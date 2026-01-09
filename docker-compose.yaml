@@ -1,0 +1,24 @@
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb_data:/data
+    restart: always
+
+  pgvector:
+    image: pgvector/pgvector:0.8.1-pg18-trixie
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=graphknows
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - pgvector_data:/var/lib/postgresql
+    restart: always
+
+volumes:
+  falkordb_data:
+  pgvector_data:

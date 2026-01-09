@@ -1,0 +1,91 @@
+# ==============================================================================
+# PROCESSING MODE
+# ==============================================================================
+# Choose between 'batch' (full rebuild) or 'incremental' (only new/changed documents)
+mode: incremental  # Options: 'batch' | 'incremental'
+
+# Clean start: If true, clears FalkorDB and processing state before running
+# USE WITH CAUTION: This deletes all existing graph data and extraction history
+clean_start: true
+
+# ==============================================================================
+# INPUT/OUTPUT CONFIGURATION (Common to both modes)
+# ==============================================================================
+processing:
+  input_dir: "input/2023"
+  output_dir: "output"
+  file_pattern: "*.txt"  # Glob pattern for input files
+  chunk_size: 256  # Token-based chunk size for LlamaIndex SentenceSplitter
+  chunk_overlap: 20  # Token overlap between chunks
+  max_concurrent_extractions: 10  # Parallel extraction limit
+
+# ==============================================================================
+# INCREMENTAL MODE SETTINGS (Only used when mode: incremental)
+# ==============================================================================
+incremental:
+  speech_limit: 10 # Max segments per document (used to detect when to reprocess)
+  max_documents: 10 # Max documents to process per run (0 = no limit)
+  state_file: "processing_state.json"  # Tracks processed documents/segments
+  enable_pruning: true  # Remove low-centrality nodes after updates
+  pruning_threshold: 0.01  # Minimum centrality score to keep
+  auto_recalculate_centrality: true  # Recalculate centrality after each update
+
+# ==============================================================================
+# LLM CONFIGURATION (Common)
+# ==============================================================================
+llm:
+  temperature: 0.05
+  max_tokens: 1500
+
+# ==============================================================================
+# EMBEDDINGS CONFIGURATION (Common)
+# ==============================================================================
+embeddings:
+  provider: "sentence-transformers"
+  model_name: "all-MiniLM-L6-v2"
+  dimension: 384
+
+# ==============================================================================
+# ENTITY EXTRACTION (Common)
+# ==============================================================================
+entity_extraction:
+  approach: "langchain"  # Options: langchain, llamaindex
+  max_triplets: 30
+
+# ==============================================================================
+# GRAPH ENRICHMENT (Common)
+# ==============================================================================
+graph_enrichment:
+  similarity_threshold: 0.35
+  max_similar_entities: 5
+
+# ==============================================================================
+# COMMUNITY DETECTION (Common)
+# ==============================================================================
+community:
+  resolution: 1.0
+  resolution_min: 0.5
+  resolution_max: 2.0
+  sub_max_depth: 1
+
+# ==============================================================================
+# DATABASE CONFIGURATION
+# ==============================================================================
+# FalkorDB (Primary Graph Storage)
+falkordb:
+  upload_enabled: true
+  host: "host.docker.internal"
+  port: 6379
+  database: "kg"
+  # In incremental mode: clean_database is controlled by global 'clean_start'
+  # In batch mode: clean_database is always true
+
+# PostgreSQL + pgvector (Content Store)
+postgres:
+  enabled: true
+  host: "host.docker.internal"
+  port: 5432
+  database: "graphknows"
+  user: "postgres"
+  password: "password"
+  table_name: "content_chunks"

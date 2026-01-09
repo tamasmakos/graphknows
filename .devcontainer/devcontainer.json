@@ -1,0 +1,36 @@
+// .devcontainer/devcontainer.json
+{
+    "name": "GraphKnows",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            "INSTALL_DEV_TOOLS": "true"
+        }
+    },
+    "runArgs": [
+        "--gpus=all",
+        "--runtime=nvidia"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-toolsai.jupyter",
+                "VisualStudioExptTeam.vscodeintellicode"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/opt/conda/envs/py311/bin/python",
+                "python.linting.enabled": true,
+                "python.formatting.provider": "black",
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "terminal.integrated.env.linux": {
+                    "CONDA_DEFAULT_ENV": "py311",
+                    "PATH": "/opt/conda/envs/py311/bin:${env:PATH}"
+                }
+            }
+        }
+    },
+    "forwardPorts": [5000, 8888],
+    "remoteUser": "root"
+}

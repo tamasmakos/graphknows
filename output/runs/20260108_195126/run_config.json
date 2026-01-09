@@ -1,0 +1,60 @@
+{
+  "mode": "incremental",
+  "clean_start": true,
+  "processing": {
+    "input_dir": "input/2023",
+    "output_dir": "output",
+    "file_pattern": "*.txt",
+    "chunk_size": 256,
+    "chunk_overlap": 20,
+    "max_concurrent_extractions": 10
+  },
+  "incremental": {
+    "speech_limit": 10,
+    "max_documents": 10,
+    "state_file": "processing_state.json",
+    "enable_pruning": true,
+    "pruning_threshold": 0.01,
+    "auto_recalculate_centrality": true
+  },
+  "llm": {
+    "temperature": 0.05,
+    "max_tokens": "***REDACTED***",
+    "api_key": "***REDACTED***",
+    "resolved_model": "qwen/qwen3-32b"
+  },
+  "embeddings": {
+    "provider": "sentence-transformers",
+    "model_name": "all-MiniLM-L6-v2",
+    "dimension": 384
+  },
+  "entity_extraction": {
+    "approach": "langchain",
+    "max_triplets": 30
+  },
+  "graph_enrichment": {
+    "similarity_threshold": 0.35,
+    "max_similar_entities": 5
+  },
+  "community": {
+    "resolution": 1.0,
+    "resolution_min": 0.5,
+    "resolution_max": 2.0,
+    "sub_max_depth": 1
+  },
+  "falkordb": {
+    "upload_enabled": true,
+    "host": "host.docker.internal",
+    "port": 6379,
+    "database": "kg"
+  },
+  "postgres": {
+    "enabled": true,
+    "host": "host.docker.internal",
+    "port": 5432,
+    "database": "graphknows",
+    "user": "postgres",
+    "password": "***REDACTED***",
+    "table_name": "content_chunks"
+  }
+}

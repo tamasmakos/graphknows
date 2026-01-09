@@ -1,0 +1,87 @@
+{
+  "generated_at": "2026-01-08T20:05:22.631014",
+  "node_types": {
+    "ENTITY_CONCEPT": {
+      "count": 1815,
+      "properties": {}
+    },
+    "TOPIC": {
+      "count": 139,
+      "properties": {
+        "graph_type": "string",
+        "community_id": "integer",
+        "name": "string",
+        "title": "string",
+        "summary": "string",
+        "chunk_ids": "list[string]",
+        "entity_ids": "list[string]",
+        "has_summary": "boolean",
+        "updated_at": "string"
+      }
+    },
+    "SUBTOPIC": {
+      "count": 231,
+      "properties": {
+        "graph_type": "string",
+        "community_id": "integer",
+        "subtopic_local_id": "integer",
+        "name": "string",
+        "title": "string",
+        "summary": "string",
+        "chunk_ids": "list[string]",
+        "entity_ids": "list[string]",
+        "has_summary": "boolean",
+        "updated_at": "string"
+      }
+    },
+    "CHUNK": {
+      "count": 392,
+      "properties": {
+        "text": "string",
+        "speech_order": "NoneType",
+        "chunk_order": "NoneType",
+        "name": "string"
+      }
+    }
+  },
+  "edge_types": {
+    "IN_TOPIC": {
+      "count": 1560,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "SUBTOPIC"
+      ],
+      "properties": {
+        "graph_type": "string"
+      }
+    },
+    "PARENT_TOPIC": {
+      "count": 231,
+      "source_types": [
+        "SUBTOPIC"
+      ],
+      "target_types": [
+        "TOPIC"
+      ],
+      "properties": {
+        "graph_type": "string"
+      }
+    },
+    "HAS_ENTITY": {
+      "count": 2871,
+      "source_types": [
+        "CHUNK"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {}
+    }
+  },
+  "stats": {
+    "total_nodes": 2577,
+    "total_edges": 6966
+  }
+}

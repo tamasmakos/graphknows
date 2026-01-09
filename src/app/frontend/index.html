@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KG Chat</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+
+<body>
+    <div class="main-container">
+        <div class="chat-panel">
+            <header>
+                <h1>Knowledge Graph Chat</h1>
+                <button id="theme-toggle" class="theme-btn" title="Toggle Dark/Light Mode">🌙</button>
+            </header>
+            <div id="chat-container">
+                <div id="messages"></div>
+                <div id="input-area">
+                    <input type="text" id="query-input" placeholder="Ask a question..." autocomplete="off">
+                    <button id="send-btn">Send</button>
+                </div>
+            </div>
+        </div>
+        <div class="graph-panel">
+            <div id="graph-container"></div>
+            <div id="graph-legend">
+                <!-- Legend items will be dynamically generated based on graph data -->
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>
