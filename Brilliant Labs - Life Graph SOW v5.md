@@ -124,11 +124,11 @@ This Independent Contractor Agreement (the “Agreement”) is entered into as o
 
 | Role | Task Category | Specific Action Items |
 | :---- | :---- | :---- |
-| **Sebi** | Infrastructure | 1\. Dual-DB Setup: Deploy Docker Compose with FalkorDB (Graph) \+ Postgres (Vector). 2\. The Bridge: Implement src/kg/storage/hybrid\_store.py to handle atomic writes to both DBs. |
-| **Sebi** | Ingestion | 3\. Queued Worker: Build RedisQueue consumer for sequential consistency. 4\. The “Pulse”: Setup Cron/Celery task for periodic run\_community\_detection. |
-| **Tamas** | Parser Dev | **5\. CSV LifeLog Parser:** Implement CSVLogParser in src/kg/graph/parsers/ inheriting from BaseDocumentParser. *Logic:* Strict datetime parsing; Regex split for \[en\] dialogue blocks; Store Image desc in Segment metadata. |
-| **Tamas** | Schema Mapping | 6\. Ontology Alignment: Map CSV columns to Graph Schema: \- Speaker ID $\\\\to$ Person \- Location $\\\\to$ Place \- Image $\\\\to$ Context node. |
-| **Deliverable** |  | **Live Ingestion Pipeline utilizing CSVLogParser and HybridStore.** |
+| **Sebi** | Infrastructure | [x] 1. Dual-DB Setup: Deploy Docker Compose with FalkorDB (Graph) + Postgres (Vector). <br> [x] 2. The Bridge: Implement src/kg/storage/hybrid_store.py to handle atomic writes to both DBs. |
+| **Sebi** | Ingestion | [x] 3. Queued Worker: Build RedisQueue consumer for sequential consistency. <br> [x] 4. The “Pulse”: Setup Cron/Celery task for periodic run_community_detection. |
+| **Tamas** | Parser Dev | [x] **5. CSV LifeLog Parser:** Implement CSVLogParser in src/kg/graph/parsers/ inheriting from BaseDocumentParser. *Logic:* Strict datetime parsing; Regex split for [en] dialogue blocks; Store Image desc in Segment metadata. |
+| **Tamas** | Schema Mapping | [x] 6. Ontology Alignment: Map CSV columns to Graph Schema: - Speaker ID $\to$ Person - Location $\to$ Place - Image $\to$ Context node. |
+| **Deliverable** |  | **[x] Live Ingestion Pipeline utilizing CSVLogParser and HybridStore.** |
 
 ### **Week 2: The Backbone (Enrichment & Spatial Logic)**
 
@@ -136,11 +136,11 @@ This Independent Contractor Agreement (the “Agreement”) is entered into as o
 
 | Role | Task Category | Specific Action Items |
 | :---- | :---- | :---- |
-| **Sebi** | Optimization | 1\. Bulk Loader: Optimize QueueWorker to batch inserts (N=50) for FalkorDB efficiency. |
-| **Sebi** | Resolution | 3\. Entity Resolution: Implement merge\_similar\_nodes in src/kg/graph/resolution.py using fuzzy string matching on “Location”. |
-| **Tamas** | Data Logic | 4\. Multilingual Splitting: Detect language tags \[zh\] vs \[en\] in CSVLogParser and route to appropriate embedding model defined in config.yaml. |
-| **Tamas** | Segmentation | 5\. Episode Segmentation: Implement group\_segments\_by\_time logic in src/kg/graph/parsing.py (\>5min gap \= new Episode node). |
-| **Deliverable** |  | **Structured Graph with Episode nodes and resolved Place entities.** |
+| **Sebi** | Optimization | [x] 1. Bulk Loader: Optimize QueueWorker to batch inserts (N=50) for FalkorDB efficiency. |
+| **Sebi** | Resolution | [x] 3. Entity Resolution: Implement merge_similar_nodes in src/kg/graph/resolution.py using fuzzy string matching on “Location”. |
+| **Tamas** | Data Logic | [ ] 4. Multilingual Splitting: Detect language tags [zh] vs [en] in CSVLogParser and route to appropriate embedding model defined in config.yaml. |
+| **Tamas** | Segmentation | [x] 5. Episode Segmentation: Implement group_segments_by_time logic in src/kg/graph/parsing.py (>5min gap = new Episode node). |
+| **Deliverable** |  | **[x] Structured Graph with Episode nodes and resolved Place entities.** |
 
 ### **Week 3: The Brain (Ontology & Intelligence)**
 
@@ -148,10 +148,10 @@ This Independent Contractor Agreement (the “Agreement”) is entered into as o
 
 | Role | Task Category | Specific Action Items |
 | :---- | :---- | :---- |
-| **Sebi** | Algorithms | 1\. Community Detection: Tune Leiden parameters in src/kg/community/detection.py for small-cluster conversation grouping. 2\. Pruning: Implement prune\_disconnected\_nodes in src/kg/graph/maintenance.py. |
-| **Tamas** | Intelligence | 3\. Context Extraction: Implement ImageContextExtractor to generate (Image)-\[:DEPICTS\]-\>(Context) facts. |
-| **Tamas** | Extraction | 4\. Triplet Extraction: Update src/kg/graph/extractors.py to extract (Person)-\[:SPEAKS\_AT\]-\>(Place) from metadata. |
-| **Deliverable** |  | **Rich Knowledge Graph with Context nodes and Community clusters.** |
+| **Sebi** | Algorithms | [x] 1. Community Detection: Tune Leiden parameters in src/kg/community/detection.py for small-cluster conversation grouping. <br> [x] 2. Pruning: Implement prune_disconnected_nodes in src/kg/graph/maintenance.py. |
+| **Tamas** | Intelligence | [ ] 3. Context Extraction: Implement ImageContextExtractor to generate (Image)-[:DEPICTS]->(Context) facts. |
+| **Tamas** | Extraction | [ ] 4. Triplet Extraction: Update src/kg/graph/extractors.py to extract (Person)-[:SPEAKS_AT]->(Place) from metadata. |
+| **Deliverable** |  | **[/] Rich Knowledge Graph with Context nodes and Community clusters.** |
 
 ### **Week 4: The Recall (Deep Context & Handoff)**
 
@@ -159,7 +159,7 @@ This Independent Contractor Agreement (the “Agreement”) is entered into as o
 
 | Role | Task Category | Specific Action Items |
 | :---- | :---- | :---- |
-| **Sebi** | Retrieval | 1\. Hybrid Query: Implement search\_hybrid() combining Cypher traversal \+ Vector ANN. 2\. Latency: Optimize redis-py connection pooling. 3\. Deploy: Dockerize graph\_service, worker, redis stack. |
-| **Tamas** | Synthesis | 4\. Context Builder: Implement build\_context\_window() in src/kg/retrieval/context.py joining Image \+ Dialogue. 5\. Golden Query: Validate “What did I eat…?” query against ground truth. |
-| **Deliverable** |  | **Final POC Codebase (Dockerized) \+ Golden Query Report.** |
+| **Sebi** | Retrieval | [x] 1. Hybrid Query: Implement search_hybrid() combining Cypher traversal + Vector ANN. <br> [x] 2. Latency: Optimize redis-py connection pooling. <br> [x] 3. Deploy: Dockerize graph_service, worker, redis stack. |
+| **Tamas** | Synthesis | [x] 4. Context Builder: Implement build_context_window() in src/kg/retrieval/context.py joining Image + Dialogue. <br> [ ] 5. Golden Query: Validate “What did I eat…?” query against ground truth. |
+| **Deliverable** |  | **[/] Final POC Codebase (Dockerized) + Golden Query Report.** |
 

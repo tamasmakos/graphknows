@@ -27,3 +27,7 @@ llama-index-embeddings-huggingface
 llama-index-llms-groq
 psycopg2-binary
 pgvector
+pytest==7.4.3
+pytest-asyncio==0.23.2
+httpx==0.25.2
+langdetect==1.0.9

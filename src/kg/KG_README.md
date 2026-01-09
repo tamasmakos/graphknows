@@ -67,6 +67,14 @@ The pipeline executes the following stages in order:
 
 ## Usage
 
+### Prerequisites
+
+Ensure the database services are running before executing the pipeline:
+
+```bash
+docker-compose up -d
+```
+
 ### Configuration (`config.yaml`)
 
 Enable hybrid storage and health checks:

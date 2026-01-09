@@ -6,6 +6,7 @@ This repository is set up to be fully reproducible via a Dev Container (Docker +
 
 - **Docker** installed and running
 - **Dev Containers / Remote - Containers** extension (or equivalent)
+- **PostgreSQL** (with pgvector extension) and **Redis** (FalkorDB) are required. These are provided via `docker-compose`.
 
 ### Recommended: Open in Dev Container
 
@@ -28,6 +29,15 @@ This will:
 - Set the working directory to `/workspaces/kg`
 
 Once the container is ready, your terminal inside the editor will automatically use the `py311` environment.
+
+### Startup Services
+
+Before running any Python code, you must start the supporting services (FalkorDB and Postgres):
+
+```bash
+# In the terminal (host or container with docker socket access)
+docker-compose up -d
+```
 
 ### Manual Docker Usage (without Dev Containers extension)
 

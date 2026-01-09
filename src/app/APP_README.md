@@ -31,7 +31,7 @@ The heart of the application. Unlike simple vector RAG, this service performs a 
     *   *Result*: Captures the "web of influence" around key entities.
 3.  **Content Retrieval**:
     *   Finds **Chunks** linked to the gathered entities (`[:HAS_ENTITY]`).
-    *   If Hybrid Storage is enabled, fetches chunk content from FalkorDB using pointers retrieved from Postgres vector search.
+    *   **Hybrid Hydration**: If Hybrid Storage is enabled, automatically hydrates chunk content from **PostgreSQL** using pointers stored in the graph nodes.
 4.  **Content Hierarchy Reconstruction**:
     *   Traverses the strict temporal hierarchy: **Day → Segment → Chunk**.
     *   *Result*: Reconstructs the timeline of events with full provenance.

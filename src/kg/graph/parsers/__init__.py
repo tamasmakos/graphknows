@@ -9,9 +9,12 @@ from typing import Optional, Dict, Type
 from src.kg.graph.parsers.base import BaseDocumentParser
 from src.kg.graph.parsers.generic import GenericParser
 
+from src.kg.graph.parsers.multilingual import MultilingualParser
+
 __all__ = [
     'BaseDocumentParser',
     'GenericParser',
+    'MultilingualParser',
     'get_parser',
     'PARSER_REGISTRY'
 ]
@@ -19,6 +22,7 @@ __all__ = [
 # Parser registry mapping format names to parser classes
 PARSER_REGISTRY: Dict[str, Type[BaseDocumentParser]] = {
     'generic': GenericParser,
+    'multilingual': MultilingualParser,
 }
 
 

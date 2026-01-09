@@ -1,6 +1,5 @@
 .env
 .venv
-tests
 __pycache__
 lib
 input

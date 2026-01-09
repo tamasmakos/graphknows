@@ -2,6 +2,7 @@
 import logging
 import numpy as np
 import psycopg2
+import os
 from pgvector.psycopg2 import register_vector
 from typing import List, Tuple, Optional
 
@@ -14,7 +15,7 @@ class PostgresVectorStore:
         port: int = 5432,
         database: str = "graphknows",
         user: str = "postgres",
-        password: str = "password",
+        password: Optional[str] = None,
         table_name: str = "hybrid_embeddings",
         embedding_dim: int = 384
     ):
@@ -22,7 +23,7 @@ class PostgresVectorStore:
         self.port = port
         self.database = database
         self.user = user
-        self.password = password
+        self.password = password or os.getenv("POSTGRES_PASSWORD", "password")
         self.table_name = table_name
         self.embedding_dim = embedding_dim
         self.conn = None
