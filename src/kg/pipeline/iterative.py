@@ -19,11 +19,11 @@ from ..types import AgentDependencies
 from ..graph.extraction import build_lexical_graph, extract_all_entities_relations
 from ..embeddings.rag import generate_rag_embeddings
 from ..graph.extractors import get_extractor
-from ..graph.extractors import get_extractor
 from ..community.detection import CommunityDetector
-from ..llm import get_model_name
-from ..graph.schema import save_graph_schema
 from ..summarization.reporting import generate_community_summary_comparison
+from ..summarization.core import generate_community_summaries
+from ..community.subcommunities import add_enhanced_community_attributes_to_graph
+from ..llm import get_model_name, get_langchain_llm
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +260,6 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[
                     
                     # 6b. Create Hierarchy (TOPIC and SUBTOPIC nodes)
                     logger.info("Creating topic hierarchy...")
-                    from src.kg.community.subcommunities import add_enhanced_community_attributes_to_graph
                     
                     # Create a temporary NetworkX graph with entities and communities
                     hierarchy_graph = nx.DiGraph()
@@ -296,11 +295,6 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[
                             hierarchy_graph.add_edge(u, v, **edge_data)
                     
                     logger.info(f"✅ Context enrichment complete: {hierarchy_graph.number_of_nodes()} total nodes in hierarchy graph")
-                    
-                    # 6d. Summarization
-                    logger.info("Generating topic summaries...")
-                    from src.kg.llm import get_langchain_llm
-                    from src.kg.summarization.core import generate_community_summaries
                     
                     llm = get_langchain_llm(config.to_dict())
                     summary_stats = await generate_community_summaries(hierarchy_graph, llm)

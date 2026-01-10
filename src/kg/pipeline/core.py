@@ -122,7 +122,8 @@ async def run_community_detection(graph: nx.DiGraph, config: Config, **kwargs) -
     detector = CommunityDetector()
     
     # Detect main communities
-    communities = detector.detect_communities(graph)
+    results = detector.detect_communities(graph)
+    communities = results['assignments']
     
     # Detect subcommunities
     subcommunities = detector.detect_subcommunities_leiden(
@@ -145,7 +146,8 @@ async def run_community_detection(graph: nx.DiGraph, config: Config, **kwargs) -
         "communities": communities,
         "subcommunities": subcommunities,
         "centrality_results": centrality_results,
-        "community_quality": community_quality
+        "community_quality": community_quality,
+        "metrics": results
     }
 
 async def run_summarization(graph: nx.DiGraph, config: Config, **kwargs) -> Dict[str, Any]:
@@ -279,9 +281,9 @@ def register_stages():
 
     
     registry.register(PipelineStage(
-        name="falkordb_upload",
-        display_name="FalkorDB Upload",
-        description="Uploads graph to FalkorDB database",
+        name="neo4j_upload",
+        display_name="Neo4j/FalkorDB Upload",
+        description="Uploads graph to Neo4j/FalkorDB database",
         run_func=run_falkordb_upload
     ))
 

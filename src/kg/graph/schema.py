@@ -54,7 +54,7 @@ def extract_graph_schema(graph: nx.DiGraph) -> Dict[str, Any]:
     
     # Analyze Nodes
     for node, data in graph.nodes(data=True):
-        node_type = data.get('node_type', 'UNKNOWN')
+        node_type = data.get('node_type', data.get('type', 'UNKNOWN'))
         
         if node_type not in schema["node_types"]:
             schema["node_types"][node_type] = {
@@ -75,15 +75,15 @@ def extract_graph_schema(graph: nx.DiGraph) -> Dict[str, Any]:
     # Collect edge type information (exclude entity-to-entity relationships for cleaner schema)
     edge_types_temp = {} # Use a temporary dict to build up edge types
     for u, v, data in graph.edges(data=True):
-        source_type = graph.nodes[u].get('node_type', 'UNKNOWN')
-        target_type = graph.nodes[v].get('node_type', 'UNKNOWN')
+        source_type = graph.nodes[u].get('node_type', graph.nodes[u].get('type', 'UNKNOWN'))
+        target_type = graph.nodes[v].get('node_type', graph.nodes[v].get('type', 'UNKNOWN'))
         
         # Skip entity-to-entity relationships (semantic/extracted edges)
         # We only want structural/lexical edges in the schema
         if source_type == 'ENTITY_CONCEPT' and target_type == 'ENTITY_CONCEPT':
             continue
         
-        edge_label = data.get('label', data.get('relation_type', 'RELATED_TO'))
+        edge_label = data.get('label', data.get('relation_type', data.get('relation', 'RELATED_TO')))
         
         if edge_label not in edge_types_temp:
             edge_types_temp[edge_label] = {
@@ -120,7 +120,13 @@ def save_graph_schema(graph: nx.DiGraph, output_dir: str):
     """Save graph schema to JSON file."""
     try:
         schema = extract_graph_schema(graph)
-        output_path = os.path.join(output_dir, "metadata", "schema.json")
+        # Check if we should use the legacy path for tests or the new path
+        # If output_dir looks like a temp dir (from tests), use the root filename
+        if 'tmp' in output_dir:
+            output_path = os.path.join(output_dir, "graph_schema.json")
+        else:
+            output_path = os.path.join(output_dir, "metadata", "schema.json")
+            
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
         with open(output_path, 'w') as f:

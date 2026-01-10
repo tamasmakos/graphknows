@@ -33,13 +33,20 @@ class MultilingualParser(GenericParser):
         
         # Augment with language detection
         for segment in segments:
-            text = segment.content
+            text = segment.content.strip()
+            
+            # Heuristic: very short segments are often misidentified (e.g. "Hello" as Finnish)
+            # Default to English for very short text unless it contains non-latin characters
+            if len(text) < 20 and not re.search(r'[^\x00-\x7F]', text):
+                segment.metadata['language'] = 'en'
+                continue
+                
             try:
                 # Detect language
                 lang = detect(text)
                 
                 # Normalize common Chinese codes
-                if lang in ['zh-cn', 'zh-tw']:
+                if lang in ['zh-cn', 'zh-tw', 'zh']:
                     lang = 'zh'
                     
                 segment.metadata['language'] = lang

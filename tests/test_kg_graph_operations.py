@@ -279,7 +279,8 @@ class TestCommunityOperations(unittest.TestCase):
         from kg.community.detection import CommunityDetector
         
         detector = CommunityDetector()
-        communities = detector.detect_communities(self.graph)
+        results = detector.detect_communities(self.graph)
+        communities = results['assignments']
         
         # Should detect 2 communities
         unique_communities = set(communities.values())

@@ -15,7 +15,8 @@ class TestCommunityDetection(unittest.TestCase):
         self.graph.add_edge(2, 3)
 
     def test_detect_communities(self):
-        communities = self.detector.detect_communities(self.graph)
+        results = self.detector.detect_communities(self.graph)
+        communities = results['assignments']
         self.assertEqual(len(set(communities.values())), 2)
         self.assertEqual(communities[0], communities[1])
         self.assertEqual(communities[3], communities[4])
@@ -23,8 +24,8 @@ class TestCommunityDetection(unittest.TestCase):
 
     def test_empty_graph(self):
         empty_graph = nx.Graph()
-        communities = self.detector.detect_communities(empty_graph)
-        self.assertEqual(communities, {})
+        results = self.detector.detect_communities(empty_graph)
+        self.assertEqual(results['assignments'], {})
 
 if __name__ == '__main__':
     unittest.main()

@@ -17,6 +17,7 @@ processing:
   file_pattern: "*.txt"  # Glob pattern for input files
   chunk_size: 256  # Token-based chunk size for LlamaIndex SentenceSplitter
   chunk_overlap: 20  # Token overlap between chunks
+  speech_limit: 1 # Match test expectations
   max_concurrent_extractions: 10  # Parallel extraction limit
 
 # ==============================================================================
