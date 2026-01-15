@@ -1,0 +1,12 @@
+{
+  "run_id": "20260115_162742",
+  "timestamp": "2026-01-15T16:28:30.462122",
+  "total_stats": {
+    "documents_processed": 1,
+    "nodes_merged": 421,
+    "relationships_merged": 1281,
+    "errors": []
+  },
+  "config_path": "config.yaml",
+  "documents_processed": 1
+}

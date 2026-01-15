@@ -64,7 +64,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def main_async(config_path: str, reset: bool = False):
+async def main_async(config_path: str, reset: bool = False, log_limit: int = 0):
     """Main async entry point."""
     logger.info("=" * 80)
     logger.info("Knowledge Graph Pipeline")
@@ -84,7 +84,7 @@ async def main_async(config_path: str, reset: bool = False):
     
     # Run the iterative pipeline
     from kg.pipeline.iterative import run_iterative_pipeline
-    results = await run_iterative_pipeline(config_path, reset=reset)
+    results = await run_iterative_pipeline(config_path, reset=reset, log_limit=log_limit)
     
     logger.info("=" * 80)
     logger.info("PIPELINE EXECUTION COMPLETE")
@@ -125,6 +125,13 @@ Examples:
         help='Clear FalkorDB and processing state before running (overrides config)'
     )
     
+    parser.add_argument(
+        '--log-limit',
+        type=int,
+        default=0,
+        help='Limit the number of log episodes/segments to process (0 = no limit)'
+    )
+    
     args = parser.parse_args()
     
     # If --clean-start is provided, temporarily modify config
@@ -132,8 +139,16 @@ Examples:
         logger.warning("--clean-start flag provided, will clear all data")
         # We'll handle this in main_async
     
+    # Pass generic args to be injected into config later if needed, 
+    # but for now we pass it via config assignment or special handling.
+    # The IterativePipeline loads config from file. We need to override it.
+    # We can handle this by modifying the config object after load in run_iterative_pipeline
+    # but run_iterative_pipeline takes a path.
+    # We will pass it as a separate argument or modify the function signature.
+    # Let's modify run_iterative_pipeline signature in calling code.
+    
     try:
-        asyncio.run(main_async(args.config, reset=args.clean_start))
+        asyncio.run(main_async(args.config, reset=args.clean_start, log_limit=args.log_limit))
     except KeyboardInterrupt:
         logger.info("\nInterrupted by user")
         sys.exit(1)

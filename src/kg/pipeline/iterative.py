@@ -17,6 +17,7 @@ from ..config.loader import Config
 from ..service import IterativeGraphBuilder
 from ..types import AgentDependencies
 from ..graph.extraction import build_lexical_graph, extract_all_entities_relations
+from ..graph.schema import save_graph_schema
 from ..embeddings.rag import generate_rag_embeddings
 from ..graph.extractors import get_extractor
 from ..community.detection import CommunityDetector
@@ -27,7 +28,7 @@ from ..llm import get_model_name, get_langchain_llm
 
 logger = logging.getLogger(__name__)
 
-async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[str, Any]:
+async def run_iterative_pipeline(config_path: str, reset: bool = False, log_limit: int = 0) -> Dict[str, Any]:
     """
     Run the iterative graph update pipeline.
     
@@ -122,6 +123,9 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[
     logger.info(f"Found {len(all_document_ids)} total documents in {input_dir}")
     logger.info(f"Already processed: {len(builder.state.processed_documents)} documents")
     
+    # helper for mapping IDs to filenames
+    doc_id_to_filename = {f.stem: f.name for f in all_files}
+    
     # Resolve limits based on mode
     mode = getattr(config, 'mode', 'incremental')
     mode_config = getattr(config, mode, None)
@@ -136,9 +140,14 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[
         return int(val) if val is not None else default
 
     speech_limit = get_limit('speech_limit')
+    # If log_limit passed from CLI, it overrides/sets speech_limit (since we treat speech/segments as the unit)
+    if log_limit > 0:
+        speech_limit = log_limit
+        logger.info(f"Using CLI log_limit ({log_limit}) as segment/speech limit")
+    
     max_docs = get_limit('max_documents')
     
-    logger.info(f"Pipeline Mode: {mode}, Speech Limit: {speech_limit}, Max Docs: {max_docs}")
+    logger.info(f"Pipeline Mode: {mode}, Speech/Log Limit: {speech_limit}, Max Docs: {max_docs}")
     
     # Check for new documents
     new_documents = builder.get_new_documents(all_document_ids, speech_limit)
@@ -189,7 +198,7 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[
                     input_dir=str(input_dir),
                     config={
                         'segment_limit': speech_limit,
-                        'file_pattern': f"{doc_id}.txt"
+                        'file_pattern': doc_id_to_filename.get(doc_id, f"{doc_id}.txt")
                     }
                 )
                 
@@ -296,7 +305,7 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[
                     
                     logger.info(f"✅ Context enrichment complete: {hierarchy_graph.number_of_nodes()} total nodes in hierarchy graph")
                     
-                    llm = get_langchain_llm(config.to_dict())
+                    llm = get_langchain_llm(config.to_dict(), purpose='summarization')
                     summary_stats = await generate_community_summaries(hierarchy_graph, llm)
                     logger.info(f"✅ Summarization complete: {summary_stats.get('topics_updated', 0)} topics, {summary_stats.get('subtopics_updated', 0)} subtopics")
                     
@@ -344,6 +353,18 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False) -> Dict[
                         generate_community_summary_comparison(hierarchy_graph, str(run_dir / "analytics"))
                     except Exception as e:
                         logger.warning(f"Failed to save graph artifacts: {e}")
+                    
+                    # 6g. Save Full Entity Graph
+                    try:
+                        full_graph_path = run_dir / "graphs" / "knowledge_graph.json"
+                        with open(full_graph_path, 'w') as f:
+                            # Use node_link_data to serialize the full graph
+                            # fetch_entity_graph returns the merged graph from FalkorDB/NetworkX
+                            full_graph = builder.fetch_entity_graph()
+                            json.dump(nx.node_link_data(full_graph), f, indent=2)
+                        logger.info(f"📊 Full Knowledge Graph saved to {full_graph_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save full knowledge graph: {e}")
                     
                 except Exception as e:
                     logger.warning(f"Community detection/hierarchy/summarization failed: {e}", exc_info=True)

@@ -56,7 +56,7 @@ class LLMConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     """Configuration for embeddings."""
-    model: str = "all-MiniLM-L6-v2"
+    model_name: str = Field("all-MiniLM-L6-v2", alias="model") # Use alias for backward compat if needed, or just rename
     batch_size: int = 32
 
 class GraphConfig(BaseModel):
@@ -97,6 +97,16 @@ class FalkorDBConfig(BaseModel):
     clean_database: bool = True
     upload_enabled: bool = False
 
+class PostgresConfig(BaseModel):
+    """Configuration for PostgreSQL."""
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 5432
+    database: str = "graphknows"
+    user: str = "postgres"
+    password: str = "password"
+    table_name: str = "content_chunks"
+
 class Config(BaseModel):
     """Main configuration class."""
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
@@ -106,6 +116,7 @@ class Config(BaseModel):
     graph: GraphConfig = Field(default_factory=GraphConfig)
     community: CommunityConfig = Field(default_factory=CommunityConfig)
     falkordb: FalkorDBConfig = Field(default_factory=FalkorDBConfig)
+    postgres: PostgresConfig = Field(default_factory=PostgresConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
     incremental: IncrementalConfig = Field(default_factory=IncrementalConfig)
 
@@ -128,13 +139,15 @@ class Config(BaseModel):
             'llm_model': self.llm.model,
             'llm_temperature': self.llm.temperature,
             'extractor_type': self.graph.extractor_type,
-            'embedding_model': self.embeddings.model,
+            'embedding_model': self.embeddings.model_name,
             'embedding_batch_size': self.embeddings.batch_size,
             'embedding_similarity_threshold': self.graph.embedding_similarity_threshold,
             'add_similarity_edges': self.graph.add_similarity_edges,
             'enable_semantic_resolution': self.graph.enable_semantic_resolution,
             'semantic_resolution_threshold': self.graph.semantic_resolution_threshold,
 
+            'falkordb': self.falkordb.dict(),
+            'postgres': self.postgres.dict(),
             'falkordb_upload_enabled': self.falkordb.upload_enabled,
             'falkordb_clean_database': self.falkordb.clean_database,
             'community_detection': self.community.dict()

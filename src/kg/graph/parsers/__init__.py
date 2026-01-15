@@ -10,11 +10,13 @@ from src.kg.graph.parsers.base import BaseDocumentParser
 from src.kg.graph.parsers.generic import GenericParser
 
 from src.kg.graph.parsers.multilingual import MultilingualParser
+from src.kg.graph.parsers.life import LifeLogParser
 
 __all__ = [
     'BaseDocumentParser',
     'GenericParser',
     'MultilingualParser',
+    'LifeLogParser',
     'get_parser',
     'PARSER_REGISTRY'
 ]
@@ -23,6 +25,7 @@ __all__ = [
 PARSER_REGISTRY: Dict[str, Type[BaseDocumentParser]] = {
     'generic': GenericParser,
     'multilingual': MultilingualParser,
+    'life': LifeLogParser,
 }
 
 

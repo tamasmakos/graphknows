@@ -12,20 +12,24 @@ clean_start: true
 # INPUT/OUTPUT CONFIGURATION (Common to both modes)
 # ==============================================================================
 processing:
-  input_dir: "input/2023"
+  input_dir: "input"
   output_dir: "output"
-  file_pattern: "*.txt"  # Glob pattern for input files
+  file_pattern: "*.csv"  # Updated for Life Logs
   chunk_size: 256  # Token-based chunk size for LlamaIndex SentenceSplitter
   chunk_overlap: 20  # Token overlap between chunks
-  speech_limit: 1 # Match test expectations
+  # 'speech_limit' controls the max number of Segments/Episodes per file to process.
+  # Renamed conceptually to 'log_limit' in CLI, but internal key remains 'speech_limit' for compatibility.
+  speech_limit: 10 
   max_concurrent_extractions: 10  # Parallel extraction limit
 
 # ==============================================================================
 # INCREMENTAL MODE SETTINGS (Only used when mode: incremental)
 # ==============================================================================
 incremental:
-  speech_limit: 10 # Max segments per document (used to detect when to reprocess)
-  max_documents: 10 # Max documents to process per run (0 = no limit)
+  # Controls how many new Segments/Episodes (from the log) to process per run.
+  # If 0, processes all new content found.
+  speech_limit: 20 
+  max_documents: 0 # Max files to process (useful if you have many daily log files)
   state_file: "processing_state.json"  # Tracks processed documents/segments
   enable_pruning: true  # Remove low-centrality nodes after updates
   pruning_threshold: 0.01  # Minimum centrality score to keep

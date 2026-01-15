@@ -13,20 +13,33 @@ from langchain_groq import ChatGroq
 logger = logging.getLogger(__name__)
 
 
-def get_model_name(config: Dict[str, Any] = None) -> str:
+def get_model_name(config: Dict[str, Any] = None, purpose: str = None) -> str:
     """
     Get configured model name.
     
     Priority:
-    1. Config dict 'llm_model' key
-    2. GROQ_MODEL environment variable
+    1. Purpose-specific Env Var (EXTRACTION_MODEL, SUMMARISATION_MODEL)
+    2. Config dict 'llm_model' key
+    3. GROQ_MODEL environment variable
     
     Args:
         config: Optional config dictionary
+        purpose: Optional purpose ('extraction', 'summarization', 'synthetic')
         
     Returns:
         Model name string
     """
+    # 0. Check purpose-specific env vars
+    if purpose == 'extraction':
+        env_model = os.environ.get("EXTRACTION_MODEL")
+        if env_model: return env_model
+    elif purpose == 'summarization':
+        env_model = os.environ.get("SUMMARISATION_MODEL")
+        if env_model: return env_model
+    elif purpose == 'synthetic':
+        env_model = os.environ.get("SYNTH_MODEL")
+        if env_model: return env_model
+
     if config:
         if 'llm_model' in config:
             return config['llm_model']
@@ -58,7 +71,7 @@ def get_temperature(config: Dict[str, Any] = None) -> float:
 
 
 
-def get_langchain_llm(config: Dict[str, Any] = None) -> ChatGroq:
+def get_langchain_llm(config: Dict[str, Any] = None, purpose: str = None) -> ChatGroq:
     """
     Get LangChain-compatible Groq LLM for use with LangChain tools.
     
@@ -66,11 +79,12 @@ def get_langchain_llm(config: Dict[str, Any] = None) -> ChatGroq:
     
     Args:
         config: Optional config dictionary
+        purpose: Optional purpose ('extraction', 'summarization')
         
     Returns:
         ChatGroq instance compatible with LangChain tools
     """
-    model = get_model_name(config)
+    model = get_model_name(config, purpose=purpose)
     temperature = get_temperature(config)
     api_key = os.environ.get("GROQ_API_KEY")
     

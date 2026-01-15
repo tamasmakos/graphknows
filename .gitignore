@@ -2,5 +2,5 @@
 .venv
 __pycache__
 lib
-input
 .gitignore
+input

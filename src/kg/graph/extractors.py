@@ -95,7 +95,7 @@ class LangChainExtractor(BaseExtractor):
         
         def _extract_sync():
             # Initialize LLM in the worker thread to ensure event loop safety
-            llm = get_langchain_llm(self.config)
+            llm = get_langchain_llm(self.config, purpose='extraction')
             
             transformer = LLMGraphTransformer(
                 llm=llm,

@@ -282,9 +282,10 @@ def get_seed_entities(
                 "ENTITY_CONCEPT", query_embedding, k=10, min_score=0.5
             )
             for node_data, score in entity_results:
-                name = node_data.get("name") or node_data.get("id")
-                if name:
-                    local_candidates[name] = max(local_candidates.get(name, 0), score)
+                # Use ID as primary key
+                entity_id = node_data.get("id")
+                if entity_id:
+                    local_candidates[entity_id] = max(local_candidates.get(entity_id, 0), score)
         except Exception as e:  # noqa: BLE001
             logger.warning("Entity vector search failed: %s", e)
         return local_candidates, time.time() - t0
@@ -300,20 +301,20 @@ def get_seed_entities(
                 keyword_query = """
                 UNWIND $keywords AS keyword
                 MATCH (seed)
-                WHERE (seed:Entity OR seed:ENTITY_CONCEPT OR seed:Topic OR seed:Subtopic OR seed:TOPIC OR seed:SUBTOPIC)
+                WHERE (seed:Entity OR seed:ENTITY_CONCEPT OR seed:Topic OR seed:Subtopic OR seed:TOPIC OR seed:SUBTOPIC OR seed:DAY OR seed:SEGMENT OR seed:CONVERSATION OR seed:Day OR seed:Segment OR seed:Conversation)
                 AND (
                     toLower(coalesce(seed.name, "")) CONTAINS toLower(keyword)
                     OR toLower(coalesce(seed.id, "")) CONTAINS toLower(keyword)
                     OR toLower(coalesce(seed.title, "")) CONTAINS toLower(keyword)
                 )
-                RETURN DISTINCT coalesce(seed.name, seed.id, seed.title) AS name
-                LIMIT 10
+                RETURN DISTINCT seed.id AS id
+                LIMIT 100
                 """
                 results = db.query(keyword_query, {"keywords": keywords})
             for record in results:
-                name = record.get("name")
-                if name:
-                    local_candidates[name] = max(local_candidates.get(name, 0), 1.0)
+                entity_id = record.get("id")
+                if entity_id:
+                    local_candidates[entity_id] = max(local_candidates.get(entity_id, 0), 1.0)
         except Exception as e:  # noqa: BLE001
             logger.warning("Keyword search failed: %s", e)
         return local_candidates, time.time() - t0
@@ -347,17 +348,16 @@ def get_seed_entities(
     try:
         with Profiler("Seed Reranking"):
             rerank_query = """
-            UNWIND $names AS name
+            UNWIND $ids AS id
             MATCH (e)
-            WHERE (e:Entity OR e:ENTITY_CONCEPT OR e:Topic OR e:Subtopic OR e:TOPIC OR e:SUBTOPIC) 
-            AND (e.name = name OR e.id = name OR e.title = name)
-            RETURN coalesce(e.name, e.id, e.title) AS name, coalesce(e.pagerank_centrality, e.pagerank, 0.0) AS pagerank
+            WHERE e.id = id
+            RETURN e.id AS id, coalesce(e.pagerank_centrality, e.pagerank, 0.0) AS pagerank
             """
-            results = db.query(rerank_query, {"names": list(candidates.keys())})
+            results = db.query(rerank_query, {"ids": list(candidates.keys())})
 
         scored_entities: List[Tuple[str, float]] = []
         for record in results:
-            name = record.get("name")
+            name = record.get("id")
             pagerank = record.get("pagerank", 0.0)
             base_score = candidates.get(name, 0)
 
@@ -407,7 +407,9 @@ def filter_node_properties(props: dict, labels: List[str]) -> dict:
         and not props.get("name")
     )
     is_community = "community" in labels_lower and not is_topic and not is_subtopic
+    is_community = "community" in labels_lower and not is_topic and not is_subtopic
     is_subcommunity = "subcommunity" in labels_lower
+    is_conversation = "conversation" in labels_lower
 
     filtered: Dict[str, Any] = {}
 
@@ -507,6 +509,13 @@ def filter_node_properties(props: dict, labels: List[str]) -> dict:
             "title",
             "summary",
             "community_id",
+        }
+    elif is_conversation:
+        keep_keys = {
+            "time",
+            "name",
+            "location",
+            "date", # if present
         }
     else:
         keep_keys = {
@@ -720,10 +729,9 @@ def expand_subgraph(
     try:
         # 1. Fetch Seed Nodes
         run_stage("Seed Nodes", """
-            UNWIND $seeds AS name
+            UNWIND $seeds AS seed_id
             MATCH (n)
-            WHERE (n:Entity OR n:ENTITY_CONCEPT OR n:Topic OR n:Subtopic OR n:TOPIC OR n:SUBTOPIC) 
-              AND (n.name = name OR n.title = name OR n.id = name)
+            WHERE n.id = seed_id
             RETURN n
             """, {"seeds": seed_entities})
         
@@ -799,9 +807,11 @@ def expand_subgraph(
         seed_ids_str = "[" + ", ".join(str(sid) for sid in seed_ids) + "]"
         
         chunk_query = f"""
-        MATCH (s)<-[r:HAS_ENTITY]-(c)
+        MATCH (s)
         WHERE ID(s) IN {seed_ids_str}
-        RETURN s, r, c
+        OPTIONAL MATCH (s)<-[r1:HAS_ENTITY]-(c1)
+        OPTIONAL MATCH (s)-[r2:HAS_CHUNK]->(c2)
+        RETURN s, r1, c1, r2, c2
         LIMIT 200
         """
         run_stage("Connected Chunks", chunk_query, {})
@@ -822,10 +832,16 @@ def expand_subgraph(
                 batch = chunk_ids[i : i + batch_size]
                 batch_str = "[" + ", ".join(str(cid) for cid in batch) + "]"
                 
+                # Hierarchy Query: Handle both direct Segment->Chunk and Segment->Conversation->Chunk paths
+                # Also fetch Place and Context connected to Conversation
                 hierarchy_query = f"""
-                MATCH (c)<-[r1:HAS_CHUNK]-(seg)<-[r2:HAS_SEGMENT]-(day)
-                WHERE ID(c) IN {batch_str}
-                RETURN c, r1, seg, r2, day
+                MATCH (c) WHERE ID(c) IN {batch_str}
+                OPTIONAL MATCH (c)<-[r1a:HAS_CHUNK]-(seg:SEGMENT)<-[r2a:HAS_SEGMENT]-(day:DAY)
+                OPTIONAL MATCH (c)<-[r1b:HAS_CHUNK]-(conv:CONVERSATION)
+                OPTIONAL MATCH (conv)<-[r2b:HAS_CONVERSATION]-(seg2:SEGMENT)<-[r3b:HAS_SEGMENT]-(day2:DAY)
+                OPTIONAL MATCH (conv)-[r_place:HAPPENED_AT]->(place:PLACE)
+                OPTIONAL MATCH (conv)-[r_ctx:HAS_CONTEXT]->(context:CONTEXT)
+                RETURN c, r1a, seg, r2a, day, r1b, conv, r2b, seg2, r3b, day2, r_place, place, r_ctx, context
                 """
                 run_stage(f"Hierarchy Batch {i//batch_size}", hierarchy_query, {})
 
@@ -890,13 +906,33 @@ def filter_subgraph_by_centrality(
     This ensures the LLM sees the complete graph structure including temporal
     information without aggressive filtering that might drop Day/Segment nodes.
     """
-    # Find seed nodes by matching entity names
+    # Normalize seed entities for case-insensitive matching if they are strings
+    seed_entities_lower = {s.lower() for s in seed_entities if isinstance(s, str)}
+    seed_entities_set = set(seed_entities)
+
+    # Find seed nodes by matching node IDs (primary) or entity names/titles (fallback)
     seed_node_ids: set[str] = set()
     for node_id, node_data in nodes.items():
+        p_id = node_data.get("id") # The property-based ID (e.g. 'mom')
         props = node_data.get("properties", {})
-        node_name = props.get("name")
-        if node_name in seed_entities:
+        name = props.get("name")
+        title = props.get("title")
+        
+        # Check ID match (internal integer ID or property ID)
+        if str(node_id) in seed_entities_set or p_id in seed_entities_set:
             seed_node_ids.add(node_id)
+            continue
+
+        # Check Name/Title match (exact or case-insensitive)
+        found = False
+        for val in [p_id, name, title]:
+            if val and isinstance(val, str):
+                if val in seed_entities_set or val.lower() in seed_entities_lower:
+                    seed_node_ids.add(node_id)
+                    found = True
+                    break
+        if found:
+            continue
 
     # If no seeds found, return empty
     if not seed_node_ids:
@@ -1028,7 +1064,7 @@ def format_graph_context(nodes: dict, edges: list) -> str:
         # Categorize
         if "chunk" in labels or props.get("text"):
             grouped["documents"].append(n)
-        elif "segment" in labels or "day" in labels or props.get("date"):
+        elif "segment" in labels or "day" in labels or "conversation" in labels or props.get("date") or props.get("time"):
             grouped["timeline"].append(n)
         elif "topic" in labels or "subtopic" in labels:
             grouped["topics"].append(n)
@@ -1041,7 +1077,7 @@ def format_graph_context(nodes: dict, edges: list) -> str:
     if grouped["topics"]:
         parts.append("<topics>")
         for n in grouped["topics"]:
-            p = n["properties"]
+            p = n.get("properties", {})
             title = p.get("title", "Topic")
             summary = p.get("summary", "")
             if summary:
@@ -1065,17 +1101,46 @@ def format_graph_context(nodes: dict, edges: list) -> str:
         # Sort by date
         sorted_timeline = sorted(
             grouped["timeline"], 
-            key=lambda x: x["properties"].get("date") or x["properties"].get("document_date") or ""
+            key=lambda x: (x.get("properties") or {}).get("date") or (x.get("properties") or {}).get("time") or (x.get("properties") or {}).get("document_date") or ""
         )
         for n in sorted_timeline:
-            p = n["properties"]
-            date = p.get("date") or p.get("document_date")
+            p = n.get("properties", {})
+            date = p.get("date") or p.get("time") or p.get("document_date")
             
             # Use knowledge triplets if available
             seg_id = n.get("element_id") or n.get("id")
             triplets = segment_triplets.get(seg_id, [])
             
-            if date and triplets:
+            # Find connected Place/Context via edges
+            associated_info = []
+            related_chunks = []
+            
+            # Find chunks for this segment/conversation
+            for edge in edges:
+                 if edge.get("type") in ["HAS_CHUNK", "HAPPENED_AT", "HAS_CONTEXT"]:
+                      # Check if this timeline node is the source
+                      source_id = edge.get("start")
+                      target_id = edge.get("end")
+                      
+                      # Handle potential ID mismatches (int vs str) by string comparison if needed, or rely on exact match
+                      if str(source_id) == str(seg_id) and target_id in nodes:
+                           target_node = nodes[target_id]
+                           t_labels = target_node.get("labels", [])
+                           
+                           if "PLACE" in t_labels:
+                                p_name = target_node.get("properties", {}).get("name", "Unknown Place")
+                                associated_info.append(f"Location: {p_name}")
+                           elif "CONTEXT" in t_labels:
+                                desc = target_node.get("properties", {}).get("description", "")
+                                if desc: associated_info.append(f"Context: {desc}")
+                           elif "CHUNK" in t_labels:
+                                related_chunks.append(target_node)
+
+            body_parts = []
+            if associated_info:
+                 body_parts.extend(associated_info)
+
+            if triplets:
                 formatted_triplets = []
                 for t in triplets:
                     if isinstance(t, list) and len(t) >= 3:
@@ -1083,12 +1148,29 @@ def format_graph_context(nodes: dict, edges: list) -> str:
                     elif isinstance(t, str):
                         formatted_triplets.append(t)
                 
-                # Deduplicate
                 unique_triplets = sorted(list(set(formatted_triplets)))
-                
                 if unique_triplets:
-                    body = "; ".join(unique_triplets)
-                    parts.append(f'<event date="{date}">{body}</event>')
+                    body_parts.append("Key Events/Relations:")
+                    body_parts.extend(unique_triplets)
+            
+            # Add Chunk Text as Description (since strict source_documents is removed)
+            # Only add if we have related chunks
+            if related_chunks:
+                 chunk_texts = []
+                 for c in related_chunks:
+                      c_text = c.get("properties", {}).get("text", "")
+                      if c_text:
+                           chunk_texts.append(c_text)
+                 
+                 if chunk_texts:
+                      # Limit length if too long? For now, include relevant text.
+                      # Ideally we summary, but here we need specific details like "notifications"
+                      combined_text = "\n".join(chunk_texts)
+                      body_parts.append(f"Description: {combined_text}")
+
+            if body_parts:
+                body = "\n".join(body_parts)
+                parts.append(f'<event date="{date}">{body}</event>')
         parts.append("</timeline>\n")
 
     # 3. ENTITIES (Knowledge Graph nodes)
@@ -1097,12 +1179,12 @@ def format_graph_context(nodes: dict, edges: list) -> str:
         # Sort by importance (PageRank) if available
         sorted_entities = sorted(
             grouped["entities"],
-            key=lambda x: x["properties"].get("pagerank_centrality", 0),
+            key=lambda x: (x.get("properties") or {}).get("pagerank_centrality", 0),
             reverse=True
         )
         
         for n in sorted_entities[:10]: # Limit to top 10 entities
-            p = n["properties"]
+            p = n.get("properties", {})
             name = get_name(n)
             etype = p.get("entity_type", "Entity")
             summary = p.get("centrality_summary") or ""
@@ -1164,18 +1246,18 @@ def format_graph_context(nodes: dict, edges: list) -> str:
             parts.append(rel_str)
         parts.append("</relationships>\n")
 
-    # 5. SOURCE DOCUMENTS (Deep Dive)
-    if grouped["documents"]:
-        parts.append("<source_documents>")
-        for i, n in enumerate(grouped["documents"], 1):
-            p = n["properties"]
-            text = p.get("text", "")
-            # Skip metadata title as it often contains generative artifacts
-            title = f"Document {i}"
-            
-            if text:
-                parts.append(f'<document title="{title}">\n{text}\n</document>')
-        parts.append("</source_documents>")
+    # 5. SOURCE DOCUMENTS (Deep Dive) - REMOVED per user request
+    # if grouped["documents"]:
+    #     parts.append("<source_documents>")
+    #     for i, n in enumerate(grouped["documents"], 1):
+    #         p = n["properties"]
+    #         text = p.get("text", "")
+    #         # Skip metadata title as it often contains generative artifacts
+    #         title = f"Document {i}"
+    #         
+    #         if text:
+    #             parts.append(f'<document title="{title}">\n{text}\n</document>')
+    #     parts.append("</source_documents>")
 
     return "\n".join(parts)
 
@@ -1234,6 +1316,75 @@ def merge_graph_data(
         "nodes": merged_nodes,
         "edges": merged_edges,
     }
+
+
+
+def enrich_with_triplets(nodes: Dict[str, Any], edges: List[Dict[str, Any]]):
+    """
+    Parse 'knowledge_triplets' from Chunk nodes and add implied entities/relationships to the graph data.
+    """
+    new_nodes = {}
+    new_edges = []
+    
+    for nid, node in nodes.items():
+        props = node.get("properties", {})
+        triplets = props.get("knowledge_triplets")
+        
+        if triplets and isinstance(triplets, list):
+             for triplet in triplets:
+                 if len(triplet) != 3: continue
+                 subj, pred, obj = triplet
+                 
+                 if not subj or not obj: continue
+
+                 # Create/Find Subject Node
+                 s_id = f"ent:{subj.strip()}"
+                 if s_id not in nodes and s_id not in new_nodes:
+                     new_nodes[s_id] = {
+                         "id": s_id,
+                         "labels": ["Entity", "FromTriplet"],
+                         "properties": {"name": subj, "entity_type": "Entity", "generated": True}
+                     }
+                 
+                 # Create/Find Object Node
+                 o_id = f"ent:{obj.strip()}"
+                 if o_id not in nodes and o_id not in new_nodes:
+                     new_nodes[o_id] = {
+                         "id": o_id,
+                         "labels": ["Entity", "FromTriplet"],
+                         "properties": {"name": obj, "entity_type": "Entity", "generated": True}
+                     }
+                 
+                 # Add Relation Edge
+                 edge = {
+                     "type": pred.upper().replace(" ", "_"),
+                     "start": s_id, 
+                     "end": o_id,   
+                     "properties": {"implied": True}
+                 }
+                 new_edges.append(edge)
+                 
+                 # Link Chunk to Subject (structural)
+                 c_s_edge = {
+                     "type": "MENTIONS",
+                     "start": nid,
+                     "end": s_id, 
+                     "properties": {"implied": True}
+                 }
+                 new_edges.append(c_s_edge)
+                 
+                 # Link Chunk to Object (structural)
+                 c_o_edge = {
+                     "type": "MENTIONS",
+                     "start": nid,
+                     "end": o_id,
+                     "properties": {"implied": True}
+                 }
+                 new_edges.append(c_o_edge)
+
+    # Merge into main
+    nodes.update(new_nodes)
+    edges.extend(new_edges)
 
 
 def retrieve_subgraph(
@@ -1306,6 +1457,9 @@ def retrieve_subgraph(
             len(edges),
             node_types_before,
         )
+
+        # Enrich with implied entities from triplets (Fallback for missing edges)
+        enrich_with_triplets(nodes, edges)
 
         # Keep entire connected component - no aggressive filtering
         # This ensures Day/Segment nodes are always included for temporal reasoning
@@ -1399,20 +1553,22 @@ def run_focused_retrieval(
                 logger.warning("Graph stats failed in parallel: %s", e)
                 graph_stats = {}
 
-        system_prompt = """You are a knowledgeable assistant helping users understand information from document segments and discussions.
+        system_prompt = """You are a Personal Life Assistant. You help users recall memories, understand their daily patterns, and answer questions about their life based on their logs.
 
 You have access to a knowledge graph structured in XML tags:
-- <topics>: High-level themes.
-- <timeline>: Chronological events and segments.
-- <entities>: Key people, organizations, and concepts with summaries.
+- <topics>: High-level themes of the user's life.
+- <timeline>: Chronological events (Days, Segments, Conversations).
+- <entities>: Key people, places, and concepts.
 - <relationships>: Connections between entities.
-- <source_documents>: Full text excerpts for detailed evidence.
+- <source_documents>: Full text transcripts and descriptions.
 
 **Guidelines:**
-- Answer questions naturally.
-- Cite your sources using the dates from the <timeline> or titles from <source_documents>.
-- Use <relationships> to explain how entities are connected.
-- If information is missing, acknowledge it.
+- Answer differently based on the user's question type (memory recall, pattern analysis, etc.).
+- BE PERSONAL. Use "you" and "your".
+- Cite dates and times specifically.
+- Use the <timeline> to order events chronologically.
+- If asking about a specific day, summarize the flow of that day.
+- If information is missing, say so gently.
 
 **Available Information:**
 {context}

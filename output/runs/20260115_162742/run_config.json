@@ -1,0 +1,58 @@
+{
+  "input_dir": "input",
+  "output_dir": "output",
+  "speech_limit": 10,
+  "use_speech_limit": true,
+  "max_concurrent_extractions": 10,
+  "file_pattern": "*.csv",
+  "parser_type": "generic",
+  "parser_kwargs": {},
+  "chunk_size": 256,
+  "chunk_overlap": 20,
+  "use_overlapping_chunks": true,
+  "enable_metadata_extractors": true,
+  "llm_model": "llama-3.3-70b-versatile",
+  "llm_temperature": 0.05,
+  "extractor_type": "langchain",
+  "embedding_model": "all-MiniLM-L6-v2",
+  "embedding_batch_size": 32,
+  "embedding_similarity_threshold": 0.85,
+  "add_similarity_edges": true,
+  "enable_semantic_resolution": true,
+  "semantic_resolution_threshold": 0.95,
+  "falkordb": {
+    "host": "host.docker.internal",
+    "port": 6379,
+    "username": null,
+    "password": "***REDACTED***",
+    "database": "kg",
+    "clean_database": true,
+    "upload_enabled": true
+  },
+  "postgres": {
+    "enabled": true,
+    "host": "host.docker.internal",
+    "port": 5432,
+    "database": "graphknows",
+    "user": "postgres",
+    "password": "***REDACTED***",
+    "table_name": "content_chunks"
+  },
+  "falkordb_upload_enabled": true,
+  "falkordb_clean_database": true,
+  "community_detection": {
+    "resolution_parameter": 1.0,
+    "random_seed": 42,
+    "iterations": 10,
+    "min_community_size": 2,
+    "min_subcommunity_size": 2,
+    "sub_max_depth": 1,
+    "sub_resolution_min": 0.7,
+    "sub_resolution_max": 1.3,
+    "sub_resolution_steps": 7,
+    "sub_consistency_threshold": 0.75
+  },
+  "llm": {
+    "resolved_model": "llama-3.3-70b-versatile"
+  }
+}

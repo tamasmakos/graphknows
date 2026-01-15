@@ -346,7 +346,9 @@ class IterativeGraphBuilder:
             # In extraction, node_type="ENTITY_CONCEPT". So label is likely "ENTITY_CONCEPT".
             
             # Fetch nodes
-            query_nodes = "MATCH (n:ENTITY_CONCEPT) RETURN n.id as id"
+            # Query multiple labels relevant for community detection
+            labels_clause = "n:ENTITY_CONCEPT OR n:PLACE OR n:CONTEXT OR n:ONTOLOGY_CLASS"
+            query_nodes = f"MATCH (n) WHERE {labels_clause} RETURN n.id as id"
             res_nodes = self.uploader.graph_client.query(query_nodes)
             
             g = nx.Graph() # Undirected for Leiden algorithm usually
@@ -354,12 +356,15 @@ class IterativeGraphBuilder:
             for record in res_nodes.result_set:
                 g.add_node(record[0])
             
-            logger.info(f"Fetched {g.number_of_nodes()} entity nodes")
+            logger.info(f"Fetched {g.number_of_nodes()} nodes for community detection")
             
             # Fetch edges (RELATED_TO or similar)
-            # We want all relationships between entities
-            query_edges = """
-            MATCH (s:ENTITY_CONCEPT)-[r]->(t:ENTITY_CONCEPT) 
+            # We want all relationships between these entities
+            # Note: We filter by the same labels for source and target
+            query_edges = f"""
+            MATCH (s)-[r]->(t) 
+            WHERE ({labels_clause.replace('n:', 's:')}) 
+            AND ({labels_clause.replace('n:', 't:')})
             RETURN s.id, t.id, type(r) as type, r.weight as weight
             """
             res_edges = self.uploader.graph_client.query(query_edges)
