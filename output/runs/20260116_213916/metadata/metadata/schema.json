@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-01-15T16:28:30.107947",
+  "generated_at": "2026-01-16T21:40:21.099452",
   "node_types": {
     "ENTITY_CONCEPT": {
-      "count": 340,
+      "count": 338,
       "properties": {}
     },
     "TOPIC": {
-      "count": 28,
+      "count": 24,
       "properties": {
         "graph_type": "string",
         "community_id": "integer",
@@ -14,13 +14,13 @@
         "title": "string",
         "summary": "string",
         "chunk_ids": "list[string]",
+        "entity_ids": "list[string]",
         "has_summary": "boolean",
-        "updated_at": "string",
-        "entity_ids": "list[string]"
+        "updated_at": "string"
       }
     },
     "SUBTOPIC": {
-      "count": 42,
+      "count": 53,
       "properties": {
         "graph_type": "string",
         "community_id": "integer",
@@ -45,8 +45,21 @@
     }
   },
   "edge_types": {
+    "RELATED_TO": {
+      "count": 661,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "weight": "float",
+        "type": "string"
+      }
+    },
     "IN_TOPIC": {
-      "count": 181,
+      "count": 303,
       "source_types": [
         "ENTITY_CONCEPT"
       ],
@@ -58,7 +71,7 @@
       }
     },
     "PARENT_TOPIC": {
-      "count": 42,
+      "count": 53,
       "source_types": [
         "SUBTOPIC"
       ],
@@ -70,7 +83,7 @@
       }
     },
     "HAS_ENTITY": {
-      "count": 455,
+      "count": 399,
       "source_types": [
         "CHUNK"
       ],
@@ -81,7 +94,7 @@
     }
   },
   "stats": {
-    "total_nodes": 450,
-    "total_edges": 1342
+    "total_nodes": 455,
+    "total_edges": 1416
   }
 }

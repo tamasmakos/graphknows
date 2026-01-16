@@ -22,6 +22,31 @@ from src.kg.llm import get_langchain_llm
 logger = logging.getLogger(__name__)
 
 
+
+DEFAULT_EXTRACTION_PROMPT = ChatPromptTemplate.from_template(
+    """You are an expert at extracting knowledge graph entities and relationships from text.
+    
+    Focus on extracting information relevant to building a "Life Graph" or memory graph for the user.
+    Strictly identify and extract:
+    1. Life Patterns & Habits: Recurring activities, behaviors, or routines (e.g., "goes for a run every morning", "drinks coffee at 8am").
+    2. Things to Remember: Specific preferences, tasks, deadlines, or important details (e.g., "allergic to peanuts", "meeting on Friday").
+    3. Entities: People, Places, Organizations, Concepts involved in the user's life.
+    4. Contextual Relations: How these entities relate to the user's daily life (e.g., LIVES_IN, VISITS, HAS_HABIT, PREFERS, OWNS).
+    
+    When extracting relationships, use descriptive types like:
+    - HAS_HABIT
+    - IS_A
+    - LOCATED_AT
+    - OCCURRED_AT
+    - INVOLVES
+    - HAS_PREFERENCE
+    - REMINDER_FOR
+    
+    Text:
+    {input}
+    """
+)
+
 class BaseExtractor(ABC):
     """Base class for graph extractors."""
     
@@ -91,7 +116,7 @@ class LangChainExtractor(BaseExtractor):
         if custom_prompt:
             prompt = custom_prompt
         else:
-            prompt = None  # LLMGraphTransformer will use its default
+            prompt = DEFAULT_EXTRACTION_PROMPT  # Use our life-graph focused default
         
         def _extract_sync():
             # Initialize LLM in the worker thread to ensure event loop safety

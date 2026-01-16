@@ -4,3 +4,5 @@ __pycache__
 lib
 .gitignore
 input
+.pytest_cache
+.vscode

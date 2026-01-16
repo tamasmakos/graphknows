@@ -1,0 +1,1579 @@
+2026-01-16 21:39:16,020 - kg.pipeline.iterative - INFO - 📂 Created Run Directory: output/runs/20260116_213916
+2026-01-16 21:39:16,027 - kg.falkordb.uploader - INFO - Enabled Hybrid Storage with Postgres (pgvector)
+2026-01-16 21:39:16,028 - kg.service.graph_service - INFO - Initialized IterativeGraphBuilder
+2026-01-16 21:39:16,029 - kg.service.graph_service - INFO - State: 0 documents, 0 segments processed
+2026-01-16 21:39:16,029 - kg.pipeline.iterative - WARNING - Resetting processing state and clearing database...
+2026-01-16 21:39:16,063 - kg.falkordb.uploader - INFO - Cleared graph 'kg'
+2026-01-16 21:39:16,064 - kg.service.graph_service - WARNING - Resetting processing state!
+2026-01-16 21:39:16,070 - kg.service.graph_service - INFO - Saved processing state: 0 documents, 0 segments
+2026-01-16 21:39:16,071 - kg.service.graph_service - INFO - Verifying database schema and indexes...
+2026-01-16 21:39:16,097 - kg.falkordb.indexes - INFO - Created index: CREATE INDEX FOR (d:DAY) ON (d.id)
+2026-01-16 21:39:16,100 - kg.falkordb.indexes - INFO - Created index: CREATE INDEX FOR (e:EPISODE) ON (e.id)
+2026-01-16 21:39:16,105 - kg.falkordb.indexes - INFO - Created index: CREATE INDEX FOR (c:CHUNK) ON (c.id)
+2026-01-16 21:39:16,110 - kg.falkordb.indexes - INFO - Created index: CREATE INDEX FOR (e:ENTITY_CONCEPT) ON (e.id)
+2026-01-16 21:39:16,114 - kg.falkordb.indexes - INFO - Created index: CREATE INDEX FOR (st:SUBTOPIC) ON (st.id)
+2026-01-16 21:39:16,118 - kg.falkordb.indexes - INFO - Created index: CREATE INDEX FOR (t:TOPIC) ON (t.id)
+2026-01-16 21:39:16,124 - kg.falkordb.indexes - INFO - Created vector index for ENTITY_CONCEPT.embedding
+2026-01-16 21:39:16,128 - kg.falkordb.indexes - INFO - Created vector index for EPISODE.embedding
+2026-01-16 21:39:16,129 - kg.service.graph_service - INFO - ✅ Database schema valid
+2026-01-16 21:39:16,135 - kg.pipeline.iterative - INFO - Found 2 total documents in input
+2026-01-16 21:39:16,136 - kg.pipeline.iterative - INFO - Already processed: 0 documents
+2026-01-16 21:39:16,137 - kg.pipeline.iterative - INFO - Pipeline Mode: incremental, Speech/Log Limit: 20, Max Docs: 0
+2026-01-16 21:39:16,138 - kg.service.graph_service - INFO - Found 2 document(s) to process out of 2 total
+2026-01-16 21:39:16,139 - kg.pipeline.iterative - INFO - 📥 Processing 2 new documents incrementally...
+2026-01-16 21:39:16,140 - kg.graph.extractors - INFO - Initializing graph extractor: langchain
+2026-01-16 21:39:16,141 - kg.pipeline.iterative - INFO - 
+============================================================
+2026-01-16 21:39:16,141 - kg.pipeline.iterative - INFO - Processing: synthetic_test_data
+2026-01-16 21:39:16,142 - kg.pipeline.iterative - INFO - ============================================================
+2026-01-16 21:39:16,143 - kg.pipeline.iterative - INFO - Step 1: Building lexical graph...
+2026-01-16 21:39:16,151 - kg.graph.extraction - INFO - Processing specific file(s) matching pattern 'synthetic_test_data.csv': ['synthetic_test_data.csv']
+2026-01-16 21:39:16,152 - kg.graph.extraction - WARNING - Could not extract date from synthetic_test_data.csv, using today's date
+2026-01-16 21:39:16,164 - kg.graph.extraction - INFO - Processing document synthetic_test_data.csv (155407 chars)
+2026-01-16 21:39:16,174 - kg.pipeline.iterative - INFO - Step 2: Extracting entities and relations...
+2026-01-16 21:39:16,174 - kg.graph.extraction - INFO - Using LangChainExtractor for relation extraction
+2026-01-16 21:39:16,175 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_070000_0_CHUNK
+2026-01-16 21:39:16,177 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_070000_0_CHUNK
+2026-01-16 21:39:16,179 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_091400_0_CHUNK
+2026-01-16 21:39:16,181 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_091400_0_CHUNK
+2026-01-16 21:39:16,185 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_105100_0_CHUNK
+2026-01-16 21:39:16,197 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_105100_0_CHUNK
+2026-01-16 21:39:16,200 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_131300_0_CHUNK
+2026-01-16 21:39:16,203 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_131300_0_CHUNK
+2026-01-16 21:39:16,209 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_152900_0_CHUNK
+2026-01-16 21:39:16,213 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_152900_0_CHUNK
+2026-01-16 21:39:18,564 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:18,574 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:18,590 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_152900_0_CHUNK: stored 8 entities, 6 relations
+2026-01-16 21:39:18,595 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_174800_0_CHUNK
+2026-01-16 21:39:18,598 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_105100_0_CHUNK: stored 13 entities, 10 relations
+2026-01-16 21:39:18,600 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_174800_0_CHUNK
+2026-01-16 21:39:19,144 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:19,151 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_152900_0_CHUNK: stored 10 entities, 14 relations
+2026-01-16 21:39:19,151 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_193700_0_CHUNK
+2026-01-16 21:39:19,498 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:19,505 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_105100_0_CHUNK: stored 12 entities, 14 relations
+2026-01-16 21:39:19,505 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_193700_0_CHUNK
+2026-01-16 21:39:19,509 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:19,515 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_070000_0_CHUNK: stored 12 entities, 15 relations
+2026-01-16 21:39:19,516 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-20_214000_0_CHUNK
+2026-01-16 21:39:19,711 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:19,717 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_131300_0_CHUNK: stored 10 entities, 14 relations
+2026-01-16 21:39:19,717 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-20_214000_0_CHUNK
+2026-01-16 21:39:19,859 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:19,868 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_091400_0_CHUNK: stored 10 entities, 6 relations
+2026-01-16 21:39:19,868 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_072200_0_CHUNK
+2026-01-16 21:39:19,967 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:19,980 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_091400_0_CHUNK: stored 10 entities, 16 relations
+2026-01-16 21:39:19,981 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_072200_0_CHUNK
+2026-01-16 21:39:20,819 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:20,826 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_070000_0_CHUNK: stored 9 entities, 8 relations
+2026-01-16 21:39:20,826 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_083800_0_CHUNK
+2026-01-16 21:39:21,085 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:21,092 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_174800_0_CHUNK: stored 14 entities, 10 relations
+2026-01-16 21:39:21,092 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_083800_0_CHUNK
+2026-01-16 21:39:21,441 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:21,448 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_214000_0_CHUNK: stored 11 entities, 7 relations
+2026-01-16 21:39:21,448 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_101200_0_CHUNK
+2026-01-16 21:39:21,785 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:21,791 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_174800_0_CHUNK: stored 6 entities, 5 relations
+2026-01-16 21:39:21,792 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_101200_0_CHUNK
+2026-01-16 21:39:22,318 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:22,328 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_072200_0_CHUNK: stored 16 entities, 12 relations
+2026-01-16 21:39:22,329 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_111700_0_CHUNK
+2026-01-16 21:39:22,424 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:22,441 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_072200_0_CHUNK: stored 9 entities, 8 relations
+2026-01-16 21:39:22,442 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_111700_0_CHUNK
+2026-01-16 21:39:22,726 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:22,749 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_214000_0_CHUNK: stored 13 entities, 10 relations
+2026-01-16 21:39:22,751 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_132000_0_CHUNK
+2026-01-16 21:39:22,897 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:22,911 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_131300_0_CHUNK: stored 10 entities, 9 relations
+2026-01-16 21:39:22,912 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_132000_0_CHUNK
+2026-01-16 21:39:23,031 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:23,043 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-20_193700_0_CHUNK: stored 11 entities, 9 relations
+2026-01-16 21:39:23,044 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_154600_0_CHUNK
+2026-01-16 21:39:23,325 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:23,338 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_083800_0_CHUNK: stored 9 entities, 10 relations
+2026-01-16 21:39:23,339 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_154600_0_CHUNK
+2026-01-16 21:39:25,218 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:25,226 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_132000_0_CHUNK: stored 13 entities, 11 relations
+2026-01-16 21:39:25,226 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_173000_0_CHUNK
+2026-01-16 21:39:25,476 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:25,486 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_101200_0_CHUNK: stored 12 entities, 11 relations
+2026-01-16 21:39:25,487 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_173000_0_CHUNK
+2026-01-16 21:39:25,551 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:25,590 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_111700_0_CHUNK: stored 12 entities, 11 relations
+2026-01-16 21:39:25,594 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_184700_0_CHUNK
+2026-01-16 21:39:25,687 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:25,708 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_154600_0_CHUNK: stored 14 entities, 18 relations
+2026-01-16 21:39:25,709 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_184700_0_CHUNK
+2026-01-16 21:39:25,946 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:25,962 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:25,965 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_083800_0_CHUNK: stored 12 entities, 11 relations
+2026-01-16 21:39:25,968 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_202600_0_CHUNK
+2026-01-16 21:39:25,980 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_132000_0_CHUNK: stored 14 entities, 8 relations
+2026-01-16 21:39:25,981 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_202600_0_CHUNK
+2026-01-16 21:39:26,176 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:26,190 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-20_193700_0_CHUNK: stored 19 entities, 19 relations
+2026-01-16 21:39:26,191 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-21_214300_0_CHUNK
+2026-01-16 21:39:26,554 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:26,561 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_154600_0_CHUNK: stored 10 entities, 10 relations
+2026-01-16 21:39:26,562 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-21_214300_0_CHUNK
+2026-01-16 21:39:27,453 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:27,459 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_111700_0_CHUNK: stored 12 entities, 14 relations
+2026-01-16 21:39:27,460 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-22_071600_0_CHUNK
+2026-01-16 21:39:27,671 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:27,677 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_173000_0_CHUNK: stored 17 entities, 13 relations
+2026-01-16 21:39:27,678 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-22_071600_0_CHUNK
+2026-01-16 21:39:27,797 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:27,804 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_184700_0_CHUNK: stored 10 entities, 9 relations
+2026-01-16 21:39:27,804 - kg.graph.extraction - INFO -       🚀 Starting CONV_2026-01-16_2025-12-22_092700_0_CHUNK
+2026-01-16 21:39:28,418 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:28,425 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_202600_0_CHUNK: stored 14 entities, 10 relations
+2026-01-16 21:39:28,425 - kg.graph.extraction - INFO -       🚀 Starting CONTEXT_CONV_2026-01-16_2025-12-22_092700_0_CHUNK
+2026-01-16 21:39:28,439 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:28,445 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_214300_0_CHUNK: stored 11 entities, 10 relations
+2026-01-16 21:39:28,974 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:28,984 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_184700_0_CHUNK: stored 11 entities, 15 relations
+2026-01-16 21:39:28,993 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:28,998 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_173000_0_CHUNK: stored 10 entities, 9 relations
+2026-01-16 21:39:29,695 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:29,701 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_101200_0_CHUNK: stored 11 entities, 15 relations
+2026-01-16 21:39:29,720 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:29,726 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-21_214300_0_CHUNK: stored 12 entities, 10 relations
+2026-01-16 21:39:30,710 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:30,716 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-22_092700_0_CHUNK: stored 15 entities, 14 relations
+2026-01-16 21:39:30,842 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:30,848 - kg.graph.extraction - INFO -       ✅ Completed CONV_2026-01-16_2025-12-22_071600_0_CHUNK: stored 12 entities, 7 relations
+2026-01-16 21:39:31,275 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:31,280 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-22_071600_0_CHUNK: stored 10 entities, 9 relations
+2026-01-16 21:39:31,495 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:31,500 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-21_202600_0_CHUNK: stored 7 entities, 6 relations
+2026-01-16 21:39:31,630 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:39:31,635 - kg.graph.extraction - INFO -       ✅ Completed CONTEXT_CONV_2026-01-16_2025-12-22_092700_0_CHUNK: stored 11 entities, 10 relations
+2026-01-16 21:39:31,636 - kg.graph.extraction - INFO - Extraction complete: 40/40 successful
+2026-01-16 21:39:34,152 - kg.pipeline.iterative - INFO - Step 3: Generating embeddings...
+2026-01-16 21:39:34,153 - kg.embeddings.rag - INFO - Generating RAG embeddings for node types: ['ENTITY_CONCEPT', 'TOPIC', 'SUBTOPIC', 'CHUNK', 'EPISODE']
+2026-01-16 21:39:34,153 - kg.embeddings.rag - INFO - Using embedding model: all-MiniLM-L6-v2
+2026-01-16 21:39:34,154 - kg.embeddings.rag - INFO - Attempting to load all-MiniLM-L6-v2 from local cache...
+2026-01-16 21:39:34,159 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-01-16 21:39:34,160 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-01-16 21:39:34,360 - kg.embeddings.rag - INFO - Embedding dimension: 384
+2026-01-16 21:39:34,361 - kg.embeddings.rag - INFO - Found 345 nodes to embed:
+2026-01-16 21:39:34,361 - kg.embeddings.rag - INFO -   - CHUNK: 40
+2026-01-16 21:39:34,362 - kg.embeddings.rag - INFO -   - ENTITY_CONCEPT: 305
+2026-01-16 21:39:34,362 - kg.embeddings.rag - INFO - Generating embeddings in batches of 32...
+2026-01-16 21:39:54,709 - kg.embeddings.rag - INFO -   Processed 320/345 nodes
+2026-01-16 21:39:57,276 - kg.embeddings.rag - INFO - Generated 345 embeddings (384 dimensions)
+2026-01-16 21:39:57,276 - kg.pipeline.iterative - INFO - Step 3.5: Pruning graph...
+2026-01-16 21:39:57,277 - kg.graph.pruning - INFO - Taking a laser scan... Pruning graph (threshold=0.01, prune_isolated=True)
+2026-01-16 21:39:57,278 - kg.pipeline.iterative - INFO - Step 4: Uploading and merging into database...
+2026-01-16 21:39:57,279 - kg.service.graph_service - INFO - 🚀 Uploading graph for document synthetic_test_data (20 segments) to FalkorDB...
+2026-01-16 21:39:57,290 - kg.falkordb.postgres_store - INFO - Connecting to Postgres: host=host.docker.internal, port=5432, db=graphknows, user=postgres
+2026-01-16 21:39:57,566 - kg.falkordb.uploader - INFO - 🚀 Uploading and Merging 419 nodes into FalkorDB...
+2026-01-16 21:39:57,920 - kg.falkordb.uploader - INFO - ✅ Uploaded and Merged 419 nodes
+2026-01-16 21:39:57,923 - kg.falkordb.uploader - INFO - 🚀 Uploading and Merging 1223 relationships into FalkorDB...
+2026-01-16 21:39:58,541 - kg.falkordb.uploader - INFO - ✅ Uploaded and Merged 1223 relationships
+2026-01-16 21:39:58,541 - kg.service.graph_service - INFO - ✅ Merged 419 nodes, 1223 relationships
+2026-01-16 21:39:58,543 - kg.pipeline.iterative - INFO - Running Entity Resolution (Merging similar Entity/Location nodes)...
+2026-01-16 21:39:58,544 - kg.service.graph_service - INFO - Fetching entity graph from FalkorDB...
+2026-01-16 21:39:58,570 - kg.service.graph_service - INFO - Fetched 338 nodes for community detection
+2026-01-16 21:39:58,614 - kg.service.graph_service - INFO - Fetched 661 relationships
+2026-01-16 21:39:58,625 - kg.graph.text_resolution - INFO - Starting text-based entity resolution (threshold=0.9)...
+2026-01-16 21:39:58,626 - kg.pipeline.iterative - INFO - No merges required.
+2026-01-16 21:39:58,626 - kg.pipeline.iterative - INFO - Running Incremental Community Detection...
+2026-01-16 21:39:58,627 - kg.community.detection - INFO - === LEIDEN COMMUNITY DETECTION ===
+2026-01-16 21:39:58,628 - kg.community.detection - INFO - Running Leiden algorithm with edge weights (includes similarity edges if present)
+2026-01-16 21:39:58,631 - kg.community.detection - INFO - Graph: 338 nodes, 661 edges (0 weighted, 0 similarity)
+2026-01-16 21:39:58,632 - kg.community.detection - INFO - Optimizing resolution parameter in range (0.3, 2.0) with 15 steps...
+2026-01-16 21:39:58,633 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:58,762 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:58,763 - kg.community.detection - INFO - Community counts across runs: [11, 11, 11, 11, 11, 11, 11]
+2026-01-16 21:39:58,766 - kg.community.detection - INFO - Resolution 0.10: 11 communities, consistency=1.000, modularity=0.059
+2026-01-16 21:39:58,766 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:58,883 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:58,884 - kg.community.detection - INFO - Community counts across runs: [11, 11, 11, 11, 11, 11, 11]
+2026-01-16 21:39:58,886 - kg.community.detection - INFO - Resolution 0.20: 11 communities, consistency=1.000, modularity=0.059
+2026-01-16 21:39:58,887 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:58,996 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:58,996 - kg.community.detection - INFO - Community counts across runs: [11, 11, 11, 11, 11, 11, 11]
+2026-01-16 21:39:58,998 - kg.community.detection - INFO - Resolution 0.30: 11 communities, consistency=1.000, modularity=0.059
+2026-01-16 21:39:58,998 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,106 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,106 - kg.community.detection - INFO - Community counts across runs: [12, 12, 12, 12, 12, 12, 12]
+2026-01-16 21:39:59,108 - kg.community.detection - INFO - Resolution 0.40: 12 communities, consistency=1.000, modularity=0.179
+2026-01-16 21:39:59,109 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,216 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,217 - kg.community.detection - INFO - Community counts across runs: [14, 14, 14, 14, 14, 14, 14]
+2026-01-16 21:39:59,219 - kg.community.detection - INFO - Resolution 0.50: 14 communities, consistency=1.000, modularity=0.274
+2026-01-16 21:39:59,219 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,328 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,328 - kg.community.detection - INFO - Community counts across runs: [16, 16, 16, 16, 16, 16, 16]
+2026-01-16 21:39:59,330 - kg.community.detection - INFO - Resolution 0.60: 16 communities, consistency=1.000, modularity=0.360
+2026-01-16 21:39:59,331 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,450 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,450 - kg.community.detection - INFO - Community counts across runs: [18, 18, 18, 18, 18, 18, 18]
+2026-01-16 21:39:59,453 - kg.community.detection - INFO - Resolution 0.70: 18 communities, consistency=1.000, modularity=0.395
+2026-01-16 21:39:59,453 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,560 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,561 - kg.community.detection - INFO - Community counts across runs: [20, 20, 20, 20, 20, 20, 20]
+2026-01-16 21:39:59,564 - kg.community.detection - INFO - Resolution 0.80: 20 communities, consistency=1.000, modularity=0.417
+2026-01-16 21:39:59,564 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,684 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,684 - kg.community.detection - INFO - Community counts across runs: [22, 22, 22, 22, 22, 22, 22]
+2026-01-16 21:39:59,687 - kg.community.detection - INFO - Resolution 0.90: 22 communities, consistency=1.000, modularity=0.422
+2026-01-16 21:39:59,687 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,796 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,797 - kg.community.detection - INFO - Community counts across runs: [24, 24, 24, 24, 24, 24, 24]
+2026-01-16 21:39:59,799 - kg.community.detection - INFO - Resolution 1.00: 24 communities, consistency=1.000, modularity=0.423
+2026-01-16 21:39:59,800 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:39:59,913 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:39:59,913 - kg.community.detection - INFO - Community counts across runs: [26, 26, 26, 26, 26, 26, 26]
+2026-01-16 21:39:59,916 - kg.community.detection - INFO - Resolution 1.10: 26 communities, consistency=1.000, modularity=0.422
+2026-01-16 21:39:59,916 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,029 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,029 - kg.community.detection - INFO - Community counts across runs: [28, 28, 28, 28, 28, 28, 28]
+2026-01-16 21:40:00,032 - kg.community.detection - INFO - Resolution 1.20: 28 communities, consistency=1.000, modularity=0.421
+2026-01-16 21:40:00,033 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,142 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,143 - kg.community.detection - INFO - Community counts across runs: [26, 26, 26, 26, 26, 26, 26]
+2026-01-16 21:40:00,145 - kg.community.detection - INFO - Resolution 1.30: 26 communities, consistency=1.000, modularity=0.417
+2026-01-16 21:40:00,146 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,252 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,252 - kg.community.detection - INFO - Community counts across runs: [26, 26, 26, 26, 26, 26, 26]
+2026-01-16 21:40:00,255 - kg.community.detection - INFO - Resolution 1.40: 26 communities, consistency=1.000, modularity=0.414
+2026-01-16 21:40:00,255 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,371 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,371 - kg.community.detection - INFO - Community counts across runs: [28, 28, 28, 28, 28, 28, 28]
+2026-01-16 21:40:00,374 - kg.community.detection - INFO - Resolution 1.50: 28 communities, consistency=1.000, modularity=0.412
+2026-01-16 21:40:00,374 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,496 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,496 - kg.community.detection - INFO - Community counts across runs: [29, 29, 29, 29, 29, 29, 29]
+2026-01-16 21:40:00,499 - kg.community.detection - INFO - Resolution 1.60: 29 communities, consistency=1.000, modularity=0.408
+2026-01-16 21:40:00,499 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,629 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,629 - kg.community.detection - INFO - Community counts across runs: [31, 31, 31, 31, 31, 31, 31]
+2026-01-16 21:40:00,632 - kg.community.detection - INFO - Resolution 1.70: 31 communities, consistency=1.000, modularity=0.405
+2026-01-16 21:40:00,632 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,742 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,742 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:00,745 - kg.community.detection - INFO - Resolution 1.80: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:00,746 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,859 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,860 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:00,863 - kg.community.detection - INFO - Resolution 1.90: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:00,863 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:00,973 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:00,974 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:00,977 - kg.community.detection - INFO - Resolution 2.00: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:00,977 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,085 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,086 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:01,088 - kg.community.detection - INFO - Resolution 2.10: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:01,089 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,199 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,199 - kg.community.detection - INFO - Community counts across runs: [37, 37, 37, 37, 37, 37, 37]
+2026-01-16 21:40:01,202 - kg.community.detection - INFO - Resolution 2.20: 37 communities, consistency=1.000, modularity=0.395
+2026-01-16 21:40:01,203 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,310 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,310 - kg.community.detection - INFO - Community counts across runs: [39, 39, 39, 39, 39, 39, 39]
+2026-01-16 21:40:01,313 - kg.community.detection - INFO - Resolution 2.30: 39 communities, consistency=1.000, modularity=0.389
+2026-01-16 21:40:01,314 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,424 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,425 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:01,428 - kg.community.detection - INFO - Resolution 2.40: 40 communities, consistency=1.000, modularity=0.387
+2026-01-16 21:40:01,429 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,557 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,557 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:01,561 - kg.community.detection - INFO - Resolution 2.50: 40 communities, consistency=1.000, modularity=0.387
+2026-01-16 21:40:01,561 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,701 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,702 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:01,705 - kg.community.detection - INFO - Resolution 2.60: 40 communities, consistency=1.000, modularity=0.387
+2026-01-16 21:40:01,706 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,830 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,830 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:01,834 - kg.community.detection - INFO - Resolution 2.70: 40 communities, consistency=1.000, modularity=0.386
+2026-01-16 21:40:01,834 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:01,954 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:01,955 - kg.community.detection - INFO - Community counts across runs: [41, 41, 41, 41, 41, 41, 41]
+2026-01-16 21:40:01,958 - kg.community.detection - INFO - Resolution 2.80: 41 communities, consistency=1.000, modularity=0.385
+2026-01-16 21:40:01,958 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:02,088 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:02,088 - kg.community.detection - INFO - Community counts across runs: [42, 42, 42, 42, 42, 42, 42]
+2026-01-16 21:40:02,092 - kg.community.detection - INFO - Resolution 2.90: 42 communities, consistency=1.000, modularity=0.384
+2026-01-16 21:40:02,092 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:02,218 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:02,218 - kg.community.detection - INFO - Community counts across runs: [44, 44, 44, 44, 44, 44, 44]
+2026-01-16 21:40:02,222 - kg.community.detection - INFO - Resolution 3.00: 44 communities, consistency=1.000, modularity=0.382
+2026-01-16 21:40:02,222 - kg.community.detection - INFO - Best resolution: 1.00 (consistency=1.000, modularity=0.423)
+2026-01-16 21:40:02,222 - kg.community.detection - INFO - Using optimized resolution 1.00
+2026-01-16 21:40:02,225 - kg.community.detection - INFO - Leiden algorithm found 24 communities
+2026-01-16 21:40:02,225 - kg.community.detection - INFO - Community sizes: {0: 72, 1: 38, 2: 30, 3: 25, 4: 23, 5: 21, 6: 21, 7: 20, 8: 19, 9: 10, 10: 10, 11: 7, 12: 7, 13: 5, 14: 5, 15: 5, 16: 3, 17: 3, 18: 3, 19: 3, 20: 2, 21: 2, 22: 2, 23: 2}
+2026-01-16 21:40:02,225 - kg.community.detection - INFO - Stats: Min=2, Max=72, Avg=14.08
+2026-01-16 21:40:02,226 - kg.community.detection - INFO - Community detection finished in 3599.00ms
+2026-01-16 21:40:02,226 - kg.service.graph_service - INFO - Updating community assignments for 338 nodes...
+2026-01-16 21:40:02,299 - kg.service.graph_service - INFO - ✅ Community assignments updated
+2026-01-16 21:40:02,299 - kg.pipeline.iterative - INFO - ✅ Community detection complete
+2026-01-16 21:40:02,300 - kg.pipeline.iterative - INFO - Running subcommunity detection...
+2026-01-16 21:40:02,555 - kg.pipeline.iterative - INFO - ✅ Detected 303 subcommunities
+2026-01-16 21:40:02,556 - kg.pipeline.iterative - INFO - Creating topic hierarchy...
+2026-01-16 21:40:02,559 - kg.community.subcommunities - INFO - Creating PROPER topic hierarchy: Entities→Subtopics→Parent Topics...
+2026-01-16 21:40:02,562 - kg.community.subcommunities - INFO - Created 53 Subtopic nodes
+2026-01-16 21:40:02,563 - kg.community.subcommunities - INFO - Created 24 Topic nodes
+2026-01-16 21:40:02,563 - kg.community.subcommunities - INFO - Created 303 entity→subtopic IN_TOPIC relationships
+2026-01-16 21:40:02,564 - kg.community.subcommunities - INFO - Created 53 subtopic→parent PARENT_TOPIC relationships
+2026-01-16 21:40:02,564 - kg.community.subcommunities - INFO - ✅ PROPER HIERARCHY: Entities→Subtopics→Parent Topics
+2026-01-16 21:40:02,565 - kg.pipeline.iterative - INFO - Fetching chunks for summarization context...
+2026-01-16 21:40:02,565 - kg.service.graph_service - INFO - Fetching chunks for summarization context...
+2026-01-16 21:40:02,588 - kg.service.graph_service - INFO - Fetched 40 chunk nodes
+2026-01-16 21:40:02,606 - kg.service.graph_service - INFO - Fetched 399 HAS_ENTITY relationships
+2026-01-16 21:40:02,609 - kg.pipeline.iterative - INFO - ✅ Context enrichment complete: 455 total nodes in hierarchy graph
+2026-01-16 21:40:02,648 - kg.summarization.core - INFO - Phase 1: Collecting summarization tasks...
+2026-01-16 21:40:02,650 - kg.summarization.core - INFO - Found 24 topic nodes for summarization
+2026-01-16 21:40:02,652 - kg.summarization.core - INFO - Created task for topic 0: 72 entities, 20 chunks, 31210 chars
+2026-01-16 21:40:02,653 - kg.summarization.core - INFO - Created task for topic 1: 38 entities, 8 chunks, 13727 chars
+2026-01-16 21:40:02,655 - kg.summarization.core - INFO - Created task for topic 2: 30 entities, 8 chunks, 2823 chars
+2026-01-16 21:40:02,656 - kg.summarization.core - INFO - Created task for topic 3: 25 entities, 10 chunks, 6624 chars
+2026-01-16 21:40:02,657 - kg.summarization.core - INFO - Created task for topic 4: 23 entities, 5 chunks, 1657 chars
+2026-01-16 21:40:02,658 - kg.summarization.core - INFO - Created task for topic 5: 21 entities, 5 chunks, 1827 chars
+2026-01-16 21:40:02,659 - kg.summarization.core - INFO - Created task for topic 6: 21 entities, 4 chunks, 5538 chars
+2026-01-16 21:40:02,660 - kg.summarization.core - INFO - Created task for topic 7: 20 entities, 8 chunks, 11613 chars
+2026-01-16 21:40:02,661 - kg.summarization.core - INFO - Created task for topic 8: 19 entities, 4 chunks, 1417 chars
+2026-01-16 21:40:02,662 - kg.summarization.core - INFO - Created task for topic 9: 10 entities, 1 chunks, 368 chars
+2026-01-16 21:40:02,663 - kg.summarization.core - INFO - Created task for topic 10: 10 entities, 6 chunks, 11712 chars
+2026-01-16 21:40:02,665 - kg.summarization.core - INFO - Created task for topic 11: 7 entities, 1 chunks, 294 chars
+2026-01-16 21:40:02,666 - kg.summarization.core - INFO - Created task for topic 12: 7 entities, 1 chunks, 275 chars
+2026-01-16 21:40:02,667 - kg.summarization.core - INFO - Using fallback chunks for topic 13: 10 chunks
+2026-01-16 21:40:02,667 - kg.summarization.core - INFO - Created task for topic 13: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,668 - kg.summarization.core - INFO - Using fallback chunks for topic 14: 10 chunks
+2026-01-16 21:40:02,669 - kg.summarization.core - INFO - Created task for topic 14: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,670 - kg.summarization.core - INFO - Using fallback chunks for topic 15: 10 chunks
+2026-01-16 21:40:02,671 - kg.summarization.core - INFO - Created task for topic 15: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,673 - kg.summarization.core - INFO - Using fallback chunks for topic 16: 10 chunks
+2026-01-16 21:40:02,675 - kg.summarization.core - INFO - Created task for topic 16: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,676 - kg.summarization.core - INFO - Using fallback chunks for topic 17: 10 chunks
+2026-01-16 21:40:02,677 - kg.summarization.core - INFO - Created task for topic 17: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,678 - kg.summarization.core - INFO - Using fallback chunks for topic 18: 10 chunks
+2026-01-16 21:40:02,679 - kg.summarization.core - INFO - Created task for topic 18: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,679 - kg.summarization.core - INFO - Using fallback chunks for topic 19: 10 chunks
+2026-01-16 21:40:02,680 - kg.summarization.core - INFO - Created task for topic 19: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,681 - kg.summarization.core - INFO - Using fallback chunks for topic 20: 10 chunks
+2026-01-16 21:40:02,682 - kg.summarization.core - INFO - Created task for topic 20: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,682 - kg.summarization.core - INFO - Using fallback chunks for topic 21: 10 chunks
+2026-01-16 21:40:02,683 - kg.summarization.core - INFO - Created task for topic 21: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,684 - kg.summarization.core - INFO - Using fallback chunks for topic 22: 10 chunks
+2026-01-16 21:40:02,685 - kg.summarization.core - INFO - Created task for topic 22: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,687 - kg.summarization.core - INFO - Using fallback chunks for topic 23: 10 chunks
+2026-01-16 21:40:02,688 - kg.summarization.core - INFO - Created task for topic 23: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:02,690 - kg.summarization.core - INFO - Found 53 subtopic nodes for summarization
+2026-01-16 21:40:02,691 - kg.summarization.core - INFO - Created task for subtopic 0_0: 43 entities, 14 chunks, 24419 chars
+2026-01-16 21:40:02,692 - kg.summarization.core - INFO - Created task for subtopic 0_1: 3 entities, 1 chunks, 296 chars
+2026-01-16 21:40:02,693 - kg.summarization.core - INFO - Created task for subtopic 0_2: 2 entities, 1 chunks, 296 chars
+2026-01-16 21:40:02,694 - kg.summarization.core - INFO - Created task for subtopic 0_3: 8 entities, 8 chunks, 14884 chars
+2026-01-16 21:40:02,694 - kg.summarization.core - INFO - Created task for subtopic 0_4: 2 entities, 1 chunks, 338 chars
+2026-01-16 21:40:02,695 - kg.summarization.core - INFO - Created task for subtopic 0_5: 2 entities, 1 chunks, 1430 chars
+2026-01-16 21:40:02,695 - kg.summarization.core - INFO - Created task for subtopic 0_6: 4 entities, 1 chunks, 325 chars
+2026-01-16 21:40:02,696 - kg.summarization.core - INFO - Created task for subtopic 0_7: 6 entities, 1 chunks, 325 chars
+2026-01-16 21:40:02,697 - kg.summarization.core - INFO - Created task for subtopic 0_8: 2 entities, 1 chunks, 1909 chars
+2026-01-16 21:40:02,697 - kg.summarization.core - INFO - Created task for subtopic 1_0: 26 entities, 6 chunks, 11648 chars
+2026-01-16 21:40:02,698 - kg.summarization.core - INFO - Created task for subtopic 1_1: 8 entities, 4 chunks, 6421 chars
+2026-01-16 21:40:02,698 - kg.summarization.core - INFO - Created task for subtopic 1_2: 2 entities, 2 chunks, 3932 chars
+2026-01-16 21:40:02,699 - kg.summarization.core - INFO - Created task for subtopic 1_3: 2 entities, 1 chunks, 2129 chars
+2026-01-16 21:40:02,700 - kg.summarization.core - INFO - Created task for subtopic 2_0: 7 entities, 3 chunks, 1119 chars
+2026-01-16 21:40:02,706 - kg.summarization.core - INFO - Created task for subtopic 2_1: 7 entities, 5 chunks, 1673 chars
+2026-01-16 21:40:02,707 - kg.summarization.core - INFO - Created task for subtopic 2_2: 10 entities, 3 chunks, 1072 chars
+2026-01-16 21:40:02,708 - kg.summarization.core - INFO - Created task for subtopic 2_3: 6 entities, 4 chunks, 1438 chars
+2026-01-16 21:40:02,709 - kg.summarization.core - INFO - Created task for subtopic 3_0: 5 entities, 3 chunks, 2834 chars
+2026-01-16 21:40:02,709 - kg.summarization.core - INFO - Created task for subtopic 3_1: 6 entities, 5 chunks, 1744 chars
+2026-01-16 21:40:02,710 - kg.summarization.core - INFO - Created task for subtopic 3_2: 4 entities, 3 chunks, 2490 chars
+2026-01-16 21:40:02,711 - kg.summarization.core - INFO - Created task for subtopic 3_3: 5 entities, 2 chunks, 631 chars
+2026-01-16 21:40:02,711 - kg.summarization.core - INFO - Created task for subtopic 3_4: 5 entities, 2 chunks, 633 chars
+2026-01-16 21:40:02,712 - kg.summarization.core - INFO - Created task for subtopic 4_0: 4 entities, 2 chunks, 748 chars
+2026-01-16 21:40:02,713 - kg.summarization.core - INFO - Created task for subtopic 4_1: 3 entities, 1 chunks, 444 chars
+2026-01-16 21:40:02,713 - kg.summarization.core - INFO - Created task for subtopic 4_2: 6 entities, 3 chunks, 1084 chars
+2026-01-16 21:40:02,714 - kg.summarization.core - INFO - Created task for subtopic 4_3: 5 entities, 3 chunks, 936 chars
+2026-01-16 21:40:02,714 - kg.summarization.core - INFO - Created task for subtopic 4_4: 5 entities, 2 chunks, 611 chars
+2026-01-16 21:40:02,715 - kg.summarization.core - INFO - Created task for subtopic 5_0: 6 entities, 3 chunks, 1122 chars
+2026-01-16 21:40:02,715 - kg.summarization.core - INFO - Created task for subtopic 5_1: 6 entities, 3 chunks, 1048 chars
+2026-01-16 21:40:02,716 - kg.summarization.core - INFO - Created task for subtopic 5_2: 3 entities, 1 chunks, 365 chars
+2026-01-16 21:40:02,716 - kg.summarization.core - INFO - Created task for subtopic 5_3: 2 entities, 2 chunks, 682 chars
+2026-01-16 21:40:02,717 - kg.summarization.core - INFO - Created task for subtopic 5_4: 4 entities, 1 chunks, 343 chars
+2026-01-16 21:40:02,718 - kg.summarization.core - INFO - Created task for subtopic 6_0: 6 entities, 4 chunks, 5538 chars
+2026-01-16 21:40:02,719 - kg.summarization.core - INFO - Created task for subtopic 6_1: 8 entities, 3 chunks, 5098 chars
+2026-01-16 21:40:02,720 - kg.summarization.core - INFO - Created task for subtopic 6_2: 4 entities, 3 chunks, 5098 chars
+2026-01-16 21:40:02,722 - kg.summarization.core - INFO - Created task for subtopic 6_3: 3 entities, 1 chunks, 1802 chars
+2026-01-16 21:40:02,723 - kg.summarization.core - INFO - Created task for subtopic 7_0: 5 entities, 2 chunks, 3104 chars
+2026-01-16 21:40:02,724 - kg.summarization.core - INFO - Created task for subtopic 7_1: 3 entities, 5 chunks, 9251 chars
+2026-01-16 21:40:02,724 - kg.summarization.core - INFO - Created task for subtopic 7_2: 4 entities, 3 chunks, 2554 chars
+2026-01-16 21:40:02,725 - kg.summarization.core - INFO - Created task for subtopic 7_3: 8 entities, 2 chunks, 3860 chars
+2026-01-16 21:40:02,726 - kg.summarization.core - INFO - Created task for subtopic 8_0: 5 entities, 3 chunks, 977 chars
+2026-01-16 21:40:02,727 - kg.summarization.core - INFO - Created task for subtopic 8_1: 7 entities, 1 chunks, 439 chars
+2026-01-16 21:40:02,727 - kg.summarization.core - INFO - Created task for subtopic 8_2: 2 entities, 2 chunks, 738 chars
+2026-01-16 21:40:02,728 - kg.summarization.core - INFO - Created task for subtopic 8_3: 5 entities, 1 chunks, 298 chars
+2026-01-16 21:40:02,728 - kg.summarization.core - INFO - Created task for subtopic 9_0: 4 entities, 1 chunks, 368 chars
+2026-01-16 21:40:02,729 - kg.summarization.core - INFO - Created task for subtopic 9_1: 4 entities, 1 chunks, 368 chars
+2026-01-16 21:40:02,730 - kg.summarization.core - INFO - Created task for subtopic 9_2: 2 entities, 1 chunks, 368 chars
+2026-01-16 21:40:02,730 - kg.summarization.core - INFO - Created task for subtopic 10_0: 8 entities, 6 chunks, 11712 chars
+2026-01-16 21:40:02,731 - kg.summarization.core - INFO - Created task for subtopic 10_1: 2 entities, 1 chunks, 1909 chars
+2026-01-16 21:40:02,731 - kg.summarization.core - INFO - Created task for subtopic 11_0: 3 entities, 1 chunks, 294 chars
+2026-01-16 21:40:02,732 - kg.summarization.core - INFO - Created task for subtopic 11_1: 4 entities, 1 chunks, 294 chars
+2026-01-16 21:40:02,732 - kg.summarization.core - INFO - Created task for subtopic 12_0: 4 entities, 1 chunks, 275 chars
+2026-01-16 21:40:02,733 - kg.summarization.core - INFO - Created task for subtopic 12_1: 3 entities, 1 chunks, 275 chars
+2026-01-16 21:40:02,734 - kg.summarization.core - INFO - Created 77 summarization tasks
+2026-01-16 21:40:02,737 - kg.summarization.core - INFO - Phase 2: Processing 77 tasks...
+2026-01-16 21:40:02,739 - kg.summarization.core - INFO - Processing 77 summarization tasks with max concurrency 10
+2026-01-16 21:40:02,741 - kg.summarization.core - INFO - Processing task topic_0...
+2026-01-16 21:40:02,741 - kg.summarization.core - INFO - Processing task topic_1...
+2026-01-16 21:40:02,742 - kg.summarization.core - INFO - Processing task topic_2...
+2026-01-16 21:40:02,743 - kg.summarization.core - INFO - Processing task topic_3...
+2026-01-16 21:40:02,744 - kg.summarization.core - INFO - Processing task topic_4...
+2026-01-16 21:40:02,744 - kg.summarization.core - INFO - Processing task topic_5...
+2026-01-16 21:40:02,745 - kg.summarization.core - INFO - Processing task topic_6...
+2026-01-16 21:40:02,745 - kg.summarization.core - INFO - Processing task topic_7...
+2026-01-16 21:40:02,746 - kg.summarization.core - INFO - Processing task topic_8...
+2026-01-16 21:40:02,747 - kg.summarization.core - INFO - Processing task topic_9...
+2026-01-16 21:40:03,209 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,216 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,225 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,233 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,239 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,315 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,320 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,324 - kg.summarization.core - INFO - Completed task topic_9: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:03,324 - kg.summarization.core - INFO - Processing task topic_10...
+2026-01-16 21:40:03,355 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,359 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,369 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,375 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,380 - kg.summarization.core - INFO - Completed task topic_5: 'Warm Morning Routine in a Snowy Winter Home Scene...'
+2026-01-16 21:40:03,385 - kg.summarization.core - INFO - Processing task topic_11...
+2026-01-16 21:40:03,390 - kg.summarization.core - INFO - Completed task topic_8: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:03,391 - kg.summarization.core - INFO - Processing task topic_12...
+2026-01-16 21:40:03,394 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,407 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,447 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,453 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,462 - kg.summarization.core - INFO - Completed task topic_4: 'Morning Routine and Family Life in a Cozy Home Env...'
+2026-01-16 21:40:03,464 - kg.summarization.core - INFO - Processing task topic_13...
+2026-01-16 21:40:03,480 - kg.summarization.core - INFO - Completed task topic_2: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:03,481 - kg.summarization.core - INFO - Processing task topic_14...
+2026-01-16 21:40:03,552 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,555 - kg.summarization.core - INFO - Completed task topic_1: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:03,555 - kg.summarization.core - INFO - Processing task topic_15...
+2026-01-16 21:40:03,580 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,585 - kg.summarization.core - INFO - Completed task topic_3: 'Family Life: Chaos and Connection in the Everyday ...'
+2026-01-16 21:40:03,586 - kg.summarization.core - INFO - Processing task topic_16...
+2026-01-16 21:40:03,599 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,620 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,630 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,635 - kg.summarization.core - INFO - Completed task topic_6: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:03,636 - kg.summarization.core - INFO - Processing task topic_17...
+2026-01-16 21:40:03,649 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,654 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,659 - kg.summarization.core - INFO - Completed task topic_7: 'Coordinating Chaos: A Day in the Life of a Busy Fa...'
+2026-01-16 21:40:03,660 - kg.summarization.core - INFO - Processing task topic_18...
+2026-01-16 21:40:03,661 - kg.summarization.core - INFO - Completed task topic_0: 'A Family's Morning Routine on a Snowy Saturday...'
+2026-01-16 21:40:03,665 - kg.summarization.core - INFO - Processing task topic_19...
+2026-01-16 21:40:03,814 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,816 - kg.summarization.core - INFO - Completed task topic_12: 'Morning Routine: A Glimpse into the Daily Bakery S...'
+2026-01-16 21:40:03,816 - kg.summarization.core - INFO - Processing task topic_20...
+2026-01-16 21:40:03,867 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,869 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,871 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:03,873 - kg.summarization.core - INFO - Completed task topic_11: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:03,874 - kg.summarization.core - INFO - Processing task topic_21...
+2026-01-16 21:40:03,997 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,042 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,046 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,048 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,051 - kg.summarization.core - INFO - Completed task topic_13: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,052 - kg.summarization.core - INFO - Processing task topic_22...
+2026-01-16 21:40:04,107 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,110 - kg.summarization.core - INFO - Completed task topic_14: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,111 - kg.summarization.core - INFO - Processing task topic_23...
+2026-01-16 21:40:04,167 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,210 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,272 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,274 - kg.summarization.core - INFO - Completed task topic_16: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,275 - kg.summarization.core - INFO - Processing task subtopic_0_0...
+2026-01-16 21:40:04,301 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,303 - kg.summarization.core - INFO - Completed task topic_15: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,303 - kg.summarization.core - INFO - Processing task subtopic_0_1...
+2026-01-16 21:40:04,315 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,317 - kg.summarization.core - INFO - Completed task topic_10: 'Balancing Family Life and Work Demands in the Chao...'
+2026-01-16 21:40:04,318 - kg.summarization.core - INFO - Processing task subtopic_0_2...
+2026-01-16 21:40:04,398 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,434 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,436 - kg.summarization.core - INFO - Completed task topic_20: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,436 - kg.summarization.core - INFO - Processing task subtopic_0_3...
+2026-01-16 21:40:04,476 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,478 - kg.summarization.core - INFO - Completed task topic_17: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,479 - kg.summarization.core - INFO - Processing task subtopic_0_4...
+2026-01-16 21:40:04,481 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,483 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,486 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,491 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,495 - kg.summarization.core - INFO - Completed task topic_21: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,495 - kg.summarization.core - INFO - Processing task subtopic_0_5...
+2026-01-16 21:40:04,498 - kg.summarization.core - INFO - Completed task topic_18: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,498 - kg.summarization.core - INFO - Processing task subtopic_0_6...
+2026-01-16 21:40:04,516 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,518 - kg.summarization.core - INFO - Completed task topic_19: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,519 - kg.summarization.core - INFO - Processing task subtopic_0_7...
+2026-01-16 21:40:04,525 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,526 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,612 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,624 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,740 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,743 - kg.summarization.core - INFO - Completed task subtopic_0_1: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:04,743 - kg.summarization.core - INFO - Processing task subtopic_0_8...
+2026-01-16 21:40:04,749 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,754 - kg.summarization.core - INFO - Completed task subtopic_0_2: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:04,755 - kg.summarization.core - INFO - Processing task subtopic_1_0...
+2026-01-16 21:40:04,772 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,783 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,786 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,794 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,800 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,835 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,879 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,883 - kg.summarization.core - INFO - Completed task topic_23: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,883 - kg.summarization.core - INFO - Processing task subtopic_1_1...
+2026-01-16 21:40:04,886 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,893 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,896 - kg.summarization.core - INFO - Completed task topic_22: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:04,897 - kg.summarization.core - INFO - Processing task subtopic_1_2...
+2026-01-16 21:40:04,900 - kg.summarization.core - INFO - Completed task subtopic_0_4: 'Morning Routine: A Glimpse into Everyday Life...'
+2026-01-16 21:40:04,900 - kg.summarization.core - INFO - Processing task subtopic_1_3...
+2026-01-16 21:40:04,923 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,925 - kg.summarization.core - INFO - Completed task subtopic_0_5: 'Bedtime Routine Chaos: A Family's Evening Struggle...'
+2026-01-16 21:40:04,925 - kg.summarization.core - INFO - Processing task subtopic_2_0...
+2026-01-16 21:40:04,935 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,936 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:04,940 - kg.summarization.core - INFO - Completed task subtopic_0_7: 'Moments of Quiet in the Urban Commute Rush...'
+2026-01-16 21:40:04,941 - kg.summarization.core - INFO - Processing task subtopic_2_1...
+2026-01-16 21:40:04,997 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,000 - kg.summarization.core - INFO - Completed task subtopic_0_6: 'Quiet Moments Amidst the Rush: A Subway Scene...'
+2026-01-16 21:40:05,000 - kg.summarization.core - INFO - Processing task subtopic_2_2...
+2026-01-16 21:40:05,025 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,028 - kg.summarization.core - INFO - Completed task subtopic_0_0: 'A Family's Saturday Morning Routine: Chaos and Con...'
+2026-01-16 21:40:05,029 - kg.summarization.core - INFO - Processing task subtopic_2_3...
+2026-01-16 21:40:05,098 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,100 - kg.summarization.core - INFO - Completed task subtopic_0_8: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:05,101 - kg.summarization.core - INFO - Processing task subtopic_3_0...
+2026-01-16 21:40:05,114 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,157 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,185 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,207 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,227 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,310 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,313 - kg.summarization.core - INFO - Completed task subtopic_2_0: 'A Glimpse into Morning Routine and Family Life...'
+2026-01-16 21:40:05,314 - kg.summarization.core - INFO - Processing task subtopic_3_1...
+2026-01-16 21:40:05,327 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,361 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,366 - kg.summarization.core - INFO - Completed task subtopic_1_0: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:05,366 - kg.summarization.core - INFO - Processing task subtopic_3_2...
+2026-01-16 21:40:05,370 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,384 - kg.summarization.core - INFO - Completed task subtopic_2_1: 'Snapshots of Home Life: Chaos and Cozy Moments...'
+2026-01-16 21:40:05,385 - kg.summarization.core - INFO - Processing task subtopic_3_3...
+2026-01-16 21:40:05,388 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,393 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,397 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,409 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,418 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,425 - kg.summarization.core - INFO - Completed task subtopic_2_3: 'Warm Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:05,427 - kg.summarization.core - INFO - Processing task subtopic_3_4...
+2026-01-16 21:40:05,429 - kg.summarization.core - INFO - Completed task subtopic_2_2: 'Morning Routine: A Glimpse into Everyday Life and ...'
+2026-01-16 21:40:05,431 - kg.summarization.core - INFO - Processing task subtopic_4_0...
+2026-01-16 21:40:05,443 - kg.summarization.core - INFO - Completed task subtopic_0_3: 'A Family's Saturday Morning Chaos: Balancing Work ...'
+2026-01-16 21:40:05,455 - kg.summarization.core - INFO - Processing task subtopic_4_1...
+2026-01-16 21:40:05,457 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,505 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,517 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,522 - kg.summarization.core - INFO - Completed task subtopic_3_0: 'A Family's Winter Evening Routine and Holiday Chao...'
+2026-01-16 21:40:05,523 - kg.summarization.core - INFO - Processing task subtopic_4_2...
+2026-01-16 21:40:05,584 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,587 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,590 - kg.summarization.core - INFO - Completed task subtopic_1_3: 'Morning Chaos: Navigating Family Life and Daily Re...'
+2026-01-16 21:40:05,590 - kg.summarization.core - INFO - Processing task subtopic_4_3...
+2026-01-16 21:40:05,605 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,641 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,644 - kg.summarization.core - INFO - Completed task subtopic_1_2: 'Chaos in the Morning: Managing Family Life and Wor...'
+2026-01-16 21:40:05,645 - kg.summarization.core - INFO - Processing task subtopic_4_4...
+2026-01-16 21:40:05,649 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,669 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,678 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,700 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,703 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,706 - kg.summarization.core - INFO - Completed task subtopic_3_1: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:05,707 - kg.summarization.core - INFO - Processing task subtopic_5_0...
+2026-01-16 21:40:05,709 - kg.summarization.core - INFO - Completed task subtopic_1_1: 'Morning Chaos: Navigating Family Life on a Busy Su...'
+2026-01-16 21:40:05,711 - kg.summarization.core - INFO - Processing task subtopic_5_1...
+2026-01-16 21:40:05,714 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,770 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,775 - kg.summarization.core - INFO - Completed task subtopic_3_3: 'Winter Morning Routine: A Glimpse into Quiet Daily...'
+2026-01-16 21:40:05,776 - kg.summarization.core - INFO - Processing task subtopic_5_2...
+2026-01-16 21:40:05,798 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,802 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,805 - kg.summarization.core - INFO - Completed task subtopic_3_4: 'Winter Morning Routine on a Cozy Balcony Retreat...'
+2026-01-16 21:40:05,806 - kg.summarization.core - INFO - Processing task subtopic_5_3...
+2026-01-16 21:40:05,808 - kg.summarization.core - INFO - Completed task subtopic_4_1: 'Winter Morning Routine in a Cozy, Snowy Bedroom Sa...'
+2026-01-16 21:40:05,810 - kg.summarization.core - INFO - Processing task subtopic_5_4...
+2026-01-16 21:40:05,837 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,844 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,852 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,862 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,867 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,873 - kg.summarization.core - INFO - Completed task subtopic_4_0: 'Winter Morning Routine in a Cozy Bedroom Sanctuary...'
+2026-01-16 21:40:05,874 - kg.summarization.core - INFO - Processing task subtopic_6_0...
+2026-01-16 21:40:05,877 - kg.summarization.core - INFO - Completed task subtopic_3_2: 'Saturday Morning Chaos: A Glimpse into Family Life...'
+2026-01-16 21:40:05,877 - kg.summarization.core - INFO - Processing task subtopic_6_1...
+2026-01-16 21:40:05,878 - kg.summarization.core - INFO - Completed task subtopic_4_2: 'Morning Routine: A Glimpse into Everyday Domestic ...'
+2026-01-16 21:40:05,879 - kg.summarization.core - INFO - Processing task subtopic_6_2...
+2026-01-16 21:40:05,929 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,935 - kg.summarization.core - INFO - Completed task subtopic_4_4: 'Cozy Home Scene: Daily Routine and Leisure Activit...'
+2026-01-16 21:40:05,936 - kg.summarization.core - INFO - Processing task subtopic_6_3...
+2026-01-16 21:40:05,940 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,942 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,965 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,980 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:05,983 - kg.summarization.core - INFO - Completed task subtopic_4_3: 'Morning Routine in a Family Home: A Snapshot of Da...'
+2026-01-16 21:40:05,984 - kg.summarization.core - INFO - Processing task subtopic_7_0...
+2026-01-16 21:40:06,018 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,023 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,063 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,067 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,070 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,075 - kg.summarization.core - INFO - Completed task subtopic_5_2: 'Warm Morning Routine in a Cozy Winter Kitchen Scen...'
+2026-01-16 21:40:06,076 - kg.summarization.core - INFO - Processing task subtopic_7_1...
+2026-01-16 21:40:06,087 - kg.summarization.core - INFO - Completed task subtopic_5_0: 'Warm Winter Morning in a Cozy, Snowy Kitchen Sanct...'
+2026-01-16 21:40:06,087 - kg.summarization.core - INFO - Processing task subtopic_7_2...
+2026-01-16 21:40:06,089 - kg.summarization.core - INFO - Completed task subtopic_5_1: 'Warm Morning Routine in a Snowy Winter Kitchen Sce...'
+2026-01-16 21:40:06,092 - kg.summarization.core - INFO - Processing task subtopic_7_3...
+2026-01-16 21:40:06,148 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,156 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,162 - kg.summarization.core - INFO - Completed task subtopic_5_4: 'Morning Routine in a Winter Wonderland Kitchen Set...'
+2026-01-16 21:40:06,163 - kg.summarization.core - INFO - Processing task subtopic_8_0...
+2026-01-16 21:40:06,174 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,188 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,192 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,210 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,213 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,216 - kg.summarization.core - INFO - Completed task subtopic_5_3: 'Winter Morning Routine in a Cozy, Snowy Kitchen Sa...'
+2026-01-16 21:40:06,217 - kg.summarization.core - INFO - Processing task subtopic_8_1...
+2026-01-16 21:40:06,348 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,350 - kg.summarization.core - INFO - Completed task subtopic_6_3: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:06,351 - kg.summarization.core - INFO - Processing task subtopic_8_2...
+2026-01-16 21:40:06,398 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,406 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,408 - kg.summarization.core - INFO - Completed task subtopic_6_1: 'Managing Chaos: A Day in the Life of a Busy Family...'
+2026-01-16 21:40:06,409 - kg.summarization.core - INFO - Processing task subtopic_8_3...
+2026-01-16 21:40:06,420 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,423 - kg.summarization.core - INFO - Completed task subtopic_6_2: 'A Family's Ordinary Day: Chaos and Connection...'
+2026-01-16 21:40:06,423 - kg.summarization.core - INFO - Processing task subtopic_9_0...
+2026-01-16 21:40:06,494 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,498 - kg.summarization.core - INFO - Completed task subtopic_7_0: 'A Family's Morning Routine: Chaos and Compromise...'
+2026-01-16 21:40:06,498 - kg.summarization.core - INFO - Processing task subtopic_9_1...
+2026-01-16 21:40:06,506 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,510 - kg.summarization.core - INFO - Completed task subtopic_8_1: 'Warmth and Comfort in a Cozy Winter Dining Scene...'
+2026-01-16 21:40:06,511 - kg.summarization.core - INFO - Processing task subtopic_9_2...
+2026-01-16 21:40:06,532 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,554 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,584 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,601 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,611 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,623 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,654 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,655 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,658 - kg.summarization.core - INFO - Completed task subtopic_6_0: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:06,659 - kg.summarization.core - INFO - Completed task subtopic_8_0: 'Warm Morning Routine in a Cozy Winter Wonderland S...'
+2026-01-16 21:40:06,659 - kg.summarization.core - INFO - Processing task subtopic_10_0...
+2026-01-16 21:40:06,660 - kg.summarization.core - INFO - Processing task subtopic_10_1...
+2026-01-16 21:40:06,682 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,683 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,687 - kg.summarization.core - INFO - Completed task subtopic_8_2: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:06,688 - kg.summarization.core - INFO - Processing task subtopic_11_0...
+2026-01-16 21:40:06,704 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,706 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,736 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,738 - kg.summarization.core - INFO - Completed task subtopic_9_0: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:06,739 - kg.summarization.core - INFO - Processing task subtopic_11_1...
+2026-01-16 21:40:06,742 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,754 - kg.summarization.core - INFO - Completed task subtopic_8_3: 'Winter Morning Routine: A Cozy Scene of Daily Comf...'
+2026-01-16 21:40:06,754 - kg.summarization.core - INFO - Processing task subtopic_12_0...
+2026-01-16 21:40:06,783 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,786 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,788 - kg.summarization.core - INFO - Completed task subtopic_9_1: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:06,789 - kg.summarization.core - INFO - Processing task subtopic_12_1...
+2026-01-16 21:40:06,791 - kg.summarization.core - INFO - Completed task subtopic_7_2: 'Bedtime Routine: A Glimpse into Family Life and Ha...'
+2026-01-16 21:40:06,793 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,804 - kg.summarization.core - INFO - Completed task subtopic_9_2: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:06,843 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,848 - kg.summarization.core - INFO - Completed task subtopic_7_3: 'Chaos of Bedtime Routine: A Family's Evening Strug...'
+2026-01-16 21:40:06,861 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,869 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,914 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,937 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,959 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:06,962 - kg.summarization.core - INFO - Completed task subtopic_7_1: 'A Family's Snowy Day Chaos: Balancing Work and Fam...'
+2026-01-16 21:40:06,985 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,019 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,050 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,053 - kg.summarization.core - INFO - Completed task subtopic_11_0: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:07,064 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,067 - kg.summarization.core - INFO - Completed task subtopic_12_0: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:07,101 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,103 - kg.summarization.core - INFO - Completed task subtopic_11_1: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:07,109 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,113 - kg.summarization.core - INFO - Completed task subtopic_12_1: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:07,125 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,128 - kg.summarization.core - INFO - Completed task subtopic_10_1: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:07,331 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:07,333 - kg.summarization.core - INFO - Completed task subtopic_10_0: 'Chaos in the Family: A Day in the Life...'
+2026-01-16 21:40:07,333 - kg.summarization.core - INFO - Summarization complete: 77/77 successful
+2026-01-16 21:40:08,536 - kg.summarization.core - INFO - Phase 3: Updating topic nodes...
+2026-01-16 21:40:08,537 - kg.summarization.core - INFO - Updated TOPIC_0 with title: 'A Family's Morning Routine on a Snowy Saturday...'
+2026-01-16 21:40:08,537 - kg.summarization.core - INFO - Updated TOPIC_1 with title: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:08,537 - kg.summarization.core - INFO - Updated TOPIC_2 with title: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:08,538 - kg.summarization.core - INFO - Updated TOPIC_3 with title: 'Family Life: Chaos and Connection in the Everyday ...'
+2026-01-16 21:40:08,538 - kg.summarization.core - INFO - Updated TOPIC_4 with title: 'Morning Routine and Family Life in a Cozy Home Env...'
+2026-01-16 21:40:08,538 - kg.summarization.core - INFO - Updated TOPIC_5 with title: 'Warm Morning Routine in a Snowy Winter Home Scene...'
+2026-01-16 21:40:08,539 - kg.summarization.core - INFO - Updated TOPIC_6 with title: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:08,539 - kg.summarization.core - INFO - Updated TOPIC_7 with title: 'Coordinating Chaos: A Day in the Life of a Busy Fa...'
+2026-01-16 21:40:08,539 - kg.summarization.core - INFO - Updated TOPIC_8 with title: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:08,540 - kg.summarization.core - INFO - Updated TOPIC_9 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:08,540 - kg.summarization.core - INFO - Updated TOPIC_10 with title: 'Balancing Family Life and Work Demands in the Chao...'
+2026-01-16 21:40:08,540 - kg.summarization.core - INFO - Updated TOPIC_11 with title: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:08,541 - kg.summarization.core - INFO - Updated TOPIC_12 with title: 'Morning Routine: A Glimpse into the Daily Bakery S...'
+2026-01-16 21:40:08,541 - kg.summarization.core - INFO - Updated TOPIC_13 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,541 - kg.summarization.core - INFO - Updated TOPIC_14 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,542 - kg.summarization.core - INFO - Updated TOPIC_15 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,542 - kg.summarization.core - INFO - Updated TOPIC_16 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,542 - kg.summarization.core - INFO - Updated TOPIC_17 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,543 - kg.summarization.core - INFO - Updated TOPIC_18 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,543 - kg.summarization.core - INFO - Updated TOPIC_19 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,543 - kg.summarization.core - INFO - Updated TOPIC_20 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,544 - kg.summarization.core - INFO - Updated TOPIC_21 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,544 - kg.summarization.core - INFO - Updated TOPIC_22 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,544 - kg.summarization.core - INFO - Updated TOPIC_23 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:08,545 - kg.summarization.core - INFO - Updated SUBTOPIC_0_0 with title: 'A Family's Saturday Morning Routine: Chaos and Con...'
+2026-01-16 21:40:08,545 - kg.summarization.core - INFO - Updated SUBTOPIC_0_1 with title: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:08,545 - kg.summarization.core - INFO - Updated SUBTOPIC_0_2 with title: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:08,545 - kg.summarization.core - INFO - Updated SUBTOPIC_0_3 with title: 'A Family's Saturday Morning Chaos: Balancing Work ...'
+2026-01-16 21:40:08,546 - kg.summarization.core - INFO - Updated SUBTOPIC_0_4 with title: 'Morning Routine: A Glimpse into Everyday Life...'
+2026-01-16 21:40:08,546 - kg.summarization.core - INFO - Updated SUBTOPIC_0_5 with title: 'Bedtime Routine Chaos: A Family's Evening Struggle...'
+2026-01-16 21:40:08,547 - kg.summarization.core - INFO - Updated SUBTOPIC_0_6 with title: 'Quiet Moments Amidst the Rush: A Subway Scene...'
+2026-01-16 21:40:08,548 - kg.summarization.core - INFO - Updated SUBTOPIC_0_7 with title: 'Moments of Quiet in the Urban Commute Rush...'
+2026-01-16 21:40:08,549 - kg.summarization.core - INFO - Updated SUBTOPIC_0_8 with title: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:08,550 - kg.summarization.core - INFO - Updated SUBTOPIC_1_0 with title: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:08,551 - kg.summarization.core - INFO - Updated SUBTOPIC_1_1 with title: 'Morning Chaos: Navigating Family Life on a Busy Su...'
+2026-01-16 21:40:08,551 - kg.summarization.core - INFO - Updated SUBTOPIC_1_2 with title: 'Chaos in the Morning: Managing Family Life and Wor...'
+2026-01-16 21:40:08,552 - kg.summarization.core - INFO - Updated SUBTOPIC_1_3 with title: 'Morning Chaos: Navigating Family Life and Daily Re...'
+2026-01-16 21:40:08,552 - kg.summarization.core - INFO - Updated SUBTOPIC_2_0 with title: 'A Glimpse into Morning Routine and Family Life...'
+2026-01-16 21:40:08,553 - kg.summarization.core - INFO - Updated SUBTOPIC_2_1 with title: 'Snapshots of Home Life: Chaos and Cozy Moments...'
+2026-01-16 21:40:08,553 - kg.summarization.core - INFO - Updated SUBTOPIC_2_2 with title: 'Morning Routine: A Glimpse into Everyday Life and ...'
+2026-01-16 21:40:08,554 - kg.summarization.core - INFO - Updated SUBTOPIC_2_3 with title: 'Warm Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:08,554 - kg.summarization.core - INFO - Updated SUBTOPIC_3_0 with title: 'A Family's Winter Evening Routine and Holiday Chao...'
+2026-01-16 21:40:08,555 - kg.summarization.core - INFO - Updated SUBTOPIC_3_1 with title: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:08,555 - kg.summarization.core - INFO - Updated SUBTOPIC_3_2 with title: 'Saturday Morning Chaos: A Glimpse into Family Life...'
+2026-01-16 21:40:08,556 - kg.summarization.core - INFO - Updated SUBTOPIC_3_3 with title: 'Winter Morning Routine: A Glimpse into Quiet Daily...'
+2026-01-16 21:40:08,556 - kg.summarization.core - INFO - Updated SUBTOPIC_3_4 with title: 'Winter Morning Routine on a Cozy Balcony Retreat...'
+2026-01-16 21:40:08,557 - kg.summarization.core - INFO - Updated SUBTOPIC_4_0 with title: 'Winter Morning Routine in a Cozy Bedroom Sanctuary...'
+2026-01-16 21:40:08,557 - kg.summarization.core - INFO - Updated SUBTOPIC_4_1 with title: 'Winter Morning Routine in a Cozy, Snowy Bedroom Sa...'
+2026-01-16 21:40:08,557 - kg.summarization.core - INFO - Updated SUBTOPIC_4_2 with title: 'Morning Routine: A Glimpse into Everyday Domestic ...'
+2026-01-16 21:40:08,558 - kg.summarization.core - INFO - Updated SUBTOPIC_4_3 with title: 'Morning Routine in a Family Home: A Snapshot of Da...'
+2026-01-16 21:40:08,558 - kg.summarization.core - INFO - Updated SUBTOPIC_4_4 with title: 'Cozy Home Scene: Daily Routine and Leisure Activit...'
+2026-01-16 21:40:08,559 - kg.summarization.core - INFO - Updated SUBTOPIC_5_0 with title: 'Warm Winter Morning in a Cozy, Snowy Kitchen Sanct...'
+2026-01-16 21:40:08,559 - kg.summarization.core - INFO - Updated SUBTOPIC_5_1 with title: 'Warm Morning Routine in a Snowy Winter Kitchen Sce...'
+2026-01-16 21:40:08,560 - kg.summarization.core - INFO - Updated SUBTOPIC_5_2 with title: 'Warm Morning Routine in a Cozy Winter Kitchen Scen...'
+2026-01-16 21:40:08,560 - kg.summarization.core - INFO - Updated SUBTOPIC_5_3 with title: 'Winter Morning Routine in a Cozy, Snowy Kitchen Sa...'
+2026-01-16 21:40:08,561 - kg.summarization.core - INFO - Updated SUBTOPIC_5_4 with title: 'Morning Routine in a Winter Wonderland Kitchen Set...'
+2026-01-16 21:40:08,561 - kg.summarization.core - INFO - Updated SUBTOPIC_6_0 with title: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:08,562 - kg.summarization.core - INFO - Updated SUBTOPIC_6_1 with title: 'Managing Chaos: A Day in the Life of a Busy Family...'
+2026-01-16 21:40:08,562 - kg.summarization.core - INFO - Updated SUBTOPIC_6_2 with title: 'A Family's Ordinary Day: Chaos and Connection...'
+2026-01-16 21:40:08,563 - kg.summarization.core - INFO - Updated SUBTOPIC_6_3 with title: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:08,563 - kg.summarization.core - INFO - Updated SUBTOPIC_7_0 with title: 'A Family's Morning Routine: Chaos and Compromise...'
+2026-01-16 21:40:08,563 - kg.summarization.core - INFO - Updated SUBTOPIC_7_1 with title: 'A Family's Snowy Day Chaos: Balancing Work and Fam...'
+2026-01-16 21:40:08,564 - kg.summarization.core - INFO - Updated SUBTOPIC_7_2 with title: 'Bedtime Routine: A Glimpse into Family Life and Ha...'
+2026-01-16 21:40:08,565 - kg.summarization.core - INFO - Updated SUBTOPIC_7_3 with title: 'Chaos of Bedtime Routine: A Family's Evening Strug...'
+2026-01-16 21:40:08,565 - kg.summarization.core - INFO - Updated SUBTOPIC_8_0 with title: 'Warm Morning Routine in a Cozy Winter Wonderland S...'
+2026-01-16 21:40:08,565 - kg.summarization.core - INFO - Updated SUBTOPIC_8_1 with title: 'Warmth and Comfort in a Cozy Winter Dining Scene...'
+2026-01-16 21:40:08,566 - kg.summarization.core - INFO - Updated SUBTOPIC_8_2 with title: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:08,567 - kg.summarization.core - INFO - Updated SUBTOPIC_8_3 with title: 'Winter Morning Routine: A Cozy Scene of Daily Comf...'
+2026-01-16 21:40:08,568 - kg.summarization.core - INFO - Updated SUBTOPIC_9_0 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:08,570 - kg.summarization.core - INFO - Updated SUBTOPIC_9_1 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:08,571 - kg.summarization.core - INFO - Updated SUBTOPIC_9_2 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:08,571 - kg.summarization.core - INFO - Updated SUBTOPIC_10_0 with title: 'Chaos in the Family: A Day in the Life...'
+2026-01-16 21:40:08,572 - kg.summarization.core - INFO - Updated SUBTOPIC_10_1 with title: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:08,572 - kg.summarization.core - INFO - Updated SUBTOPIC_11_0 with title: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:08,573 - kg.summarization.core - INFO - Updated SUBTOPIC_11_1 with title: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:08,573 - kg.summarization.core - INFO - Updated SUBTOPIC_12_0 with title: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:08,574 - kg.summarization.core - INFO - Updated SUBTOPIC_12_1 with title: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:08,574 - kg.summarization.core - INFO - Updated 24 topics and 53 subtopics
+2026-01-16 21:40:08,574 - kg.summarization.core - INFO - Phase 4: Checking similarity...
+2026-01-16 21:40:08,575 - kg.summarization.core - INFO - Checking for similar topic titles...
+2026-01-16 21:40:08,755 - kg.summarization.core - INFO - Found 171 similar pairs, 74 potential duplicates
+2026-01-16 21:40:08,756 - kg.pipeline.iterative - INFO - ✅ Summarization complete: 24 topics, 53 subtopics
+2026-01-16 21:40:08,756 - kg.pipeline.iterative - INFO - Step 6e: Uploading and syncing topic hierarchy to FalkorDB...
+2026-01-16 21:40:08,762 - kg.service.graph_service - INFO - 🚀 Uploading graph for document synthetic_test_data_hierarchy (0 segments) to FalkorDB...
+2026-01-16 21:40:08,773 - kg.falkordb.uploader - INFO - 🚀 Uploading and Merging 415 nodes into FalkorDB...
+2026-01-16 21:40:08,811 - kg.falkordb.uploader - INFO - ✅ Uploaded and Merged 415 nodes
+2026-01-16 21:40:08,813 - kg.falkordb.uploader - INFO - 🚀 Uploading and Merging 1017 relationships into FalkorDB...
+2026-01-16 21:40:09,528 - kg.falkordb.uploader - INFO - ✅ Uploaded and Merged 1017 relationships
+2026-01-16 21:40:09,529 - kg.service.graph_service - INFO - ✅ Merged 415 nodes, 1017 relationships
+2026-01-16 21:40:09,530 - kg.pipeline.iterative - INFO - ✅ Synced 415 hierarchy nodes, 1017 relationships
+2026-01-16 21:40:09,581 - kg.pipeline.iterative - INFO - 📊 Graph snapshot saved to output/runs/20260116_213916/graphs/hierarchy.json
+2026-01-16 21:40:09,603 - kg.graph.schema - INFO - Graph schema saved to output/runs/20260116_213916/metadata/metadata/schema.json
+2026-01-16 21:40:09,604 - kg.summarization.reporting - INFO - Generating topic summary comparison...
+2026-01-16 21:40:09,616 - kg.summarization.reporting - INFO - Topic summary comparison saved to output/runs/20260116_213916/analytics/topic_summary_comparison.json
+2026-01-16 21:40:09,629 - kg.service.graph_service - INFO - Fetching entity graph from FalkorDB...
+2026-01-16 21:40:09,663 - kg.service.graph_service - INFO - Fetched 338 nodes for community detection
+2026-01-16 21:40:09,756 - kg.service.graph_service - INFO - Fetched 661 relationships
+2026-01-16 21:40:09,773 - kg.pipeline.iterative - INFO - 📊 Full Knowledge Graph saved to output/runs/20260116_213916/graphs/knowledge_graph.json
+2026-01-16 21:40:09,774 - kg.service.graph_service - INFO - Recalculating centrality and gathering metrics...
+2026-01-16 21:40:09,880 - src.kg.falkordb.algorithms - INFO - Calculating graph metrics (counts + centrality averages) for label=ENTITY_CONCEPT...
+2026-01-16 21:40:09,881 - src.kg.falkordb.algorithms - INFO - Running PageRank (iter=20, damping=0.85, label=ENTITY_CONCEPT, rel=None)...
+2026-01-16 21:40:09,887 - src.kg.falkordb.algorithms - INFO - PageRank finished in 6.72ms
+2026-01-16 21:40:09,888 - src.kg.falkordb.algorithms - INFO - Running Betweenness Centrality (label=ENTITY_CONCEPT, rel=None)...
+2026-01-16 21:40:09,891 - src.kg.falkordb.algorithms - INFO - Betweenness Centrality finished in 2.87ms
+2026-01-16 21:40:09,944 - src.kg.falkordb.algorithms - INFO - Graph Metrics: Nodes=529, Edges=2103, AvgPR=0.0022, AvgBC=0.00, Time(PR)=6.72ms, Time(BC)=2.87ms
+2026-01-16 21:40:09,945 - kg.service.graph_service - INFO - ✅ Metrics calculation complete
+2026-01-16 21:40:09,951 - kg.pipeline.iterative - INFO - 📈 Graph metrics saved to output/runs/20260116_213916/analytics/graph_metrics.csv
+2026-01-16 21:40:09,951 - kg.pipeline.iterative - INFO - 
+    📊 Run Metrics for synthetic_test_data:
+    ----------------------------------------
+    • Nodes Merged:      419
+    • Edges Merged:      1223
+    • Total Nodes:       529
+    • Total Edges:       2103
+    • Communities:       24
+    • Modularity:        0.4227
+    • Avg PageRank:      0.002169
+    ----------------------------------------
+                    
+2026-01-16 21:40:09,952 - kg.pipeline.iterative - INFO - 
+============================================================
+2026-01-16 21:40:09,952 - kg.pipeline.iterative - INFO - Processing: test_data
+2026-01-16 21:40:09,953 - kg.pipeline.iterative - INFO - ============================================================
+2026-01-16 21:40:09,953 - kg.pipeline.iterative - INFO - Step 1: Building lexical graph...
+2026-01-16 21:40:09,958 - kg.graph.extraction - INFO - Processing specific file(s) matching pattern 'test_data.csv': ['test_data.csv']
+2026-01-16 21:40:09,959 - kg.graph.extraction - WARNING - Could not extract date from test_data.csv, using today's date
+2026-01-16 21:40:09,964 - kg.graph.extraction - INFO - Processing document test_data.csv (88870 chars)
+2026-01-16 21:40:09,966 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 07:46
+2026-01-16 21:40:09,967 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 08:00
+2026-01-16 21:40:09,967 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 09:49
+2026-01-16 21:40:09,968 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 11:27
+2026-01-16 21:40:09,969 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 13:02
+2026-01-16 21:40:09,969 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 14:48
+2026-01-16 21:40:09,970 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 14:54
+2026-01-16 21:40:09,971 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 15:45
+2026-01-16 21:40:09,971 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 18:55
+2026-01-16 21:40:09,972 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Tuesday 23 December 2025, 20:32
+2026-01-16 21:40:09,972 - src.kg.graph.parsers.life - WARNING - Skipping row with invalid time: Wednesday 24 December 2025, 12:12
+2026-01-16 21:40:09,973 - kg.pipeline.iterative - INFO - Step 2: Extracting entities and relations...
+2026-01-16 21:40:09,974 - kg.pipeline.iterative - INFO - Step 3: Generating embeddings...
+2026-01-16 21:40:09,974 - kg.embeddings.rag - INFO - Generating RAG embeddings for node types: ['ENTITY_CONCEPT', 'TOPIC', 'SUBTOPIC', 'CHUNK', 'EPISODE']
+2026-01-16 21:40:09,975 - kg.embeddings.rag - INFO - Using embedding model: all-MiniLM-L6-v2
+2026-01-16 21:40:09,975 - kg.embeddings.rag - INFO - Attempting to load all-MiniLM-L6-v2 from local cache...
+2026-01-16 21:40:09,982 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-01-16 21:40:09,982 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-01-16 21:40:10,091 - kg.embeddings.rag - INFO - Embedding dimension: 384
+2026-01-16 21:40:10,091 - kg.embeddings.rag - WARNING - No texts found for embedding generation
+2026-01-16 21:40:10,092 - kg.pipeline.iterative - INFO - Step 3.5: Pruning graph...
+2026-01-16 21:40:10,092 - kg.graph.pruning - INFO - Taking a laser scan... Pruning graph (threshold=0.01, prune_isolated=True)
+2026-01-16 21:40:10,093 - kg.graph.pruning - INFO - ✂️  Pruned 1 isolated nodes
+2026-01-16 21:40:10,093 - kg.pipeline.iterative - INFO - Step 4: Uploading and merging into database...
+2026-01-16 21:40:10,094 - kg.service.graph_service - INFO - 🚀 Uploading graph for document test_data (0 segments) to FalkorDB...
+2026-01-16 21:40:10,104 - kg.falkordb.uploader - INFO - 🚀 Uploading and Merging 0 nodes into FalkorDB...
+2026-01-16 21:40:10,104 - kg.falkordb.uploader - INFO - ✅ Uploaded and Merged 0 nodes
+2026-01-16 21:40:10,105 - kg.service.graph_service - INFO - ✅ Merged 0 nodes, 0 relationships
+2026-01-16 21:40:10,105 - kg.pipeline.iterative - INFO - Running Entity Resolution (Merging similar Entity/Location nodes)...
+2026-01-16 21:40:10,106 - kg.service.graph_service - INFO - Fetching entity graph from FalkorDB...
+2026-01-16 21:40:10,130 - kg.service.graph_service - INFO - Fetched 338 nodes for community detection
+2026-01-16 21:40:10,205 - kg.service.graph_service - INFO - Fetched 661 relationships
+2026-01-16 21:40:10,215 - kg.graph.text_resolution - INFO - Starting text-based entity resolution (threshold=0.9)...
+2026-01-16 21:40:10,216 - kg.pipeline.iterative - INFO - No merges required.
+2026-01-16 21:40:10,216 - kg.pipeline.iterative - INFO - Running Incremental Community Detection...
+2026-01-16 21:40:10,217 - kg.community.detection - INFO - === LEIDEN COMMUNITY DETECTION ===
+2026-01-16 21:40:10,217 - kg.community.detection - INFO - Running Leiden algorithm with edge weights (includes similarity edges if present)
+2026-01-16 21:40:10,219 - kg.community.detection - INFO - Graph: 338 nodes, 661 edges (0 weighted, 0 similarity)
+2026-01-16 21:40:10,219 - kg.community.detection - INFO - Optimizing resolution parameter in range (0.3, 2.0) with 15 steps...
+2026-01-16 21:40:10,219 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:10,331 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:10,332 - kg.community.detection - INFO - Community counts across runs: [11, 11, 11, 11, 11, 11, 11]
+2026-01-16 21:40:10,334 - kg.community.detection - INFO - Resolution 0.10: 11 communities, consistency=1.000, modularity=0.059
+2026-01-16 21:40:10,334 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:10,437 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:10,437 - kg.community.detection - INFO - Community counts across runs: [11, 11, 11, 11, 11, 11, 11]
+2026-01-16 21:40:10,439 - kg.community.detection - INFO - Resolution 0.20: 11 communities, consistency=1.000, modularity=0.059
+2026-01-16 21:40:10,440 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:10,544 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:10,545 - kg.community.detection - INFO - Community counts across runs: [11, 11, 11, 11, 11, 11, 11]
+2026-01-16 21:40:10,547 - kg.community.detection - INFO - Resolution 0.30: 11 communities, consistency=1.000, modularity=0.059
+2026-01-16 21:40:10,547 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:10,652 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:10,653 - kg.community.detection - INFO - Community counts across runs: [12, 12, 12, 12, 12, 12, 12]
+2026-01-16 21:40:10,655 - kg.community.detection - INFO - Resolution 0.40: 12 communities, consistency=1.000, modularity=0.179
+2026-01-16 21:40:10,655 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:10,769 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:10,770 - kg.community.detection - INFO - Community counts across runs: [14, 14, 14, 14, 14, 14, 14]
+2026-01-16 21:40:10,772 - kg.community.detection - INFO - Resolution 0.50: 14 communities, consistency=1.000, modularity=0.274
+2026-01-16 21:40:10,772 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:10,895 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:10,896 - kg.community.detection - INFO - Community counts across runs: [16, 16, 16, 16, 16, 16, 16]
+2026-01-16 21:40:10,899 - kg.community.detection - INFO - Resolution 0.60: 16 communities, consistency=1.000, modularity=0.360
+2026-01-16 21:40:10,899 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:11,340 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:11,341 - kg.community.detection - INFO - Community counts across runs: [18, 18, 18, 18, 18, 18, 18]
+2026-01-16 21:40:11,344 - kg.community.detection - INFO - Resolution 0.70: 18 communities, consistency=1.000, modularity=0.395
+2026-01-16 21:40:11,345 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:11,483 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:11,483 - kg.community.detection - INFO - Community counts across runs: [20, 20, 20, 20, 20, 20, 20]
+2026-01-16 21:40:11,487 - kg.community.detection - INFO - Resolution 0.80: 20 communities, consistency=1.000, modularity=0.417
+2026-01-16 21:40:11,488 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:11,615 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:11,616 - kg.community.detection - INFO - Community counts across runs: [22, 22, 22, 22, 22, 22, 22]
+2026-01-16 21:40:11,618 - kg.community.detection - INFO - Resolution 0.90: 22 communities, consistency=1.000, modularity=0.422
+2026-01-16 21:40:11,619 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:11,733 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:11,734 - kg.community.detection - INFO - Community counts across runs: [24, 24, 24, 24, 24, 24, 24]
+2026-01-16 21:40:11,736 - kg.community.detection - INFO - Resolution 1.00: 24 communities, consistency=1.000, modularity=0.423
+2026-01-16 21:40:11,737 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:11,850 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:11,850 - kg.community.detection - INFO - Community counts across runs: [26, 26, 26, 26, 26, 26, 26]
+2026-01-16 21:40:11,853 - kg.community.detection - INFO - Resolution 1.10: 26 communities, consistency=1.000, modularity=0.422
+2026-01-16 21:40:11,853 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:11,966 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:11,967 - kg.community.detection - INFO - Community counts across runs: [28, 28, 28, 28, 28, 28, 28]
+2026-01-16 21:40:11,970 - kg.community.detection - INFO - Resolution 1.20: 28 communities, consistency=1.000, modularity=0.421
+2026-01-16 21:40:11,970 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:12,085 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:12,085 - kg.community.detection - INFO - Community counts across runs: [26, 26, 26, 26, 26, 26, 26]
+2026-01-16 21:40:12,088 - kg.community.detection - INFO - Resolution 1.30: 26 communities, consistency=1.000, modularity=0.417
+2026-01-16 21:40:12,088 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:12,202 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:12,203 - kg.community.detection - INFO - Community counts across runs: [26, 26, 26, 26, 26, 26, 26]
+2026-01-16 21:40:12,206 - kg.community.detection - INFO - Resolution 1.40: 26 communities, consistency=1.000, modularity=0.414
+2026-01-16 21:40:12,207 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:12,327 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:12,328 - kg.community.detection - INFO - Community counts across runs: [28, 28, 28, 28, 28, 28, 28]
+2026-01-16 21:40:12,331 - kg.community.detection - INFO - Resolution 1.50: 28 communities, consistency=1.000, modularity=0.412
+2026-01-16 21:40:12,331 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:12,448 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:12,448 - kg.community.detection - INFO - Community counts across runs: [29, 29, 29, 29, 29, 29, 29]
+2026-01-16 21:40:12,451 - kg.community.detection - INFO - Resolution 1.60: 29 communities, consistency=1.000, modularity=0.408
+2026-01-16 21:40:12,451 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:12,564 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:12,564 - kg.community.detection - INFO - Community counts across runs: [31, 31, 31, 31, 31, 31, 31]
+2026-01-16 21:40:12,567 - kg.community.detection - INFO - Resolution 1.70: 31 communities, consistency=1.000, modularity=0.405
+2026-01-16 21:40:12,568 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:12,747 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:12,748 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:12,752 - kg.community.detection - INFO - Resolution 1.80: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:12,753 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:12,933 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:12,934 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:12,938 - kg.community.detection - INFO - Resolution 1.90: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:12,939 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:13,130 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:13,130 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:13,134 - kg.community.detection - INFO - Resolution 2.00: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:13,134 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:13,278 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:13,278 - kg.community.detection - INFO - Community counts across runs: [34, 34, 34, 34, 34, 34, 34]
+2026-01-16 21:40:13,282 - kg.community.detection - INFO - Resolution 2.10: 34 communities, consistency=1.000, modularity=0.399
+2026-01-16 21:40:13,283 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:13,425 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:13,425 - kg.community.detection - INFO - Community counts across runs: [37, 37, 37, 37, 37, 37, 37]
+2026-01-16 21:40:13,429 - kg.community.detection - INFO - Resolution 2.20: 37 communities, consistency=1.000, modularity=0.395
+2026-01-16 21:40:13,429 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:13,560 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:13,560 - kg.community.detection - INFO - Community counts across runs: [39, 39, 39, 39, 39, 39, 39]
+2026-01-16 21:40:13,564 - kg.community.detection - INFO - Resolution 2.30: 39 communities, consistency=1.000, modularity=0.389
+2026-01-16 21:40:13,564 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:13,683 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:13,684 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:13,687 - kg.community.detection - INFO - Resolution 2.40: 40 communities, consistency=1.000, modularity=0.387
+2026-01-16 21:40:13,688 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:13,801 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:13,802 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:13,805 - kg.community.detection - INFO - Resolution 2.50: 40 communities, consistency=1.000, modularity=0.387
+2026-01-16 21:40:13,805 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:13,928 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:13,929 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:13,932 - kg.community.detection - INFO - Resolution 2.60: 40 communities, consistency=1.000, modularity=0.387
+2026-01-16 21:40:13,933 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:14,049 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:14,050 - kg.community.detection - INFO - Community counts across runs: [40, 40, 40, 40, 40, 40, 40]
+2026-01-16 21:40:14,053 - kg.community.detection - INFO - Resolution 2.70: 40 communities, consistency=1.000, modularity=0.386
+2026-01-16 21:40:14,054 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:14,171 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:14,171 - kg.community.detection - INFO - Community counts across runs: [41, 41, 41, 41, 41, 41, 41]
+2026-01-16 21:40:14,174 - kg.community.detection - INFO - Resolution 2.80: 41 communities, consistency=1.000, modularity=0.385
+2026-01-16 21:40:14,175 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:14,286 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:14,286 - kg.community.detection - INFO - Community counts across runs: [42, 42, 42, 42, 42, 42, 42]
+2026-01-16 21:40:14,290 - kg.community.detection - INFO - Resolution 2.90: 42 communities, consistency=1.000, modularity=0.384
+2026-01-16 21:40:14,290 - kg.community.detection - INFO - Evaluating community consistency across 3 runs...
+2026-01-16 21:40:14,422 - kg.community.detection - INFO - Community consistency score: 1.000
+2026-01-16 21:40:14,422 - kg.community.detection - INFO - Community counts across runs: [44, 44, 44, 44, 44, 44, 44]
+2026-01-16 21:40:14,427 - kg.community.detection - INFO - Resolution 3.00: 44 communities, consistency=1.000, modularity=0.382
+2026-01-16 21:40:14,427 - kg.community.detection - INFO - Best resolution: 1.00 (consistency=1.000, modularity=0.423)
+2026-01-16 21:40:14,428 - kg.community.detection - INFO - Using optimized resolution 1.00
+2026-01-16 21:40:14,430 - kg.community.detection - INFO - Leiden algorithm found 24 communities
+2026-01-16 21:40:14,430 - kg.community.detection - INFO - Community sizes: {0: 72, 1: 38, 2: 30, 3: 25, 4: 23, 5: 21, 6: 21, 7: 20, 8: 19, 9: 10, 10: 10, 11: 7, 12: 7, 13: 5, 14: 5, 15: 5, 16: 3, 17: 3, 18: 3, 19: 3, 20: 2, 21: 2, 22: 2, 23: 2}
+2026-01-16 21:40:14,431 - kg.community.detection - INFO - Stats: Min=2, Max=72, Avg=14.08
+2026-01-16 21:40:14,431 - kg.community.detection - INFO - Community detection finished in 4214.46ms
+2026-01-16 21:40:14,432 - kg.service.graph_service - INFO - Updating community assignments for 338 nodes...
+2026-01-16 21:40:14,450 - kg.service.graph_service - INFO - ✅ Community assignments updated
+2026-01-16 21:40:14,451 - kg.pipeline.iterative - INFO - ✅ Community detection complete
+2026-01-16 21:40:14,451 - kg.pipeline.iterative - INFO - Running subcommunity detection...
+2026-01-16 21:40:14,717 - kg.pipeline.iterative - INFO - ✅ Detected 303 subcommunities
+2026-01-16 21:40:14,717 - kg.pipeline.iterative - INFO - Creating topic hierarchy...
+2026-01-16 21:40:14,719 - kg.community.subcommunities - INFO - Creating PROPER topic hierarchy: Entities→Subtopics→Parent Topics...
+2026-01-16 21:40:14,721 - kg.community.subcommunities - INFO - Created 53 Subtopic nodes
+2026-01-16 21:40:14,721 - kg.community.subcommunities - INFO - Created 24 Topic nodes
+2026-01-16 21:40:14,722 - kg.community.subcommunities - INFO - Created 303 entity→subtopic IN_TOPIC relationships
+2026-01-16 21:40:14,722 - kg.community.subcommunities - INFO - Created 53 subtopic→parent PARENT_TOPIC relationships
+2026-01-16 21:40:14,722 - kg.community.subcommunities - INFO - ✅ PROPER HIERARCHY: Entities→Subtopics→Parent Topics
+2026-01-16 21:40:14,723 - kg.pipeline.iterative - INFO - Fetching chunks for summarization context...
+2026-01-16 21:40:14,723 - kg.service.graph_service - INFO - Fetching chunks for summarization context...
+2026-01-16 21:40:14,738 - kg.service.graph_service - INFO - Fetched 40 chunk nodes
+2026-01-16 21:40:14,749 - kg.service.graph_service - INFO - Fetched 399 HAS_ENTITY relationships
+2026-01-16 21:40:14,751 - kg.pipeline.iterative - INFO - ✅ Context enrichment complete: 455 total nodes in hierarchy graph
+2026-01-16 21:40:14,773 - kg.summarization.core - INFO - Phase 1: Collecting summarization tasks...
+2026-01-16 21:40:14,773 - kg.summarization.core - INFO - Found 24 topic nodes for summarization
+2026-01-16 21:40:14,774 - kg.summarization.core - INFO - Created task for topic 0: 72 entities, 20 chunks, 31210 chars
+2026-01-16 21:40:14,775 - kg.summarization.core - INFO - Created task for topic 1: 38 entities, 8 chunks, 13727 chars
+2026-01-16 21:40:14,775 - kg.summarization.core - INFO - Created task for topic 2: 30 entities, 8 chunks, 2823 chars
+2026-01-16 21:40:14,776 - kg.summarization.core - INFO - Created task for topic 3: 25 entities, 10 chunks, 6624 chars
+2026-01-16 21:40:14,776 - kg.summarization.core - INFO - Created task for topic 4: 23 entities, 5 chunks, 1657 chars
+2026-01-16 21:40:14,777 - kg.summarization.core - INFO - Created task for topic 5: 21 entities, 5 chunks, 1827 chars
+2026-01-16 21:40:14,777 - kg.summarization.core - INFO - Created task for topic 6: 21 entities, 4 chunks, 5538 chars
+2026-01-16 21:40:14,778 - kg.summarization.core - INFO - Created task for topic 7: 20 entities, 8 chunks, 11613 chars
+2026-01-16 21:40:14,779 - kg.summarization.core - INFO - Created task for topic 8: 19 entities, 4 chunks, 1417 chars
+2026-01-16 21:40:14,780 - kg.summarization.core - INFO - Created task for topic 9: 10 entities, 1 chunks, 368 chars
+2026-01-16 21:40:14,781 - kg.summarization.core - INFO - Created task for topic 10: 10 entities, 6 chunks, 11712 chars
+2026-01-16 21:40:14,782 - kg.summarization.core - INFO - Created task for topic 11: 7 entities, 1 chunks, 294 chars
+2026-01-16 21:40:14,782 - kg.summarization.core - INFO - Created task for topic 12: 7 entities, 1 chunks, 275 chars
+2026-01-16 21:40:14,783 - kg.summarization.core - INFO - Using fallback chunks for topic 13: 10 chunks
+2026-01-16 21:40:14,783 - kg.summarization.core - INFO - Created task for topic 13: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,784 - kg.summarization.core - INFO - Using fallback chunks for topic 14: 10 chunks
+2026-01-16 21:40:14,785 - kg.summarization.core - INFO - Created task for topic 14: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,785 - kg.summarization.core - INFO - Using fallback chunks for topic 15: 10 chunks
+2026-01-16 21:40:14,785 - kg.summarization.core - INFO - Created task for topic 15: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,786 - kg.summarization.core - INFO - Using fallback chunks for topic 16: 10 chunks
+2026-01-16 21:40:14,786 - kg.summarization.core - INFO - Created task for topic 16: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,787 - kg.summarization.core - INFO - Using fallback chunks for topic 17: 10 chunks
+2026-01-16 21:40:14,787 - kg.summarization.core - INFO - Created task for topic 17: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,788 - kg.summarization.core - INFO - Using fallback chunks for topic 18: 10 chunks
+2026-01-16 21:40:14,788 - kg.summarization.core - INFO - Created task for topic 18: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,789 - kg.summarization.core - INFO - Using fallback chunks for topic 19: 10 chunks
+2026-01-16 21:40:14,789 - kg.summarization.core - INFO - Created task for topic 19: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,790 - kg.summarization.core - INFO - Using fallback chunks for topic 20: 10 chunks
+2026-01-16 21:40:14,790 - kg.summarization.core - INFO - Created task for topic 20: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,791 - kg.summarization.core - INFO - Using fallback chunks for topic 21: 10 chunks
+2026-01-16 21:40:14,791 - kg.summarization.core - INFO - Created task for topic 21: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,792 - kg.summarization.core - INFO - Using fallback chunks for topic 22: 10 chunks
+2026-01-16 21:40:14,792 - kg.summarization.core - INFO - Created task for topic 22: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,793 - kg.summarization.core - INFO - Using fallback chunks for topic 23: 10 chunks
+2026-01-16 21:40:14,793 - kg.summarization.core - INFO - Created task for topic 23: 0 entities, 10 chunks, 11374 chars
+2026-01-16 21:40:14,794 - kg.summarization.core - INFO - Found 53 subtopic nodes for summarization
+2026-01-16 21:40:14,795 - kg.summarization.core - INFO - Created task for subtopic 0_0: 43 entities, 14 chunks, 24419 chars
+2026-01-16 21:40:14,797 - kg.summarization.core - INFO - Created task for subtopic 0_1: 3 entities, 1 chunks, 296 chars
+2026-01-16 21:40:14,798 - kg.summarization.core - INFO - Created task for subtopic 0_2: 2 entities, 1 chunks, 296 chars
+2026-01-16 21:40:14,798 - kg.summarization.core - INFO - Created task for subtopic 0_3: 8 entities, 8 chunks, 14884 chars
+2026-01-16 21:40:14,799 - kg.summarization.core - INFO - Created task for subtopic 0_4: 2 entities, 1 chunks, 338 chars
+2026-01-16 21:40:14,800 - kg.summarization.core - INFO - Created task for subtopic 0_5: 2 entities, 1 chunks, 1430 chars
+2026-01-16 21:40:14,801 - kg.summarization.core - INFO - Created task for subtopic 0_6: 4 entities, 1 chunks, 325 chars
+2026-01-16 21:40:14,801 - kg.summarization.core - INFO - Created task for subtopic 0_7: 6 entities, 1 chunks, 325 chars
+2026-01-16 21:40:14,801 - kg.summarization.core - INFO - Created task for subtopic 0_8: 2 entities, 1 chunks, 1909 chars
+2026-01-16 21:40:14,802 - kg.summarization.core - INFO - Created task for subtopic 1_0: 26 entities, 6 chunks, 11648 chars
+2026-01-16 21:40:14,802 - kg.summarization.core - INFO - Created task for subtopic 1_1: 8 entities, 4 chunks, 6421 chars
+2026-01-16 21:40:14,803 - kg.summarization.core - INFO - Created task for subtopic 1_2: 2 entities, 2 chunks, 3932 chars
+2026-01-16 21:40:14,803 - kg.summarization.core - INFO - Created task for subtopic 1_3: 2 entities, 1 chunks, 2129 chars
+2026-01-16 21:40:14,804 - kg.summarization.core - INFO - Created task for subtopic 2_0: 7 entities, 3 chunks, 1119 chars
+2026-01-16 21:40:14,804 - kg.summarization.core - INFO - Created task for subtopic 2_1: 7 entities, 5 chunks, 1673 chars
+2026-01-16 21:40:14,804 - kg.summarization.core - INFO - Created task for subtopic 2_2: 10 entities, 3 chunks, 1072 chars
+2026-01-16 21:40:14,805 - kg.summarization.core - INFO - Created task for subtopic 2_3: 6 entities, 4 chunks, 1438 chars
+2026-01-16 21:40:14,805 - kg.summarization.core - INFO - Created task for subtopic 3_0: 5 entities, 3 chunks, 2834 chars
+2026-01-16 21:40:14,806 - kg.summarization.core - INFO - Created task for subtopic 3_1: 6 entities, 5 chunks, 1744 chars
+2026-01-16 21:40:14,806 - kg.summarization.core - INFO - Created task for subtopic 3_2: 4 entities, 3 chunks, 2490 chars
+2026-01-16 21:40:14,807 - kg.summarization.core - INFO - Created task for subtopic 3_3: 5 entities, 2 chunks, 631 chars
+2026-01-16 21:40:14,807 - kg.summarization.core - INFO - Created task for subtopic 3_4: 5 entities, 2 chunks, 633 chars
+2026-01-16 21:40:14,807 - kg.summarization.core - INFO - Created task for subtopic 4_0: 4 entities, 2 chunks, 748 chars
+2026-01-16 21:40:14,808 - kg.summarization.core - INFO - Created task for subtopic 4_1: 3 entities, 1 chunks, 444 chars
+2026-01-16 21:40:14,808 - kg.summarization.core - INFO - Created task for subtopic 4_2: 6 entities, 3 chunks, 1084 chars
+2026-01-16 21:40:14,809 - kg.summarization.core - INFO - Created task for subtopic 4_3: 5 entities, 3 chunks, 936 chars
+2026-01-16 21:40:14,809 - kg.summarization.core - INFO - Created task for subtopic 4_4: 5 entities, 2 chunks, 611 chars
+2026-01-16 21:40:14,809 - kg.summarization.core - INFO - Created task for subtopic 5_0: 6 entities, 3 chunks, 1122 chars
+2026-01-16 21:40:14,810 - kg.summarization.core - INFO - Created task for subtopic 5_1: 6 entities, 3 chunks, 1048 chars
+2026-01-16 21:40:14,810 - kg.summarization.core - INFO - Created task for subtopic 5_2: 3 entities, 1 chunks, 365 chars
+2026-01-16 21:40:14,811 - kg.summarization.core - INFO - Created task for subtopic 5_3: 2 entities, 2 chunks, 682 chars
+2026-01-16 21:40:14,811 - kg.summarization.core - INFO - Created task for subtopic 5_4: 4 entities, 1 chunks, 343 chars
+2026-01-16 21:40:14,812 - kg.summarization.core - INFO - Created task for subtopic 6_0: 6 entities, 4 chunks, 5538 chars
+2026-01-16 21:40:14,813 - kg.summarization.core - INFO - Created task for subtopic 6_1: 8 entities, 3 chunks, 5098 chars
+2026-01-16 21:40:14,815 - kg.summarization.core - INFO - Created task for subtopic 6_2: 4 entities, 3 chunks, 5098 chars
+2026-01-16 21:40:14,816 - kg.summarization.core - INFO - Created task for subtopic 6_3: 3 entities, 1 chunks, 1802 chars
+2026-01-16 21:40:14,816 - kg.summarization.core - INFO - Created task for subtopic 7_0: 5 entities, 2 chunks, 3104 chars
+2026-01-16 21:40:14,817 - kg.summarization.core - INFO - Created task for subtopic 7_1: 3 entities, 5 chunks, 9251 chars
+2026-01-16 21:40:14,818 - kg.summarization.core - INFO - Created task for subtopic 7_2: 4 entities, 3 chunks, 2554 chars
+2026-01-16 21:40:14,818 - kg.summarization.core - INFO - Created task for subtopic 7_3: 8 entities, 2 chunks, 3860 chars
+2026-01-16 21:40:14,819 - kg.summarization.core - INFO - Created task for subtopic 8_0: 5 entities, 3 chunks, 977 chars
+2026-01-16 21:40:14,819 - kg.summarization.core - INFO - Created task for subtopic 8_1: 7 entities, 1 chunks, 439 chars
+2026-01-16 21:40:14,820 - kg.summarization.core - INFO - Created task for subtopic 8_2: 2 entities, 2 chunks, 738 chars
+2026-01-16 21:40:14,820 - kg.summarization.core - INFO - Created task for subtopic 8_3: 5 entities, 1 chunks, 298 chars
+2026-01-16 21:40:14,821 - kg.summarization.core - INFO - Created task for subtopic 9_0: 4 entities, 1 chunks, 368 chars
+2026-01-16 21:40:14,821 - kg.summarization.core - INFO - Created task for subtopic 9_1: 4 entities, 1 chunks, 368 chars
+2026-01-16 21:40:14,821 - kg.summarization.core - INFO - Created task for subtopic 9_2: 2 entities, 1 chunks, 368 chars
+2026-01-16 21:40:14,822 - kg.summarization.core - INFO - Created task for subtopic 10_0: 8 entities, 6 chunks, 11712 chars
+2026-01-16 21:40:14,822 - kg.summarization.core - INFO - Created task for subtopic 10_1: 2 entities, 1 chunks, 1909 chars
+2026-01-16 21:40:14,823 - kg.summarization.core - INFO - Created task for subtopic 11_0: 3 entities, 1 chunks, 294 chars
+2026-01-16 21:40:14,823 - kg.summarization.core - INFO - Created task for subtopic 11_1: 4 entities, 1 chunks, 294 chars
+2026-01-16 21:40:14,823 - kg.summarization.core - INFO - Created task for subtopic 12_0: 4 entities, 1 chunks, 275 chars
+2026-01-16 21:40:14,824 - kg.summarization.core - INFO - Created task for subtopic 12_1: 3 entities, 1 chunks, 275 chars
+2026-01-16 21:40:14,824 - kg.summarization.core - INFO - Created 77 summarization tasks
+2026-01-16 21:40:14,825 - kg.summarization.core - INFO - Phase 2: Processing 77 tasks...
+2026-01-16 21:40:14,825 - kg.summarization.core - INFO - Processing 77 summarization tasks with max concurrency 10
+2026-01-16 21:40:14,858 - kg.summarization.core - INFO - Processing task topic_0...
+2026-01-16 21:40:14,858 - kg.summarization.core - INFO - Processing task topic_1...
+2026-01-16 21:40:14,859 - kg.summarization.core - INFO - Processing task topic_2...
+2026-01-16 21:40:14,859 - kg.summarization.core - INFO - Processing task topic_3...
+2026-01-16 21:40:14,860 - kg.summarization.core - INFO - Processing task topic_4...
+2026-01-16 21:40:14,860 - kg.summarization.core - INFO - Processing task topic_5...
+2026-01-16 21:40:14,861 - kg.summarization.core - INFO - Processing task topic_6...
+2026-01-16 21:40:14,862 - kg.summarization.core - INFO - Processing task topic_7...
+2026-01-16 21:40:14,862 - kg.summarization.core - INFO - Processing task topic_8...
+2026-01-16 21:40:14,863 - kg.summarization.core - INFO - Processing task topic_9...
+2026-01-16 21:40:15,206 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,232 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,240 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,249 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,253 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,268 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,320 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,322 - kg.summarization.core - INFO - Completed task topic_9: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:15,323 - kg.summarization.core - INFO - Processing task topic_10...
+2026-01-16 21:40:15,329 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,333 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,383 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,387 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,392 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,401 - kg.summarization.core - INFO - Completed task topic_5: 'Warm Morning Routine in a Snowy Winter Home Scene...'
+2026-01-16 21:40:15,402 - kg.summarization.core - INFO - Processing task topic_11...
+2026-01-16 21:40:15,403 - kg.summarization.core - INFO - Completed task topic_4: 'Morning Routine and Family Life in a Cozy Home Env...'
+2026-01-16 21:40:15,405 - kg.summarization.core - INFO - Processing task topic_12...
+2026-01-16 21:40:15,426 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,433 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,440 - kg.summarization.core - INFO - Completed task topic_8: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:15,441 - kg.summarization.core - INFO - Processing task topic_13...
+2026-01-16 21:40:15,443 - kg.summarization.core - INFO - Completed task topic_2: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:15,445 - kg.summarization.core - INFO - Processing task topic_14...
+2026-01-16 21:40:15,483 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,577 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,579 - kg.summarization.core - INFO - Completed task topic_0: 'A Family's Morning Routine on a Snowy Christmas Ev...'
+2026-01-16 21:40:15,580 - kg.summarization.core - INFO - Processing task topic_15...
+2026-01-16 21:40:15,621 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,624 - kg.summarization.core - INFO - Completed task topic_3: 'Balancing Family Life and Daily Chaos...'
+2026-01-16 21:40:15,624 - kg.summarization.core - INFO - Processing task topic_16...
+2026-01-16 21:40:15,628 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,631 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,634 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,643 - kg.summarization.core - INFO - Completed task topic_7: 'Coordinating Chaos: A Day in the Life of a Busy Fa...'
+2026-01-16 21:40:15,644 - kg.summarization.core - INFO - Processing task topic_17...
+2026-01-16 21:40:15,674 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,677 - kg.summarization.core - INFO - Completed task topic_6: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:15,678 - kg.summarization.core - INFO - Processing task topic_18...
+2026-01-16 21:40:15,753 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,755 - kg.summarization.core - INFO - Completed task topic_1: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:15,755 - kg.summarization.core - INFO - Processing task topic_19...
+2026-01-16 21:40:15,757 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,771 - kg.summarization.core - INFO - Completed task topic_12: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:15,772 - kg.summarization.core - INFO - Processing task topic_20...
+2026-01-16 21:40:15,776 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,788 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,795 - kg.summarization.core - INFO - Completed task topic_11: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:15,796 - kg.summarization.core - INFO - Processing task topic_21...
+2026-01-16 21:40:15,811 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,835 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,925 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,981 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:15,989 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,074 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,077 - kg.summarization.core - INFO - Completed task topic_10: 'Chaos in the Family: A Day in the Life...'
+2026-01-16 21:40:16,078 - kg.summarization.core - INFO - Processing task topic_22...
+2026-01-16 21:40:16,127 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,149 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,193 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,197 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,210 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,213 - kg.summarization.core - INFO - Completed task topic_15: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,214 - kg.summarization.core - INFO - Processing task topic_23...
+2026-01-16 21:40:16,217 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,233 - kg.summarization.core - INFO - Completed task topic_14: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,233 - kg.summarization.core - INFO - Processing task subtopic_0_0...
+2026-01-16 21:40:16,247 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,254 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,262 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,266 - kg.summarization.core - INFO - Completed task topic_13: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,267 - kg.summarization.core - INFO - Processing task subtopic_0_1...
+2026-01-16 21:40:16,268 - kg.summarization.core - INFO - Completed task topic_18: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,271 - kg.summarization.core - INFO - Processing task subtopic_0_2...
+2026-01-16 21:40:16,274 - kg.summarization.core - INFO - Completed task topic_16: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,276 - kg.summarization.core - INFO - Processing task subtopic_0_3...
+2026-01-16 21:40:16,301 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,321 - kg.summarization.core - INFO - Completed task topic_17: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,322 - kg.summarization.core - INFO - Processing task subtopic_0_4...
+2026-01-16 21:40:16,424 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,474 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,482 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,502 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,544 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,548 - kg.summarization.core - INFO - Completed task topic_21: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,549 - kg.summarization.core - INFO - Processing task subtopic_0_5...
+2026-01-16 21:40:16,552 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,565 - kg.summarization.core - INFO - Completed task topic_20: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,566 - kg.summarization.core - INFO - Processing task subtopic_0_6...
+2026-01-16 21:40:16,582 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,598 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,601 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,604 - kg.summarization.core - INFO - Completed task subtopic_0_2: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:16,604 - kg.summarization.core - INFO - Processing task subtopic_0_7...
+2026-01-16 21:40:16,627 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,630 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,633 - kg.summarization.core - INFO - Completed task subtopic_0_1: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:16,633 - kg.summarization.core - INFO - Processing task subtopic_0_8...
+2026-01-16 21:40:16,635 - kg.summarization.core - INFO - Completed task subtopic_0_4: 'Morning Routine: A Glimpse into Everyday Life...'
+2026-01-16 21:40:16,636 - kg.summarization.core - INFO - Processing task subtopic_1_0...
+2026-01-16 21:40:16,686 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,718 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,721 - kg.summarization.core - INFO - Completed task topic_19: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,722 - kg.summarization.core - INFO - Processing task subtopic_1_1...
+2026-01-16 21:40:16,738 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,740 - kg.summarization.core - INFO - Completed task topic_22: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,740 - kg.summarization.core - INFO - Processing task subtopic_1_2...
+2026-01-16 21:40:16,751 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,776 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,779 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,812 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,815 - kg.summarization.core - INFO - Completed task topic_23: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:16,815 - kg.summarization.core - INFO - Processing task subtopic_1_3...
+2026-01-16 21:40:16,858 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,868 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,871 - kg.summarization.core - INFO - Completed task subtopic_0_0: 'A Family's Saturday Morning Routine: Chaos and Con...'
+2026-01-16 21:40:16,872 - kg.summarization.core - INFO - Processing task subtopic_2_0...
+2026-01-16 21:40:16,876 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,888 - kg.summarization.core - INFO - Completed task subtopic_0_6: 'Moments of Quiet in the Rush of Daily Commute...'
+2026-01-16 21:40:16,889 - kg.summarization.core - INFO - Processing task subtopic_2_1...
+2026-01-16 21:40:16,922 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,926 - kg.summarization.core - INFO - Completed task subtopic_0_5: 'Bedtime Routine Chaos: A Family's Evening Struggle...'
+2026-01-16 21:40:16,927 - kg.summarization.core - INFO - Processing task subtopic_2_2...
+2026-01-16 21:40:16,937 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,941 - kg.summarization.core - INFO - Completed task subtopic_0_7: 'Moments of Quiet in the Rush of Daily Commute...'
+2026-01-16 21:40:16,942 - kg.summarization.core - INFO - Processing task subtopic_2_3...
+2026-01-16 21:40:16,982 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:16,984 - kg.summarization.core - INFO - Completed task subtopic_0_3: 'A Family's Saturday Morning Chaos: Balancing Work ...'
+2026-01-16 21:40:16,985 - kg.summarization.core - INFO - Processing task subtopic_3_0...
+2026-01-16 21:40:17,037 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,039 - kg.summarization.core - INFO - Completed task subtopic_0_8: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:17,039 - kg.summarization.core - INFO - Processing task subtopic_3_1...
+2026-01-16 21:40:17,049 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,067 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,074 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,098 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,101 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,140 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,166 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,188 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,223 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,227 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,229 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,230 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,234 - kg.summarization.core - INFO - Completed task subtopic_1_2: 'Chaos in the Morning: Managing Family Life and Wor...'
+2026-01-16 21:40:17,235 - kg.summarization.core - INFO - Processing task subtopic_3_2...
+2026-01-16 21:40:17,236 - kg.summarization.core - INFO - Completed task subtopic_1_1: 'Morning Chaos: Navigating Family Life on a Busy Su...'
+2026-01-16 21:40:17,238 - kg.summarization.core - INFO - Processing task subtopic_3_3...
+2026-01-16 21:40:17,242 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,245 - kg.summarization.core - INFO - Completed task subtopic_2_0: 'A Glimpse into Morning Routine and Family Life...'
+2026-01-16 21:40:17,247 - kg.summarization.core - INFO - Processing task subtopic_3_4...
+2026-01-16 21:40:17,262 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,275 - kg.summarization.core - INFO - Completed task subtopic_1_3: 'Morning Chaos: Navigating Family Life and Daily Re...'
+2026-01-16 21:40:17,277 - kg.summarization.core - INFO - Processing task subtopic_4_0...
+2026-01-16 21:40:17,278 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,293 - kg.summarization.core - INFO - Completed task subtopic_2_1: 'Snapshots of Home Life: Chaos and Comfort in Every...'
+2026-01-16 21:40:17,294 - kg.summarization.core - INFO - Processing task subtopic_4_1...
+2026-01-16 21:40:17,329 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,332 - kg.summarization.core - INFO - Completed task subtopic_2_2: 'Morning Routine: A Glimpse into Everyday Life and ...'
+2026-01-16 21:40:17,332 - kg.summarization.core - INFO - Processing task subtopic_4_2...
+2026-01-16 21:40:17,350 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,352 - kg.summarization.core - INFO - Completed task subtopic_2_3: 'Warm Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:17,353 - kg.summarization.core - INFO - Processing task subtopic_4_3...
+2026-01-16 21:40:17,355 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,367 - kg.summarization.core - INFO - Completed task subtopic_1_0: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:17,368 - kg.summarization.core - INFO - Processing task subtopic_4_4...
+2026-01-16 21:40:17,382 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,384 - kg.summarization.core - INFO - Completed task subtopic_3_1: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:17,385 - kg.summarization.core - INFO - Processing task subtopic_5_0...
+2026-01-16 21:40:17,431 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,433 - kg.summarization.core - INFO - Completed task subtopic_3_0: 'A Family's Winter Evening Routine: Chaos and Cozy ...'
+2026-01-16 21:40:17,433 - kg.summarization.core - INFO - Processing task subtopic_5_1...
+2026-01-16 21:40:17,461 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,467 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,470 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,481 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,488 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,517 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,541 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,579 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,581 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,599 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,601 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,603 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,610 - kg.summarization.core - INFO - Completed task subtopic_3_3: 'Winter Morning Routine: A Glimpse into Quiet Daily...'
+2026-01-16 21:40:17,610 - kg.summarization.core - INFO - Processing task subtopic_5_2...
+2026-01-16 21:40:17,611 - kg.summarization.core - INFO - Completed task subtopic_4_1: 'Winter Morning Routine in a Cozy, Snowy Bedroom Sa...'
+2026-01-16 21:40:17,611 - kg.summarization.core - INFO - Completed task subtopic_3_4: 'Winter Morning Routine on a Cozy Balcony Retreat...'
+2026-01-16 21:40:17,613 - kg.summarization.core - INFO - Processing task subtopic_5_3...
+2026-01-16 21:40:17,613 - kg.summarization.core - INFO - Processing task subtopic_5_4...
+2026-01-16 21:40:17,624 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,628 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,647 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,651 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,663 - kg.summarization.core - INFO - Completed task subtopic_4_0: 'Winter Morning Routine in a Cozy Bedroom Sanctuary...'
+2026-01-16 21:40:17,664 - kg.summarization.core - INFO - Processing task subtopic_6_0...
+2026-01-16 21:40:17,670 - kg.summarization.core - INFO - Completed task subtopic_4_2: 'Morning Routine: A Glimpse into Everyday Domestic ...'
+2026-01-16 21:40:17,672 - kg.summarization.core - INFO - Processing task subtopic_6_1...
+2026-01-16 21:40:17,673 - kg.summarization.core - INFO - Completed task subtopic_4_4: 'Cozy Home Scene: Daily Life in a Comfortable Livin...'
+2026-01-16 21:40:17,675 - kg.summarization.core - INFO - Processing task subtopic_6_2...
+2026-01-16 21:40:17,698 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,702 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,710 - kg.summarization.core - INFO - Completed task subtopic_3_2: 'Saturday Morning Chaos: A Glimpse into Family Life...'
+2026-01-16 21:40:17,710 - kg.summarization.core - INFO - Processing task subtopic_6_3...
+2026-01-16 21:40:17,712 - kg.summarization.core - INFO - Completed task subtopic_4_3: 'Morning Routines and Family Life in a Cozy Home En...'
+2026-01-16 21:40:17,713 - kg.summarization.core - INFO - Processing task subtopic_7_0...
+2026-01-16 21:40:17,727 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,732 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,735 - kg.summarization.core - INFO - Completed task subtopic_5_0: 'Warm Winter Morning in a Cozy, Snowy Kitchen Sanct...'
+2026-01-16 21:40:17,735 - kg.summarization.core - INFO - Processing task subtopic_7_1...
+2026-01-16 21:40:17,739 - kg.summarization.core - INFO - Completed task subtopic_5_1: 'Warm Morning Routine in a Cozy Winter Kitchen Sett...'
+2026-01-16 21:40:17,740 - kg.summarization.core - INFO - Processing task subtopic_7_2...
+2026-01-16 21:40:17,813 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,816 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,849 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,928 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,937 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,947 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,949 - kg.summarization.core - INFO - Completed task subtopic_5_4: 'Morning Routine in a Winter Wonderland Kitchen Set...'
+2026-01-16 21:40:17,949 - kg.summarization.core - INFO - Processing task subtopic_7_3...
+2026-01-16 21:40:17,969 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,973 - kg.summarization.core - INFO - Completed task subtopic_5_2: 'Warm Morning Routine in a Cozy Winter Kitchen Scen...'
+2026-01-16 21:40:17,974 - kg.summarization.core - INFO - Processing task subtopic_8_0...
+2026-01-16 21:40:17,981 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:17,985 - kg.summarization.core - INFO - Completed task subtopic_5_3: 'Winter Morning Routine in a Cozy, Snowy Kitchen Sa...'
+2026-01-16 21:40:17,985 - kg.summarization.core - INFO - Processing task subtopic_8_1...
+2026-01-16 21:40:17,998 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,010 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,014 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,037 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,083 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,141 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,143 - kg.summarization.core - INFO - Completed task subtopic_6_3: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:18,143 - kg.summarization.core - INFO - Processing task subtopic_8_2...
+2026-01-16 21:40:18,187 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,193 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,195 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,197 - kg.summarization.core - INFO - Completed task subtopic_6_1: 'A Family's Ordinary Day: Chaos and Connection...'
+2026-01-16 21:40:18,198 - kg.summarization.core - INFO - Processing task subtopic_8_3...
+2026-01-16 21:40:18,205 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,213 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,216 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,219 - kg.summarization.core - INFO - Completed task subtopic_6_0: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:18,219 - kg.summarization.core - INFO - Processing task subtopic_9_0...
+2026-01-16 21:40:18,223 - kg.summarization.core - INFO - Completed task subtopic_7_2: 'Bedtime Routine: A Glimpse into Family Life and Ha...'
+2026-01-16 21:40:18,225 - kg.summarization.core - INFO - Processing task subtopic_9_1...
+2026-01-16 21:40:18,270 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,273 - kg.summarization.core - INFO - Completed task subtopic_6_2: 'Chaos in the Home: Managing Family Life and Respon...'
+2026-01-16 21:40:18,274 - kg.summarization.core - INFO - Processing task subtopic_9_2...
+2026-01-16 21:40:18,313 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,316 - kg.summarization.core - INFO - Completed task subtopic_7_0: 'A Family's Morning Routine: Chaos and Compromise...'
+2026-01-16 21:40:18,316 - kg.summarization.core - INFO - Processing task subtopic_10_0...
+2026-01-16 21:40:18,318 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,338 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,340 - kg.summarization.core - INFO - Completed task subtopic_8_1: 'Warmth and Comfort in a Cozy Winter Dining Scene...'
+2026-01-16 21:40:18,341 - kg.summarization.core - INFO - Processing task subtopic_10_1...
+2026-01-16 21:40:18,363 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,365 - kg.summarization.core - INFO - Completed task subtopic_8_0: 'Warm Morning Routine in a Cozy Winter Wonderland S...'
+2026-01-16 21:40:18,366 - kg.summarization.core - INFO - Processing task subtopic_11_0...
+2026-01-16 21:40:18,376 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,380 - kg.summarization.core - INFO - Completed task subtopic_7_3: 'Chaos of Bedtime Routine: A Family's Evening Strug...'
+2026-01-16 21:40:18,380 - kg.summarization.core - INFO - Processing task subtopic_11_1...
+2026-01-16 21:40:18,389 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,392 - kg.summarization.core - INFO - Completed task subtopic_7_1: 'Coordinating Chaos: A Day in the Life of a Busy Fa...'
+2026-01-16 21:40:18,393 - kg.summarization.core - INFO - Processing task subtopic_12_0...
+2026-01-16 21:40:18,400 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,420 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,423 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,454 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,458 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,461 - kg.summarization.core - INFO - Completed task subtopic_8_2: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:18,461 - kg.summarization.core - INFO - Processing task subtopic_12_1...
+2026-01-16 21:40:18,493 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,496 - kg.summarization.core - INFO - Completed task subtopic_8_3: 'Winter Morning Routine: A Cozy Scene of Simple Com...'
+2026-01-16 21:40:18,520 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,524 - kg.summarization.core - INFO - Completed task subtopic_9_0: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:18,528 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,531 - kg.summarization.core - INFO - Completed task subtopic_9_1: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:18,562 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,568 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,573 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,590 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,607 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,610 - kg.summarization.core - INFO - Completed task subtopic_9_2: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:18,655 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,692 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,695 - kg.summarization.core - INFO - Completed task subtopic_12_0: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:18,708 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,711 - kg.summarization.core - INFO - Completed task subtopic_11_0: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:18,757 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,761 - kg.summarization.core - INFO - Completed task subtopic_11_1: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:18,784 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,786 - kg.summarization.core - INFO - Completed task subtopic_12_1: 'Daily Delights: A Glimpse into the Bakery Counter ...'
+2026-01-16 21:40:18,788 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,805 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:18,808 - kg.summarization.core - INFO - Completed task subtopic_10_1: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:19,048 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-16 21:40:19,050 - kg.summarization.core - INFO - Completed task subtopic_10_0: 'Family Life: Chaos and Connection in the Everyday...'
+2026-01-16 21:40:19,051 - kg.summarization.core - INFO - Summarization complete: 77/77 successful
+2026-01-16 21:40:20,253 - kg.summarization.core - INFO - Phase 3: Updating topic nodes...
+2026-01-16 21:40:20,253 - kg.summarization.core - INFO - Updated TOPIC_0 with title: 'A Family's Morning Routine on a Snowy Christmas Ev...'
+2026-01-16 21:40:20,253 - kg.summarization.core - INFO - Updated TOPIC_1 with title: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:20,254 - kg.summarization.core - INFO - Updated TOPIC_2 with title: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:20,254 - kg.summarization.core - INFO - Updated TOPIC_3 with title: 'Balancing Family Life and Daily Chaos...'
+2026-01-16 21:40:20,254 - kg.summarization.core - INFO - Updated TOPIC_4 with title: 'Morning Routine and Family Life in a Cozy Home Env...'
+2026-01-16 21:40:20,254 - kg.summarization.core - INFO - Updated TOPIC_5 with title: 'Warm Morning Routine in a Snowy Winter Home Scene...'
+2026-01-16 21:40:20,255 - kg.summarization.core - INFO - Updated TOPIC_6 with title: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:20,255 - kg.summarization.core - INFO - Updated TOPIC_7 with title: 'Coordinating Chaos: A Day in the Life of a Busy Fa...'
+2026-01-16 21:40:20,255 - kg.summarization.core - INFO - Updated TOPIC_8 with title: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:20,256 - kg.summarization.core - INFO - Updated TOPIC_9 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:20,256 - kg.summarization.core - INFO - Updated TOPIC_10 with title: 'Chaos in the Family: A Day in the Life...'
+2026-01-16 21:40:20,256 - kg.summarization.core - INFO - Updated TOPIC_11 with title: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:20,256 - kg.summarization.core - INFO - Updated TOPIC_12 with title: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:20,257 - kg.summarization.core - INFO - Updated TOPIC_13 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,257 - kg.summarization.core - INFO - Updated TOPIC_14 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,257 - kg.summarization.core - INFO - Updated TOPIC_15 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,257 - kg.summarization.core - INFO - Updated TOPIC_16 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,258 - kg.summarization.core - INFO - Updated TOPIC_17 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,258 - kg.summarization.core - INFO - Updated TOPIC_18 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,258 - kg.summarization.core - INFO - Updated TOPIC_19 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,259 - kg.summarization.core - INFO - Updated TOPIC_20 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,259 - kg.summarization.core - INFO - Updated TOPIC_21 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,259 - kg.summarization.core - INFO - Updated TOPIC_22 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,260 - kg.summarization.core - INFO - Updated TOPIC_23 with title: 'A Family's Daily Routine: Chaos and Connection...'
+2026-01-16 21:40:20,260 - kg.summarization.core - INFO - Updated SUBTOPIC_0_0 with title: 'A Family's Saturday Morning Routine: Chaos and Con...'
+2026-01-16 21:40:20,260 - kg.summarization.core - INFO - Updated SUBTOPIC_0_1 with title: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:20,260 - kg.summarization.core - INFO - Updated SUBTOPIC_0_2 with title: 'Cozy Morning Routine in a Child's Bedroom Sanctuar...'
+2026-01-16 21:40:20,261 - kg.summarization.core - INFO - Updated SUBTOPIC_0_3 with title: 'A Family's Saturday Morning Chaos: Balancing Work ...'
+2026-01-16 21:40:20,261 - kg.summarization.core - INFO - Updated SUBTOPIC_0_4 with title: 'Morning Routine: A Glimpse into Everyday Life...'
+2026-01-16 21:40:20,261 - kg.summarization.core - INFO - Updated SUBTOPIC_0_5 with title: 'Bedtime Routine Chaos: A Family's Evening Struggle...'
+2026-01-16 21:40:20,262 - kg.summarization.core - INFO - Updated SUBTOPIC_0_6 with title: 'Moments of Quiet in the Rush of Daily Commute...'
+2026-01-16 21:40:20,262 - kg.summarization.core - INFO - Updated SUBTOPIC_0_7 with title: 'Moments of Quiet in the Rush of Daily Commute...'
+2026-01-16 21:40:20,262 - kg.summarization.core - INFO - Updated SUBTOPIC_0_8 with title: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:20,263 - kg.summarization.core - INFO - Updated SUBTOPIC_1_0 with title: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:20,263 - kg.summarization.core - INFO - Updated SUBTOPIC_1_1 with title: 'Morning Chaos: Navigating Family Life on a Busy Su...'
+2026-01-16 21:40:20,263 - kg.summarization.core - INFO - Updated SUBTOPIC_1_2 with title: 'Chaos in the Morning: Managing Family Life and Wor...'
+2026-01-16 21:40:20,263 - kg.summarization.core - INFO - Updated SUBTOPIC_1_3 with title: 'Morning Chaos: Navigating Family Life and Daily Re...'
+2026-01-16 21:40:20,264 - kg.summarization.core - INFO - Updated SUBTOPIC_2_0 with title: 'A Glimpse into Morning Routine and Family Life...'
+2026-01-16 21:40:20,264 - kg.summarization.core - INFO - Updated SUBTOPIC_2_1 with title: 'Snapshots of Home Life: Chaos and Comfort in Every...'
+2026-01-16 21:40:20,264 - kg.summarization.core - INFO - Updated SUBTOPIC_2_2 with title: 'Morning Routine: A Glimpse into Everyday Life and ...'
+2026-01-16 21:40:20,265 - kg.summarization.core - INFO - Updated SUBTOPIC_2_3 with title: 'Warm Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:20,265 - kg.summarization.core - INFO - Updated SUBTOPIC_3_0 with title: 'A Family's Winter Evening Routine: Chaos and Cozy ...'
+2026-01-16 21:40:20,265 - kg.summarization.core - INFO - Updated SUBTOPIC_3_1 with title: 'Winter Morning Routine in a Cozy Home Environment...'
+2026-01-16 21:40:20,266 - kg.summarization.core - INFO - Updated SUBTOPIC_3_2 with title: 'Saturday Morning Chaos: A Glimpse into Family Life...'
+2026-01-16 21:40:20,266 - kg.summarization.core - INFO - Updated SUBTOPIC_3_3 with title: 'Winter Morning Routine: A Glimpse into Quiet Daily...'
+2026-01-16 21:40:20,266 - kg.summarization.core - INFO - Updated SUBTOPIC_3_4 with title: 'Winter Morning Routine on a Cozy Balcony Retreat...'
+2026-01-16 21:40:20,267 - kg.summarization.core - INFO - Updated SUBTOPIC_4_0 with title: 'Winter Morning Routine in a Cozy Bedroom Sanctuary...'
+2026-01-16 21:40:20,267 - kg.summarization.core - INFO - Updated SUBTOPIC_4_1 with title: 'Winter Morning Routine in a Cozy, Snowy Bedroom Sa...'
+2026-01-16 21:40:20,268 - kg.summarization.core - INFO - Updated SUBTOPIC_4_2 with title: 'Morning Routine: A Glimpse into Everyday Domestic ...'
+2026-01-16 21:40:20,268 - kg.summarization.core - INFO - Updated SUBTOPIC_4_3 with title: 'Morning Routines and Family Life in a Cozy Home En...'
+2026-01-16 21:40:20,268 - kg.summarization.core - INFO - Updated SUBTOPIC_4_4 with title: 'Cozy Home Scene: Daily Life in a Comfortable Livin...'
+2026-01-16 21:40:20,269 - kg.summarization.core - INFO - Updated SUBTOPIC_5_0 with title: 'Warm Winter Morning in a Cozy, Snowy Kitchen Sanct...'
+2026-01-16 21:40:20,269 - kg.summarization.core - INFO - Updated SUBTOPIC_5_1 with title: 'Warm Morning Routine in a Cozy Winter Kitchen Sett...'
+2026-01-16 21:40:20,270 - kg.summarization.core - INFO - Updated SUBTOPIC_5_2 with title: 'Warm Morning Routine in a Cozy Winter Kitchen Scen...'
+2026-01-16 21:40:20,270 - kg.summarization.core - INFO - Updated SUBTOPIC_5_3 with title: 'Winter Morning Routine in a Cozy, Snowy Kitchen Sa...'
+2026-01-16 21:40:20,270 - kg.summarization.core - INFO - Updated SUBTOPIC_5_4 with title: 'Morning Routine in a Winter Wonderland Kitchen Set...'
+2026-01-16 21:40:20,271 - kg.summarization.core - INFO - Updated SUBTOPIC_6_0 with title: 'A Family's Ordinary Moments: Chaos and Connection...'
+2026-01-16 21:40:20,271 - kg.summarization.core - INFO - Updated SUBTOPIC_6_1 with title: 'A Family's Ordinary Day: Chaos and Connection...'
+2026-01-16 21:40:20,271 - kg.summarization.core - INFO - Updated SUBTOPIC_6_2 with title: 'Chaos in the Home: Managing Family Life and Respon...'
+2026-01-16 21:40:20,272 - kg.summarization.core - INFO - Updated SUBTOPIC_6_3 with title: 'Chaos in the Morning Routine: A Family's Daily Str...'
+2026-01-16 21:40:20,272 - kg.summarization.core - INFO - Updated SUBTOPIC_7_0 with title: 'A Family's Morning Routine: Chaos and Compromise...'
+2026-01-16 21:40:20,272 - kg.summarization.core - INFO - Updated SUBTOPIC_7_1 with title: 'Coordinating Chaos: A Day in the Life of a Busy Fa...'
+2026-01-16 21:40:20,273 - kg.summarization.core - INFO - Updated SUBTOPIC_7_2 with title: 'Bedtime Routine: A Glimpse into Family Life and Ha...'
+2026-01-16 21:40:20,273 - kg.summarization.core - INFO - Updated SUBTOPIC_7_3 with title: 'Chaos of Bedtime Routine: A Family's Evening Strug...'
+2026-01-16 21:40:20,273 - kg.summarization.core - INFO - Updated SUBTOPIC_8_0 with title: 'Warm Morning Routine in a Cozy Winter Wonderland S...'
+2026-01-16 21:40:20,274 - kg.summarization.core - INFO - Updated SUBTOPIC_8_1 with title: 'Warmth and Comfort in a Cozy Winter Dining Scene...'
+2026-01-16 21:40:20,274 - kg.summarization.core - INFO - Updated SUBTOPIC_8_2 with title: 'Warmth and Comfort in the Heart of Home Life...'
+2026-01-16 21:40:20,275 - kg.summarization.core - INFO - Updated SUBTOPIC_8_3 with title: 'Winter Morning Routine: A Cozy Scene of Simple Com...'
+2026-01-16 21:40:20,275 - kg.summarization.core - INFO - Updated SUBTOPIC_9_0 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:20,275 - kg.summarization.core - INFO - Updated SUBTOPIC_9_1 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:20,276 - kg.summarization.core - INFO - Updated SUBTOPIC_9_2 with title: 'Morning Routine: A Glimpse into a Cozy Bakery Scen...'
+2026-01-16 21:40:20,276 - kg.summarization.core - INFO - Updated SUBTOPIC_10_0 with title: 'Family Life: Chaos and Connection in the Everyday...'
+2026-01-16 21:40:20,276 - kg.summarization.core - INFO - Updated SUBTOPIC_10_1 with title: 'Chaos in the Kitchen: A Family's Daily Struggle...'
+2026-01-16 21:40:20,277 - kg.summarization.core - INFO - Updated SUBTOPIC_11_0 with title: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:20,277 - kg.summarization.core - INFO - Updated SUBTOPIC_11_1 with title: 'Commuter Life: A Glimpse into Daily Routine on the...'
+2026-01-16 21:40:20,277 - kg.summarization.core - INFO - Updated SUBTOPIC_12_0 with title: 'Daily Delights: A Glimpse into the Morning Bakery ...'
+2026-01-16 21:40:20,278 - kg.summarization.core - INFO - Updated SUBTOPIC_12_1 with title: 'Daily Delights: A Glimpse into the Bakery Counter ...'
+2026-01-16 21:40:20,278 - kg.summarization.core - INFO - Updated 24 topics and 53 subtopics
+2026-01-16 21:40:20,278 - kg.summarization.core - INFO - Phase 4: Checking similarity...
+2026-01-16 21:40:20,278 - kg.summarization.core - INFO - Checking for similar topic titles...
+2026-01-16 21:40:20,459 - kg.summarization.core - INFO - Found 172 similar pairs, 77 potential duplicates
+2026-01-16 21:40:20,460 - kg.pipeline.iterative - INFO - ✅ Summarization complete: 24 topics, 53 subtopics
+2026-01-16 21:40:20,460 - kg.pipeline.iterative - INFO - Step 6e: Uploading and syncing topic hierarchy to FalkorDB...
+2026-01-16 21:40:20,467 - kg.service.graph_service - INFO - 🚀 Uploading graph for document test_data_hierarchy (0 segments) to FalkorDB...
+2026-01-16 21:40:20,480 - kg.falkordb.uploader - INFO - 🚀 Uploading and Merging 415 nodes into FalkorDB...
+2026-01-16 21:40:20,520 - kg.falkordb.uploader - INFO - ✅ Uploaded and Merged 415 nodes
+2026-01-16 21:40:20,522 - kg.falkordb.uploader - INFO - 🚀 Uploading and Merging 1017 relationships into FalkorDB...
+2026-01-16 21:40:21,068 - kg.falkordb.uploader - INFO - ✅ Uploaded and Merged 1017 relationships
+2026-01-16 21:40:21,068 - kg.service.graph_service - INFO - ✅ Merged 415 nodes, 1017 relationships
+2026-01-16 21:40:21,069 - kg.pipeline.iterative - INFO - ✅ Synced 415 hierarchy nodes, 1017 relationships
+2026-01-16 21:40:21,099 - kg.pipeline.iterative - INFO - 📊 Graph snapshot saved to output/runs/20260116_213916/graphs/hierarchy.json
+2026-01-16 21:40:21,114 - kg.graph.schema - INFO - Graph schema saved to output/runs/20260116_213916/metadata/metadata/schema.json
+2026-01-16 21:40:21,115 - kg.summarization.reporting - INFO - Generating topic summary comparison...
+2026-01-16 21:40:21,124 - kg.summarization.reporting - INFO - Topic summary comparison saved to output/runs/20260116_213916/analytics/topic_summary_comparison.json
+2026-01-16 21:40:21,128 - kg.service.graph_service - INFO - Fetching entity graph from FalkorDB...
+2026-01-16 21:40:21,153 - kg.service.graph_service - INFO - Fetched 338 nodes for community detection
+2026-01-16 21:40:21,217 - kg.service.graph_service - INFO - Fetched 661 relationships
+2026-01-16 21:40:21,230 - kg.pipeline.iterative - INFO - 📊 Full Knowledge Graph saved to output/runs/20260116_213916/graphs/knowledge_graph.json
+2026-01-16 21:40:21,237 - kg.service.graph_service - INFO - Recalculating centrality and gathering metrics...
+2026-01-16 21:40:21,251 - src.kg.falkordb.algorithms - INFO - Calculating graph metrics (counts + centrality averages) for label=ENTITY_CONCEPT...
+2026-01-16 21:40:21,252 - src.kg.falkordb.algorithms - INFO - Running PageRank (iter=20, damping=0.85, label=ENTITY_CONCEPT, rel=None)...
+2026-01-16 21:40:21,260 - src.kg.falkordb.algorithms - INFO - PageRank finished in 7.70ms
+2026-01-16 21:40:21,261 - src.kg.falkordb.algorithms - INFO - Running Betweenness Centrality (label=ENTITY_CONCEPT, rel=None)...
+2026-01-16 21:40:21,265 - src.kg.falkordb.algorithms - INFO - Betweenness Centrality finished in 3.72ms
+2026-01-16 21:40:21,329 - src.kg.falkordb.algorithms - INFO - Graph Metrics: Nodes=529, Edges=2103, AvgPR=0.0022, AvgBC=0.00, Time(PR)=7.70ms, Time(BC)=3.72ms
+2026-01-16 21:40:21,330 - kg.service.graph_service - INFO - ✅ Metrics calculation complete
+2026-01-16 21:40:21,334 - kg.pipeline.iterative - INFO - 📈 Graph metrics saved to output/runs/20260116_213916/analytics/graph_metrics.csv
+2026-01-16 21:40:21,335 - kg.pipeline.iterative - INFO - 
+    📊 Run Metrics for test_data:
+    ----------------------------------------
+    • Nodes Merged:      0
+    • Edges Merged:      0
+    • Total Nodes:       529
+    • Total Edges:       2103
+    • Communities:       24
+    • Modularity:        0.4227
+    • Avg PageRank:      0.002169
+    ----------------------------------------
+                    
+2026-01-16 21:40:21,339 - kg.service.graph_service - INFO - Saved processing state: 2 documents, 20 segments
+2026-01-16 21:40:21,367 - kg.pipeline.iterative - INFO - 💾 Backed up processing state to output/runs/20260116_213916/processing_state_backup.json
+2026-01-16 21:40:21,371 - kg.pipeline.iterative - INFO - 💾 Run summary saved to output/runs/20260116_213916/run_summary.json
+2026-01-16 21:40:21,372 - kg.pipeline.iterative - INFO - 
+Post-Processing Complete.
+2026-01-16 21:40:21,373 - __main__ - INFO - ================================================================================
+2026-01-16 21:40:21,373 - __main__ - INFO - PIPELINE EXECUTION COMPLETE
+2026-01-16 21:40:21,374 - __main__ - INFO - ================================================================================
+2026-01-16 21:40:21,374 - __main__ - INFO - Documents processed: 2
+2026-01-16 21:40:21,375 - __main__ - INFO - Nodes merged: 419
+2026-01-16 21:40:21,375 - __main__ - INFO - Relationships merged: 1223

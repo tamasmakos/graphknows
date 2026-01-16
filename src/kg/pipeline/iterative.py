@@ -25,6 +25,8 @@ from ..summarization.reporting import generate_community_summary_comparison
 from ..summarization.core import generate_community_summaries
 from ..community.subcommunities import add_enhanced_community_attributes_to_graph
 from ..llm import get_model_name, get_langchain_llm
+from ..graph.pruning import prune_graph
+from ..graph.text_resolution import resolve_similar_entities
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +217,10 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False, log_limi
                     batch_size=32
                 )
                 
+                # 3.5 Pruning
+                logger.info("Step 3.5: Pruning graph...")
+                prune_graph(graph, config.incremental.dict() if hasattr(config, 'incremental') else {})
+                
                 # 4. Upload & Merge into Database
                 logger.info("Step 4: Uploading and merging into database...")
                 segments = [n for n, d in graph.nodes(data=True) if d.get('node_type') == 'SEGMENT']
@@ -240,14 +246,70 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False, log_limi
                 total_stats['documents_processed'] += 1
                 docs_processed_count += 1
                 
-                logger.info(f"✅ Successfully processed and merged {doc_id}")
+                # 5b. Run Text-Based Entity Resolution (Merge similar nodes)
+                # We do this before community detection so that communities are built on the consolidated graph.
+                try:
+                    logger.info("Running Entity Resolution (Merging similar Entity/Location nodes)...")
+                    # Fetch current graph state
+                    full_graph_for_res = builder.fetch_entity_graph()
+                    
+                    # Convert to DiGraph for resolution (it expects DiGraph although it uses undirected internally for sim)
+                    # Actually fetch_entity_graph returns nx.Graph (undirected).
+                    # resolve_similar_entities takes nx.DiGraph but only reads 'name' and 'node_type'.
+                    # It creates 'sim_graph' (undirected) internally.
+                    # It calls '_merge_node_into' which modifies the graph.
+                    # Since we are essentially just getting a list of merges to apply to DB, 
+                    # we can cast it to DiGraph to satisfy type hint, or adjust hint.
+                    # Let's just cast or ignore type hint (it's python).
+                    # But wait, resolve_similar_entities calls _merge_node_into which does `graph.in_edges`.
+                    # Undirected graph doesn't have `in_edges`.
+                    # So we need a DiGraph.
+                    # fetch_entity_graph returns Graph because it sums weights for community detection.
+                    # We might need a separate fetch or just use what we have? 
+                    # If we use Undirected, `in_edges` fails.
+                    # We need directionality for correct merging? 
+                    # actually `_merge_node_into` logic moves edges.
+                    # If we just want the MERGE LIST, 'resolve_similar_entities' computes similarity based on Nodes.
+                    # The graph structure is only used to "break ties" (degree) or "move edges" (in memory).
+                    # We can use a DiGraph version of fetch or just make a temporary DiGraph from the Undirected one?
+                    # But the Undirected one has collapsed edges (summed weights).
+                    # Ideally we want the REAL graph.
+                    # But fetching the full real graph might be expensive.
+                    # Let's assume for now we use the graph we have (Undirected) and catch error if it tries to use in_edges?
+                    # No, `resolve_similar_entities` is ours, let's fix IT or fix usage.
+                    # It does: `degree = graph.degree(nid)`. This works on Undirected.
+                    # It does: `_merge_node_into`. This uses in/out edges.
+                    # FIX: We only need the LIST of merges for the DB. The in-memory update is only to prevent double-merging in one batch.
+                    # We can make `_merge_node_into` robust to Undirected graphs?
+                    # Or just:
+                    res_graph = full_graph_for_res.to_directed() if not full_graph_for_res.is_directed() else full_graph_for_res
+                    
+                    merges = resolve_similar_entities(res_graph)
+                    
+                    if merges:
+                         logger.info(f"Identified {len(merges)} merges to perform.")
+                         builder.apply_merges_to_db(merges)
+                         # If merges happened, we should ideally re-fetch the graph for community detection
+                         # so it is clean.
+                         logger.info("Re-fetching entity graph after merges...")
+                         full_graph = builder.fetch_entity_graph() # Refresh variable for next usage
+                    else:
+                         logger.info("No merges required.")
+                         full_graph = full_graph_for_res # Use existing
+
+                except Exception as e:
+                    logger.warning(f"Entity Resolution skipped/failed: {e}", exc_info=True)
+                    try:
+                        full_graph = builder.fetch_entity_graph() # Fallback
+                    except:
+                        full_graph = nx.Graph()
 
                 # 6. Run Community Detection & Centrality (Incremental)
                 comm_metrics = {}
                 comm_graph_size = {'nodes': 0, 'edges': 0}
                 try:
                     logger.info("Running Incremental Community Detection...")
-                    full_graph = builder.fetch_entity_graph()
+                    # full_graph is already set above
                     comm_graph_size['nodes'] = full_graph.number_of_nodes()
                     comm_graph_size['edges'] = full_graph.number_of_edges()
                     
@@ -346,8 +408,9 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False, log_limi
                             json.dump(nx.node_link_data(hierarchy_graph), f, indent=2)
                         logger.info(f"📊 Graph snapshot saved to {graph_json_path}")
                         
-                        # Save Schema (into analytics/metadata/schema.json)
-                        save_graph_schema(hierarchy_graph, str(run_dir / "analytics"))
+                        # Save Schema (into output_dir/metadata/schema.json)
+                        # User requested "in the output folder for each run"
+                        save_graph_schema(hierarchy_graph, str(run_dir / "metadata"))
                         
                         # Save Topic Comparison (into analytics/topic_summary_comparison.json)
                         generate_community_summary_comparison(hierarchy_graph, str(run_dir / "analytics"))

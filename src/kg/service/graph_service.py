@@ -7,7 +7,7 @@ Manages incremental document processing and graph updates.
 import logging
 import json
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 from datetime import datetime
 import networkx as nx
 
@@ -292,7 +292,8 @@ class IterativeGraphBuilder:
         try:
             from src.kg.falkordb.algorithms import FalkorDBAlgorithms
             algorithms = FalkorDBAlgorithms(self.uploader.graph_client)
-            results = algorithms.get_graph_metrics()
+            # Restrict metrics to ENTITY_CONCEPT nodes to avoid skewing stats with chunks/segments
+            results = algorithms.get_graph_metrics(label='ENTITY_CONCEPT')
             logger.info("✅ Metrics calculation complete")
             return results
         finally:
@@ -348,13 +349,14 @@ class IterativeGraphBuilder:
             # Fetch nodes
             # Query multiple labels relevant for community detection
             labels_clause = "n:ENTITY_CONCEPT OR n:PLACE OR n:CONTEXT OR n:ONTOLOGY_CLASS"
-            query_nodes = f"MATCH (n) WHERE {labels_clause} RETURN n.id as id"
+            query_nodes = f"MATCH (n) WHERE {labels_clause} RETURN n.id as id, n.name as name, n.node_type as node_type"
             res_nodes = self.uploader.graph_client.query(query_nodes)
             
             g = nx.Graph() # Undirected for Leiden algorithm usually
             
             for record in res_nodes.result_set:
-                g.add_node(record[0])
+                node_id, name, node_type = record
+                g.add_node(node_id, name=name, node_type=node_type)
             
             logger.info(f"Fetched {g.number_of_nodes()} nodes for community detection")
             
@@ -415,6 +417,72 @@ class IterativeGraphBuilder:
             
         finally:
             self.uploader.close()
+
+    def apply_merges_to_db(self, merges: List[Tuple[str, str, float]]) -> None:
+        """
+        Apply merge operations to the database.
+        
+        Args:
+            merges: List of (source_id, target_id, score) tuples.
+        """
+        if not merges:
+            return
+            
+        logger.info(f"Applying {len(merges)} merges to database...")
+        
+        if not self.uploader.connect():
+             raise RuntimeError("Failed to connect to FalkorDB")
+             
+        try:
+             count = 0
+             for source, target, score in merges:
+                 # 1. Fetch all edges connected to source
+                 # We simply move them to target.
+                 query_edges = f"MATCH (s {{id: '{source}'}})-[r]-(n) RETURN type(r) as type, startNode(r).id as start, endNode(r).id as end, properties(r) as props"
+                 res = self.uploader.graph_client.query(query_edges)
+                 
+                 edges_to_create = []
+                 if res and res.result_set:
+                     for record in res.result_set:
+                         rtype, start, end, props = record
+                         
+                         # Determine new direction
+                         if start == source:
+                             new_start, new_end = target, end
+                         else:
+                             new_start, new_end = start, target
+                             
+                         # Avoid self-loops if not intended
+                         if new_start == new_end:
+                             continue 
+                             
+                         edges_to_create.append({
+                             'source_id': new_start,
+                             'target_id': new_end,
+                             'type': rtype,
+                             'properties': props
+                         })
+                 
+                 # 2. Create new edges
+                 if edges_to_create:
+                     self.uploader.merge_relationships(edges_to_create)
+                     
+                 # 3. Update target aliases (append source name/id)
+                 # Using a direct query to update the array
+                 query_alias = f"MATCH (s {{id: '{source}'}}), (t {{id: '{target}'}}) SET t.aliases = (CASE WHEN t.aliases IS NULL THEN [] ELSE t.aliases END) + [s.name, s.id]"
+                 self.uploader.graph_client.query(query_alias)
+                 
+                 # 4. Delete source node
+                 query_del = f"MATCH (s {{id: '{source}'}}) DETACH DELETE s"
+                 self.uploader.graph_client.query(query_del)
+                 count += 1
+                 
+             logger.info(f"✅ Successfully applied {count} merges.")
+                 
+        except Exception as e:
+             logger.error(f"Failed to apply merges: {e}", exc_info=True)
+        finally:
+             self.uploader.close()
 
     def fetch_chunks_for_summarization(self) -> nx.DiGraph:
         """

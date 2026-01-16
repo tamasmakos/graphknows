@@ -15,11 +15,8 @@ processing:
   input_dir: "input"
   output_dir: "output"
   file_pattern: "*.csv"  # Updated for Life Logs
-  chunk_size: 256  # Token-based chunk size for LlamaIndex SentenceSplitter
+  chunk_size: 512  # Token-based chunk size for LlamaIndex SentenceSplitter
   chunk_overlap: 20  # Token overlap between chunks
-  # 'speech_limit' controls the max number of Segments/Episodes per file to process.
-  # Renamed conceptually to 'log_limit' in CLI, but internal key remains 'speech_limit' for compatibility.
-  speech_limit: 10 
   max_concurrent_extractions: 10  # Parallel extraction limit
 
 # ==============================================================================
@@ -28,8 +25,8 @@ processing:
 incremental:
   # Controls how many new Segments/Episodes (from the log) to process per run.
   # If 0, processes all new content found.
-  speech_limit: 20 
-  max_documents: 0 # Max files to process (useful if you have many daily log files)
+  speech_limit: 10 
+  max_documents: 1 # Max files to process (useful if you have many daily log files)
   state_file: "processing_state.json"  # Tracks processed documents/segments
   enable_pruning: true  # Remove low-centrality nodes after updates
   pruning_threshold: 0.01  # Minimum centrality score to keep

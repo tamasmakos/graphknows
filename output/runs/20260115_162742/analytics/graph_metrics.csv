@@ -1,2 +1,0 @@
-timestamp,document_id,nodes_merged,total_nodes,total_edges,avg_pagerank,avg_betweenness,pagerank_time_ms,betweenness_time_ms,modularity,community_count,community_detection_time_ms,comm_graph_nodes,comm_graph_edges,min_community_size,max_community_size,avg_community_size
-2026-01-15T16:28:30.431630,synthetic_test_data,421,527,2023,0.0020606204504246,329.730952209908,6.567478179931641,9.673595428466797,0.38909402670924675,28,3576.5559673309326,340,664,2,116,12.142857142857142

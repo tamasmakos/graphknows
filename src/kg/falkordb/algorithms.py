@@ -29,7 +29,9 @@ class FalkorDBAlgorithms:
         self, 
         iterations: int = 20, 
         damping_factor: float = 0.85, 
-        write_property: str = 'pagerank'
+        write_property: str = 'pagerank',
+        label: Optional[str] = None,
+        relationship_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Run PageRank algorithm.
@@ -38,21 +40,26 @@ class FalkorDBAlgorithms:
             iterations: Number of iterations
             damping_factor: Damping factor
             write_property: Property name to write results to
+            label: Node label to restrict prediction to (optional)
+            relationship_type: Relationship type to traverse (optional)
             
         Returns:
             Statistics about the execution including timing
         """
         import time
         start_time = time.time()
-        logger.info(f"Running PageRank (iter={iterations}, damping={damping_factor})...")
+        logger.info(f"Running PageRank (iter={iterations}, damping={damping_factor}, label={label}, rel={relationship_type})...")
         
         try:
             # FalkorDB syntax: gds.pageRank(graph_name, {param: value, ...})
             # Note: This version of FalkorDB/RedisGraph algo.pageRank requires exactly 2 arguments (Label, Type).
-            # It does not support custom iterations/damping via procedure arguments in this version.
-            # Passing null, null runs it on the entire graph with defaults.
+            # Passing 'null' checks all.
+            
+            label_arg = f"'{label}'" if label else "null"
+            rel_arg = f"'{relationship_type}'" if relationship_type else "null"
+            
             query = f"""
-            CALL algo.pageRank(null, null)
+            CALL algo.pageRank({label_arg}, {rel_arg})
             YIELD node, score
             SET node.{write_property} = score
             """
@@ -75,24 +82,31 @@ class FalkorDBAlgorithms:
 
     def run_betweenness_centrality(
         self, 
-        write_property: str = 'betweenness'
+        write_property: str = 'betweenness',
+        label: Optional[str] = None,
+        relationship_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Run Betweenness Centrality algorithm.
         
         Args:
             write_property: Property name to write results to
+            label: Node label to restrict prediction to (optional)
+            relationship_type: Relationship type to traverse (optional)
             
         Returns:
             Statistics about the execution
         """
         import time
         start_time = time.time()
-        logger.info("Running Betweenness Centrality...")
+        logger.info(f"Running Betweenness Centrality (label={label}, rel={relationship_type})...")
         
         try:
+            label_arg = f"'{label}'" if label else "null"
+            rel_arg = f"'{relationship_type}'" if relationship_type else "null"
+
             query = f"""
-            CALL algo.betweenness
+            CALL algo.betweenness({label_arg}, {rel_arg})
             YIELD node, score
             SET node.{write_property} = score
             """
@@ -114,13 +128,21 @@ class FalkorDBAlgorithms:
 
 
 
-    def get_graph_metrics(self) -> Dict[str, Any]:
+    def get_graph_metrics(
+        self,
+        label: Optional[str] = None,
+        relationship_type: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Calculate and retrieve graph metrics.
         
         This first runs centrality algorithms to ensure the graph properties 
         are up to date, then aggregates the results.
         
+        Args:
+            label: Node label to restrict metrics/centrality to
+            relationship_type: Relationship type to traverse
+            
         Returns:
             Dictionary containing:
             - total_nodes
@@ -131,21 +153,21 @@ class FalkorDBAlgorithms:
             - pagerank_time_ms
             - betweenness_time_ms
         """
-        logger.info("Calculating graph metrics (counts + centrality averages)...")
+        logger.info(f"Calculating graph metrics (counts + centrality averages) for label={label}...")
         
         metrics = {}
         
         # 1. Run centrality algorithms first to update properties
         # We catch errors so we can still return count metrics even if algorithms fail
         try:
-            pr_stats = self.run_pagerank()
+            pr_stats = self.run_pagerank(label=label, relationship_type=relationship_type)
             metrics['pagerank_time_ms'] = pr_stats.get('execution_time_ms', 0)
         except Exception as e:
             logger.warning(f"PageRank calc failed during metrics collection: {e}")
             metrics['pagerank_time_ms'] = 0
             
         try:
-            bc_stats = self.run_betweenness_centrality()
+            bc_stats = self.run_betweenness_centrality(label=label, relationship_type=relationship_type)
             metrics['betweenness_time_ms'] = bc_stats.get('execution_time_ms', 0)
         except Exception as e:
             logger.warning(f"Betweenness calc failed during metrics collection: {e}")

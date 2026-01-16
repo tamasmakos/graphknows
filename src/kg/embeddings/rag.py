@@ -32,10 +32,16 @@ def get_embedding_dimension(model_name: str = "all-MiniLM-L6-v2") -> int:
         return 384  # Default fallback
     
     try:
-        model = SentenceTransformer(model_name)
+        # Try loading from local cache first to avoid network timeouts
+        model = SentenceTransformer(model_name, local_files_only=True)
         return int(model.get_sentence_embedding_dimension())
     except Exception:
-        return 384
+        # Fallback to default loading (might download)
+        try:
+            model = SentenceTransformer(model_name)
+            return int(model.get_sentence_embedding_dimension())
+        except Exception:
+            return 384
 
 
 def _get_embedding_text_for_node(
@@ -141,7 +147,12 @@ def generate_rag_embeddings(
     logger.info(f"Using embedding model: {embedding_model}")
     
     # Load embedding model
-    model = SentenceTransformer(embedding_model)
+    try:
+        logger.info(f"Attempting to load {embedding_model} from local cache...")
+        model = SentenceTransformer(embedding_model, local_files_only=True)
+    except Exception as e:
+        logger.warning(f"Could not load from local cache ({e}). Attempting download...")
+        model = SentenceTransformer(embedding_model)
     embedding_dim = model.get_sentence_embedding_dimension()
     logger.info(f"Embedding dimension: {embedding_dim}")
     

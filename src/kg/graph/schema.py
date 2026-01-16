@@ -80,8 +80,9 @@ def extract_graph_schema(graph: nx.DiGraph) -> Dict[str, Any]:
         
         # Skip entity-to-entity relationships (semantic/extracted edges)
         # We only want structural/lexical edges in the schema
-        if source_type == 'ENTITY_CONCEPT' and target_type == 'ENTITY_CONCEPT':
-            continue
+        # Entity-to-entity relationships are now included to provide a complete schema
+        # if source_type == 'ENTITY_CONCEPT' and target_type == 'ENTITY_CONCEPT':
+        #    continue
         
         edge_label = data.get('label', data.get('relation_type', data.get('relation', 'RELATED_TO')))
         

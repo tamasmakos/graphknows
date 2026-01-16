@@ -26,7 +26,12 @@ def get_llamaindex_embeddings(model_name: str = "all-MiniLM-L6-v2") -> HuggingFa
     """
     global _embedding_model
     if _embedding_model is None:
-        _embedding_model = HuggingFaceEmbedding(model_name=model_name)
+        try:
+            # Try loading from local cache first
+            _embedding_model = HuggingFaceEmbedding(model_name=model_name, local_files_only=True)
+        except Exception:
+            # Fallback to default loading
+            _embedding_model = HuggingFaceEmbedding(model_name=model_name)
     return _embedding_model
 
 

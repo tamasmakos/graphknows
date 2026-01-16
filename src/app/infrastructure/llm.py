@@ -23,7 +23,10 @@ def get_llm():
 
 class SentenceTransformerEmbeddings:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        self.model = SentenceTransformer(model_name)
+        try:
+            self.model = SentenceTransformer(model_name, local_files_only=True)
+        except Exception:
+            self.model = SentenceTransformer(model_name)
 
     def embed_query(self, text: str):
         return self.model.encode(text).tolist()

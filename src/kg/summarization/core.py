@@ -80,8 +80,8 @@ async def generate_title_internal(llm: Any, text: str) -> str:
     truncated_text = truncate_text_for_llm(text, max_chars=12000)
     
     title_prompt = ChatPromptTemplate.from_template(
-        """Please generate a concise, descriptive title (maximum 10 words) for the following content about political/policy discussions. 
-        The title should capture the main topic or theme without being too generic.
+        """Please generate a concise, descriptive title (maximum 10 words) for the following content. 
+        The title should capture the main topic or theme regarding daily life, habits, or patterns without being too generic.
         
         Content:
         {text}
@@ -121,8 +121,8 @@ async def summarize_text_internal(llm: Any, text: str) -> str:
     truncated_text = truncate_text_for_llm(text, max_chars=12000)
     
     summary_prompt = ChatPromptTemplate.from_template(
-        """Please provide a comprehensive summary (3-5 sentences) of the following political/policy content. 
-        Focus on the main points, key decisions, and important themes discussed.
+        """Please provide a comprehensive summary (3-5 sentences) of the following content. 
+        Focus on average person topics - life related things, things to remember, things to notice, habits, patterns and so on.
         
         Content:
         {text}
