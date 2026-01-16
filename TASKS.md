@@ -40,3 +40,7 @@ This file tracks the detailed implementation status of the "Noa" Agentic Memory 
 - [x] **Security**: Externalize hardcoded secrets in `postgres_store.py`.
 - [x] **Testing**: Ensure all tests satisfy `pytest` execution.
 - [x] **Code Structure**: Reconcile file structure with documentation (missing `worker.py`).
+
+
+Probably this agent should have a tool to rephrase the question and workflow to query the knowledge graph multiple time before answering the question.
+We should improve the debugging frontend to include these thoughts.

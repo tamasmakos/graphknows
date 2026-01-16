@@ -25,9 +25,15 @@ torch
 uvicorn
 llama-index-embeddings-huggingface
 llama-index-llms-groq
+llama-index-graph-stores-falkordb
+langfuse-llama-index
 psycopg2-binary
 pgvector
 pytest==7.4.3
 pytest-asyncio==0.23.2
 httpx==0.25.2
 langdetect==1.0.9
+langfuse
+openinference-instrumentation-llama-index
+llama-index-llms-openai
+llama-index

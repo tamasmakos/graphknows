@@ -53,18 +53,9 @@ header h1 {
     font-size: 1.2rem;
 }
 
+/* .theme-btn removed to enforce dark mode ONLY */
 .theme-btn {
-    background: transparent;
-    border: none;
-    font-size: 1.2rem;
-    cursor: pointer;
-    color: white;
-    padding: 5px;
-    border-radius: 50%;
-}
-
-.theme-btn:hover {
-    background-color: rgba(255, 255, 255, 0.2);
+    display: none;
 }
 
 #chat-container {
@@ -240,19 +231,58 @@ header h1 {
     display: inline-block;
 }
 
-.dot.speaker { background-color: #FFC107; }
-.dot.speech { background-color: #03A9F4; }
-.dot.chunk { background-color: #E0E0E0; border: 1px solid #BDBDBD; }
-.dot.community { background-color: #8BC34A; }
-.dot.subcommunity { background-color: #CDDC39; }
-.dot.subtopic { background-color: #FF9800; }
-.dot.topic { background-color: #FF5722; }
-.dot.entity { background-color: #9C27B0; }
-.dot.session { background-color: #607D8B; }
-.dot.document { background-color: #795548; }
-.dot.day { background-color: #00BCD4; }
-.dot.segment { background-color: #3F51B5; }
-.dot.unknown { background-color: #9E9E9E; }
+.dot.speaker {
+    background-color: #FFC107;
+}
+
+.dot.speech {
+    background-color: #03A9F4;
+}
+
+.dot.chunk {
+    background-color: #E0E0E0;
+    border: 1px solid #BDBDBD;
+}
+
+.dot.community {
+    background-color: #8BC34A;
+}
+
+.dot.subcommunity {
+    background-color: #CDDC39;
+}
+
+.dot.subtopic {
+    background-color: #FF9800;
+}
+
+.dot.topic {
+    background-color: #FF5722;
+}
+
+.dot.entity {
+    background-color: #9C27B0;
+}
+
+.dot.session {
+    background-color: #607D8B;
+}
+
+.dot.document {
+    background-color: #795548;
+}
+
+.dot.day {
+    background-color: #00BCD4;
+}
+
+.dot.segment {
+    background-color: #3F51B5;
+}
+
+.dot.unknown {
+    background-color: #9E9E9E;
+}
 
 
 .loading {
@@ -280,7 +310,7 @@ text {
     font-size: 12px;
     background: white;
     border: 1px solid #ddd;
-    box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+    box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.2);
     border-radius: 5px;
     pointer-events: auto;
     opacity: 0;
@@ -396,9 +426,233 @@ body.dark-mode .graph-tooltip {
     background: #333;
     border-color: #555;
     color: #eee;
-    box-shadow: 2px 2px 6px rgba(0,0,0,0.5);
+    box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.5);
 }
 
 body.dark-mode .graph-tooltip h4 {
     border-bottom-color: #555;
+}
+
+/* Agent Toggle Button */
+.agent-toggle-btn {
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 20px;
+    margin-right: 10px;
+    transition: all 0.3s ease;
+}
+
+.agent-toggle-btn:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.agent-toggle-btn.active {
+    background-color: rgba(76, 175, 80, 0.3);
+    border-color: #4CAF50;
+}
+
+/* Debug Section Styles */
+.debug-section {
+    margin-bottom: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.debug-section-header {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #555;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.debug-icon {
+    font-size: 1rem;
+}
+
+/* Tool Calls Styles */
+.tool-calls-section {
+    background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
+    padding: 10px;
+    border: 1px solid #e0e7ff;
+}
+
+.tool-calls-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tool-call-item {
+    background: white;
+    border-radius: 6px;
+    padding: 8px 10px;
+    border-left: 3px solid #4a90e2;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.tool-call-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tool-number {
+    background: #4a90e2;
+    color: white;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: bold;
+}
+
+.tool-icon {
+    font-size: 1rem;
+}
+
+.tool-name {
+    font-weight: 600;
+    color: #333;
+    font-size: 0.85rem;
+}
+
+.tool-input {
+    margin-top: 4px;
+    padding-left: 26px;
+    font-size: 0.75rem;
+    color: #666;
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.input-key {
+    color: #4a90e2;
+    font-weight: 500;
+}
+
+/* Reasoning Section Styles */
+.reasoning-section {
+    background: #f9f9f9;
+    padding: 10px;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+}
+
+/* Timing Visualization */
+.timing-step {
+    margin-bottom: 8px;
+}
+
+.timing-header {
+    font-weight: 600;
+    color: #555;
+    margin-bottom: 6px;
+}
+
+.timing-items {
+    padding-left: 10px;
+}
+
+.timing-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 0.8rem;
+}
+
+.timing-label {
+    flex: 0 0 180px;
+    color: #666;
+}
+
+.timing-bar-container {
+    flex: 1;
+    height: 8px;
+    background: #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.timing-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+/* Context Section Styles */
+.context-section {
+    background: #fffef8;
+    border: 1px solid #f0e6c8;
+    border-radius: 6px;
+    padding: 10px;
+}
+
+.context-header {
+    cursor: pointer;
+}
+
+.context-toggle {
+    background: #4a90e2;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    margin-left: auto;
+}
+
+.context-block.collapsed {
+    display: none;
+}
+
+/* Dark Mode Debug Panel */
+body.dark-mode .tool-calls-section {
+    background: linear-gradient(135deg, #2a2d35 0%, #252830 100%);
+    border-color: #3d4150;
+}
+
+body.dark-mode .tool-call-item {
+    background: #3d3d3d;
+    border-left-color: #6ab0f3;
+}
+
+body.dark-mode .tool-name {
+    color: #e0e0e0;
+}
+
+body.dark-mode .tool-input {
+    color: #aaa;
+}
+
+body.dark-mode .reasoning-section {
+    background: #2d2d2d;
+    border-color: #444;
+}
+
+body.dark-mode .timing-label {
+    color: #aaa;
+}
+
+body.dark-mode .timing-bar-container {
+    background: #444;
+}
+
+body.dark-mode .context-section {
+    background: #2d2920;
+    border-color: #4a4530;
+}
+
+body.dark-mode .debug-section-header {
+    color: #bbb;
 }

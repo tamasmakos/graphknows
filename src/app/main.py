@@ -19,6 +19,10 @@ from pydantic import BaseModel
 from src.app.infrastructure.config import get_app_config
 from src.app.infrastructure.graph_db import get_database_client, GraphDB
 from src.app.services.retrieval import Message, run_focused_retrieval
+from src.app.agent.llamaindex_agent import get_agent
+from src.app.services.retrieval import Message, run_focused_retrieval
+from src.app.agent.llamaindex_agent import get_agent
+from src.app.services.graph_context import init_graph_context, get_accumulated_data, get_text_context
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +33,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("KG Agent initialized. Logging set to INFO level.")
 print("KG Agent is starting up... Visibility check.", flush=True)
+
+# Initialize Langfuse Tracing
+try:
+    from langfuse.llama_index import LlamaIndexInstrumentor
+    LlamaIndexInstrumentor().instrument()
+    logger.info("Langfuse instrumentation initialized.")
+except ImportError:
+    logger.warning("langfuse-llama-index not found. Tracing disabled.")
+except Exception as e:
+    logger.error(f"Failed to initialize Langfuse instrumentation: {e}")
 
 app = FastAPI(title="KG Agent")
 
@@ -47,6 +61,9 @@ class ChatRequest(BaseModel):
     database: str = "falkordb"
     create_plot: bool = False
     accumulated_graph_data: Optional[Dict[str, Any]] = None
+    use_agent: bool = False  # New: use LlamaIndex agent instead of direct retrieval
+
+
 def _extract_single_column(results: List[Dict[str, Any]], preferred_key: str) -> List[str]:
     """
     Utility to pull a single column out of a list of row dicts.
@@ -102,6 +119,59 @@ async def get_schema(database: str = "falkordb"):
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
+    """
+    Chat endpoint supporting both direct retrieval and LlamaIndex agent modes.
+    
+    Set use_agent=True to use the proactive LlamaIndex agent that explores
+    the graph before answering. Otherwise, uses direct retrieval pipeline.
+    """
+    import time
+    start_time = time.time()
+    
+    # Use LlamaIndex agent if requested
+    if request.use_agent:
+        try:
+            agent = get_agent(verbose=False)
+            
+            # Convert messages to history format
+            history = []
+            for msg in request.messages:
+                history.append({"role": msg.role, "content": msg.content})
+            
+            # Initialize graph context with any accumulated data
+            init_graph_context(request.accumulated_graph_data)
+            
+            # Run agent
+            result = await agent.chat(request.query, history)
+            
+            # Get accumulated graph data
+            graph_data = get_accumulated_data()
+            
+            execution_time = time.time() - start_time
+            
+            return {
+                "answer": result["answer"],
+                "context": "",  # Agent manages its own context
+                "execution_time": execution_time,
+                "execution_time": execution_time,
+                "graph_data": graph_data,  # Return collected graph data
+                "graph_stats": None,
+                "query_memory_mb": None,
+                "reasoning_chain": result.get("reasoning_timeline", [
+                    f"Mode: LlamaIndex Agent (Tracing Disabled or Empty)",
+                    f"Tools used: {len(result.get('tool_calls', []))}",
+                    f"Response time: {execution_time:.2f}s",
+                ] + [f"Tool: {tc['tool']}" for tc in result.get('tool_calls', [])]),
+                "cypher_query": "Agent-managed graph exploration",
+                "confidence_score": 1.0,
+                "tool_calls": result.get("tool_calls", []),
+                "context": get_text_context() or result.get("context", "") or "Agent exploration context",
+            }
+        except Exception as e:
+            logger.error("Agent endpoint error: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    # Fall back to direct retrieval pipeline
     config = get_app_config()
     db_type = request.database
 
@@ -206,6 +276,48 @@ async def chat_endpoint(request: ChatRequest):
 
     except Exception as e:  # noqa: BLE001
         logger.error("Endpoint error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/agent/chat")
+async def agent_chat_endpoint(request: ChatRequest):
+    """
+    Dedicated endpoint for LlamaIndex agent-based chat.
+    
+    Always uses the proactive LlamaIndex agent that explores the graph
+    before answering questions.
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        # Initialize graph context with any accumulated data from previous turns
+        init_graph_context(request.accumulated_graph_data)
+        
+        agent = get_agent(verbose=False)
+        
+        # Convert messages to history format
+        history = [{"role": msg.role, "content": msg.content} for msg in request.messages]
+        
+        # Run agent
+        result = await agent.chat(request.query, history)
+        
+        execution_time = time.time() - start_time
+        
+        # Get accumulated graph data from tools used during this turn
+        graph_data = get_accumulated_data()
+        
+        return {
+            "answer": result["answer"],
+            "execution_time": execution_time,
+            "tool_calls": result.get("tool_calls", []),
+            "iterations": result.get("iterations", 0),
+            "graph_data": graph_data,
+            # Context is managed internally by the agent, but we can return graph stats or summary if needed
+            "reasoning_chain": result.get("reasoning_timeline", []),
+        }
+    except Exception as e:
+        logger.error("Agent chat endpoint error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

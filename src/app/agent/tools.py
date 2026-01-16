@@ -1,72 +1,49 @@
 """
-Tool functions for the Pydantic-AI agent.
+LlamaIndex tool wrappers for agent operations.
 
-These are registered in `src.app.agent.core` as:
-    agent.tool(query_memory_graph)
-    agent.tool(expand_knowledge_graph)
-
-Both tools ultimately call the MCP-backed KG chat (`kg_chat`) so we can confirm
-the agent understands and can use the knowledge graph tool.
+This module provides pre-configured tools for the LlamaIndex agent.
+The tools are imported from graph_tools.py for consistency.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import List
 
-from pydantic_ai import RunContext
+from llama_index.core.tools import FunctionTool
 
-from .schema import ConversationContext
-from src.app.mcp.server import kg_chat
+from src.app.services.graph_tools import (
+    GRAPH_TOOLS,
+    search_entities_by_keywords,
+    get_entity_connections,
+    get_timeline_events,
+    get_topics_overview,
+    semantic_search,
+    expand_full_context,
+    get_entity_details,
+    create_graph_tools,
+)
 
 
-async def query_memory_graph(
-    ctx: RunContext[ConversationContext],
-    query: str,
-) -> str:
+def get_all_tools() -> List[FunctionTool]:
     """
-    Query the knowledge graph, preferring any accumulated memory graph.
-
-    This is intended for follow-up questions: it passes the current
-    `ctx.deps.memory_graph` as `accumulated_graph_data` so the MCP tool can
-    reuse and extend the existing subgraph.
+    Get all available agent tools.
+    
+    Returns:
+        List of configured FunctionTool instances
     """
-    accumulated: Dict[str, Any] | None = ctx.deps.memory_graph
-
-    result = await kg_chat(
-        query=query,
-        messages=[],
-        database="falkordb",
-        accumulated_graph_data=accumulated,
-    )
-
-    # Update conversation context with the returned graph for later turns
-    ctx.deps.memory_graph = result.get("graph_data")
-    ctx.deps.last_query = query
-
-    return result.get("answer", "")
+    return GRAPH_TOOLS
 
 
-async def expand_knowledge_graph(
-    ctx: RunContext[ConversationContext],
-    query: str,
-) -> str:
-    """
-    Query the full knowledge graph without relying on prior memory.
-
-    This is intended for new topics: it ignores any existing `memory_graph`
-    when calling `kg_chat`, then replaces it with the latest result.
-    """
-    result = await kg_chat(
-        query=query,
-        messages=[],
-        database="falkordb",
-        accumulated_graph_data=None,
-    )
-
-    ctx.deps.memory_graph = result.get("graph_data")
-    ctx.deps.last_query = query
-
-    return result.get("answer", "")
-
-
-
+# Re-export for backward compatibility
+__all__ = [
+    "GRAPH_TOOLS",
+    "get_all_tools",
+    "create_graph_tools",
+    "search_entities_by_keywords",
+    "get_entity_connections",
+    "get_timeline_events",
+    "get_topics_overview",
+    "semantic_search",
+    "expand_full_context",
+    "get_entity_details",
+]

@@ -3,7 +3,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const queryInput = document.getElementById('query-input');
     const sendBtn = document.getElementById('send-btn');
     const graphContainer = document.getElementById('graph-container');
-    const themeToggle = document.getElementById('theme-toggle');
+    // themeToggle removed to enforce dark mode only
+
 
     // Create tooltip element
     const tooltip = document.createElement('div');
@@ -55,12 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Theme Toggle
-    themeToggle.addEventListener('click', () => {
-        document.body.classList.toggle('dark-mode');
-        const isDark = document.body.classList.contains('dark-mode');
-        themeToggle.textContent = isDark ? '☀️' : '🌙';
-    });
+    // Theme Toggle removed to enforce dark mode only
 
     // Load Schema
     let schema = {};
@@ -486,44 +482,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return name && name.length > 20 ? name.substring(0, 17) + "..." : name;
             });
 
-        // Click to Expand Node Connections
-        node.on("click", async (event, d) => {
-            event.stopPropagation();
-            try {
-                const response = await fetch(`/node-connections/${encodeURIComponent(d.element_id)}?database=falkordb`);
-                if (!response.ok) return;
-                
-                const data = await response.json();
-                if (!data.nodes || data.nodes.length === 0) return;
-                
-                // Merge new data with current graph
-                const existingNodeIds = new Set(currentGraphData.nodes.map(n => n.element_id));
-                const existingEdgeKeys = new Set(currentGraphData.edges.map(e => `${e.start}-${e.type}-${e.end}`));
-                
-                data.nodes.forEach(node => {
-                    if (!existingNodeIds.has(node.element_id)) {
-                        currentGraphData.nodes.push(node);
-                        existingNodeIds.add(node.element_id);
-                    }
-                });
-                
-                data.edges.forEach(edge => {
-                    const key = `${edge.start}-${edge.type}-${edge.end}`;
-                    if (!existingEdgeKeys.has(key)) {
-                        currentGraphData.edges.push(edge);
-                        existingEdgeKeys.add(key);
-                    }
-                });
-                
-                // Update accumulated graph data
-                accumulatedGraphData = currentGraphData;
-                
-                // Re-render graph
-                renderGraph(currentGraphData, true);
-            } catch (e) {
-                console.error("Failed to fetch node connections:", e);
-            }
-        });
+        // Click to Expand Node Connections removed per user request
 
         // Tooltip Interaction for Nodes
         node.on("mouseover", (event, d) => {
@@ -625,7 +584,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     'load_centrality_description'],
                 'SESSION': ['filename', 'date', 'speech_count', 'Term', 'name'],
                 'DAY': ['date', 'name', 'segment_count'],
-                'SEGMENT': ['content', 'content_length', 'line_number', 'document_date', 'date', 
+                'SEGMENT': ['content', 'content_length', 'line_number', 'document_date', 'date',
                     'local_segment_order', 'global_segment_order', 'name']
             };
 
@@ -714,8 +673,8 @@ document.addEventListener('DOMContentLoaded', () => {
             .on("end", dragended);
     }
 
-    function createThinkingElement(reasoningChain, contextText) {
-        if ((!reasoningChain || reasoningChain.length === 0) && !contextText) return null;
+    function createThinkingElement(reasoningChain, contextText, toolCalls = [], executionTime = 0, isAgent = false) {
+        if ((!reasoningChain || reasoningChain.length === 0) && !contextText && (!toolCalls || toolCalls.length === 0)) return null;
 
         const container = document.createElement('div');
         container.className = 'thinking-process';
@@ -723,25 +682,110 @@ document.addEventListener('DOMContentLoaded', () => {
         const header = document.createElement('div');
         header.className = 'thinking-header';
         const stepsCount = reasoningChain ? reasoningChain.length : 0;
-        header.innerHTML = `<span>🤔 Debug Info (${stepsCount} steps)</span> <span>▼</span>`;
+        const toolCount = toolCalls ? toolCalls.length : 0;
+        const modeLabel = isAgent ? '🤖 Agent Mode' : '📊 Retrieval Mode';
+        const timeLabel = executionTime ? ` • ${executionTime.toFixed(2)}s` : '';
+        header.innerHTML = `<span>${modeLabel}${timeLabel} (${stepsCount} steps, ${toolCount} tools)</span> <span>▼</span>`;
 
         const body = document.createElement('div');
         body.className = 'thinking-body';
 
-        if (reasoningChain) {
+        // Tool Calls Section (for agent mode)
+        if (toolCalls && toolCalls.length > 0) {
+            const toolSection = document.createElement('div');
+            toolSection.className = 'debug-section tool-calls-section';
+
+            const toolHeader = document.createElement('div');
+            toolHeader.className = 'debug-section-header';
+            toolHeader.innerHTML = `<span class="debug-icon">🔧</span> Tool Calls (${toolCalls.length})`;
+            toolSection.appendChild(toolHeader);
+
+            const toolList = document.createElement('div');
+            toolList.className = 'tool-calls-list';
+
+            toolCalls.forEach((tc, index) => {
+                const toolItem = document.createElement('div');
+                toolItem.className = 'tool-call-item';
+
+                const toolName = tc.tool || tc.tool_name || 'unknown';
+                const toolInput = tc.input || tc.tool_kwargs || '';
+
+                // Pick icon based on tool name
+                const toolIcons = {
+                    'get_topics': '📌',
+                    'search_entities': '🔍',
+                    'get_connections': '🔗',
+                    'get_timeline': '📅',
+                    'semantic_search': '🧠',
+                    'expand_context': '📚',
+                    'entity_details': '👤',
+                };
+                const icon = toolIcons[toolName] || '🔧';
+
+                toolItem.innerHTML = `
+                    <div class="tool-call-header">
+                        <span class="tool-number">${index + 1}</span>
+                        <span class="tool-icon">${icon}</span>
+                        <span class="tool-name">${toolName}</span>
+                    </div>
+                    ${toolInput ? `<div class="tool-input">${formatToolInput(toolInput)}</div>` : ''}
+                `;
+                toolList.appendChild(toolItem);
+            });
+
+            toolSection.appendChild(toolList);
+            body.appendChild(toolSection);
+        }
+
+        // Reasoning Chain Section
+        if (reasoningChain && reasoningChain.length > 0) {
+            const reasoningSection = document.createElement('div');
+            reasoningSection.className = 'debug-section reasoning-section';
+
+            const reasoningHeader = document.createElement('div');
+            reasoningHeader.className = 'debug-section-header';
+            reasoningHeader.innerHTML = `<span class="debug-icon">💭</span> Reasoning Chain`;
+            reasoningSection.appendChild(reasoningHeader);
+
             reasoningChain.forEach(step => {
                 const stepDiv = document.createElement('div');
                 stepDiv.className = 'thinking-step';
-                stepDiv.textContent = step;
-                body.appendChild(stepDiv);
+                // Check if step contains timing info (has ⏱️)
+                if (step.includes('⏱️')) {
+                    stepDiv.className += ' timing-step';
+                    stepDiv.innerHTML = formatTimingStep(step);
+                } else {
+                    stepDiv.textContent = step;
+                }
+                reasoningSection.appendChild(stepDiv);
             });
+
+            body.appendChild(reasoningSection);
         }
 
+        // Context Section
         if (contextText) {
+            const contextSection = document.createElement('div');
+            contextSection.className = 'debug-section context-section';
+
+            const contextHeader = document.createElement('div');
+            contextHeader.className = 'debug-section-header context-header';
+            contextHeader.innerHTML = `<span class="debug-icon">📝</span> LLM Context <span class="context-toggle">Show</span>`;
+            contextSection.appendChild(contextHeader);
+
             const contextDiv = document.createElement('div');
-            contextDiv.className = 'context-block';
-            contextDiv.textContent = "=== LLM Context ===\n" + contextText;
-            body.appendChild(contextDiv);
+            contextDiv.className = 'context-block collapsed';
+            contextDiv.textContent = contextText;
+            contextSection.appendChild(contextDiv);
+
+            // Toggle context visibility
+            contextHeader.addEventListener('click', () => {
+                contextDiv.classList.toggle('collapsed');
+                contextHeader.querySelector('.context-toggle').textContent =
+                    contextDiv.classList.contains('collapsed') ? 'Show' : 'Hide';
+            });
+
+            body.appendChild(contextSection);
         }
 
         header.addEventListener('click', () => {
@@ -754,7 +798,58 @@ document.addEventListener('DOMContentLoaded', () => {
         return container;
     }
 
-    function addMessage(content, isUser, reasoningChain = null, context = null) {
+    // Helper to format tool input for display
+    function formatToolInput(input) {
+        if (!input) return '';
+        try {
+            // If it's a string that looks like a dict, parse it
+            if (typeof input === 'string' && input.startsWith('{')) {
+                const parsed = input.replace(/'/g, '"');
+                const obj = JSON.parse(parsed);
+                return Object.entries(obj)
+                    .filter(([k, v]) => v !== null && v !== undefined && v !== 'None')
+                    .map(([k, v]) => `<span class="input-key">${k}:</span> ${v}`)
+                    .join(', ');
+            }
+            return String(input);
+        } catch {
+            return String(input);
+        }
+    }
+
+    // Helper to format timing steps with visual bars
+    function formatTimingStep(step) {
+        const lines = step.split('\n');
+        const header = lines[0];
+        const items = lines.slice(1);
+
+        let html = `<div class="timing-header">${header}</div>`;
+        if (items.length > 0) {
+            html += '<div class="timing-items">';
+            items.forEach(item => {
+                // Extract time value for bar width
+                const match = item.match(/(\d+\.\d+)s/);
+                if (match) {
+                    const time = parseFloat(match[1]);
+                    const width = Math.min(100, time * 100); // Scale: 1s = 100%
+                    html += `
+                        <div class="timing-item">
+                            <span class="timing-label">${item.replace('  • ', '')}</span>
+                            <div class="timing-bar-container">
+                                <div class="timing-bar" style="width: ${width}%"></div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    html += `<div class="timing-item"><span class="timing-label">${item}</span></div>`;
+                }
+            });
+            html += '</div>';
+        }
+        return html;
+    }
+
+    function addMessage(content, isUser, debugInfo = {}) {
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
 
@@ -762,8 +857,15 @@ document.addEventListener('DOMContentLoaded', () => {
             msgDiv.textContent = content;
         } else {
             // Add thinking process if available
-            if (reasoningChain || context) {
-                const thinkingEl = createThinkingElement(reasoningChain, context);
+            const { reasoningChain, context, toolCalls, executionTime, isAgent } = debugInfo;
+            if (reasoningChain || context || (toolCalls && toolCalls.length > 0)) {
+                const thinkingEl = createThinkingElement(
+                    reasoningChain,
+                    context,
+                    toolCalls || [],
+                    executionTime || 0,
+                    isAgent || false
+                );
                 if (thinkingEl) msgDiv.appendChild(thinkingEl);
             }
 
@@ -777,6 +879,9 @@ document.addEventListener('DOMContentLoaded', () => {
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
+    // Agent mode state
+    let useAgentMode = false;
+
     async function sendMessage() {
         const query = queryInput.value.trim();
         if (!query) return;
@@ -788,14 +893,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const loadingDiv = document.createElement('div');
         loadingDiv.className = 'loading';
-        loadingDiv.textContent = 'Thinking...';
+        loadingDiv.innerHTML = useAgentMode
+            ? '🤖 Agent is exploring the graph...'
+            : '📊 Retrieving context...';
         messagesDiv.appendChild(loadingDiv);
 
         try {
-            // Prepare request body with accumulated graph data
+            // Prepare request body with accumulated graph data and agent mode
             const requestBody = {
                 query: query,
-                accumulated_graph_data: accumulatedGraphData
+                accumulated_graph_data: accumulatedGraphData,
+                use_agent: useAgentMode
             };
 
             const response = await fetch('/chat', {
@@ -814,14 +922,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
 
-            // Update accumulated graph data with the response
-            if (data.graph_data) {
+            // Update accumulated graph data with the response (if available)
+            if (data.graph_data && Object.keys(data.graph_data).length > 0) {
                 accumulatedGraphData = data.graph_data;
                 renderGraph(data.graph_data);
             }
 
-            // Add message with reasoning and context
-            addMessage(data.answer, false, data.reasoning_chain, data.context);
+            // Add message with full debug info
+            addMessage(data.answer, false, {
+                reasoningChain: data.reasoning_chain,
+                context: data.context,
+                toolCalls: data.tool_calls || [],
+                executionTime: data.execution_time,
+                isAgent: useAgentMode
+            });
 
         } catch (error) {
             if (loadingDiv.parentNode) messagesDiv.removeChild(loadingDiv);
@@ -840,6 +954,24 @@ document.addEventListener('DOMContentLoaded', () => {
             sendMessage();
         }
     });
+
+    // Add agent mode toggle to header
+    const agentToggle = document.createElement('button');
+    agentToggle.id = 'agent-toggle';
+    agentToggle.className = 'agent-toggle-btn';
+    agentToggle.title = 'Toggle Agent Mode';
+    agentToggle.innerHTML = '📊';
+    agentToggle.addEventListener('click', () => {
+        useAgentMode = !useAgentMode;
+        agentToggle.innerHTML = useAgentMode ? '🤖' : '📊';
+        agentToggle.classList.toggle('active', useAgentMode);
+        agentToggle.title = useAgentMode ? 'Agent Mode (click for Retrieval)' : 'Retrieval Mode (click for Agent)';
+    });
+    const controls = document.getElementById('header-controls');
+    if (controls) {
+        controls.appendChild(agentToggle);
+    }
+
 });
 
 

@@ -224,20 +224,25 @@ def get_seed_entities(
             topic_results = db.query_vector(
                 "TOPIC", query_embedding, k=3, min_score=0.55
             )
-            for node_data, score in topic_results:
-                entity_ids = node_data.get("entity_ids")
-                if entity_ids:
-                    if isinstance(entity_ids, str):
-                        try:
-                            entity_ids = json.loads(entity_ids)
-                        except Exception:  # noqa: BLE001
-                            pass
+            for node_data, vector_score in topic_results:
+                # Instead of relying on entity_ids property, we expand in the graph
+                topic_id = node_data.get("id")
+                if topic_id:
+                     # Find entities in this topic
+                     cypher = """
+                     MATCH (t:TOPIC)-[:IN_TOPIC]-(e)
+                     WHERE t.id = $id
+                     RETURN e.id as id, coalesce(e.pagerank_centrality, 0.0) as pr_score
+                     LIMIT 20
+                     """
+                     connected = db.query(cypher, {'id': topic_id})
+                     for row in connected:
+                         eid = row.get('id')
+                         pr = row.get('pr_score', 0)
+                         # Score is mix of vector match and static centrality
+                         combined_score = vector_score * 0.5 + pr * 0.5
+                         local_candidates[eid] = max(local_candidates.get(eid, 0), combined_score)
 
-                    if isinstance(entity_ids, list):
-                        for entity in entity_ids:
-                            local_candidates[entity] = max(
-                                local_candidates.get(entity, 0), score * 0.8
-                            )
         except Exception as e:  # noqa: BLE001
             logger.warning("Topic search failed: %s", e)
         
@@ -253,20 +258,23 @@ def get_seed_entities(
             subtopic_results = db.query_vector(
                 "SUBTOPIC", query_embedding, k=3, min_score=0.55
             )
-            for node_data, score in subtopic_results:
-                entity_ids = node_data.get("entity_ids")
-                if entity_ids:
-                    if isinstance(entity_ids, str):
-                        try:
-                            entity_ids = json.loads(entity_ids)
-                        except Exception:  # noqa: BLE001
-                            pass
-
-                    if isinstance(entity_ids, list):
-                        for entity in entity_ids:
-                            local_candidates[entity] = max(
-                                local_candidates.get(entity, 0), score * 0.9
-                            )
+            for node_data, vector_score in subtopic_results:
+                subtopic_id = node_data.get("id")
+                if subtopic_id:
+                     # Find entities in this subtopic
+                     cypher = """
+                     MATCH (t:SUBTOPIC)-[:IN_TOPIC]-(e)
+                     WHERE t.id = $id
+                     RETURN e.id as id, coalesce(e.pagerank_centrality, 0.0) as pr_score
+                     LIMIT 20
+                     """
+                     connected = db.query(cypher, {'id': subtopic_id})
+                     for row in connected:
+                         eid = row.get('id')
+                         pr = row.get('pr_score', 0)
+                         combined_score = vector_score * 0.5 + pr * 0.5
+                         local_candidates[eid] = max(local_candidates.get(eid, 0), combined_score)
+                         
         except Exception as e:  # noqa: BLE001
             logger.warning("Subtopic search failed: %s", e)
         return local_candidates, time.time() - t0
