@@ -48,7 +48,7 @@ class LifeLogParser(BaseDocumentParser):
         
         # Sort rows by time just in case
         try:
-            rows.sort(key=lambda x: datetime.strptime(x['Time'], "%Y-%m-%d %H:%M:%S"))
+            rows.sort(key=lambda x: self._parse_time(x['Time']))
         except ValueError:
              # Fallback if time format is inconsistent, trust order
              pass
@@ -57,7 +57,7 @@ class LifeLogParser(BaseDocumentParser):
         
         for row in rows:
             try:
-                row_time = datetime.strptime(row['Time'], "%Y-%m-%d %H:%M:%S")
+                row_time = self._parse_time(row['Time'])
             except ValueError:
                 logger.warning(f"Skipping row with invalid time: {row.get('Time')}")
                 continue
@@ -86,6 +86,24 @@ class LifeLogParser(BaseDocumentParser):
              
         return segments
     
+    def _parse_time(self, time_str: str) -> datetime:
+        """Parse time string with multiple format fallbacks."""
+        formats = [
+            "%Y-%m-%d %H:%M:%S",
+            "%A %d %B %Y, %H:%M",  # Tuesday 23 December 2025, 07:46
+            "%Y-%m-%d %H:%M",
+            "%d/%m/%Y %H:%M:%S",
+            "%d/%m/%Y %H:%M"
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(time_str, fmt)
+            except ValueError:
+                continue
+        
+        raise ValueError(f"Could not parse time: {time_str}")
+
     def _create_segment(self, rows: List[Dict], doc_date: date, idx: int) -> SegmentData:
         """Helper to create a SegmentData object from a list of rows."""
         start_time_str = rows[0]['Time']

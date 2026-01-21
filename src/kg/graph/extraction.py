@@ -13,56 +13,24 @@ from src.kg.graph.extractors import BaseExtractor, get_extractor
 from src.kg.graph.parsing import SegmentData
 from src.kg.graph.parsers import get_parser
 
+# --- GLiNER Helper ---
+from gliner import GLiNER
+
 logger = logging.getLogger(__name__)
 
-# --- Spacy Helper ---
-import spacy
-NLP = None
+GLINER_MODEL = None
 
-def get_nlp():
-    global NLP
-    if NLP is None:
+def get_gliner_model():
+    global GLINER_MODEL
+    if GLINER_MODEL is None:
         try:
-             NLP = spacy.load("en_core_web_sm")
-        except Exception:
-             logger.warning("Spacy model not found, trying to download...")
-             try:
-                 from spacy.cli import download
-                 download("en_core_web_sm")
-                 NLP = spacy.load("en_core_web_sm")
-             except Exception as e:
-                 logger.error(f"Failed to load Spacy: {e}")
-                 return None
-    return NLP
-
-def classify_entity(name: str) -> List[str]:
-    """Classify entity into ontology categories using Spacy."""
-    labels = []
-    
-    # Rule based
-    if name.lower().startswith("speaker"):
-        return ["Person"]
-        
-    nlp = get_nlp()
-    if not nlp:
-        return ["Concept"]
-        
-    doc = nlp(name)
-    if not doc.ents:
-        return ["Concept"]
-    
-    label = doc.ents[0].label_
-    if label == "PERSON":
-        return ["Person"]
-    elif label in ["GPE", "LOC", "FAC"]:
-        return ["Place"]
-    elif label == "ORG":
-        # ORG can be mixed, but often conceptual organizations or places
-        return ["Concept", "Place"] 
-    elif label == "EVENT":
-        return ["Action", "Concept"]
-        
-    return ["Concept"]
+            logger.info("Loading GLiNER model (urchade/gliner_medium-v2.1)...")
+            GLINER_MODEL = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
+            logger.info("GLiNER model loaded.")
+        except Exception as e:
+            logger.error(f"Failed to load GLiNER: {e}")
+            return None
+    return GLINER_MODEL
 
 # --- Helper Functions ---
 
@@ -122,6 +90,24 @@ async def process_extraction_task(
         logger.info(f"      🚀 Starting {task.chunk_id}")
         
         try:
+            # 1. Run GLiNER to get Entity Types
+            gliner_entities = []
+            try:
+                model = get_gliner_model()
+                if model:
+                    # Labels for entity prediction
+                    labels = ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"]
+                    
+                    # Run in executor to avoid blocking event loop
+                    loop = asyncio.get_event_loop()
+                    gliner_entities = await loop.run_in_executor(
+                        None, 
+                        lambda: model.predict_entities(task.chunk_text, labels, threshold=0.5)
+                    )
+            except Exception as e:
+                logger.warning(f"GLiNER extraction failed for {task.chunk_id}: {e}")
+
+            # 2. Run LLM Relation Extraction
             # Use chunk text directly for extraction, pass keywords as allowed nodes
             # Note: We use keywords as both entities and concepts for simplicity,             
             # Combine all available "allowed node" sources
@@ -148,7 +134,8 @@ async def process_extraction_task(
                 'knowledge_triplets': raw_relations,
                 'raw_extraction': {
                     'relations': raw_relations
-                }
+                },
+                'gliner_entities': gliner_entities  # Store GLiNER predictions
             }
             deps.graph.nodes[task.chunk_id].update(chunk_data)
             
@@ -254,51 +241,45 @@ async def add_triplets_to_graph_for_segment(
     relations: List[Tuple[str, str, str]],
     entity_mappings: Dict[str, str],
     segment_id: str,
-    chunk_entity_map: Dict[str, Set[str]]
+    chunk_entity_map: Dict[str, Set[str]],
+    gliner_label_map: Dict[str, str] = None  # New parameter
 ):
     """Write entities/edges to graph for a segment"""
     graph = deps.graph
+    gliner_label_map = gliner_label_map or {}
     
     # Add entities
     for _, mapped_ent in entity_mappings.items():
+        # Classify entity using GLiNER map
+        ontology_label = gliner_label_map.get(mapped_ent)
+        if not ontology_label:
+            ontology_label = gliner_label_map.get(mapped_ent.lower(), "Concept")
+            
         if not graph.has_node(mapped_ent):
-            # Classify entity
-            ontology_labels = classify_entity(mapped_ent)
-            # Add labels to node_type (Note: FalkorDB supports multiple labels via some drivers, 
-            # but here we use node_type as primary. We should add 'labels' property or list)
-            # For this system, we use 'node_type' as the primary classification for coloring etc.
-            # We will store ontology types in a property and maybe modify node_type to be the most specific.
-            
-            primary_type = ontology_labels[0] if ontology_labels else "ENTITY_CONCEPT"
-            # If Concept, keep ENTITY_CONCEPT as main type for consistency with existing queries?
-            # The brief says "Ontology nodes", implying we might want (n:Person) nodes.
-            # We'll use ENTITY_CONCEPT as a general label and add specific ones.
-            
+            # Create new node
             graph.add_node(mapped_ent, 
                          node_type="ENTITY_CONCEPT", 
-                         ontology_types=ontology_labels,
+                         ontology_class=ontology_label,
                          name=mapped_ent, 
                          graph_type="entity_relation")
+        else:
+            # Update existing node
+            node_data = graph.nodes[mapped_ent]
             
-            # Also add specific ontology edges/types if supported by the graph dumper?
-            # The current uploader uses 'node_type' as the label. 
-            # If we want multiple labels, we might need to adjust the uploader. 
-            # For now, let's stick to properties or maybe hybrid node_type "ENTITY_CONCEPT"
-            # but user asked for "Ontology nodes". 
-            # Let's create specific nodes if they are ontological concepts?
-            # "link our entities to these ontology nodes" -> 
-            # Maybe the user means: Entity "Wei Li" -> INSTANCE_OF -> Node "Person"?
-            # OR Entity "Wei Li" IS a "Person".
-            # "link our entities to these ontology nodes"
-            
-            for o_label in ontology_labels:
-                # Add Ontology Class Node if not exists
-                class_node_id = f"ONTOLOGY_{o_label.upper()}"
-                if not graph.has_node(class_node_id):
-                     graph.add_node(class_node_id, node_type="ONTOLOGY_CLASS", name=o_label, graph_type="ontology")
+            # Ensure name is set
+            if 'name' not in node_data:
+                node_data['name'] = mapped_ent
                 
-                # Link Entity to Class
-                graph.add_edge(mapped_ent, class_node_id, label="IS_A", graph_type="ontology", segment_id=segment_id)
+            # Smart update for ontology_class
+            current_class = node_data.get('ontology_class')
+            if not current_class or (current_class == 'Concept' and ontology_label != 'Concept'):
+                node_data['ontology_class'] = ontology_label
+                
+            # Ensure node_type is set (if it was created implicitly)
+            if 'node_type' not in node_data:
+                node_data['node_type'] = "ENTITY_CONCEPT"
+                node_data['graph_type'] = "entity_relation"
+
     
     # Add relations
     for h, r, t in relations:
@@ -333,9 +314,22 @@ async def enrich_graph_per_segment(deps: AgentDependencies) -> Dict[str, Any]:
             chunk_entity_map = {}
             all_entities = set()
             
+            # Collect GLiNER labels from all chunks
+            gliner_label_map = {}
+            
             for cid in chunk_ids:
                 node = graph.nodes.get(cid, {})
                 raw_relations = (node.get('raw_extraction') or {}).get('relations') or []
+                gliner_entities = node.get('gliner_entities', [])
+                
+                # Populate GLiNER map
+                for entity in gliner_entities:
+                    text = entity.get('text', '').strip()
+                    label = entity.get('label', '')
+                    if text and label:
+                        gliner_label_map[text] = label
+                        gliner_label_map[text.lower()] = label # Add lower case for robustness
+                
                 entities_in_chunk = set()
                 for (h, r, t) in raw_relations:
                     aggregated_relations.append((h, r, t))
@@ -362,7 +356,8 @@ async def enrich_graph_per_segment(deps: AgentDependencies) -> Dict[str, Any]:
                 relations=cleaned_relations,
                 entity_mappings=entity_mappings,
                 segment_id=segment_id,
-                chunk_entity_map=chunk_entity_map 
+                chunk_entity_map=chunk_entity_map,
+                gliner_label_map=gliner_label_map # Pass the map
             )
             
             segments_processed += 1
@@ -441,43 +436,24 @@ async def process_single_segment(
         # Edge: DAY -> HAS_SEGMENT -> SEGMENT
         deps.graph.add_edge(doc_id, segment.segment_id, label="HAS_SEGMENT", graph_type="lexical_graph")
         
-
-        # Edge: DAY -> HAS_SEGMENT -> SEGMENT
-        deps.graph.add_edge(doc_id, segment.segment_id, label="HAS_SEGMENT", graph_type="lexical_graph")
-        
         # Check if this is a Life Graph Episode with structured conversations
         if segment.metadata.get('conversations'):
             try:
                 conversations = segment.metadata['conversations']
                 
-                # Check log_limit (using speech_limit/segment_limit logic passed in config if we wanted row-level control, 
-                # but here we rely on segment-level limiting from the caller. 
-                # However, we can add a secondary limit if 'log_limit' is in config and we want to partial process an episode?
-                # For now, process all conversations in the segment.)
+                # Image Descriptions Accumulator
+                image_descriptions = []
                 
                 for i, row in enumerate(conversations):
-                    # Create CONVERSATION Node
-                    # ID: CONV_{TIME}_{SEQ}
-                    # We use the time string as unique ID base
-                    conv_time = row['Time'].replace(' ', '_').replace(':', '')
-                    doc_date = segment.date.isoformat()
-                    conv_id = f"CONV_{doc_date}_{conv_time}_{i}"
-                    
-                    # Create Node
-                    deps.graph.add_node(conv_id,
-                                      node_type="CONVERSATION",
-                                      graph_type="lexical_graph",
-                                      time=row['Time'],
-                                      location=row['Location'],
-                                      name=f"Conversation @ {row['Time']}")
-                    
-                    # Link SEGMENT -> HAS_CONVERSATION -> CONVERSATION
-                    deps.graph.add_edge(segment.segment_id, conv_id, label="HAS_CONVERSATION", graph_type="lexical_graph")
-                    
-                    # Create CHUNK from Audio
-                    chunk_text = row['Audio']
+                    # No longer creating CONVERSATION nodes
+                    # Direct Chunking from Audio
+                    chunk_text = row.get('Audio')
                     if chunk_text:
-                        chunk_id = f"{conv_id}_CHUNK"
+                        # Chunk ID derived from segment
+                        chunk_id = f"{segment.segment_id}_CHUNK_{i}"
+                        
+                        chunk_name = chunk_text[:20].strip() + "..." if len(chunk_text) > 20 else chunk_text
+
                         deps.graph.add_node(chunk_id,
                                           node_type="CHUNK",
                                           graph_type="lexical_graph",
@@ -485,13 +461,12 @@ async def process_single_segment(
                                           length=len(chunk_text),
                                           initial_entities=[],
                                           llama_metadata={}, 
-                                          name=chunk_text[:20] + "...")
+                                          name=chunk_name)
                         
-                        # Link CONVERSATION -> HAS_CHUNK -> CHUNK
-                        deps.graph.add_edge(conv_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
+                        # Link SEGMENT -> HAS_CHUNK -> CHUNK (Directly)
+                        deps.graph.add_edge(segment.segment_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
                         
                         # Add retrieval task for this chunk
-                        # We extract entities from the audio text
                         deps.extraction_tasks.append(ChunkExtractionTask(
                             chunk_id=chunk_id,
                             chunk_text=chunk_text,
@@ -502,70 +477,27 @@ async def process_single_segment(
                         chunk_count += 1
                     
                     # Extract Entities (Spacy/Rule-based mappings)
-                    
                     # 1. Location -> PLACE
-                    loc_name = row['Location']
+                    loc_name = row.get('Location')
                     if loc_name:
                         # Simple linking: Location string is the Place ID/Name
                         place_id = f"PLACE_{loc_name.replace(' ', '_').upper()}"
                         if not deps.graph.has_node(place_id):
                             deps.graph.add_node(place_id, node_type="PLACE", name=loc_name, graph_type="entity_relation")
                         
-                        # Link Conversation to Place
-                        deps.graph.add_edge(conv_id, place_id, label="HAPPENED_AT", graph_type="entity_relation")
-                        
-                        # Link Segment to Place
+                        # Link Segment to Place directly
                         deps.graph.add_edge(segment.segment_id, place_id, label="HAPPENED_AT", graph_type="entity_relation")
 
-                        
-                    # 2. Image -> CONTEXT
-                    image_desc = row['Image']
+                    # 2. Image -> Attribute on Segment
+                    image_desc = row.get('Image')
                     if image_desc:
-                        # Create Context Node
-                        # ID needs to be unique per image/moment
-                        context_id = f"CONTEXT_{conv_id}"
-                        deps.graph.add_node(context_id,
-                                          node_type="CONTEXT",
-                                          description=image_desc,
-                                          graph_type="entity_relation",
-                                          name="Visual Context")
-                        
-                        # Link Conversation -> HAS_CONTEXT -> CONTEXT
-                        deps.graph.add_edge(conv_id, context_id, label="HAS_CONTEXT", graph_type="entity_relation")
-                        
-                        # Link Segment -> HAS_CONTEXT -> CONTEXT (Optional but consistent)
-                        # deps.graph.add_edge(segment.segment_id, context_id, label="HAS_CONTEXT", graph_type="entity_relation")
+                        image_descriptions.append(image_desc)
 
-                        # Link Context -> DEPICTS -> PLACE if location exists
-                        if loc_name:
-                             deps.graph.add_edge(context_id, place_id, label="DEPICTS_PLACE", graph_type="entity_relation")
-                             # User Request: Link Place -> Context (description)
-                             deps.graph.add_edge(place_id, context_id, label="HAS_IMAGE_CONTEXT", graph_type="entity_relation")
-                        
-                        # Extract Triplets from Image Description
-                        # We create a pseudo-chunk for the image description to run extraction
-                        context_chunk_id = f"{context_id}_CHUNK"
-                        
-                        # Add Context Chunk Node (optional, or just reuse context_id? Extraction tasks work on chunks)
-                        # Let's link it: CONTEXT -> HAS_CHUNK -> CHUNK (Text)
-                        deps.graph.add_edge(context_id, context_chunk_id, label="HAS_DESCRIPTION_CHUNK", graph_type="entity_relation")
-                        
-                        deps.graph.add_node(context_chunk_id,
-                                          node_type="CHUNK",
-                                          graph_type="lexical_graph",
-                                          text=image_desc,
-                                          length=len(image_desc),
-                                          initial_entities=[],
-                                          name="Image Desc")
-
-                        # Add extraction task
-                        deps.extraction_tasks.append(ChunkExtractionTask(
-                            chunk_id=context_chunk_id,
-                            chunk_text=image_desc,
-                            entities=[], 
-                            abstract_concepts=[], 
-                            keywords=[]
-                        ))
+                # Store collected image descriptions on the Segment node
+                if image_descriptions:
+                    deps.graph.nodes[segment.segment_id]['image_descriptions'] = image_descriptions
+                    # Keep single field for backward compat if needed, or just use list
+                    deps.graph.nodes[segment.segment_id]['image_description'] = "; ".join(image_descriptions)
 
             except Exception as e:
                 logger.error(f"Error processing Life Graph segment {segment.segment_id}: {e}", exc_info=True)

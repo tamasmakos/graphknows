@@ -6,3 +6,9 @@ lib
 input
 .pytest_cache
 .vscode
+.gemini*.log
+node_modules/
+dist/
+.geminiignore
+.gemini
+output

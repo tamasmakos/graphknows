@@ -26,7 +26,7 @@ incremental:
   # Controls how many new Segments/Episodes (from the log) to process per run.
   # If 0, processes all new content found.
   speech_limit: 10 
-  max_documents: 1 # Max files to process (useful if you have many daily log files)
+  max_documents: 20 # Max files to process (useful if you have many daily log files)
   state_file: "processing_state.json"  # Tracks processed documents/segments
   enable_pruning: true  # Remove low-centrality nodes after updates
   pruning_threshold: 0.01  # Minimum centrality score to keep

@@ -62,13 +62,17 @@ def prune_graph(graph: nx.DiGraph, config: Dict[str, Any]) -> Dict[str, int]:
             logger.debug("Sample pruned edges:\n - " + "\n - ".join(dropped_logs))
     
     # 2. Prune Isolated Nodes
+    vital_types = {'DAY', 'SEGMENT', 'TOPIC', 'SUBTOPIC'} # Vital types to preserve
+    
     if prune_isolated:
         nodes_to_remove = []
         for node in list(graph.nodes()):
             # Check degree (in + out)
             if graph.degree(node) == 0:
-                # Optional: Don't prune certain critical node types even if isolated initially?
-                # e.g. DAY nodes might be isolated if segments not added yet? (Unlikely)
+                # Protect vital types
+                if graph.nodes[node].get('node_type') in vital_types:
+                    continue
+                    
                 nodes_to_remove.append(node)
         
         if nodes_to_remove:
@@ -76,6 +80,43 @@ def prune_graph(graph: nx.DiGraph, config: Dict[str, Any]) -> Dict[str, int]:
             stats['nodes_pruned'] = len(nodes_to_remove)
             logger.info(f"✂️  Pruned {len(nodes_to_remove)} isolated nodes")
             if len(nodes_to_remove) > 0:
-                logger.debug(f"Sample pruned nodes: {nodes_to_remove[:5]}")
+                 logger.debug(f"Sample pruned nodes: {nodes_to_remove[:5]}")
+    # 3. Prune Disconnected Components (Irrelevant Subgraphs)
+    # Remove small components that are not connected to the main backbone (Day/Segment nodes)
+    
+    # Use weakly connected components for directed graph
+    if graph.is_directed():
+        components = list(nx.weakly_connected_components(graph))
+    else:
+        components = list(nx.connected_components(graph))
+        
+    min_component_size = config.get('min_component_size', 3)
+    # Vital types that anchor a component
+    vital_types = {'DAY', 'SEGMENT', 'TOPIC', 'SUBTOPIC'} 
+    
+    components_to_remove = []
+    
+    for comp in components:
+        # If component is very small
+        if len(comp) < min_component_size:
+            # Check if it contains any vital node
+            has_vital = False
+            for node in comp:
+                ntype = graph.nodes[node].get('node_type')
+                if ntype in vital_types:
+                    has_vital = True
+                    break
+            
+            if not has_vital:
+                components_to_remove.append(comp)
+                
+    if components_to_remove:
+        nodes_removed = 0
+        for comp in components_to_remove:
+            graph.remove_nodes_from(comp)
+            nodes_removed += len(comp)
+            
+        stats['nodes_pruned'] += nodes_removed
+        logger.info(f"✂️  Pruned {len(components_to_remove)} small disconnected components (total {nodes_removed} nodes)")
 
     return stats

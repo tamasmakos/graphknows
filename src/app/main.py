@@ -263,6 +263,7 @@ async def chat_endpoint(request: ChatRequest):
             return {
                 "answer": result.answer,
                 "context": result.context,
+                "full_prompt": result.full_prompt,
                 "execution_time": result.execution_time,
                 "graph_data": result.graph_data,
                 "graph_stats": getattr(result, "graph_stats", None),

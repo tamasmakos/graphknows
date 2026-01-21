@@ -11,11 +11,12 @@ import gc
 import json
 import logging
 import time
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import psutil
 import resource
+import networkx as nx
 
 from pydantic import BaseModel
 
@@ -62,6 +63,7 @@ class QueryResult(BaseModel):
     keywords: List[str] = []
     graph_data: dict = {}
     seed_entities: List[str] = []
+    seed_topics: List[str] = []
     graph_stats: Optional[Dict[str, Any]] = None
     query_memory_mb: Optional[Dict[str, float]] = None
     full_prompt: Optional[str] = None
@@ -203,31 +205,32 @@ def extract_keywords(llm, query: str) -> List[str]:
 
 def get_seed_entities(
     db: GraphDB, query_embedding: List[float], keywords: List[str]
-) -> Tuple[List[str], Dict[str, float]]:
+) -> Tuple[List[str], List[str], Dict[str, float]]:
     """
-    Identify and rerank seed entities using vector search and keyword matching.
-    Optimized to run searches in parallel.
+    Identify and rerank seed entities/topics.
     Returns:
-        List of seed entities
+        List of entity seeds
+        List of topic seeds
         Dictionary of timing stats
     """
     candidates: Dict[str, float] = {}  # name -> score
+    topic_candidates: Dict[str, float] = {}
     timings: Dict[str, float] = {}
 
     def search_topic():
         t0 = time.time()
         local_candidates = {}
+        local_topics = {}
         if not query_embedding:
-            return local_candidates, 0.0
+            return local_candidates, local_topics, 0.0
         try:
-            # This uses pgvector if available
             topic_results = db.query_vector(
                 "TOPIC", query_embedding, k=3, min_score=0.55
             )
             for node_data, vector_score in topic_results:
-                # Instead of relying on entity_ids property, we expand in the graph
                 topic_id = node_data.get("id")
                 if topic_id:
+                     local_topics[topic_id] = max(local_topics.get(topic_id, 0), vector_score)
                      # Find entities in this topic
                      cypher = """
                      MATCH (t:TOPIC)-[:IN_TOPIC]-(e)
@@ -239,29 +242,26 @@ def get_seed_entities(
                      for row in connected:
                          eid = row.get('id')
                          pr = row.get('pr_score', 0)
-                         # Score is mix of vector match and static centrality
                          combined_score = vector_score * 0.5 + pr * 0.5
                          local_candidates[eid] = max(local_candidates.get(eid, 0), combined_score)
-
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("Topic search failed: %s", e)
-        
-        return local_candidates, time.time() - t0
+        return local_candidates, local_topics, time.time() - t0
 
     def search_subtopic():
         t0 = time.time()
         local_candidates = {}
+        local_topics = {}
         if not query_embedding:
-            return local_candidates, 0.0
+            return local_candidates, local_topics, 0.0
         try:
-            # This uses pgvector if available
             subtopic_results = db.query_vector(
                 "SUBTOPIC", query_embedding, k=3, min_score=0.55
             )
             for node_data, vector_score in subtopic_results:
                 subtopic_id = node_data.get("id")
                 if subtopic_id:
-                     # Find entities in this subtopic
+                     local_topics[subtopic_id] = max(local_topics.get(subtopic_id, 0), vector_score)
                      cypher = """
                      MATCH (t:SUBTOPIC)-[:IN_TOPIC]-(e)
                      WHERE t.id = $id
@@ -274,10 +274,9 @@ def get_seed_entities(
                          pr = row.get('pr_score', 0)
                          combined_score = vector_score * 0.5 + pr * 0.5
                          local_candidates[eid] = max(local_candidates.get(eid, 0), combined_score)
-                         
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("Subtopic search failed: %s", e)
-        return local_candidates, time.time() - t0
+        return local_candidates, local_topics, time.time() - t0
 
     def search_entity():
         t0 = time.time()
@@ -285,103 +284,90 @@ def get_seed_entities(
         if not query_embedding:
             return local_candidates, 0.0
         try:
-            # This generally uses FalkorDB vector index unless configured otherwise
             entity_results = db.query_vector(
                 "ENTITY_CONCEPT", query_embedding, k=10, min_score=0.5
             )
             for node_data, score in entity_results:
-                # Use ID as primary key
                 entity_id = node_data.get("id")
                 if entity_id:
                     local_candidates[entity_id] = max(local_candidates.get(entity_id, 0), score)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("Entity vector search failed: %s", e)
         return local_candidates, time.time() - t0
 
     def search_keywords():
         t0 = time.time()
-        local_candidates = {}
+        local_ents = {}
+        local_topics = {}
         if not keywords:
-            return local_candidates, 0.0
+            return local_ents, local_topics, 0.0
         try:
-            # This uses FalkorDB Cypher
-            with Profiler("Search Keywords"):
-                keyword_query = """
-                UNWIND $keywords AS keyword
-                MATCH (seed)
-                WHERE (seed:Entity OR seed:ENTITY_CONCEPT OR seed:Topic OR seed:Subtopic OR seed:TOPIC OR seed:SUBTOPIC OR seed:DAY OR seed:SEGMENT OR seed:CONVERSATION OR seed:Day OR seed:Segment OR seed:Conversation)
-                AND (
-                    toLower(coalesce(seed.name, "")) CONTAINS toLower(keyword)
-                    OR toLower(coalesce(seed.id, "")) CONTAINS toLower(keyword)
-                    OR toLower(coalesce(seed.title, "")) CONTAINS toLower(keyword)
-                )
-                RETURN DISTINCT seed.id AS id
-                LIMIT 100
-                """
-                results = db.query(keyword_query, {"keywords": keywords})
-            for record in results:
-                entity_id = record.get("id")
-                if entity_id:
-                    local_candidates[entity_id] = max(local_candidates.get(entity_id, 0), 1.0)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Keyword search failed: %s", e)
-        return local_candidates, time.time() - t0
-
-    # Run searches in parallel
-    with Profiler("Parallel Seed Search"), ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {
-            executor.submit(search_topic): "pgvector_topic",
-            executor.submit(search_subtopic): "pgvector_subtopic",
-            executor.submit(search_entity): "falkordb_entity_vector",
-            executor.submit(search_keywords): "falkordb_keyword",
-        }
-
-        for future in as_completed(futures):
-            key = futures[future]
-            try:
-                result, duration = future.result()
-                timings[key] = duration
-                for entity, score in result.items():
-                    candidates[entity] = max(candidates.get(entity, 0), score)
-            except Exception as e:  # noqa: BLE001
-                logger.error("Search %s failed: %s", key, e)
-                timings[key] = 0.0
-
-    if not candidates:
-        return [], timings
-
-    # 4. Rerank (combine with PageRank)
-    final_seeds: List[str] = []
-    rerank_t0 = time.time()
-    try:
-        with Profiler("Seed Reranking"):
-            rerank_query = """
-            UNWIND $ids AS id
-            MATCH (e)
-            WHERE e.id = id
-            RETURN e.id AS id, coalesce(e.pagerank_centrality, e.pagerank, 0.0) AS pagerank
+            keyword_query = """
+            UNWIND $keywords AS keyword
+            MATCH (seed)
+            WHERE (seed:ENTITY_CONCEPT OR seed:TOPIC OR seed:SUBTOPIC OR seed:DAY OR seed:CONVERSATION OR seed:PLACE)
+            AND (
+                toLower(coalesce(seed.name, "")) CONTAINS toLower(keyword)
+                OR toLower(coalesce(seed.id, "")) CONTAINS toLower(keyword)
+                OR toLower(coalesce(seed.title, "")) CONTAINS toLower(keyword)
+            )
+            RETURN DISTINCT seed.id AS id, labels(seed) as labels
+            LIMIT 100
             """
+            results = db.query(keyword_query, {"keywords": keywords})
+            for record in results:
+                eid = record.get("id")
+                labels = [l.upper() for l in record.get("labels", [])]
+                if "TOPIC" in labels or "SUBTOPIC" in labels:
+                    local_topics[eid] = max(local_topics.get(eid, 0), 1.0)
+                else:
+                    local_ents[eid] = max(local_ents.get(eid, 0), 1.0)
+        except Exception as e:
+            logger.warning("Keyword search failed: %s", e)
+        return local_ents, local_topics, time.time() - t0
+
+    with Profiler("Parallel Seed Search"), ThreadPoolExecutor(max_workers=4) as executor:
+        f_topic = executor.submit(search_topic)
+        f_sub = executor.submit(search_subtopic)
+        f_ent = executor.submit(search_entity)
+        f_key = executor.submit(search_keywords)
+
+        r_topic, t_topic, d_topic = f_topic.result()
+        r_sub, t_sub, d_sub = f_sub.result()
+        r_ent, d_ent = f_ent.result()
+        r_key_ent, r_key_top, d_key = f_key.result()
+
+        timings.update({"vector_topic": d_topic, "vector_sub": d_sub, "vector_ent": d_ent, "keyword": d_key})
+        
+        for d in [r_topic, r_sub, r_ent, r_key_ent]:
+            for k, v in d.items(): candidates[k] = max(candidates.get(k, 0), v)
+        for d in [t_topic, t_sub, r_key_top]:
+            for k, v in d.items(): topic_candidates[k] = max(topic_candidates.get(k, 0), v)
+
+    if not candidates and not topic_candidates:
+        return [], [], timings
+
+    # Rerank entities
+    final_entities = []
+    
+    if candidates:
+        try:
+            rerank_query = "UNWIND $ids AS id MATCH (e) WHERE e.id = id RETURN e.id AS id, coalesce(e.pagerank_centrality, 0.0) AS pagerank"
             results = db.query(rerank_query, {"ids": list(candidates.keys())})
+            scored = []
+            for r in results:
+                name, pr = r.get("id"), r.get("pagerank", 0.0)
+                scored.append((name, candidates.get(name, 0)*0.7 + pr*0.3))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            final_entities = [x[0] for x in scored[:30]]
+        except Exception:
+            final_entities = list(candidates.keys())[:20]
 
-        scored_entities: List[Tuple[str, float]] = []
-        for record in results:
-            name = record.get("id")
-            pagerank = record.get("pagerank", 0.0)
-            base_score = candidates.get(name, 0)
+    # Rerank topics
+    scored_topics = sorted(topic_candidates.items(), key=lambda x: x[1], reverse=True)
+    final_topics = [x[0] for x in scored_topics[:10]]
 
-            final_score = (base_score * 0.7) + (pagerank * 0.3)
-            scored_entities.append((name, final_score))
-
-        scored_entities.sort(key=lambda x: x[1], reverse=True)
-        final_seeds = [x[0] for x in scored_entities[:MAX_ENTITY_NEIGHBORS_PER_SEED]]
-        logger.info("Top seeds after reranking: %s", final_seeds)
-
-    except Exception as e:  # noqa: BLE001
-        logger.error("Reranking failed: %s", e)
-        final_seeds = list(candidates.keys())[:5]
-    timings["seed_reranking"] = time.time() - rerank_t0
-
-    return final_seeds, timings
+    return final_entities, final_topics, timings
 
 
 # The rest of the helpers are largely copied from the existing backend module.
@@ -559,142 +545,84 @@ def _process_graph_results(results: List[Dict[str, Any]], nodes: Dict[str, Any],
     Helper to process query results and update nodes/edges collections.
     Handles FalkorDB result formats and property extraction.
     """
+    internal_to_string_id = {}
+    
+    # 1. First pass: Process all nodes to establish ID mappings
     for record in results:
-        # Process Nodes
         for key, value in record.items():
-            # Check if value looks like a Node (has properties/labels or is dict with them)
-            # Simple heuristic: inspect keys or attributes
             candidate_node = None
             if hasattr(value, "labels") and hasattr(value, "id"): # Object
                 candidate_node = value
-            elif isinstance(value, dict) and ("labels" in value or "properties" in value): # Dict representation
+            elif isinstance(value, dict) and ("labels" in value or "properties" in value): # Dict
                 candidate_node = value
             
             if candidate_node:
                 node_props: Dict[str, Any] = {}
                 labels: List[str] = []
-                element_id = ""
+                internal_id = ""
 
                 if hasattr(candidate_node, "properties"):
                     raw_props = candidate_node.properties
-                    if hasattr(raw_props, "items"):
-                        node_props = dict(raw_props)
-                    elif isinstance(raw_props, dict):
-                        node_props = raw_props.copy()
-                    else:
-                        node_props = {}
-
-                    if hasattr(candidate_node, "labels"):
-                        raw_labels = candidate_node.labels
-                        if isinstance(raw_labels, (list, tuple)):
-                            labels = list(raw_labels)
-                        elif raw_labels:
-                            labels = [raw_labels]
+                    node_props = dict(raw_props) if hasattr(raw_props, "items") else {}
                     
-                    if hasattr(candidate_node, "id"):
-                        element_id = str(candidate_node.id)
-                    elif hasattr(candidate_node, "element_id"):
-                        element_id = str(candidate_node.element_id)
-                    else:
-                        element_id = str(node_props.get("id") or "unknown")
-
+                    labels = list(candidate_node.labels) if hasattr(candidate_node, "labels") else []
+                    internal_id = str(candidate_node.id)
                 elif isinstance(candidate_node, dict):
                     node_props = candidate_node.get("properties", {}).copy()
-                    if not node_props and "properties" not in candidate_node:
-                         # It might be a flat dict of properties if it came from certain queries
-                         # But typically our query returns nodes. 
-                         # If it's the dict structure from fallback:
-                         node_props = candidate_node.copy()
-                         node_props.pop("labels", None)
-                         node_props.pop("id", None)
-                         node_props.pop("element_id", None)
+                    labels = list(candidate_node.get("labels", []))
+                    internal_id = str(candidate_node.get("id") or candidate_node.get("element_id") or "")
 
-                    labels_raw = candidate_node.get("labels", [])
-                    if isinstance(labels_raw, str):
-                        labels = [labels_raw]
-                    else:
-                        labels = list(labels_raw)
-                    
-                    element_id = str(candidate_node.get("id") or candidate_node.get("element_id") or "")
+                # Establish the "canonical" ID for this node
+                # Preference: 'id' property > 'p_id' property > internal ID
+                string_id = node_props.get('id') or node_props.get('p_id') or internal_id
+                internal_to_string_id[internal_id] = string_id
                 
-                # Check for nested JSON strings
-                for k, v in list(node_props.items()):
-                    if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
-                        try:
-                            node_props[k] = json.loads(v)
-                        except Exception: # noqa: BLE001
-                            pass
+                if string_id not in nodes:
+                    filtered_props = filter_node_properties(node_props, labels)
+                    nodes[string_id] = {
+                        "id": string_id,
+                        "element_id": internal_id,
+                        "display_id": filtered_props.get("name") or filtered_props.get("title") or string_id,
+                        "labels": labels,
+                        "properties": filtered_props,
+                    }
 
-                filtered_props = filter_node_properties(node_props, labels)
-                
-                node_display_id = (
-                    filtered_props.get("name")
-                    or filtered_props.get("title")
-                    or node_props.get("id")
-                    or element_id
-                )
-
-                nodes[element_id] = {
-                    "id": node_display_id,
-                    "element_id": element_id,
-                    "labels": labels,
-                    "properties": filtered_props,
-                }
-
-        # Process Relationships
-        # Look for relationship objects or specific keys like 'r', 'rel', etc.
-        # But we iterate all values to be generic
+    # 2. Second pass: Process all relationships using established ID mapping
+    for record in results:
         for key, value in record.items():
             candidate_rel = None
-            if hasattr(value, "start_node") and hasattr(value, "end_node"): # Object
+            if hasattr(value, "src_node") and hasattr(value, "dest_node"): # FalkorDB Object
                 candidate_rel = value
-            elif hasattr(value, "src_node") and hasattr(value, "dest_node"): # FalkorDB Object
-                candidate_rel = value
-            elif isinstance(value, dict) and "start" in value and "end" in value and "type" in value: # Dict
+            elif isinstance(value, dict) and "start" in value and "end" in value: # Dict
                 candidate_rel = value
             
             if candidate_rel:
-                rel_props: Dict[str, Any] = {}
+                rel_props = {}
                 rel_type = "RELATED"
-                start_id = ""
-                end_id = ""
+                src_internal = ""
+                dst_internal = ""
 
                 if hasattr(candidate_rel, "properties"):
-                    raw_props = candidate_rel.properties
-                    rel_props = dict(raw_props) if hasattr(raw_props, "items") else {}
-                    rel_props = dict(raw_props) if hasattr(raw_props, "items") else {}
-                    # FalkorDB Edge uses 'relation', others 'type'
-                    if hasattr(candidate_rel, "relation"):
-                         rel_type = candidate_rel.relation
-                    else:
-                         rel_type = getattr(candidate_rel, "type", "RELATED")
-                    
-                    if hasattr(candidate_rel, "start_node"):
-                        start_id = str(getattr(candidate_rel.start_node, "id", "")) or str(getattr(candidate_rel.start_node, "element_id", ""))
-                        end_id = str(getattr(candidate_rel.end_node, "id", "")) or str(getattr(candidate_rel.end_node, "element_id", ""))
-                    elif hasattr(candidate_rel, "src_node"): # RedisGraph client sometimes
-                         start_id = str(candidate_rel.src_node)
-                         end_id = str(candidate_rel.dest_node)
-
+                    rel_props = dict(candidate_rel.properties)
+                    rel_type = getattr(candidate_rel, "relation", getattr(candidate_rel, "type", "RELATED"))
+                    src_internal = str(candidate_rel.src_node)
+                    dst_internal = str(candidate_rel.dest_node)
                 elif isinstance(candidate_rel, dict):
                     rel_props = candidate_rel.get("properties", {}).copy()
-                    if not rel_props:
-                         rel_props = candidate_rel.copy()
-                         rel_props.pop("start", None)
-                         rel_props.pop("end", None)
-                         rel_props.pop("type", None)
-                    
                     rel_type = candidate_rel.get("type", "RELATED")
-                    start_id = str(candidate_rel.get("start", ""))
-                    end_id = str(candidate_rel.get("end", ""))
+                    src_internal = str(candidate_rel.get("start", ""))
+                    dst_internal = str(candidate_rel.get("end", ""))
 
-                if start_id and end_id:
-                     # Check if we have these nodes
-                    # Only add edge if we have both nodes? NO, we might process nodes in other batches.
-                    # Just add edge for now.
+                # Map internal IDs to our canonical string IDs
+                src_id = internal_to_string_id.get(src_internal, src_internal)
+                dst_id = internal_to_string_id.get(dst_internal, dst_internal)
+
+                if src_id and dst_id:
                     edges.append({
-                        "start": start_id,
-                        "end": end_id,
+                        "source": src_id,
+                        "target": dst_id,
+                        "start": src_id,
+                        "end": dst_id,
                         "type": rel_type,
                         "properties": rel_props
                     })
@@ -703,17 +631,7 @@ def expand_subgraph(
     db: GraphDB, seed_entities: List[str]
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, float]]:
     """
-    Perform a split, multi-stage traversal to avoid DB timeouts.
-    Stages:
-    1. Fetch Seed Nodes
-    2. Fetch Chunks connected to Seeds
-    3. Fetch Content Hierarchy (Chunk->Segment->Day)
-    4. Fetch Context Neighbors (Chunk->Entity)
-    
-    Returns:
-        nodes: Dict[str, Any]
-        edges: List[Dict[str, Any]]
-        timings: Dict[str, float]
+    Expand subgraph using a dynamic BFS traversal from seed entities.
     """
     nodes: Dict[str, Any] = {}
     edges: List[Dict[str, Any]] = []
@@ -722,176 +640,77 @@ def expand_subgraph(
     if not seed_entities:
         return nodes, edges, timings
 
-    def run_stage(name: str, cypher: str, params: dict):
-        t0 = time.time()
-        try:
-            with Profiler(f"Expand {name}"):
-                result = db.query(cypher, params)
-                _process_graph_results(result, nodes, edges)
-                logger.info(f"{name}: Fetched {len(result)} records")
-        except Exception as e:
-            logger.error(f"Expansion Stage {name} failed: {e}")
-        finally:
-            timings[f"expand_{name.lower().replace(' ', '_')}"] = time.time() - t0
+    max_hops = 5
+    nodes_per_hop_limit = 500
+    
+    current_frontier = set([str(s).strip() for s in seed_entities if s])
+    visited_ids = set(current_frontier)
+    
+    def check_limits():
+        return len(nodes) >= MAX_EXPANDED_NODES
 
     try:
-        # 1. Fetch Seed Nodes
-        run_stage("Seed Nodes", """
-            UNWIND $seeds AS seed_id
-            MATCH (n)
-            WHERE n.id = seed_id
-            RETURN n
-            """, {"seeds": seed_entities})
-        
-        # Identify IDs for next steps
-        seed_ids = [int(n_id) for n_id in nodes.keys() if n_id.isdigit()]
-        if not seed_ids:
-             # Try assuming string IDs if not digit
-             seed_ids = [n for n in nodes.keys()]
-        
-        # 6. Fetch DIRECT relationships for SEED entities (Semantic Expansion)
-        # The user wants to see edges like "battery factory" SUPPORTS "government", even if government wasn't in chunks.
-        # We expand 1st degree connections for seeds to enrich the graph.
-        
-        logger.info(f"Expanding semantic relationships for {len(seed_ids)} seeds...")
-        seed_ids_str = "[" + ", ".join(str(sid) for sid in seed_ids) + "]"
-        
-        # Query: Seed -[r]- Entity
-        # Limit per seed to avoid explosion
-        semantic_query = f"""
-        MATCH (s)-[r]-(e)
-        WHERE ID(s) IN {seed_ids_str}
-        AND (labels(e) = ['Entity'] OR 'Entity' IN labels(e) OR labels(e) = ['ENTITY_CONCEPT'] OR 'ENTITY_CONCEPT' IN labels(e))
-        AND type(r) <> 'HAS_ENTITY'
-        RETURN s, r, e
-        LIMIT 200
-        """
-        # Note: directionless match to catch valid semantic edges
-        run_stage("Semantic Expansion", semantic_query, {})
-        logger.info(f"Semantic Expansion found {len(nodes) - len(seed_entities)} new nodes.") # Approximation
-        
-        # 7. Fetch DIRECT relationships between ALL found entities (Closure)
-        # Collect all entity IDs found so far (Seeds + Neighbors + Newly added semantic ones)
-        all_entity_ids = []
-        for nid, n in nodes.items():
-            labels = getattr(n, 'labels', [])
-            if hasattr(n, 'labels') and ( 'Entity' in labels or 'ENTITY_CONCEPT' in labels ):
-                all_entity_ids.append(nid)
-            elif isinstance(n, dict): # Fallback if dict
-                labels = n.get('labels', [])
-                if 'Entity' in labels or 'ENTITY_CONCEPT' in labels:
-                    all_entity_ids.append(nid)
-        
-        # Add seeds to be sure
-        for sid in seed_ids:
-            if sid not in all_entity_ids:
-                all_entity_ids.append(sid)
-
-        # Batch this N*N check (matching on set)
-        if all_entity_ids:
-             all_entity_ids = list(set(all_entity_ids))
-             batch_size = 500
-             for i in range(0, len(all_entity_ids), batch_size):
-                 batch = all_entity_ids[i : i + batch_size]
-                 batch_str = "[" + ", ".join(str(eid) for eid in batch) + "]"
-                 
-                 rel_enrich_query = f"""
-                 MATCH (a)-[r]->(b)
-                 WHERE ID(a) IN {batch_str}
-                 AND ID(b) IN {batch_str}
-                 RETURN a, r, b
-                 """
-                 run_stage(f"Entity Closure Batch {i//batch_size}", rel_enrich_query, {})
-
-        # Structure the result
-        if not seed_ids:
-            return nodes, edges, timings
-
-        logger.info("Found %d seed nodes. expanding chunks...", len(seed_ids))
-
-        # 2. Fetch Connected Chunks
-        # Limit per seed to avoid explosion
-        # Manually interpolate IDs because FalkorDB/RedisGraph param binding for ID lists can be flaky
-        seed_ids_str = "[" + ", ".join(str(sid) for sid in seed_ids) + "]"
-        
-        chunk_query = f"""
-        MATCH (s)
-        WHERE ID(s) IN {seed_ids_str}
-        OPTIONAL MATCH (s)<-[r1:HAS_ENTITY]-(c1)
-        OPTIONAL MATCH (s)-[r2:HAS_CHUNK]->(c2)
-        RETURN s, r1, c1, r2, c2
-        LIMIT 200
-        """
-        run_stage("Connected Chunks", chunk_query, {})
-        
-        chunk_ids = [
-            int(n["element_id"]) 
-            for n in nodes.values() 
-            if "Chunk" in n.get("labels", []) or n.get("properties", {}).get("text")
-        ]
-        
-        logger.info("Found %d relevant chunks. expanding hierarchy...", len(chunk_ids))
-        
-        if chunk_ids:
-            # 3. Fetch Hierarchy (Day -> Segment -> Chunk)
-            # Traverse strict path: Day -> Segment -> Chunk
-            batch_size = 100
-            for i in range(0, len(chunk_ids), batch_size):
-                batch = chunk_ids[i : i + batch_size]
-                batch_str = "[" + ", ".join(str(cid) for cid in batch) + "]"
-                
-                # Hierarchy Query: Handle both direct Segment->Chunk and Segment->Conversation->Chunk paths
-                # Also fetch Place and Context connected to Conversation
-                hierarchy_query = f"""
-                MATCH (c) WHERE ID(c) IN {batch_str}
-                OPTIONAL MATCH (c)<-[r1a:HAS_CHUNK]-(seg:SEGMENT)<-[r2a:HAS_SEGMENT]-(day:DAY)
-                OPTIONAL MATCH (c)<-[r1b:HAS_CHUNK]-(conv:CONVERSATION)
-                OPTIONAL MATCH (conv)<-[r2b:HAS_CONVERSATION]-(seg2:SEGMENT)<-[r3b:HAS_SEGMENT]-(day2:DAY)
-                OPTIONAL MATCH (conv)-[r_place:HAPPENED_AT]->(place:PLACE)
-                OPTIONAL MATCH (conv)-[r_ctx:HAS_CONTEXT]->(context:CONTEXT)
-                RETURN c, r1a, seg, r2a, day, r1b, conv, r2b, seg2, r3b, day2, r_place, place, r_ctx, context
+        t0 = time.time()
+        with Profiler("Fetch Seed Nodes"):
+            seed_list = list(current_frontier)
+            if seed_list:
+                query = """
+                MATCH (n)
+                WHERE n.id IN $ids 
+                OR n.name IN $ids 
+                OR n.title IN $ids
+                RETURN n
                 """
-                run_stage(f"Hierarchy Batch {i//batch_size}", hierarchy_query, {})
+                result = db.query(query, {'ids': seed_list})
+                _process_graph_results(result, nodes, edges)
+                
+                # Update frontier with actual canonical IDs found
+                found_ids = set(nodes.keys())
+                current_frontier = found_ids
+                visited_ids.update(current_frontier)
+                
+        timings["fetch_seeds"] = time.time() - t0
+        logger.info(f"BFS Start: Found {len(nodes)} seed nodes. Frontier size: {len(current_frontier)}")
 
-            # 4. Fetch Context Neighbors (Chunk -> other Entities)
-            # Limit to high relevance, avoid exploding the graph
-            # User requested "first degree entity neighbors"
-            seed_ids_str = "[" + ", ".join(str(sid) for sid in seed_ids) + "]"
-            for i in range(0, len(chunk_ids), batch_size):
-                 batch = chunk_ids[i : i + batch_size]
-                 batch_str = "[" + ", ".join(str(cid) for cid in batch) + "]"
-                 
-                 # Only fetch entities that are NOT the seeds (to avoid self-loops/duplication in logic)
-                 neighbor_query = f"""
-                 MATCH (c)-[r:HAS_ENTITY]->(e)
-                 WHERE ID(c) IN {batch_str}
-                 AND NOT ID(e) IN {seed_ids_str}
-                 RETURN c, r, e
-                 LIMIT 200
-                 """
-                 run_stage(f"Context Neighbors Batch {i//batch_size}", neighbor_query, {})
+        for hop in range(1, max_hops + 1):
+            if check_limits() or not current_frontier:
+                break
+                
+            t_hop = time.time()
+            next_frontier = set()
+            frontier_list = list(current_frontier)
+            total_new_nodes = 0
+            
+            for i in range(0, len(frontier_list), 100):
+                if check_limits(): break
+                batch = frontier_list[i : i + 100]
+                
+                query = """
+                MATCH (n)-[r]-(m)
+                WHERE n.id IN $ids
+                RETURN n, r, m
+                LIMIT $limit
+                """
+                result = db.query(query, {'ids': batch, 'limit': nodes_per_hop_limit})
+                
+                nodes_before = len(nodes)
+                _process_graph_results(result, nodes, edges)
+                nodes_after = len(nodes)
+                total_new_nodes += (nodes_after - nodes_before)
+                
+                # Collect new frontier from processed canonical IDs
+                # All keys currently in 'nodes' that haven't been visited
+                for nid in nodes.keys():
+                    if nid not in visited_ids:
+                        next_frontier.add(nid)
+                        visited_ids.add(nid)
 
-        # 5. Fetch Topic Hierarchy (Entity -> Subtopic -> Topic)
-        # This was missing in previous iteration.
-        logger.info("Expanding topic hierarchy for seeds...")
-        seed_ids_str = "[" + ", ".join(str(sid) for sid in seed_ids) + "]"
-        
-        # Simplified query if labels are consistent in DB (e.g., all uppercase based on schema check)
-        # Schema check showed ['TOPIC'] and ['SUBTOPIC']
-        topic_query = f"""
-        MATCH (e)-[r1]-(s)-[r2]-(t)
-        WHERE ID(e) IN {seed_ids_str}
-        AND (type(r1) = 'IN_TOPIC' OR type(r1) = 'in_topic') 
-        AND (labels(s) = ['SUBTOPIC'] OR 'SUBTOPIC' IN labels(s) OR labels(s) = ['Subtopic'])
-        AND (type(r2) = 'PARENT_TOPIC' OR type(r2) = 'parent_topic')
-        AND (labels(t) = ['TOPIC'] OR 'TOPIC' IN labels(t) OR labels(t) = ['Topic'])
-        RETURN e, r1, s, r2, t
-        """
-        run_stage("Topic Hierarchy", topic_query, {})
+            timings[f"bfs_hop_{hop}"] = time.time() - t_hop
+            logger.info(f"BFS Hop {hop}: Expanded {total_new_nodes} new nodes. Next Frontier: {len(next_frontier)}")
+            current_frontier = next_frontier
 
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Subgraph expansion failed: %s", exc)
-        # We return whatever we found so far
+    except Exception as exc:
+        logger.error("BFS expansion failed: %s", exc)
         
     return nodes, edges, timings
 
@@ -900,144 +719,117 @@ def filter_subgraph_by_centrality(
     nodes: Dict[str, Any],
     edges: List[Dict[str, Any]],
     seed_entities: List[str],
-    top_n: int = 10,
+    max_nodes: int = 70,  # Reduced default from 500/1000
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """
-    Keep the entire connected component from seed entities.
-    
-    Strategy:
-      1. Find all seed nodes by matching entity names.
-      2. Expand to the full connected component (all nodes reachable from seeds).
-      3. Apply a high safety cap (1000 nodes) only to prevent memory issues.
-      4. Always include temporal nodes (Day/Segment) regardless of connectivity.
-    
-    This ensures the LLM sees the complete graph structure including temporal
-    information without aggressive filtering that might drop Day/Segment nodes.
+    Smarter subgraph filtering:
+    1. Identifies seed nodes.
+    2. Calculates relevance scores based on distance from seeds and static PageRank.
+    3. Prioritizes keeping the hierarchy (Day -> Episode -> Conv) for temporal queries.
+    4. Limits total nodes to ensure a dense, high-signal context.
     """
-    # Normalize seed entities for case-insensitive matching if they are strings
-    seed_entities_lower = {s.lower() for s in seed_entities if isinstance(s, str)}
-    seed_entities_set = set(seed_entities)
-
-    # Find seed nodes by matching node IDs (primary) or entity names/titles (fallback)
-    seed_node_ids: set[str] = set()
-    for node_id, node_data in nodes.items():
-        p_id = node_data.get("id") # The property-based ID (e.g. 'mom')
-        props = node_data.get("properties", {})
-        name = props.get("name")
-        title = props.get("title")
-        
-        # Check ID match (internal integer ID or property ID)
-        if str(node_id) in seed_entities_set or p_id in seed_entities_set:
-            seed_node_ids.add(node_id)
-            continue
-
-        # Check Name/Title match (exact or case-insensitive)
-        found = False
-        for val in [p_id, name, title]:
-            if val and isinstance(val, str):
-                if val in seed_entities_set or val.lower() in seed_entities_lower:
-                    seed_node_ids.add(node_id)
-                    found = True
-                    break
-        if found:
-            continue
-
-    # If no seeds found, return empty
-    if not seed_node_ids:
+    if not nodes:
         return {}, []
 
-    # Expand to full connected component from seeds
-    # Expand to full connected component from seeds using BFS
-    # This is O(N + E) instead of O(N * E) iterative relaxation
-    
-    # 1. Build Adjacency List
-    adj: Dict[str, List[str]] = {}
-    for edge in edges:
-        start_id = edge.get("start")
-        end_id = edge.get("end")
-        if start_id and end_id:
-            if start_id not in adj:
-                adj[start_id] = []
-            if end_id not in adj:
-                adj[end_id] = []
-            adj[start_id].append(end_id)
-            adj[end_id].append(start_id)  # Treat as undirected for connectivity
+    seed_entities_set = set(str(s) for s in seed_entities)
+    seed_node_ids: set[str] = set()
 
-    # 2. BFS
-    connected_nodes = set()
-    queue = list(seed_node_ids)
-    connected_nodes.update(seed_node_ids)
-    
-    # Optional: Safety cap for traversal depth/count if needed, but we rely on output cap later
-    idx = 0
-    while idx < len(queue):
-        current = queue[idx]
-        idx += 1
+    # 1. Identify Seed Nodes
+    for node_id, node_data in nodes.items():
+        if node_id in seed_entities_set:
+            seed_node_ids.add(node_id)
+            continue
         
-        if current in adj:
-            for neighbor in adj[current]:
-                if neighbor not in connected_nodes:
-                    connected_nodes.add(neighbor)
-                    queue.append(neighbor)
+        p_id = str(node_data.get("properties", {}).get("id", ""))
+        display_id = str(node_data.get("display_id", ""))
+        if p_id in seed_entities_set or display_id in seed_entities_set:
+            seed_node_ids.add(node_id)
 
-    # Merge connected component with temporal nodes
-    # Only include temporal nodes that are actually connected to the seed context
-    # This prevents pulling in irrelevant segments just because they exist in the graph
-    selected_node_ids = connected_nodes
+    # Fallback: if no seeds match, return a limited set of important nodes
+    if not seed_node_ids:
+        logger.warning(f"filter_subgraph: No seed node IDs matched. seeds={seed_entities_set}")
+        # Just return top 30 nodes by PageRank if no seeds
+        sorted_by_pr = sorted(
+            nodes.items(),
+            key=lambda x: x[1].get("properties", {}).get("pagerank_centrality", 0),
+            reverse=True
+        )[:30]
+        nodes_pr = {nid: nd for nid, nd in sorted_by_pr}
+        return nodes_pr, []
+
+    # 2. Build Adjacency for distance calculation
+    G = nx.Graph()
+    for nid, nd in nodes.items():
+        G.add_node(nid)
+    for edge in edges:
+        s, t = edge.get("source"), edge.get("target")
+        if s in nodes and t in nodes:
+            G.add_edge(s, t)
+
+    # 3. Calculate Relevance Scores
+    # Score = (1 / (distance + 1)) * (1 + PageRank)
+    relevance_scores = {}
+    for node_id in nodes:
+        # Calculate min distance to any seed
+        min_dist = float('inf')
+        for seed in seed_node_ids:
+            try:
+                # Limit search depth for speed
+                dist = nx.shortest_path_length(G, source=node_id, target=seed)
+                min_dist = min(min_dist, dist)
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                continue
+        
+        if min_dist == float('inf'):
+            # Check if it's a temporal node (important for context anyway)
+            labels = [l.lower() for l in nodes[node_id].get("labels", [])]
+            if any(l in labels for l in ["day", "episode", "conversation"]):
+                dist_factor = 0.2 # Give temporal nodes a chance
+            else:
+                dist_factor = 0.05
+        else:
+            dist_factor = 1.0 / (min_dist + 1)
+
+        # PR Factor
+        pr = nodes[node_id].get("properties", {}).get("pagerank_centrality", 0.01)
+        
+        # Node Type Boosting
+        type_boost = 1.0
+        labels_lower = [l.lower() for l in nodes[node_id].get("labels", [])]
+        if "topic" in labels_lower or "subtopic" in labels_lower:
+            type_boost = 2.0
+        elif "day" in labels_lower:
+            type_boost = 1.5
+        elif "chunk" in labels_lower:
+            type_boost = 0.8 # De-prioritize raw chunks if they are far
+
+        relevance_scores[node_id] = dist_factor * (1 + pr) * type_boost
+
+    # 4. Select Top Nodes
+    # Ensure seeds are always kept
+    top_node_ids = set(seed_node_ids)
     
-    # Optional: If we want to be safe, we can add temporal nodes that are 1 hop away from connected component?
-    # For now, strict connectivity is better for relevance.
+    # Sort remaining nodes by score
+    remaining_nodes = [nid for nid in nodes if nid not in seed_node_ids]
+    remaining_nodes.sort(key=lambda nid: relevance_scores.get(nid, 0), reverse=True)
     
-    # Apply a stricter safety cap to prevent context window overflow
-    # Reduced from 1000 to 200 to prioritize high-signal nodes
-    max_safety_cap = 500
-    if len(selected_node_ids) > max_safety_cap:
-        # If over cap, prioritize: seeds -> connected
-        prioritized = seed_node_ids.copy()
-        for node_id in connected_nodes:
-            if len(prioritized) >= max_safety_cap:
-                break
-            prioritized.add(node_id)
-        selected_node_ids = prioritized
-        logger.warning(
-            "Subgraph exceeded safety cap (%d nodes), truncated to %d nodes",
-            len(connected_nodes),
-            len(selected_node_ids),
-        )
+    # Fill up to max_nodes
+    num_to_add = max(0, max_nodes - len(top_node_ids))
+    top_node_ids.update(remaining_nodes[:num_to_add])
 
-    path_nodes = selected_node_ids.copy()
-
-    filtered_nodes = {
-        node_id: node_data for node_id, node_data in nodes.items() if node_id in path_nodes
-    }
+    # 5. Filter nodes and edges
+    filtered_nodes = {nid: nd for nid, nd in nodes.items() if nid in top_node_ids}
     filtered_edges = [
-        edge
-        for edge in edges
-        if edge.get("start") in path_nodes and edge.get("end") in path_nodes
+        e for e in edges 
+        if e.get("source") in top_node_ids and e.get("target") in top_node_ids
     ]
 
-    type_counts: Dict[str, int] = {}
-    for node_data in filtered_nodes.values():
-        props = node_data.get("properties", {})
-        labels = node_data.get("labels", [])
-        labels_lower = {label.lower() for label in labels} if labels else set()
-        if "chunk" in labels_lower or props.get("text"):
-            node_type = "Chunk"
-        elif "segment" in labels_lower or props.get("content"):
-            node_type = "Segment"
-        elif "day" in labels_lower or props.get("date") and (props.get("episode_count") or props.get("segment_count")):
-            node_type = "Day"
-        else:
-            node_type = "Entity"
-        type_counts[node_type] = type_counts.get(node_type, 0) + 1
+    # Final cleanup: ensure edges only link to existing nodes (redundant but safe)
+    filtered_edges = [e for e in filtered_edges if e["source"] in filtered_nodes and e["target"] in filtered_nodes]
 
     logger.info(
-        "Filtered subgraph: %s nodes (from %s), %s edges (from %s). Node types: %s",
-        len(filtered_nodes),
-        len(nodes),
-        len(filtered_edges),
-        len(edges),
-        type_counts,
+        "Smarter Filter: Kept %d nodes (from %d), %d edges (from %d)",
+        len(filtered_nodes), len(nodes), len(filtered_edges), len(edges)
     )
 
     return filtered_nodes, filtered_edges
@@ -1063,7 +855,7 @@ def format_graph_context(nodes: dict, edges: list) -> str:
     def get_name(n):
         p = n.get("properties", {})
         # Prioritize calculated ID which may contain the name from node.id
-        return clean_entity_name(n.get("id") or p.get("name") or p.get("title") or "Unknown")
+        return clean_entity_name(n.get("display_id") or n.get("id") or p.get("name") or p.get("title") or "Unknown")
 
     for n in nodes.values():
         props = n.get("properties", {})
@@ -1122,6 +914,11 @@ def format_graph_context(nodes: dict, edges: list) -> str:
             # Find connected Place/Context via edges
             associated_info = []
             related_chunks = []
+            
+            # Add image_description if present directly on the node (new simplified schema)
+            img_desc = p.get("image_description")
+            if img_desc:
+                associated_info.append(f"Visual Context: {img_desc}")
             
             # Find chunks for this segment/conversation
             for edge in edges:
@@ -1366,6 +1163,8 @@ def enrich_with_triplets(nodes: Dict[str, Any], edges: List[Dict[str, Any]]):
                  # Add Relation Edge
                  edge = {
                      "type": pred.upper().replace(" ", "_"),
+                     "source": s_id,
+                     "target": o_id,
                      "start": s_id, 
                      "end": o_id,   
                      "properties": {"implied": True}
@@ -1375,6 +1174,8 @@ def enrich_with_triplets(nodes: Dict[str, Any], edges: List[Dict[str, Any]]):
                  # Link Chunk to Subject (structural)
                  c_s_edge = {
                      "type": "MENTIONS",
+                     "source": nid,
+                     "target": s_id,
                      "start": nid,
                      "end": s_id, 
                      "properties": {"implied": True}
@@ -1384,6 +1185,8 @@ def enrich_with_triplets(nodes: Dict[str, Any], edges: List[Dict[str, Any]]):
                  # Link Chunk to Object (structural)
                  c_o_edge = {
                      "type": "MENTIONS",
+                     "source": nid,
+                     "target": o_id,
                      "start": nid,
                      "end": o_id,
                      "properties": {"implied": True}
@@ -1400,104 +1203,59 @@ def retrieve_subgraph(
     keywords: List[str],
     query_text: str = "",
     accumulated_graph: Optional[Dict[str, Any]] = None,
-) -> Tuple[str, Dict[str, Any], List[str], Dict[str, float]]:
+) -> Tuple[str, Dict[str, Any], List[str], List[str], Dict[str, float]]:
     """
     Retrieve relevant context using graph traversal.
-    Optionally merges with accumulated graph data from previous queries.
     Returns:
         xml_context: str
         graph_data: dict
         seed_entities: list
+        seed_topics: list
         timings: dict
     """
-    from src.app.infrastructure.llm import (  # noqa: WPS433
-        get_embedding_model,
-    )
-    
     total_timings: Dict[str, float] = {}
-
     context_text = ""
     graph_data: Dict[str, Any] = {"nodes": [], "edges": []}
     seed_entities: List[str] = []
+    seed_topics: List[str] = []
 
     try:
         query_embedding: List[float] = []
         if query_text:
-            from src.app.infrastructure.llm import (  # noqa: WPS433
-                get_embedding_model,
-            )
-
+            from src.app.infrastructure.llm import get_embedding_model
             embedding_model = get_embedding_model()
             with Profiler("Query Embedding"):
                 query_embedding = embedding_model.embed_query(query_text)
 
         with Profiler("Get Seed Entities"):
-            seed_entities, seed_timings = get_seed_entities(db, query_embedding, keywords)
+            seed_entities, seed_topics, seed_timings = get_seed_entities(db, query_embedding, keywords)
         total_timings.update(seed_timings)
-        logger.info("Selected seed entities: %s", seed_entities)
+        
+        all_seeds = list(set(seed_entities + seed_topics))
 
         with Profiler("Expand Subgraph"):
-            nodes, edges, expand_timings = expand_subgraph(db, seed_entities)
+            nodes, edges, expand_timings = expand_subgraph(db, all_seeds)
         total_timings.update(expand_timings)
 
-        node_types_before: Dict[str, int] = {}
-        for node_data in nodes.values():
-            labels = node_data.get("labels", [])
-            props = node_data.get("properties", {})
-            labels_lower = {label.lower() for label in labels} if labels else set()
-            if "chunk" in labels_lower or props.get("text"):
-                node_type = "Chunk"
-            elif "segment" in labels_lower or props.get("content"):
-                node_type = "Segment"
-            elif "subtopic" in labels_lower:
-                node_type = "Subtopic"
-            elif "topic" in labels_lower:
-                node_type = "Topic"
-            elif "day" in labels_lower or (props.get("date") and (props.get("episode_count") or props.get("segment_count"))):
-                node_type = "Day"
-            else:
-                node_type = "Entity"
-            node_types_before[node_type] = node_types_before.get(node_type, 0) + 1
-
-        logger.info(
-            "Subgraph expanded: %s nodes, %s edges. Node types before filtering: %s",
-            len(nodes),
-            len(edges),
-            node_types_before,
-        )
-
-        # Enrich with implied entities from triplets (Fallback for missing edges)
-        enrich_with_triplets(nodes, edges)
-
-        # Keep entire connected component - no aggressive filtering
-        # This ensures Day/Segment nodes are always included for temporal reasoning
-        # This ensures Day/Segment nodes are always included for temporal reasoning
+        # Smart Filter
         with Profiler("Filter Subgraph"):
-            nodes, edges = filter_subgraph_by_centrality(
-                nodes, edges, seed_entities, top_n=1000
-            )
+            nodes, edges = filter_subgraph_by_centrality(nodes, edges, all_seeds, max_nodes=70)
 
-        new_graph_data = {
-            "nodes": list(nodes.values()),
-            "edges": edges,
-        }
-
+        new_graph_data = {"nodes": list(nodes.values()), "edges": edges}
         if accumulated_graph:
             graph_data = merge_graph_data(accumulated_graph, new_graph_data)
         else:
             graph_data = new_graph_data
 
-        nodes_dict = {
-            node.get("element_id") or node.get("id"): node for node in graph_data["nodes"]
-        }
+        nodes_dict = {node.get("id"): node for node in graph_data["nodes"]}
         with Profiler("Format Graph Context"):
             context_text = format_graph_context(nodes_dict, graph_data["edges"])
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("Graph retrieval failed: %s", exc)
-        return f"Error retrieving graph data: {exc}", graph_data, [], total_timings
+        return f"Error: {exc}", graph_data, [], [], total_timings
 
-    return context_text, graph_data, seed_entities, total_timings
+    return context_text, graph_data, seed_entities, seed_topics, total_timings
 
 
 def run_focused_retrieval(
@@ -1547,7 +1305,7 @@ def run_focused_retrieval(
         # Retrieve subgraph (depends on keywords)
             t1 = time.time()
             with Profiler("Total Subgraph Retrieval"):
-                context, graph_data, seed_entities, retrieval_timings = retrieve_subgraph(
+                context, graph_data, seed_entities, seed_topics, retrieval_timings = retrieve_subgraph(
                     db, keywords, query, accumulated_graph
                 )
             msg = f"Subgraph retrieval took {time.time() - t1:.2f}s"
@@ -1617,6 +1375,7 @@ You have access to a knowledge graph structured in XML tags:
             keywords=keywords,
             graph_data=graph_data,
             seed_entities=seed_entities,
+            seed_topics=seed_topics,
             graph_stats=graph_stats,
             query_memory_mb=query_memory,
             full_prompt=full_prompt_debug,

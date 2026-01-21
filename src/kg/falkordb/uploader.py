@@ -198,10 +198,10 @@ class KnowledgeGraphUploader:
             props = data.copy()
             
             # Extract label
-            label = props.pop('type', 'Entity')
+            label = props.get('type', 'Entity')
             # Also check for 'node_type' as fallback
             if label == 'Entity' and 'node_type' in props:
-                label = props.pop('node_type', 'Entity')
+                label = props.get('node_type', 'Entity')
             
             # Sanitize keys (remove spaces, etc.)
             sanitized_props = {}
@@ -266,6 +266,13 @@ class KnowledgeGraphUploader:
             if not sanitized_props:
                 sanitized_props['id'] = str(node_id)
             
+            # Debug check for missing critical properties on ENTITY_CONCEPT
+            if label == 'ENTITY_CONCEPT':
+                if 'name' not in sanitized_props:
+                    logger.warning(f"Node {node_id} (ENTITY_CONCEPT) is missing 'name' property!")
+                if 'ontology_class' not in sanitized_props:
+                    logger.warning(f"Node {node_id} (ENTITY_CONCEPT) is missing 'ontology_class' property!")
+
             nodes_for_upload.append({
                 'id': node_id,
                 'label': label,

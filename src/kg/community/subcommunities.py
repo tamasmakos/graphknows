@@ -61,6 +61,7 @@ def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: D
         topic_node_id = f"TOPIC_{comm_id}"
         if topic_node_id not in graph:
             graph.add_node(topic_node_id,
+                          id=topic_node_id,
                           node_type="TOPIC", 
                           graph_type="topic",
                           community_id=comm_id,
@@ -73,6 +74,9 @@ def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: D
     parent_topic_edges_created = 0
     created_sub_nodes = set()
     
+    # Track which entities have been assigned to a topic node
+    entities_with_topic = set()
+    
     for node_id, pair in subcommunities.items():
         if node_id not in graph:
             continue
@@ -80,30 +84,67 @@ def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: D
         node_data = graph.nodes.get(node_id, {})
         if node_data.get('node_type') != 'ENTITY_CONCEPT':
             continue
+            
         parent_comm_id, local_sub_id = pair
-        sub_node_id = f"SUBTOPIC_{parent_comm_id}_{local_sub_id}"
-        if sub_node_id not in graph:
-            graph.add_node(sub_node_id,
-                          node_type="SUBTOPIC",
-                          graph_type="topic",
-                          community_id=parent_comm_id,
-                          subtopic_local_id=local_sub_id,
-                          name=f"Subtopic {parent_comm_id}-{local_sub_id}")  # Temporary name until summarization sets title
-            subtopic_nodes_created += 1
-        created_sub_nodes.add(sub_node_id)
-        # Entity -> Subtopic
-        if not graph.has_edge(node_id, sub_node_id):
-            graph.add_edge(node_id, sub_node_id,
+        topic_node_id = f"TOPIC_{parent_comm_id}"
+        
+        # If we have a local sub_id, use a Subtopic node
+        if local_sub_id is not None and local_sub_id != -1:
+            sub_node_id = f"SUBTOPIC_{parent_comm_id}_{local_sub_id}"
+            if sub_node_id not in graph:
+                graph.add_node(sub_node_id,
+                              id=sub_node_id,
+                              node_type="SUBTOPIC",
+                              graph_type="topic",
+                              community_id=parent_comm_id,
+                              subtopic_local_id=local_sub_id,
+                              name=f"Subtopic {parent_comm_id}-{local_sub_id}")
+                subtopic_nodes_created += 1
+            
+            # Entity -> Subtopic
+            if not graph.has_edge(node_id, sub_node_id):
+                graph.add_edge(node_id, sub_node_id,
+                              label="IN_TOPIC",
+                              graph_type="topic")
+                in_topic_edges_created += 1
+                
+            # Subtopic -> Parent topic
+            if not graph.has_edge(sub_node_id, topic_node_id):
+                graph.add_edge(sub_node_id, topic_node_id,
+                              label="PARENT_TOPIC",
+                              graph_type="topic")
+                parent_topic_edges_created += 1
+        else:
+            # Connect Entity -> Topic directly if no subtopic
+            if not graph.has_edge(node_id, topic_node_id):
+                graph.add_edge(node_id, topic_node_id,
+                              label="IN_TOPIC",
+                              graph_type="topic")
+                in_topic_edges_created += 1
+        
+        entities_with_topic.add(node_id)
+        
+    # FALLBACK: Ensure EVERY entity assigned to a community is connected to its TOPIC
+    # even if it wasn't in the subcommunities mapping (e.g. communities with 1 node)
+    for node_id, comm_id in communities.items():
+        if node_id in entities_with_topic or node_id not in graph:
+            continue
+            
+        node_data = graph.nodes.get(node_id, {})
+        if node_data.get('node_type') != 'ENTITY_CONCEPT':
+            continue
+            
+        topic_node_id = f"TOPIC_{comm_id}"
+        if topic_node_id not in graph:
+            # Should already exist, but just in case
+            graph.add_node(topic_node_id, id=topic_node_id, node_type="TOPIC", 
+                          graph_type="topic", community_id=comm_id, name=f"Topic {comm_id}")
+            
+        if not graph.has_edge(node_id, topic_node_id):
+            graph.add_edge(node_id, topic_node_id,
                           label="IN_TOPIC",
                           graph_type="topic")
             in_topic_edges_created += 1
-        # Subtopic -> Parent topic
-        topic_node_id = f"TOPIC_{parent_comm_id}"
-        if not graph.has_edge(sub_node_id, topic_node_id):
-            graph.add_edge(sub_node_id, topic_node_id,
-                          label="PARENT_TOPIC",
-                          graph_type="topic")
-            parent_topic_edges_created += 1
     
     logger.info(f"Created {subtopic_nodes_created} Subtopic nodes")
     logger.info(f"Created {topic_nodes_created} Topic nodes") 

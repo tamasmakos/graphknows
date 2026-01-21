@@ -335,9 +335,12 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False, log_limi
                     # Create a temporary NetworkX graph with entities and communities
                     hierarchy_graph = nx.DiGraph()
                     
-                    # Add entity nodes
-                    for node_id in full_graph.nodes():
-                        hierarchy_graph.add_node(node_id, node_type='ENTITY_CONCEPT')
+                    # Add entity nodes with ALL attributes
+                    for node_id, node_data in full_graph.nodes(data=True):
+                        hierarchy_graph.add_node(node_id, **node_data)
+                        # Ensure node_type is present (fetch_entity_graph sets it)
+                        if not hierarchy_graph.nodes[node_id].get('node_type'):
+                             hierarchy_graph.nodes[node_id]['node_type'] = 'ENTITY_CONCEPT'
                     
                     # Add edges from full_graph
                     for u, v, data in full_graph.edges(data=True):

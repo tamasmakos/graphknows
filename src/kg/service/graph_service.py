@@ -341,41 +341,49 @@ class IterativeGraphBuilder:
         
         try:
             # Match entities and their relationships
-            # We assume entities have label 'ENTITY_CONCEPT' based on extraction.py
-            # But uploader.py maps 'ENTITY_CONCEPT' -> 'ENTITY_CONCEPT' (identifiers are escaped if needed)
-            # Actually, uploader logic: label = props.pop('type', 'Entity') or 'node_type'
-            # In extraction, node_type="ENTITY_CONCEPT". So label is likely "ENTITY_CONCEPT".
+            # Removed CONTEXT as requested
+            labels_clause = "n:ENTITY_CONCEPT OR n:PLACE OR n:ONTOLOGY_CLASS"
             
-            # Fetch nodes
-            # Query multiple labels relevant for community detection
-            labels_clause = "n:ENTITY_CONCEPT OR n:PLACE OR n:CONTEXT OR n:ONTOLOGY_CLASS"
-            query_nodes = f"MATCH (n) WHERE {labels_clause} RETURN n.id as id, n.name as name, n.node_type as node_type"
+            # Fetch nodes with more property fallbacks
+            query_nodes = f"""
+            MATCH (n) WHERE {labels_clause} 
+            RETURN 
+                n.id as id, 
+                coalesce(n.name, n.title, n.id) as name, 
+                coalesce(n.node_type, n.type, 'ENTITY_CONCEPT') as node_type, 
+                n.ontology_class as ontology_class
+            """
             res_nodes = self.uploader.graph_client.query(query_nodes)
             
             g = nx.Graph() # Undirected for Leiden algorithm usually
             
             for record in res_nodes.result_set:
-                node_id, name, node_type = record
-                g.add_node(node_id, name=name, node_type=node_type)
+                node_id, name, node_type, ontology_class = record
+                
+                # Use node_id from database
+                actual_id = node_id if node_id else "UNKNOWN"
+                
+                # Normalize node_type to uppercase
+                if node_type:
+                    node_type = node_type.upper()
+                
+                g.add_node(actual_id, id=actual_id, name=name, node_type=node_type, ontology_class=ontology_class)
             
             logger.info(f"Fetched {g.number_of_nodes()} nodes for community detection")
             
-            # Fetch edges (RELATED_TO or similar)
-            # We want all relationships between these entities
-            # Note: We filter by the same labels for source and target
+            # Fetch edges
             query_edges = f"""
             MATCH (s)-[r]->(t) 
             WHERE ({labels_clause.replace('n:', 's:')}) 
             AND ({labels_clause.replace('n:', 't:')})
-            RETURN s.id, t.id, type(r) as type, r.weight as weight
+            RETURN coalesce(s.id, 'S_UNKNOWN') as source_id, coalesce(t.id, 'T_UNKNOWN') as target_id, type(r) as type, coalesce(r.weight, 1.0) as weight
             """
             res_edges = self.uploader.graph_client.query(query_edges)
             
             for record in res_edges.result_set:
                 source, target, rel_type, weight = record
-                # Use default weight of 1.0 if not present
-                w = float(weight) if weight is not None else 1.0
-                g.add_edge(source, target, weight=w, type=rel_type)
+                if g.has_node(source) and g.has_node(target):
+                    g.add_edge(source, target, weight=float(weight), type=rel_type)
                 
             logger.info(f"Fetched {g.number_of_edges()} relationships")
             

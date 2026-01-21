@@ -71,11 +71,6 @@ async def run_embeddings(graph: nx.DiGraph, config: Config, **kwargs) -> Dict[st
     # Train Global KGE (optional - structural graph embeddings)
     kge_trained = False
     if config.graph.enable_kge:
-        # logger.info("Training Knowledge Graph Embeddings (KGE) - structural embeddings")
-        # kge_output_dir = os.path.join(output_dir, "embeddings", "kge")
-        # os.makedirs(kge_output_dir, exist_ok=True)
-        # _train_and_cache_global_kge(graph, kge_output_dir)
-        # kge_trained = True
         logger.warning("KGE training skipped - module missing")
         kge_trained = False
     else:

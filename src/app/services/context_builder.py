@@ -152,7 +152,7 @@ def format_graph_context(nodes: dict, edges: list) -> str:
 
     def get_name(n):
         p = n.get("properties", {})
-        return clean_entity_name(n.get("id") or p.get("name") or p.get("title") or "Unknown")
+        return clean_entity_name(n.get("display_id") or n.get("id") or p.get("name") or p.get("title") or "Unknown")
 
     for n in nodes.values():
         props = n.get("properties", {})
@@ -206,6 +206,11 @@ def format_graph_context(nodes: dict, edges: list) -> str:
             
             associated_info = []
             related_chunks = []
+            
+            # Add image_description if present directly on the node (new simplified schema)
+            img_desc = p.get("image_description")
+            if img_desc:
+                associated_info.append(f"Visual Context: {img_desc}")
             
             for edge in edges:
                 if edge.get("type") in ["HAS_CHUNK", "HAPPENED_AT", "HAS_CONTEXT"]:
@@ -333,7 +338,7 @@ def format_compact_context(nodes: List[Dict[str, Any]], relationships: List[Dict
     if nodes:
         parts.append("Found entities:")
         for node in nodes[:15]:
-            name = node.get("name") or node.get("title") or node.get("id", "Unknown")
+            name = node.get("display_id") or node.get("name") or node.get("title") or node.get("id", "Unknown")
             node_type = node.get("entity_type") or node.get("_type") or "Entity"
             parts.append(f"  - {name} ({node_type})")
     

@@ -281,8 +281,9 @@ def _process_graph_results(results: List[Dict[str, Any]], nodes: Dict[str, Any],
                 )
 
                 nodes[element_id] = {
-                    "id": node_display_id,
+                    "id": element_id,  # Use internal ID for linking
                     "element_id": element_id,
+                    "display_id": node_display_id, # Keep display ID if needed
                     "labels": labels,
                     "properties": filtered_props,
                 }
@@ -332,6 +333,8 @@ def _process_graph_results(results: List[Dict[str, Any]], nodes: Dict[str, Any],
 
                 if start_id and end_id:
                     edges.append({
+                        "source": start_id,
+                        "target": end_id,
                         "start": start_id,
                         "end": end_id,
                         "type": rel_type,
@@ -635,6 +638,8 @@ def enrich_with_triplets(nodes: Dict[str, Any], edges: List[Dict[str, Any]]):
                 
                 edge = {
                     "type": pred.upper().replace(" ", "_"),
+                    "source": s_id,
+                    "target": o_id,
                     "start": s_id, 
                     "end": o_id,   
                     "properties": {"implied": True}
@@ -643,12 +648,16 @@ def enrich_with_triplets(nodes: Dict[str, Any], edges: List[Dict[str, Any]]):
                 
                 new_edges.append({
                     "type": "MENTIONS",
+                    "source": nid,
+                    "target": s_id,
                     "start": nid,
                     "end": s_id, 
                     "properties": {"implied": True}
                 })
                 new_edges.append({
                     "type": "MENTIONS",
+                    "source": nid,
+                    "target": o_id,
                     "start": nid,
                     "end": o_id,
                     "properties": {"implied": True}

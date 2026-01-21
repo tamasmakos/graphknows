@@ -158,20 +158,22 @@ async def find_entities_for_community_async(graph: nx.DiGraph, topic_node_id: st
     """Find entity IDs that belong to a topic"""
     entity_ids = []
     
-    # Look for entity nodes connected to this topic node
+    # Look for entity nodes connected to topic node
     if graph.has_node(topic_node_id):
         # Structure is Entity -> Subtopic -> Topic (incoming edges)
         for pred in graph.predecessors(topic_node_id):
             node_data = graph.nodes[pred]
+            node_type = str(node_data.get('node_type', '')).upper()
             
             # If predecessor is a Subtopic, look for its entities
-            if node_data.get('node_type') == 'SUBTOPIC':
+            if node_type == 'SUBTOPIC':
                 for sub_pred in graph.predecessors(pred):
-                    if graph.nodes[sub_pred].get('node_type') in ['ENTITY', 'ENTITY_CONCEPT']:
+                    sub_node_type = str(graph.nodes[sub_pred].get('node_type', '')).upper()
+                    if sub_node_type in ['ENTITY', 'ENTITY_CONCEPT', 'PLACE']:
                         entity_ids.append(sub_pred)
                         
-            # If predecessor is directly an Entity (fallback/legacy structure)
-            elif node_data.get('node_type') in ['ENTITY', 'ENTITY_CONCEPT']:
+            # If predecessor is directly an Entity
+            elif node_type in ['ENTITY', 'ENTITY_CONCEPT', 'PLACE']:
                 entity_ids.append(pred)
     
     return entity_ids
@@ -182,10 +184,11 @@ async def find_chunks_for_entities_async(graph: nx.DiGraph, entity_ids: List[str
     
     for entity_id in entity_ids:
         if graph.has_node(entity_id):
-            # Look at predecessors because structure is Chunk -> Entity (HAS_ENTITY)
+            # Structure is Chunk -> Entity (HAS_ENTITY)
             for pred in graph.predecessors(entity_id):
                 node_data = graph.nodes[pred]
-                if node_data.get('node_type') == 'CHUNK':
+                node_type = str(node_data.get('node_type', '')).upper()
+                if node_type == 'CHUNK':
                     chunk_ids.add(pred)
     
     return list(chunk_ids)
