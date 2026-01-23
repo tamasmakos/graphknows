@@ -6,11 +6,11 @@ or file detection.
 """
 
 from typing import Optional, Dict, Type
-from src.kg.graph.parsers.base import BaseDocumentParser
-from src.kg.graph.parsers.generic import GenericParser
+from kg.graph.parsers.base import BaseDocumentParser
+from kg.graph.parsers.generic import GenericParser
 
-from src.kg.graph.parsers.multilingual import MultilingualParser
-from src.kg.graph.parsers.life import LifeLogParser
+from kg.graph.parsers.multilingual import MultilingualParser
+from kg.graph.parsers.life import LifeLogParser
 
 __all__ = [
     'BaseDocumentParser',

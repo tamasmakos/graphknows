@@ -8,8 +8,8 @@ import csv
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timedelta
-from src.kg.graph.parsers.base import BaseDocumentParser
-from src.kg.graph.parsing import SegmentData
+from kg.graph.parsers.base import BaseDocumentParser
+from kg.graph.parsing import SegmentData
 
 logger = logging.getLogger(__name__)
 

@@ -50,8 +50,8 @@ services:
     volumes:
       - langfuse_data:/var/lib/postgresql/data
 
-  app:
-    build: ./services/app
+  graphrag:
+    build: ./services/graphrag
     ports:
       - "8000:8000"
     environment:
@@ -64,8 +64,8 @@ services:
       - falkordb
       - pgvector
 
-  pipeline:
-    build: ./services/pipeline
+  graphgen:
+    build: ./services/graphgen
     environment:
       - DATABASE_URL=falkordb:6379
       - FALKORDB_HOST=falkordb

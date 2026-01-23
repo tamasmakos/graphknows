@@ -13,8 +13,8 @@ Filename pattern:
 import re
 from typing import List, Optional
 from datetime import date, datetime
-from src.kg.graph.parsers.base import BaseDocumentParser
-from src.kg.graph.parsing import SegmentData
+from kg.graph.parsers.base import BaseDocumentParser
+from kg.graph.parsing import SegmentData
 
 
 class GenericParser(BaseDocumentParser):

@@ -10,8 +10,8 @@ import networkx as nx
 import numpy as np
 from typing import Dict, List, Set, Tuple, Any, Optional
 
-from src.kg.graph.similarity import compute_embedding_similarity_matrix
-from src.kg.graph.utils import merge_node_into
+from kg.graph.similarity import compute_embedding_similarity_matrix
+from kg.graph.utils import merge_node_into
 
 logger = logging.getLogger(__name__)
 

@@ -312,12 +312,12 @@ def get_graph_store(db_type: str = "falkordb") -> GraphStore:
     if _graph_store is None:
         config = get_app_config()
         db = FalkorDBDB(
-            host=config.falkordb.host,
-            port=config.falkordb.port,
-            database=config.falkordb.database,
-            username=config.falkordb.username,
-            password=config.falkordb.password,
-            postgres_config=config.to_dict().get('postgres')
+            host=config.falkordb_host,
+            port=config.falkordb_port,
+            database="kg", # config.falkordb_database if added
+            username=None, 
+            password=None,
+            postgres_config=None # Hybrid search temporarily disabled or need Env vars mapping
         )
         _graph_store = GraphStore(db)
     return _graph_store

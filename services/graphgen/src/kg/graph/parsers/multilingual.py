@@ -11,8 +11,8 @@ from typing import List, Optional
 from datetime import date
 from langdetect import detect, LangDetectException
 
-from src.kg.graph.parsers.generic import GenericParser
-from src.kg.graph.parsing import SegmentData
+from kg.graph.parsers.generic import GenericParser
+from kg.graph.parsing import SegmentData
 
 logger = logging.getLogger(__name__)
 

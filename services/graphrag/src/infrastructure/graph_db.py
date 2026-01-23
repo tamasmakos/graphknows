@@ -6,8 +6,8 @@ import os
 
 from falkordb import FalkorDB
 
-from src.infrastructure.config import Config
-from src.kg.falkordb.postgres_store import PostgresVectorStore
+from src.common.config.settings import AppSettings
+from src.infrastructure.postgres_store import PostgresVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -198,15 +198,15 @@ class FalkorDBDB(GraphDB):
         pass
 
 
-def get_database_client(config: Config, db_type: str = "falkordb") -> GraphDB:
+def get_database_client(config: AppSettings, db_type: str = "falkordb") -> GraphDB:
     if db_type.lower() == "falkordb":
         return FalkorDBDB(
-            host=config.falkordb.host,
-            port=config.falkordb.port,
-            database=config.falkordb.database,
-            username=config.falkordb.username,
-            password=config.falkordb.password,
-            postgres_config=config.to_dict().get('postgres')
+            host=config.falkordb_host,
+            port=config.falkordb_port,
+            database="kg", # config.falkordb.database if it exists in settings
+            username=None, # config.falkordb.username
+            password=None, # config.falkordb.password
+            postgres_config=None # Disable hybrid for now to simplify migration, or map env vars if needed
         )
     else:
         raise ValueError(f"Unsupported database type: {db_type}")

@@ -1,9 +1,9 @@
 """
-Configuration package.
+Configuration package for Knowledge Graph pipeline.
 """
 
 from .schema import Config, PipelineConfig, ProcessingConfig, LLMConfig, EmbeddingConfig, CommunityConfig
-from .settings import AppSettings
+from .compat import load_config
 
 __all__ = [
     'Config',
@@ -12,5 +12,5 @@ __all__ = [
     'LLMConfig',
     'EmbeddingConfig',
     'CommunityConfig',
-    'AppSettings'
+    'load_config'
 ]

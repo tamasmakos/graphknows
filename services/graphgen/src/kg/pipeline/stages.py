@@ -6,7 +6,7 @@ import logging
 import networkx as nx
 from typing import List, Dict, Any, Callable, Optional, Set
 from dataclasses import dataclass, field
-from src.kg.config import Config
+from kg.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class StageRegistry:
         """Ensure stages are registered by importing the core pipeline module."""
         if not self.stages:
             try:
-                import src.kg.pipeline.core # This triggers register_stages()
+                import kg.pipeline.core # This triggers register_stages()
             except ImportError as e:
                 logger.debug(f"Could not import core for registration: {e}")
 

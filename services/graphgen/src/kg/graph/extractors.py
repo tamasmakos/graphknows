@@ -17,7 +17,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_experimental.graph_transformers import LLMGraphTransformer
 
-from src.kg.llm import get_langchain_llm
+from kg.llm import get_langchain_llm
 
 logger = logging.getLogger(__name__)
 

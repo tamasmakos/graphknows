@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional, Set, Tuple
 from datetime import datetime
 import networkx as nx
 
-from ..config.loader import Config
+from ..config.schema import Config
 from ..falkordb import KnowledgeGraphUploader
 
 logger = logging.getLogger(__name__)
@@ -290,7 +290,7 @@ class IterativeGraphBuilder:
             raise RuntimeError("Failed to connect to FalkorDB")
         
         try:
-            from src.kg.falkordb.algorithms import FalkorDBAlgorithms
+            from kg.falkordb.algorithms import FalkorDBAlgorithms
             algorithms = FalkorDBAlgorithms(self.uploader.graph_client)
             # Restrict metrics to ENTITY_CONCEPT nodes to avoid skewing stats with chunks/segments
             results = algorithms.get_graph_metrics(label='ENTITY_CONCEPT')

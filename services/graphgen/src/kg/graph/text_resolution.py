@@ -10,7 +10,7 @@ import networkx as nx
 import jellyfish
 from typing import Dict, List, Set, Tuple, Any, Optional
 
-from src.kg.graph.utils import merge_node_into
+from kg.graph.utils import merge_node_into
 
 logger = logging.getLogger(__name__)
 

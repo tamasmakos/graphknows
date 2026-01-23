@@ -13,7 +13,7 @@ import shutil
 import json
 from datetime import datetime
 
-from ..config.loader import Config
+from ..config.schema import Config
 from ..service import IterativeGraphBuilder
 from ..types import AgentDependencies
 from ..graph.extraction import build_lexical_graph, extract_all_entities_relations
@@ -41,7 +41,7 @@ async def run_iterative_pipeline(config_path: str, reset: bool = False, log_limi
     Returns:
         Statistics about the run
     """
-    from ..config.loader import load_config
+    from ..config.compat import load_config
     
     # Load configuration
     config = load_config(config_path)

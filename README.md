@@ -1,66 +1,71 @@
-## Knowledge Graph Project – Development Environment
+# Knowledge Graph Project – Diamond Standard Architecture
 
-This repository is set up to be fully reproducible via a Dev Container (Docker + Conda) and does not require you to manage Python or system dependencies manually on your host.
+This repository implements a decoupled Knowledge Graph system consisting of two primary services: **GraphGen** (Generation/ETL) and **GraphRAG** (Retrieval/API).
 
-### Prerequisites
+## Architecture Overview
 
-- **Docker** installed and running
-- **Dev Containers / Remote - Containers** extension (or equivalent)
-- **PostgreSQL** (with pgvector extension) and **Redis** (FalkorDB) are required. These are provided via `docker-compose`.
+- **`services/graphgen`**: The ETL pipeline. Responsible for parsing raw data, extracting entities, and building the graph in FalkorDB. Uses Pydantic Settings for configuration and Dependency Injection for core logic.
+- **`services/graphrag`**: The Retrieval API. A FastAPI-based agentic system using LlamaIndex to explore the graph and answer user queries.
 
-### Recommended: Open in Dev Container
+## Prerequisites
 
-1. Clone the repository:
+- **Docker** and **Docker Compose**
+- **Python 3.11** (if running locally)
+- API Keys for LLM providers (Groq, OpenAI, etc.) in a `.env` file.
 
-```bash
-git clone <YOUR-REPO-URL> kg
-cd kg
-```
+## Quick Start with Docker Compose
 
-2. Open the folder in VS Code or Cursor.
-3. When prompted, choose **“Reopen in Container”** (or run the command: **Dev Containers: Rebuild and Reopen in Container**).
-
-This will:
-
-- Build the image using `.devcontainer/Dockerfile` (based on `continuumio/miniconda3`)
-- Create and activate the Conda environment `py311`
-- Install Python dependencies from `requirements.txt` (inside the container)
-- Download spaCy model `en_core_web_lg` and required NLTK data
-- Set the working directory to `/workspaces/kg`
-
-Once the container is ready, your terminal inside the editor will automatically use the `py311` environment.
-
-### Startup Services
-
-Before running any Python code, you must start the supporting services (FalkorDB and Postgres):
+The easiest way to run the entire stack is via Docker Compose:
 
 ```bash
-# In the terminal (host or container with docker socket access)
-docker-compose up -d
+# Build and start all services (FalkorDB, Postgres, GraphGen, GraphRAG)
+docker-compose up --build -d
 ```
 
-### Manual Docker Usage (without Dev Containers extension)
+### Supporting Services
+- **FalkorDB**: Primary graph database (port 6379)
+- **PostgreSQL**: Vector store for hybrid search (port 5432)
+- **Langfuse**: Tracing and observability (port 3000)
 
-From the repository root:
+## Service Usage
+
+### 1. GraphGen (Pipeline)
+To run the ingestion pipeline manually or via Docker:
 
 ```bash
-docker build -t kg-dev -f .devcontainer/Dockerfile .
-docker run --gpus=all --runtime=nvidia \
-  -v "$PWD":/workspaces/kg \
-  -w /workspaces/kg \
-  -it kg-dev
+# Via Docker
+docker-compose run graphgen
+
+# Locally (from services/graphgen)
+cd services/graphgen/src
+python -m main
 ```
 
-Inside the container, the `py311` Conda environment is already activated and all dependencies are installed.
+### 2. GraphRAG (API & UI)
+The API server starts automatically with `docker-compose`. 
 
-### Running the Project
+- **Web UI**: [http://localhost:8000](http://localhost:8000)
+- **API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-From within the Dev Container (or inside the running Docker container), run your usual commands, for example:
-
+To run locally:
 ```bash
-python -m src.app
+cd services/graphrag/src
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Replace this with the actual entrypoint you use (e.g. API server, scripts, or notebooks).
+## Development Environment (Dev Container)
 
+This repository includes a VS Code Dev Container configuration. Opening the project in a container will automatically set up the Python environment and all system dependencies.
 
+1. Open the folder in VS Code.
+2. Click **"Reopen in Container"** when prompted.
+3. Supporting databases will still need to be started via `docker-compose up -d`.
+
+## Configuration
+
+Configuration is managed via **Environment Variables** (loaded from `.env`) using Pydantic Settings:
+
+- `FALKORDB_HOST`: Host for the graph database.
+- `POSTGRES_HOST`: Host for pgvector.
+- `OPENAI_API_KEY` / `GROQ_API_KEY`: LLM credentials.
+- `INPUT_DIR`: Directory for raw data (GraphGen).

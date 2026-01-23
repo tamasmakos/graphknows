@@ -7,7 +7,7 @@ enabling a pluggable parser system that can handle various document formats.
 from abc import ABC, abstractmethod
 from typing import List, Optional
 from datetime import date
-from src.kg.graph.parsing import SegmentData
+from kg.graph.parsing import SegmentData
 
 
 class BaseDocumentParser(ABC):

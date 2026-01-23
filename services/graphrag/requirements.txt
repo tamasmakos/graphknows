@@ -14,3 +14,4 @@ groq
 langchain-groq
 psycopg2-binary
 pgvector
+pydantic-settings

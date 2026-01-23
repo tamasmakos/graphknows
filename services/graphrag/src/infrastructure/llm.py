@@ -1,40 +1,57 @@
 import os
-
+import logging
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
 
-from src.kg.llm import get_langchain_llm
+# Try importing langchain integrations
+try:
+    from langchain_groq import ChatGroq
+except ImportError:
+    ChatGroq = None
 
-# Load environment variables (including GROQ_API_KEY / GROQ_MODEL) from the
-# same .env file used by the KG pipeline so LLM config is shared.
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    ChatOpenAI = None
+
+from src.llama.embeddings import embed_query
+
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 
 def get_llm():
     """
-    Get a LangChain-compatible Groq LLM using the shared KG configuration.
-
-    Delegates to `src.kg.llm.get_langchain_llm`, which reads:
-    - GROQ_API_KEY / GROQ_MODEL from the environment, or
-    - any overrides defined in the shared `config.yaml`.
+    Get a LangChain-compatible LLM.
+    Prioritizes Groq, then OpenAI.
     """
-    return get_langchain_llm()
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    
+    if ChatGroq and groq_api_key:
+        model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+        return ChatGroq(
+            temperature=0,
+            model_name=model,
+            api_key=groq_api_key
+        )
+    
+    if ChatOpenAI and openai_api_key:
+        return ChatOpenAI(
+            temperature=0,
+            model="gpt-3.5-turbo",
+            api_key=openai_api_key
+        )
+        
+    logger.warning("No suitable LLM provider found (checked GROQ_API_KEY, OPENAI_API_KEY).")
+    return None
 
 
-class SentenceTransformerEmbeddings:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        try:
-            self.model = SentenceTransformer(model_name, local_files_only=True)
-        except Exception:
-            self.model = SentenceTransformer(model_name)
-
+class LlamaIndexEmbeddingsAdapter:
+    """Adapts src.llama.embeddings to expected interface."""
     def embed_query(self, text: str):
-        return self.model.encode(text).tolist()
+        return embed_query(text)
 
 
 def get_embedding_model():
     """Get embedding model instance."""
-    return SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-
-
-
+    return LlamaIndexEmbeddingsAdapter()

@@ -7,11 +7,11 @@ from typing import List, Dict, Any, Tuple, Set, Optional
 
 import networkx as nx
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from src.kg.types import AgentDependencies, ChunkExtractionTask
-from src.kg.graph.coref import resolve_coreferences_simple
-from src.kg.graph.extractors import BaseExtractor, get_extractor
-from src.kg.graph.parsing import SegmentData
-from src.kg.graph.parsers import get_parser
+from kg.types import AgentDependencies, ChunkExtractionTask
+from kg.graph.coref import resolve_coreferences_simple
+from kg.graph.extractors import BaseExtractor, get_extractor
+from kg.graph.parsing import SegmentData
+from kg.graph.parsers import get_parser
 
 # --- GLiNER Helper ---
 from gliner import GLiNER
