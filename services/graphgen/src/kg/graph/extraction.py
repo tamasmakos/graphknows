@@ -116,20 +116,11 @@ async def process_extraction_task(
                         # Fallback to whole text if no sentences found (rare)
                         sentences = [task.chunk_text]
                         
-                    # Define safe prediction function for a single sentence
-                    def predict_sentence(text):
-                        return model.predict_entities(text, labels, threshold=0.5)
-
-                    # Parallel execution for sentences
-                    # Note: GLiNER might be GIL bounded but this allows IO overlap or potential internal parallelization
-                    sentence_tasks = [
-                        loop.run_in_executor(None, predict_sentence, sentence) 
-                        for sentence in sentences
-                    ]
+                    # Batch prediction
+                    # Note: batch_predict_entities handles tokenization and batching internally
+                    results = model.batch_predict_entities(sentences, labels, threshold=0.5)
                     
-                    results = await asyncio.gather(*sentence_tasks)
-                    
-                    # Aggregate results
+                    # Results is a list of lists (entities per sentence)
                     for res in results:
                         gliner_entities.extend(res)
                         
