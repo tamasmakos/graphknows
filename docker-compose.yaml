@@ -60,6 +60,13 @@ services:
       - POSTGRES_HOST=pgvector
     volumes:
 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       - falkordb
       - pgvector
@@ -71,9 +78,15 @@ services:
       - FALKORDB_HOST=falkordb
       - POSTGRES_HOST=pgvector
     volumes:
-
       - ./input:/app/input
       - ./output:/app/output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       - falkordb
       - pgvector

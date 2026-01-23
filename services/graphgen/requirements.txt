@@ -17,3 +17,5 @@ psycopg2-binary
 pgvector
 sentence-transformers
 pydantic-settings
+gliner
+spacy

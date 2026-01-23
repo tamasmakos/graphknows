@@ -13,8 +13,14 @@ class PipelineSettings(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 20
     
+    # GLiNER / Extraction Settings
+    gliner_labels: list[str] = ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"]
+    extraction_backend: str = "gliner" # Options: "gliner", "spacy"
+    spacy_model: str = "en_core_web_lg"
+
     # Incremental Mode Settings
     speech_limit: int = 10
+
     max_documents: int = 20
     
     class Config:

@@ -39,12 +39,17 @@ def get_llamaindex_embeddings(model_name: str = "all-MiniLM-L6-v2"):
     if _embedding_model is None:
         if HuggingFaceEmbedding:
             try:
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"Loading HuggingFace embedding ({model_name}) on {device}...")
                 # Try loading from local cache first
-                _embedding_model = HuggingFaceEmbedding(model_name=model_name, local_files_only=True)
+                _embedding_model = HuggingFaceEmbedding(model_name=model_name, local_files_only=True, device=device)
             except Exception:
                 try:
                     # Fallback to default loading
-                    _embedding_model = HuggingFaceEmbedding(model_name=model_name)
+                    import torch
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    _embedding_model = HuggingFaceEmbedding(model_name=model_name, device=device)
                 except Exception as e:
                     logger.warning(f"Failed to load HuggingFace embedding: {e}")
         
