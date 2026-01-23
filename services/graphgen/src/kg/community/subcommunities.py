@@ -1,5 +1,4 @@
 import networkx as nx
-from sklearn.cluster import KMeans
 from collections import defaultdict
 from typing import Dict, List
 import logging
@@ -9,43 +8,6 @@ from typing import Dict, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
-
-def split_community_with_graph_clustering(subgraph: nx.Graph, num_clusters: int, 
-                                        node_list: List[str]) -> Dict[str, int]:
-    """Split a community using graph-aware clustering"""
-    
-    if subgraph.number_of_nodes() < num_clusters:
-        # More clusters than nodes - each node gets its own cluster
-        return {node: i for i, node in enumerate(node_list)}
-    
-    if subgraph.number_of_edges() == 0:
-        # No connections - simple round-robin assignment
-        return {node: i % num_clusters for i, node in enumerate(node_list)}
-    
-    try:
-        # Use spectral clustering based on graph structure
-        adjacency = nx.adjacency_matrix(subgraph)
-        
-        # Convert to dense for small graphs
-        if adjacency.shape[0] < 1000:
-            adjacency = adjacency.todense()
-        
-        # Simple k-means on adjacency matrix rows
-        kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(adjacency)
-        
-        node_to_cluster = {}
-        for i, node in enumerate(subgraph.nodes()):
-            node_to_cluster[node] = cluster_labels[i]
-        
-        return node_to_cluster
-        
-    except Exception as e:
-        logger.warning(f"Spectral clustering failed: {e}, using simple assignment")
-        # Fallback to simple assignment
-        return {node: i % num_clusters for i, node in enumerate(node_list)}
-
-
 
 def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: Dict[str, int], 
                                              subcommunities: Dict[str, Tuple[int, int]]) -> nx.DiGraph:

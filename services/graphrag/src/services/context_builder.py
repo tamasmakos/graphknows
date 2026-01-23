@@ -326,25 +326,3 @@ def format_graph_context(nodes: dict, edges: list) -> str:
 
     return "\n".join(parts)
 
-
-def format_compact_context(nodes: List[Dict[str, Any]], relationships: List[Dict[str, Any]]) -> str:
-    """
-    Format a compact context string for agent tool responses.
-    
-    This is a simpler alternative to format_graph_context for tool-level responses.
-    """
-    parts = []
-    
-    if nodes:
-        parts.append("Found entities:")
-        for node in nodes[:15]:
-            name = node.get("display_id") or node.get("name") or node.get("title") or node.get("id", "Unknown")
-            node_type = node.get("entity_type") or node.get("_type") or "Entity"
-            parts.append(f"  - {name} ({node_type})")
-    
-    if relationships:
-        parts.append("\nRelationships:")
-        for rel in relationships[:20]:
-            parts.append(f"  - {rel['source']} --[{rel['type']}]--> {rel['target']}")
-    
-    return "\n".join(parts)

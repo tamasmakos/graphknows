@@ -17,9 +17,6 @@ class PipelineSettings(BaseSettings):
     speech_limit: int = 10
     max_documents: int = 20
     
-    # Other settings
-    language: str = "en"
-
     class Config:
         env_file = ".env"
         extra = "ignore"

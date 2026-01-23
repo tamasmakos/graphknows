@@ -1,4 +1,4 @@
-# Knowledge Graph Project – Diamond Standard Architecture
+# Knowledge Graph Project
 
 This repository implements a decoupled Knowledge Graph system consisting of two primary services: **GraphGen** (Generation/ETL) and **GraphRAG** (Retrieval/API).
 

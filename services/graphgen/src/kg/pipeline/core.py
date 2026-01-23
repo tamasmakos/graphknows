@@ -98,7 +98,7 @@ class KnowledgePipeline:
         # 4. Community Detection & Summarization
         try:
             from ..community.detection import CommunityDetector
-            from ..community.subcommunities import detect_subcommunities_leiden, add_enhanced_community_attributes_to_graph
+            from ..community.subcommunities import add_enhanced_community_attributes_to_graph
             from ..summarization.core import generate_community_summaries
             from ..llm import get_langchain_llm
             

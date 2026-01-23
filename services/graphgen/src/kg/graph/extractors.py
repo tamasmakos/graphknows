@@ -103,13 +103,6 @@ class LangChainExtractor(BaseExtractor):
         entities = entities or []
         abstract_concepts = abstract_concepts or []
         
-        # Use GLiNER to extract entities when none provided
-        # if not entities and not abstract_concepts:
-        #     gliner_entities = self.gliner.predict_entities(text, self.entity_labels, threshold=0.4)
-        #     entities = list(set(ent["text"] for ent in gliner_entities))
-        #     if not entities:
-        #         return []
-        
         allowed_nodes = list(set(entities + abstract_concepts))
         
         # Use custom prompt if provided, otherwise use default
