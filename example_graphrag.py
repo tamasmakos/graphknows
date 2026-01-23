@@ -1,56 +1,65 @@
 import sys
 import os
-from unittest.mock import MagicMock
+import asyncio
+from dotenv import load_dotenv
 
 # Add services/graphrag to path so 'src' package is found
 sys.path.insert(0, os.path.abspath("services/graphrag"))
 
+# Load environment variables from .env file
+load_dotenv()
+
+# Default to localhost for external script execution if not set
+os.environ.setdefault("FALKORDB_HOST", "localhost")
+os.environ.setdefault("FALKORDB_PORT", "6379")
+
 try:
-    from src.infrastructure.config import get_app_config
-    from src.infrastructure.graph_db import get_database_client, FalkorDBDB
-    # Mock langfuse before importing main to avoid errors if not configured/running
-    sys.modules["langfuse.llama_index"] = MagicMock()
-    
-    from src.main import app
+    from src.workflow.graph_workflow import GraphWorkflow
     print("[GraphRAG] Imports successful.")
 except ImportError as e:
     print(f"[GraphRAG] Import failed: {e}")
     sys.exit(1)
 
-def test_graphrag():
-    print("[GraphRAG] Testing App wiring...")
+async def run_example():
+    print("[GraphRAG] Initializing Workflow...")
     
-    # 1. Config
-    os.environ["FALKORDB_HOST"] = "localhost"
-    os.environ["FALKORDB_PORT"] = "6379"
+    # Instantiate the workflow
+    # timeout: seconds to wait for the workflow to complete
+    # verbose: print step execution details
+    workflow = GraphWorkflow(timeout=60, verbose=True)
     
-    try:
-        config = get_app_config()
-        print(f"[GraphRAG] Config loaded: {config.falkordb_host}")
-    except Exception as e:
-        print(f"[GraphRAG] Failed to load config: {e}")
-        sys.exit(1)
-    
-    # 2. DB Client
-    # We don't want to actually connect, but instantiation should work.
-    try:
-        # We need to mock FalkorDB class to prevent connection attempts if any
-        # But importing src.infrastructure.graph_db already imported FalkorDB
-        # We can patch it?
-        # Or just try instantiating.
+    # Get query from command line args or use default
+    query = "How could I improve my morning routine?"
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:])
         
-        db = get_database_client(config)
-        print("[GraphRAG] Database client instantiated.")
-        if isinstance(db, FalkorDBDB):
-             print("[GraphRAG] Client is FalkorDBDB.")
-    except Exception as e:
-        print(f"[GraphRAG] DB Client instantiation warning: {e}")
-        # Not fatal if just connection failed
-
-    # 3. FastAPI App
-    print(f"[GraphRAG] FastAPI App title: {app.title}")
+    print(f"[GraphRAG] Running query: {query}")
+    print("-" * 50)
     
-    print("[GraphRAG] Test passed!")
+    try:
+        # Run the workflow
+        result = await workflow.run(query=query)
+        
+        # Display Results
+        print("\n" + "="*50)
+        print(result.get("answer"))
+        
+        print("\n" + "="*50)
+        print("🧠 REASONING TRACE")
+        print("="*50)
+        for step_info in result.get("trace", []):
+            print(f"• {step_info}")
+
+        # Optional: Print Context if needed
+        # print("\n" + "="*50)
+        # print("📄 CONTEXT USED")
+        # print("="*50)
+        # print(result.get("context", "")[:1000] + "...")
+        
+    except Exception as e:
+        print(f"\n[GraphRAG] ❌ Execution failed: {e}")
+        # import traceback
+        # traceback.print_exc()
 
 if __name__ == "__main__":
-    test_graphrag()
+    asyncio.run(run_example())

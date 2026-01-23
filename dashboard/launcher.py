@@ -6,24 +6,23 @@ import socket
 import signal
 from pathlib import Path
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # Paths
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DASHBOARD_DIR = PROJECT_ROOT / "src" / "dashboard"
-BACKEND_DIR = DASHBOARD_DIR / "backend"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def kill_existing_processes():
     """Aggressively find and kill existing service processes."""
     print("🧹 Cleaning up existing processes...")
     try:
-        # List processes
         result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
         lines = result.stdout.splitlines()
         
         pids_to_kill = []
         for line in lines:
-            if "uvicorn" in line and ("src.app.main:app" in line or "src.dashboard.backend.main:app" in line):
+            # Match uvicorn processes for our specific apps
+            if "uvicorn" in line and ("src.main:app" in line or "dashboard.backend.main:app" in line):
                 parts = line.split()
                 if len(parts) > 1:
                     pids_to_kill.append(parts[1])
@@ -32,23 +31,25 @@ def kill_existing_processes():
             try:
                 print(f"Killing PID {pid}...")
                 os.kill(int(pid), signal.SIGKILL)
-            except ProcessLookupError:
+            except Exception:
                 pass
     except Exception as e:
         print(f"Cleanup warning: {e}")
 
-def wait_for_port(port, timeout=30):
+def wait_for_port(port, timeout=60):
+    """Wait for a port to become active."""
     start_time = time.time()
     while time.time() - start_time < timeout:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(('localhost', port)) == 0:
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=1):
                 return True
-        time.sleep(0.5)
+        except (ConnectionRefusedError, socket.timeout):
+            time.sleep(1)
     return False
 
 def run_process(command, cwd, env=None):
     """Run a process and return the Popen object."""
-    print(f"🚀 Starting: {' '.join(command)}")
+    print(f"🚀 Starting in {cwd}: {' '.join(command)}")
     return subprocess.Popen(
         command,
         cwd=cwd,
@@ -58,10 +59,6 @@ def run_process(command, cwd, env=None):
     )
 
 def main():
-    # Environment variables
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(PROJECT_ROOT)
-    
     # Clean slate
     kill_existing_processes()
     
@@ -74,43 +71,52 @@ def main():
     try:
         # 1. Start Agent Service (Port 8000)
         print("\n--- Starting Agent Service (Port 8000) ---")
+        agent_env = os.environ.copy()
+        agent_dir = PROJECT_ROOT / "services" / "graphrag"
+        agent_env["PYTHONPATH"] = str(agent_dir)
+        
         agent_proc = run_process(
-            ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000"],
-            cwd=PROJECT_ROOT,
-            env=env
+            ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"],
+            cwd=agent_dir,
+            env=agent_env
         )
         processes.append(agent_proc)
         
         # 2. Start Dashboard Backend (Port 8001)
-        # This now also serves the static frontend
         print("\n--- Starting Dashboard (Port 8001) ---")
+        dash_env = os.environ.copy()
+        dash_env["PYTHONPATH"] = str(PROJECT_ROOT)
+        
         backend_proc = run_process(
-            ["uvicorn", "src.dashboard.backend.main:app", "--host", "0.0.0.0", "--port", "8001"],
+            ["uvicorn", "dashboard.backend.main:app", "--host", "0.0.0.0", "--port", "8001"],
             cwd=PROJECT_ROOT,
-            env=env
+            env=dash_env
         )
         processes.append(backend_proc)
         
         # 3. Wait for backends to be ready
-        print("Waiting for services to initialize...")
-        if not wait_for_port(8000):
-            print("❌ Agent Service failed to start on port 8000")
-        if not wait_for_port(8001):
-            print("❌ Dashboard failed to start on port 8001")
+        print("Waiting for services to initialize (up to 60s)...")
         
-        print("\n✅ All services started!")
-        print("   - Agent API: http://localhost:8000")
-        print("   - Dashboard: http://localhost:8001")
+        # Check Dashboard first as it's faster
+        if wait_for_port(8001, timeout=20):
+            print("✅ Dashboard ready at http://localhost:8001")
+        else:
+            print("❌ Dashboard failed to start on port 8001")
+
+        # Check Agent (might take longer)
+        if wait_for_port(8000, timeout=40):
+            print("✅ Agent Service ready at http://localhost:8000")
+        else:
+            print("⚠️  Agent Service taking longer than expected or failed. Check logs above.")
+        
         print("\nPress Ctrl+C to stop all services.")
         
-        # Keep alive
+        # Keep alive and monitor
         while True:
             time.sleep(1)
-            # Check if any process died
             for p in processes:
                 if p.poll() is not None:
                     print(f"⚠️ Process {p.args} exited with code {p.returncode}")
-                    # If a critical backend dies, we should probably exit
                     raise KeyboardInterrupt
 
     except KeyboardInterrupt:

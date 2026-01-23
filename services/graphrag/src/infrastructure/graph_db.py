@@ -206,7 +206,15 @@ def get_database_client(config: AppSettings, db_type: str = "falkordb") -> Graph
             database="kg", # config.falkordb.database if it exists in settings
             username=None, # config.falkordb.username
             password=None, # config.falkordb.password
-            postgres_config=None # Disable hybrid for now to simplify migration, or map env vars if needed
+            postgres_config={
+                "enabled": config.postgres_enabled,
+                "host": config.postgres_host,
+                "port": config.postgres_port,
+                "database": config.postgres_db,
+                "user": config.postgres_user,
+                "password": config.postgres_password,
+                "table_name": config.postgres_table
+            }
         )
     else:
         raise ValueError(f"Unsupported database type: {db_type}")

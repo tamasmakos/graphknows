@@ -35,11 +35,16 @@ def main():
         uploader=uploader
     )
 
-    # 4. Run
-    # Since existing logic is async, we run it here
-    # For now, we call the legacy compat method as the full rewrite of logic wasn't done
-    # But the Wiring is correct.
-    pipeline.run_legacy_compat()
+        # 4. Run
 
-if __name__ == "__main__":
-    main()
+        # Since existing logic is async, we run it here
+
+        asyncio.run(pipeline.run())
+
+    
+
+    if __name__ == "__main__":
+
+        main()
+
+    

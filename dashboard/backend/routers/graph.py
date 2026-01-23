@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
-from ..database import get_db
-from src.app.infrastructure.graph_db import GraphDB
+from ..database import get_db, GraphDB
+
 
 router = APIRouter()
 

@@ -5,13 +5,19 @@ Defines the KnowledgePipeline class which orchestrates the graph generation proc
 Follows the Inversion of Control pattern where dependencies are injected.
 """
 
+import os
 import logging
 import networkx as nx
 from typing import Dict, Any, Optional
 
-# Define interfaces for dependencies to ensure type safety (Protocol or abstract base class would be ideal, using direct types for now)
 from ..falkordb.uploader import KnowledgeGraphUploader
 from ..config.settings import PipelineSettings
+from ..types import AgentDependencies
+from ..graph.extraction import build_lexical_graph, extract_all_entities_relations
+from ..graph.pruning import prune_graph
+from ..graph.utils import create_output_directory
+from ..graph.schema import save_graph_schema
+from ..utils.health import check_falkordb
 
 logger = logging.getLogger(__name__)
 
@@ -27,86 +33,132 @@ class KnowledgePipeline:
         self, 
         settings: PipelineSettings,
         uploader: KnowledgeGraphUploader,
-        # embedder: RagEmbedder, # Example dependency
-        # We can add other dependencies here like:
-        # community_detector: CommunityDetector
-        # llm_service: LLMService
+        extractor: Any = None
     ):
         self.settings = settings
         self.uploader = uploader
-        # self.embedder = embedder
+        self.extractor = extractor
         
     async def run(self):
         """
-        Execute the pipeline.
-        
-        This method replaces the old procedural 'run_iterative_pipeline'.
+        Execute the full knowledge graph generation pipeline:
+        1. Build Lexical Graph from Input Dir
+        2. Extract Entities/Relations
+        3. Semantic Enrichment (Embeddings, Similarity, Resolution)
+        4. Community Detection & Summarization
+        5. Pruning
+        6. Upload to FalkorDB
+        7. Save Artifacts to Disk
         """
         logger.info("Starting KnowledgePipeline run...")
         
-        # Logic from run_iterative_pipeline should be migrated here or delegated.
-        # For this refactoring step, I will simplify and show the structure.
-        # To strictly follow the manifesto, I should move the logic here.
-        # But run_iterative_pipeline is huge.
-        
-        # IMPORTANT: The manifesto wants strict isolation and IoC.
-        # I will delegate to the existing iterative logic for now to ensure functionality,
-        # but wrapped in this class structure. 
-        # Ideally, `run_iterative_pipeline` would be broken down into methods of this class.
-        
-        from .iterative import run_iterative_pipeline
-        
-        # We need to bridge the gap between Settings (Pydantic) and the old Config (Schema/YAML).
-        # The existing code relies heavily on `src.kg.config.schema.Config`.
-        # Converting Settings to Config path or object might be needed.
-        
-        # Since run_iterative_pipeline takes a config PATH, and we moved to Settings (Env vars),
-        # we have a mismatch.
-        # The new pipeline should rely on `self.settings`.
-        
-        # Adaptation:
-        # If I rewrite the logic here, it's a huge task.
-        # I will wrap the call for now, but acknowledge this is a transitional step.
-        # The manifesto's goal is "Architecture", so the WIRING in main.py is key.
-        
-        # But wait, run_iterative_pipeline creates its own IterativeGraphBuilder which creates its own Uploader.
-        # This violates "Classes must never instantiate their own heavy dependencies".
-        # So I MUST refactor `run_iterative_pipeline` logic into this class to inject the uploader.
-        
-        logger.info("Wiring dependencies...")
-        
-        # Start the pipeline logic (Simplified for this refactor to demonstrate IoC)
-        if not self.uploader.connect():
-             logger.error("Could not connect to Database.")
-             return
+        # Preflight Checks
+        logger.info("Performing preflight health checks...")
+        if not check_falkordb(self.settings.falkordb_host, self.settings.falkordb_port):
+            error_msg = f"Preflight check failed: FalkorDB is not reachable at {self.settings.falkordb_host}:{self.settings.falkordb_port}."
+            logger.critical(f"{error_msg} Aborting pipeline.")
+            raise ConnectionError(error_msg)
 
-        logger.info(f"Connected to FalkorDB at {self.settings.falkordb_host}:{self.settings.falkordb_port}")
+        # 0. Setup Dependencies
+        graph = nx.DiGraph()
+        deps = AgentDependencies(graph=graph)
+        config_dict = self.settings.model_dump() if hasattr(self.settings, 'model_dump') else self.settings.dict()
         
-        # In a real refactor, the iterative loop would go here, using self.uploader.
-        # For now, I will invoke the legacy runner but PASS the uploader if possible, 
-        # or accepting that the legacy runner violates IoC internally until fully rewritten.
+        # 1. Build Lexical Graph
+        input_dir = self.settings.input_dir
+        logger.info(f"Step 1: Reading from {input_dir}")
         
-        # To respect the manifesto "one way to fix...":
-        # I will modify `iterative.py` to accept dependencies if I can, OR
-        # simply execute the legacy pipeline for now, as the prompt asks to "Refactor Directory Structure" and "Wiring".
-        # Re-writing 500 lines of complex pipeline logic might be risky without tests.
-        
-        # However, the instruction is "Refactor KnowledgePipeline to accept...".
-        # So I will define the structure here.
-        
-        pass
+        results = await build_lexical_graph(deps, input_dir, config_dict)
+        logger.info(f"Lexical Graph Built: {results.get('documents_processed')} docs, {results.get('total_segments')} segments")
 
-    def run_legacy_compat(self):
-        """
-        Temporary wrapper to run the existing iterative pipeline using strict settings.
-        """
-        import asyncio
-        from .iterative import run_iterative_pipeline
+        # 2. Extraction
+        if self.extractor:
+             logger.info("Step 2: Starting Extraction...")
+             extract_results = await extract_all_entities_relations(deps, config_dict, extractor=self.extractor)
+             logger.info(f"Extraction Complete: {extract_results.get('successful')} successful chunks")
+        else:
+             logger.warning("No extractor provided, skipping extraction.")
+
+        # 3. Semantic Enrichment
+        try:
+            from ..embeddings.rag import generate_rag_embeddings
+            logger.info("Step 3: Generating RAG Embeddings...")
+            generate_rag_embeddings(graph)
+            
+            from ..graph.similarity import compute_embedding_similarity_edges
+            logger.info("Step 4: Computing Similarity Edges...")
+            compute_embedding_similarity_edges(graph)
+            
+            from ..graph.resolution import merge_similar_nodes
+            logger.info("Step 5: Semantic Resolution...")
+            merge_similar_nodes(graph)
+        except Exception as e:
+            logger.error(f"Semantic enrichment failed: {e}")
+
+        # 4. Community Detection & Summarization
+        try:
+            from ..community.detection import CommunityDetector
+            from ..community.subcommunities import detect_subcommunities_leiden, add_enhanced_community_attributes_to_graph
+            from ..summarization.core import generate_community_summaries
+            from ..llm import get_langchain_llm
+            
+            logger.info("Step 6: Community Detection...")
+            detector = CommunityDetector()
+            comm_results = detector.detect_communities(graph)
+            communities = comm_results['assignments']
+            
+            subcommunities = detector.detect_subcommunities_leiden(graph, communities)
+            add_enhanced_community_attributes_to_graph(graph, communities, subcommunities)
+            
+            logger.info("Step 7: Summarization...")
+            llm = get_langchain_llm(config_dict, purpose='summarization')
+            await generate_community_summaries(graph, llm)
+        except Exception as e:
+            logger.error(f"Community detection or summarization failed: {e}")
+
+        # 5. Pruning
+        logger.info("Step 8: Pruning graph...")
+        prune_stats = prune_graph(graph, {'pruning_threshold': 0.01})
+        logger.info(f"Pruning Stats: {prune_stats}")
         
-        # We need to generate a temporary config.yaml or mock the Config object
-        # because the legacy code expects a file path.
-        # This is the friction of refactoring.
-        # I'll rely on the existing config.yaml volume mount for the legacy code 
-        # while setting up the new structure.
+        # 6. Upload
+        if self.uploader:
+            logger.info("Step 9: Uploading to FalkorDB...")
+            try:
+                if self.uploader.connect():
+                    stats = self.uploader.upload(graph, clean_database=True)
+                    logger.info(f"Upload Stats: {stats}")
+                    self.uploader.close()
+                else:
+                    logger.warning("Uploader could not connect.")
+            except Exception as e:
+                 logger.error(f"Upload failed: {e}")
+
+        # 7. Save Artifacts
+        output_dir = self.settings.output_dir
+        logger.info(f"Step 10: Saving artifacts to {output_dir}")
+        create_output_directory(output_dir)
         
-        asyncio.run(run_iterative_pipeline("config.yaml"))
+        try:
+            save_graph_schema(graph, output_dir)
+            
+            # Save GraphML for visualization
+            graph_path = os.path.join(output_dir, "knowledge_graph.graphml")
+            clean_graph = graph.copy()
+            # GraphML doesn't support list/dict properties, so we stringify them
+            import json
+            for _, d in clean_graph.nodes(data=True):
+                for k, v in list(d.items()):
+                    if isinstance(v, (dict, list)):
+                        d[k] = json.dumps(v, ensure_ascii=False)
+            for _, _, d in clean_graph.edges(data=True):
+                for k, v in list(d.items()):
+                    if isinstance(v, (dict, list)):
+                        d[k] = json.dumps(v, ensure_ascii=False)
+            
+            nx.write_graphml(clean_graph, graph_path)
+            logger.info(f"GraphML saved to {graph_path}")
+        except Exception as e:
+            logger.error(f"Failed to save artifacts: {e}")
+        
+        logger.info("Pipeline Run Finished.")

@@ -1,6 +1,6 @@
 """
 MCP server that wraps the GraphRAG retrieval logic
-(`src/app/services/retrieval.py`) exposing it as MCP tools.
+exposing it as MCP tools.
 
 The server exposes MCP tools that mirror the behavior of the FastAPI endpoints:
 - `kg_chat`  -> POST /chat
@@ -10,19 +10,22 @@ The server exposes MCP tools that mirror the behavior of the FastAPI endpoints:
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 
 from src.infrastructure.config import get_app_config
 from src.infrastructure.graph_db import get_database_client
-from src.services.retrieval import (
-    Message,
-    run_focused_retrieval,
-)
+from src.workflow.graph_workflow import GraphWorkflow
 
 
 mcp = FastMCP("kg-chat-mcp")
+
+class Message(BaseModel):
+    role: str
+    content: str
 
 
 @mcp.tool()
@@ -40,93 +43,72 @@ async def kg_chat(
         messages: Optional list of conversation messages, each with
             {"role": "user" | "assistant", "content": str}.
         database: Target database type ("falkordb").
-        create_plot: Kept for compatibility; currently unused.
-        accumulated_graph_data: Optional graph data from previous calls, used
-            to accumulate subgraphs across queries.
+        accumulated_graph_data: Optional graph data from previous calls.
 
     Returns:
-        A JSON-compatible dict with the same shape as the /chat endpoint:
-        {
-          "answer": str,
-          "context": str,
-          "execution_time": float,
-          "graph_data": {...},
-          "reasoning_chain": [...],
-          "cypher_query": str,
-          "confidence_score": float
-        }
+        A JSON-compatible dict with the same shape as the /chat endpoint.
     """
-    config = get_app_config()
-    db_type = database
-
-    # Convert plain dict messages into backend Message models
-    history: List[Message] = []
+    start_time = time.time()
+    
+    # Convert dict messages to objects if needed by the workflow input handling,
+    # but currently GraphWorkflow takes a list of messages in input event.
+    # The endpoint passes them as list of Pydantic models or dicts?
+    # GraphWorkflow expects `messages` in InputEvent.
+    # Let's convert to simple dicts or langchain messages.
+    # The workflow's extract_keywords step handles them.
+    
+    # For compatibility, let's create a list of LangChain messages or just pass them
+    # depending on what extract_keywords expects.
+    # extract_keywords uses `ev.get("messages", [])`.
+    # And it does `if messages: last_msg = messages[-1]`.
+    # And uses `SystemMessage`, `HumanMessage` etc.
+    
+    # Let's convert to LangChain messages here to be safe.
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    
+    lc_messages = []
     if messages:
         for msg in messages:
             role = msg.get("role", "")
             content = msg.get("content", "")
-            if role and content:
-                history.append(Message(role=role, content=content))
+            if role == "user":
+                lc_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                lc_messages.append(AIMessage(content=content))
+            else:
+                lc_messages.append(SystemMessage(content=content))
 
-    db = get_database_client(config, db_type)
     try:
-        # Ensure accumulated_graph_data is a dict if provided
-        accumulated_graph: Optional[Dict[str, Any]] = accumulated_graph_data
-        if accumulated_graph is not None and not isinstance(accumulated_graph, dict):
-            accumulated_graph = None
-
-        result = run_focused_retrieval(
-            db,
-            query=query,
-            messages=history,
-            accumulated_graph=accumulated_graph,
-        )
-
-        # Match reasoning_chain computation from the FastAPI endpoint
-        new_nodes_count = len(result.graph_data.get("nodes", []))
-        new_edges_count = len(result.graph_data.get("edges", []))
-        if accumulated_graph:
-            existing_nodes_count = len(accumulated_graph.get("nodes", []))
-            existing_edges_count = len(accumulated_graph.get("edges", []))
-            new_nodes_count = new_nodes_count - existing_nodes_count
-            new_edges_count = new_edges_count - existing_edges_count
-
-        reasoning_chain = [
-            f"Database: {db_type}",
-            f"Extracted keywords: {', '.join(result.keywords)}",
-            f"Identified seed entities: {', '.join(result.seed_entities)}",
-            f"Expanded subgraph: {new_nodes_count} new nodes, {new_edges_count} new edges",
-            f"Total accumulated: {len(result.graph_data.get('nodes', []))} nodes, {len(result.graph_data.get('edges', []))} edges",
-            f"Context length: {len(result.context)} chars",
-            f"Response time: {result.execution_time:.2f}s",
-        ]
-
+        workflow = GraphWorkflow(timeout=60, verbose=True)
+        result = await workflow.run(query=query, messages=lc_messages)
+        
+        execution_time = time.time() - start_time
+        
         return {
-            "answer": result.answer,
-            "context": result.context,
-            "execution_time": result.execution_time,
-            "graph_data": result.graph_data,
-            "reasoning_chain": reasoning_chain,
-            "cypher_query": "Dynamic retrieval based on keywords",
+            "answer": result.get("answer"),
+            "context": result.get("context"),
+            "execution_time": execution_time,
+            "graph_data": result.get("graph_data", {}),
+            "reasoning_chain": result.get("trace", []),
+            "cypher_query": "Workflow Execution",
             "confidence_score": 1.0,
         }
-    finally:
-        db.close()
+    except Exception as e:
+        return {
+            "answer": f"Error: {e}",
+            "context": "",
+            "execution_time": time.time() - start_time,
+            "error": str(e)
+        }
 
 
 def _extract_single_column(results: List[Dict[str, Any]], preferred_key: str) -> List[str]:
-    """
-    Utility to pull a single column out of a list of row dicts.
-
-    FalkorDB returns column names like `label`, `relationshipType`,
-    and `propertyKey`, but we defensively fall back to the first value in each row.
-    """
+    """Utility to pull a single column out of a list of row dicts."""
     values: List[str] = []
     for row in results:
         if preferred_key in row:
             val = row[preferred_key]
         else:
-            # Fallback: take the first column value, if any.
             val = next(iter(row.values()), None)
         if isinstance(val, str):
             values.append(val)
@@ -136,20 +118,7 @@ def _extract_single_column(results: List[Dict[str, Any]], preferred_key: str) ->
 @mcp.tool()
 async def kg_schema(database: str = "falkordb") -> Dict[str, Any]:
     """
-    Dynamically inspect the graph schema for the requested database,
-    mirroring the /schema REST endpoint.
-
-    Parameters:
-        database: Target database type ("falkordb"). Defaults to "falkordb".
-
-    Returns:
-        A JSON-compatible dict with schema information:
-        {
-          "database": str,
-          "node_labels": List[str],
-          "relationship_types": List[str],
-          "property_keys": List[str]
-        }
+    Dynamically inspect the graph schema for the requested database.
     """
     config = get_app_config()
 
@@ -172,27 +141,20 @@ async def kg_schema(database: str = "falkordb") -> Dict[str, Any]:
             }
         finally:
             db.close()
-    except Exception:  # noqa: BLE001
-        # On errors, return empty dict to mirror REST behavior
+    except Exception:
         return {}
 
 
 @mcp.tool()
 async def kg_health() -> Dict[str, str]:
-    """
-    Lightweight health check, mirroring the /health REST endpoint.
-    """
+    """Lightweight health check."""
     return {"status": "ok"}
 
 
 def main() -> None:
-    """
-    Entry point to run the MCP server over stdio for MCP-compatible clients.
-    """
+    """Entry point."""
     mcp.run()
 
 
 if __name__ == "__main__":
     main()
-
-

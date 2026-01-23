@@ -6,15 +6,6 @@ from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 import os
 
-class IncrementalConfig(BaseModel):
-    """Configuration for incremental processing."""
-    speech_limit: int = 1
-    max_documents: int = 10
-    state_file: str = "processing_state.json"
-    enable_pruning: bool = True
-    pruning_threshold: float = 0.01
-    auto_recalculate_centrality: bool = True
-
 class PipelineConfig(BaseModel):
     """Configuration for pipeline stages."""
     stages: Dict[str, bool] = Field(
@@ -81,12 +72,6 @@ class CommunityConfig(BaseModel):
     sub_resolution_steps: int = 7
     sub_consistency_threshold: float = 0.75
 
-class Neo4jConfig(BaseModel):
-    """Configuration for Neo4j (Legacy/Alternative)."""
-    uri: str = "bolt://localhost:7687"
-    username: str = "neo4j"
-    password: str = "password"
-
 class FalkorDBConfig(BaseModel):
     """Configuration for FalkorDB."""
     host: str = "localhost"
@@ -117,8 +102,6 @@ class Config(BaseModel):
     community: CommunityConfig = Field(default_factory=CommunityConfig)
     falkordb: FalkorDBConfig = Field(default_factory=FalkorDBConfig)
     postgres: PostgresConfig = Field(default_factory=PostgresConfig)
-    neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
-    incremental: IncrementalConfig = Field(default_factory=IncrementalConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for backward compatibility."""

@@ -114,8 +114,13 @@
                 </div>
                 
                 <!-- Explore Controls Toggle -->
-                <button onclick="toggleExplorer()" class="pointer-events-auto bg-[#28292a]/90 backdrop-blur rounded-full border border-[#444746] p-1.5 shadow-lg text-[#c4c7c5] hover:text-[#e3e3e3] hover:bg-[#333537] transition-colors">
+                <button onclick="toggleExplorer()" class="pointer-events-auto bg-[#28292a]/90 backdrop-blur rounded-full border border-[#444746] p-1.5 shadow-lg text-[#c4c7c5] hover:text-[#e3e3e3] hover:bg-[#333537] transition-colors" title="Explore Controls">
                     <span class="material-icons-round">tune</span>
+                </button>
+                
+                <!-- Run Pipeline Button -->
+                <button onclick="runPipeline()" id="btn-pipeline" class="pointer-events-auto bg-[#28292a]/90 backdrop-blur rounded-full border border-[#444746] p-1.5 shadow-lg text-[#a8c7fa] hover:text-[#d6e3ff] hover:bg-[#333537] transition-colors flex items-center justify-center" title="Run Graph Generation">
+                    <span class="material-icons-round">play_arrow</span>
                 </button>
             </div>
             

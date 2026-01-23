@@ -8,14 +8,11 @@ or file detection.
 from typing import Optional, Dict, Type
 from kg.graph.parsers.base import BaseDocumentParser
 from kg.graph.parsers.generic import GenericParser
-
-from kg.graph.parsers.multilingual import MultilingualParser
 from kg.graph.parsers.life import LifeLogParser
 
 __all__ = [
     'BaseDocumentParser',
     'GenericParser',
-    'MultilingualParser',
     'LifeLogParser',
     'get_parser',
     'PARSER_REGISTRY'
@@ -23,9 +20,8 @@ __all__ = [
 
 # Parser registry mapping format names to parser classes
 PARSER_REGISTRY: Dict[str, Type[BaseDocumentParser]] = {
-    'generic': GenericParser,
-    'multilingual': MultilingualParser,
     'life': LifeLogParser,
+    'generic': GenericParser,
 }
 
 

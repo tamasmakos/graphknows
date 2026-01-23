@@ -1,29 +1,61 @@
-import sys
-import os
 import logging
-from typing import Optional
-
-# Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
-
-from src.app.infrastructure.graph_db import FalkorDBDB, GraphDB
+import os
+from typing import Optional, List, Dict, Any, Tuple
+from falkordb import FalkorDB
 
 logger = logging.getLogger(__name__)
+
+class GraphDB:
+    def query(self, cypher: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        pass
+    def close(self):
+        pass
+
+class FalkorDBDB(GraphDB):
+    def __init__(self, host: str = "localhost", port: int = 6379, database: str = "kg"):
+        self.driver = FalkorDB(host=host, port=port)
+        self.graph = self.driver.select_graph(database)
+
+    def query(self, cypher: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        try:
+            result = self.graph.query(cypher, params)
+            if not result or not result.header:
+                return []
+            
+            columns = []
+            for h in result.header:
+                if isinstance(h, (list, tuple)) and len(h) >= 2:
+                    columns.append(h[1])
+                else:
+                    columns.append(str(h))
+
+            output = []
+            for row in result.result_set:
+                record = {}
+                for i, val in enumerate(row):
+                    if i < len(columns):
+                        record[columns[i]] = val
+                output.append(record)
+            return output
+        except Exception as e:
+            logger.error(f"Query failed: {e}")
+            return []
+
+    def close(self):
+        pass
 
 _db_instance: Optional[GraphDB] = None
 
 def get_db() -> GraphDB:
     global _db_instance
     if _db_instance is None:
-        host = os.getenv("FALKORDB_HOST", "host.docker.internal")
+        host = os.getenv("FALKORDB_HOST", "localhost")
         port = int(os.getenv("FALKORDB_PORT", 6379))
         
         logger.info(f"Connecting to FalkorDB at {host}:{port}")
         
-        # FalkorDBDB wraps FalkorDB client
         _db_instance = FalkorDBDB(host=host, port=port, database="kg")
         
-        # Test connection by running a simple query
         try:
             _db_instance.query("RETURN 1")
         except Exception:

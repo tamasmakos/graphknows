@@ -59,7 +59,7 @@ services:
       - FALKORDB_HOST=falkordb
       - POSTGRES_HOST=pgvector
     volumes:
-      - ./config.yaml:/app/config.yaml
+
     depends_on:
       - falkordb
       - pgvector
@@ -71,7 +71,7 @@ services:
       - FALKORDB_HOST=falkordb
       - POSTGRES_HOST=pgvector
     volumes:
-      - ./config.yaml:/app/config.yaml
+
       - ./input:/app/input
       - ./output:/app/output
     depends_on:

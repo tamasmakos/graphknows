@@ -124,7 +124,7 @@ class LangChainExtractor(BaseExtractor):
             
             transformer = LLMGraphTransformer(
                 llm=llm,
-                # allowed_nodes=allowed_nodes,
+                allowed_nodes=allowed_nodes,
                 prompt=prompt,
                 strict_mode=False,
                 node_properties=False,

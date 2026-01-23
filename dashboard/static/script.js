@@ -101,6 +101,31 @@ async function fetchSampleWithFilters() {
     }
 }
 
+async function runPipeline() {
+    const btn = document.getElementById('btn-pipeline');
+    if (btn.disabled) return;
+    
+    if (!confirm("Start Knowledge Graph Generation Pipeline? This may take a while.")) return;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="w-4 h-4 border-2 border-[#a8c7fa] border-t-transparent rounded-full animate-spin"></span>';
+    
+    try {
+        const res = await fetch(`${MGMT_API}/api/pipeline/run`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Pipeline failed to start");
+        
+        alert("Pipeline started! Check server logs for progress. The graph will update automatically when you refresh.");
+    } catch (e) {
+        alert("Error: " + e.message);
+    } finally {
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<span class="material-icons-round">play_arrow</span>';
+        }, 5000);
+    }
+}
+
 // "Find Path" removed to simplify UI as requested, 
 // keeping backend support for future use.
 

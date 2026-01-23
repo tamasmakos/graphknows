@@ -4,6 +4,7 @@ import os
 import re
 from datetime import datetime, date
 from typing import List, Dict, Any, Tuple, Set, Optional
+import re
 
 import networkx as nx
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -37,6 +38,13 @@ def get_gliner_model():
 def get_max_concurrent(config: Dict[str, Any], default: int = 8) -> int:
     """Get max_concurrent_extractions from config with fallback to default."""
     return config.get('max_concurrent_extractions', default)
+
+def split_sentences(text: str) -> List[str]:
+    """Split text into sentences using regex."""
+    # Simple regex for sentence splitting
+    sentence_endings = r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s'
+    sentences = re.split(sentence_endings, text)
+    return [s.strip() for s in sentences if s.strip()]
 
 # --- Async Extraction ---
 
@@ -100,10 +108,31 @@ async def process_extraction_task(
                     
                     # Run in executor to avoid blocking event loop
                     loop = asyncio.get_event_loop()
-                    gliner_entities = await loop.run_in_executor(
-                        None, 
-                        lambda: model.predict_entities(task.chunk_text, labels, threshold=0.5)
-                    )
+                    
+                    # Clean and split into sentences
+                    sentences = split_sentences(task.chunk_text)
+                    
+                    if not sentences:
+                        # Fallback to whole text if no sentences found (rare)
+                        sentences = [task.chunk_text]
+                        
+                    # Define safe prediction function for a single sentence
+                    def predict_sentence(text):
+                        return model.predict_entities(text, labels, threshold=0.5)
+
+                    # Parallel execution for sentences
+                    # Note: GLiNER might be GIL bounded but this allows IO overlap or potential internal parallelization
+                    sentence_tasks = [
+                        loop.run_in_executor(None, predict_sentence, sentence) 
+                        for sentence in sentences
+                    ]
+                    
+                    results = await asyncio.gather(*sentence_tasks)
+                    
+                    # Aggregate results
+                    for res in results:
+                        gliner_entities.extend(res)
+                        
             except Exception as e:
                 logger.warning(f"GLiNER extraction failed for {task.chunk_id}: {e}")
 
@@ -118,6 +147,11 @@ async def process_extraction_task(
                 allowed_nodes.extend(task.entities)
             if task.abstract_concepts:
                 allowed_nodes.extend(task.abstract_concepts)
+            
+            # Add GLINER entities to allowed_nodes
+            if gliner_entities:
+                gliner_texts = [e.get('text') for e in gliner_entities if e.get('text')]
+                allowed_nodes.extend(gliner_texts)
             
             # Deduplicate
             allowed_nodes = list(set(allowed_nodes))
@@ -449,32 +483,40 @@ async def process_single_segment(
                     # Direct Chunking from Audio
                     chunk_text = row.get('Audio')
                     if chunk_text:
-                        # Chunk ID derived from segment
-                        chunk_id = f"{segment.segment_id}_CHUNK_{i}"
+                        # Split text if too long to prevent GLINER truncation
+                        sub_chunks = await process_document_splitting(chunk_text, config)
                         
-                        chunk_name = chunk_text[:20].strip() + "..." if len(chunk_text) > 20 else chunk_text
+                        for sub_idx, sub_text in enumerate(sub_chunks):
+                            # Chunk ID derived from segment
+                            # Use simplified ID if only one chunk, otherwise append sub_index
+                            if len(sub_chunks) == 1:
+                                chunk_id = f"{segment.segment_id}_CHUNK_{i}"
+                            else:
+                                chunk_id = f"{segment.segment_id}_CHUNK_{i}_{sub_idx}"
+                            
+                            chunk_name = sub_text[:20].strip() + "..." if len(sub_text) > 20 else sub_text
 
-                        deps.graph.add_node(chunk_id,
-                                          node_type="CHUNK",
-                                          graph_type="lexical_graph",
-                                          text=chunk_text,
-                                          length=len(chunk_text),
-                                          initial_entities=[],
-                                          llama_metadata={}, 
-                                          name=chunk_name)
-                        
-                        # Link SEGMENT -> HAS_CHUNK -> CHUNK (Directly)
-                        deps.graph.add_edge(segment.segment_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
-                        
-                        # Add retrieval task for this chunk
-                        deps.extraction_tasks.append(ChunkExtractionTask(
-                            chunk_id=chunk_id,
-                            chunk_text=chunk_text,
-                            entities=[], 
-                            abstract_concepts=[], 
-                            keywords=[]
-                        ))
-                        chunk_count += 1
+                            deps.graph.add_node(chunk_id,
+                                              node_type="CHUNK",
+                                              graph_type="lexical_graph",
+                                              text=sub_text,
+                                              length=len(sub_text),
+                                              initial_entities=[],
+                                              llama_metadata={}, 
+                                              name=chunk_name)
+                            
+                            # Link SEGMENT -> HAS_CHUNK -> CHUNK (Directly)
+                            deps.graph.add_edge(segment.segment_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
+                            
+                            # Add retrieval task for this chunk
+                            deps.extraction_tasks.append(ChunkExtractionTask(
+                                chunk_id=chunk_id,
+                                chunk_text=sub_text,
+                                entities=[], 
+                                abstract_concepts=[], 
+                                keywords=[]
+                            ))
+                            chunk_count += 1
                     
                     # Extract Entities (Spacy/Rule-based mappings)
                     # 1. Location -> PLACE
