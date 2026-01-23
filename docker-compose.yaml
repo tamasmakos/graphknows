@@ -50,6 +50,34 @@ services:
     volumes:
       - langfuse_data:/var/lib/postgresql/data
 
+  app:
+    build: ./services/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=falkordb:6379
+      - FALKORDB_HOST=falkordb
+      - POSTGRES_HOST=pgvector
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      - falkordb
+      - pgvector
+
+  pipeline:
+    build: ./services/pipeline
+    environment:
+      - DATABASE_URL=falkordb:6379
+      - FALKORDB_HOST=falkordb
+      - POSTGRES_HOST=pgvector
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./input:/app/input
+      - ./output:/app/output
+    depends_on:
+      - falkordb
+      - pgvector
+
 volumes:
   falkordb_data:
   pgvector_data:
