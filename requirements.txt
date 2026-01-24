@@ -12,7 +12,6 @@ networkx
 nltk
 numpy
 pandas
-psutil
 pydantic
 pydantic-ai
 pykeen
@@ -35,5 +34,7 @@ langdetect==1.0.9
 langfuse
 openinference-instrumentation-llama-index
 llama-index-llms-openai
-llama-index
 gliner
+spacy
+pydantic-settings
+llama-index-core

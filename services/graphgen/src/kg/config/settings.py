@@ -5,6 +5,16 @@ class PipelineSettings(BaseSettings):
     # Define all env vars here with types
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379
+    
+    # Postgres
+    postgres_host: str = "pgvector"
+    postgres_port: int = 5432
+    postgres_db: str = "graphknows"
+    postgres_user: str = "postgres"
+    postgres_password: str = "password"
+    postgres_table: str = "hybrid_embeddings"
+    postgres_enabled: bool = True
+
     openai_api_key: Optional[str] = None
     # Processing Settings
     input_dir: str = "/app/input"

@@ -7,11 +7,16 @@ services:
     volumes:
       - falkordb_data:/data
     restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   pgvector:
-    image: pgvector/pgvector:0.8.1-pg18-trixie
+    image: pgvector/pgvector:pg16
     ports:
-      - "5432:5432"
+      - "5435:5432"
     environment:
       - POSTGRES_DB=graphknows
       - POSTGRES_USER=postgres
@@ -19,6 +24,11 @@ services:
     volumes:
       - pgvector_data:/var/lib/postgresql/data
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   langfuse-server:
     image: langfuse/langfuse:2
@@ -43,53 +53,33 @@ services:
       - POSTGRES_PASSWORD=langfuse
       - POSTGRES_DB=langfuse
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      test: [ "CMD-SHELL", "pg_isready -U langfuse -d langfuse" ]
       interval: 5s
       timeout: 5s
       retries: 5
     volumes:
       - langfuse_data:/var/lib/postgresql/data
 
-  graphrag:
-    build: ./services/graphrag
+  dev-environment:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - .:/workspaces/kg:cached
+    command: sleep infinity
+    environment:
+      - FALKORDB_HOST=falkordb
+      - POSTGRES_HOST=pgvector
+      - DATABASE_URL=falkordb:6379
+    depends_on:
+      falkordb:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=falkordb:6379
-      - FALKORDB_HOST=falkordb
-      - POSTGRES_HOST=pgvector
-    volumes:
-
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    depends_on:
-      - falkordb
-      - pgvector
-
-  graphgen:
-    build: ./services/graphgen
-    environment:
-      - DATABASE_URL=falkordb:6379
-      - FALKORDB_HOST=falkordb
-      - POSTGRES_HOST=pgvector
-    volumes:
-      - ./input:/app/input
-      - ./output:/app/output
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    depends_on:
-      - falkordb
-      - pgvector
+      - "8001:8001"
+    restart: no
 
 volumes:
   falkordb_data:

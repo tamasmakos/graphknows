@@ -24,7 +24,7 @@ docker-compose up --build -d
 
 ### Supporting Services
 - **FalkorDB**: Primary graph database (port 6379)
-- **PostgreSQL**: Vector store for hybrid search (port 5432)
+- **PostgreSQL**: Vector store for hybrid search (port 5435)
 - **Langfuse**: Tracing and observability (port 3000)
 
 ## Service Usage

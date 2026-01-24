@@ -26,7 +26,15 @@ def main():
         database="kg", # Could be in settings
         username=None,
         password=None,
-        postgres_config=None # simplified for now
+        postgres_config={
+            "enabled": settings.postgres_enabled,
+            "host": settings.postgres_host,
+            "port": settings.postgres_port,
+            "database": settings.postgres_db,
+            "user": settings.postgres_user,
+            "password": settings.postgres_password,
+            "table_name": settings.postgres_table
+        }
     )
 
     # 3. Instantiate Logic (Inject Dependencies)
