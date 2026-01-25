@@ -25,7 +25,7 @@ class PipelineSettings(BaseSettings):
     
     # GLiNER / Extraction Settings
     gliner_labels: list[str] = ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"]
-    extraction_backend: str = "gliner" # Options: "gliner", "spacy"
+    extraction_backend: str = "spacy" # Options: "gliner", "spacy"
     spacy_model: str = "en_core_web_lg"
 
     # Incremental Mode Settings

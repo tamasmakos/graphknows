@@ -11,3 +11,7 @@ langchain-groq
 psycopg2-binary
 pgvector
 pydantic-settings
+llama-index-embeddings-huggingface
+torch
+transformers
+# Force rebuild 1
