@@ -3,8 +3,8 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "6379:6379"
-      - "3001:3000"
+      - "6379:6379"     # Internal & Local access
+      - "3001:3000"     # Dashboard
     volumes:
       - falkordb_data:/data
     restart: always
@@ -69,20 +69,19 @@ services:
     environment:
       - FALKORDB_HOST=falkordb
       - POSTGRES_HOST=pgvector
-      - INPUT_DIR=/app/input
-      - OUTPUT_DIR=/app/output
       - GROQ_API_KEY=${GROQ_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-    volumes:
-      - ./input:/app/input
-      - ./output:/app/output
+      - GROQ_MODEL=${GROQ_MODEL}
+      - EXTRACTION_MODEL=${EXTRACTION_MODEL}
+      - SUMMARISATION_MODEL=${SUMMARISATION_MODEL}
+      - PYTHONPATH=/app/src
+    ports:
+      - "8020:8000" # Host:Container
     depends_on:
       falkordb:
         condition: service_healthy
       pgvector:
         condition: service_healthy
-    ports:
-      - "8020:8000" # Map to 8020 (GraphGen API)
 
   graphrag:
     build:
@@ -93,40 +92,20 @@ services:
       - POSTGRES_HOST=pgvector
       - GROQ_API_KEY=${GROQ_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_MODEL=${GROQ_MODEL}
+      - KEYWORDS_MODEL=${KEYWORDS_MODEL}
+      - CHAT_MODEL=${CHAT_MODEL}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_HOST=http://langfuse-server:3000
+      - PYTHONPATH=/app/src
     ports:
-      - "8010:8000" # Map to 8010 (GraphRAG API)
+      - "8010:8000" # Host:Container
     depends_on:
       falkordb:
         condition: service_healthy
       pgvector:
         condition: service_healthy
-
-  # --- Dev/Master Environment ---
-  dev-environment:
-    build:
-      context: .
-      dockerfile: .devcontainer/Dockerfile
-    volumes:
-      - .:/workspaces/kg:cached
-    command: sleep infinity
-    environment:
-      - FALKORDB_HOST=falkordb
-      - POSTGRES_HOST=pgvector
-      - GRAPHGEN_URL=http://graphgen:8000
-      - GRAPHRAG_URL=http://graphrag:8000
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      graphgen:
-        condition: service_started
-      graphrag:
-        condition: service_started
-    ports:
-      - "8000:8000" # For Dashboard if started manually
-      - "8001:8001" # For Dashboard API
 
 volumes:
   falkordb_data:

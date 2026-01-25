@@ -22,6 +22,16 @@ def test_graphgen():
         if response.status_code == 200:
             print("[GraphGen Client] Pipeline started successfully!")
             print(f"Response: {response.json()}")
+            print("-" * 50)
+            print("[GraphGen Client] 📡 Streaming server logs to track progress...")
+            print("[GraphGen Client] (Press Ctrl+C to stop watching logs - pipeline will continue)")
+            print("-" * 50)
+            try:
+                import subprocess
+                # Stream logs from the graphgen container
+                subprocess.run(["docker", "compose", "logs", "-f", "graphgen"], check=False)
+            except KeyboardInterrupt:
+                print("\n[GraphGen Client] Stopped watching logs.")
         else:
             print(f"[GraphGen Client] Failed to start pipeline. Code: {response.status_code}")
             print(f"Error: {response.text}")

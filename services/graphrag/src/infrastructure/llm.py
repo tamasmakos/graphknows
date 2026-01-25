@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-def get_llm():
+def get_llm(purpose: str = None):
     """
     Get a LangChain-compatible LLM.
     Prioritizes Groq, then OpenAI.
@@ -29,6 +29,13 @@ def get_llm():
     
     if ChatGroq and groq_api_key:
         model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+        
+        # Override based on purpose
+        if purpose == "keywords":
+             model = os.environ.get("KEYWORDS_MODEL", model)
+        elif purpose == "chat":
+             model = os.environ.get("CHAT_MODEL", model)
+
         return ChatGroq(
             temperature=0,
             model_name=model,

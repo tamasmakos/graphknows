@@ -2,6 +2,7 @@ import sys
 import os
 import requests
 import json
+import subprocess
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,9 +40,21 @@ def run_example():
             for step_info in result.get("reasoning_chain", []):
                 print(f"• {step_info}")
         else:
-            print(f"[GraphRAG Client] Error: {response.status_code}")
-            print(response.text)
+            print(f"[GraphRAG Client] ❌ Error: {response.status_code}")
+            try:
+                error_details = response.json()
+                print(json.dumps(error_details, indent=2))
+            except:
+                print(response.text)
             
+            print("-" * 50)
+            print("[GraphRAG Client] 🔍 Fetching recent server logs for debugging:")
+            print("-" * 50)
+            try:
+                subprocess.run(["docker", "compose", "logs", "--tail=20", "graphrag"], check=False)
+            except Exception as log_err:
+                print(f"Could not fetch logs: {log_err}")
+
     except Exception as e:
         print(f"[GraphRAG Client] ❌ Execution failed: {e}")
 

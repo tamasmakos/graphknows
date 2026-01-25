@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any
 from .kg.config.settings import PipelineSettings
 from .kg.falkordb.uploader import KnowledgeGraphUploader
 from .kg.pipeline.core import KnowledgePipeline
+from .kg.graph.extractors import get_extractor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +36,9 @@ async def run_pipeline_task(request: PipelineRunRequest):
                 settings.input_dir = request.input_dir
             
             logger.info(f"Loaded settings. Input: {settings.input_dir}, Output: {settings.output_dir}")
+            
+            # Prepare config dict
+            config_dict = settings.model_dump() if hasattr(settings, 'model_dump') else settings.dict()
 
             # 2. Instantiate Dependencies
             uploader = KnowledgeGraphUploader(
@@ -51,16 +55,24 @@ async def run_pipeline_task(request: PipelineRunRequest):
                     "table_name": settings.postgres_table
                 }
             )
+            
+            # Instantiate Extractor
+            extractor = get_extractor(config_dict)
 
             # 3. Instantiate Pipeline
             pipeline = KnowledgePipeline(
                 settings=settings,
-                uploader=uploader
+                uploader=uploader,
+                extractor=extractor
             )
 
             # 4. Run
-            await pipeline.run()
-            logger.info("GraphGen Pipeline Task Completed Successfully.")
+            try:
+                await pipeline.run()
+                logger.info("GraphGen Pipeline Task Completed Successfully.")
+            finally:
+                if extractor:
+                    await extractor.close()
 
         except Exception as e:
             logger.error(f"GraphGen Pipeline Failed: {e}", exc_info=True)
