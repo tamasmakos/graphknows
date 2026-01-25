@@ -7,50 +7,35 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-PIPELINE_RUNNING = False
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+import requests
+import os
+import logging
+import asyncio
 
-def run_pipeline_task():
-    global PIPELINE_RUNNING
-    PIPELINE_RUNNING = True
-    try:
-        # Assuming we are at PROJECT_ROOT
-        logger.info("Starting GraphGen pipeline...")
-        env = os.environ.copy()
-        # Set PYTHONPATH to include project root
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-        env["PYTHONPATH"] = project_root
-        
-        # Run module
-        result = subprocess.run(
-            ["python", "-m", "services.graphgen.src.main"],
-            cwd=project_root,
-            env=env,
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode == 0:
-            logger.info("GraphGen pipeline completed successfully.")
-            logger.info(result.stdout)
-        else:
-            logger.error(f"GraphGen pipeline failed with code {result.returncode}")
-            logger.error(result.stderr)
-            
-    except Exception as e:
-        logger.error(f"Failed to run pipeline: {e}")
-    finally:
-        PIPELINE_RUNNING = False
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+GRAPHGEN_URL = os.getenv("GRAPHGEN_URL", "http://graphgen:8000")
 
 @router.post("/run")
-async def run_pipeline(background_tasks: BackgroundTasks):
-    global PIPELINE_RUNNING
-    if PIPELINE_RUNNING:
-        raise HTTPException(status_code=400, detail="Pipeline is already running")
-    
-    background_tasks.add_task(run_pipeline_task)
-    return {"status": "started", "message": "GraphGen pipeline started in background"}
+async def run_pipeline():
+    try:
+        # Trigger remote pipeline
+        response = requests.post(f"{GRAPHGEN_URL}/run", json={"clean_database": True}, timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to trigger pipeline at {GRAPHGEN_URL}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger pipeline: {e}")
 
 @router.get("/status")
 async def get_status():
-    global PIPELINE_RUNNING
-    return {"running": PIPELINE_RUNNING}
+    # Simple check if service is up, not exact pipeline status (needs more complex API on graphgen side)
+    try:
+        response = requests.get(f"{GRAPHGEN_URL}/health", timeout=2)
+        return {"service_status": "ok" if response.status_code == 200 else "error"}
+    except:
+        return {"service_status": "unreachable"}
+

@@ -13,7 +13,7 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def kill_existing_processes():
-    """Aggressively find and kill existing service processes."""
+    """Aggressively find and kill existing dashboard processes."""
     print("🧹 Cleaning up existing processes...")
     try:
         result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
@@ -21,8 +21,8 @@ def kill_existing_processes():
         
         pids_to_kill = []
         for line in lines:
-            # Match uvicorn processes for our specific apps
-            if "uvicorn" in line and ("src.main:app" in line or "dashboard.backend.main:app" in line):
+            # Match uvicorn processes for dashboard only
+            if "uvicorn" in line and "dashboard.backend.main:app" in line:
                 parts = line.split()
                 if len(parts) > 1:
                     pids_to_kill.append(parts[1])
@@ -62,30 +62,32 @@ def main():
     # Clean slate
     kill_existing_processes()
     
-    # Check for API Key
+    # Check for API Key (Just a warning, since services might have it in docker-compose)
     if not os.getenv("GROQ_API_KEY") and not os.getenv("OPENAI_API_KEY"):
-        print("⚠️  Warning: Neither GROQ_API_KEY nor OPENAI_API_KEY found in environment.")
+        print("ℹ️  Note: GROQ_API_KEY/OPENAI_API_KEY not found in local env. Ensure services have them.")
 
     processes = []
 
     try:
-        # 1. Start Agent Service (Port 8000)
-        print("\n--- Starting Agent Service (Port 8000) ---")
-        agent_env = os.environ.copy()
-        agent_dir = PROJECT_ROOT / "services" / "graphrag"
-        agent_env["PYTHONPATH"] = str(agent_dir)
+        # 1. Check if External Services are reachable
+        print("\n--- Checking Services ---")
+        # GraphRAG (Agent) usually at 8000 or 8010 depending on docker-compose. 
+        # In the new setup, graphrag is a service.
+        # But we are running this launcher LOCALLY (or in dev-container).
+        # We need to know where GraphRAG is.
+        # Default to localhost:8010 (mapped in docker-compose) or 8000 (internal).
+        # If running in dev-container, we might access services via hostname 'graphrag'.
         
-        agent_proc = run_process(
-            ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"],
-            cwd=agent_dir,
-            env=agent_env
-        )
-        processes.append(agent_proc)
+        # We'll just start the Dashboard.
         
         # 2. Start Dashboard Backend (Port 8001)
         print("\n--- Starting Dashboard (Port 8001) ---")
         dash_env = os.environ.copy()
         dash_env["PYTHONPATH"] = str(PROJECT_ROOT)
+        
+        # Pass Service URLs to Dashboard if needed
+        # Defaults in code might be http://graphgen:8000
+        # If running in dev-container, this is correct.
         
         backend_proc = run_process(
             ["uvicorn", "dashboard.backend.main:app", "--host", "0.0.0.0", "--port", "8001"],
@@ -94,24 +96,16 @@ def main():
         )
         processes.append(backend_proc)
         
-        # 3. Wait for backends to be ready
-        print("Waiting for services to initialize (up to 60s)...")
-        
-        # Check Dashboard first as it's faster
+        # 3. Wait for dashboard
+        print("Waiting for Dashboard...")
         if wait_for_port(8001, timeout=20):
             print("✅ Dashboard ready at http://localhost:8001")
         else:
             print("❌ Dashboard failed to start on port 8001")
-
-        # Check Agent (might take longer)
-        if wait_for_port(8000, timeout=40):
-            print("✅ Agent Service ready at http://localhost:8000")
-        else:
-            print("⚠️  Agent Service taking longer than expected or failed. Check logs above.")
         
-        print("\nPress Ctrl+C to stop all services.")
+        print("\nPress Ctrl+C to stop.")
         
-        # Keep alive and monitor
+        # Keep alive
         while True:
             time.sleep(1)
             for p in processes:
