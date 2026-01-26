@@ -1,12 +1,26 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Dashboard: Backend",
+            "type": "python",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "dashboard.backend.main:app",
+                "--reload",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8001"
+            ],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "GraphGen: Pipeline",
-            "type": "debugpy",
+            "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/services/graphgen/src/main.py",
             "cwd": "${workspaceFolder}/services/graphgen",
@@ -15,7 +29,7 @@
         },
         {
             "name": "GraphRag: Service (Uvicorn)",
-            "type": "debugpy",
+            "type": "python",
             "request": "launch",
             "module": "uvicorn",
             "args": [
@@ -29,26 +43,8 @@
             "console": "integratedTerminal"
         },
         {
-            "name": "Example: GraphGen",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/example_graphgen.py",
-            "cwd": "${workspaceFolder}",
-            "envFile": "${workspaceFolder}/.env",
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "Example: GraphRag",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/example_graphrag.py",
-            "cwd": "${workspaceFolder}",
-            "envFile": "${workspaceFolder}/.env",
-            "console": "integratedTerminal"
-        },
-        {
             "name": "Python: Current File",
-            "type": "debugpy",
+            "type": "python",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"

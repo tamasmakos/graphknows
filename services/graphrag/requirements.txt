@@ -14,4 +14,3 @@ pydantic-settings
 llama-index-embeddings-huggingface
 torch
 transformers
-# Force rebuild 1
