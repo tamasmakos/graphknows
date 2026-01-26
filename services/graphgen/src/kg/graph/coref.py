@@ -41,21 +41,6 @@ def _token_similarity(a: str, b: str) -> float:
     
     return intersection / union if union > 0 else 0.0
 
-def _is_potential_acronym(short: str, long: str) -> bool:
-    """
-    Check if 'short' is a potential acronym of 'long'.
-    e.g. "ECB" and "European Central Bank" -> True
-    """
-    # Heuristic: Short must be short (<= 6 chars) and Long must be significantly longer
-    if len(short) > 6 or len(long) < len(short) * 2:
-        return False
-        
-    # Get initials from long string
-    # Filter out stopwords/small words for initials if needed, but simple first-letter approach is standard
-    initials = "".join([word[0] for word in long.split() if word])
-    
-    return short == initials
-
 def _are_coreferent(a: str, b: str, threshold: float) -> bool:
     """
     Check if two strings are likely coreferent using multiple strategies.
@@ -67,11 +52,6 @@ def _are_coreferent(a: str, b: str, threshold: float) -> bool:
     # 2. Token-based similarity (Bag of words)
     # Use a slightly higher threshold for tokens to avoid false positives with common words
     if _token_similarity(a, b) >= 0.9: # e.g. "President of ECB" vs "President of the ECB"
-        return True
-        
-    # 3. Acronym check
-    # Check both directions
-    if _is_potential_acronym(a, b) or _is_potential_acronym(b, a):
         return True
         
     return False

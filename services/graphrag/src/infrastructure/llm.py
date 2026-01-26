@@ -24,17 +24,29 @@ def get_llm(purpose: str = None):
     Get a LangChain-compatible LLM.
     Prioritizes Groq, then OpenAI.
     """
-    groq_api_key = os.environ.get("GROQ_API_KEY")
+    from src.infrastructure.config import get_app_config
+    
+    settings = get_app_config()
+    
+    groq_api_key = os.environ.get("GROQ_API_KEY") # Keep getting API key from env/os if not in settings? 
+    # Wait, AppSettings has openai_api_key but not groq_api_key in its definition file? 
+    # Ah, I didn't add groq_api_key to common/config/settings.py in previous step.
+    # The original llm.py used os.environ for keys. 
+    # Since only secrets go in .env, getting keys from os.environ is correct/standard.
+    # BUT I should check if I should add keys to settings.py too for consistency?
+    # No, AppSettings usually loads from .env.
+    # Let's stick to using settings for MODELS. Keys can stay env.
+    
     openai_api_key = os.environ.get("OPENAI_API_KEY")
     
     if ChatGroq and groq_api_key:
-        model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+        model = settings.groq_model
         
         # Override based on purpose
         if purpose == "keywords":
-             model = os.environ.get("KEYWORDS_MODEL", model)
+             model = settings.keywords_model
         elif purpose == "chat":
-             model = os.environ.get("CHAT_MODEL", model)
+             model = settings.chat_model
 
         return ChatGroq(
             temperature=0,

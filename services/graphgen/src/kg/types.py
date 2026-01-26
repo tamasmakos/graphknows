@@ -21,11 +21,16 @@ class ChunkExtractionTask:
 
 
 @dataclass
-class AgentDependencies:
-    """Dependencies shared across pipeline agents."""
+class PipelineContext:
+    """Dependencies and state shared across pipeline agents."""
     graph: nx.DiGraph
     extraction_tasks: List[ChunkExtractionTask] = field(default_factory=list)
     total_segments: int = 0
+    stats: Dict[str, Any] = field(default_factory=dict)
+    errors: List[str] = field(default_factory=list)
+    
+    def add_error(self, step: str, message: str):
+        self.errors.append(f"[{step}] {message}")
 
 
 class FalkorDBConfig(BaseModel):

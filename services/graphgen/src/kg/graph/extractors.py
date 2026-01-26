@@ -113,6 +113,7 @@ class LangChainExtractor(BaseExtractor):
         
         def _extract_sync():
             # Initialize LLM in the worker thread to ensure event loop safety
+            # pass full config to get_langchain_llm
             llm = get_langchain_llm(self.config, purpose='extraction')
             
             transformer = LLMGraphTransformer(
@@ -185,7 +186,12 @@ def get_extractor(config: Dict[str, Any]) -> BaseExtractor:
     Returns:
         Configured extractor instance
     """
-    extractor_type = 'langchain'
+    # Look for backend in extraction settings
+    extraction_config = config.get('extraction', {})
+    if hasattr(extraction_config, 'model_dump'):
+        extraction_config = extraction_config.model_dump()
+        
+    extractor_type = extraction_config.get('backend', 'langchain') # fallback loop for now, we only have one
     
     logger.info(f"Initializing graph extractor: {extractor_type}")
     

@@ -55,5 +55,16 @@ class BaseDocumentParser(ABC):
             True if this parser can handle the file, False otherwise
         """
         pass
+
+    def extract_date_from_content(self, content: str) -> Optional[str]:
+        """Extract date string from document content.
+        
+        Args:
+            content: The full text content of the document
+            
+        Returns:
+            Date string in YYYY-MM-DD format, or None if no date found
+        """
+        return None
     
 

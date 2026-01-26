@@ -109,9 +109,13 @@ class LifeLogParser(BaseDocumentParser):
         start_time_str = rows[0]['Time']
         end_time_str = rows[-1]['Time']
         
-        # Generate ID
+        # Use the date from the first row for the segment metadata
+        # logic: A segment (episode) must belong to the day it started
+        episode_date = self._parse_time(rows[0]['Time']).date()
+        
+        # Generate ID using the EPISODE DATE, not the document date
         # SEGMENT_{DATE}_EPISODE_{ID}
-        segment_id = f"SEGMENT_{doc_date.isoformat()}_EPISODE_{idx:03d}"
+        segment_id = f"SEGMENT_{episode_date.isoformat()}_EPISODE_{idx:03d}"
         
         # Summary content (could be improved explicitly later)
         # Concatenate audio for simple text representation
@@ -124,7 +128,7 @@ class LifeLogParser(BaseDocumentParser):
         return SegmentData(
             segment_id=segment_id,
             content=content_summary,
-            date=doc_date,
+            date=episode_date,  # Use the actual episode date
             line_number=idx, # Using idx as logical line number
             metadata={
                 'type': 'EPISODE',
@@ -141,6 +145,23 @@ class LifeLogParser(BaseDocumentParser):
         match = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
         if match:
             return match.group(1)
+        return None
+
+    def extract_date_from_content(self, content: str) -> Optional[str]:
+        """Extract date from the first valid row in content."""
+        try:
+            # Peek at the first few lines to find a valid date
+            lines = content.strip().split('\n')
+            reader = csv.DictReader(lines)
+            for row in reader:
+                 if 'Time' in row:
+                    try:
+                        dt = self._parse_time(row['Time'])
+                        return dt.strftime("%Y-%m-%d")
+                    except ValueError:
+                        continue
+        except Exception:
+            pass
         return None
     
     def supports_file(self, filename: str) -> bool:

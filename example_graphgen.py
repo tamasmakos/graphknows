@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Service URL
-GRAPHGEN_URL = os.getenv("GRAPHGEN_URL", "http://graphgen:8000")
+GRAPHGEN_URL = os.getenv("GRAPHGEN_URL", "http://localhost:8020")
 
 def test_graphgen():
     print("[GraphGen Client] Triggering pipeline via API...")
@@ -16,7 +16,7 @@ def test_graphgen():
         response = requests.post(
             f"{GRAPHGEN_URL}/run", 
             json={"clean_database": True},
-            timeout=10
+            timeout=60
         )
         
         if response.status_code == 200:

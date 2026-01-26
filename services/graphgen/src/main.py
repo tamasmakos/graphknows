@@ -33,26 +33,26 @@ async def run_pipeline_task(request: PipelineRunRequest):
             # 1. Load Config
             settings = PipelineSettings()
             if request.input_dir:
-                settings.input_dir = request.input_dir
+                settings.infra.input_dir = request.input_dir
             
-            logger.info(f"Loaded settings. Input: {settings.input_dir}, Output: {settings.output_dir}")
+            logger.info(f"Loaded settings. Input: {settings.infra.input_dir}, Output: {settings.infra.output_dir}")
             
             # Prepare config dict
             config_dict = settings.model_dump() if hasattr(settings, 'model_dump') else settings.dict()
 
             # 2. Instantiate Dependencies
             uploader = KnowledgeGraphUploader(
-                host=settings.falkordb_host,
-                port=settings.falkordb_port,
+                host=settings.infra.falkordb_host,
+                port=settings.infra.falkordb_port,
                 database="kg",
                 postgres_config={
-                    "enabled": settings.postgres_enabled,
-                    "host": settings.postgres_host,
-                    "port": settings.postgres_port,
-                    "database": settings.postgres_db,
-                    "user": settings.postgres_user,
-                    "password": settings.postgres_password,
-                    "table_name": settings.postgres_table
+                    "enabled": settings.infra.postgres_enabled,
+                    "host": settings.infra.postgres_host,
+                    "port": settings.infra.postgres_port,
+                    "database": settings.infra.postgres_db,
+                    "user": settings.infra.postgres_user,
+                    "password": settings.infra.postgres_password,
+                    "table_name": settings.infra.postgres_table
                 }
             )
             

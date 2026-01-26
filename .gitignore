@@ -1,4 +1,4 @@
-.env
+requires
 .venv
 __pycache__
 lib
@@ -11,3 +11,4 @@ dist/
 .geminiignore
 .gemini
 output
+.env

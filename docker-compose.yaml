@@ -72,9 +72,6 @@ services:
       - POSTGRES_HOST=pgvector
       - GROQ_API_KEY=${GROQ_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
-      - EXTRACTION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
-      - SUMMARISATION_MODEL=meta-llama/llama-guard-4-12b
       - PYTHONPATH=/app/src
     ports:
       - "8020:8000" # Host:Container
@@ -98,9 +95,6 @@ services:
       - POSTGRES_HOST=pgvector
       - GROQ_API_KEY=${GROQ_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GROQ_MODEL=llama-3.3-70b-versatile
-      - KEYWORDS_MODEL=llama-3.3-70b-versatile
-      - CHAT_MODEL=llama-3.3-70b-versatile
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_HOST=http://langfuse-server:3000

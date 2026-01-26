@@ -9,7 +9,7 @@ import re
 
 import networkx as nx
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from kg.types import AgentDependencies, ChunkExtractionTask
+from kg.types import PipelineContext, ChunkExtractionTask
 from kg.graph.coref import resolve_coreferences_simple
 from kg.graph.extractors import BaseExtractor, get_extractor
 from kg.graph.parsing import SegmentData
@@ -62,7 +62,11 @@ def get_spacy_model(model_name: str = "en_core_web_lg"):
 
 def get_max_concurrent(config: Dict[str, Any], default: int = 8) -> int:
     """Get max_concurrent_extractions from config with fallback to default."""
-    return config.get('max_concurrent_extractions', default)
+    extraction_cfg = config.get('extraction', {})
+    if hasattr(extraction_cfg, 'model_dump'):
+        extraction_cfg = extraction_cfg.model_dump()
+        
+    return extraction_cfg.get('max_concurrent_chunks', default)
 
 def split_sentences(text: str) -> List[str]:
     """Split text into sentences using regex."""
@@ -112,7 +116,7 @@ async def extract_relations_with_llm_async(
     return []
 
 async def process_extraction_task(
-    deps: AgentDependencies,
+    deps: PipelineContext,
     task: ChunkExtractionTask,
     semaphore: asyncio.Semaphore,
     extractor: BaseExtractor,
@@ -175,7 +179,7 @@ async def process_extraction_task(
             logger.error(f"      ❌ Failed {task.chunk_id}: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e), "chunk_id": task.chunk_id}
 
-async def extract_all_entities_relations(deps: AgentDependencies, config: Dict[str, Any], extractor: BaseExtractor = None) -> Dict[str, Any]:
+async def extract_all_entities_relations(deps: PipelineContext, config: Dict[str, Any], extractor: BaseExtractor = None) -> Dict[str, Any]:
     """Phase 2: Parallel entity/relation extraction"""
     if not deps.extraction_tasks:
         return {"processed": 0, "successful": 0, "errors": []}
@@ -200,14 +204,18 @@ async def extract_all_entities_relations(deps: AgentDependencies, config: Dict[s
     logger.info(f"Using {extractor.__class__.__name__} for relation extraction")
     
     # Check extraction backend
-    extraction_backend = config.get('extraction_backend', 'gliner')
+    extraction_config = config.get('extraction', {})
+    if hasattr(extraction_config, 'model_dump'):
+        extraction_config = extraction_config.model_dump()
+        
+    extraction_backend = extraction_config.get('backend', 'gliner')
     gliner_results_map = {}
     
     if extraction_backend == 'spacy':
         # --- SPACY Extraction ---
         logger.info(f"Step 2.1: Bulk Spacy Extraction for {len(unique_tasks)} chunks...")
         try:
-            spacy_model_name = config.get('spacy_model', 'en_core_web_lg')
+            spacy_model_name = extraction_config.get('spacy_model', 'en_core_web_lg')
             nlp = get_spacy_model(spacy_model_name)
             
             if nlp:
@@ -257,7 +265,7 @@ async def extract_all_entities_relations(deps: AgentDependencies, config: Dict[s
         try:
             model = get_gliner_model()
             if model:
-                labels = config.get('gliner_labels', ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"])
+                labels = extraction_config.get('gliner_labels', ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"])
                 
                 all_sentences = []
                 sentence_to_task_map = []
@@ -352,7 +360,7 @@ def _get_chunks_for_segment(graph: nx.DiGraph, segment_id: str) -> List[str]:
     return list(chunk_ids)
 
 async def add_triplets_to_graph_for_segment(
-    deps: AgentDependencies,
+    deps: PipelineContext,
     relations: List[Tuple[str, str, str]],
     entity_mappings: Dict[str, str],
     segment_id: str,
@@ -412,7 +420,7 @@ async def add_triplets_to_graph_for_segment(
             if graph.has_node(mapped):
                 graph.add_edge(chunk_id, mapped, label="HAS_ENTITY", graph_type="lexical_graph")
 
-async def enrich_graph_per_segment(deps: AgentDependencies) -> Dict[str, Any]:
+async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
     """Aggregate chunk-level extractions per segment, run coref, and enrich graph."""
     graph = deps.graph
     segment_nodes = [n for n, d in graph.nodes(data=True) if d.get('node_type') == 'SEGMENT']
@@ -493,8 +501,12 @@ async def process_document_splitting(
     
     try:
         # Configure splitter
-        chunk_size = config.get('chunk_size', 512)
-        chunk_overlap = config.get('chunk_overlap', 50)
+        extraction_config = config.get('extraction', {})
+        if hasattr(extraction_config, 'model_dump'):
+            extraction_config = extraction_config.model_dump()
+            
+        chunk_size = extraction_config.get('chunk_size', 512)
+        chunk_overlap = extraction_config.get('chunk_overlap', 50)
         
         # Ensure overlap is not larger than chunk_size
         if chunk_overlap >= chunk_size:
@@ -517,7 +529,7 @@ async def process_document_splitting(
         raise
 
 async def process_single_segment(
-    deps: AgentDependencies,
+    deps: PipelineContext,
     segment: SegmentData,
     doc_id: str,
     segment_index: int,
@@ -665,7 +677,7 @@ async def process_single_segment(
         
         return {"chunk_count": chunk_count, "segment_id": segment.segment_id}
 
-async def add_segments_to_graph(deps: AgentDependencies, segments: List[SegmentData], doc_id: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
+async def add_segments_to_graph(deps: PipelineContext, segments: List[SegmentData], doc_id: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
     config = config or {}
     chunk_count = 0
     segment_count = 0
@@ -676,7 +688,15 @@ async def add_segments_to_graph(deps: AgentDependencies, segments: List[SegmentD
     
     # Process segments concurrently
     tasks = []
-    limit = config.get('segment_limit', config.get('speech_limit', 0))
+    
+    extraction_config = config.get('extraction', {})
+    if hasattr(extraction_config, 'model_dump'):
+        extraction_config = extraction_config.model_dump()
+
+    limit = extraction_config.get('speech_limit', 0)
+    # Also support old key if needed, or just rely on 'speech_limit'
+    if 'segment_limit' in config:
+         limit = config['segment_limit']
     
     for idx, segment in enumerate(segments):
         # Check limit before creating task
@@ -716,7 +736,7 @@ async def add_segments_to_graph(deps: AgentDependencies, segments: List[SegmentD
     
     return {"segments_count": segment_count, "chunks_count": chunk_count, "errors": errors}
 
-async def process_single_document_lexical(deps: AgentDependencies, filename: str, input_dir: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
+async def process_single_document_lexical(deps: PipelineContext, filename: str, input_dir: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
     """Process a single document."""
     config = config or {}
     
@@ -724,24 +744,32 @@ async def process_single_document_lexical(deps: AgentDependencies, filename: str
     # Use GenericParser's logic implicitly via get_parser check or manual check
     # We'll use a temporary parser instance to check support and extract date
     
-    temp_parser = get_parser('auto', filename=filename)
-    doc_date_str = temp_parser.extract_date(filename)
     
-    if not doc_date_str:
-        logger.warning(f"Could not extract date from {filename}, using today's date")
-        doc_date_str = datetime.now().strftime("%Y-%m-%d")
-        
-    doc_date_obj = datetime.strptime(doc_date_str, "%Y-%m-%d").date()
-    # Create DAY node ID
-    day_id = f"DAY_{doc_date_str}"
-    # Use generic DOC ID if preferred, but DAY hierarchy is established.
-    # Let's keep DAY node as root for these segments.
+    temp_parser = get_parser('auto', filename=filename)
     
     try:
         file_path = os.path.join(input_dir, filename)
         with open(file_path, 'r', encoding='utf-8') as file:
             text = file.read()
-            
+    except Exception as e:
+        logger.error(f"Error reading {filename}: {str(e)}")
+        return {"error": f"Error reading {filename}: {str(e)}", "segments_added": 0, "chunks_added": 0}
+
+    # Try to extract date from filename first
+    doc_date_str = temp_parser.extract_date(filename)
+    
+    # Fallback to content-based extraction
+    if not doc_date_str:
+        doc_date_str = temp_parser.extract_date_from_content(text)
+        
+    if not doc_date_str:
+        logger.warning(f"Could not extract date from {filename}, using today's date")
+        doc_date_str = datetime.now().strftime("%Y-%m-%d")
+        
+    doc_date_obj = datetime.strptime(doc_date_str, "%Y-%m-%d").date()
+    day_id = f"DAY_{doc_date_str}"
+    
+    try:
         logger.info(f"Processing document {filename} ({len(text)} chars)")
         
         # Add DAY node if not exists
@@ -774,7 +802,7 @@ async def process_single_document_lexical(deps: AgentDependencies, filename: str
         logger.error(f"Error processing {filename}: {str(e)}", exc_info=True)
         return {"error": f"Error processing {filename}: {str(e)}", "segments_added": 0, "chunks_added": 0}
 
-async def build_lexical_graph(deps: AgentDependencies, input_dir: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
+async def build_lexical_graph(deps: PipelineContext, input_dir: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
     """Phase 1: Build the complete lexical graph structure sequentially"""
     config = config or {}
     results = {"documents_processed": 0, "total_segments": 0, "total_chunks": 0, "errors": []}
@@ -784,7 +812,11 @@ async def build_lexical_graph(deps: AgentDependencies, input_dir: str, config: D
             raise FileNotFoundError(f"Input directory {input_dir} not found")
         
         # Check if a specific file pattern is provided (for incremental processing)
-        file_pattern = config.get('file_pattern')
+        extraction_config = config.get('extraction', {})
+        if hasattr(extraction_config, 'model_dump'):
+            extraction_config = extraction_config.model_dump()
+            
+        file_pattern = extraction_config.get('file_pattern')
         if file_pattern:
             # Process only the specified file
             import fnmatch

@@ -15,6 +15,11 @@ class AppSettings(BaseSettings):
     postgres_table: str = "hybrid_embeddings"
     postgres_enabled: bool = True
 
+    # Models
+    groq_model: str = "llama-3.3-70b-versatile"
+    keywords_model: str = "llama-3.1-8b-instant"
+    chat_model: str = "llama-3.1-8b-instant"
+
     openai_api_key: Optional[str] = None
     
     class Config:
