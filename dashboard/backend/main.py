@@ -50,8 +50,18 @@ async def read_index():
         return FileResponse(index_path)
     return {"error": f"index.html not found at {index_path}"}
 
-# Mount other static files (js, css, etc.)
+# Mount static files at /static
 if os.path.exists(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir), name="static")
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 else:
     print(f"Warning: Static directory not found at {static_dir}")
+
+# Fallback for other paths to serve index.html (SPA support)
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    if full_path.startswith("api/"):
+        return {"error": "Not Found"}
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"error": f"index.html not found"}

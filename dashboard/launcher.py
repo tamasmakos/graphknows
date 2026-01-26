@@ -7,6 +7,11 @@ import signal
 from pathlib import Path
 from dotenv import load_dotenv
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 load_dotenv()
 
 # Paths
@@ -15,26 +20,41 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 def kill_existing_processes():
     """Aggressively find and kill existing dashboard processes."""
     print("🧹 Cleaning up existing processes...")
-    try:
-        result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
-        lines = result.stdout.splitlines()
-        
-        pids_to_kill = []
-        for line in lines:
-            # Match uvicorn processes for dashboard only
-            if "uvicorn" in line and "dashboard.backend.main:app" in line:
-                parts = line.split()
-                if len(parts) > 1:
-                    pids_to_kill.append(parts[1])
-
-        for pid in pids_to_kill:
+    
+    if psutil:
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                print(f"Killing PID {pid}...")
-                os.kill(int(pid), signal.SIGKILL)
-            except Exception:
+                cmdline = proc.info.get('cmdline')
+                if cmdline:
+                    cmd_str = " ".join(cmdline)
+                    # Match uvicorn processes for dashboard only
+                    if "uvicorn" in cmd_str and "dashboard.backend.main:app" in cmd_str:
+                        print(f"Killing PID {proc.info['pid']}...")
+                        proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-    except Exception as e:
-        print(f"Cleanup warning: {e}")
+    else:
+        # Fallback for systems without psutil (though we saw it in pip list)
+        if os.name == 'nt':
+            # Windows fallback using taskkill if possible, or just skip
+            print("⚠️ psutil not found, skipping detailed cleanup.")
+        else:
+            try:
+                result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+                lines = result.stdout.splitlines()
+                pids_to_kill = []
+                for line in lines:
+                    if "uvicorn" in line and "dashboard.backend.main:app" in line:
+                        parts = line.split()
+                        if len(parts) > 1:
+                            pids_to_kill.append(parts[1])
+                for pid in pids_to_kill:
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"Cleanup warning: {e}")
 
 def wait_for_port(port, timeout=60):
     """Wait for a port to become active."""
@@ -43,7 +63,7 @@ def wait_for_port(port, timeout=60):
         try:
             with socket.create_connection(('127.0.0.1', port), timeout=1):
                 return True
-        except (ConnectionRefusedError, socket.timeout):
+        except (ConnectionRefusedError, socket.timeout, OSError):
             time.sleep(1)
     return False
 
@@ -62,35 +82,38 @@ def main():
     # Clean slate
     kill_existing_processes()
     
-    # Check for API Key (Just a warning, since services might have it in docker-compose)
+    # Check for API Key
     if not os.getenv("GROQ_API_KEY") and not os.getenv("OPENAI_API_KEY"):
         print("ℹ️  Note: GROQ_API_KEY/OPENAI_API_KEY not found in local env. Ensure services have them.")
 
     processes = []
 
     try:
-        # 1. Check if External Services are reachable
-        print("\n--- Checking Services ---")
-        # GraphRAG (Agent) usually at 8000 or 8010 depending on docker-compose. 
-        # In the new setup, graphrag is a service.
-        # But we are running this launcher LOCALLY (or in dev-container).
-        # We need to know where GraphRAG is.
-        # Default to localhost:8010 (mapped in docker-compose) or 8000 (internal).
-        # If running in dev-container, we might access services via hostname 'graphrag'.
-        
-        # We'll just start the Dashboard.
-        
         # 2. Start Dashboard Backend (Port 8001)
         print("\n--- Starting Dashboard (Port 8001) ---")
         dash_env = os.environ.copy()
         dash_env["PYTHONPATH"] = str(PROJECT_ROOT)
         
-        # Pass Service URLs to Dashboard if needed
-        # Defaults in code might be http://graphgen:8000
-        # If running in dev-container, this is correct.
+        # Default Service URLs to point to Docker-exposed ports if not set
+        # This matches the behavior of example scripts connecting to running containers.
+        if "GRAPHGEN_URL" not in dash_env:
+            dash_env["GRAPHGEN_URL"] = "http://localhost:8020"
+            print(f"ℹ️  GRAPHGEN_URL not set, defaulting to {dash_env['GRAPHGEN_URL']}")
+        
+        if "GRAPHRAG_URL" not in dash_env:
+            dash_env["GRAPHRAG_URL"] = "http://localhost:8010"
+            print(f"ℹ️  GRAPHRAG_URL not set, defaulting to {dash_env['GRAPHRAG_URL']}")
+        
+        # Use sys.executable -m uvicorn for better compatibility
+        command = [
+            sys.executable, "-m", "uvicorn", 
+            "dashboard.backend.main:app", 
+            "--host", "127.0.0.1", 
+            "--port", "8001"
+        ]
         
         backend_proc = run_process(
-            ["uvicorn", "dashboard.backend.main:app", "--host", "0.0.0.0", "--port", "8001"],
+            command,
             cwd=PROJECT_ROOT,
             env=dash_env
         )
@@ -102,6 +125,7 @@ def main():
             print("✅ Dashboard ready at http://localhost:8001")
         else:
             print("❌ Dashboard failed to start on port 8001")
+            print("💡 Tip: Ensure 'fastapi' and 'uvicorn' are installed: pip install -r requirements.txt")
         
         print("\nPress Ctrl+C to stop.")
         
@@ -110,7 +134,7 @@ def main():
             time.sleep(1)
             for p in processes:
                 if p.poll() is not None:
-                    print(f"⚠️ Process {p.args} exited with code {p.returncode}")
+                    print(f"⚠️ Process exited with code {p.returncode}")
                     raise KeyboardInterrupt
 
     except KeyboardInterrupt:
