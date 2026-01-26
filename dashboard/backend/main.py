@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-from dashboard.backend.routers import graph, pipeline
+from dashboard.backend.routers import graph, pipeline, retrieval
 from dashboard.backend.database import get_db
 
 @asynccontextmanager
@@ -39,6 +39,7 @@ app.add_middleware(
 
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
+app.include_router(retrieval.router, prefix="/api/retrieval", tags=["retrieval"])
 
 # Explicitly serve index.html at root
 static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../static"))
@@ -50,8 +51,18 @@ async def read_index():
         return FileResponse(index_path)
     return {"error": f"index.html not found at {index_path}"}
 
-# Mount other static files (js, css, etc.)
+# Mount static files at /static
 if os.path.exists(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir), name="static")
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 else:
     print(f"Warning: Static directory not found at {static_dir}")
+
+# Fallback for other paths to serve index.html (SPA support)
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    if full_path.startswith("api/"):
+        return {"error": "Not Found"}
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"error": f"index.html not found"}

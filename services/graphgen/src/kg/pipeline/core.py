@@ -147,14 +147,27 @@ class KnowledgePipeline:
             clean_graph = graph.copy()
             # GraphML doesn't support list/dict properties, so we stringify them
             import json
+            from datetime import date, datetime
+            
             for _, d in clean_graph.nodes(data=True):
                 for k, v in list(d.items()):
+                    if v is None:
+                        del d[k]
+                        continue
                     if isinstance(v, (dict, list)):
                         d[k] = json.dumps(v, ensure_ascii=False)
+                    elif isinstance(v, (date, datetime)):
+                        d[k] = v.isoformat()
+                        
             for _, _, d in clean_graph.edges(data=True):
                 for k, v in list(d.items()):
+                    if v is None:
+                        del d[k]
+                        continue
                     if isinstance(v, (dict, list)):
                         d[k] = json.dumps(v, ensure_ascii=False)
+                    elif isinstance(v, (date, datetime)):
+                        d[k] = v.isoformat()
             
             nx.write_graphml(clean_graph, graph_path)
             logger.info(f"GraphML saved to {graph_path}")

@@ -1,138 +1,90 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import os
 import logging
-import time
-
-from langchain_core.messages import HumanMessage, SystemMessage
-
-from src.app.services.retrieval import (
-    extract_keywords,
-    get_seed_entities,
-    expand_subgraph,
-    get_graph_stats,
-    format_graph_context
-)
-from src.app.infrastructure.graph_db import GraphDB
-from src.app.infrastructure.llm import get_llm, get_embedding_model
-from ..database import get_db
+import requests
+import json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# GraphRAG Service URL
+GRAPHRAG_URL = os.getenv("GRAPHRAG_URL", "http://graphrag:8000")
+
 class RetrievalRequest(BaseModel):
     query: str
+    conversation_id: Optional[str] = None
 
 class RetrievalResponse(BaseModel):
-    keywords: List[str]
-    seeds: List[str]
-    subgraph_nodes: List[Dict[str, Any]]
-    subgraph_edges: List[Dict[str, Any]]
-    timings: Dict[str, float]
+    keywords: List[str] = []
+    seeds: List[str] = []
+    subgraph_nodes: List[Dict[str, Any]] = []
+    subgraph_edges: List[Dict[str, Any]] = []
+    timings: Dict[str, float] = {}
     answer: str
     context: str
+    reasoning_chain: List[str] = []
 
 @router.post("/debug", response_model=RetrievalResponse)
-async def debug_retrieval(req: RetrievalRequest, db: GraphDB = Depends(get_db)):
+async def debug_retrieval(req: RetrievalRequest):
     """
-    Run the retrieval pipeline for a given query and return intermediate results + answer.
+    Proxy the retrieval request to the GraphRAG service.
     """
-    start_total = time.time()
-    timings = {}
-    
-    if not db:
-        raise HTTPException(status_code=500, detail="Database not connected")
-
-    # 1. Initialize Components
     try:
-        # db is injected
-        llm = get_llm()
-        embed_model = get_embedding_model()
-    except Exception as e:
-        logger.error(f"Failed to init retrieval components: {e}")
-        raise HTTPException(status_code=500, detail=f"Component init failed: {str(e)}")
-
-    try:
-        # 2. Extract Keywords
-        t0 = time.time()
-        keywords = extract_keywords(llm, req.query)
-        timings["keywords"] = time.time() - t0
+        logger.info(f"Sending query to GraphRAG at {GRAPHRAG_URL}: {req.query}")
         
-        # 3. Embed Query
-        t0 = time.time()
-        embedding = embed_model.embed_query(req.query)
-        timings["embedding"] = time.time() - t0
+        # Call GraphRAG service
+        response = requests.post(
+            f"{GRAPHRAG_URL}/chat",
+            json={
+                "query": req.query,
+                "create_plot": False, # We can enable this if we want graph data
+                # Add other params if needed
+            },
+            timeout=120
+        )
         
-        # 4. Get Seeds
-        t0 = time.time()
-        seeds, seed_timings = get_seed_entities(db, embedding, keywords)
-        timings["seed_finding"] = time.time() - t0
-        timings.update(seed_timings)
-        
-        # 5. Expand Subgraph
-        t0 = time.time()
-        raw_nodes, raw_edges, expand_timings = expand_subgraph(db, seeds)
-        timings["subgraph_expansion"] = time.time() - t0
-        timings.update(expand_timings)
-        
-        # 6. Format Context
-        nodes_dict = {
-            node.get("element_id") or node.get("id"): node for node in raw_nodes.values()
-        }
-        context = format_graph_context(nodes_dict, raw_edges)
-
-        # 7. Generate Answer
-        t0 = time.time()
-        system_prompt = """You are a Personal Life Assistant.
-        
-        **Available Information:**
-        {context}
-        """
-        messages = [
-            SystemMessage(content=system_prompt.format(context=context)),
-            HumanMessage(content=req.query)
-        ]
-        response = llm.invoke(messages)
-        answer = response.content
-        timings["llm_generation"] = time.time() - t0
-
-        # 8. Transform for Frontend
-        id_map = { eid: n_data["id"] for eid, n_data in raw_nodes.items() }
-        
-        nodes_list = []
-        for eid, n_data in raw_nodes.items():
-            nodes_list.append(n_data)
+        if response.status_code != 200:
+            logger.error(f"GraphRAG error {response.status_code}: {response.text}")
+            raise HTTPException(status_code=response.status_code, detail=f"GraphRAG service error: {response.text}")
             
-        edges_list = []
-        for edge in raw_edges:
-            start_display = id_map.get(str(edge["start"]))
-            end_display = id_map.get(str(edge["end"]))
-            
-            if start_display and end_display:
-                edges_list.append({
-                    "id": f"{start_display}-{end_display}-{edge['type']}",
-                    "source": start_display,
-                    "target": end_display,
-                    "type": edge["type"],
-                    "properties": edge["properties"]
-                })
+        data = response.json()
         
-        timings["total"] = time.time() - start_total
+        # Map GraphRAG response to Dashboard response format
+        # GraphRAG returns: 
+        # {
+        #     "answer": ...,
+        #     "context": ...,
+        #     "graph_data": {"nodes": [], "edges": []},
+        #     "execution_time": ...,
+        #     "reasoning_chain": [],
+        #     "seed_entities": [],
+        #     ...
+        # }
         
-        return {
-            "keywords": keywords,
-            "seeds": seeds,
-            "subgraph_nodes": nodes_list,
-            "subgraph_edges": edges_list,
-            "timings": timings,
-            "answer": answer,
-            "context": context
-        }
+        graph_data = data.get("graph_data", {})
+        nodes = graph_data.get("nodes", [])
+        edges = graph_data.get("edges", [])
         
+        # Format nodes/edges if necessary for frontend
+        # Assuming frontend expects them as-is or we might need transformation
+        
+        return RetrievalResponse(
+            keywords=[], # GraphRAG might not expose keywords directly in top level
+            seeds=data.get("seed_entities", []),
+            subgraph_nodes=nodes,
+            subgraph_edges=edges,
+            timings={"total": data.get("execution_time", 0)},
+            answer=data.get("answer", ""),
+            context=str(data.get("context", "")),
+            reasoning_chain=data.get("reasoning_chain", [])
+        )
+        
+    except requests.RequestException as e:
+        logger.error(f"Connection to GraphRAG failed: {e}")
+        raise HTTPException(status_code=503, detail=f"GraphRAG service unreachable: {str(e)}")
     except Exception as e:
-        logger.error(f"Retrieval pipeline failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Pipeline failed: {str(e)}")
-    finally:
-        pass
+        logger.error(f"Retrieval proxy failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")

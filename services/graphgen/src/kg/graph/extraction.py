@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import os
 import re
@@ -16,22 +17,46 @@ from kg.graph.parsers import get_parser
 
 # --- GLiNER Helper ---
 from gliner import GLiNER
+import spacy
+import torch
 
 logger = logging.getLogger(__name__)
 
 GLINER_MODEL = None
+SPACY_MODEL = None
 
 def get_gliner_model():
     global GLINER_MODEL
     if GLINER_MODEL is None:
         try:
-            logger.info("Loading GLiNER model (urchade/gliner_medium-v2.1)...")
-            GLINER_MODEL = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
-            logger.info("GLiNER model loaded.")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Loading GLiNER model (urchade/gliner_medium-v2.1) on {device}...")
+            GLINER_MODEL = GLiNER.from_pretrained("urchade/gliner_medium-v2.1", device=device)
+            logger.info(f"GLiNER model loaded on {device}.")
         except Exception as e:
             logger.error(f"Failed to load GLiNER: {e}")
             return None
     return GLINER_MODEL
+
+def get_spacy_model(model_name: str = "en_core_web_lg"):
+    global SPACY_MODEL
+    if SPACY_MODEL is None:
+        try:
+            logger.info(f"Loading Spacy model ({model_name})...")
+            SPACY_MODEL = spacy.load(model_name)
+            logger.info("Spacy model loaded.")
+        except Exception as e:
+            logger.error(f"Failed to load Spacy model {model_name}: {e}")
+            logger.info(f"Trying to download {model_name}...")
+            try:
+                from spacy.cli import download
+                download(model_name)
+                SPACY_MODEL = spacy.load(model_name)
+                logger.info("Spacy model loaded after download.")
+            except Exception as e2:
+                logger.error(f"Failed to download/load Spacy model: {e2}")
+                return None
+    return SPACY_MODEL
 
 # --- Helper Functions ---
 
@@ -90,7 +115,8 @@ async def process_extraction_task(
     deps: AgentDependencies,
     task: ChunkExtractionTask,
     semaphore: asyncio.Semaphore,
-    extractor: BaseExtractor
+    extractor: BaseExtractor,
+    precomputed_gliner_entities: List[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Process a single chunk extraction task"""
     async with semaphore:
@@ -98,34 +124,8 @@ async def process_extraction_task(
         logger.info(f"      🚀 Starting {task.chunk_id}")
         
         try:
-            # 1. Run GLiNER to get Entity Types
-            gliner_entities = []
-            try:
-                model = get_gliner_model()
-                if model:
-                    # Labels for entity prediction
-                    labels = ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"]
-                    
-                    # Run in executor to avoid blocking event loop
-                    loop = asyncio.get_event_loop()
-                    
-                    # Clean and split into sentences
-                    sentences = split_sentences(task.chunk_text)
-                    
-                    if not sentences:
-                        # Fallback to whole text if no sentences found (rare)
-                        sentences = [task.chunk_text]
-                        
-                    # Batch prediction
-                    # Note: batch_predict_entities handles tokenization and batching internally
-                    results = model.batch_predict_entities(sentences, labels, threshold=0.5)
-                    
-                    # Results is a list of lists (entities per sentence)
-                    for res in results:
-                        gliner_entities.extend(res)
-                        
-            except Exception as e:
-                logger.warning(f"GLiNER extraction failed for {task.chunk_id}: {e}")
+            # 1. Use precomputed GLiNER entities or fallback to empty
+            gliner_entities = precomputed_gliner_entities or []
 
             # 2. Run LLM Relation Extraction
             # Use chunk text directly for extraction, pass keywords as allowed nodes
@@ -199,12 +199,102 @@ async def extract_all_entities_relations(deps: AgentDependencies, config: Dict[s
         
     logger.info(f"Using {extractor.__class__.__name__} for relation extraction")
     
+    # Check extraction backend
+    extraction_backend = config.get('extraction_backend', 'gliner')
+    gliner_results_map = {}
+    
+    if extraction_backend == 'spacy':
+        # --- SPACY Extraction ---
+        logger.info(f"Step 2.1: Bulk Spacy Extraction for {len(unique_tasks)} chunks...")
+        try:
+            spacy_model_name = config.get('spacy_model', 'en_core_web_lg')
+            nlp = get_spacy_model(spacy_model_name)
+            
+            if nlp:
+                texts = [task.chunk_text for task in unique_tasks]
+                # Use nlp.pipe for efficiency
+                docs = list(nlp.pipe(texts))
+                
+                # Default mapping from Spacy labels to Ontology labels
+                spacy_label_map = {
+                    "PERSON": "Person",
+                    "ORG": "Organization",
+                    "GPE": "Location",
+                    "LOC": "Location",
+                    "DATE": "Date",
+                    "EVENT": "Event",
+                    "FAC": "Location",
+                    "PRODUCT": "Concept",
+                    "WORK_OF_ART": "Concept",
+                    "LAW": "Concept",
+                    "LANGUAGE": "Concept",
+                    "MONEY": "Concept",
+                    "NORP": "Group",
+                    "PERCENT": "Concept",
+                    "QUANTITY": "Concept",
+                    "ORDINAL": "Concept",
+                    "CARDINAL": "Concept"
+                }
+                
+                for task, doc in zip(unique_tasks, docs):
+                    chunk_id = task.chunk_id
+                    extracted = []
+                    for ent in doc.ents:
+                        # Map label
+                        label = spacy_label_map.get(ent.label_, "Concept")
+                        extracted.append({"text": ent.text, "label": label})
+                    
+                    gliner_results_map[chunk_id] = extracted
+                
+                logger.info(f"Bulk Spacy complete. Extracted entities for {len(gliner_results_map)} chunks.")
+        
+        except Exception as e:
+             logger.error(f"Bulk Spacy extraction failed: {e}", exc_info=True)
+             
+    else:
+        # --- GLiNER Extraction (Default) ---
+        logger.info(f"Step 2.1: Bulk GLiNER Pass for {len(unique_tasks)} chunks...")
+        try:
+            model = get_gliner_model()
+            if model:
+                labels = config.get('gliner_labels', ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"])
+                
+                all_sentences = []
+                sentence_to_task_map = []
+                
+                for task in unique_tasks:
+                    sents = split_sentences(task.chunk_text)
+                    if not sents:
+                        sents = [task.chunk_text]
+                    all_sentences.extend(sents)
+                    sentence_to_task_map.extend([task.chunk_id] * len(sents))
+                
+                if all_sentences:
+                    # Run in thread to avoid blocking event loop
+                    predict_func = functools.partial(
+                        model.batch_predict_entities, 
+                        all_sentences, 
+                        labels, 
+                        threshold=0.5
+                    )
+                    all_predictions = await asyncio.to_thread(predict_func)
+                    
+                    # Re-map results to chunks
+                    for chunk_id, preds in zip(sentence_to_task_map, all_predictions):
+                        if chunk_id not in gliner_results_map:
+                            gliner_results_map[chunk_id] = []
+                        gliner_results_map[chunk_id].extend(preds)
+                    
+                    logger.info(f"Bulk GLiNER complete. Extracted entities for {len(gliner_results_map)} chunks.")
+        except Exception as e:
+            logger.error(f"Bulk GLiNER extraction failed: {e}")
+
     try:
         # Use max_concurrent from config for controlled parallelization
         max_concurrent = get_max_concurrent(config, default=8)
         semaphore = asyncio.Semaphore(max_concurrent)
         
-        tasks = [process_extraction_task(deps, task, semaphore, extractor) for task in unique_tasks]
+        tasks = [process_extraction_task(deps, task, semaphore, extractor, gliner_results_map.get(task.chunk_id, [])) for task in unique_tasks]
         results = await asyncio.gather(*tasks)
         
         successful = sum(1 for r in results if r.get("success"))

@@ -1,71 +1,93 @@
 # Knowledge Graph Project
 
-This repository implements a decoupled Knowledge Graph system consisting of two primary services: **GraphGen** (Generation/ETL) and **GraphRAG** (Retrieval/API).
+This repository implements a decoupled Knowledge Graph system consisting of two primary services:
+- **GraphGen** (Generation/ETL): Parses raw data, extracts entities, and builds the graph.
+- **GraphRAG** (Retrieval/API): An agentic system for querying the graph.
 
-## Architecture Overview
+## 🚀 Getting Started
 
-- **`services/graphgen`**: The ETL pipeline. Responsible for parsing raw data, extracting entities, and building the graph in FalkorDB. Uses Pydantic Settings for configuration and Dependency Injection for core logic.
-- **`services/graphrag`**: The Retrieval API. A FastAPI-based agentic system using LlamaIndex to explore the graph and answer user queries.
+Follow these steps to get the application up and and running.
 
-## Prerequisites
+### 1. Prerequisites
+- **Docker** and **Docker Compose** installed.
+- API Keys for **Groq** and **OpenAI**.
 
-- **Docker** and **Docker Compose**
-- **Python 3.11** (if running locally)
-- API Keys for LLM providers (Groq, OpenAI, etc.) in a `.env` file.
+### 2. Configuration
+The application relies on environment variables for API keys and model selection.
 
-## Quick Start with Docker Compose
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
 
-The easiest way to run the entire stack is via Docker Compose:
+2. Open `.env` and fill in your credentials:
+   ```env
+   GROQ_API_KEY=gsk_...
+   OPENAI_API_KEY=sk-...
+   ```
+
+3. (Optional) Customize the LLM models for specific tasks:
+   ```env
+   # Extraction: Fast model for processing large text volumes
+   EXTRACTION_MODEL=llama-3.1-8b-instant
+   
+   # Summarization: Stronger model for community insights
+   SUMMARISATION_MODEL=llama-3.3-70b-versatile
+   
+   # Chat: Capable model for final answer synthesis
+   CHAT_MODEL=llama-3.3-70b-versatile
+   ```
+
+### 3. Start the Services
+Run the following command to build and start the entire stack:
 
 ```bash
-# Build and start all services (FalkorDB, Postgres, GraphGen, GraphRAG)
 docker-compose up --build -d
 ```
 
-### Supporting Services
-- **FalkorDB**: Primary graph database (port 6379)
-- **PostgreSQL**: Vector store for hybrid search (port 5432)
-- **Langfuse**: Tracing and observability (port 3000)
+This will start:
+- **FalkorDB** (Graph Database)
+- **PostgreSQL/pgvector** (Vector Store)
+- **GraphGen Service** (Port 8020)
+- **GraphRAG Service** (Port 8010)
 
-## Service Usage
+### 4. Run the Ingestion Pipeline
+Once the services are running, you need to populate the graph with data.
 
-### 1. GraphGen (Pipeline)
-To run the ingestion pipeline manually or via Docker:
+1. **Add Data**: Place your text files (`.txt`, `.csv`) in the `input/` directory at the root of the project.
+   
+2. **Trigger Ingestion**: The GraphGen service exposes an API to start the pipeline. Run:
+   ```bash
+   curl -X POST http://localhost:8020/run \
+     -H "Content-Type: application/json" \
+     -d '{"clean_database": true}'
+   ```
+   *Note: Set `clean_database` to `false` for incremental updates.*
+
+3. **Monitor Progress**: You can view the logs to watch the extraction process:
+   ```bash
+   docker-compose logs -f graphgen
+   ```
+
+### 5. Chat with your Data
+Once ingestion is complete, use the GraphRAG service to explore the graph.
+
+- **Web UI**: Open [http://localhost:8010](http://localhost:8010) in your browser.
+- **API Documentation**: [http://localhost:8010/docs](http://localhost:8010/docs)
+
+---
+
+
+## Architecture details
+
+- **`services/graphgen`**: The ETL pipeline. Responsible for parsing raw data, extracting entities, and building the graph in FalkorDB.
+- **`services/graphrag`**: The Retrieval API. A FastAPI-based agentic system using LlamaIndex to explore the graph and answer user queries.
+
+## Development
+
+To run the services in development mode with hot-reloading, you can use the development compose file (or ensure your volumes are mapped correctly):
 
 ```bash
-# Via Docker
-docker-compose run graphgen
-
-# Locally (from services/graphgen)
-cd services/graphgen/src
-python -m main
+docker-compose -f docker-compose.yaml -f docker-compose.dev.yaml up
 ```
 
-### 2. GraphRAG (API & UI)
-The API server starts automatically with `docker-compose`. 
-
-- **Web UI**: [http://localhost:8000](http://localhost:8000)
-- **API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-
-To run locally:
-```bash
-cd services/graphrag/src
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-## Development Environment (Dev Container)
-
-This repository includes a VS Code Dev Container configuration. Opening the project in a container will automatically set up the Python environment and all system dependencies.
-
-1. Open the folder in VS Code.
-2. Click **"Reopen in Container"** when prompted.
-3. Supporting databases will still need to be started via `docker-compose up -d`.
-
-## Configuration
-
-Configuration is managed via **Environment Variables** (loaded from `.env`) using Pydantic Settings:
-
-- `FALKORDB_HOST`: Host for the graph database.
-- `POSTGRES_HOST`: Host for pgvector.
-- `OPENAI_API_KEY` / `GROQ_API_KEY`: LLM credentials.
-- `INPUT_DIR`: Directory for raw data (GraphGen).

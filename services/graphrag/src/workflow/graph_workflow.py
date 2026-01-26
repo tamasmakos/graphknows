@@ -94,7 +94,7 @@ class GraphWorkflow(Workflow):
         
         logger.info(f"Step 1: Extracting keywords for query: {query}")
         
-        llm = get_llm()
+        llm = get_llm(purpose="keywords")
         if not llm:
             logger.error("No LLM available")
             return KeywordsEvent(keywords=[], query=query)
@@ -245,7 +245,7 @@ You have access to a knowledge graph structured in XML tags:
             
         messages.append(HumanMessage(content=ev.query))
         
-        llm = get_llm()
+        llm = get_llm(purpose="chat")
         response = await llm.ainvoke(messages)
         answer = response.content
         

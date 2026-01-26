@@ -41,10 +41,21 @@ class PostgresVectorStore:
                 password=self.password
             )
             self.conn.autocommit = True
+            
+            # Ensure extension exists
+            with self.conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                
             register_vector(self.conn)
             
         except Exception as e:
             logger.error(f"Failed to connect to Postgres: {e}")
+            if self.conn:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                self.conn = None
             raise
 
     def search_similar(

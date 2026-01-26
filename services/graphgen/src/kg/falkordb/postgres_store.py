@@ -46,18 +46,24 @@ class PostgresVectorStore:
             )
             self.conn.autocommit = True
             
-            # Register pgvector type
-            register_vector(self.conn)
-            
             # Ensure extension exists
             with self.conn.cursor() as cur:
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-                
+            
+            # Register pgvector type
+            register_vector(self.conn)
+            
             # Ensure table exists
             self._ensure_table()
             
         except Exception as e:
             logger.error(f"Failed to connect to Postgres: {e}")
+            if self.conn:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                self.conn = None
             raise
 
     def _ensure_table(self):

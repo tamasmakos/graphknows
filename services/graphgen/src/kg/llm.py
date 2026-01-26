@@ -21,24 +21,15 @@ def get_model_name(config: Dict[str, Any] = None, purpose: str = None) -> str:
     1. Purpose-specific Env Var (EXTRACTION_MODEL, SUMMARISATION_MODEL)
     2. Config dict 'llm_model' key
     3. GROQ_MODEL environment variable
-    
-    Args:
-        config: Optional config dictionary
-        purpose: Optional purpose ('extraction', 'summarization', 'synthetic')
-        
-    Returns:
-        Model name string
+    4. Hardcoded Defaults
     """
     # 0. Check purpose-specific env vars
     if purpose == 'extraction':
-        env_model = os.environ.get("EXTRACTION_MODEL")
-        if env_model: return env_model
+        return os.environ.get("EXTRACTION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
     elif purpose == 'summarization':
-        env_model = os.environ.get("SUMMARISATION_MODEL")
-        if env_model: return env_model
+        return os.environ.get("SUMMARISATION_MODEL", "meta-llama/llama-guard-4-12b")
     elif purpose == 'synthetic':
-        env_model = os.environ.get("SYNTH_MODEL")
-        if env_model: return env_model
+        return os.environ.get("SYNTH_MODEL", "llama-3.3-70b-versatile")
 
     if config:
         if 'llm_model' in config:

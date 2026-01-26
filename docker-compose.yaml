@@ -1,17 +1,23 @@
 services:
+  # --- Infrastructure ---
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "6379:6379"
-      - "3001:3000"
+      - "6379:6379" # Internal & Local access
+      - "3001:3000" # Dashboard
     volumes:
       - falkordb_data:/data
     restart: always
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   pgvector:
-    image: pgvector/pgvector:0.8.1-pg18-trixie
+    image: pgvector/pgvector:pg16
     ports:
-      - "5432:5432"
+      - "5435:5432"
     environment:
       - POSTGRES_DB=graphknows
       - POSTGRES_USER=postgres
@@ -19,6 +25,11 @@ services:
     volumes:
       - pgvector_data:/var/lib/postgresql/data
     restart: always
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   langfuse-server:
     image: langfuse/langfuse:2
@@ -43,40 +54,66 @@ services:
       - POSTGRES_PASSWORD=langfuse
       - POSTGRES_DB=langfuse
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      test: [ "CMD-SHELL", "pg_isready -U langfuse -d langfuse" ]
       interval: 5s
       timeout: 5s
       retries: 5
     volumes:
       - langfuse_data:/var/lib/postgresql/data
 
-  graphrag:
-    build: ./services/graphrag
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=falkordb:6379
-      - FALKORDB_HOST=falkordb
-      - POSTGRES_HOST=pgvector
-    volumes:
-
-    depends_on:
-      - falkordb
-      - pgvector
-
+  # --- Application Services ---
   graphgen:
-    build: ./services/graphgen
+    build:
+      context: services/graphgen
+      dockerfile: Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
-      - DATABASE_URL=falkordb:6379
       - FALKORDB_HOST=falkordb
       - POSTGRES_HOST=pgvector
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
+      - EXTRACTION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
+      - SUMMARISATION_MODEL=meta-llama/llama-guard-4-12b
+      - PYTHONPATH=/app/src
+    ports:
+      - "8020:8000" # Host:Container
     volumes:
-
       - ./input:/app/input
       - ./output:/app/output
+      - ./services/graphgen/src:/app/src
     depends_on:
-      - falkordb
-      - pgvector
+      falkordb:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+
+  graphrag:
+    build:
+      context: services/graphrag
+      dockerfile: Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - FALKORDB_HOST=falkordb
+      - POSTGRES_HOST=pgvector
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_MODEL=llama-3.3-70b-versatile
+      - KEYWORDS_MODEL=llama-3.3-70b-versatile
+      - CHAT_MODEL=llama-3.3-70b-versatile
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=http://langfuse-server:3000
+      - PYTHONPATH=/app/src
+    ports:
+      - "8010:8000" # Host:Container
+    volumes:
+      - ./services/graphrag/src:/app/src
+    depends_on:
+      falkordb:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
 
 volumes:
   falkordb_data:

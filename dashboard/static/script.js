@@ -1,4 +1,4 @@
-const AGENT_API = "http://localhost:8000";
+const AGENT_API = "http://127.0.0.1:8010";
 const MGMT_API = ""; 
 
 // D3 Global State
@@ -59,7 +59,7 @@ function toggleExplorer() {
 
 async function fetchNodeTypes() {
     try {
-        const res = await fetch(`${MGMT_API}/api/graph/labels`);
+        const res = await fetch(`/api/graph/labels`);
         const data = await res.json();
         
         const container = document.getElementById('type-filters');
@@ -111,7 +111,7 @@ async function runPipeline() {
     btn.innerHTML = '<span class="w-4 h-4 border-2 border-[#a8c7fa] border-t-transparent rounded-full animate-spin"></span>';
     
     try {
-        const res = await fetch(`${MGMT_API}/api/pipeline/run`, { method: 'POST' });
+        const res = await fetch(`/api/pipeline/run`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Pipeline failed to start");
         
@@ -559,7 +559,7 @@ async function expandSelectedNode() {
     const nodeId = window._currentNodeId; 
     if (!nodeId) return;
     try {
-        const res = await fetch(`${MGMT_API}/api/graph/node/${encodeURIComponent(nodeId)}/expand`);
+        const res = await fetch(`/api/graph/node/${encodeURIComponent(nodeId)}/expand`);
         const data = await res.json();
         if (data.error) {
             alert("Failed to expand: " + data.error);
@@ -594,7 +594,7 @@ async function searchNodes() {
     const q = document.getElementById('graph-search').value;
     if (!q) return;
     
-    const res = await fetch(`${MGMT_API}/api/graph/search?q=${encodeURIComponent(q)}`);
+    const res = await fetch(`/api/graph/search?q=${encodeURIComponent(q)}`);
     const data = await res.json();
     
     const resultsDiv = document.getElementById('search-results');
@@ -631,7 +631,7 @@ async function searchNodes() {
 async function fetchSampleGraph() {
     try {
         // Use updated sample endpoint logic without manual limit if possible, or limit 50
-        const res = await fetch(`${MGMT_API}/api/graph/sample?limit=50`);
+        const res = await fetch(`/api/graph/sample?limit=50`);
         const data = await res.json();
         updateGraphData(data);
     } catch (e) {
