@@ -103,6 +103,17 @@ class ProcessingSettings(BaseSettings):
     resolution: float = 1.0
 
 
+class EmbeddingSettings(BaseSettings):
+    """
+    Embedding Model Configuration.
+    """
+    model_name: str = Field("all-MiniLM-L6-v2", alias="EMBEDDING_MODEL")
+    batch_size: int = Field(32, alias="EMBEDDING_BATCH_SIZE")
+    device: str = Field("auto", alias="EMBEDDING_DEVICE")
+    cache_folder: Optional[str] = Field(None, alias="EMBEDDING_CACHE_FOLDER")
+
+
+
 class PipelineSettings(BaseSettings):
     """
     Master Configuration Object.
@@ -112,6 +123,7 @@ class PipelineSettings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
+    embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     
     # Global/Runtime flags
     debug: bool = False

@@ -15,33 +15,16 @@ Supported node types:
 import networkx as nx
 import numpy as np
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+
+from .model import get_model
 
 logger = logging.getLogger(__name__)
 
-try:
-    from sentence_transformers import SentenceTransformer
-    EMBEDDINGS_AVAILABLE = True
-except ImportError:
-    EMBEDDINGS_AVAILABLE = False
 
-
-def get_embedding_dimension(model_name: str = "all-MiniLM-L6-v2") -> int:
+def get_embedding_dimension(model_name: str = None) -> int:
     """Get the dimension of the embedding model."""
-    if not EMBEDDINGS_AVAILABLE:
-        return 384  # Default fallback
-    
-    try:
-        # Try loading from local cache first to avoid network timeouts
-        model = SentenceTransformer(model_name, local_files_only=True)
-        return int(model.get_sentence_embedding_dimension())
-    except Exception:
-        # Fallback to default loading (might download)
-        try:
-            model = SentenceTransformer(model_name)
-            return int(model.get_sentence_embedding_dimension())
-        except Exception:
-            return 384
+    return get_model().dimension
 
 
 def _get_embedding_text_for_node(
@@ -114,7 +97,7 @@ def _get_embedding_text_for_node(
 
 def generate_rag_embeddings(
     graph: nx.DiGraph,
-    embedding_model: str = "all-MiniLM-L6-v2",
+    embedding_model: str = None,
     batch_size: int = 32,
     node_types: Optional[List[str]] = None
 ) -> Dict[str, np.ndarray]:
@@ -126,17 +109,16 @@ def generate_rag_embeddings(
     
     Args:
         graph: NetworkX DiGraph containing the knowledge graph
-        embedding_model: SentenceTransformer model name
-            - 'all-MiniLM-L6-v2': 384 dims, fast, good quality (default)
-            - 'all-mpnet-base-v2': 768 dims, best quality, slower
-        batch_size: Batch size for embedding generation
+        embedding_model: Ignored, uses centralized configuration.
+        batch_size: Batch size for embedding generation (can be overridden)
         node_types: Optional list of node types to embed (default: all supported types)
         
     Returns:
         Dictionary mapping node_id to embedding numpy array
     """
-    if not EMBEDDINGS_AVAILABLE:
-        logger.warning("SentenceTransformers not available. Skipping embedding generation.")
+    model = get_model()
+    if not model.is_available:
+        logger.warning("Embeddings not available. Skipping embedding generation.")
         return {}
     
     # Default to all supported node types
@@ -144,16 +126,8 @@ def generate_rag_embeddings(
         node_types = ['ENTITY_CONCEPT', 'TOPIC', 'SUBTOPIC', 'CHUNK', 'EPISODE']
     
     logger.info(f"Generating RAG embeddings for node types: {node_types}")
-    logger.info(f"Using embedding model: {embedding_model}")
     
-    # Load embedding model
-    try:
-        logger.info(f"Attempting to load {embedding_model} from local cache...")
-        model = SentenceTransformer(embedding_model, local_files_only=True)
-    except Exception as e:
-        logger.warning(f"Could not load from local cache ({e}). Attempting download...")
-        model = SentenceTransformer(embedding_model)
-    embedding_dim = model.get_sentence_embedding_dimension()
+    embedding_dim = model.dimension
     logger.info(f"Embedding dimension: {embedding_dim}")
     
     # Collect texts to embed per node type
@@ -183,27 +157,22 @@ def generate_rag_embeddings(
     for node_type, count in node_type_counts.items():
         logger.info(f"  - {node_type}: {count}")
     
-    # Generate embeddings in batches
-    logger.info(f"Generating embeddings in batches of {batch_size}...")
-    all_embeddings: List[np.ndarray] = []
-    
-    for i in range(0, len(texts_to_embed), batch_size):
-        batch_texts = texts_to_embed[i:i + batch_size]
-        batch_embeddings = model.encode(batch_texts, show_progress_bar=False)
-        all_embeddings.extend(batch_embeddings)
-        
-        if (i + batch_size) % (batch_size * 10) == 0:
-            logger.info(f"  Processed {min(i + batch_size, len(texts_to_embed))}/{len(texts_to_embed)} nodes")
+    # Generate embeddings
+    logger.info(f"Generating embeddings for {len(texts_to_embed)} texts...")
+    all_embeddings = model.encode(texts_to_embed, batch_size=batch_size)
     
     # Store embeddings on graph and build return dictionary
     embeddings: Dict[str, np.ndarray] = {}
+    
+    # Handle single embedding return case (if list was size 1, encode might return 1d array depending on usage, but we passed list so it should return list or 2d array)
+    # SentenceTransformer.encode(List[str]) returns List[ndarray] or ndarray(N, D)
     
     for node_id, embedding in zip(node_ids, all_embeddings):
         embeddings[node_id] = embedding
         # Store embedding on graph node (convert to list for JSON serialization)
         graph.nodes[node_id]['embedding'] = embedding.tolist()
     
-    logger.info(f"Generated {len(embeddings)} embeddings ({embedding_dim} dimensions)")
+    logger.info(f"Generated {len(embeddings)} embeddings")
     
     return embeddings
 

@@ -1,11 +1,8 @@
 """
 LlamaIndex embeddings adapter.
-
-Supports HuggingFace SentenceTransformers (if available) and OpenAI embeddings.
 """
-
-from typing import List
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -14,67 +11,27 @@ try:
 except ImportError:
     HuggingFaceEmbedding = None
 
-try:
-    from llama_index.embeddings.openai import OpenAIEmbedding
-except ImportError:
-    OpenAIEmbedding = None
-
-
-_embedding_model = None
-
+_instance = None
 
 def get_llamaindex_embeddings(model_name: str = "all-MiniLM-L6-v2"):
-    """
-    Get a LlamaIndex-compatible embedding model.
+    """Get the singleton HuggingFace embedding model."""
+    global _instance
+    if _instance:
+        return _instance
 
-    Prioritizes HuggingFace (if available and requested), falls back to OpenAI.
+    if not HuggingFaceEmbedding:
+        raise ImportError("llama-index-embeddings-huggingface not installed.")
 
-    Args:
-        model_name: HuggingFace model name for embeddings
+    # Align with global config if present
+    model_name = os.getenv("EMBEDDING_MODEL", model_name)
+    
+    logger.info(f"Initializing embedding model: {model_name}")
+    
+    # Simple and robust initialization
+    # We rely on sentence-transformers (used by llama-index) to handle caching/downloads
+    _instance = HuggingFaceEmbedding(model_name=model_name)
+    return _instance
 
-    Returns:
-        Configured Embedding instance
-    """
-    global _embedding_model
-    if _embedding_model is None:
-        if HuggingFaceEmbedding:
-            try:
-                import torch
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"Loading HuggingFace embedding ({model_name}) on {device}...")
-                # Try loading from local cache first
-                _embedding_model = HuggingFaceEmbedding(model_name=model_name, local_files_only=True, device=device)
-            except Exception:
-                try:
-                    # Fallback to default loading
-                    import torch
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                    _embedding_model = HuggingFaceEmbedding(model_name=model_name, device=device)
-                except Exception as e:
-                    logger.warning(f"Failed to load HuggingFace embedding: {e}")
-        
-        if _embedding_model is None:
-            if OpenAIEmbedding:
-                logger.info("Using OpenAI embeddings fallback.")
-                _embedding_model = OpenAIEmbedding()
-            else:
-                raise RuntimeError("No embedding model available. Install llama-index-embeddings-huggingface (with torch) or llama-index-embeddings-openai.")
-                
-    return _embedding_model
-
-
-def embed_query(text: str, model_name: str = "all-MiniLM-L6-v2") -> List[float]:
-    """
-    Embed a single query text.
-
-    Convenience function for direct embedding without managing model lifecycle.
-
-    Args:
-        text: Text to embed
-        model_name: HuggingFace model name (if used)
-
-    Returns:
-        Embedding vector as list of floats
-    """
-    model = get_llamaindex_embeddings(model_name)
-    return model.get_query_embedding(text)
+def embed_query(text: str, model_name: str = "all-MiniLM-L6-v2"):
+    """Direct embedding query."""
+    return get_llamaindex_embeddings(model_name).get_query_embedding(text)

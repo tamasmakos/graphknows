@@ -44,7 +44,7 @@ def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: D
             continue
         # Only connect ENTITY_CONCEPT nodes to topics
         node_data = graph.nodes.get(node_id, {})
-        if node_data.get('node_type') != 'ENTITY_CONCEPT':
+        if node_data.get('node_type') not in ['ENTITY_CONCEPT', 'PLACE', 'ENTITY']:
             continue
             
         parent_comm_id, local_sub_id = pair
@@ -93,7 +93,7 @@ def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: D
             continue
             
         node_data = graph.nodes.get(node_id, {})
-        if node_data.get('node_type') != 'ENTITY_CONCEPT':
+        if node_data.get('node_type') not in ['ENTITY_CONCEPT', 'PLACE', 'ENTITY']:
             continue
             
         topic_node_id = f"TOPIC_{comm_id}"

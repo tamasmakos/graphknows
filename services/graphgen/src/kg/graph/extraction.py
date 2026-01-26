@@ -80,40 +80,24 @@ def split_sentences(text: str) -> List[str]:
 async def extract_relations_with_llm_async(
     text: str,
     extractor: BaseExtractor,
-    max_retries: int = 3,
     keywords: List[str] = None,
     entities: List[str] = None,
     abstract_concepts: List[str] = None
-) -> List[Tuple[str, str, str]]:
+) -> Tuple[List[Tuple[str, str, str]], List[Dict[str, Any]]]:
     """Extract relations using configured extractor."""
-    if not extractor:
-        return []
-        
-    # If no text provided, return empty
-    if not text:
-        return []
+    if not extractor or not text:
+        return [], []
 
-    retry_delay = 2
-
-    for attempt in range(max_retries):
-        try:
-            relations = await extractor.extract_relations(
-                text=text,
-                keywords=keywords,
-                entities=entities,
-                abstract_concepts=abstract_concepts
-            )
-            return relations
-            
-        except Exception as e:
-            if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay * (attempt + 1))
-                continue
-            else:
-                logger.error(f"Failed after {max_retries} attempts: {str(e)}")
-                return []
-    
-    return []
+    try:
+        return await extractor.extract_relations(
+            text=text,
+            keywords=keywords,
+            entities=entities,
+            abstract_concepts=abstract_concepts
+        )
+    except Exception as e:
+        logger.error(f"Extraction failed: {str(e)}")
+        return [], []
 
 async def process_extraction_task(
     deps: PipelineContext,
@@ -151,7 +135,7 @@ async def process_extraction_task(
             # Deduplicate
             allowed_nodes = list(set(allowed_nodes))
             
-            raw_relations = await extract_relations_with_llm_async(
+            raw_relations, raw_nodes = await extract_relations_with_llm_async(
                 text=task.chunk_text,
                 extractor=extractor,
                 keywords=task.keywords,
@@ -162,7 +146,8 @@ async def process_extraction_task(
             chunk_data = {
                 'knowledge_triplets': raw_relations,
                 'raw_extraction': {
-                    'relations': raw_relations
+                    'relations': raw_relations,
+                    'nodes': raw_nodes
                 },
                 'gliner_entities': gliner_entities  # Store GLiNER predictions
             }
@@ -179,12 +164,85 @@ async def process_extraction_task(
             logger.error(f"      ❌ Failed {task.chunk_id}: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e), "chunk_id": task.chunk_id}
 
+async def _generate_entity_hints(
+    tasks: List[ChunkExtractionTask], 
+    config: Dict[str, Any]
+) -> Dict[str, List[Dict[str, str]]]:
+    """Generate entity hints using GLiNER or Spacy."""
+    extraction_config = config.get('extraction', {})
+    if hasattr(extraction_config, 'model_dump'):
+        extraction_config = extraction_config.model_dump()
+        
+    extraction_backend = extraction_config.get('backend', 'gliner')
+    results_map = {}
+    
+    if extraction_backend == 'spacy':
+        # --- SPACY Extraction ---
+        logger.info(f"Step 2.1: Bulk Spacy Extraction for {len(tasks)} chunks...")
+        try:
+            spacy_model_name = extraction_config.get('spacy_model', 'en_core_web_lg')
+            nlp = get_spacy_model(spacy_model_name)
+            
+            if nlp:
+                texts = [task.chunk_text for task in tasks]
+                # Use nlp.pipe for efficiency
+                docs = list(nlp.pipe(texts))
+                
+                for task, doc in zip(tasks, docs):
+                    extracted = []
+                    for ent in doc.ents:
+                        extracted.append({"text": ent.text})
+                    results_map[task.chunk_id] = extracted
+                
+                logger.info(f"Bulk Spacy complete. Extracted entities for {len(results_map)} chunks.")
+        
+        except Exception as e:
+             logger.error(f"Bulk Spacy extraction failed: {e}", exc_info=True)
+             
+    else:
+        # --- GLiNER Extraction (Default) ---
+        logger.info(f"Step 2.1: Bulk GLiNER Pass for {len(tasks)} chunks...")
+        try:
+            model = get_gliner_model()
+            if model:
+                labels = extraction_config.get('gliner_labels', ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"])
+                
+                all_sentences = []
+                sentence_to_task_map = []
+                
+                for task in tasks:
+                    sents = split_sentences(task.chunk_text)
+                    if not sents:
+                        sents = [task.chunk_text]
+                    all_sentences.extend(sents)
+                    sentence_to_task_map.extend([task.chunk_id] * len(sents))
+                
+                if all_sentences:
+                    predict_func = functools.partial(
+                        model.batch_predict_entities, 
+                        all_sentences, 
+                        labels, 
+                        threshold=0.5
+                    )
+                    all_predictions = await asyncio.to_thread(predict_func)
+                    
+                    for chunk_id, preds in zip(sentence_to_task_map, all_predictions):
+                        if chunk_id not in results_map:
+                            results_map[chunk_id] = []
+                        results_map[chunk_id].extend(preds)
+                    
+                    logger.info(f"Bulk GLiNER complete. Extracted entities for {len(results_map)} chunks.")
+        except Exception as e:
+            logger.error(f"Bulk GLiNER extraction failed: {e}")
+
+    return results_map
+
 async def extract_all_entities_relations(deps: PipelineContext, config: Dict[str, Any], extractor: BaseExtractor = None) -> Dict[str, Any]:
     """Phase 2: Parallel entity/relation extraction"""
     if not deps.extraction_tasks:
         return {"processed": 0, "successful": 0, "errors": []}
     
-    # Deduplicate tasks by chunk_id to avoid processing the same chunk multiple times
+    # Deduplicate tasks
     seen_chunk_ids = set()
     unique_tasks = []
     for task in deps.extraction_tasks:
@@ -195,7 +253,6 @@ async def extract_all_entities_relations(deps: PipelineContext, config: Dict[str
     if len(unique_tasks) < len(deps.extraction_tasks):
         logger.warning(f"Removed {len(deps.extraction_tasks) - len(unique_tasks)} duplicate extraction tasks")
     
-    # Create extractor instance if not provided
     should_close_extractor = False
     if extractor is None:
         extractor = get_extractor(config)
@@ -203,99 +260,8 @@ async def extract_all_entities_relations(deps: PipelineContext, config: Dict[str
         
     logger.info(f"Using {extractor.__class__.__name__} for relation extraction")
     
-    # Check extraction backend
-    extraction_config = config.get('extraction', {})
-    if hasattr(extraction_config, 'model_dump'):
-        extraction_config = extraction_config.model_dump()
-        
-    extraction_backend = extraction_config.get('backend', 'gliner')
-    gliner_results_map = {}
-    
-    if extraction_backend == 'spacy':
-        # --- SPACY Extraction ---
-        logger.info(f"Step 2.1: Bulk Spacy Extraction for {len(unique_tasks)} chunks...")
-        try:
-            spacy_model_name = extraction_config.get('spacy_model', 'en_core_web_lg')
-            nlp = get_spacy_model(spacy_model_name)
-            
-            if nlp:
-                texts = [task.chunk_text for task in unique_tasks]
-                # Use nlp.pipe for efficiency
-                docs = list(nlp.pipe(texts))
-                
-                # Default mapping from Spacy labels to Ontology labels
-                spacy_label_map = {
-                    "PERSON": "Person",
-                    "ORG": "Organization",
-                    "GPE": "Location",
-                    "LOC": "Location",
-                    "DATE": "Date",
-                    "EVENT": "Event",
-                    "FAC": "Location",
-                    "PRODUCT": "Concept",
-                    "WORK_OF_ART": "Concept",
-                    "LAW": "Concept",
-                    "LANGUAGE": "Concept",
-                    "MONEY": "Concept",
-                    "NORP": "Group",
-                    "PERCENT": "Concept",
-                    "QUANTITY": "Concept",
-                    "ORDINAL": "Concept",
-                    "CARDINAL": "Concept"
-                }
-                
-                for task, doc in zip(unique_tasks, docs):
-                    chunk_id = task.chunk_id
-                    extracted = []
-                    for ent in doc.ents:
-                        # Map label
-                        label = spacy_label_map.get(ent.label_, "Concept")
-                        extracted.append({"text": ent.text, "label": label})
-                    
-                    gliner_results_map[chunk_id] = extracted
-                
-                logger.info(f"Bulk Spacy complete. Extracted entities for {len(gliner_results_map)} chunks.")
-        
-        except Exception as e:
-             logger.error(f"Bulk Spacy extraction failed: {e}", exc_info=True)
-             
-    else:
-        # --- GLiNER Extraction (Default) ---
-        logger.info(f"Step 2.1: Bulk GLiNER Pass for {len(unique_tasks)} chunks...")
-        try:
-            model = get_gliner_model()
-            if model:
-                labels = extraction_config.get('gliner_labels', ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"])
-                
-                all_sentences = []
-                sentence_to_task_map = []
-                
-                for task in unique_tasks:
-                    sents = split_sentences(task.chunk_text)
-                    if not sents:
-                        sents = [task.chunk_text]
-                    all_sentences.extend(sents)
-                    sentence_to_task_map.extend([task.chunk_id] * len(sents))
-                
-                if all_sentences:
-                    # Run in thread to avoid blocking event loop
-                    predict_func = functools.partial(
-                        model.batch_predict_entities, 
-                        all_sentences, 
-                        labels, 
-                        threshold=0.5
-                    )
-                    all_predictions = await asyncio.to_thread(predict_func)
-                    
-                    # Re-map results to chunks
-                    for chunk_id, preds in zip(sentence_to_task_map, all_predictions):
-                        if chunk_id not in gliner_results_map:
-                            gliner_results_map[chunk_id] = []
-                        gliner_results_map[chunk_id].extend(preds)
-                    
-                    logger.info(f"Bulk GLiNER complete. Extracted entities for {len(gliner_results_map)} chunks.")
-        except Exception as e:
-            logger.error(f"Bulk GLiNER extraction failed: {e}")
+    # Generate Entity Hints
+    gliner_results_map = await _generate_entity_hints(unique_tasks, config)
 
     try:
         # Use max_concurrent from config for controlled parallelization
@@ -324,9 +290,7 @@ async def extract_all_entities_relations(deps: PipelineContext, config: Dict[str
 
 # --- Graph Enrichment ---
 
-def _get_chunks_for_segment(graph: nx.DiGraph, segment_id: str) -> List[str]:
-    if not graph.has_node(segment_id):
-        return []
+
 def _get_chunks_for_segment(graph: nx.DiGraph, segment_id: str) -> List[str]:
     """Find all chunks associated with a segment, including via Conversations and Contexts."""
     chunk_ids = set()
@@ -365,11 +329,13 @@ async def add_triplets_to_graph_for_segment(
     entity_mappings: Dict[str, str],
     segment_id: str,
     chunk_entity_map: Dict[str, Set[str]],
-    gliner_label_map: Dict[str, str] = None  # New parameter
+    gliner_label_map: Dict[str, str] = None,  # New parameter
+    llm_type_map: Dict[str, str] = None # Map of entity -> llm_type
 ):
     """Write entities/edges to graph for a segment"""
     graph = deps.graph
     gliner_label_map = gliner_label_map or {}
+    llm_type_map = llm_type_map or {}
     
     # Add entities
     for _, mapped_ent in entity_mappings.items():
@@ -383,6 +349,7 @@ async def add_triplets_to_graph_for_segment(
             graph.add_node(mapped_ent, 
                          node_type="ENTITY_CONCEPT", 
                          ontology_class=ontology_label,
+                         llm_type=llm_type_map.get(mapped_ent),
                          name=mapped_ent, 
                          graph_type="entity_relation")
         else:
@@ -392,6 +359,10 @@ async def add_triplets_to_graph_for_segment(
             # Ensure name is set
             if 'name' not in node_data:
                 node_data['name'] = mapped_ent
+                
+            # Update llm_type if available and not set
+            if llm_type_map.get(mapped_ent) and not node_data.get('llm_type'):
+                node_data['llm_type'] = llm_type_map.get(mapped_ent)
                 
             # Smart update for ontology_class
             current_class = node_data.get('ontology_class')
@@ -442,7 +413,10 @@ async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
             
             for cid in chunk_ids:
                 node = graph.nodes.get(cid, {})
-                raw_relations = (node.get('raw_extraction') or {}).get('relations') or []
+                raw_extraction = node.get('raw_extraction') or {}
+                raw_relations = raw_extraction.get('relations') or []
+                raw_nodes = raw_extraction.get('nodes') or []
+                
                 gliner_entities = node.get('gliner_entities', [])
                 
                 # Populate GLiNER map
@@ -474,13 +448,42 @@ async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
             cleaned_relations = coref_result.get('cleaned_relations', [])
             entity_mappings = coref_result.get('entity_mappings', {})
             
+            # Build LLM type map
+            llm_type_map = {}
+            # Iterate through all chunks again to collect types?
+            # Or better, collect them in the loop above.
+            # Let's do a quick pass here or modify the loop above.
+            
+            # Re-iterating to be safe and simple
+            for cid in chunk_ids:
+                node = graph.nodes.get(cid, {})
+                raw_nodes = (node.get('raw_extraction') or {}).get('nodes') or []
+                for n in raw_nodes:
+                    ent_id = n.get('id')
+                    ent_type = n.get('type')
+                    if ent_id and ent_type:
+                        llm_type_map[ent_id] = ent_type
+                        
+            # Apply mappings to llm_type_map keys if needed? 
+            # The extraction uses raw names. Coref maps raw names to canonical names.
+            # So we should map raw name -> type, then when adding/updating canonical node, lookup type by raw name?
+            # Or better: construct canonical -> type map.
+            
+            canonical_llm_type_map = {}
+            for ent_id, ent_type in llm_type_map.items():
+                # ent_id is the raw extracted name
+                canonical = entity_mappings.get(ent_id, ent_id)
+                if canonical:
+                    canonical_llm_type_map[canonical] = ent_type
+
             await add_triplets_to_graph_for_segment(
                 deps=deps,
                 relations=cleaned_relations,
                 entity_mappings=entity_mappings,
                 segment_id=segment_id,
                 chunk_entity_map=chunk_entity_map,
-                gliner_label_map=gliner_label_map # Pass the map
+                gliner_label_map=gliner_label_map, # Pass the map
+                llm_type_map=canonical_llm_type_map
             )
             
             segments_processed += 1
@@ -618,10 +621,10 @@ async def process_single_segment(
                         # Simple linking: Location string is the Place ID/Name
                         place_id = f"PLACE_{loc_name.replace(' ', '_').upper()}"
                         if not deps.graph.has_node(place_id):
-                            deps.graph.add_node(place_id, node_type="PLACE", name=loc_name, graph_type="entity_relation")
+                            deps.graph.add_node(place_id, node_type="PLACE", name=loc_name, graph_type="lexical_graph")
                         
                         # Link Segment to Place directly
-                        deps.graph.add_edge(segment.segment_id, place_id, label="HAPPENED_AT", graph_type="entity_relation")
+                        deps.graph.add_edge(segment.segment_id, place_id, label="HAPPENED_AT", graph_type="lexical_graph")
 
                     # 2. Image -> Attribute on Segment
                     image_desc = row.get('Image')

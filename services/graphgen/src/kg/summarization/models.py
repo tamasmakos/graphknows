@@ -18,15 +18,4 @@ class SummarizationTask:
 
 
 
-@dataclass
-class SimilarTopicPair:
-    """Represents a pair of similar topics found by Levenshtein analysis"""
-    topic1_id: str
-    topic1_title: str
-    topic1_level: str
-    topic2_id: str
-    topic2_title: str
-    topic2_level: str
-    similarity_score: float
-    levenshtein_distance: int
-    is_potential_duplicate: bool
+

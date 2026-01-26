@@ -5,9 +5,9 @@ import networkx as nx
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional
 from langchain_core.prompts import ChatPromptTemplate
-import jellyfish  # For Levenshtein Distance
 
-from .models import SummarizationTask, SimilarTopicPair
+
+from .models import SummarizationTask
 
 logger = logging.getLogger(__name__)
 
@@ -34,45 +34,6 @@ def truncate_text_for_llm(text: str, max_chars: int = 15000) -> str:
     
     return truncated.strip()
 
-def clean_llm_output(text: str) -> str:
-    """Clean and format LLM output"""
-    import re
-    
-    if not text:
-        return ""
-    
-    text = text.strip()
-    
-    # Strip <think>...</think> tags (reasoning model output like DeepSeek)
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = text.strip()
-    
-    # Remove common prefixes that LLMs sometimes add
-    prefixes_to_remove = [
-        "Title:", "title:", "TITLE:",
-        "Summary:", "summary:", "SUMMARY:",
-        "Topic:", "topic:", "TOPIC:",
-        "The title is:", "The summary is:",
-        "Here is the title:", "Here is the summary:",
-        "Here's the title:", "Here's the summary:"
-    ]
-    
-    for prefix in prefixes_to_remove:
-        if text.startswith(prefix):
-            text = text[len(prefix):].strip()
-    
-    # Remove quotes if the entire text is wrapped in them
-    if text.startswith('"') and text.endswith('"'):
-        text = text[1:-1]
-    elif text.startswith("'") and text.endswith("'"):
-        text = text[1:-1]
-    
-    # Remove trailing periods from titles (but not summaries)
-    # This is a simple heuristic - titles are usually shorter
-    if len(text) < 100 and text.endswith('.'):
-        text = text[:-1]
-    
-    return text.strip()
 
 async def generate_title_internal(llm: Any, text: str) -> str:
     """Generate title for given text using LLM"""
@@ -97,7 +58,6 @@ async def generate_title_internal(llm: Any, text: str) -> str:
                 title = response.content
             else:
                 title = str(response)
-            title = clean_llm_output(title)
             if len(title) > 100:
                 title = title[:97] + "..."
             return title if title else "Untitled Topic"
@@ -138,7 +98,6 @@ async def summarize_text_internal(llm: Any, text: str) -> str:
                 summary = response.content
             else:
                 summary = str(response)
-            summary = clean_llm_output(summary)
             return summary if summary else "No summary available."
         except RuntimeError as e:
             if "Event loop is closed" in str(e) and attempt < 2:
@@ -538,96 +497,7 @@ async def get_all_topic_nodes_async(graph: nx.DiGraph) -> List[Tuple[str, Dict[s
     
     return topic_nodes
 
-def _levenshtein_distance_safe(s1: str, s2: str) -> int:
-    """Calculate Levenshtein distance safely"""
-    try:
-        return jellyfish.damerau_levenshtein_distance(s1, s2)
-    except Exception:
-        return max(len(s1), len(s2))
 
-async def find_similar_topic_pairs_async(topic_nodes: List[Tuple[str, Dict[str, Any]]]) -> List[SimilarTopicPair]:
-    """Find similar topic pairs using Levenshtein distance"""
-    
-    similar_pairs = []
-    
-    for i, (node1_id, node1_data) in enumerate(topic_nodes):
-        for j, (node2_id, node2_data) in enumerate(topic_nodes):
-            if i >= j:  # Avoid duplicates and self-comparison
-                continue
-            
-            title1 = node1_data.get('title', '')
-            title2 = node2_data.get('title', '')
-            
-            if not title1 or not title2:
-                continue
-            
-            # Calculate Levenshtein distance
-            distance = _levenshtein_distance_safe(title1.lower(), title2.lower())
-            max_len = max(len(title1), len(title2))
-            
-            if max_len > 0:
-                similarity_score = 1 - (distance / max_len)
-            else:
-                similarity_score = 1.0
-            
-            # Consider pairs with high similarity
-            if similarity_score > 0.7:  # 70% similarity threshold
-                
-                # Determine node levels
-                level1 = "TOPIC" if node1_data.get('node_type') == 'TOPIC' else "SUBTOPIC"
-                level2 = "TOPIC" if node2_data.get('node_type') == 'TOPIC' else "SUBTOPIC"
-                
-                # Mark as potential duplicate if very high similarity
-                is_potential_duplicate = similarity_score > 0.9
-                
-                pair = SimilarTopicPair(
-                    topic1_id=node1_id,
-                    topic1_title=title1,
-                    topic1_level=level1,
-                    topic2_id=node2_id,
-                    topic2_title=title2,
-                    topic2_level=level2,
-                    similarity_score=similarity_score,
-                    levenshtein_distance=distance,
-                    is_potential_duplicate=is_potential_duplicate
-                )
-                
-                similar_pairs.append(pair)
-    
-    # Sort by similarity score (highest first)
-    similar_pairs.sort(key=lambda x: x.similarity_score, reverse=True)
-    
-    return similar_pairs
-
-async def check_topic_title_similarity_simple(graph: nx.DiGraph) -> Dict[str, Any]:
-    """Check for similar topic titles using Levenshtein Distance"""
-    
-    logger.info("Checking for similar topic titles...")
-    
-    # Get all topic nodes
-    topic_nodes = await get_all_topic_nodes_async(graph)
-    
-    if len(topic_nodes) < 2:
-        logger.info("Not enough topics to compare")
-        return {
-            "similar_pairs_found": 0,
-            "potential_duplicates_found": 0,
-            "similar_pairs": []
-        }
-    
-    # Find similar pairs
-    similar_pairs = await find_similar_topic_pairs_async(topic_nodes)
-    
-    # Count potential duplicates
-    potential_duplicates = sum(1 for pair in similar_pairs if pair.is_potential_duplicate)
-    
-    logger.info(f"Found {len(similar_pairs)} similar pairs, {potential_duplicates} potential duplicates")
-    
-    return {
-        "similar_pairs_found": len(similar_pairs),
-        "potential_duplicates_found": potential_duplicates,
-        "similar_pairs": similar_pairs
-    }
 
 async def generate_community_summaries(graph: nx.DiGraph, llm: Any) -> Dict[str, Any]:
     """
@@ -636,7 +506,6 @@ async def generate_community_summaries(graph: nx.DiGraph, llm: Any) -> Dict[str,
     1. Collect tasks
     2. Process tasks
     3. Update nodes
-    4. Check similarity
     """
     start_time = datetime.now()
     
@@ -660,18 +529,12 @@ async def generate_community_summaries(graph: nx.DiGraph, llm: Any) -> Dict[str,
         logger.info("Phase 3: Updating topic nodes...")
         creation_result = await create_all_topic_nodes(graph, summary_result["processed_tasks"])
         
-        # Phase 4: Check similarity
-        logger.info("Phase 4: Checking similarity...")
-        similarity_result = await check_topic_title_similarity_simple(graph)
-        
         return {
             "processing_time_seconds": (datetime.now() - start_time).total_seconds(),
             "total_topics": len(community_tasks),
             "total_subtopics": len(subcommunity_tasks),
             "topics_updated": creation_result["topics_updated"],
-            "subtopics_updated": creation_result["subtopics_updated"],
-            "similar_pairs_found": similarity_result["similar_pairs_found"],
-            "potential_duplicates_found": similarity_result["potential_duplicates_found"]
+            "subtopics_updated": creation_result["subtopics_updated"]
         }
         
     except Exception as e:

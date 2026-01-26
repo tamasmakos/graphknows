@@ -28,19 +28,10 @@ DEFAULT_EXTRACTION_PROMPT = ChatPromptTemplate.from_template(
     
     Focus on extracting information relevant to building a "Life Graph" or memory graph for the user.
     Strictly identify and extract:
-    1. Life Patterns & Habits: Recurring activities, behaviors, or routines (e.g., "goes for a run every morning", "drinks coffee at 8am").
-    2. Things to Remember: Specific preferences, tasks, deadlines, or important details (e.g., "allergic to peanuts", "meeting on Friday").
+    1. Life Patterns & Habits: Recurring activities, behaviors, or routines.
+    2. Things to Remember: Specific preferences, tasks, deadlines, or important details.
     3. Entities: People, Places, Organizations, Concepts involved in the user's life.
-    4. Contextual Relations: How these entities relate to the user's daily life (e.g., LIVES_IN, VISITS, HAS_HABIT, PREFERS, OWNS).
-    
-    When extracting relationships, use descriptive types like:
-    - HAS_HABIT
-    - IS_A
-    - LOCATED_AT
-    - OCCURRED_AT
-    - INVOLVES
-    - HAS_PREFERENCE
-    - REMINDER_FOR
+    4. Contextual Relations: How these entities relate to the user's daily life.
     
     Text:
     {input}
@@ -58,7 +49,7 @@ class BaseExtractor(ABC):
         keywords: List[str] = None,
         entities: List[str] = None,
         abstract_concepts: List[str] = None
-    ) -> List[Tuple[str, str, str]]:
+    ) -> Tuple[List[Tuple[str, str, str]], List[Dict[str, Any]]]:
         """
         Extract relations from text.
         
@@ -70,7 +61,10 @@ class BaseExtractor(ABC):
             abstract_concepts: Optional list of abstract concepts (used by LangChain)
             
         Returns:
-            List of (source, relation_type, target) triplets
+        Returns:
+            Tuple containing:
+            - List of (source, relation_type, target) triplets
+            - List of extracted nodes with metadata (id, type, properties)
         """
         pass
     
@@ -98,18 +92,14 @@ class LangChainExtractor(BaseExtractor):
         keywords: List[str] = None,
         entities: List[str] = None,
         abstract_concepts: List[str] = None
-    ) -> List[Tuple[str, str, str]]:
+    ) -> Tuple[List[Tuple[str, str, str]], List[Dict[str, Any]]]:
         """Extract relations using LangChain LLMGraphTransformer."""
         entities = entities or []
         abstract_concepts = abstract_concepts or []
         
         allowed_nodes = list(set(entities + abstract_concepts))
         
-        # Use custom prompt if provided, otherwise use default
-        if custom_prompt:
-            prompt = custom_prompt
-        else:
-            prompt = DEFAULT_EXTRACTION_PROMPT  # Use our life-graph focused default
+        prompt = DEFAULT_EXTRACTION_PROMPT  # Use our life-graph focused default
         
         def _extract_sync():
             # Initialize LLM in the worker thread to ensure event loop safety
@@ -140,18 +130,29 @@ class LangChainExtractor(BaseExtractor):
                 )
                 
                 if not graph_docs:
-                    return []
+                    return [], []
                 
-                # Extract triplets
+                # Extract triplets and nodes
                 relations = []
+                nodes_data = []
+                
                 for graph_doc in graph_docs:
+                    # Extract relations
                     for relationship in graph_doc.relationships:
                         source = relationship.source.id
                         target = relationship.target.id
                         relation_type = relationship.type
                         relations.append((source, relation_type, target))
+                        
+                    # Extract nodes
+                    for node in graph_doc.nodes:
+                        nodes_data.append({
+                            "id": node.id,
+                            "type": node.type,
+                            "properties": dict(node.properties or {})
+                        })
                 
-                return relations
+                return relations, nodes_data
                 
             except Exception as e:
                 # Check for 400 Bad Request / Tool use failed
@@ -164,7 +165,7 @@ class LangChainExtractor(BaseExtractor):
                     else:
                         # Last retry for 400 error, return empty
                         logger.error(f"All {retries} retries exhausted for 400/Tool Error")
-                        return []
+                        return [], []
                 
                 # For other errors, log and retry or return empty
                 logger.error(f"LangChain extraction failed: {e}", exc_info=True)
@@ -172,9 +173,9 @@ class LangChainExtractor(BaseExtractor):
                     await asyncio.sleep(retry_delay * (attempt + 1))
                     continue
                 else:
-                    return []
+                    return [], []
         
-        return []
+        return [], []
 
 def get_extractor(config: Dict[str, Any]) -> BaseExtractor:
     """
