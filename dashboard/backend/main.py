@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-from dashboard.backend.routers import graph, pipeline
+from dashboard.backend.routers import graph, pipeline, retrieval
 from dashboard.backend.database import get_db
 
 @asynccontextmanager
@@ -39,6 +39,7 @@ app.add_middleware(
 
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
+app.include_router(retrieval.router, prefix="/api/retrieval", tags=["retrieval"])
 
 # Explicitly serve index.html at root
 static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../static"))

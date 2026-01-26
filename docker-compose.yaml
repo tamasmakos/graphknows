@@ -66,6 +66,7 @@ services:
     build:
       context: services/graphgen
       dockerfile: Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - FALKORDB_HOST=falkordb
       - POSTGRES_HOST=pgvector
@@ -91,6 +92,7 @@ services:
     build:
       context: services/graphrag
       dockerfile: Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - FALKORDB_HOST=falkordb
       - POSTGRES_HOST=pgvector
@@ -105,6 +107,8 @@ services:
       - PYTHONPATH=/app/src
     ports:
       - "8010:8000" # Host:Container
+    volumes:
+      - ./services/graphrag/src:/app/src
     depends_on:
       falkordb:
         condition: service_healthy
