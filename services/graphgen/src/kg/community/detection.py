@@ -274,18 +274,7 @@ class CommunityDetector:
         similarity_edges = sum(1 for _, _, d in graph.edges(data=True) if d.get('graph_type') == 'similarity')
         logger.info(f"Graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges "
                    f"({weighted_edges} weighted, {similarity_edges} similarity)")
-        
-        # Step 1: Comprehensive resolution optimization for entire graph
-        # optimize_resolution returns (resolution, partition) - ideally it should return metrics too
-        # But we can recalculate modularity easily or refactor optimize_resolution.
-        # Let's inspect optimize_resolution again... 
-        # It calculates best_result (dict) but returns only res, partition.
-        # Let's just refactor optimize_resolution usage or trust it picked the best.
-        # Actually, let's just make detect_communities calculate modularity again or grab it if we refactor optimize_resolution.
-        # Since I'm only editing this block, I can't easily change optimize_resolution's signature without editing lines 91-163. 
-        # But wait, lines 91-163 are earlier in the file. I CAN edit multiple chunks if I use multi_replace, but replace_file_content is single block.
-        # I'll stick to calculating modularity here for simplicty, or just use what I have.
-        
+
         best_resolution, communities = self.optimize_resolution(graph)
         
         logger.info(f"Using optimized resolution {best_resolution:.2f}")

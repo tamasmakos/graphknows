@@ -10,10 +10,10 @@ import re
 import networkx as nx
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from kg.types import PipelineContext, ChunkExtractionTask
-from kg.graph.coref import resolve_coreferences_simple
+from kg.graph.resolution import resolve_extraction_coreferences
 from kg.graph.extractors import BaseExtractor, get_extractor
 from kg.graph.parsing import SegmentData
-from kg.graph.parsers import get_parser
+from kg.graph.parsers.life import LifeLogParser
 
 # --- GLiNER Helper ---
 from gliner import GLiNER
@@ -470,7 +470,7 @@ async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
             if not aggregated_relations and not all_entities:
                 continue
 
-            coref_result = resolve_coreferences_simple(aggregated_relations, list(all_entities))
+            coref_result = resolve_extraction_coreferences(aggregated_relations, list(all_entities))
             cleaned_relations = coref_result.get('cleaned_relations', [])
             entity_mappings = coref_result.get('entity_mappings', {})
             
@@ -740,12 +740,7 @@ async def process_single_document_lexical(deps: PipelineContext, filename: str, 
     """Process a single document."""
     config = config or {}
     
-    # Try to extract date from filename
-    # Use GenericParser's logic implicitly via get_parser check or manual check
-    # We'll use a temporary parser instance to check support and extract date
-    
-    
-    temp_parser = get_parser('auto', filename=filename)
+    parser = LifeLogParser()
     
     try:
         file_path = os.path.join(input_dir, filename)
@@ -756,11 +751,11 @@ async def process_single_document_lexical(deps: PipelineContext, filename: str, 
         return {"error": f"Error reading {filename}: {str(e)}", "segments_added": 0, "chunks_added": 0}
 
     # Try to extract date from filename first
-    doc_date_str = temp_parser.extract_date(filename)
+    doc_date_str = parser.extract_date(filename)
     
     # Fallback to content-based extraction
     if not doc_date_str:
-        doc_date_str = temp_parser.extract_date_from_content(text)
+        doc_date_str = parser.extract_date_from_content(text)
         
     if not doc_date_str:
         logger.warning(f"Could not extract date from {filename}, using today's date")
@@ -782,7 +777,6 @@ async def process_single_document_lexical(deps: PipelineContext, filename: str, 
                                segment_count=0)
         
         # Parse segments
-        parser = get_parser('auto', filename=filename)
         segments = parser.parse(text, filename, doc_date_obj)
         
         segments_result = await add_segments_to_graph(deps, segments, day_id, config)

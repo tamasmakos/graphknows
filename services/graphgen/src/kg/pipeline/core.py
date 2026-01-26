@@ -129,19 +129,15 @@ class KnowledgePipeline:
     async def _step_enrichment(self, ctx: PipelineContext):
         try:
             from ..embeddings.rag import generate_rag_embeddings
-            from ..graph.similarity import compute_embedding_similarity_edges
-            from ..graph.resolution import merge_similar_nodes
+            from ..graph.resolution import resolve_entities_semantically
             
             logger.info("Step 3: Semantic Enrichment")
             
             logger.info("  3.1: Generating RAG Embeddings...")
             generate_rag_embeddings(ctx.graph)
             
-            logger.info("  3.2: Computing Similarity Edges...")
-            compute_embedding_similarity_edges(ctx.graph)
-            
-            logger.info("  3.3: Semantic Resolution...")
-            merge_similar_nodes(ctx.graph)
+            logger.info("  3.2: Semantic Resolution...")
+            resolve_entities_semantically(ctx.graph)
             
         except Exception as e:
             logger.error(f"Semantic enrichment failed: {e}")
