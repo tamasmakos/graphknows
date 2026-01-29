@@ -113,14 +113,25 @@ async def chat_endpoint(request: ChatRequest):
     try:
         workflow = GraphWorkflow(timeout=60, verbose=True)
         
-        # Convert pydantic messages to langchain format if needed, 
-        # but the workflow step handles extraction. 
-        # The input event expects raw messages or specific format.
-        # GraphWorkflow.extract_keywords uses ev.get("messages")
+        # Convert Pydantic messages to LlamaIndex ChatMessage objects
+        from llama_index.core.llms import ChatMessage, MessageRole
         
+        li_messages = []
+        for msg in request.messages:
+            role = str(msg.role).lower()
+            if role == "user":
+                li_messages.append(ChatMessage(role=MessageRole.USER, content=msg.content))
+            elif role == "assistant":
+                li_messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=msg.content))
+            elif role == "system":
+                li_messages.append(ChatMessage(role=MessageRole.SYSTEM, content=msg.content))
+            else:
+                 # Default to user if unknown
+                 li_messages.append(ChatMessage(role=MessageRole.USER, content=msg.content))
+
         result = await workflow.run(
             query=request.query, 
-            messages=request.messages
+            messages=li_messages
         )
         
         execution_time = time.time() - start_time
@@ -139,6 +150,7 @@ async def chat_endpoint(request: ChatRequest):
             "reasoning_chain": result.get("trace", []),
             "seed_entities": result.get("seed_entities", []),
             "seed_topics": result.get("seed_topics", []),
+            "step_timings": result.get("step_timings", {}),
             "cypher_query": "Workflow Execution",
             "confidence_score": 1.0,
         }

@@ -41,6 +41,11 @@ class GraphDB(ABC):
         pass
 
     @abstractmethod
+    def get_vector_stats(self) -> Dict[str, Any]:
+        """Get statistics about the vector store."""
+        pass
+
+    @abstractmethod
     def close(self):
         """Close the connection."""
         pass
@@ -193,6 +198,11 @@ class FalkorDBDB(GraphDB):
             parsed_results.append((node_data, float(score)))
             
         return parsed_results
+
+    def get_vector_stats(self) -> Dict[str, Any]:
+        if self.pg_store:
+            return self.pg_store.get_stats()
+        return {"error": "Postgres store not enabled or initialized"}
 
     def close(self):
         pass

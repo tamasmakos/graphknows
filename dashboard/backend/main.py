@@ -1,3 +1,4 @@
+import logging
 import sys
 import os
 from contextlib import asynccontextmanager
@@ -5,6 +6,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
@@ -15,17 +24,19 @@ from dashboard.backend.database import get_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    logger.info("Dashboard starting up...")
     db = get_db()
     if db:
         try:
             db.query("RETURN 1")
-            print("Connected to FalkorDB")
+            logger.info("Connected to FalkorDB")
         except Exception as e:
-            print(f"Failed to connect to FalkorDB: {e}")
+            logger.error(f"Failed to connect to FalkorDB: {e}")
     yield
     # Shutdown
     if db:
         db.close()
+        logger.info("Closed database connection.")
 
 app = FastAPI(lifespan=lifespan)
 

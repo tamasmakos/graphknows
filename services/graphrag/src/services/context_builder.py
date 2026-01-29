@@ -110,7 +110,7 @@ def filter_node_properties(props: dict, labels: List[str]) -> dict:
     elif is_chunk:
         keep_keys = {"text", "llama_metadata", "knowledge_triplets"}
     elif is_entity:
-        keep_keys = {"name", "entity_type", "centrality_summary", "pagerank_centrality"}
+        keep_keys = {"name", "entity_type", "llm_type"}
     elif is_topic or is_community:
         keep_keys = {"title", "summary", "community_id"}
     elif is_subtopic or is_subcommunity:
@@ -277,6 +277,7 @@ def format_graph_context(nodes: dict, edges: list) -> str:
             p = n.get("properties", {})
             name = get_name(n)
             etype = p.get("entity_type", "Entity")
+            llm_type = p.get("llm_type")
             summary = p.get("centrality_summary") or ""
             
             boilerplate_markers = [
@@ -287,10 +288,12 @@ def format_graph_context(nodes: dict, edges: list) -> str:
             if any(marker in summary for marker in boilerplate_markers):
                 summary = ""
             
+            llm_type_attr = f' llm_type="{llm_type}"' if llm_type else ""
+            
             if summary:
-                parts.append(f'<entity name="{name}" type="{etype}">{summary}</entity>')
+                parts.append(f'<entity name="{name}" type="{etype}"{llm_type_attr}>{summary}</entity>')
             else:
-                parts.append(f'<entity name="{name}" type="{etype}"/>')
+                parts.append(f'<entity name="{name}" type="{etype}"{llm_type_attr}/>')
         parts.append("</entities>\n")
 
     # 4. RELATIONSHIPS (Entity-Entity connection)

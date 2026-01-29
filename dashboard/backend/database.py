@@ -8,6 +8,10 @@ logger = logging.getLogger(__name__)
 class GraphDB:
     def query(self, cypher: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         pass
+
+    def get_vector_stats(self) -> Dict[str, Any]:
+        pass
+
     def close(self):
         pass
 
@@ -40,6 +44,19 @@ class FalkorDBDB(GraphDB):
         except Exception as e:
             logger.error(f"Query failed: {e}")
             return []
+
+    def get_vector_stats(self) -> Dict[str, Any]:
+        try:
+            # Proxy vector stats with node count for now
+            res = self.query("MATCH (n) RETURN count(n) as count")
+            count = res[0]['count'] if res else 0
+            return {
+                "row_count": count,
+                "table_size": "N/A (FalkorDB)"
+            }
+        except Exception as e:
+            logger.error(f"Failed to get stats: {e}")
+            return {"row_count": 0, "table_size": "Error"}
 
     def close(self):
         pass

@@ -50,20 +50,6 @@ async def kg_chat(
     """
     start_time = time.time()
     
-    # Convert dict messages to objects if needed by the workflow input handling,
-    # but currently GraphWorkflow takes a list of messages in input event.
-    # The endpoint passes them as list of Pydantic models or dicts?
-    # GraphWorkflow expects `messages` in InputEvent.
-    # Let's convert to simple dicts or langchain messages.
-    # The workflow's extract_keywords step handles them.
-    
-    # For compatibility, let's create a list of LangChain messages or just pass them
-    # depending on what extract_keywords expects.
-    # extract_keywords uses `ev.get("messages", [])`.
-    # And it does `if messages: last_msg = messages[-1]`.
-    # And uses `SystemMessage`, `HumanMessage` etc.
-    
-    # Let's convert to LangChain messages here to be safe.
     from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
     
     lc_messages = []

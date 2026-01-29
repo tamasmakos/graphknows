@@ -93,6 +93,7 @@ def main():
         print("\n--- Starting Dashboard (Port 8001) ---")
         dash_env = os.environ.copy()
         dash_env["PYTHONPATH"] = str(PROJECT_ROOT)
+        dash_env["PYTHONUNBUFFERED"] = "1"
         
         # Default Service URLs to point to Docker-exposed ports if not set
         # This matches the behavior of example scripts connecting to running containers.
@@ -108,8 +109,10 @@ def main():
         command = [
             sys.executable, "-m", "uvicorn", 
             "dashboard.backend.main:app", 
-            "--host", "127.0.0.1", 
-            "--port", "8001"
+            "--host", "0.0.0.0", 
+            "--port", "8001",
+            "--log-level", "info",
+            "--access-log"
         ]
         
         backend_proc = run_process(
@@ -122,7 +125,7 @@ def main():
         # 3. Wait for dashboard
         print("Waiting for Dashboard...")
         if wait_for_port(8001, timeout=20):
-            print("✅ Dashboard ready at http://localhost:8001")
+            print("\n✅ Dashboard ready at http://localhost:8001")
         else:
             print("❌ Dashboard failed to start on port 8001")
             print("💡 Tip: Ensure 'fastapi' and 'uvicorn' are installed: pip install -r requirements.txt")

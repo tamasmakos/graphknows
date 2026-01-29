@@ -56,15 +56,29 @@ def get_seed_entities(
     candidates: Dict[str, float] = {}
     timings: Dict[str, float] = {}
 
+    # 1. Embed Keywords for Vector Search
+    t_embed = time.time()
+    keyword_embeddings = []
+    if keywords:
+        try:
+            from src.infrastructure.llm import get_embedding_model
+            model = get_embedding_model()
+            keyword_embeddings = model.embed_documents(keywords)
+        except Exception as e:
+            logger.warning(f"Failed to embed keywords: {e}")
+    timings["keyword_embedding"] = time.time() - t_embed
+
     def search_topic():
         t0 = time.time()
         local_candidates = {}
         if not query_embedding:
             return local_candidates, 0.0
         try:
-            topic_results = db.query_vector("TOPIC", query_embedding, k=3, min_score=0.55)
+            topic_results = db.query_vector("TOPIC", query_embedding, k=5, min_score=0.55) # increased k
             for node_data, vector_score in topic_results:
                 topic_id = node_data.get("id")
+                local_candidates[topic_id] = max(local_candidates.get(topic_id, 0), vector_score) # Add topic itself
+                
                 if topic_id:
                      # Find entities in this topic
                      cypher = """
@@ -89,9 +103,11 @@ def get_seed_entities(
         if not query_embedding:
             return local_candidates, 0.0
         try:
-            subtopic_results = db.query_vector("SUBTOPIC", query_embedding, k=3, min_score=0.55)
+            subtopic_results = db.query_vector("SUBTOPIC", query_embedding, k=5, min_score=0.55)
             for node_data, vector_score in subtopic_results:
                 subtopic_id = node_data.get("id")
+                local_candidates[subtopic_id] = max(local_candidates.get(subtopic_id, 0), vector_score) # Add subtopic itself
+
                 if subtopic_id:
                      # Find entities in this subtopic
                      cypher = """
@@ -116,7 +132,7 @@ def get_seed_entities(
         if not query_embedding:
             return local_candidates, 0.0
         try:
-            entity_results = db.query_vector("ENTITY_CONCEPT", query_embedding, k=10, min_score=0.5)
+            entity_results = db.query_vector("ENTITY_CONCEPT", query_embedding, k=15, min_score=0.5) # increased k
             for node_data, score in entity_results:
                 entity_id = node_data.get("id")
                 if entity_id:
@@ -125,13 +141,40 @@ def get_seed_entities(
             logger.warning("Entity vector search failed: %s", e)
         return local_candidates, time.time() - t0
 
-    def search_keywords():
+    def search_keyword_vectors():
+        t0 = time.time()
+        local_candidates = {}
+        if not keyword_embeddings:
+            return local_candidates, 0.0
+        try:
+            # Search for each keyword embedding against Topics and Entities
+            for i, kw_emb in enumerate(keyword_embeddings):
+                # Search Topics
+                t_res = db.query_vector("TOPIC", kw_emb, k=2, min_score=0.6)
+                for node, score in t_res:
+                    tid = node.get("id")
+                    if tid:
+                         # Keywords matching topics is a strong signal
+                        local_candidates[tid] = max(local_candidates.get(tid, 0), score * 1.2)
+                
+                # Search Entities
+                e_res = db.query_vector("ENTITY_CONCEPT", kw_emb, k=3, min_score=0.6)
+                for node, score in e_res:
+                    eid = node.get("id")
+                    if eid:
+                        local_candidates[eid] = max(local_candidates.get(eid, 0), score * 1.1)
+
+        except Exception as e:
+            logger.warning("Keyword vector search failed: %s", e)
+        return local_candidates, time.time() - t0
+
+    def search_keywords_exact():
         t0 = time.time()
         local_candidates = {}
         if not keywords:
             return local_candidates, 0.0
         try:
-            with Profiler("Search Keywords"):
+            with Profiler("Search Keywords Exact"):
                 keyword_query = """
                 UNWIND $keywords AS keyword
                 MATCH (seed)
@@ -150,16 +193,17 @@ def get_seed_entities(
                 if entity_id:
                     local_candidates[entity_id] = max(local_candidates.get(entity_id, 0), 1.0)
         except Exception as e:
-            logger.warning("Keyword search failed: %s", e)
+            logger.warning("Keyword exact search failed: %s", e)
         return local_candidates, time.time() - t0
 
     # Run searches in parallel
-    with Profiler("Parallel Seed Search"), ThreadPoolExecutor(max_workers=4) as executor:
+    with Profiler("Parallel Seed Search"), ThreadPoolExecutor(max_workers=5) as executor:
         futures = {
-            executor.submit(search_topic): "pgvector_topic",
-            executor.submit(search_subtopic): "pgvector_subtopic",
-            executor.submit(search_entity): "falkordb_entity_vector",
-            executor.submit(search_keywords): "falkordb_keyword",
+            executor.submit(search_topic): "pgvector_topic_global",
+            executor.submit(search_subtopic): "pgvector_subtopic_global",
+            executor.submit(search_entity): "falkordb_entity_vector_global",
+            executor.submit(search_keyword_vectors): "pgvector_keyword_local",
+            executor.submit(search_keywords_exact): "falkordb_keyword_exact",
         }
 
         for future in as_completed(futures):
@@ -194,6 +238,7 @@ def get_seed_entities(
             name = record.get("id")
             pagerank = record.get("pagerank", 0.0)
             base_score = candidates.get(name, 0)
+            # Boost score significantly if it came from keyword matches (which usually have high base_score)
             final_score = (base_score * 0.7) + (pagerank * 0.3)
             scored_entities.append((name, final_score))
 
@@ -318,7 +363,6 @@ def _process_graph_results(results: List[Dict[str, Any]], nodes: Dict[str, Any],
                     elif hasattr(candidate_rel, "src_node"):
                         start_id = str(candidate_rel.src_node)
                         end_id = str(candidate_rel.dest_node)
-
                 elif isinstance(candidate_rel, dict):
                     rel_props = candidate_rel.get("properties", {}).copy()
                     if not rel_props:

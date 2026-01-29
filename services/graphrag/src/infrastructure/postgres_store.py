@@ -102,6 +102,28 @@ class PostgresVectorStore:
                     
             return results
 
+    def get_stats(self) -> dict:
+        """Get statistics about the vector store."""
+        self._connect()
+        try:
+            with self.conn.cursor() as cur:
+                # Get total rows
+                cur.execute(f"SELECT COUNT(*) FROM {self.table_name}")
+                count = cur.fetchone()[0]
+                
+                # Get table size
+                cur.execute(f"SELECT pg_size_pretty(pg_total_relation_size('{self.table_name}'))")
+                size = cur.fetchone()[0]
+                
+                return {
+                    "count": count,
+                    "size": size,
+                    "table": self.table_name
+                }
+        except Exception as e:
+            logger.error(f"Failed to get stats: {e}")
+            return {"error": str(e)}
+
     def close(self):
         if self.conn:
             self.conn.close()

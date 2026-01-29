@@ -4,6 +4,9 @@ from typing import List, Optional, Any, Dict
 from ..database import get_db, GraphDB
 
 
+import logging
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 class CypherQuery(BaseModel):
@@ -16,9 +19,45 @@ def execute_query(q: CypherQuery, db: GraphDB = Depends(get_db)):
         return {"error": "Database not connected"}
     
     try:
-        results = db.query(q.query, q.params or {})
-        return {"result": results}
+        logger.info(f"Executing Query: {q.query}")
+        raw_results = db.query(q.query, q.params or {})
+        logger.info(f"Query returned {len(raw_results)} rows.")
+        
+        # Serialize FalkorDB objects (Nodes/Edges) to dicts
+        serialized_results = []
+        for row in raw_results:
+            new_row = {}
+            for col, val in row.items():
+                if hasattr(val, 'labels'): # Node
+                    new_row[col] = {
+                        "id": val.id,
+                        "element_id": str(val.id),
+                        "labels": list(val.labels),
+                        "properties": dict(val.properties)
+                    }
+                elif hasattr(val, 'relation'): # Relationship
+                    # Handle src_node/dest_node being Node objects in newer FalkorDB clients
+                    src = val.src_node.id if hasattr(val.src_node, 'id') else val.src_node
+                    dest = val.dest_node.id if hasattr(val.dest_node, 'id') else val.dest_node
+
+                    new_row[col] = {
+                        "id": val.id,
+                        "relation": val.relation,
+                        "src_node": src,
+                        "dest_node": dest,
+                        "properties": dict(val.properties)
+                    }
+                else:
+                    new_row[col] = val
+            serialized_results.append(new_row)
+        
+        if len(serialized_results) > 0:
+            print(f"Sample First Row: {serialized_results[0]}")
+            
+        return {"result": serialized_results}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 @router.get("/node/{node_id}/expand")
@@ -83,7 +122,7 @@ def expand_node(node_id: str, limit: int = 50, db: GraphDB = Depends(get_db)):
                 r_type = rel.relation
                 r_id = str(rel.id)
                 
-                src_id_int = rel.src_node
+                src_id_int = rel.src_node.id if hasattr(rel.src_node, 'id') else rel.src_node
                 
                 # Check direction relative to n_data (which is 'n' in query)
                 # Note: This logic assumes n_data maps to source_node.id
@@ -230,17 +269,20 @@ def get_shortest_path(source: str, target: str, db: GraphDB = Depends(get_db)):
             
         for r in path_rels:
             # We need start/end node IDs. 
-            # r.src_node and r.dest_node are internal integers.
+            # r.src_node and r.dest_node are internal integers (or Node objects).
             # We need to map them to our string IDs if possible, or use element_id.
             
             # Map internal ID to string ID from our nodes dict
             src_str = None
             tgt_str = None
             
+            r_src = r.src_node.id if hasattr(r.src_node, 'id') else r.src_node
+            r_dest = r.dest_node.id if hasattr(r.dest_node, 'id') else r.dest_node
+            
             for nid, nd in nodes.items():
-                if int(nd['element_id']) == r.src_node:
+                if int(nd['element_id']) == r_src:
                     src_str = nid
-                if int(nd['element_id']) == r.dest_node:
+                if int(nd['element_id']) == r_dest:
                     tgt_str = nid
             
             if src_str and tgt_str:
@@ -273,16 +315,15 @@ def get_sample_graph(limit: int = 50, types: Optional[str] = None, db: GraphDB =
         
         cypher = f"""
         MATCH (n) WHERE ({labels_check})
-        WITH n, rand() as rng ORDER BY rng LIMIT 5
-        MATCH (n)-[r]-(m)
+        OPTIONAL MATCH (n)-[r]-(m)
         RETURN n, r, m
         LIMIT $limit
         """
     else:
+        # User requested: MATCH (n) OPTIONAL MATCH (n)-[e]-(m) RETURN *
         cypher = f"""
-        MATCH (n) 
-        WITH n, rand() as rng ORDER BY rng LIMIT 5
-        MATCH (n)-[r]-(m)
+        MATCH (n)
+        OPTIONAL MATCH (n)-[r]-(m)
         RETURN n, r, m
         LIMIT $limit
         """
@@ -327,7 +368,7 @@ def get_sample_graph(limit: int = 50, types: Optional[str] = None, db: GraphDB =
                 # But Cypher '-(r)-' returns direction.
                 
                 # Correct way using FalkorDB client objects:
-                # rel.src_node -> internal ID
+                # rel.src_node -> internal ID (or Node object)
                 # source_node.id -> internal ID
                 
                 src_id = None
@@ -336,7 +377,9 @@ def get_sample_graph(limit: int = 50, types: Optional[str] = None, db: GraphDB =
                 # Map internal IDs to our string IDs
                 # We know n_data corresponds to source_node, m_data to target_node
                 
-                if rel.src_node == source_node.id:
+                r_src_id = rel.src_node.id if hasattr(rel.src_node, 'id') else rel.src_node
+
+                if r_src_id == source_node.id:
                     src_id = n_data['id']
                     tgt_id = m_data['id']
                 else:
@@ -356,5 +399,16 @@ def get_sample_graph(limit: int = 50, types: Optional[str] = None, db: GraphDB =
             "edges": links
         }
 
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.get("/stats/pgvector")
+def get_pgvector_stats(db: GraphDB = Depends(get_db)):
+    """Get statistics from the pgvector store."""
+    if not db:
+        return {"error": "Database not connected"}
+    
+    try:
+        return db.get_vector_stats()
     except Exception as e:
         return {"error": str(e)}

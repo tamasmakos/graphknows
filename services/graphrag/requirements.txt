@@ -7,10 +7,13 @@ langchain-core
 langfuse
 llama-index-core
 mcp
-langchain-groq
+# langchain-groq  <-- Removed, using native llama-index-llms-groq
 psycopg2-binary
 pgvector
 pydantic-settings
 llama-index-embeddings-huggingface
+llama-index-llms-groq
+llama-index-llms-openai
 torch
 transformers
+tiktoken

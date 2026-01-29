@@ -39,6 +39,15 @@ def run_example():
             print("="*50)
             for step_info in result.get("reasoning_chain", []):
                 print(f"• {step_info}")
+            
+            print("-" * 50)
+            print("[GraphRAG Client] 📡 Streaming server logs for details...")
+            print("[GraphRAG Client] (Press Ctrl+C to stop watching logs)")
+            print("-" * 50)
+            try:
+                subprocess.run(["docker", "compose", "logs", "-f", "graphrag"], check=False)
+            except KeyboardInterrupt:
+                print("\n[GraphRAG Client] Stopped watching logs.")
         else:
             print(f"[GraphRAG Client] ❌ Error: {response.status_code}")
             try:
@@ -48,10 +57,13 @@ def run_example():
                 print(response.text)
             
             print("-" * 50)
-            print("[GraphRAG Client] 🔍 Fetching recent server logs for debugging:")
+            print("[GraphRAG Client] 🔍 Streaming server logs for debugging:")
+            print("[GraphRAG Client] (Press Ctrl+C to stop watching logs)")
             print("-" * 50)
             try:
-                subprocess.run(["docker", "compose", "logs", "--tail=20", "graphrag"], check=False)
+                subprocess.run(["docker", "compose", "logs", "-f", "graphrag"], check=False)
+            except KeyboardInterrupt:
+                print("\n[GraphRAG Client] Stopped watching logs.")
             except Exception as log_err:
                 print(f"Could not fetch logs: {log_err}")
 

@@ -1,5 +1,5 @@
 const AGENT_API = "http://127.0.0.1:8010";
-const MGMT_API = ""; 
+const MGMT_API = "";
 
 // D3 Global State
 let simulation = null;
@@ -17,17 +17,17 @@ let selectedNodes = new Set(); // Stores IDs
 
 // --- Colors ---
 const COLORS = {
-    "TOPIC": "#FF7043",           
-    "SUBTOPIC": "#FFA726",        
-    "ENTITY_CONCEPT": "#AB47BC",  
-    "ONTOLOGY_CLASS": "#7E57C2",  
-    "PLACE": "#42A5F5",           
-    "CONTEXT": "#26C6DA",         
-    "CHUNK": "#78909C",           
-    "SEGMENT": "#66BB6A",         
-    "EPISODE": "#9CCC65",         
-    "CONVERSATION": "#EC407A",    
-    "DAY": "#8D6E63",             
+    "TOPIC": "#FF7043",
+    "SUBTOPIC": "#FFA726",
+    "ENTITY_CONCEPT": "#AB47BC",
+    "ONTOLOGY_CLASS": "#7E57C2",
+    "PLACE": "#42A5F5",
+    "CONTEXT": "#26C6DA",
+    "CHUNK": "#78909C",
+    "SEGMENT": "#66BB6A",
+    "EPISODE": "#9CCC65",
+    "CONVERSATION": "#EC407A",
+    "DAY": "#8D6E63",
     "DEFAULT": "#8e918f"
 };
 
@@ -40,8 +40,9 @@ function getColor(d) {
 
 document.addEventListener('DOMContentLoaded', () => {
     initD3Graph();
-    fetchSampleGraph(); 
-    fetchNodeTypes(); 
+    // fetchSampleGraph(); // Disabled preloading
+    fetchNodeTypes();
+    fetchPgStats();
 });
 
 // --- Explorer & Controls ---
@@ -57,12 +58,32 @@ function toggleExplorer() {
     }
 }
 
+async function fetchPgStats() {
+    try {
+        const res = await fetch(`/api/graph/stats/pgvector`);
+        const data = await res.json();
+
+        if (data.error) {
+            console.error("PG Stats error:", data.error);
+            return;
+        }
+
+        document.getElementById('pg-count').innerText = data.row_count || 0;
+        document.getElementById('pg-size').innerText = data.table_size || '0 B';
+
+    } catch (e) {
+        console.error("Failed to fetch PG stats", e);
+    }
+}
+
 async function fetchNodeTypes() {
     try {
+        const container = document.getElementById('type-filters');
+        if (!container) return;
+
         const res = await fetch(`/api/graph/labels`);
         const data = await res.json();
-        
-        const container = document.getElementById('type-filters');
+
         if (data.labels && data.labels.length > 0) {
             container.innerHTML = data.labels.map(label => `
                 <label class="flex items-center gap-2 cursor-pointer group">
@@ -75,25 +96,26 @@ async function fetchNodeTypes() {
         }
     } catch (e) {
         console.error("Failed to fetch types", e);
-        document.getElementById('type-filters').innerHTML = '<div class="text-xs text-red-400">Error loading types</div>';
+        const container = document.getElementById('type-filters');
+        if (container) container.innerHTML = '<div class="text-xs text-red-400">Error loading types</div>';
     }
 }
 
 async function fetchSampleWithFilters() {
     const checkboxes = document.querySelectorAll('#type-filters input[type="checkbox"]:checked');
     const types = Array.from(checkboxes).map(cb => cb.value).join(',');
-    
+
     // Clear graph for fresh view
     updateGraphData({ nodes: [], links: [] }, true);
-    
+
     try {
         const url = `${MGMT_API}/api/graph/sample?limit=50${types ? `&types=${encodeURIComponent(types)}` : ''}`;
         const res = await fetch(url);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        
+
         if (data.edges) data.links = data.edges;
-        
+
         updateGraphData(data);
     } catch (e) {
         console.error("Fetch sample failed", e);
@@ -101,28 +123,111 @@ async function fetchSampleWithFilters() {
     }
 }
 
-async function runPipeline() {
-    const btn = document.getElementById('btn-pipeline');
-    if (btn.disabled) return;
-    
-    if (!confirm("Start Knowledge Graph Generation Pipeline? This may take a while.")) return;
-    
-    btn.disabled = true;
-    btn.innerHTML = '<span class="w-4 h-4 border-2 border-[#a8c7fa] border-t-transparent rounded-full animate-spin"></span>';
-    
+
+
+async function runCypherQuery(query) {
+    if (!query) return;
+
+    // Clear graph for fresh view
+    updateGraphData({ nodes: [], links: [] }, true);
+
     try {
-        const res = await fetch(`/api/pipeline/run`, { method: 'POST' });
+        const res = await fetch(`/api/graph/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: query })
+        });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Pipeline failed to start");
-        
-        alert("Pipeline started! Check server logs for progress. The graph will update automatically when you refresh.");
+        if (data.error) throw new Error(data.error);
+
+        // Process results to match graph format
+        // Result is list of dicts. We need to extract nodes and rels.
+
+        const nodes = new Map();
+        const links = [];
+
+        data.result.forEach(row => {
+            Object.values(row).forEach(item => {
+                if (!item) return;
+
+                // If item looks like a node (has labels, properties, id)
+                if (item.labels && item.id !== undefined) {
+                    // Normalize
+                    const nid = item.properties && item.properties.id ? item.properties.id : item.id.toString();
+                    nodes.set(nid, {
+                        id: nid,
+                        labels: item.labels,
+                        properties: item.properties || {},
+                        element_id: item.id.toString()
+                    });
+                }
+
+                // If item looks like a relationship (has relation, src_node, dest_node)
+                if (item.relation && item.src_node !== undefined) {
+                    links.push(item);
+                }
+            });
+        });
+
+        // Second pass for links to resolve IDs
+        const finalLinks = [];
+        links.forEach(l => {
+            // Find source/target strings from nodes map based on internal IDs
+            let source = null;
+            let target = null;
+
+            for (const [nid, node] of nodes.entries()) {
+                if (node.element_id === l.src_node.toString()) source = nid;
+                if (node.element_id === l.dest_node.toString()) target = nid;
+            }
+
+            if (source && target) {
+                finalLinks.push({
+                    id: l.id.toString(),
+                    source: source,
+                    target: target,
+                    type: l.relation,
+                    properties: l.properties || {}
+                });
+            }
+        });
+
+        const graphData = {
+            nodes: Array.from(nodes.values()),
+            edges: finalLinks
+        };
+
+        updateGraphData(graphData);
+        alert(`Loaded ${graphData.nodes.length} nodes and ${graphData.edges.length} edges.`);
+
     } catch (e) {
-        alert("Error: " + e.message);
-    } finally {
-        setTimeout(() => {
-            btn.disabled = false;
-            btn.innerHTML = '<span class="material-icons-round">play_arrow</span>';
-        }, 5000);
+        console.error("Query failed", e);
+        alert("Query failed: " + e.message);
+    }
+}
+
+// function runLimitedSample() { ... } replaced below
+async function runLimitedSample() {
+    const limit = document.getElementById('query-limit').value || 50;
+
+    // Clear graph for fresh view
+    updateGraphData({ nodes: [], links: [] }, true);
+
+    try {
+        const res = await fetch(`/api/graph/sample?limit=${limit}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        if (data.edges) data.links = data.edges;
+
+        updateGraphData(data);
+
+        // Optional: show stats in UI instead of alert
+        // document.getElementById('stat-nodes').innerText = data.nodes.length; // updateGraphData does this
+
+    } catch (e) {
+        console.error("Failed to load sample", e);
+        alert("Failed to load sample: " + e.message);
     }
 }
 
@@ -140,7 +245,7 @@ async function sendMessage() {
 
     addMessage('user', text);
     input.value = '';
-    
+
     status.classList.remove('hidden');
     status.classList.add('flex');
     const useAgent = document.getElementById('use-agent').checked;
@@ -148,7 +253,7 @@ async function sendMessage() {
     try {
         const payload = {
             query: text,
-            messages: chatHistory, 
+            messages: chatHistory,
             use_agent: useAgent
         };
 
@@ -162,12 +267,12 @@ async function sendMessage() {
         const data = await response.json();
 
         addMessage('assistant', data.answer, data);
-        
+
         if (data.graph_data && data.graph_data.nodes.length > 0) {
             // Clear previous graph and show ONLY the context
             updateGraphData(data.graph_data, true);
         }
-        
+
         chatHistory.push({ role: 'user', content: text });
         chatHistory.push({ role: 'assistant', content: data.answer });
 
@@ -181,19 +286,19 @@ async function sendMessage() {
 
 function addMessage(role, content, data = null) {
     const container = document.getElementById('chat-messages');
-    
+
     if (container.children.length === 1 && container.children[0].innerText.includes("explore")) {
         container.innerHTML = '';
     }
 
     const wrapper = document.createElement('div');
     wrapper.className = `flex w-full mb-4 ${role === 'user' ? 'justify-end' : 'justify-start'}`;
-    
+
     const isUser = role === 'user';
-    const bubbleClass = isUser 
-        ? 'bg-[#0842a0] text-[#d6e3ff] rounded-2xl rounded-tr-sm' 
+    const bubbleClass = isUser
+        ? 'bg-[#0842a0] text-[#d6e3ff] rounded-2xl rounded-tr-sm'
         : 'bg-[#333537] text-[#e3e3e3] rounded-2xl rounded-tl-sm border border-[#444746]';
-        
+
     let html = `
         <div class="max-w-[90%] px-4 py-3 shadow-sm ${bubbleClass} text-sm leading-relaxed">
             <div>${content}</div>
@@ -201,9 +306,48 @@ function addMessage(role, content, data = null) {
 
     if (data) {
         html += `<div class="mt-2 pt-2 border-t border-[#444746]/50 space-y-2">`;
-        
-        // Execution Time
-        if (data.execution_time) {
+
+        // Execution Time & Detailed Timings
+        if (data.step_timings) {
+            const totalTime = data.step_timings.synthesize_answer
+                ? (data.execution_time || Object.values(data.step_timings).reduce((a, b) => a + b, 0))
+                : data.execution_time;
+
+            html += `
+                <div class="text-[10px] text-[#c4c7c5] flex flex-col gap-2 mt-2 bg-[#28292a] p-2 rounded border border-[#444746]/50">
+                    <div class="flex items-center justify-between pb-1 border-b border-[#444746]/50 mb-1">
+                        <span class="font-bold text-[#e3e3e3] flex items-center gap-1"><span class="material-icons-round text-[12px]">timer</span> Performance Metrics</span>
+                        <span class="font-mono text-[#a8c7fa]">${totalTime ? totalTime.toFixed(2) : '0.00'}s</span>
+                    </div>
+                    <div class="space-y-1.5">
+             `;
+
+            // Sort by time desc
+            const sortedTimings = Object.entries(data.step_timings).sort((a, b) => b[1] - a[1]);
+            const maxTime = sortedTimings.length > 0 ? sortedTimings[0][1] : 1;
+
+            sortedTimings.forEach(([step, time]) => {
+                const width = (time / totalTime) * 100;
+                // Color mapping for known steps
+                let barColor = '#444746';
+                if (step.includes('extract')) barColor = '#FF7043';
+                if (step.includes('seed')) barColor = '#AB47BC';
+                if (step.includes('expand')) barColor = '#42A5F5';
+                if (step.includes('synthesize')) barColor = '#9CCC65';
+
+                html += `
+                <div class="flex flex-col gap-0.5">
+                    <div class="flex justify-between items-center text-[9px] text-[#8e918f]">
+                        <span class="uppercase tracking-wider">${step.replace(/_/g, ' ')}</span>
+                        <span class="font-mono text-[#c4c7c5]">${time.toFixed(3)}s</span>
+                    </div>
+                    <div class="h-1.5 w-full bg-[#1e1f20] rounded-full overflow-hidden">
+                        <div class="h-full rounded-full" style="width: ${Math.min(width, 100)}%; background-color: ${barColor}"></div>
+                    </div>
+                </div>`;
+            });
+            html += `</div></div>`;
+        } else if (data.execution_time) {
             html += `<div class="text-[10px] text-[#c4c7c5] flex items-center gap-1"><span class="material-icons-round text-[10px]">timer</span> ${data.execution_time.toFixed(2)}s</div>`;
         }
 
@@ -227,13 +371,28 @@ function addMessage(role, content, data = null) {
                 </div>
             `;
         }
-        
-        if (data.full_prompt) {
-             const promptId = `prompt-${Date.now()}`;
-             html += `
+
+        // Full Context Display
+        if (data.context) {
+            const contextId = `ctx-${Date.now()}`;
+            html += `
                 <div class="mt-2">
-                    <button onclick="document.getElementById('${promptId}').classList.toggle('hidden')" class="text-[10px] text-[#a8c7fa] hover:text-[#d6e3ff] flex items-center gap-1 cursor-pointer">
-                        <span class="material-icons-round text-[12px]">code</span> View Prompt Context
+                    <button onclick="document.getElementById('${contextId}').classList.toggle('hidden')" class="text-[10px] text-[#a8c7fa] hover:text-[#d6e3ff] flex items-center gap-1 cursor-pointer w-full text-left">
+                        <span class="material-icons-round text-[12px]">description</span> View Retrieved Context
+                    </button>
+                    <div id="${contextId}" class="hidden mt-2 p-2 bg-[#1e1f20] rounded border border-[#444746] text-[10px] font-mono text-[#c4c7c5] whitespace-pre-wrap overflow-x-auto max-h-60 scrollbar-thin">
+                        ${data.context.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                    </div>
+                </div>
+             `;
+        }
+
+        if (data.full_prompt) {
+            const promptId = `prompt-${Date.now()}`;
+            html += `
+                <div class="mt-1">
+                    <button onclick="document.getElementById('${promptId}').classList.toggle('hidden')" class="text-[10px] text-[#8e918f] hover:text-[#c4c7c5] flex items-center gap-1 cursor-pointer w-full text-left">
+                        <span class="material-icons-round text-[12px]">code</span> View Full Prompt
                     </button>
                     <div id="${promptId}" class="hidden mt-2 p-2 bg-[#1e1f20] rounded border border-[#444746] text-[10px] font-mono text-[#c4c7c5] whitespace-pre-wrap overflow-x-auto max-h-60 scrollbar-thin">
                         ${data.full_prompt.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
@@ -264,7 +423,7 @@ function initD3Graph() {
         .on("zoom", (event) => {
             transformState = event.transform;
             container.attr("transform", event.transform);
-            ticked(); 
+            ticked();
         });
 
     svg = d3.select("#graph-container").append("svg")
@@ -292,7 +451,7 @@ function initD3Graph() {
     container.append("g").attr("class", "link-labels"); // New group for edge labels
     container.append("g").attr("class", "nodes");
     container.append("g").attr("class", "labels");
-    
+
     window.addEventListener('resize', () => {
         const w = containerEl.clientWidth;
         const h = containerEl.clientHeight;
@@ -323,13 +482,13 @@ function updateGraphData(data, reset = false) {
     if (data.edges) data.links = data.edges;
 
     const nodeMap = new Map(graphData.nodes.map(n => [n.id, n]));
-    
+
     let newNodesCount = 0;
     data.nodes.forEach(n => {
-        if (!n || !n.id) return; 
+        if (!n || !n.id) return;
         if (!nodeMap.has(n.id)) {
             // Init pos: Random scatter near center to help simulation
-            n.x = (Math.random() - 0.5) * 50; 
+            n.x = (Math.random() - 0.5) * 50;
             n.y = (Math.random() - 0.5) * 50;
             nodeMap.set(n.id, n);
             newNodesCount++;
@@ -342,9 +501,9 @@ function updateGraphData(data, reset = false) {
     data.links.forEach(l => {
         const sid = typeof l.source === 'object' ? l.source.id : l.source;
         const tid = typeof l.target === 'object' ? l.target.id : l.target;
-        
+
         if (!sid || !tid) return;
-        
+
         if (nodeMap.has(sid) && nodeMap.has(tid)) {
             const id = `${sid}-${tid}-${l.type || 'rel'}`;
             if (!linkMap.has(id)) {
@@ -362,7 +521,7 @@ function updateGraphData(data, reset = false) {
     document.getElementById('stat-edges').innerText = graphData.links.length;
 
     renderGraph();
-    
+
     if (newNodesCount > 0 || reset) {
         simulation.alpha(1).restart();
     }
@@ -375,28 +534,29 @@ function renderGraph() {
         .data(graphData.links, d => getLinkId(d));
 
     linkElements.exit().remove();
-    
+
     const linkEnter = linkElements.enter().append("line")
         .attr("class", "link")
         .attr("stroke-width", 1)
-        .attr("stroke", "#444746");
-    
+        .attr("stroke", "#444746")
+        .on("click", (event, d) => handleEdgeClick(event, d));
+
     linkElements = linkEnter.merge(linkElements);
 
     // Link Labels
     const linkLabelsGroup = container.select(".link-labels");
     linkLabelElements = linkLabelsGroup.selectAll("text")
         .data(graphData.links, d => getLinkId(d));
-    
+
     linkLabelElements.exit().remove();
-    
+
     const linkLabelEnter = linkLabelElements.enter().append("text")
         .text(d => d.type)
         .attr("text-anchor", "middle")
         .attr("font-size", "8px")
         .attr("fill", "#8e918f")
         .attr("dy", -3); // Offset above line
-        
+
     linkLabelElements = linkLabelEnter.merge(linkLabelElements);
 
     // Nodes
@@ -417,20 +577,20 @@ function renderGraph() {
         .on("click", (event, d) => handleNodeClick(event, d))
         .on("mouseover", (event, d) => showTooltip(event, d))
         .on("mouseout", hideTooltip);
-    
+
     nodeEnter.transition().duration(500).attr("r", 6);
-    
+
     nodeElements = nodeEnter.merge(nodeElements);
-    
+
     updateSelectionVisuals();
 
     // Labels (Nodes)
     const labelsGroup = container.select(".labels");
     textElements = labelsGroup.selectAll("text")
         .data(graphData.nodes, d => d.id);
-        
+
     textElements.exit().remove();
-    
+
     const textEnter = textElements.enter().append("text")
         .attr("dy", 15)
         .attr("text-anchor", "middle")
@@ -460,14 +620,14 @@ function ticked() {
         .attr("transform", d => {
             // Optional: Rotate text to align with line
             // For now, keep horizontal for readability
-            return ""; 
+            return "";
         })
         .attr("opacity", transformState.k > 1.2 ? 1 : 0); // Hide when zoomed out
 
     nodeElements
         .attr("cx", d => d.x)
         .attr("cy", d => d.y);
-        
+
     const k = transformState.k;
     textElements
         .attr("x", d => d.x)
@@ -504,14 +664,20 @@ function handleNodeClick(event, d) {
             selectedNodes.add(d.id);
         }
         updateSelectionVisuals();
-        return; 
+        return;
     }
 
     selectedNodes.clear();
     selectedNodes.add(d.id);
     updateSelectionVisuals();
-    
+
     showNodeDetails(d);
+}
+
+function handleEdgeClick(event, d) {
+    selectedNodes.clear();
+    updateSelectionVisuals();
+    showEdgeDetails(d);
 }
 
 function clearSelection() {
@@ -531,19 +697,20 @@ function updateSelectionVisuals() {
 function showNodeDetails(d) {
     const panel = document.getElementById('node-details');
     panel.classList.remove('translate-x-[110%]');
-    
+    document.getElementById('expand-button-container').classList.remove('hidden');
+
     document.getElementById('detail-title').innerText = d.properties.name || d.id;
     const content = document.getElementById('detail-content');
     const type = d.properties.ontology_class || d.labels.join(', ');
-    
+
     let html = `<div class="mb-4"><span class="px-2 py-1 rounded bg-[#333537] text-[#a8c7fa] text-xs font-bold uppercase tracking-wider">${type}</span></div>`;
-    
+
     Object.entries(d.properties).forEach(([k, v]) => {
-        if (k !== 'name' && k !== 'id' && k !== 'ontology_class') {
+        if (!['embedding', 'embeddings'].includes(k.toLowerCase())) {
             html += `
                 <div class="mb-3 border-b border-[#444746]/50 pb-2 last:border-0">
                     <div class="text-[#8e918f] text-[10px] uppercase font-bold mb-1">${k}</div>
-                    <div class="text-[#e3e3e3] text-sm break-words">${v}</div>
+                    <div class="text-[#e3e3e3] text-sm break-words">${typeof v === 'object' ? JSON.stringify(v) : v}</div>
                 </div>`;
         }
     });
@@ -551,12 +718,50 @@ function showNodeDetails(d) {
     window._currentNodeId = d.id;
 }
 
+function showEdgeDetails(d) {
+    const panel = document.getElementById('node-details');
+    panel.classList.remove('translate-x-[110%]');
+    document.getElementById('expand-button-container').classList.add('hidden');
+
+    document.getElementById('detail-title').innerText = d.type || 'Relationship';
+    const content = document.getElementById('detail-content');
+
+    let html = `
+        <div class="mb-4 flex flex-col gap-2 p-2 bg-[#28292a] rounded border border-[#444746]">
+            <div class="flex flex-col">
+                <span class="text-[9px] uppercase font-bold text-[#8e918f]">Source</span>
+                <span class="text-xs text-[#a8c7fa] truncate">${d.source.properties?.name || d.source.id}</span>
+            </div>
+            <div class="flex items-center justify-center -my-1">
+                <span class="material-icons-round text-xs text-[#444746]">arrow_downward</span>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-[9px] uppercase font-bold text-[#8e918f]">Target</span>
+                <span class="text-xs text-[#a8c7fa] truncate">${d.target.properties?.name || d.target.id}</span>
+            </div>
+        </div>
+    `;
+
+    if (d.properties) {
+        Object.entries(d.properties).forEach(([k, v]) => {
+            if (!['embedding', 'embeddings'].includes(k.toLowerCase())) {
+                html += `
+                    <div class="mb-3 border-b border-[#444746]/50 pb-2 last:border-0">
+                        <div class="text-[#8e918f] text-[10px] uppercase font-bold mb-1">${k}</div>
+                        <div class="text-[#e3e3e3] text-sm break-words">${typeof v === 'object' ? JSON.stringify(v) : v}</div>
+                    </div>`;
+            }
+        });
+    }
+    content.innerHTML = html;
+}
+
 function closeDetails() {
     document.getElementById('node-details').classList.add('translate-x-[110%]');
 }
 
 async function expandSelectedNode() {
-    const nodeId = window._currentNodeId; 
+    const nodeId = window._currentNodeId;
     if (!nodeId) return;
     try {
         const res = await fetch(`/api/graph/node/${encodeURIComponent(nodeId)}/expand`);
@@ -589,44 +794,7 @@ function hideTooltip() {
     document.getElementById('graph-tooltip').style.opacity = 0;
 }
 
-// Search
-async function searchNodes() {
-    const q = document.getElementById('graph-search').value;
-    if (!q) return;
-    
-    const res = await fetch(`/api/graph/search?q=${encodeURIComponent(q)}`);
-    const data = await res.json();
-    
-    const resultsDiv = document.getElementById('search-results');
-    resultsDiv.innerHTML = '';
-    resultsDiv.classList.remove('hidden');
-    resultsDiv.classList.add('flex');
-    
-    data.nodes.forEach(node => {
-        const btn = document.createElement('button');
-        btn.className = "text-left px-4 py-3 text-sm text-[#e3e3e3] hover:bg-[#333537] border-b border-[#444746] last:border-0 w-full flex items-center gap-3 transition-colors";
-        const label = node.properties.name || node.id;
-        const color = getColor(node);
-        
-        btn.innerHTML = `<span class="w-3 h-3 rounded-full shrink-0" style="background-color: ${color}"></span><div class="flex-1 truncate"><span class="font-medium">${label}</span></div>`;
-        
-        btn.onclick = () => {
-            const existing = graphData.nodes.find(n => n.id === node.id);
-            if (existing) {
-                selectedNodes.clear();
-                selectedNodes.add(existing.id);
-                updateSelectionVisuals();
-                showNodeDetails(existing);
-            } else {
-                window._currentNodeId = node.id;
-                expandSelectedNode();
-            }
-            resultsDiv.classList.add('hidden');
-            document.getElementById('graph-search').value = '';
-        };
-        resultsDiv.appendChild(btn);
-    });
-}
+
 
 async function fetchSampleGraph() {
     try {
