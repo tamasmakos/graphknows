@@ -7,7 +7,6 @@ langchain-core
 langfuse
 llama-index-core
 mcp
-# langchain-groq  <-- Removed, using native llama-index-llms-groq
 psycopg2-binary
 pgvector
 pydantic-settings
@@ -17,3 +16,5 @@ llama-index-llms-openai
 torch
 transformers
 tiktoken
+langfuse
+openinference-instrumentation-llama-index
