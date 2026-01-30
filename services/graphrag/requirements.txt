@@ -18,3 +18,6 @@ transformers
 tiktoken
 langfuse
 openinference-instrumentation-llama-index
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+opentelemetry-api

@@ -22,6 +22,11 @@ class AppSettings(BaseSettings):
 
     openai_api_key: Optional[str] = None
     
+    # Langfuse
+    langfuse_public_key: Optional[str] = None
+    langfuse_secret_key: Optional[str] = None
+    langfuse_host: str = "http://localhost:3000"
+    
     class Config:
         env_file = ".env"
         extra = "ignore"

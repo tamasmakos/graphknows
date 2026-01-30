@@ -12,3 +12,4 @@ dist/
 .gemini
 output
 .env
+langfuse

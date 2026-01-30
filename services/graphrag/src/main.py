@@ -21,6 +21,14 @@ from src.infrastructure.config import get_app_config
 from src.infrastructure.graph_db import get_database_client, GraphDB
 from src.workflow.graph_workflow import GraphWorkflow
 
+import base64
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -32,11 +40,39 @@ logger.info("KG Agent initialized. Logging set to INFO level.")
 
 # Initialize Langfuse Tracing
 try:
-    from langfuse.llama_index import LlamaIndexInstrumentor
-    LlamaIndexInstrumentor().instrument()
-    logger.info("Langfuse instrumentation initialized.")
+    config = get_app_config()
+    if config.langfuse_public_key and config.langfuse_secret_key:
+        # Set environment variables just in case
+        os.environ["LANGFUSE_PUBLIC_KEY"] = config.langfuse_public_key
+        os.environ["LANGFUSE_SECRET_KEY"] = config.langfuse_secret_key
+        os.environ["LANGFUSE_HOST"] = config.langfuse_host
+        
+        # Configure OpenTelemetry to export to Langfuse
+        auth_str = f"{config.langfuse_public_key}:{config.langfuse_secret_key}"
+        auth_bytes = base64.b64encode(auth_str.encode()).decode()
+        
+        # Langfuse OTLP HTTP endpoint
+        endpoint = f"{config.langfuse_host}/api/public/otel/v1/traces"
+        logger.info(f"Langfuse Tracing Configured. Host: {config.langfuse_host}, Endpoint: {endpoint}")
+        
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers={"Authorization": f"Basic {auth_bytes}"}
+        )
+        
+        resource = Resource(attributes={"service.name": "graphrag-service"})
+        tracer_provider = TracerProvider(resource=resource)
+        tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+        
+        trace.set_tracer_provider(tracer_provider)
+        
+        LlamaIndexInstrumentor().instrument()
+        
+        logger.info(f"Langfuse instrumentation enabled (exporting to {endpoint})")
+    else:
+        logger.warning("Langfuse keys not found in environment. Tracing disabled.")
 except ImportError:
-    logger.warning("langfuse-llama-index not found. Tracing disabled.")
+    logger.warning("openinference-instrumentation-llama-index not found. Tracing disabled.")
 except Exception as e:
     logger.error(f"Failed to initialize Langfuse instrumentation: {e}")
 
