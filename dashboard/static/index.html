@@ -106,31 +106,56 @@
         </header>
 
         <!-- Stats -->
-        <div class="px-5 py-4 border-b border-[#444746]/50">
-            <div class="grid grid-cols-2 gap-4">
-                <div class="bg-[#28292a] rounded-lg p-3 border border-[#444746]">
-                    <div class="text-[10px] uppercase font-bold text-[#8e918f] mb-1">Nodes</div>
-                    <div class="text-xl font-light text-[#e3e3e3]" id="stat-nodes">0</div>
-                </div>
-                <div class="bg-[#28292a] rounded-lg p-3 border border-[#444746]">
-                    <div class="text-[10px] uppercase font-bold text-[#8e918f] mb-1">Edges</div>
-                    <div class="text-xl font-light text-[#e3e3e3]" id="stat-edges">0</div>
+        <div class="px-5 py-4 border-b border-[#444746]/50 space-y-4">
+
+            <!-- Current View Stats -->
+            <div>
+                <div class="text-[10px] uppercase font-bold text-[#8e918f] mb-2 tracking-wider">Current View</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="bg-[#28292a] rounded p-2 border border-[#444746] flex flex-col">
+                        <span class="text-[10px] text-[#c4c7c5]">Nodes</span>
+                        <span class="text-lg font-light text-[#e3e3e3] leading-tight" id="stat-nodes">0</span>
+                    </div>
+                    <div class="bg-[#28292a] rounded p-2 border border-[#444746] flex flex-col">
+                        <span class="text-[10px] text-[#c4c7c5]">Edges</span>
+                        <span class="text-lg font-light text-[#e3e3e3] leading-tight" id="stat-edges">0</span>
+                    </div>
                 </div>
             </div>
-            <!-- PGVector Stats -->
-            <div class="mt-4 bg-[#28292a] rounded-lg p-3 border border-[#444746]">
+
+            <!-- Database Stats -->
+            <div>
                 <div class="flex items-center justify-between mb-2">
-                    <div class="text-[10px] uppercase font-bold text-[#8e918f]">PGVector</div>
+                    <span class="text-[10px] uppercase font-bold text-[#8e918f] tracking-wider">Total Database</span>
                     <button onclick="fetchPgStats()" class="text-[#a8c7fa] hover:text-[#d6e3ff] cursor-pointer"
-                        title="Refresh PG Stats">
+                        title="Refresh DB Stats">
                         <span class="material-icons-round text-[14px]">refresh</span>
                     </button>
                 </div>
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                    <div><span class="text-[#c4c7c5] block">Vectors</span><span class="text-[#e3e3e3] font-mono"
-                            id="pg-count">-</span></div>
-                    <div><span class="text-[#c4c7c5] block">Size</span><span class="text-[#e3e3e3] font-mono"
-                            id="pg-size">-</span></div>
+
+                <div class="space-y-2">
+                    <!-- FalkorDB -->
+                    <div class="bg-[#28292a] rounded p-2 border border-[#444746]">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-[10px] font-bold text-[#a8c7fa]">FalkorDB</span>
+                            <span class="text-[10px] font-mono text-[#c4c7c5]" id="falkor-size">-</span>
+                        </div>
+                        <div class="flex gap-3 text-[10px] text-[#8e918f]">
+                            <span>Nodes: <span class="text-[#e3e3e3] font-mono" id="db-nodes">-</span></span>
+                            <span>Edges: <span class="text-[#e3e3e3] font-mono" id="db-edges">-</span></span>
+                        </div>
+                    </div>
+
+                    <!-- PGVector -->
+                    <div class="bg-[#28292a] rounded p-2 border border-[#444746]">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-[10px] font-bold text-[#a8c7fa]">PGVector</span>
+                            <span class="text-[10px] font-mono text-[#c4c7c5]" id="pg-size">-</span>
+                        </div>
+                        <div class="text-[10px] text-[#8e918f]">
+                            <span>Vectors: <span class="text-[#e3e3e3] font-mono" id="pg-count">-</span></span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

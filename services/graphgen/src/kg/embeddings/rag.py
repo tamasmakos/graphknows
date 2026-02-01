@@ -87,6 +87,17 @@ def _get_embedding_text_for_node(
             return content[:2000] if len(content) > 2000 else content
         return None
     
+    elif node_type == 'SEGMENT':
+        # Segment (Time of Day): name + date
+        text_parts = []
+        if 'name' in node_data:
+            text_parts.append(node_data['name'])
+        if 'date' in node_data:
+            text_parts.append(f"Date: {node_data['date']}")
+        if 'time_of_day' in node_data:
+            text_parts.append(f"Time: {node_data['time_of_day']}")
+        return ' '.join(text_parts) if text_parts else None
+
     # DAY type - typically not embedded (date-based container)
     elif node_type == 'DAY':
         # Could embed date metadata if needed
@@ -123,7 +134,7 @@ def generate_rag_embeddings(
     
     # Default to all supported node types
     if node_types is None:
-        node_types = ['ENTITY_CONCEPT', 'TOPIC', 'SUBTOPIC', 'CHUNK', 'EPISODE']
+        node_types = ['ENTITY_CONCEPT', 'TOPIC', 'SUBTOPIC', 'CHUNK', 'EPISODE', 'SEGMENT']
     
     logger.info(f"Generating RAG embeddings for node types: {node_types}")
     

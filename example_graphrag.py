@@ -35,19 +35,25 @@ def run_example():
             print(result.get("answer"))
             
             print("\n" + "="*50)
+            print("📜 CONTEXT SAVED TO context_dump.txt")
+            print("="*50)
+            with open("context_dump.txt", "w", encoding="utf-8") as f:
+                f.write(result.get("context", "") or "")
+
+            print("\n" + "="*50)
             print("🧠 REASONING TRACE")
             print("="*50)
             for step_info in result.get("reasoning_chain", []):
                 print(f"• {step_info}")
             
-            print("-" * 50)
-            print("[GraphRAG Client] 📡 Streaming server logs for details...")
-            print("[GraphRAG Client] (Press Ctrl+C to stop watching logs)")
-            print("-" * 50)
-            try:
-                subprocess.run(["docker", "compose", "logs", "-f", "graphrag"], check=False)
-            except KeyboardInterrupt:
-                print("\n[GraphRAG Client] Stopped watching logs.")
+            # print("-" * 50)
+            # print("[GraphRAG Client] 📡 Streaming server logs for details...")
+            # print("[GraphRAG Client] (Press Ctrl+C to stop watching logs)")
+            # print("-" * 50)
+            # try:
+            #     subprocess.run(["docker", "compose", "logs", "-f", "graphrag"], check=False)
+            # except KeyboardInterrupt:
+            #     print("\n[GraphRAG Client] Stopped watching logs.")
         else:
             print(f"[GraphRAG Client] ❌ Error: {response.status_code}")
             try:
@@ -56,16 +62,16 @@ def run_example():
             except:
                 print(response.text)
             
-            print("-" * 50)
-            print("[GraphRAG Client] 🔍 Streaming server logs for debugging:")
-            print("[GraphRAG Client] (Press Ctrl+C to stop watching logs)")
-            print("-" * 50)
-            try:
-                subprocess.run(["docker", "compose", "logs", "-f", "graphrag"], check=False)
-            except KeyboardInterrupt:
-                print("\n[GraphRAG Client] Stopped watching logs.")
-            except Exception as log_err:
-                print(f"Could not fetch logs: {log_err}")
+            # print("-" * 50)
+            # print("[GraphRAG Client] 🔍 Streaming server logs for debugging:")
+            # print("[GraphRAG Client] (Press Ctrl+C to stop watching logs)")
+            # print("-" * 50)
+            # try:
+            #     subprocess.run(["docker", "compose", "logs", "-f", "graphrag"], check=False)
+            # except KeyboardInterrupt:
+            #     print("\n[GraphRAG Client] Stopped watching logs.")
+            # except Exception as log_err:
+            #     print(f"Could not fetch logs: {log_err}")
 
     except Exception as e:
         print(f"[GraphRAG Client] ❌ Execution failed: {e}")

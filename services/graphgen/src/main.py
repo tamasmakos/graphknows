@@ -23,6 +23,7 @@ app = FastAPI(title="GraphGen Service")
 class PipelineRunRequest(BaseModel):
     input_dir: Optional[str] = None
     clean_database: bool = True
+    skip_communities: bool = False
 
 PIPELINE_LOCK = asyncio.Lock()
 
@@ -63,7 +64,9 @@ async def run_pipeline_task(request: PipelineRunRequest):
             pipeline = KnowledgePipeline(
                 settings=settings,
                 uploader=uploader,
-                extractor=extractor
+                extractor=extractor,
+                clean_database=request.clean_database,
+                run_communities=not request.skip_communities
             )
 
             # 4. Run
@@ -76,6 +79,31 @@ async def run_pipeline_task(request: PipelineRunRequest):
 
         except Exception as e:
             logger.error(f"GraphGen Pipeline Failed: {e}", exc_info=True)
+
+from .simulation.orchestrator import LifeSimulation
+
+class SimulationRunRequest(BaseModel):
+    days: int = 3
+    start_date: str = "2025-01-01"
+
+async def run_simulation_task(request: SimulationRunRequest):
+    async with PIPELINE_LOCK:
+        logger.info(f"Starting Life Simulation for {request.days} days from {request.start_date}...")
+        try:
+            # Instantiate and run simulation
+            sim = LifeSimulation(request.days, request.start_date)
+            await sim.run()
+            logger.info("Life Simulation Completed Successfully.")
+        except Exception as e:
+            logger.error(f"Life Simulation Failed: {e}", exc_info=True)
+
+@app.post("/simulate")
+async def run_simulation(request: SimulationRunRequest, background_tasks: BackgroundTasks):
+    if PIPELINE_LOCK.locked():
+        raise HTTPException(status_code=409, detail="Pipeline (or Simulation) is already running")
+    
+    background_tasks.add_task(run_simulation_task, request)
+    return {"status": "accepted", "message": "Life Simulation started in background"}
 
 @app.post("/run")
 async def run_pipeline(request: PipelineRunRequest, background_tasks: BackgroundTasks):

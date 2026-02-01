@@ -64,15 +64,30 @@ async function fetchPgStats() {
         const data = await res.json();
 
         if (data.error) {
-            console.error("PG Stats error:", data.error);
+            console.error("Stats error:", data.error);
             return;
         }
 
-        document.getElementById('pg-count').innerText = data.row_count || 0;
-        document.getElementById('pg-size').innerText = data.table_size || '0 B';
+        // FalkorDB
+        if (data.falkordb) {
+            const n = document.getElementById('db-nodes');
+            const e = document.getElementById('db-edges');
+            const s = document.getElementById('falkor-size');
+            if (n) n.innerText = data.falkordb.nodes || 0;
+            if (e) e.innerText = data.falkordb.edges || 0;
+            if (s) s.innerText = data.falkordb.bytes_fmt || 'N/A';
+        }
+
+        // Postgres
+        if (data.pgvector) {
+            const c = document.getElementById('pg-count');
+            const z = document.getElementById('pg-size');
+            if (c) c.innerText = data.pgvector.rows || 0;
+            if (z) z.innerText = data.pgvector.size || '0 B';
+        }
 
     } catch (e) {
-        console.error("Failed to fetch PG stats", e);
+        console.error("Failed to fetch DB stats", e);
     }
 }
 

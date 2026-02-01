@@ -18,4 +18,11 @@ langchain-experimental
 langchain-groq
 fastapi
 uvicorn
+pytest
+pytest-asyncio
+httpx
 jellyfish
+langchain
+langgraph
+langchain_community
+langfuse

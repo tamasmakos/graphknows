@@ -16,6 +16,17 @@ def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: D
     """
     logger.info("Creating PROPER topic hierarchy: Entities→Subtopics→Parent Topics...")
     
+    # 0. CLEANUP: Remove existing TOPIC and SUBTOPIC nodes to prevent duplication
+    # Since we are regenerating communities globally, old topics are obsolete.
+    nodes_to_remove = []
+    for n, data in graph.nodes(data=True):
+        if data.get('node_type') in ['TOPIC', 'SUBTOPIC']:
+            nodes_to_remove.append(n)
+    
+    if nodes_to_remove:
+        logger.info(f"Removing {len(nodes_to_remove)} existing topic/subtopic nodes before regeneration...")
+        graph.remove_nodes_from(nodes_to_remove)
+
     # Create ParentTopic nodes  
     topic_nodes_created = 0
     unique_communities = set(communities.values())

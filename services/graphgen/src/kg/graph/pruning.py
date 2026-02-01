@@ -62,7 +62,7 @@ def prune_graph(graph: nx.DiGraph, config: Dict[str, Any]) -> Dict[str, int]:
             logger.debug("Sample pruned edges:\n - " + "\n - ".join(dropped_logs))
     
     # 2. Prune Isolated Nodes
-    vital_types = {'DAY', 'SEGMENT', 'TOPIC', 'SUBTOPIC'} # Vital types to preserve
+    vital_types = {'DAY', 'SEGMENT', 'EPISODE', 'TOPIC', 'SUBTOPIC'} # Vital types to preserve
     
     if prune_isolated:
         nodes_to_remove = []
@@ -92,7 +92,7 @@ def prune_graph(graph: nx.DiGraph, config: Dict[str, Any]) -> Dict[str, int]:
         
     min_component_size = config.get('min_component_size', 3)
     # Vital types that anchor a component
-    vital_types = {'DAY', 'SEGMENT', 'TOPIC', 'SUBTOPIC'} 
+    vital_types = {'DAY', 'SEGMENT', 'EPISODE', 'TOPIC', 'SUBTOPIC'} 
     
     components_to_remove = []
     

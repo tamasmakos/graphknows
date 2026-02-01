@@ -308,35 +308,44 @@ def get_sample_graph(limit: int = 50, types: Optional[str] = None, db: GraphDB =
     if not db:
         return {"error": "Database not connected"}
 
-    # Strategy: Pick random seeds, then expand to get a connected component look
+    # Strategy: Pick random seeds using rand(), then expand
     if types:
         type_list = [t.strip() for t in types.split(',') if t.strip()]
         labels_check = " OR ".join([f"n:`{t}`" for t in type_list])
         
+        # Valid Cypher for random sampling:
+        # MATCH (n) WHERE ... WITH n, rand() as r ORDER BY r LIMIT ...
         cypher = f"""
         MATCH (n) WHERE ({labels_check})
-        OPTIONAL MATCH (n)-[r]-(m)
-        RETURN n, r, m
-        LIMIT $limit
+        WITH n, rand() as r
+        ORDER BY r
+        LIMIT {limit}
+        OPTIONAL MATCH (n)-[e]-(m)
+        RETURN n, e, m
         """
     else:
-        # User requested: MATCH (n) OPTIONAL MATCH (n)-[e]-(m) RETURN *
         cypher = f"""
         MATCH (n)
-        OPTIONAL MATCH (n)-[r]-(m)
-        RETURN n, r, m
-        LIMIT $limit
+        WITH n, rand() as r
+        ORDER BY r
+        LIMIT {limit}
+        OPTIONAL MATCH (n)-[e]-(m)
+        RETURN n, e, m
         """
     
     try:
-        results = db.query(cypher, {'limit': limit})
+        # Note: We hardcode limit in the query string above because passing $limit to LIMIT 
+        # *after* an ORDER BY/WITH clause can sometimes be tricky in some RedisGraph/FalkorDB versions 
+        # if not handled perfectly. F-strings are safe here as limit is int.
+        
+        results = db.query(cypher)
         
         nodes = {}
         links = []
         
         for record in results:
             source_node = record.get('n')
-            rel = record.get('r')
+            rel = record.get('e')
             target_node = record.get('m')
             
             def format_node(node_obj):
@@ -358,28 +367,18 @@ def get_sample_graph(limit: int = 50, types: Optional[str] = None, db: GraphDB =
             if m_data: nodes[m_data['id']] = m_data
             
             if hasattr(rel, 'properties'):
-                # Handle directionality for D3
-                # In Cypher result, rel has src_node/dest_node IDs (integers)
-                # We need to map them to our string IDs
+                r_src_id_int = rel.src_node.id if hasattr(rel.src_node, 'id') else rel.src_node
                 
-                # Simple fallback if we can't map internal IDs easily: 
-                # Use n_data and m_data as source/target based on some logic, 
-                # OR assume n is source if rel starts there.
-                # But Cypher '-(r)-' returns direction.
-                
-                # Correct way using FalkorDB client objects:
-                # rel.src_node -> internal ID (or Node object)
-                # source_node.id -> internal ID
+                # Determine direction based on internal IDs
+                # n_data is source_node, m_data is target_node
                 
                 src_id = None
                 tgt_id = None
                 
-                # Map internal IDs to our string IDs
-                # We know n_data corresponds to source_node, m_data to target_node
+                # We need the internal ID of 'source_node' (n)
+                n_internal = source_node.id
                 
-                r_src_id = rel.src_node.id if hasattr(rel.src_node, 'id') else rel.src_node
-
-                if r_src_id == source_node.id:
+                if r_src_id_int == n_internal:
                     src_id = n_data['id']
                     tgt_id = m_data['id']
                 else:
@@ -400,6 +399,7 @@ def get_sample_graph(limit: int = 50, types: Optional[str] = None, db: GraphDB =
         }
 
     except Exception as e:
+        logger.error(f"Sample query failed: {e}")
         return {"error": str(e)}
 
 @router.get("/stats/pgvector")

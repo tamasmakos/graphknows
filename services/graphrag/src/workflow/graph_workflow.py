@@ -200,7 +200,7 @@ class GraphWorkflow(Workflow):
             for k, v in timings.items():
                 self.state.step_timings[f"expand_{k}"] = v
             
-            enrich_with_triplets(nodes, edges)
+            # enrich_with_triplets(nodes, edges)
             
             nodes, edges = filter_subgraph_by_centrality(nodes, edges, ev.seed_entities)
             

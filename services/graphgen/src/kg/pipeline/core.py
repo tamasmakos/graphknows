@@ -38,11 +38,15 @@ class KnowledgePipeline:
         self, 
         settings: PipelineSettings,
         uploader: KnowledgeGraphUploader,
-        extractor: Any = None
+        extractor: Any = None,
+        clean_database: bool = True,
+        run_communities: bool = True
     ):
         self.settings = settings
         self.uploader = uploader
         self.extractor = extractor
+        self.clean_database = clean_database
+        self.run_communities = run_communities
         self.run_id = str(uuid.uuid4())[:8]
         
     async def run(self):
@@ -144,6 +148,10 @@ class KnowledgePipeline:
             ctx.add_error("enrichment", str(e))
 
     async def _step_communities(self, ctx: PipelineContext, config: Dict[str, Any]):
+        if not self.run_communities:
+            logger.info("Step 4: Skipped (run_communities=False).")
+            return
+
         try:
             from ..community.detection import CommunityDetector
             from ..community.subcommunities import add_enhanced_community_attributes_to_graph
@@ -164,7 +172,13 @@ class KnowledgePipeline:
             llm = get_langchain_llm(config, purpose='summarization')
             summary_stats = await generate_community_summaries(ctx.graph, llm)
             ctx.stats['summarization'] = summary_stats
-            
+
+            # 4.3: Generate Embeddings for Topics (NEW)
+            logger.info("  4.3: Generating Topic Embeddings...")
+            # We must import inside the function to avoid circular imports? Validated above
+            from ..embeddings.rag import generate_rag_embeddings
+            generate_rag_embeddings(ctx.graph, node_types=['TOPIC', 'SUBTOPIC'])
+                        
         except Exception as e:
             logger.error(f"Community detection or summarization failed: {e}")
             ctx.add_error("communities", str(e))
@@ -180,9 +194,18 @@ class KnowledgePipeline:
             return
             
         logger.info("Step 6: Uploading to FalkorDB...")
+        
+        # DEBUG: Log edge counts by type
+        edge_counts = {}
+        for _, _, data in ctx.graph.edges(data=True):
+            etype = data.get('label') or data.get('relation_type') or data.get('type') or 'RELATED_TO'
+            edge_counts[etype] = edge_counts.get(etype, 0) + 1
+        
+        logger.info(f"DEBUG: Edges to upload breakdown: {edge_counts}")
+        
         try:
             if self.uploader.connect():
-                stats = self.uploader.upload(ctx.graph, clean_database=True)
+                stats = self.uploader.upload(ctx.graph, clean_database=self.clean_database)
                 ctx.stats['upload'] = stats
                 logger.info(f"Upload Stats: {stats}")
                 self.uploader.close()

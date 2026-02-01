@@ -75,8 +75,12 @@ def get_seed_entities(
             return local_candidates, 0.0
         try:
             topic_results = db.query_vector("TOPIC", query_embedding, k=5, min_score=0.55) # increased k
+            logger.info(f"DEBUG: Found {len(topic_results)} topics in vector search")
             for node_data, vector_score in topic_results:
+                logger.info(f"DEBUG: Topic node keys: {node_data.keys()}")
                 topic_id = node_data.get("id")
+                logger.info(f"DEBUG: Topic ID: {topic_id}")
+                
                 local_candidates[topic_id] = max(local_candidates.get(topic_id, 0), vector_score) # Add topic itself
                 
                 if topic_id:
@@ -104,8 +108,11 @@ def get_seed_entities(
             return local_candidates, 0.0
         try:
             subtopic_results = db.query_vector("SUBTOPIC", query_embedding, k=5, min_score=0.55)
+            logger.info(f"DEBUG: Found {len(subtopic_results)} subtopics in vector search")
             for node_data, vector_score in subtopic_results:
+                logger.info(f"DEBUG: Subtopic node keys: {node_data.keys()}")
                 subtopic_id = node_data.get("id")
+                
                 local_candidates[subtopic_id] = max(local_candidates.get(subtopic_id, 0), vector_score) # Add subtopic itself
 
                 if subtopic_id:
@@ -489,6 +496,14 @@ def expand_subgraph(
         
         logger.info("Found %d relevant chunks. expanding hierarchy...", len(chunk_ids))
         
+        # Debug Log: Check for Topic/Subtopic nodes in nodes dict
+        topics_in_nodes = [
+            n for n in nodes.values() 
+            if "TOPIC" in n.get("labels", []) or "SUBTOPIC" in n.get("labels", [])
+            or "Topic" in n.get("labels", []) or "Subtopic" in n.get("labels", [])
+        ]
+        logger.info(f"DEBUG: expand_subgraph has {len(topics_in_nodes)} topics/subtopics in nodes so far.")
+        
         if chunk_ids:
             # 3. Fetch Hierarchy (Day -> Segment -> Chunk)
             batch_size = 100
@@ -498,12 +513,12 @@ def expand_subgraph(
                 
                 hierarchy_query = f"""
                 MATCH (c) WHERE ID(c) IN {batch_str}
-                OPTIONAL MATCH (c)<-[r1a:HAS_CHUNK]-(seg:SEGMENT)<-[r2a:HAS_SEGMENT]-(day:DAY)
+                OPTIONAL MATCH (c)<-[r1a:HAS_CHUNK]-(ep:EPISODE)<-[r2a:HAS_EPISODE]-(seg:SEGMENT)<-[r3a:HAS_SEGMENT]-(day:DAY)
                 OPTIONAL MATCH (c)<-[r1b:HAS_CHUNK]-(conv:CONVERSATION)
                 OPTIONAL MATCH (conv)<-[r2b:HAS_CONVERSATION]-(seg2:SEGMENT)<-[r3b:HAS_SEGMENT]-(day2:DAY)
-                OPTIONAL MATCH (conv)-[r_place:HAPPENED_AT]->(place:PLACE)
-                OPTIONAL MATCH (conv)-[r_ctx:HAS_CONTEXT]->(context:CONTEXT)
-                RETURN c, r1a, seg, r2a, day, r1b, conv, r2b, seg2, r3b, day2, r_place, place, r_ctx, context
+                OPTIONAL MATCH (ep)-[r_place:HAPPENED_AT]->(place:PLACE)
+                OPTIONAL MATCH (ep)-[r_ctx:HAS_CONTEXT]->(context:CONTEXT)
+                RETURN c, r1a, ep, r2a, seg, r3a, day, r_place, place, r_ctx, context
                 """
                 run_stage(f"Hierarchy Batch {i//batch_size}", hierarchy_query, {})
 
@@ -527,16 +542,25 @@ def expand_subgraph(
         logger.info("Expanding topic hierarchy for seeds...")
         seed_ids_str = "[" + ", ".join(str(sid) for sid in seed_ids) + "]"
         
+        # Property-based join since edges are missing
         topic_query = f"""
-        MATCH (e)-[r1]-(s)-[r2]-(t)
-        WHERE ID(e) IN {seed_ids_str}
-        AND (type(r1) = 'IN_TOPIC' OR type(r1) = 'in_topic') 
-        AND (labels(s) = ['SUBTOPIC'] OR 'SUBTOPIC' IN labels(s) OR labels(s) = ['Subtopic'])
-        AND (type(r2) = 'PARENT_TOPIC' OR type(r2) = 'parent_topic')
-        AND (labels(t) = ['TOPIC'] OR 'TOPIC' IN labels(t) OR labels(t) = ['Topic'])
-        RETURN e, r1, s, r2, t
+        MATCH (e) WHERE ID(e) IN {seed_ids_str}
+        MATCH (s:SUBTOPIC) WHERE e.name IN s.entity_ids
+        OPTIONAL MATCH (t:TOPIC) WHERE t.title = s.parent_topic
+        RETURN e, s, t
         """
-        run_stage("Topic Hierarchy", topic_query, {})
+        
+        t0_topic = time.time()
+        try:
+            with Profiler("Expand Topic Hierarchy"):
+                topic_results = db.query(topic_query, {})
+                _process_graph_results(topic_results, nodes, edges)
+                logger.info(f"Topic Hierarchy: Fetched {len(topic_results)} records")
+
+        except Exception as exc:
+             logger.error(f"Expansion Stage Topic Hierarchy failed: {exc}")
+        finally:
+             timings["expand_topic_hierarchy"] = time.time() - t0_topic
         
         # 6. Semantic Expansion
         logger.info(f"Expanding semantic relationships for {len(seed_ids)} seeds...")
