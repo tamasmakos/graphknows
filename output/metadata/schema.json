@@ -1,0 +1,1902 @@
+{
+  "generated_at": "2026-02-01T23:01:03.103652",
+  "node_types": {
+    "DAY": {
+      "count": 1,
+      "properties": {
+        "graph_type": "string",
+        "date": "string",
+        "name": "string",
+        "segment_count": "integer"
+      }
+    },
+    "SEGMENT": {
+      "count": 4,
+      "properties": {
+        "graph_type": "string",
+        "name": "string",
+        "date": "string",
+        "time_of_day": "string",
+        "embedding": "embedding[384]"
+      }
+    },
+    "EPISODE": {
+      "count": 10,
+      "properties": {
+        "graph_type": "string",
+        "content": "string",
+        "content_length": "integer",
+        "line_number": "integer",
+        "document_date": "string",
+        "date": "date",
+        "local_segment_order": "integer",
+        "global_segment_order": "integer",
+        "sentiment": "NoneType",
+        "name": "string",
+        "type": "string",
+        "start_time": "string",
+        "end_time": "string",
+        "locations": "list[string]",
+        "conversations": "list[dict]",
+        "image_descriptions": "list[string]",
+        "image_description": "string",
+        "embedding": "embedding[384]"
+      }
+    },
+    "CHUNK": {
+      "count": 37,
+      "properties": {
+        "graph_type": "string",
+        "text": "string",
+        "length": "integer",
+        "initial_entities": "list",
+        "llama_metadata": "dict",
+        "name": "string",
+        "knowledge_triplets": "list[list[string]]",
+        "raw_extraction": "dict",
+        "gliner_entities": "list[dict]",
+        "extraction_successful": "boolean",
+        "embedding": "embedding[384]"
+      }
+    },
+    "PLACE": {
+      "count": 8,
+      "properties": {
+        "name": "string",
+        "graph_type": "string"
+      }
+    },
+    "ENTITY_CONCEPT": {
+      "count": 158,
+      "properties": {
+        "ontology_class": "string",
+        "llm_type": "string",
+        "name": "string",
+        "graph_type": "string",
+        "embedding": "embedding[384]",
+        "aliases": "list[string]"
+      }
+    }
+  },
+  "edge_types": {
+    "HAS_SEGMENT": {
+      "count": 4,
+      "source_types": [
+        "DAY"
+      ],
+      "target_types": [
+        "SEGMENT"
+      ],
+      "properties": {
+        "graph_type": "string"
+      }
+    },
+    "HAS_EPISODE": {
+      "count": 10,
+      "source_types": [
+        "SEGMENT"
+      ],
+      "target_types": [
+        "EPISODE"
+      ],
+      "properties": {
+        "graph_type": "string"
+      }
+    },
+    "HAS_CHUNK": {
+      "count": 37,
+      "source_types": [
+        "EPISODE"
+      ],
+      "target_types": [
+        "CHUNK"
+      ],
+      "properties": {
+        "graph_type": "string"
+      }
+    },
+    "HAPPENED_AT": {
+      "count": 10,
+      "source_types": [
+        "EPISODE"
+      ],
+      "target_types": [
+        "PLACE"
+      ],
+      "properties": {
+        "graph_type": "string"
+      }
+    },
+    "HAS_ENTITY": {
+      "count": 275,
+      "source_types": [
+        "CHUNK"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string"
+      }
+    },
+    "INCLUDES": {
+      "count": 5,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "GOES_TO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LIVES_AT": {
+      "count": 4,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARTOF": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "HAS_ACTIVITY": {
+      "count": 3,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DISCUSSES": {
+      "count": 4,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "HELPS_WITH": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LISTENS_TO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ATTENDS": {
+      "count": 7,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "REQUIRES": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PREPARES": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "MAKES": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PART_OF": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "READS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CREATES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ENCOURAGES": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PERFORMS": {
+      "count": 4,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARTICIPATES_IN": {
+      "count": 5,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WANTS": {
+      "count": 7,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PLANNING_MEALS_FOR": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARENT": {
+      "count": 7,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PLANS_TO_SPEND_TIME": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "UNABLE_TO_ATTEND": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SUGGESTS_PREPARING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "HAS_PROJECT_AT": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "NEEDS_TO_FOLLOW_UP": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PLANNING_FOR": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "NEEDS_TO_COMPLETE": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DOES_NOT_LIKE": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "HAS_MEETING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "RESPONSIBLE_FOR": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "INVOLVED_IN": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PLANS_TO_VISIT": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "TRYING_TO_MAKE_EASIER": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "HAS_DEADLINE": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WANTS_TO_PLAY_WITH": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "COLLEAGUE": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "REQUESTS": {
+      "count": 3,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LEARNED_ABOUT": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ENCOURAGES_CONSUMPTION_OF": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WANTSTOEAT": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CONSIDERS_ENROLLING_CHILDREN_IN": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "USES": {
+      "count": 3,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "MENTION": {
+      "count": 4,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WANTS_ON_DRINK": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "REQUEST": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "NEEDS_TO_DO": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CHILD": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SEES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "AGREES_TO_GET": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DOES_NOT_WANT_FOR_KIDS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DOES_NOT_WANT": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SUGGESTS": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "NEEDS_TO_CHECK": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WANTS_TO_BRING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PLANS_TO_GET_OFF": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PREFERS": {
+      "count": 3,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "INTEREST": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CONVERSATION": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "FEELS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ORGANIZES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LOCATED_AT": {
+      "count": 3,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "VISITED": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DISLIKES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CHILDOF": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "EATS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ASSIGNS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARENTOF": {
+      "count": 3,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CHECKS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "RESEARCHES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "RECEIVES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SCHEDULES": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "BUYS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SENDSTO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "GET": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LIVESIN": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WANT": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "GOESTO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DECORATES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "OPTION_FOR": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SPILLED_DURING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "TAKEN_TO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ESPECIALLY_IMPORTANT_DURING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CONTRIBUTES_TO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "REMINDS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ALTERNATIVE_TO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DOES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "FAMILY": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "TAKES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "FOLLOWS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "DOES_NOT_PREFER": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WASHES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WORKS_AT": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "HAS_CHILD": {
+      "count": 3,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WORKS_ON": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "TRADITIONOF": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WATCHES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "EXPERIENCES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "RESPONSIBILITY_OF": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "INVOLVES": {
+      "count": 4,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SCHEDULED_ON": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "COMMUNICATES_WITH": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "EXPERIENCED_BY": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LIKES": {
+      "count": 4,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "RESPONSIBLEFOR": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "MENTIONS": {
+      "count": 4,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ALLOWS_PLAYTIME": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARTICIPANTIN": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SCHEDULED_AT": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LOCATIONOF": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PLANS_TO_HOST": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "VALUES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "BOOKS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "VISITS_TO_OBTAIN": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CONSULTS": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARTNER": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CARES_FOR": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PLANS_FOR": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "COLLABORATES_WITH": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "WORKING_ON": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "COMPLETED_WORK_ON": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CONSIDERING_ORDERING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ORGANIZING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "SCHEDULE_OF": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "RELATED_TO_PLAN": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "CONSUMED_DURING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "HAPPENS_BEFORE": {
+      "count": 2,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARTICIPANT": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LIVES_IN": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "RELATED_TO": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "USED_DURING": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PARENT_OF": {
+      "count": 6,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "ALTERNATIVELOCATIONFOR": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "LOCATION": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    },
+    "PROPOSES": {
+      "count": 1,
+      "source_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "target_types": [
+        "ENTITY_CONCEPT"
+      ],
+      "properties": {
+        "graph_type": "string",
+        "episode_id": "string"
+      }
+    }
+  },
+  "stats": {
+    "total_nodes": 218,
+    "total_edges": 556
+  }
+}
