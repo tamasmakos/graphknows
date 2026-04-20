@@ -230,3 +230,60 @@ class Neo4jUploader:
             {"from_val": from_val, "to_val": to_val, "props": props or {}},
         )
         return 1
+
+    async def upload_parsed_document(self, parsed: "ParsedDocument") -> None:
+        """
+        Store a ParsedDocument (from kg.parser) directly in Neo4j
+        without running entity extraction.
+        Used by the /documents upload endpoint.
+        """
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        doc_props = _clean_props(
+            {
+                "doc_id": parsed.doc_id,
+                "title": parsed.title,
+                "source_path": str(parsed.source_path) if parsed.source_path else "",
+                "mime_type": parsed.mime_type,
+                "created_at": now,
+            }
+        )
+
+        chunk_rows = [
+            _clean_props(
+                {
+                    "chunk_id": c.chunk_id,
+                    "doc_id": c.doc_id,
+                    "position": c.position,
+                    "text": c.text,
+                    "heading_path": c.heading_path,
+                    "token_count": c.token_count,
+                }
+            )
+            for c in parsed.chunks
+        ]
+
+        async with self.driver.session(database=self.database) as session:
+            # Upsert Document node
+            await session.run(
+                "MERGE (d:Document {doc_id: $doc_id}) SET d += $props",
+                {"doc_id": parsed.doc_id, "props": doc_props},
+            )
+            # Upsert Chunk nodes + CONTAINS edges
+            for i in range(0, len(chunk_rows), self.batch_size):
+                batch = chunk_rows[i : i + self.batch_size]
+                await session.run(
+                    """
+                    UNWIND $batch AS c
+                    MERGE (ch:Chunk {chunk_id: c.chunk_id})
+                    SET ch += c
+                    WITH ch, c
+                    MATCH (d:Document {doc_id: c.doc_id})
+                    MERGE (d)-[:CONTAINS]->(ch)
+                    """,
+                    {"batch": batch},
+                )
+
+        logger.info("Stored parsed document %s (%d chunks)", parsed.doc_id, len(parsed.chunks))

@@ -2,13 +2,15 @@
 Main Entry Point for GraphGen Service (API).
 Exposes an API to trigger the pipeline.
 """
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from .kg.config.settings import PipelineSettings
 from .kg.neo4j.driver import create_driver
@@ -39,6 +41,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="GraphGen Service", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -89,9 +99,7 @@ async def run_pipeline_task(request: PipelineRunRequest) -> None:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.post("/run")
-async def run_pipeline(
-    request: PipelineRunRequest, background_tasks: BackgroundTasks
-):
+async def run_pipeline(request: PipelineRunRequest, background_tasks: BackgroundTasks):
     if PIPELINE_LOCK.locked():
         raise HTTPException(status_code=409, detail="Pipeline is already running")
     background_tasks.add_task(run_pipeline_task, request)
@@ -101,3 +109,155 @@ async def run_pipeline(
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+# ── Document management endpoints ─────────────────────────────────────────────
+
+
+@app.get("/documents")
+async def list_documents(database: str = "neo4j") -> Dict[str, Any]:
+    """Return all Document nodes with chunk counts."""
+    if _neo4j_driver is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    cypher = """
+    MATCH (d:Document)
+    OPTIONAL MATCH (d)-[:CONTAINS]->(c:Chunk)
+    RETURN
+        d.doc_id      AS doc_id,
+        d.title       AS title,
+        d.source_path AS source_path,
+        d.created_at  AS created_at,
+        count(c)      AS chunk_count
+    ORDER BY d.created_at DESC
+    """
+    async with _neo4j_driver.session(database=database) as session:
+        result = await session.run(cypher)
+        rows = await result.data()
+    return {"documents": rows}
+
+
+@app.post("/documents")
+async def upload_document(
+    file: UploadFile = File(...),
+    database: str = "neo4j",
+) -> Dict[str, Any]:
+    """
+    Accept an uploaded file, parse it with the matching parser,
+    and store the Document + Chunks in Neo4j.
+    Does not run entity extraction — use /run for full ETL.
+    """
+    if _neo4j_driver is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    import tempfile, shutil
+    from pathlib import Path
+    from .kg.parser import get_parser
+
+    # Ensure all parsers are registered
+    import importlib
+
+    importlib.import_module(".kg.parser.registry", package=__name__.rsplit(".", 1)[0])
+    from .kg.neo4j.uploader import Neo4jUploader
+
+    suffix = Path(file.filename or "upload").suffix
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        parser = get_parser(tmp_path)
+        parsed = parser.parse(tmp_path)
+        # Override title with original filename
+        parsed.title = file.filename or parsed.title
+
+        uploader = Neo4jUploader(driver=_neo4j_driver, database=database)
+        await uploader.upload_parsed_document(parsed)
+
+        return {"doc_id": parsed.doc_id, "chunks": len(parsed.chunks), "title": parsed.title}
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@app.get("/documents/{doc_id}")
+async def get_document(doc_id: str, database: str = "neo4j") -> Dict[str, Any]:
+    """Return a document with all its chunks."""
+    if _neo4j_driver is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    cypher = """
+    MATCH (d:Document {doc_id: $doc_id})
+    OPTIONAL MATCH (d)-[:CONTAINS]->(c:Chunk)
+    WITH d, c ORDER BY c.position
+    RETURN
+        d.doc_id      AS doc_id,
+        d.title       AS title,
+        d.source_path AS source_path,
+        d.created_at  AS created_at,
+        collect({
+            chunk_id: c.chunk_id,
+            position: c.position,
+            text: c.text,
+            heading_path: c.heading_path
+        }) AS chunks
+    LIMIT 1
+    """
+    async with _neo4j_driver.session(database=database) as session:
+        result = await session.run(cypher, {"doc_id": doc_id})
+        record = await result.single()
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return dict(record)
+
+
+@app.delete("/documents/{doc_id}", status_code=204)
+async def delete_document(doc_id: str, database: str = "neo4j") -> None:
+    """Delete a Document and all its Chunks from Neo4j."""
+    if _neo4j_driver is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    cypher = """
+    MATCH (d:Document {doc_id: $doc_id})
+    OPTIONAL MATCH (d)-[:CONTAINS]->(c:Chunk)
+    DETACH DELETE d, c
+    """
+    async with _neo4j_driver.session(database=database) as session:
+        await session.run(cypher, {"doc_id": doc_id})
+
+
+@app.post("/documents/{doc_id}/reprocess")
+async def reprocess_document(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    database: str = "neo4j",
+) -> Dict[str, Any]:
+    """Re-run entity extraction + community detection for a single document."""
+    if _neo4j_driver is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    async def _task() -> None:
+        logger.info("Reprocessing document %s", doc_id)
+        # TODO: per-document pipeline run
+
+    background_tasks.add_task(_task)
+    return {"status": "accepted", "doc_id": doc_id}
+
+
+# ── Analytics ─────────────────────────────────────────────────────────────────
+
+
+@app.get("/analytics")
+async def get_analytics(database: str = "neo4j") -> Dict[str, Any]:
+    """Return aggregate node/relationship counts."""
+    if _neo4j_driver is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    cypher = """
+    MATCH (d:Document) WITH count(d) AS documents
+    MATCH (c:Chunk)    WITH documents, count(c) AS chunks
+    MATCH (e:Entity)   WITH documents, chunks, count(e) AS entities
+    MATCH ()-[r]->()   WITH documents, chunks, entities, count(r) AS relationships
+    RETURN documents, chunks, entities, relationships
+    """
+    async with _neo4j_driver.session(database=database) as session:
+        result = await session.run(cypher)
+        record = await result.single()
+    return (
+        dict(record) if record else {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
+    )
