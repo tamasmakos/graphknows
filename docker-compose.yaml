@@ -64,8 +64,8 @@ services:
   # --- Application Services ---
   graphgen:
     build:
-      context: services/graphgen
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/graphgen/Dockerfile
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - FALKORDB_HOST=falkordb
@@ -87,8 +87,8 @@ services:
 
   graphrag:
     build:
-      context: services/graphrag
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/graphrag/Dockerfile
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - FALKORDB_HOST=falkordb
@@ -103,6 +103,22 @@ services:
       - "8010:8000" # Host:Container
     volumes:
       - ./services/graphrag/src:/app/src
+    depends_on:
+      falkordb:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+
+  # Devcontainer attachment point — VS Code "Reopen in Container" connects here.
+  workspace:
+    image: ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+    command: sleep infinity
+    volumes:
+      - .:/workspace:cached
+    working_dir: /workspace
+    environment:
+      - FALKORDB_HOST=falkordb
+      - POSTGRES_HOST=pgvector
     depends_on:
       falkordb:
         condition: service_healthy
