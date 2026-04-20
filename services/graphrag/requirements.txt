@@ -1,25 +1,3 @@
-<<<<<<< HEAD
-fastapi
-uvicorn
-falkordb
-pydantic
-python-dotenv
-langchain-core
-langfuse
-llama-index-core
-mcp
-psycopg2-binary
-pgvector
-pydantic-settings
-llama-index-embeddings-huggingface
-llama-index-llms-groq
-llama-index-llms-openai
-torch
-transformers
-tiktoken
-langfuse
-openinference-instrumentation-llama-index
-=======
 fastapi
 uvicorn
 falkordb
@@ -43,4 +21,3 @@ openinference-instrumentation-llama-index
 opentelemetry-sdk
 opentelemetry-exporter-otlp
 opentelemetry-api
->>>>>>> 33d176646d75b1ad20790a86705c13c6a898a3f4
