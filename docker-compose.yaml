@@ -31,6 +31,23 @@ services:
       timeout: 5s
       retries: 5
 
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7474:7474" # HTTP Browser
+      - "7687:7687" # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j_data:/data
+    restart: always
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:7474" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   langfuse-server:
     image: langfuse/langfuse:2
     depends_on:
@@ -129,3 +146,4 @@ volumes:
   falkordb_data:
   pgvector_data:
   langfuse_data:
+  neo4j_data:

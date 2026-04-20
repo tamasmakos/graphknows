@@ -2,16 +2,16 @@ FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 # System deps required for C extensions: psycopg2-binary, torch build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        curl \
-        git \
+    build-essential \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy all workspace manifests first for layer-cached dependency resolution.
 # Both members must be present for UV to understand the workspace structure.
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 COPY services/graphgen/pyproject.toml ./services/graphgen/pyproject.toml
 COPY services/graphrag/pyproject.toml ./services/graphrag/pyproject.toml
 
