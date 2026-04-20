@@ -50,3 +50,7 @@ langfuse/
 .gemini*.log
 .geminiignore
 lib/
+
+memory-bank
+
+
