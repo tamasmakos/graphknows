@@ -1,0 +1,127 @@
+
+// --- Chat Logic Enhancements ---
+
+async function sendMessage() {
+    const input = document.getElementById('chat-input');
+    const status = document.getElementById('chat-status');
+    const text = input.value.trim();
+    if (!text) return;
+
+    addMessage('user', text);
+    input.value = '';
+    
+    status.classList.remove('hidden');
+    status.classList.add('flex');
+    const useAgent = document.getElementById('use-agent').checked;
+
+    try {
+        const payload = {
+            query: text,
+            messages: chatHistory, 
+            use_agent: useAgent
+        };
+
+        const response = await fetch(`${AGENT_API}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error("API Request Failed");
+        const data = await response.json();
+
+        // 1. Visualize the Retrieval Graph
+        if (data.graph_data && data.graph_data.nodes && data.graph_data.nodes.length > 0) {
+            console.log("Visualizing Retrieved Graph:", data.graph_data);
+            // We do NOT clear the existing graph if we want to "explore", but for a specific retrieval 
+            // the user usually wants to see exactly what was found. Let's provide a way to see ONLY this.
+            // For now, let's reset to focus on the answer context.
+            updateGraphData(data.graph_data, true);
+        } else {
+             console.log("No graph data returned in response.");
+        }
+
+        addMessage('assistant', data.answer, data);
+        
+        chatHistory.push({ role: 'user', content: text });
+        chatHistory.push({ role: 'assistant', content: data.answer });
+
+    } catch (e) {
+        addMessage('assistant', `Error: ${e.message}`);
+        console.error(e);
+    } finally {
+        status.classList.add('hidden');
+        status.classList.remove('flex');
+    }
+}
+
+// Update addMessage to show better context details
+function addMessage(role, content, data = null) {
+    const container = document.getElementById('chat-messages');
+    
+    if (container.children.length === 1 && container.children[0].innerText.includes("explore")) {
+        container.innerHTML = '';
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = `flex w-full mb-4 ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+    
+    const isUser = role === 'user';
+    const bubbleClass = isUser 
+        ? 'bg-[#0842a0] text-[#d6e3ff] rounded-2xl rounded-tr-sm' 
+        : 'bg-[#333537] text-[#e3e3e3] rounded-2xl rounded-tl-sm border border-[#444746]';
+        
+    let html = `
+        <div class="max-w-[90%] px-4 py-3 shadow-sm ${bubbleClass} text-sm leading-relaxed">
+            <div class="markdown-body">${marked.parse(content)}</div>
+    `;
+
+    if (data) {
+        html += `<div class="mt-3 pt-3 border-t border-[#444746]/50 space-y-3">`;
+        
+        // Metrics Row
+        html += `<div class="flex flex-wrap gap-4 text-[10px] text-[#c4c7c5] uppercase font-bold tracking-wider">`;
+        if (data.execution_time) {
+            html += `<div class="flex items-center gap-1"><span class="material-icons-round text-[12px]">timer</span> ${data.execution_time.toFixed(2)}s</div>`;
+        }
+        if (data.graph_data) {
+             const n = data.graph_data.nodes ? data.graph_data.nodes.length : 0;
+             const e = data.graph_data.edges ? data.graph_data.edges.length : 0;
+             html += `<div class="flex items-center gap-1"><span class="material-icons-round text-[12px]">hub</span> ${n} Nodes / ${e} Edges</div>`;
+        }
+        html += `</div>`;
+
+        // Context Inspection
+        if (data.context) {
+             const contextId = `ctx-${Date.now()}`;
+             html += `
+                <div>
+                    <button onclick="document.getElementById('${contextId}').classList.toggle('hidden')" class="w-full text-left text-[10px] text-[#a8c7fa] hover:text-[#d6e3ff] flex items-center justify-between group py-1">
+                        <span class="flex items-center gap-1"><span class="material-icons-round text-[12px]">description</span> Inspect LLM Context</span>
+                        <span class="material-icons-round text-[12px] group-hover:translate-x-0.5 transition-transform">chevron_right</span>
+                    </button>
+                    <div id="${contextId}" class="hidden mt-2 p-3 bg-[#1e1f20] rounded border border-[#444746] text-[10px] font-mono text-[#c4c7c5] whitespace-pre-wrap overflow-x-auto max-h-60 scrollbar-thin shadow-inner">
+                        ${data.context.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                    </div>
+                </div>
+             `;
+        }
+
+        // Trace/Reasoning
+        if (data.reasoning_chain && data.reasoning_chain.length > 0) {
+            html += `
+                <div class="bg-[#1e1f20]/50 rounded p-2 text-[10px] text-[#c4c7c5] border border-[#444746]/30">
+                    <div class="font-bold text-[#a8c7fa] mb-1 text-[9px]">REASONING TRACE</div>
+                    ${data.reasoning_chain.map(s => `<div class="truncate py-0.5 border-l-2 border-[#444746] pl-2 mb-0.5">${s}</div>`).join('')}
+                </div>
+            `;
+        }
+        
+        html += `</div>`;
+    }
+
+    html += `</div>`;
+    wrapper.innerHTML = html;
+    container.appendChild(wrapper);
+    container.scrollTop = container.scrollHeight;
+}
