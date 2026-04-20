@@ -11,9 +11,13 @@ dependencies = [
     "pydantic-settings>=2.2.0",
     "python-dotenv>=1.0.0",
     # Graph & databases
-    "falkordb>=1.0.0",
+    "neo4j>=5.21.0",
     "psycopg2-binary>=2.9.9",
     "pgvector>=0.3.0",
+    # Observability (OpenTelemetry → Langfuse)
+    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.25.0",
+    "opentelemetry-api>=1.25.0",
     # LangChain / LlamaIndex
     "langchain-core>=0.2.0",
     "llama-index-core>=0.10.0",

@@ -4,21 +4,44 @@ Exposes an API to trigger the pipeline.
 """
 import asyncio
 import logging
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from contextlib import asynccontextmanager
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
 from .kg.config.settings import PipelineSettings
-from .kg.falkordb.uploader import KnowledgeGraphUploader
+from .kg.neo4j.driver import create_driver
+from .kg.neo4j.uploader import Neo4jUploader
+from .kg.neo4j.indexes import create_indexes
 from .kg.pipeline.core import KnowledgePipeline
 from .kg.graph.extractors import get_extractor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="GraphGen Service")
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+_neo4j_driver = None
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _neo4j_driver
+    settings = PipelineSettings()
+    _neo4j_driver = create_driver()
+    await _neo4j_driver.verify_connectivity()
+    await create_indexes(_neo4j_driver, database=settings.infra.neo4j_database)
+    logger.info("Neo4j driver ready.")
+    yield
+    if _neo4j_driver:
+        await _neo4j_driver.close()
+        logger.info("Neo4j driver closed.")
+
+
+app = FastAPI(title="GraphGen Service", lifespan=lifespan)
+
+
+# ── Models ────────────────────────────────────────────────────────────────────
 class PipelineRunRequest(BaseModel):
     input_dir: Optional[str] = None
     clean_database: bool = True
@@ -28,6 +51,7 @@ class PipelineRunRequest(BaseModel):
 PIPELINE_LOCK = asyncio.Lock()
 
 
+# ── Pipeline task ─────────────────────────────────────────────────────────────
 async def run_pipeline_task(request: PipelineRunRequest) -> None:
     async with PIPELINE_LOCK:
         logger.info("Starting GraphGen Pipeline Task...")
@@ -37,23 +61,12 @@ async def run_pipeline_task(request: PipelineRunRequest) -> None:
                 settings.infra.input_dir = request.input_dir
 
             config_dict = settings.model_dump()
-
-            uploader = KnowledgeGraphUploader(
-                host=settings.infra.falkordb_host,
-                port=settings.infra.falkordb_port,
-                database="kg",
-                postgres_config={
-                    "enabled": settings.infra.postgres_enabled,
-                    "host": settings.infra.postgres_host,
-                    "port": settings.infra.postgres_port,
-                    "database": settings.infra.postgres_db,
-                    "user": settings.infra.postgres_user,
-                    "password": settings.infra.postgres_password,
-                    "table_name": settings.infra.postgres_table,
-                },
-            )
-
             extractor = get_extractor(config_dict)
+
+            uploader = Neo4jUploader(
+                driver=_neo4j_driver,
+                database=settings.infra.neo4j_database,
+            )
 
             pipeline = KnowledgePipeline(
                 settings=settings,
@@ -74,6 +87,7 @@ async def run_pipeline_task(request: PipelineRunRequest) -> None:
             logger.error("GraphGen Pipeline Failed: %s", e, exc_info=True)
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.post("/run")
 async def run_pipeline(
     request: PipelineRunRequest, background_tasks: BackgroundTasks
