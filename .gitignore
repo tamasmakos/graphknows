@@ -1,15 +1,52 @@
-requires
+# ─── Python ───────────────────────────────────────────────────────────────────
 .venv
 __pycache__
-lib
-.gitignore
-input
-.pytest_cache
-.gemini*.log
-node_modules/
+*.py[cod]
+*.pyo
+*.egg-info
 dist/
-.geminiignore
-.gemini
+build/
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov/
+coverage.xml
+
+# ─── Node / pnpm ──────────────────────────────────────────────────────────────
+node_modules
+.pnpm-store
+pnpm-debug.log*
+
+# ─── Next.js ──────────────────────────────────────────────────────────────────
+apps/**/.next
+apps/**/out
+apps/**/dist
+
+# ─── Turborepo ────────────────────────────────────────────────────────────────
+.turbo
+
+# ─── TypeScript ───────────────────────────────────────────────────────────────
+*.tsbuildinfo
+packages/**/dist
+
+# ─── Secrets / environment ────────────────────────────────────────────────────
 .env
-langfuse
-output
+.env.*
+!.env.example
+
+# ─── Data / generated output ─────────────────────────────────────────────────
+output/
+input/
+
+# ─── Editor / OS ──────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea
+*.DS_Store
+Thumbs.db
+
+# ─── Legacy / removed ─────────────────────────────────────────────────────────
+langfuse/
+.gemini
+.gemini*.log
+.geminiignore
+lib/

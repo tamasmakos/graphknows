@@ -1,149 +1,151 @@
-services:
-  # --- Infrastructure ---
-  falkordb:
-    image: falkordb/falkordb:latest
-    ports:
-      - "6379:6379" # Internal & Local access
-      - "3001:3000" # Dashboard
-    volumes:
-      - falkordb_data:/data
-    restart: always
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# docker-compose.yaml — production service definitions
+# Override with docker-compose.dev.yaml for local development
+# Usage: docker compose up -d
+#        docker compose --profile observability up -d   (adds Langfuse)
+version: "3.9"
 
-  pgvector:
-    image: pgvector/pgvector:pg16
-    ports:
-      - "5435:5432"
-    environment:
-      - POSTGRES_DB=graphknows
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-    volumes:
-      - pgvector_data:/var/lib/postgresql/data
-    restart: always
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
 
   neo4j:
-    image: neo4j:5
+    image: neo4j:5.21-community
     ports:
-      - "7474:7474" # HTTP Browser
-      - "7687:7687" # Bolt
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
     environment:
-      - NEO4J_AUTH=neo4j/password
+      NEO4J_AUTH: "${NEO4J_AUTH:-neo4j/changeme}"
     volumes:
       - neo4j_data:/data
-    restart: always
+    restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:7474" ]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
 
-  langfuse-server:
-    image: langfuse/langfuse:2
+  pgvector:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-graphknows}"
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Application Services ────────────────────────────────────────────────────
+
+  graphgen:
+    build:
+      context: .
+      dockerfile: services/graphgen/Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    environment:
+      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
+      POSTGRES_HOST: "${POSTGRES_HOST:-pgvector}"
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_DB: "${POSTGRES_DB:-graphknows}"
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
+      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
+      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
+      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
+      GRAPHGEN_INPUT_DIR: "${GRAPHGEN_INPUT_DIR:-/data/input}"
+      GRAPHGEN_OUTPUT_DIR: "${GRAPHGEN_OUTPUT_DIR:-/data/output}"
+      PYTHONPATH: /app/src
+    ports:
+      - "8020:8000"
+    volumes:
+      - graphgen_input:/data/input
+      - graphgen_output:/data/output
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  graphrag:
+    build:
+      context: .
+      dockerfile: services/graphrag/Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    environment:
+      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
+      POSTGRES_HOST: "${POSTGRES_HOST:-pgvector}"
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      POSTGRES_DB: "${POSTGRES_DB:-graphknows}"
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
+      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
+      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
+      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
+      LANGFUSE_HOST: "${LANGFUSE_HOST:-http://langfuse:3000}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      GRAPHRAG_KEYWORDS_MODEL: "${GRAPHRAG_KEYWORDS_MODEL:-llama-3.1-8b-instant}"
+      GRAPHRAG_CHAT_MODEL: "${GRAPHRAG_CHAT_MODEL:-llama-3.3-70b-versatile}"
+      PYTHONPATH: /app/src
+    ports:
+      - "8010:8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Observability (optional profile) ────────────────────────────────────────
+
+  langfuse:
+    image: langfuse/langfuse:2.95.0
+    profiles: ["observability"]
     depends_on:
       langfuse-db:
         condition: service_healthy
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
-      - NEXTAUTH_SECRET=mysecret
-      - SALT=mysalt
-      - NEXTAUTH_URL=http://localhost:3000
-      - TELEMETRY_ENABLED=false
-    restart: always
+      DATABASE_URL: "${LANGFUSE_DATABASE_URL:-postgresql://langfuse:langfuse@langfuse-db:5432/langfuse}"
+      NEXTAUTH_SECRET: "${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-production}"
+      SALT: "${LANGFUSE_SALT:-change-me-in-production}"
+      NEXTAUTH_URL: "http://localhost:3000"
+      TELEMETRY_ENABLED: "false"
+    restart: unless-stopped
 
   langfuse-db:
-    image: postgres:16
-    restart: always
+    image: postgres:16.6-alpine
+    profiles: ["observability"]
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=langfuse
-      - POSTGRES_PASSWORD=langfuse
-      - POSTGRES_DB=langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U langfuse -d langfuse" ]
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
       interval: 5s
       timeout: 5s
       retries: 5
     volumes:
       - langfuse_data:/var/lib/postgresql/data
 
-  # --- Application Services ---
-  graphgen:
-    build:
-      context: .
-      dockerfile: services/graphgen/Dockerfile
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-    environment:
-      - FALKORDB_HOST=falkordb
-      - POSTGRES_HOST=pgvector
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - PYTHONPATH=/app/src
-    ports:
-      - "8020:8000" # Host:Container
-    volumes:
-      - ./input:/app/input
-      - ./output:/app/output
-      - ./services/graphgen/src:/app/src
-    depends_on:
-      falkordb:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-
-  graphrag:
-    build:
-      context: .
-      dockerfile: services/graphrag/Dockerfile
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-    environment:
-      - FALKORDB_HOST=falkordb
-      - POSTGRES_HOST=pgvector
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-      - LANGFUSE_HOST=http://langfuse-server:3000
-      - PYTHONPATH=/app/src
-    ports:
-      - "8010:8000" # Host:Container
-    volumes:
-      - ./services/graphrag/src:/app/src
-    depends_on:
-      falkordb:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-
-  # Devcontainer attachment point — VS Code "Reopen in Container" connects here.
-  workspace:
-    image: ghcr.io/astral-sh/uv:python3.11-bookworm-slim
-    command: sleep infinity
-    volumes:
-      - .:/workspace:cached
-    working_dir: /workspace
-    environment:
-      - FALKORDB_HOST=falkordb
-      - POSTGRES_HOST=pgvector
-    depends_on:
-      falkordb:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-
 volumes:
-  falkordb_data:
-  pgvector_data:
-  langfuse_data:
   neo4j_data:
+  pgvector_data:
+  graphgen_input:
+  graphgen_output:
+  langfuse_data:
