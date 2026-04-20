@@ -20,6 +20,7 @@ def create_indexes(graph: Graph) -> List[str]:
     """
     indexes = [
         "CREATE INDEX FOR (d:DAY) ON (d.id)",
+        "CREATE INDEX FOR (s:SEGMENT) ON (s.id)",
         "CREATE INDEX FOR (e:EPISODE) ON (e.id)",
         "CREATE INDEX FOR (c:CHUNK) ON (c.id)",
         "CREATE INDEX FOR (e:ENTITY_CONCEPT) ON (e.id)",

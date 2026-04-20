@@ -32,7 +32,7 @@ def filter_node_properties(props: dict, labels: List[str]) -> dict:
     labels_lower = {label.lower() for label in labels} if labels else set()
 
     is_day = "day" in labels_lower
-    is_segment = "segment" in labels_lower
+    is_segment = "segment" in labels_lower or "episode" in labels_lower
     is_chunk = "chunk" in labels_lower
     is_entity = "entity" in labels_lower or "entity_concept" in labels_lower
     is_topic = "topic" in labels_lower or (
@@ -110,11 +110,11 @@ def filter_node_properties(props: dict, labels: List[str]) -> dict:
     elif is_chunk:
         keep_keys = {"text", "llama_metadata", "knowledge_triplets"}
     elif is_entity:
-        keep_keys = {"name", "entity_type", "llm_type"}
+        keep_keys = {"name", "entity_type", "llm_type", "description", "summary", "image_description"}
     elif is_topic or is_community:
-        keep_keys = {"title", "summary", "community_id"}
+        keep_keys = {"title", "summary", "community_id", "name", "description"}
     elif is_subtopic or is_subcommunity:
-        keep_keys = {"title", "summary", "community_id"}
+        keep_keys = {"title", "summary", "community_id", "name", "description"}
     elif is_conversation:
         keep_keys = {"time", "name", "location", "date"}
     else:
@@ -160,7 +160,7 @@ def format_graph_context(nodes: dict, edges: list) -> str:
         
         if "chunk" in labels or props.get("text"):
             grouped["documents"].append(n)
-        elif "segment" in labels or "day" in labels or "conversation" in labels or props.get("date") or props.get("time"):
+        elif "segment" in labels or "day" in labels or "conversation" in labels or "episode" in labels or props.get("date") or props.get("time"):
             grouped["timeline"].append(n)
         elif "topic" in labels or "subtopic" in labels:
             grouped["topics"].append(n)
@@ -175,9 +175,8 @@ def format_graph_context(nodes: dict, edges: list) -> str:
         for n in grouped["topics"]:
             p = n.get("properties", {})
             title = p.get("title", "Topic")
-            summary = p.get("summary", "")
-            if summary:
-                parts.append(f'<topic name="{title}">{summary}</topic>')
+            summary = p.get("summary") or p.get("description") or "No summary available."
+            parts.append(f'<topic name="{title}">{summary}</topic>')
         parts.append("</topics>\n")
 
     # 2. TIMELINE (Chronological context)
@@ -204,13 +203,13 @@ def format_graph_context(nodes: dict, edges: list) -> str:
             seg_id = n.get("element_id") or n.get("id")
             triplets = segment_triplets.get(seg_id, [])
             
-            associated_info = []
+            associated_info = set() # Use set for dedup
             related_chunks = []
             
             # Add image_description if present directly on the node (new simplified schema)
             img_desc = p.get("image_description")
             if img_desc:
-                associated_info.append(f"Visual Context: {img_desc}")
+                associated_info.add(f"Visual Context: {img_desc}")
             
             for edge in edges:
                 if edge.get("type") in ["HAS_CHUNK", "HAPPENED_AT", "HAS_CONTEXT"]:
@@ -220,20 +219,21 @@ def format_graph_context(nodes: dict, edges: list) -> str:
                     if str(source_id) == str(seg_id) and target_id in nodes:
                         target_node = nodes[target_id]
                         t_labels = target_node.get("labels", [])
+                        t_props = target_node.get("properties", {})
                         
                         if "PLACE" in t_labels:
-                            p_name = target_node.get("properties", {}).get("name", "Unknown Place")
-                            associated_info.append(f"Location: {p_name}")
+                            p_name = t_props.get("name", "Unknown Place")
+                            associated_info.add(f"Location: {p_name}")
                         elif "CONTEXT" in t_labels:
-                            desc = target_node.get("properties", {}).get("description", "")
+                            desc = t_props.get("description", "")
                             if desc:
-                                associated_info.append(f"Context: {desc}")
+                                associated_info.add(f"Context: {desc}")
                         elif "CHUNK" in t_labels:
                             related_chunks.append(target_node)
 
             body_parts = []
             if associated_info:
-                body_parts.extend(associated_info)
+                body_parts.extend(sorted(list(associated_info)))
 
             if triplets:
                 formatted_triplets = []
@@ -288,7 +288,9 @@ def format_graph_context(nodes: dict, edges: list) -> str:
             if any(marker in summary for marker in boilerplate_markers):
                 summary = ""
             
-            llm_type_attr = f' llm_type="{llm_type}"' if llm_type else ""
+            llm_type_attr = ""
+            if llm_type and not (isinstance(llm_type, (int, float)) or (isinstance(llm_type, str) and llm_type.isdigit())):
+                 llm_type_attr = f' llm_type="{llm_type}"'
             
             if summary:
                 parts.append(f'<entity name="{name}" type="{etype}"{llm_type_attr}>{summary}</entity>')

@@ -1,93 +1,136 @@
 # Knowledge Graph Project
 
-This repository implements a decoupled Knowledge Graph system consisting of two primary services:
-- **GraphGen** (Generation/ETL): Parses raw data, extracts entities, and builds the graph.
-- **GraphRAG** (Retrieval/API): An agentic system for querying the graph.
+This repository implements a decoupled, agentic Knowledge Graph system designed to transform unstructured life-log data into a queryable semantic memory.
+
+It consists of two primary microservices:
+- **GraphGen** (Generation/ETL): A sophisticated pipeline that parses raw data, extracts entities using LLMs and NER, resolves coreferences, detects communities, and builds a hierarchical graph.
+- **GraphRAG** (Retrieval/API): An agentic retrieval system powered by **LlamaIndex** that navigates the graph to answer complex user queries.
+
+---
+
+## 🏗️ System Architecture
+
+The system follows a strict producer-consumer model, decoupled by the storage layer.
+
+```mermaid
+graph TD
+    Raw[Raw Data .txt/.csv] -->|Input| Gen[GraphGen Service]
+    
+    subgraph "GraphGen Pipeline"
+        Gen --> Lex[Lexical Graph]
+        Lex --> Ext[Entity Extraction]
+        Ext --> Enrich[Semantic Enrichment]
+        Enrich --> Comm[Community Detection]
+    end
+    
+    Comm -->|Write Topology| Falkor[(FalkorDB Graph)]
+    Comm -->|Write Vectors| PG[(Postgres pgvector)]
+    
+    User -->|Query| RAG[GraphRAG Service]
+    
+    subgraph "GraphRAG Agent"
+        RAG -->|Vector Search| PG
+        RAG -->|Graph Traversal| Falkor
+        RAG -->|Synthesis| LLM[LLM Response]
+    end
+```
+
+### Shared Infrastructure
+- **FalkorDB**: Stores the graph topology (Nodes, Edges, Properties).
+- **PostgreSQL (pgvector)**: Stores 384-dimensional vector embeddings for hybrid retrieval.
+
+---
+
+## 🛠️ Service Details
+
+### 1. GraphGen (The Builder)
+Located in `services/graphgen`.
+
+This service runs a multi-stage ETL pipeline to convert unstructured text into a structured knowledge graph.
+
+**Key Pipeline Stages:**
+1. **Lexical Construction**: Parses documents into a temporal hierarchy (`DAY` → `SEGMENT` → `EPISODE` → `CHUNK`).
+2. **Entity & Relation Extraction**: Uses a hybrid of **GLiNER** (for high-precision NER) and **LLMs** (for semantic relation extraction).
+3. **Semantic Enrichment**: Generates embeddings and resolves duplicate entities using vector similarity.
+4. **Community Detection**: Applies the **Leiden Algorithm** to cluster entities into high-level `TOPIC` and `SUBTOPIC` nodes.
+5. **Summarization**: Generates LLM-based summaries for every community and topic.
+6. **Centrality**: Calculates Degree Centrality and Z-Scores for influential entities.
+7. **Hybrid Upload**: Persists topology to FalkorDB and vectors to Postgres.
+
+**Key Tech**: `LangChain`, `Spacy`, `GLiNER`, `NetworkX`, `Leidenalg`, `SentenceTransformers`.
+
+### 2. GraphRAG (The Agent)
+Located in `services/graphrag`.
+
+This service provides a `FastAPI` interface for querying the graph. Unlike simple RAG, it uses an **Agentic Workflow** to "walk" the graph.
+
+**Retrieval Workflow:**
+1. **Keyword Extraction**: Analyzes the user query to find key entities.
+2. **Seed Identification**: Uses **Hybrid Search** (Vector Similarity + Exact Match) to find entry points in the graph.
+3. **Subgraph Expansion**: Expands from seeds to find relevant neighbors (Chunks, Topics, Related Entities) using Cypher queries.
+4. **Context Building**: Formats the subgraph into a structured XML context for the LLM.
+5. **Synthesis**: Generates a personalized answer based on the traversed path.
+
+**Key Tech**: `LlamaIndex`, `FastAPI`, `Langfuse` (Tracing), `Pydantic`.
+
+---
+
+## 📊 Data Schema
+
+The graph uses a specific schema to represent both time and knowledge:
+
+- **Temporal Nodes**: `DAY`, `SEGMENT` (Morning/Afternoon), `EPISODE` (Events).
+- **Content Nodes**: `CHUNK` (Raw text).
+- **Semantic Nodes**: `ENTITY_CONCEPT` (People, Places, Concepts).
+- **Organizational Nodes**: `TOPIC`, `SUBTOPIC` (Leiden communities).
+
+---
 
 ## 🚀 Getting Started
 
-Follow these steps to get the application up and and running.
-
 ### 1. Prerequisites
-- **Docker** and **Docker Compose** installed.
+- **Docker** and **Docker Compose**.
 - API Keys for **Groq** and **OpenAI**.
 
 ### 2. Configuration
-The application relies on environment variables for API keys and model selection.
-
 1. Copy the example environment file:
    ```bash
    cp .env.example .env
    ```
-
-2. Open `.env` and fill in your credentials:
+2. Fill in your credentials in `.env`:
    ```env
    GROQ_API_KEY=gsk_...
    OPENAI_API_KEY=sk-...
    ```
 
-3. (Optional) Customize the LLM models for specific tasks:
-   ```env
-   # Extraction: Fast model for processing large text volumes
-   EXTRACTION_MODEL=llama-3.1-8b-instant
-   
-   # Summarization: Stronger model for community insights
-   SUMMARISATION_MODEL=llama-3.3-70b-versatile
-   
-   # Chat: Capable model for final answer synthesis
-   CHAT_MODEL=llama-3.3-70b-versatile
-   ```
-
-### 3. Start the Services
-Run the following command to build and start the entire stack:
-
+### 3. Run the Stack
+Build and start all services:
 ```bash
 docker-compose up --build -d
 ```
+This starts:
+- **GraphGen** (Port 8020)
+- **GraphRAG** (Port 8010)
+- **FalkorDB** & **Postgres**
 
-This will start:
-- **FalkorDB** (Graph Database)
-- **PostgreSQL/pgvector** (Vector Store)
-- **GraphGen Service** (Port 8020)
-- **GraphRAG Service** (Port 8010)
-
-### 4. Run the Ingestion Pipeline
-Once the services are running, you need to populate the graph with data.
-
-1. **Add Data**: Place your text files (`.txt`, `.csv`) in the `input/` directory at the root of the project.
-   
-2. **Trigger Ingestion**: The GraphGen service exposes an API to start the pipeline. Run:
+### 4. Ingest Data
+1. Place text files (`.txt`, `.csv`) in the `input/` directory.
+2. Trigger the pipeline via the API:
    ```bash
    curl -X POST http://localhost:8020/run \
      -H "Content-Type: application/json" \
      -d '{"clean_database": true}'
    ```
-   *Note: Set `clean_database` to `false` for incremental updates.*
+   *(Use `clean_database: false` for incremental updates)*
 
-3. **Monitor Progress**: You can view the logs to watch the extraction process:
-   ```bash
-   docker-compose logs -f graphgen
-   ```
-
-### 5. Chat with your Data
-Once ingestion is complete, use the GraphRAG service to explore the graph.
-
-- **Web UI**: Open [http://localhost:8010](http://localhost:8010) in your browser.
-- **API Documentation**: [http://localhost:8010/docs](http://localhost:8010/docs)
-
----
-
-
-## Architecture details
-
-- **`services/graphgen`**: The ETL pipeline. Responsible for parsing raw data, extracting entities, and building the graph in FalkorDB.
-- **`services/graphrag`**: The Retrieval API. A FastAPI-based agentic system using LlamaIndex to explore the graph and answer user queries.
+### 5. Chat
+Access the retrieval interface:
+- **Web UI**: [http://localhost:8010](http://localhost:8010)
+- **API Docs**: [http://localhost:8010/docs](http://localhost:8010/docs)
 
 ## Development
 
-To run the services in development mode with hot-reloading, you can use the development compose file (or ensure your volumes are mapped correctly):
-
+To run with hot-reloading for local development:
 ```bash
 docker-compose -f docker-compose.yaml -f docker-compose.dev.yaml up
 ```
-

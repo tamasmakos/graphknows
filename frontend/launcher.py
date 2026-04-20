@@ -95,6 +95,13 @@ def main():
         dash_env["PYTHONPATH"] = str(PROJECT_ROOT)
         dash_env["PYTHONUNBUFFERED"] = "1"
         
+        # Explicitly set FalkorDB connection for local host access
+        # The container exposes 6379 as 6380 on the host
+        if "FALKORDB_PORT" not in dash_env:
+            dash_env["FALKORDB_PORT"] = "6380"
+        if "FALKORDB_HOST" not in dash_env:
+            dash_env["FALKORDB_HOST"] = "localhost"
+        
         # Default Service URLs to point to Docker-exposed ports if not set
         # This matches the behavior of example scripts connecting to running containers.
         if "GRAPHGEN_URL" not in dash_env:

@@ -368,8 +368,65 @@ class KnowledgeGraphUploader:
                         except Exception as ind_error:
                             logger.error(f"Failed to create node {node['id']}: {ind_error}")
 
-    def _upload_relationships(self, graph: nx.DiGraph):
-        """Upload relationships to FalkorDB."""
+    def upload(
+        self,
+        graph: nx.DiGraph,
+        clean_database: bool = True,
+        create_indexes_flag: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Upload the knowledge graph to FalkorDB.
+        """
+        logger.info(f"Starting knowledge graph upload to FalkorDB (Clean: {clean_database})...")
+        
+        if not self.connect():
+            raise RuntimeError("Failed to connect to FalkorDB")
+        
+        try:
+            if clean_database:
+                self.clear_database()
+            
+            # Prepare nodes
+            nodes = self._prepare_nodes(graph)
+            
+            if clean_database:
+                self._upload_nodes(nodes)
+            else:
+                self.merge_nodes(nodes)
+            
+            # Create indexes (standard) BEFORE relationships to speed up matching?
+            if clean_database: # Only needed on fresh DB or if we suspect they are missing
+                create_indexes(self.graph_client)
+            
+            # Relationships
+            # Separate preparation from upload to handle merge vs create
+            edges = self._prepare_relationships(graph)
+             
+            if clean_database:
+                self._upload_relationships(edges)
+            else:
+                self.merge_relationships(edges)
+            
+            # Create vector indexes if requested
+            if create_indexes_flag and self.embedding_dim:
+                # If merging, indexes might already exist, but create_vector_indexes checks usually
+                create_vector_indexes(self.graph_client, self.embedding_dim)
+            
+            stats = {
+                'nodes_uploaded': graph.number_of_nodes(),
+                'relationships_uploaded': graph.number_of_edges(),
+                'embedding_dim': self.embedding_dim,
+                'database': self.database_name,
+            }
+            
+            logger.info(f"Upload completed: {stats['nodes_uploaded']} nodes, {stats['relationships_uploaded']} relationships")
+            return stats
+            
+        finally:
+            self.close()
+
+    def _prepare_relationships(self, graph: nx.DiGraph) -> List[Dict]:
+        """Prepare relationships for upload."""
         edges_to_upload = []
         
         for u, v, data in graph.edges(data=True):
@@ -398,7 +455,10 @@ class KnowledgeGraphUploader:
                 'type': rel_type,
                 'properties': props
             })
-            
+        return edges_to_upload
+
+    def _upload_relationships(self, edges_to_upload: List[Dict]):
+        """Upload relationships to FalkorDB."""
         logger.info(f"Uploading {len(edges_to_upload)} relationships...")
         
         # Batch edges
@@ -417,12 +477,6 @@ class KnowledgeGraphUploader:
             for i in range(0, len(edges), self.rel_batch_size):
                 batch = edges[i:i + self.rel_batch_size]
                 
-                # We need to match source and target nodes by ID
-                # Assuming 'id' property is indexed (we create indexes later, but maybe should before?)
-                # Actually, indexes are created AFTER upload usually.
-                # Without indexes, matching might be slow.
-                # But let's follow the pattern.
-                
                 cypher = f"""
                 UNWIND $batch AS rel
                 MATCH (source) WHERE source.id = rel.source_id
@@ -435,55 +489,6 @@ class KnowledgeGraphUploader:
                     self.graph_client.query(cypher, {'batch': batch})
                 except Exception as e:
                     logger.error(f"Failed to upload {rel_type} relationships batch: {e}")
-
-    def upload(
-        self,
-        graph: nx.DiGraph,
-        clean_database: bool = True,
-        create_indexes_flag: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Upload the knowledge graph to FalkorDB.
-        """
-        logger.info("Starting knowledge graph upload to FalkorDB...")
-        
-        if not self.connect():
-            raise RuntimeError("Failed to connect to FalkorDB")
-        
-        try:
-            if clean_database:
-                self.clear_database()
-            
-            # Prepare and upload nodes
-            nodes = self._prepare_nodes(graph)
-            self._upload_nodes(nodes)
-            
-            # Create indexes (standard) BEFORE relationships to speed up matching?
-            # I'll stick to the plan but maybe create standard indexes early if I can.
-            # Actually, `create_indexes` includes checking if exists. 
-            # Let's create standard indexes before relationships for performance.
-            
-            create_indexes(self.graph_client)
-            
-            # Upload relationships
-            self._upload_relationships(graph)
-            
-            # Create vector indexes if requested
-            if create_indexes_flag and self.embedding_dim:
-                create_vector_indexes(self.graph_client, self.embedding_dim)
-            
-            stats = {
-                'nodes_uploaded': graph.number_of_nodes(),
-                'relationships_uploaded': graph.number_of_edges(),
-                'embedding_dim': self.embedding_dim,
-                'database': self.database_name,
-            }
-            
-            logger.info(f"Upload completed: {stats['nodes_uploaded']} nodes, {stats['relationships_uploaded']} relationships")
-            return stats
-            
-        finally:
-            self.close()
     
     def merge_nodes(self, nodes: List[Dict]) -> Dict[str, Any]:
         """
@@ -576,6 +581,8 @@ class KnowledgeGraphUploader:
             if t not in edges_by_type:
                 edges_by_type[t] = []
             edges_by_type[t].append(edge)
+        
+        logger.info(f"DEBUG: merge_relationships types: {list(edges_by_type.keys())}")
         
         total_merged = 0
         for rel_type, type_edges in edges_by_type.items():

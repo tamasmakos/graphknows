@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """
 Main Entry Point for GraphGen Service (API).
 Exposes an API to trigger the pipeline.
@@ -88,3 +89,123 @@ async def run_pipeline(request: PipelineRunRequest, background_tasks: Background
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+=======
+"""
+Main Entry Point for GraphGen Service (API).
+Exposes an API to trigger the pipeline.
+V2 - Indentation Fix.
+"""
+import asyncio
+import logging
+from fastapi import FastAPI, BackgroundTasks, HTTPException
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+
+from .kg.config.settings import PipelineSettings
+from .kg.falkordb.uploader import KnowledgeGraphUploader
+from .kg.pipeline.core import KnowledgePipeline
+from .kg.graph.extractors import get_extractor
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="GraphGen Service")
+
+class PipelineRunRequest(BaseModel):
+    input_dir: Optional[str] = None
+    clean_database: bool = True
+    skip_communities: bool = False
+
+PIPELINE_LOCK = asyncio.Lock()
+
+async def run_pipeline_task(request: PipelineRunRequest):
+    async with PIPELINE_LOCK:
+        logger.info("Starting GraphGen Pipeline Task...")
+        try:
+            # 1. Load Config
+            settings = PipelineSettings()
+            if request.input_dir:
+                settings.infra.input_dir = request.input_dir
+            
+            logger.info(f"Loaded settings. Input: {settings.infra.input_dir}, Output: {settings.infra.output_dir}")
+            
+            # Prepare config dict
+            config_dict = settings.model_dump() if hasattr(settings, 'model_dump') else settings.dict()
+
+            # 2. Instantiate Dependencies
+            uploader = KnowledgeGraphUploader(
+                host=settings.infra.falkordb_host,
+                port=settings.infra.falkordb_port,
+                database="kg",
+                postgres_config={
+                    "enabled": settings.infra.postgres_enabled,
+                    "host": settings.infra.postgres_host,
+                    "port": settings.infra.postgres_port,
+                    "database": settings.infra.postgres_db,
+                    "user": settings.infra.postgres_user,
+                    "password": settings.infra.postgres_password,
+                    "table_name": settings.infra.postgres_table
+                }
+            )
+            
+            # Instantiate Extractor
+            extractor = get_extractor(config_dict)
+
+            # 3. Instantiate Pipeline
+            pipeline = KnowledgePipeline(
+                settings=settings,
+                uploader=uploader,
+                extractor=extractor,
+                clean_database=request.clean_database,
+                run_communities=not request.skip_communities
+            )
+
+            # 4. Run
+            try:
+                await pipeline.run()
+                logger.info("GraphGen Pipeline Task Completed Successfully.")
+            finally:
+                if extractor:
+                    await extractor.close()
+
+        except Exception as e:
+            logger.error(f"GraphGen Pipeline Failed: {e}", exc_info=True)
+
+from .simulation.orchestrator import LifeSimulation
+
+class SimulationRunRequest(BaseModel):
+    days: int = 3
+    start_date: str = "2025-01-01"
+
+async def run_simulation_task(request: SimulationRunRequest):
+    async with PIPELINE_LOCK:
+        logger.info(f"Starting Life Simulation for {request.days} days from {request.start_date}...")
+        try:
+            # Instantiate and run simulation
+            sim = LifeSimulation(request.days, request.start_date)
+            await sim.run()
+            logger.info("Life Simulation Completed Successfully.")
+        except Exception as e:
+            logger.error(f"Life Simulation Failed: {e}", exc_info=True)
+
+@app.post("/simulate")
+async def run_simulation(request: SimulationRunRequest, background_tasks: BackgroundTasks):
+    if PIPELINE_LOCK.locked():
+        raise HTTPException(status_code=409, detail="Pipeline (or Simulation) is already running")
+    
+    background_tasks.add_task(run_simulation_task, request)
+    return {"status": "accepted", "message": "Life Simulation started in background"}
+
+@app.post("/run")
+async def run_pipeline(request: PipelineRunRequest, background_tasks: BackgroundTasks):
+    if PIPELINE_LOCK.locked():
+        raise HTTPException(status_code=409, detail="Pipeline is already running")
+    
+    background_tasks.add_task(run_pipeline_task, request)
+    return {"status": "accepted", "message": "Pipeline run started in background"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+>>>>>>> 33d176646d75b1ad20790a86705c13c6a898a3f4

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 torch
 numpy
 scikit-learn
@@ -19,3 +20,33 @@ langchain-groq
 fastapi
 uvicorn
 jellyfish
+=======
+torch
+numpy
+scikit-learn
+nltk
+leidenalg
+networkx
+falkordb
+python-dotenv
+psycopg2-binary
+pgvector
+sentence-transformers
+pydantic-settings
+gliner
+spacy
+langchain-core
+langchain-text-splitters
+langchain-experimental
+langchain-groq
+fastapi
+uvicorn
+pytest
+pytest-asyncio
+httpx
+jellyfish
+langchain
+langgraph
+langchain_community
+langfuse
+>>>>>>> 33d176646d75b1ad20790a86705c13c6a898a3f4

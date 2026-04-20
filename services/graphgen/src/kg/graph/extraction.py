@@ -276,8 +276,8 @@ async def extract_all_entities_relations(deps: PipelineContext, config: Dict[str
         
         logger.info(f"Extraction complete: {successful}/{len(results)} successful")
         
-        # Enrich graph per segment
-        enrich_result = await enrich_graph_per_segment(deps)
+        # Enrich graph per episode
+        enrich_result = await enrich_graph_per_episode(deps)
         
         return {
             "processed": len(results),
@@ -291,48 +291,28 @@ async def extract_all_entities_relations(deps: PipelineContext, config: Dict[str
 # --- Graph Enrichment ---
 
 
-def _get_chunks_for_segment(graph: nx.DiGraph, segment_id: str) -> List[str]:
-    """Find all chunks associated with a segment, including via Conversations and Contexts."""
+def _get_chunks_for_episode(graph: nx.DiGraph, episode_id: str) -> List[str]:
+    """Find all chunks associated with an episode."""
     chunk_ids = set()
     
-    # 1. Direct Chunks (old schema)
-    for neighbor in graph.neighbors(segment_id):
-        edge = graph.get_edge_data(segment_id, neighbor) or {}
+    # Direct Chunks: EPISODE -> HAS_CHUNK -> CHUNK
+    for neighbor in graph.neighbors(episode_id):
+        edge = graph.get_edge_data(episode_id, neighbor) or {}
         if edge.get('label') == 'HAS_CHUNK' and graph.nodes[neighbor].get('node_type') == 'CHUNK':
             chunk_ids.add(neighbor)
             
-    # 2. Via Conversations
-    # Segment -> HAS_CONVERSATION -> Conversation
-    for neighbor in graph.neighbors(segment_id):
-        edge = graph.get_edge_data(segment_id, neighbor) or {}
-        if edge.get('label') == 'HAS_CONVERSATION':
-            conv_id = neighbor
-            # Conversation -> HAS_CHUNK -> Chunk
-            for conv_neighbor in graph.neighbors(conv_id):
-                conv_edge = graph.get_edge_data(conv_id, conv_neighbor) or {}
-                if conv_edge.get('label') == 'HAS_CHUNK' and graph.nodes[conv_neighbor].get('node_type') == 'CHUNK':
-                    chunk_ids.add(conv_neighbor)
-                
-                # Conversation -> HAS_CONTEXT -> Context -> HAS_DESCRIPTION_CHUNK -> Chunk
-                if conv_edge.get('label') == 'HAS_CONTEXT':
-                    ctx_id = conv_neighbor
-                    for ctx_neighbor in graph.neighbors(ctx_id):
-                        ctx_edge = graph.get_edge_data(ctx_id, ctx_neighbor) or {}
-                        if ctx_edge.get('label') == 'HAS_DESCRIPTION_CHUNK' and graph.nodes[ctx_neighbor].get('node_type') == 'CHUNK':
-                            chunk_ids.add(ctx_neighbor)
-
     return list(chunk_ids)
 
-async def add_triplets_to_graph_for_segment(
+async def add_triplets_to_graph_for_episode(
     deps: PipelineContext,
     relations: List[Tuple[str, str, str]],
     entity_mappings: Dict[str, str],
-    segment_id: str,
+    episode_id: str,
     chunk_entity_map: Dict[str, Set[str]],
-    gliner_label_map: Dict[str, str] = None,  # New parameter
-    llm_type_map: Dict[str, str] = None # Map of entity -> llm_type
+    gliner_label_map: Dict[str, str] = None,
+    llm_type_map: Dict[str, str] = None
 ):
-    """Write entities/edges to graph for a segment"""
+    """Write entities/edges to graph for an episode"""
     graph = deps.graph
     gliner_label_map = gliner_label_map or {}
     llm_type_map = llm_type_map or {}
@@ -380,9 +360,7 @@ async def add_triplets_to_graph_for_segment(
         if not graph.has_node(h) or not graph.has_node(t):
             continue
             
-        graph.add_edge(h, t, label=r, relation_type=r, graph_type="entity_relation", segment_id=segment_id, source="extraction")
-        # Log edge creation (verbose)
-        # logger.debug(f"Created edge: {h} --[{r}]--> {t}")
+        graph.add_edge(h, t, label=r, relation_type=r, graph_type="entity_relation", episode_id=episode_id, source="extraction")
 
     # Link chunks to entities
     for chunk_id, entities in chunk_entity_map.items():
@@ -391,16 +369,16 @@ async def add_triplets_to_graph_for_segment(
             if graph.has_node(mapped):
                 graph.add_edge(chunk_id, mapped, label="HAS_ENTITY", graph_type="lexical_graph")
 
-async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
-    """Aggregate chunk-level extractions per segment, run coref, and enrich graph."""
+async def enrich_graph_per_episode(deps: PipelineContext) -> Dict[str, Any]:
+    """Aggregate chunk-level extractions per episode, run coref, and enrich graph."""
     graph = deps.graph
-    segment_nodes = [n for n, d in graph.nodes(data=True) if d.get('node_type') == 'SEGMENT']
-    segments_processed = 0
+    episode_nodes = [n for n, d in graph.nodes(data=True) if d.get('node_type') == 'EPISODE']
+    episodes_processed = 0
     errors = []
     
-    for segment_id in segment_nodes:
+    for episode_id in episode_nodes:
         try:
-            chunk_ids = _get_chunks_for_segment(graph, segment_id)
+            chunk_ids = _get_chunks_for_episode(graph, episode_id)
             if not chunk_ids:
                 continue
             
@@ -450,11 +428,6 @@ async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
             
             # Build LLM type map
             llm_type_map = {}
-            # Iterate through all chunks again to collect types?
-            # Or better, collect them in the loop above.
-            # Let's do a quick pass here or modify the loop above.
-            
-            # Re-iterating to be safe and simple
             for cid in chunk_ids:
                 node = graph.nodes.get(cid, {})
                 raw_nodes = (node.get('raw_extraction') or {}).get('nodes') or []
@@ -463,11 +436,6 @@ async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
                     ent_type = n.get('type')
                     if ent_id and ent_type:
                         llm_type_map[ent_id] = ent_type
-                        
-            # Apply mappings to llm_type_map keys if needed? 
-            # The extraction uses raw names. Coref maps raw names to canonical names.
-            # So we should map raw name -> type, then when adding/updating canonical node, lookup type by raw name?
-            # Or better: construct canonical -> type map.
             
             canonical_llm_type_map = {}
             for ent_id, ent_type in llm_type_map.items():
@@ -476,23 +444,23 @@ async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
                 if canonical:
                     canonical_llm_type_map[canonical] = ent_type
 
-            await add_triplets_to_graph_for_segment(
+            await add_triplets_to_graph_for_episode(
                 deps=deps,
                 relations=cleaned_relations,
                 entity_mappings=entity_mappings,
-                segment_id=segment_id,
+                episode_id=episode_id,
                 chunk_entity_map=chunk_entity_map,
-                gliner_label_map=gliner_label_map, # Pass the map
+                gliner_label_map=gliner_label_map,
                 llm_type_map=canonical_llm_type_map
             )
             
-            segments_processed += 1
+            episodes_processed += 1
         except Exception as e:
-            logger.warning(f"Segment-level enrichment failed for {segment_id}: {e}")
-            errors.append(f"{segment_id}: {e}")
+            logger.warning(f"Episode-level enrichment failed for {episode_id}: {e}")
+            errors.append(f"{episode_id}: {e}")
             continue
     
-    return {"segments_processed": segments_processed, "errors": errors}
+    return {"episodes_processed": episodes_processed, "errors": errors}
 
 # --- Lexical Graph Construction with LangChain ---
  
@@ -531,6 +499,18 @@ async def process_document_splitting(
         logger.error(f"Error in splitting: {e}")
         raise
 
+def get_time_of_day(dt: datetime) -> str:
+    """Determine time of day segment."""
+    hour = dt.hour
+    if 5 <= hour < 12:
+        return "MORNING"
+    elif 12 <= hour < 17:
+        return "AFTERNOON"
+    elif 17 <= hour < 21:
+        return "EVENING"
+    else:
+        return "NIGHT"
+
 async def process_single_segment(
     deps: PipelineContext,
     segment: SegmentData,
@@ -543,14 +523,55 @@ async def process_single_segment(
     async with semaphore:
         chunk_count = 0
         
-        # Set name field: first 20 chars of content
-        segment_name = segment.content[:20].strip() if segment.content else f"Segment {segment_index}"
-        if len(segment.content) > 20:
-            segment_name += "..."
+        # --- Time Segment Logic ---
+        # Try to parse start_time from metadata to determine Time Segment (Morning/Afternoon/etc)
+        # Default to document date + noon if missing
+        start_time_str = segment.metadata.get('start_time')
+        timestamp = datetime.combine(segment.date, datetime.min.time()) # fallback
         
-        # Add Segment node
-        deps.graph.add_node(segment.segment_id,
-                          node_type="SEGMENT",
+        if start_time_str:
+            try:
+                # Reuse the parser's logic or simple parse if format is known. 
+                # Since we don't have the parser instance here easily, we rely on standard formats.
+                # LifeLogParser uses specific formats. Let's try common ones.
+                # Actually, better to parse in LifeLogParser and pass datetime in metadata, 
+                # but for now we try to parse the string.
+                for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%A %d %B %Y, %H:%M"]:
+                    try:
+                        timestamp = datetime.strptime(start_time_str, fmt)
+                        break
+                    except ValueError:
+                        continue
+            except Exception:
+                pass
+
+        time_segment = get_time_of_day(timestamp)
+        # Unique ID for the Time Segment: e.g. SEGMENT_2025-12-20_MORNING
+        time_segment_id = f"SEGMENT_{segment.date.isoformat()}_{time_segment}"
+        
+        # Create Time Segment Node (Idempotent)
+        if not deps.graph.has_node(time_segment_id):
+            deps.graph.add_node(time_segment_id,
+                              node_type="SEGMENT",
+                              graph_type="lexical_graph",
+                              name=f"{time_segment.title()} of {segment.date.isoformat()}",
+                              date=segment.date.isoformat(),
+                              time_of_day=time_segment)
+            # Link DAY -> SEGMENT
+            deps.graph.add_edge(doc_id, time_segment_id, label="HAS_SEGMENT", graph_type="lexical_graph")
+            
+        # --- Episode Node (Formerly Segment) ---
+        # The 'segment' passed in is now treated as an EPISODE
+        episode_id = segment.segment_id
+        
+        # Set name field: first 20 chars of content
+        episode_name = segment.content[:20].strip() if segment.content else f"Episode {segment_index}"
+        if len(segment.content) > 20:
+            episode_name += "..."
+        
+        # Add EPISODE node
+        deps.graph.add_node(episode_id,
+                          node_type="EPISODE",
                           graph_type="lexical_graph",
                           content=segment.content,
                           content_length=len(segment.content),
@@ -560,11 +581,11 @@ async def process_single_segment(
                           local_segment_order=segment_index,
                           global_segment_order=global_segment_order,
                           sentiment=segment.sentiment,
-                          name=segment_name,
+                          name=episode_name,
                           **segment.metadata)
         
-        # Edge: DAY -> HAS_SEGMENT -> SEGMENT
-        deps.graph.add_edge(doc_id, segment.segment_id, label="HAS_SEGMENT", graph_type="lexical_graph")
+        # Edge: SEGMENT -> HAS_EPISODE -> EPISODE
+        deps.graph.add_edge(time_segment_id, episode_id, label="HAS_EPISODE", graph_type="lexical_graph")
         
         # Check if this is a Life Graph Episode with structured conversations
         if segment.metadata.get('conversations'):
@@ -583,12 +604,11 @@ async def process_single_segment(
                         sub_chunks = await process_document_splitting(chunk_text, config)
                         
                         for sub_idx, sub_text in enumerate(sub_chunks):
-                            # Chunk ID derived from segment
-                            # Use simplified ID if only one chunk, otherwise append sub_index
+                            # Chunk ID derived from episode id
                             if len(sub_chunks) == 1:
-                                chunk_id = f"{segment.segment_id}_CHUNK_{i}"
+                                chunk_id = f"{episode_id}_CHUNK_{i}"
                             else:
-                                chunk_id = f"{segment.segment_id}_CHUNK_{i}_{sub_idx}"
+                                chunk_id = f"{episode_id}_CHUNK_{i}_{sub_idx}"
                             
                             chunk_name = sub_text[:20].strip() + "..." if len(sub_text) > 20 else sub_text
 
@@ -601,8 +621,8 @@ async def process_single_segment(
                                               llama_metadata={}, 
                                               name=chunk_name)
                             
-                            # Link SEGMENT -> HAS_CHUNK -> CHUNK (Directly)
-                            deps.graph.add_edge(segment.segment_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
+                            # Link EPISODE -> HAS_CHUNK -> CHUNK
+                            deps.graph.add_edge(episode_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
                             
                             # Add retrieval task for this chunk
                             deps.extraction_tasks.append(ChunkExtractionTask(
@@ -623,30 +643,29 @@ async def process_single_segment(
                         if not deps.graph.has_node(place_id):
                             deps.graph.add_node(place_id, node_type="PLACE", name=loc_name, graph_type="lexical_graph")
                         
-                        # Link Segment to Place directly
-                        deps.graph.add_edge(segment.segment_id, place_id, label="HAPPENED_AT", graph_type="lexical_graph")
+                        # Link Episode to Place directly
+                        deps.graph.add_edge(episode_id, place_id, label="HAPPENED_AT", graph_type="lexical_graph")
 
-                    # 2. Image -> Attribute on Segment
+                    # 2. Image -> Attribute on Episode
                     image_desc = row.get('Image')
                     if image_desc:
                         image_descriptions.append(image_desc)
 
-                # Store collected image descriptions on the Segment node
+                # Store collected image descriptions on the Episode node
                 if image_descriptions:
-                    deps.graph.nodes[segment.segment_id]['image_descriptions'] = image_descriptions
-                    # Keep single field for backward compat if needed, or just use list
-                    deps.graph.nodes[segment.segment_id]['image_description'] = "; ".join(image_descriptions)
+                    deps.graph.nodes[episode_id]['image_descriptions'] = image_descriptions
+                    deps.graph.nodes[episode_id]['image_description'] = "; ".join(image_descriptions)
 
             except Exception as e:
-                logger.error(f"Error processing Life Graph segment {segment.segment_id}: {e}", exc_info=True)
+                logger.error(f"Error processing Life Graph episode {episode_id}: {e}", exc_info=True)
                 
         else:
-            # Fallback to standard Text Splitter for non-LifeGraph segments
+            # Fallback to standard Text Splitter for non-LifeGraph segments (now episodes)
             try:
                 chunks = await process_document_splitting(segment.content, config)
                 
                 for i, chunk_text in enumerate(chunks):
-                    chunk_id = f"{segment.segment_id}_CHUNK_{i}"
+                    chunk_id = f"{episode_id}_CHUNK_{i}"
                     
                     metadata = {}
                     
@@ -664,7 +683,7 @@ async def process_single_segment(
                                       llama_metadata=metadata, 
                                       name=chunk_name)
                     
-                    deps.graph.add_edge(segment.segment_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
+                    deps.graph.add_edge(episode_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
                     
                     deps.extraction_tasks.append(ChunkExtractionTask(
                         chunk_id=chunk_id,
@@ -676,9 +695,9 @@ async def process_single_segment(
                     chunk_count += 1
                     
             except Exception as e:
-                logger.error(f"Error processing segment {segment.segment_id} with splitting: {e}", exc_info=True)
+                logger.error(f"Error processing episode {episode_id} with splitting: {e}", exc_info=True)
         
-        return {"chunk_count": chunk_count, "segment_id": segment.segment_id}
+        return {"chunk_count": chunk_count, "segment_id": episode_id}
 
 async def add_segments_to_graph(deps: PipelineContext, segments: List[SegmentData], doc_id: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
     config = config or {}
