@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --bg: #0f0f11;
+    --surface: #1a1a1f;
+    --border: #2d2d35;
+    --text: #e2e2e8;
+    --text-muted: #8888a0;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+}
+
+body {
+    @apply text-sm;
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: "Inter", system-ui, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+}
