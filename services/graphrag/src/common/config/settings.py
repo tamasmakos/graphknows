@@ -1,32 +1,39 @@
-from pydantic_settings import BaseSettings
 from typing import Optional
+from pydantic_settings import BaseSettings
+
 
 class AppSettings(BaseSettings):
-    # Define all env vars here with types
-    falkordb_host: str = "falkordb"
-    falkordb_port: int = 6379
-    
-    # Postgres
+    # Neo4j
+    neo4j_uri: str = "bolt://neo4j:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "changeme"
+    neo4j_database: str = "neo4j"
+
+    # Postgres / pgvector
     postgres_host: str = "pgvector"
     postgres_port: int = 5432
     postgres_db: str = "graphknows"
     postgres_user: str = "postgres"
-    postgres_password: str = "password"
+    postgres_password: str = "changeme"
     postgres_table: str = "hybrid_embeddings"
     postgres_enabled: bool = True
 
-    # Models
-    groq_model: str = "llama-3.3-70b-versatile"
-    keywords_model: str = "llama-3.1-8b-instant"
-    chat_model: str = "llama-3.1-8b-instant"
+    # LLM
+    llm_provider: str = "groq"
+    llm_model: str = "llama-3.3-70b-versatile"
+    llm_groq_api_key: Optional[str] = None
+    llm_openai_api_key: Optional[str] = None
 
-    openai_api_key: Optional[str] = None
-    
+    # Service-level model overrides
+    graphrag_keywords_model: str = "llama-3.1-8b-instant"
+    graphrag_chat_model: str = "llama-3.3-70b-versatile"
+    graphrag_embedding_model: str = "BAAI/bge-small-en-v1.5"
+
     # Langfuse
     langfuse_public_key: Optional[str] = None
     langfuse_secret_key: Optional[str] = None
     langfuse_host: str = "http://localhost:3000"
-    
+
     class Config:
         env_file = ".env"
         extra = "ignore"
