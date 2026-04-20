@@ -1,330 +1,72 @@
-<<<<<<< HEAD
 """
 HTTP interface for the KG Agent.
 
-This module defines the FastAPI app for the Agent, which exposes
-retrieval logic as tools and serves the frontend.
+Exposes retrieval logic as an API, backed by the graph-based workflow.
 """
 
 from __future__ import annotations
-
-import os
-import logging
-from typing import List, Dict, Any, Optional
-import time
-
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-from src.infrastructure.config import get_app_config
-from src.infrastructure.graph_db import get_database_client, GraphDB
-from src.workflow.graph_workflow import GraphWorkflow
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    force=True,
-)
-logger = logging.getLogger(__name__)
-logger.info("KG Agent initialized. Logging set to INFO level.")
-
-# Initialize Langfuse Tracing
-try:
-    from langfuse.llama_index import LlamaIndexInstrumentor
-    LlamaIndexInstrumentor().instrument()
-    logger.info("Langfuse instrumentation initialized.")
-except ImportError:
-    logger.warning("langfuse-llama-index not found. Tracing disabled.")
-except Exception as e:
-    logger.error(f"Failed to initialize Langfuse instrumentation: {e}")
-
-app = FastAPI(title="KG Agent")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-class ChatRequest(BaseModel):
-    query: str
-    messages: List[Message] = []
-    database: str = "falkordb"
-    create_plot: bool = False
-    accumulated_graph_data: Optional[Dict[str, Any]] = None
-    use_agent: bool = False  # Deprecated, kept for compatibility
-
-def _extract_single_column(results: List[Dict[str, Any]], preferred_key: str) -> List[str]:
-    """Utility to pull a single column out of a list of row dicts."""
-    values: List[str] = []
-    for row in results:
-        if preferred_key in row:
-            val = row[preferred_key]
-        else:
-            val = next(iter(row.values()), None)
-        if isinstance(val, str):
-            values.append(val)
-    return values
-
-
-@app.get("/schema")
-async def get_schema(database: str = "falkordb"):
-    """Dynamically inspect the graph schema."""
-    config = get_app_config()
-    try:
-        db: GraphDB = get_database_client(config, database)
-        try:
-            node_labels_raw = db.query("CALL db.labels()")
-            rel_types_raw = db.query("CALL db.relationshipTypes()")
-            prop_keys_raw = db.query("CALL db.propertyKeys()")
-
-            node_labels = _extract_single_column(node_labels_raw, "label")
-            relationship_types = _extract_single_column(rel_types_raw, "relationshipType")
-            property_keys = _extract_single_column(prop_keys_raw, "propertyKey")
-
-            return {
-                "database": database,
-                "node_labels": sorted(set(node_labels)),
-                "relationship_types": sorted(set(relationship_types)),
-                "property_keys": sorted(set(property_keys)),
-            }
-        finally:
-            db.close()
-    except Exception as e:  # noqa: BLE001
-        logger.error("Error fetching schema for %s: %s", database, e)
-        raise HTTPException(status_code=500, detail=f"Failed to fetch schema: {e}")
-
-
-@app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    """
-    Unified chat endpoint using the Event-Driven Workflow.
-    """
-    start_time = time.time()
-    
-    try:
-        workflow = GraphWorkflow(timeout=60, verbose=True)
-        
-        # Convert Pydantic messages to LlamaIndex ChatMessage objects
-        from llama_index.core.llms import ChatMessage, MessageRole
-        
-        li_messages = []
-        for msg in request.messages:
-            role = str(msg.role).lower()
-            if role == "user":
-                li_messages.append(ChatMessage(role=MessageRole.USER, content=msg.content))
-            elif role == "assistant":
-                li_messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=msg.content))
-            elif role == "system":
-                li_messages.append(ChatMessage(role=MessageRole.SYSTEM, content=msg.content))
-            else:
-                 # Default to user if unknown
-                 li_messages.append(ChatMessage(role=MessageRole.USER, content=msg.content))
-
-        result = await workflow.run(
-            query=request.query, 
-            messages=li_messages
-        )
-        
-        execution_time = time.time() - start_time
-        
-        # Result is from StopEvent
-        # {"answer": ..., "context": ..., "graph_data": ..., "trace": ...}
-        
-        return {
-            "answer": result.get("answer"),
-            "context": result.get("context"),
-            "full_prompt": "",
-            "execution_time": execution_time,
-            "graph_data": result.get("graph_data", {"nodes": [], "edges": []}),
-            "graph_stats": {},
-            "query_memory_mb": {},
-            "reasoning_chain": result.get("trace", []),
-            "seed_entities": result.get("seed_entities", []),
-            "seed_topics": result.get("seed_topics", []),
-            "step_timings": result.get("step_timings", {}),
-            "cypher_query": "Workflow Execution",
-            "confidence_score": 1.0,
-        }
-
-    except Exception as e:  # noqa: BLE001
-        logger.error("Endpoint error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/agent/chat")
-async def agent_chat_endpoint(request: ChatRequest):
-    """
-    Redirects to the main chat endpoint.
-    """
-    return await chat_endpoint(request)
-
-
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
-
-
-@app.get("/node-connections/{node_id}")
-async def get_node_connections(node_id: str, database: str = "falkordb"):
-    """Fetch all immediate connections (neighbors) of a given node."""
-    config = get_app_config()
-    try:
-        db: GraphDB = get_database_client(config, database)
-        try:
-            cypher = """
-            MATCH (n)-[r]-(m)
-            WHERE toString(id(n)) = $node_id
-            RETURN n, r, m
-            """
-            results = db.query(cypher, {"node_id": node_id})
-            
-            nodes_dict = {}
-            edges_list = []
-            
-            def extract_node_data(node):
-                if hasattr(node, "properties"):
-                    data = dict(node.properties)
-                    data["labels"] = list(node.labels) if hasattr(node, "labels") else []
-                    data["element_id"] = str(node.id) if hasattr(node, "id") else node.element_id if hasattr(node, "element_id") else ""
-                else:
-                    data = dict(node) if node else {}
-                    data["labels"] = data.get("labels", [])
-                    data["element_id"] = data.get("element_id", "")
-                return data
-            
-            def extract_edge_data(edge):
-                if hasattr(edge, "properties"):
-                    data = dict(edge.properties)
-                    data["type"] = edge.type if hasattr(edge, "type") else ""
-                    data["start"] = str(edge.src_node) if hasattr(edge, "src_node") else ""
-                    data["end"] = str(edge.dest_node) if hasattr(edge, "dest_node") else ""
-                else:
-                    data = dict(edge) if edge else {}
-                    data["type"] = data.get("type", "")
-                    data["start"] = data.get("start", "")
-                    data["end"] = data.get("end", "")
-                return data
-            
-            for row in results:
-                n = row.get("n")
-                if n:
-                    node_data = extract_node_data(n)
-                    if node_data["element_id"]:
-                        nodes_dict[node_data["element_id"]] = node_data
-                m = row.get("m")
-                if m:
-                    node_data = extract_node_data(m)
-                    if node_data["element_id"]:
-                        nodes_dict[node_data["element_id"]] = node_data
-                r = row.get("r")
-                if r:
-                    edge_data = extract_edge_data(r)
-                    if edge_data["start"] and edge_data["end"]:
-                        edges_list.append(edge_data)
-            
-            return {
-                "nodes": list(nodes_dict.values()),
-                "edges": edges_list
-            }
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error("Error fetching node connections: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-static_dir = os.path.join(os.path.dirname(__file__), "frontend")
-static_dir = os.path.abspath(static_dir)
-if os.path.exists(static_dir):
-=======
-"""
-HTTP interface for the KG Agent.
-
-This module defines the FastAPI app for the Agent, which exposes
-retrieval logic as tools and serves the frontend.
-"""
-
-from __future__ import annotations
-
-import os
-import logging
-from typing import List, Dict, Any, Optional
-import time
-
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-from src.infrastructure.config import get_app_config
-from src.infrastructure.graph_db import get_database_client, GraphDB
-from src.workflow.graph_workflow import GraphWorkflow
 
 import base64
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+import logging
+import os
+import time
+from typing import Any, Dict, List, Optional
 
-# Configure logging
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from src.infrastructure.config import get_app_config
+from src.infrastructure.graph_db import get_database_client, GraphDB
+from src.workflow.graph_workflow import GraphWorkflow
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     force=True,
 )
 logger = logging.getLogger(__name__)
-logger.info("KG Agent initialized. Logging set to INFO level.")
+logger.info("KG Agent initialized.")
 
-# Initialize Langfuse Tracing
+# ── Langfuse / OpenTelemetry tracing ─────────────────────────────────────────
 try:
-    config = get_app_config()
-    if config.langfuse_public_key and config.langfuse_secret_key:
-        # Set environment variables just in case
-        os.environ["LANGFUSE_PUBLIC_KEY"] = config.langfuse_public_key
-        os.environ["LANGFUSE_SECRET_KEY"] = config.langfuse_secret_key
-        os.environ["LANGFUSE_HOST"] = config.langfuse_host
-        
-        # Configure OpenTelemetry to export to Langfuse
-        auth_str = f"{config.langfuse_public_key}:{config.langfuse_secret_key}"
-        auth_bytes = base64.b64encode(auth_str.encode()).decode()
-        
-        # Langfuse OTLP HTTP endpoint
-        endpoint = f"{config.langfuse_host}/api/public/otel/v1/traces"
-        logger.info(f"Langfuse Tracing Configured. Host: {config.langfuse_host}, Endpoint: {endpoint}")
-        
-        exporter = OTLPSpanExporter(
-            endpoint=endpoint,
-            headers={"Authorization": f"Basic {auth_bytes}"}
-        )
-        
-        resource = Resource(attributes={"service.name": "graphrag-service"})
-        tracer_provider = TracerProvider(resource=resource)
-        tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-        
-        trace.set_tracer_provider(tracer_provider)
-        
-        LlamaIndexInstrumentor().instrument()
-        
-        logger.info(f"Langfuse instrumentation enabled (exporting to {endpoint})")
-    else:
-        logger.warning("Langfuse keys not found in environment. Tracing disabled.")
-except ImportError:
-    logger.warning("openinference-instrumentation-llama-index not found. Tracing disabled.")
-except Exception as e:
-    logger.error(f"Failed to initialize Langfuse instrumentation: {e}")
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
 
+    _cfg = get_app_config()
+    if _cfg.langfuse_public_key and _cfg.langfuse_secret_key:
+        os.environ["LANGFUSE_PUBLIC_KEY"] = _cfg.langfuse_public_key
+        os.environ["LANGFUSE_SECRET_KEY"] = _cfg.langfuse_secret_key
+        os.environ["LANGFUSE_HOST"] = _cfg.langfuse_host
+
+        _auth = base64.b64encode(
+            f"{_cfg.langfuse_public_key}:{_cfg.langfuse_secret_key}".encode()
+        ).decode()
+        _endpoint = f"{_cfg.langfuse_host}/api/public/otel/v1/traces"
+
+        _exporter = OTLPSpanExporter(
+            endpoint=_endpoint,
+            headers={"Authorization": f"Basic {_auth}"},
+        )
+        _provider = TracerProvider(
+            resource=Resource(attributes={"service.name": "graphrag-service"})
+        )
+        _provider.add_span_processor(BatchSpanProcessor(_exporter))
+        trace.set_tracer_provider(_provider)
+        LlamaIndexInstrumentor().instrument()
+        logger.info("Langfuse OTEL instrumentation enabled → %s", _endpoint)
+    else:
+        logger.warning("Langfuse keys not set — tracing disabled.")
+except ImportError:
+    logger.warning("openinference-instrumentation-llama-index not installed — tracing disabled.")
+except Exception as exc:
+    logger.error("Langfuse init failed: %s", exc)
+
+# ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="KG Agent")
 
 app.add_middleware(
@@ -335,95 +77,88 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Models ────────────────────────────────────────────────────────────────────
 class Message(BaseModel):
     role: str
     content: str
 
+
 class ChatRequest(BaseModel):
     query: str
     messages: List[Message] = []
-    database: str = "falkordb"
+    database: str = "neo4j"
     create_plot: bool = False
     accumulated_graph_data: Optional[Dict[str, Any]] = None
-    use_agent: bool = False  # Deprecated, kept for compatibility
 
-def _extract_single_column(results: List[Dict[str, Any]], preferred_key: str) -> List[str]:
-    """Utility to pull a single column out of a list of row dicts."""
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _extract_single_column(
+    results: List[Dict[str, Any]], preferred_key: str
+) -> List[str]:
     values: List[str] = []
     for row in results:
-        if preferred_key in row:
-            val = row[preferred_key]
-        else:
-            val = next(iter(row.values()), None)
+        val = row.get(preferred_key) or next(iter(row.values()), None)
         if isinstance(val, str):
             values.append(val)
     return values
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/schema")
-async def get_schema(database: str = "falkordb"):
-    """Dynamically inspect the graph schema."""
+async def get_schema(database: str = "neo4j"):
+    """Inspect the live graph schema."""
     config = get_app_config()
     try:
         db: GraphDB = get_database_client(config, database)
         try:
-            node_labels_raw = db.query("CALL db.labels()")
-            rel_types_raw = db.query("CALL db.relationshipTypes()")
-            prop_keys_raw = db.query("CALL db.propertyKeys()")
-
-            node_labels = _extract_single_column(node_labels_raw, "label")
-            relationship_types = _extract_single_column(rel_types_raw, "relationshipType")
-            property_keys = _extract_single_column(prop_keys_raw, "propertyKey")
-
+            node_labels = _extract_single_column(
+                db.query("CALL db.labels()"), "label"
+            )
+            rel_types = _extract_single_column(
+                db.query("CALL db.relationshipTypes()"), "relationshipType"
+            )
+            prop_keys = _extract_single_column(
+                db.query("CALL db.propertyKeys()"), "propertyKey"
+            )
             return {
                 "database": database,
                 "node_labels": sorted(set(node_labels)),
-                "relationship_types": sorted(set(relationship_types)),
-                "property_keys": sorted(set(property_keys)),
+                "relationship_types": sorted(set(rel_types)),
+                "property_keys": sorted(set(prop_keys)),
             }
         finally:
             db.close()
-    except Exception as e:  # noqa: BLE001
-        logger.error("Error fetching schema for %s: %s", database, e)
-        raise HTTPException(status_code=500, detail=f"Failed to fetch schema: {e}")
+    except Exception as exc:
+        logger.error("Error fetching schema: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch schema: {exc}")
 
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    """
-    Unified chat endpoint using the Event-Driven Workflow.
-    """
+    """Unified chat endpoint using the graph workflow."""
     start_time = time.time()
-    
     try:
-        workflow = GraphWorkflow(timeout=60, verbose=True)
-        
-        # Convert Pydantic messages to LlamaIndex ChatMessage objects
         from llama_index.core.llms import ChatMessage, MessageRole
-        
-        li_messages = []
-        for msg in request.messages:
-            role = str(msg.role).lower()
-            if role == "user":
-                li_messages.append(ChatMessage(role=MessageRole.USER, content=msg.content))
-            elif role == "assistant":
-                li_messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=msg.content))
-            elif role == "system":
-                li_messages.append(ChatMessage(role=MessageRole.SYSTEM, content=msg.content))
-            else:
-                 # Default to user if unknown
-                 li_messages.append(ChatMessage(role=MessageRole.USER, content=msg.content))
 
-        result = await workflow.run(
-            query=request.query, 
-            messages=li_messages
-        )
-        
+        workflow = GraphWorkflow(timeout=60, verbose=True)
+
+        role_map = {
+            "user": MessageRole.USER,
+            "assistant": MessageRole.ASSISTANT,
+            "system": MessageRole.SYSTEM,
+        }
+        li_messages = [
+            ChatMessage(
+                role=role_map.get(msg.role.lower(), MessageRole.USER),
+                content=msg.content,
+            )
+            for msg in request.messages
+        ]
+
+        result = await workflow.run(query=request.query, messages=li_messages)
         execution_time = time.time() - start_time
-        
-        # Result is from StopEvent
-        # {"answer": ..., "context": ..., "graph_data": ..., "trace": ...}
-        
+
         return {
             "answer": result.get("answer"),
             "context": result.get("context"),
@@ -439,17 +174,14 @@ async def chat_endpoint(request: ChatRequest):
             "cypher_query": "Workflow Execution",
             "confidence_score": 1.0,
         }
-
-    except Exception as e:  # noqa: BLE001
-        logger.error("Endpoint error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("Endpoint error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/agent/chat")
 async def agent_chat_endpoint(request: ChatRequest):
-    """
-    Redirects to the main chat endpoint.
-    """
+    """Alias for /chat."""
     return await chat_endpoint(request)
 
 
@@ -459,8 +191,8 @@ async def health_check():
 
 
 @app.get("/node-connections/{node_id}")
-async def get_node_connections(node_id: str, database: str = "falkordb"):
-    """Fetch all immediate connections (neighbors) of a given node."""
+async def get_node_connections(node_id: str, database: str = "neo4j"):
+    """Fetch all immediate neighbours of a given node."""
     config = get_app_config()
     try:
         db: GraphDB = get_database_client(config, database)
@@ -471,64 +203,46 @@ async def get_node_connections(node_id: str, database: str = "falkordb"):
             RETURN n, r, m
             """
             results = db.query(cypher, {"node_id": node_id})
-            
-            nodes_dict = {}
-            edges_list = []
-            
-            def extract_node_data(node):
+
+            nodes_dict: Dict[str, Any] = {}
+            edges_list: List[Dict[str, Any]] = []
+
+            def _node_data(node: Any) -> Dict[str, Any]:
                 if hasattr(node, "properties"):
                     data = dict(node.properties)
-                    data["labels"] = list(node.labels) if hasattr(node, "labels") else []
-                    data["element_id"] = str(node.id) if hasattr(node, "id") else node.element_id if hasattr(node, "element_id") else ""
+                    data["labels"] = list(getattr(node, "labels", []))
+                    data["element_id"] = str(getattr(node, "id", getattr(node, "element_id", "")))
                 else:
                     data = dict(node) if node else {}
-                    data["labels"] = data.get("labels", [])
-                    data["element_id"] = data.get("element_id", "")
+                    data.setdefault("labels", [])
+                    data.setdefault("element_id", "")
                 return data
-            
-            def extract_edge_data(edge):
+
+            def _edge_data(edge: Any) -> Dict[str, Any]:
                 if hasattr(edge, "properties"):
                     data = dict(edge.properties)
-                    data["type"] = edge.type if hasattr(edge, "type") else ""
-                    data["start"] = str(edge.src_node) if hasattr(edge, "src_node") else ""
-                    data["end"] = str(edge.dest_node) if hasattr(edge, "dest_node") else ""
+                    data["type"] = getattr(edge, "type", "")
+                    data["start"] = str(getattr(edge, "src_node", ""))
+                    data["end"] = str(getattr(edge, "dest_node", ""))
                 else:
                     data = dict(edge) if edge else {}
-                    data["type"] = data.get("type", "")
-                    data["start"] = data.get("start", "")
-                    data["end"] = data.get("end", "")
+                    data.setdefault("type", "")
+                    data.setdefault("start", "")
+                    data.setdefault("end", "")
                 return data
-            
+
             for row in results:
-                n = row.get("n")
-                if n:
-                    node_data = extract_node_data(n)
-                    if node_data["element_id"]:
-                        nodes_dict[node_data["element_id"]] = node_data
-                m = row.get("m")
-                if m:
-                    node_data = extract_node_data(m)
-                    if node_data["element_id"]:
-                        nodes_dict[node_data["element_id"]] = node_data
-                r = row.get("r")
-                if r:
-                    edge_data = extract_edge_data(r)
-                    if edge_data["start"] and edge_data["end"]:
-                        edges_list.append(edge_data)
-            
-            return {
-                "nodes": list(nodes_dict.values()),
-                "edges": edges_list
-            }
+                for key in ("n", "m"):
+                    nd = _node_data(row.get(key))
+                    if nd.get("element_id"):
+                        nodes_dict[nd["element_id"]] = nd
+                ed = _edge_data(row.get("r"))
+                if ed.get("start") and ed.get("end"):
+                    edges_list.append(ed)
+
+            return {"nodes": list(nodes_dict.values()), "edges": edges_list}
         finally:
             db.close()
-    except Exception as e:
-        logger.error("Error fetching node connections: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-static_dir = os.path.join(os.path.dirname(__file__), "frontend")
-static_dir = os.path.abspath(static_dir)
-if os.path.exists(static_dir):
->>>>>>> 33d176646d75b1ad20790a86705c13c6a898a3f4
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    except Exception as exc:
+        logger.error("Error fetching node connections: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
