@@ -52,9 +52,9 @@ export default function ChatPage() {
                     try {
                         const chunkStr = line.slice(5).trim();
                         if (!chunkStr) continue;
-                        
+
                         const chunk = JSON.parse(chunkStr) as SSEChunk;
-                        
+
                         if (chunk.type === "token") {
                             setMessages((prev) => {
                                 const copy = [...prev];
@@ -68,14 +68,15 @@ export default function ChatPage() {
                             setMessages((prev) => {
                                 const copy = [...prev];
                                 const currentCitations = copy[copy.length - 1].citations || [];
+                                const incoming = Array.isArray(chunk.data) ? chunk.data : [chunk.data];
                                 copy[copy.length - 1] = {
                                     ...copy[copy.length - 1],
-                                    citations: [...currentCitations, chunk.data],
+                                    citations: [...currentCitations, ...incoming],
                                 };
                                 return copy;
                             });
                         } else if (chunk.type === "tool_call") {
-                             setMessages((prev) => {
+                            setMessages((prev) => {
                                 const copy = [...prev];
                                 const currentTools = copy[copy.length - 1].toolCalls || [];
                                 copy[copy.length - 1] = {
@@ -89,12 +90,12 @@ export default function ChatPage() {
                             setGraphData(prev => {
                                 if (!prev) return chunk.data;
                                 // Basic merge of incoming Graph node data (e.g., from multiple tools)
-                                const existingNodes = new Set(prev.nodes.map((n:any) => n.id));
-                                const existingEdges = new Set(prev.edges.map((e:any) => `${e.source}-${e.target}-${e.type}`));
-                                
-                                const newNodes = chunk.data.nodes.filter((n:any) => !existingNodes.has(n.id));
-                                const newEdges = chunk.data.edges.filter((e:any) => !existingEdges.has(`${e.source}-${e.target}-${e.type}`));
-                                
+                                const existingNodes = new Set(prev.nodes.map((n: any) => n.id));
+                                const existingEdges = new Set(prev.edges.map((e: any) => `${e.source}-${e.target}-${e.type}`));
+
+                                const newNodes = chunk.data.nodes.filter((n: any) => !existingNodes.has(n.id));
+                                const newEdges = chunk.data.edges.filter((e: any) => !existingEdges.has(`${e.source}-${e.target}-${e.type}`));
+
                                 return {
                                     nodes: [...prev.nodes, ...newNodes],
                                     edges: [...prev.edges, ...newEdges]
@@ -138,26 +139,25 @@ export default function ChatPage() {
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
                     {messages.length === 0 ? (
                         <div className="flex flex-col flex-1 h-full items-center justify-center text-center max-w-sm mx-auto space-y-4 opacity-70">
-                           <Bot className="w-12 h-12 text-primary/60"/>
-                           <p className="text-sm font-medium">Hello. Upload a document on the left, then ask me a question.</p>
+                            <Bot className="w-12 h-12 text-primary/60" />
+                            <p className="text-sm font-medium">Hello. Upload a document on the left, then ask me a question.</p>
                         </div>
                     ) : (
                         messages.map((m, i) => (
                             <div key={i} className={`flex gap-4 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 {m.role === 'assistant' && (
                                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-1 text-primary">
-                                        <Bot className="w-5 h-5"/>
+                                        <Bot className="w-5 h-5" />
                                     </div>
                                 )}
                                 <div className={`flex flex-col gap-2 max-w-[85%] ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-                                    <div className={`px-4 py-3 rounded-2xl text-[15px] leading-relaxed shadow-sm ${
-                                        m.role === 'user' 
-                                          ? 'bg-primary text-primary-foreground rounded-tr-sm' 
-                                          : 'bg-white border rounded-tl-sm text-gray-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-200'
-                                    }`}>
-                                        {m.content || (streaming && i === messages.length - 1 ? <Loader2 className="w-4 h-4 animate-spin my-1"/> : "")}
+                                    <div className={`px-4 py-3 rounded-2xl text-[15px] leading-relaxed shadow-sm ${m.role === 'user'
+                                        ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                                        : 'bg-white border rounded-tl-sm text-gray-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-200'
+                                        }`}>
+                                        {m.content || (streaming && i === messages.length - 1 ? <Loader2 className="w-4 h-4 animate-spin my-1" /> : "")}
                                     </div>
-                                    
+
                                     {m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0 && (
                                         <div className="text-xs text-gray-500 font-mono bg-gray-50 border rounded p-2 max-w-full overflow-x-auto dark:bg-zinc-900 dark:border-zinc-800">
                                             {m.toolCalls.map((tc, idx) => (
@@ -185,7 +185,7 @@ export default function ChatPage() {
 
                 <div className="p-4 bg-white dark:bg-zinc-950">
                     <div className="relative max-w-3xl mx-auto flex items-center shadow-sm rounded-xl border dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all">
-                        <input 
+                        <input
                             type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
@@ -193,7 +193,7 @@ export default function ChatPage() {
                             placeholder="Ask a question..."
                             className="flex-1 bg-transparent py-4 pl-5 outline-none text-[15px] text-gray-800 dark:text-zinc-100 placeholder:text-gray-400"
                         />
-                        <button 
+                        <button
                             onClick={send}
                             disabled={!input.trim() || streaming}
                             className="bg-primary/10 hover:bg-primary text-primary hover:text-white p-2.5 mr-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -206,8 +206,51 @@ export default function ChatPage() {
 
             {/* Right Pane: Graph Explorer (Force Graph) */}
             <div className="w-[33%] hidden lg:block bg-gray-50 flex-shrink-0 relative">
-                 <GraphVisualizer graphData={graphData} isLoading={streaming && graphData === null} />
+                <GraphVisualizer graphData={graphData} isLoading={streaming && graphData === null} />
             </div>
         </div>
     );
 }
+                    </p >
+                )}
+{
+    messages.map((msg, i) => (
+        <div key={i} className={msg.role === "user" ? "flex justify-end" : "flex justify-start"}>
+            <div
+                className="max-w-2xl rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap"
+                style={{
+                    backgroundColor: msg.role === "user" ? "var(--accent)" : "var(--surface)",
+                    color: msg.role === "user" ? "#fff" : "var(--text)",
+                    border: msg.role === "assistant" ? "1px solid var(--border)" : "none",
+                }}
+            >
+                {msg.content}
+                {msg.citations && msg.citations.length > 0 && (
+                    <details className="mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
+                        <summary className="cursor-pointer">
+                            {msg.citations.length} source{msg.citations.length !== 1 ? "s" : ""}
+                        </summary>
+                        <ol className="mt-2 space-y-1 list-decimal list-inside">
+                            {msg.citations.map((c, ci) => (
+                                <li key={ci} title={c.text_excerpt}>
+                                    <strong>{c.doc_title}</strong>
+                                    {c.heading_path?.length > 0 && ` › ${c.heading_path.join(" › ")}`}
+                                    {` (score: ${c.score.toFixed(2)})`}
+                                </li>
+                            ))}
+                        </ol>
+                    </details>
+                )}
+            </div>
+        </div>
+    ))
+}
+<div ref={bottomRef} />
+            </div >
+
+    {/* Input row */ }
+    < div
+className = "border-t p-4 flex gap-2"
+style = {{ borderColor: "var(--border)", backgroundColor: "var(--surface)" }}
+            >
+    {/* Extra old code removed */ }
