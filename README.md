@@ -1,10 +1,124 @@
 # Knowledge Graph Project
 
-This repository implements a decoupled, agentic Knowledge Graph system designed to transform unstructured life-log data into a queryable semantic memory.
+This repository implements a decoupled, agentic Knowledge Graph system designed to transform unstructured documents into a queryable semantic memory.
 
 It consists of two primary microservices:
-- **GraphGen** (Generation/ETL): A sophisticated pipeline that parses raw data, extracts entities using LLMs and NER, resolves coreferences, detects communities, and builds a hierarchical graph.
-- **GraphRAG** (Retrieval/API): An agentic retrieval system powered by **LlamaIndex** that navigates the graph to answer complex user queries.
+- **GraphGen** (Generation/ETL): A pipeline that parses documents, extracts entities using GLiNER + LLMs, resolves coreferences, detects communities, and stores everything in Neo4j.
+- **GraphRAG** (Retrieval/API): An agentic retrieval system powered by **LlamaIndex** `ReActAgent` that navigates the graph to answer complex user queries.
+
+---
+
+## System Architecture
+
+The system follows a strict producer-consumer model, decoupled by Neo4j as the shared storage layer.
+
+```mermaid
+graph TD
+    Raw[Documents .txt/.pdf/.docx/...] -->|Input| Gen[GraphGen Service :8020]
+
+    subgraph "GraphGen Pipeline"
+        Gen --> Parse[Parser Registry]
+        Parse --> Upload[Neo4j Upload]
+        Upload --> Ext[Entity Extraction GLiNER + LLM]
+        Ext --> Enrich[Embeddings + Resolution]
+        Enrich --> Comm[Community Detection]
+    end
+
+    Upload -->|Document + Chunks| Neo4j[(Neo4j)]
+    Ext -->|Entity + Relations| Neo4j
+
+    User -->|Query| RAG[GraphRAG Service :8010]
+
+    subgraph "GraphRAG Agent"
+        RAG -->|Vector + Graph Search| Neo4j
+        RAG -->|Synthesis| LLM[LLM Response]
+    end
+```
+
+### Shared Infrastructure
+- **Neo4j**: Stores graph topology, properties, and 384-dim vector embeddings (Community Edition 5.11+).
+
+---
+
+## Service Details
+
+### 1. GraphGen (The Builder)
+Located in `services/graphgen`.
+
+**Key Pipeline Stages:**
+1. **Document Parsing**: Auto-discovers files in `input/` using a parser registry (TXT, MD, PDF, DOCX, PPTX, XLSX, HTML, Images via pytesseract).
+2. **Neo4j Upload**: Stores `Document → [:CONTAINS] → Chunk` nodes immediately.
+3. **Entity & Relation Extraction**: Uses **GLiNER** (NER) + **LLMs** (relation extraction).
+4. **Semantic Enrichment**: Generates embeddings (`BAAI/bge-small-en-v1.5`), resolves duplicate entities.
+5. **Community Detection**: Applies the **Leiden Algorithm** to cluster entities.
+6. **Summarization**: Generates LLM-based summaries for every community.
+
+**Key Tech**: `LangChain`, `GLiNER`, `NetworkX`, `Leidenalg`, `SentenceTransformers`, `Neo4j`.
+
+### 2. GraphRAG (The Agent)
+Located in `services/graphrag`.
+
+**Key Tech**: `LlamaIndex ReActAgent`, `FastAPI`, `Langfuse` (Tracing), `Pydantic`, `Neo4j`.
+
+---
+
+## Data Schema
+
+```
+(:Document {doc_id, title, source_path, created_at})
+    -[:CONTAINS]->
+(:Chunk {chunk_id, text, position, doc_id, embedding[384]})
+    -[:MENTIONS]->
+(:Entity {entity_id, name, type, embedding[384]})
+    -[:RELATED_TO {relation}]->
+(:Entity)
+```
+
+---
+
+## Getting Started
+
+### 1. Prerequisites
+- **Docker** and **Docker Compose**.
+- API Keys for **Groq** (or OpenAI).
+
+### 2. Configuration
+```bash
+cp .env.example .env
+# Fill in: NEO4J_PASSWORD, GROQ_API_KEY
+```
+
+### 3. Run the Stack
+```bash
+docker-compose up --build -d
+```
+This starts:
+- **GraphGen** (Port 8020)
+- **GraphRAG** (Port 8010)
+- **Neo4j** (Port 7474 / 7687)
+
+### 4. Ingest Data
+```bash
+# Place files in input/
+curl -X POST http://localhost:8020/run \
+  -H "Content-Type: application/json" \
+  -d '{"clean_database": true}'
+```
+
+Or upload individual documents:
+```bash
+curl -X POST http://localhost:8020/documents -F "file=@myfile.pdf"
+```
+
+### 5. Chat
+- **Web UI**: [http://localhost:3333](http://localhost:3333)
+- **API Docs**: [http://localhost:8010/docs](http://localhost:8010/docs)
+
+## Development
+
+```bash
+docker-compose -f docker-compose.yaml -f docker-compose.dev.yaml up
+```
 
 ---
 

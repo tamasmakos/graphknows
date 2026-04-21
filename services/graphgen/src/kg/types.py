@@ -31,23 +31,3 @@ class PipelineContext:
     
     def add_error(self, step: str, message: str):
         self.errors.append(f"[{step}] {message}")
-
-
-class FalkorDBConfig(BaseModel):
-    """Configuration for FalkorDB graph database."""
-    upload_enabled: bool = True
-    host: str = "localhost"
-    port: int = 6379
-    username: Optional[str] = None
-    password: Optional[str] = None
-    database: str = "kg"
-    clean_database: bool = True
-
-# IterativeConfig removed
-
-class Config(BaseModel):
-    """Main configuration object."""
-    falkordb: FalkorDBConfig
-
-
-

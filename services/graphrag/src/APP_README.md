@@ -4,31 +4,29 @@ The `graphrag` service is a FastAPI-based retrieval system that uses a **LlamaIn
 
 ## Architecture Overview
 
-- **Agentic Exploration**: Uses a `FunctionAgent` to proactively browse entities, relationships, and topics before answering.
-- **Service Isolation**: Contains its own local drivers for FalkorDB and PostgreSQL, ensuring zero dependency on the ingestion pipeline.
+- **Agentic Exploration**: Uses a `ReActAgent` with 4 Neo4j tools to proactively browse entities, relationships, and document chunks before answering.
+- **Service Isolation**: Contains its own Neo4j driver; zero dependency on the ingestion pipeline.
 - **Pydantic Settings**: Configuration is strictly typed and managed via `AppSettings`.
 
 ## Core Components
 
 ### 1. The Agent (`src/agent/`)
-A LlamaIndex agent equipped with tools to query the graph.
-- `llamaindex_agent.py`: Agent definition and tool orchestration.
-- `tracing.py`: Langfuse instrumentation and reasoning chain logging.
+A LlamaIndex `ReActAgent` equipped with Neo4j tools.
+- `workflow.py`: `run_agent()` and `stream_agent()` entry points.
+- `tools.py`: `search_chunks`, `get_entity_neighbours`, `get_document_context`, `search_entities`.
 
 ### 2. Infrastructure (`src/infrastructure/`)
-- `graph_db.py`: Database client with hybrid search logic.
-- `postgres_store.py`: Read-only driver for pgvector embedding retrieval.
+- `neo4j_driver.py`: Async Neo4j driver factory.
 - `llm.py`: Provider-agnostic LLM factory (Groq/OpenAI).
 - `config.py`: Configuration factory using `AppSettings`.
 
-### 3. Llama Adapters (`src/llama/`)
-Adapts the local graph infrastructure to LlamaIndex's `GraphStore` and `Embedding` interfaces.
+### 3. MCP Server (`src/mcp/`)
+An MCP server exposing `kg_chat` and `kg_schema` tools for use with MCP-compatible clients (internal dev tool).
 
 ## API Endpoints
 
-- `POST /agent/chat`: Proactive agent-based chat.
-- `POST /chat`: Direct retrieval pipeline.
-- `GET /schema`: Inspect the current graph schema.
+- `POST /chat`: Stream or non-stream agent chat.
+- `GET /schema`: Inspect the current graph schema from Neo4j.
 - `GET /health`: Service health check.
 
 ## Running the Service
@@ -36,14 +34,16 @@ Adapts the local graph infrastructure to LlamaIndex's `GraphStore` and `Embeddin
 ### 1. Configuration
 Settings are loaded from environment variables:
 ```env
-FALKORDB_HOST=localhost
+NEO4J_URI=bolt://neo4j:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=changeme
 GROQ_API_KEY=gsk_...
 ```
 
 ### 2. Start the API
 ```bash
-# From services/graphrag/src
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# From services/graphrag/
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8010
 ```
 
 ## Monitoring

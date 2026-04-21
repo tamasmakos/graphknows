@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from .kg.config.settings import PipelineSettings
 from .kg.neo4j.driver import create_driver
 from .kg.neo4j.uploader import Neo4jUploader
-from .kg.neo4j.indexes import create_indexes
+from .kg.neo4j.schema_bootstrap import bootstrap_schema
 from .kg.pipeline.core import KnowledgePipeline
 from .kg.graph.extractors import get_extractor
 
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     _neo4j_driver = create_driver()
     try:
         await asyncio.wait_for(_neo4j_driver.verify_connectivity(), timeout=5.0)
-        await create_indexes(_neo4j_driver, database=settings.infra.neo4j_database)
+        await bootstrap_schema(_neo4j_driver, database=settings.infra.neo4j_database)
         _neo4j_available = True
         logger.info("Neo4j driver ready.")
     except Exception as e:

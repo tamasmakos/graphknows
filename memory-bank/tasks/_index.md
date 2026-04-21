@@ -4,15 +4,15 @@ _Last updated: 2026-04-21 after full codebase audit._
 
 ---
 
-## In Progress
-_(none — Phase A is next)_
+## Completed — Phase A: Cleanup & Unification
+
+- **[TASK010]** ✅ Nuke Legacy & Align Schema
+- **[TASK011]** ✅ Single Workflow + Schema Bootstrap + MCP Alignment
 
 ---
 
-## Pending — Phase A: Cleanup & Unification (must be first)
-
-- **[TASK010]** Nuke Legacy & Align Schema — delete FalkorDB/life-log/dead code across both services; fix embedding model to bge-small-en-v1.5; add pytesseract; unify `/run` to new parser system; update stale docs.
-- **[TASK011]** Single Workflow + Schema Bootstrap + MCP Alignment — Neo4j constraints/vector/fulltext indexes at lifespan; rewire MCP to agent workflow; remove FalkorDB from graphrag; resolve pgvector + MCP scope questions.
+## In Progress
+_(none)_
 
 ## Pending — Phase B: Ingestion Scale
 

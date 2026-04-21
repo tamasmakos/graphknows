@@ -74,6 +74,26 @@ async def lifespan(app: FastAPI):
     try:
         await _driver.verify_connectivity()
         logger.info("Neo4j driver connected.")
+        # Verify required vector indexes exist; warn if missing (schema must be
+        # bootstrapped by the graphgen service before queries can run).
+        async with _driver.session() as session:
+            result = await session.run(
+                "SHOW INDEXES YIELD name, type, state WHERE type = 'VECTOR' RETURN name, state"
+            )
+            indexes = {rec["name"]: rec["state"] async for rec in result}
+        expected = {"chunk_embedding", "entity_embedding"}
+        missing = expected - set(indexes.keys())
+        if missing:
+            logger.warning(
+                "Vector indexes missing — run graphgen /run to bootstrap schema: %s",
+                missing,
+            )
+        else:
+            not_online = {n for n, s in indexes.items() if n in expected and s != "ONLINE"}
+            if not_online:
+                logger.warning("Vector indexes not ONLINE yet: %s", not_online)
+            else:
+                logger.info("Vector indexes verified: %s", expected)
     except Exception as exc:
         logger.warning("Neo4j not reachable at startup: %s", exc)
     yield

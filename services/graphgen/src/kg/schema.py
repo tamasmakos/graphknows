@@ -18,7 +18,7 @@ class PropertySpec:
     required: bool = False
     indexed: bool = False
     unique: bool = False
-    vector_dims: int = 0  # > 0 → pgvector / Neo4j vector index
+    vector_dims: int = 0  # > 0 → Neo4j vector index
 
 
 @dataclass(frozen=True)

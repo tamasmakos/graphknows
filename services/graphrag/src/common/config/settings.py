@@ -9,15 +9,6 @@ class AppSettings(BaseSettings):
     neo4j_password: str = "changeme"
     neo4j_database: str = "neo4j"
 
-    # Postgres / pgvector
-    postgres_host: str = "pgvector"
-    postgres_port: int = 5432
-    postgres_db: str = "graphknows"
-    postgres_user: str = "postgres"
-    postgres_password: str = "changeme"
-    postgres_table: str = "hybrid_embeddings"
-    postgres_enabled: bool = True
-
     # LLM
     llm_provider: str = "groq"
     llm_model: str = "llama-3.3-70b-versatile"

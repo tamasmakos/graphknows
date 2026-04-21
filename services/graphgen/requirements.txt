@@ -4,10 +4,7 @@ scikit-learn
 nltk
 leidenalg
 networkx
-falkordb
 python-dotenv
-psycopg2-binary
-pgvector
 sentence-transformers
 pydantic-settings
 gliner

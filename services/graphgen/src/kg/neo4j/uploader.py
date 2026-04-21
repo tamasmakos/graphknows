@@ -1,7 +1,7 @@
 """
 Neo4j Knowledge Graph Uploader.
 
-Replaces the FalkorDB uploader with the official async neo4j driver.
+Uses the official async neo4j driver.
 All Cypher uses parameterised queries — never f-string interpolation.
 """
 

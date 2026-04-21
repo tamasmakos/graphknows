@@ -1,29 +1,21 @@
 import asyncio
 import functools
 import logging
-import os
 import re
-from datetime import datetime, date
-from typing import List, Dict, Any, Tuple, Set, Optional
-import re
+from typing import List, Dict, Any, Tuple, Set
 
 import networkx as nx
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from kg.types import PipelineContext, ChunkExtractionTask
 from kg.graph.resolution import resolve_extraction_coreferences
 from kg.graph.extractors import BaseExtractor, get_extractor
-from kg.graph.parsing import SegmentData
-from kg.graph.parsers.life import LifeLogParser
 
 # --- GLiNER Helper ---
 from gliner import GLiNER
-import spacy
 import torch
 
 logger = logging.getLogger(__name__)
 
 GLINER_MODEL = None
-SPACY_MODEL = None
 
 def get_gliner_model():
     global GLINER_MODEL
@@ -37,26 +29,6 @@ def get_gliner_model():
             logger.error(f"Failed to load GLiNER: {e}")
             return None
     return GLINER_MODEL
-
-def get_spacy_model(model_name: str = "en_core_web_lg"):
-    global SPACY_MODEL
-    if SPACY_MODEL is None:
-        try:
-            logger.info(f"Loading Spacy model ({model_name})...")
-            SPACY_MODEL = spacy.load(model_name)
-            logger.info("Spacy model loaded.")
-        except Exception as e:
-            logger.error(f"Failed to load Spacy model {model_name}: {e}")
-            logger.info(f"Trying to download {model_name}...")
-            try:
-                from spacy.cli import download
-                download(model_name)
-                SPACY_MODEL = spacy.load(model_name)
-                logger.info("Spacy model loaded after download.")
-            except Exception as e2:
-                logger.error(f"Failed to download/load Spacy model: {e2}")
-                return None
-    return SPACY_MODEL
 
 # --- Helper Functions ---
 
@@ -168,72 +140,47 @@ async def _generate_entity_hints(
     tasks: List[ChunkExtractionTask], 
     config: Dict[str, Any]
 ) -> Dict[str, List[Dict[str, str]]]:
-    """Generate entity hints using GLiNER or Spacy."""
+    """Generate entity hints using GLiNER."""
     extraction_config = config.get('extraction', {})
     if hasattr(extraction_config, 'model_dump'):
         extraction_config = extraction_config.model_dump()
-        
-    extraction_backend = extraction_config.get('backend', 'gliner')
+
     results_map = {}
-    
-    if extraction_backend == 'spacy':
-        # --- SPACY Extraction ---
-        logger.info(f"Step 2.1: Bulk Spacy Extraction for {len(tasks)} chunks...")
-        try:
-            spacy_model_name = extraction_config.get('spacy_model', 'en_core_web_lg')
-            nlp = get_spacy_model(spacy_model_name)
+
+    # --- GLiNER Extraction ---
+    logger.info(f"Step 2.1: Bulk GLiNER Pass for {len(tasks)} chunks...")
+    try:
+        model = get_gliner_model()
+        if model:
+            labels = extraction_config.get('gliner_labels', ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"])
             
-            if nlp:
-                texts = [task.chunk_text for task in tasks]
-                # Use nlp.pipe for efficiency
-                docs = list(nlp.pipe(texts))
+            all_sentences = []
+            sentence_to_task_map = []
+            
+            for task in tasks:
+                sents = split_sentences(task.chunk_text)
+                if not sents:
+                    sents = [task.chunk_text]
+                all_sentences.extend(sents)
+                sentence_to_task_map.extend([task.chunk_id] * len(sents))
+            
+            if all_sentences:
+                predict_func = functools.partial(
+                    model.batch_predict_entities, 
+                    all_sentences, 
+                    labels, 
+                    threshold=0.5
+                )
+                all_predictions = await asyncio.to_thread(predict_func)
                 
-                for task, doc in zip(tasks, docs):
-                    extracted = []
-                    for ent in doc.ents:
-                        extracted.append({"text": ent.text})
-                    results_map[task.chunk_id] = extracted
+                for chunk_id, preds in zip(sentence_to_task_map, all_predictions):
+                    if chunk_id not in results_map:
+                        results_map[chunk_id] = []
+                    results_map[chunk_id].extend(preds)
                 
-                logger.info(f"Bulk Spacy complete. Extracted entities for {len(results_map)} chunks.")
-        
-        except Exception as e:
-             logger.error(f"Bulk Spacy extraction failed: {e}", exc_info=True)
-             
-    else:
-        # --- GLiNER Extraction (Default) ---
-        logger.info(f"Step 2.1: Bulk GLiNER Pass for {len(tasks)} chunks...")
-        try:
-            model = get_gliner_model()
-            if model:
-                labels = extraction_config.get('gliner_labels', ["Person", "Organization", "Location", "Event", "Date", "Award", "Competitions", "Teams", "Concept"])
-                
-                all_sentences = []
-                sentence_to_task_map = []
-                
-                for task in tasks:
-                    sents = split_sentences(task.chunk_text)
-                    if not sents:
-                        sents = [task.chunk_text]
-                    all_sentences.extend(sents)
-                    sentence_to_task_map.extend([task.chunk_id] * len(sents))
-                
-                if all_sentences:
-                    predict_func = functools.partial(
-                        model.batch_predict_entities, 
-                        all_sentences, 
-                        labels, 
-                        threshold=0.5
-                    )
-                    all_predictions = await asyncio.to_thread(predict_func)
-                    
-                    for chunk_id, preds in zip(sentence_to_task_map, all_predictions):
-                        if chunk_id not in results_map:
-                            results_map[chunk_id] = []
-                        results_map[chunk_id].extend(preds)
-                    
-                    logger.info(f"Bulk GLiNER complete. Extracted entities for {len(results_map)} chunks.")
-        except Exception as e:
-            logger.error(f"Bulk GLiNER extraction failed: {e}")
+                logger.info(f"Bulk GLiNER complete. Extracted entities for {len(results_map)} chunks.")
+    except Exception as e:
+        logger.error(f"Bulk GLiNER extraction failed: {e}")
 
     return results_map
 
@@ -461,408 +408,3 @@ async def enrich_graph_per_episode(deps: PipelineContext) -> Dict[str, Any]:
             continue
     
     return {"episodes_processed": episodes_processed, "errors": errors}
-
-# --- Lexical Graph Construction with LangChain ---
- 
-async def process_document_splitting(
-    content: str, 
-    config: Dict[str, Any]
-) -> List[str]: # Returns list of chunk strings
-    """Process text using LangChain splitter."""
-    
-    try:
-        # Configure splitter
-        extraction_config = config.get('extraction', {})
-        if hasattr(extraction_config, 'model_dump'):
-            extraction_config = extraction_config.model_dump()
-            
-        chunk_size = extraction_config.get('chunk_size', 512)
-        chunk_overlap = extraction_config.get('chunk_overlap', 50)
-        
-        # Ensure overlap is not larger than chunk_size
-        if chunk_overlap >= chunk_size:
-            chunk_overlap = max(20, chunk_size // 10)
-            logger.warning(f"chunk_overlap too large, adjusted to {chunk_overlap}")
-        
-        logger.debug(f"RecursiveCharacterTextSplitter configured: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
-        
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=len
-        )
-        
-        chunks = splitter.split_text(content)
-        return chunks
-        
-    except Exception as e:
-        logger.error(f"Error in splitting: {e}")
-        raise
-
-def get_time_of_day(dt: datetime) -> str:
-    """Determine time of day segment."""
-    hour = dt.hour
-    if 5 <= hour < 12:
-        return "MORNING"
-    elif 12 <= hour < 17:
-        return "AFTERNOON"
-    elif 17 <= hour < 21:
-        return "EVENING"
-    else:
-        return "NIGHT"
-
-async def process_single_segment(
-    deps: PipelineContext,
-    segment: SegmentData,
-    doc_id: str,
-    segment_index: int,
-    global_segment_order: int,
-    config: Dict[str, Any],
-    semaphore: asyncio.Semaphore
-) -> Dict[str, Any]:
-    async with semaphore:
-        chunk_count = 0
-        
-        # --- Time Segment Logic ---
-        # Try to parse start_time from metadata to determine Time Segment (Morning/Afternoon/etc)
-        # Default to document date + noon if missing
-        start_time_str = segment.metadata.get('start_time')
-        timestamp = datetime.combine(segment.date, datetime.min.time()) # fallback
-        
-        if start_time_str:
-            try:
-                # Reuse the parser's logic or simple parse if format is known. 
-                # Since we don't have the parser instance here easily, we rely on standard formats.
-                # LifeLogParser uses specific formats. Let's try common ones.
-                # Actually, better to parse in LifeLogParser and pass datetime in metadata, 
-                # but for now we try to parse the string.
-                for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%A %d %B %Y, %H:%M"]:
-                    try:
-                        timestamp = datetime.strptime(start_time_str, fmt)
-                        break
-                    except ValueError:
-                        continue
-            except Exception:
-                pass
-
-        time_segment = get_time_of_day(timestamp)
-        # Unique ID for the Time Segment: e.g. SEGMENT_2025-12-20_MORNING
-        time_segment_id = f"SEGMENT_{segment.date.isoformat()}_{time_segment}"
-        
-        # Create Time Segment Node (Idempotent)
-        if not deps.graph.has_node(time_segment_id):
-            deps.graph.add_node(time_segment_id,
-                              node_type="SEGMENT",
-                              graph_type="lexical_graph",
-                              name=f"{time_segment.title()} of {segment.date.isoformat()}",
-                              date=segment.date.isoformat(),
-                              time_of_day=time_segment)
-            # Link DAY -> SEGMENT
-            deps.graph.add_edge(doc_id, time_segment_id, label="HAS_SEGMENT", graph_type="lexical_graph")
-            
-        # --- Episode Node (Formerly Segment) ---
-        # The 'segment' passed in is now treated as an EPISODE
-        episode_id = segment.segment_id
-        
-        # Set name field: first 20 chars of content
-        episode_name = segment.content[:20].strip() if segment.content else f"Episode {segment_index}"
-        if len(segment.content) > 20:
-            episode_name += "..."
-        
-        # Add EPISODE node
-        deps.graph.add_node(episode_id,
-                          node_type="EPISODE",
-                          graph_type="lexical_graph",
-                          content=segment.content,
-                          content_length=len(segment.content),
-                          line_number=segment.line_number,
-                          document_date=segment.date.isoformat(),
-                          date=segment.date,
-                          local_segment_order=segment_index,
-                          global_segment_order=global_segment_order,
-                          sentiment=segment.sentiment,
-                          name=episode_name,
-                          **segment.metadata)
-        
-        # Edge: SEGMENT -> HAS_EPISODE -> EPISODE
-        deps.graph.add_edge(time_segment_id, episode_id, label="HAS_EPISODE", graph_type="lexical_graph")
-        
-        # Check if this is a Life Graph Episode with structured conversations
-        if segment.metadata.get('conversations'):
-            try:
-                conversations = segment.metadata['conversations']
-                
-                # Image Descriptions Accumulator
-                image_descriptions = []
-                
-                for i, row in enumerate(conversations):
-                    # No longer creating CONVERSATION nodes
-                    # Direct Chunking from Audio
-                    chunk_text = row.get('Audio')
-                    if chunk_text:
-                        # Split text if too long to prevent GLINER truncation
-                        sub_chunks = await process_document_splitting(chunk_text, config)
-                        
-                        for sub_idx, sub_text in enumerate(sub_chunks):
-                            # Chunk ID derived from episode id
-                            if len(sub_chunks) == 1:
-                                chunk_id = f"{episode_id}_CHUNK_{i}"
-                            else:
-                                chunk_id = f"{episode_id}_CHUNK_{i}_{sub_idx}"
-                            
-                            chunk_name = sub_text[:20].strip() + "..." if len(sub_text) > 20 else sub_text
-
-                            deps.graph.add_node(chunk_id,
-                                              node_type="CHUNK",
-                                              graph_type="lexical_graph",
-                                              text=sub_text,
-                                              length=len(sub_text),
-                                              initial_entities=[],
-                                              llama_metadata={}, 
-                                              name=chunk_name)
-                            
-                            # Link EPISODE -> HAS_CHUNK -> CHUNK
-                            deps.graph.add_edge(episode_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
-                            
-                            # Add retrieval task for this chunk
-                            deps.extraction_tasks.append(ChunkExtractionTask(
-                                chunk_id=chunk_id,
-                                chunk_text=sub_text,
-                                entities=[], 
-                                abstract_concepts=[], 
-                                keywords=[]
-                            ))
-                            chunk_count += 1
-                    
-                    # Extract Entities (Spacy/Rule-based mappings)
-                    # 1. Location -> PLACE
-                    loc_name = row.get('Location')
-                    if loc_name:
-                        # Simple linking: Location string is the Place ID/Name
-                        place_id = f"PLACE_{loc_name.replace(' ', '_').upper()}"
-                        if not deps.graph.has_node(place_id):
-                            deps.graph.add_node(place_id, node_type="PLACE", name=loc_name, graph_type="lexical_graph")
-                        
-                        # Link Episode to Place directly
-                        deps.graph.add_edge(episode_id, place_id, label="HAPPENED_AT", graph_type="lexical_graph")
-
-                    # 2. Image -> Attribute on Episode
-                    image_desc = row.get('Image')
-                    if image_desc:
-                        image_descriptions.append(image_desc)
-
-                # Store collected image descriptions on the Episode node
-                if image_descriptions:
-                    deps.graph.nodes[episode_id]['image_descriptions'] = image_descriptions
-                    deps.graph.nodes[episode_id]['image_description'] = "; ".join(image_descriptions)
-
-            except Exception as e:
-                logger.error(f"Error processing Life Graph episode {episode_id}: {e}", exc_info=True)
-                
-        else:
-            # Fallback to standard Text Splitter for non-LifeGraph segments (now episodes)
-            try:
-                chunks = await process_document_splitting(segment.content, config)
-                
-                for i, chunk_text in enumerate(chunks):
-                    chunk_id = f"{episode_id}_CHUNK_{i}"
-                    
-                    metadata = {}
-                    
-                    chunk_name = chunk_text[:20].strip() if chunk_text else f"Chunk {i}"
-                    if len(chunk_text) > 20:
-                        chunk_name += "..."
-                    
-                    deps.graph.add_node(chunk_id,
-                                      node_type="CHUNK",
-                                      graph_type="lexical_graph",
-                                      text=chunk_text,
-                                      length=len(chunk_text),
-                                      initial_entities=[],
-                                      initial_concepts=[],
-                                      llama_metadata=metadata, 
-                                      name=chunk_name)
-                    
-                    deps.graph.add_edge(episode_id, chunk_id, label="HAS_CHUNK", graph_type="lexical_graph")
-                    
-                    deps.extraction_tasks.append(ChunkExtractionTask(
-                        chunk_id=chunk_id,
-                        chunk_text=chunk_text,
-                        entities=[],  # No longer extracting keywords/entities
-                        abstract_concepts=[], 
-                        keywords=[]
-                    ))
-                    chunk_count += 1
-                    
-            except Exception as e:
-                logger.error(f"Error processing episode {episode_id} with splitting: {e}", exc_info=True)
-        
-        return {"chunk_count": chunk_count, "segment_id": episode_id}
-
-async def add_segments_to_graph(deps: PipelineContext, segments: List[SegmentData], doc_id: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
-    config = config or {}
-    chunk_count = 0
-    segment_count = 0
-    
-    # Get max_concurrent from config for controlled parallelization
-    max_concurrent = get_max_concurrent(config, default=8)
-    semaphore = asyncio.Semaphore(max_concurrent)
-    
-    # Process segments concurrently
-    tasks = []
-    
-    extraction_config = config.get('extraction', {})
-    if hasattr(extraction_config, 'model_dump'):
-        extraction_config = extraction_config.model_dump()
-
-    limit = extraction_config.get('speech_limit', 0)
-    # Also support old key if needed, or just rely on 'speech_limit'
-    if 'segment_limit' in config:
-         limit = config['segment_limit']
-    
-    for idx, segment in enumerate(segments):
-        # Check limit before creating task
-        if limit > 0 and deps.total_segments >= limit:
-            break
-        
-        # Capture current global_segment_order before incrementing
-        current_global_order = deps.total_segments
-            
-        task = process_single_segment(
-            deps=deps,
-            segment=segment,
-            doc_id=doc_id,
-            segment_index=idx,
-            global_segment_order=current_global_order,
-            config=config,
-            semaphore=semaphore
-        )
-        tasks.append(task)
-        segment_count += 1
-        deps.total_segments += 1
-        
-        # Check limit after incrementing
-        if limit > 0 and deps.total_segments >= limit:
-            break
-    
-    # Wait for all segment processing tasks to complete
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Aggregate results
-    errors = []
-    for result in results:
-        if isinstance(result, Exception):
-            errors.append(str(result))
-        else:
-            chunk_count += result.get("chunk_count", 0)
-    
-    return {"segments_count": segment_count, "chunks_count": chunk_count, "errors": errors}
-
-async def process_single_document_lexical(deps: PipelineContext, filename: str, input_dir: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Process a single document."""
-    config = config or {}
-    
-    parser = LifeLogParser()
-    
-    try:
-        file_path = os.path.join(input_dir, filename)
-        with open(file_path, 'r', encoding='utf-8') as file:
-            text = file.read()
-    except Exception as e:
-        logger.error(f"Error reading {filename}: {str(e)}")
-        return {"error": f"Error reading {filename}: {str(e)}", "segments_added": 0, "chunks_added": 0}
-
-    # Try to extract date from filename first
-    doc_date_str = parser.extract_date(filename)
-    
-    # Fallback to content-based extraction
-    if not doc_date_str:
-        doc_date_str = parser.extract_date_from_content(text)
-        
-    if not doc_date_str:
-        logger.warning(f"Could not extract date from {filename}, using today's date")
-        doc_date_str = datetime.now().strftime("%Y-%m-%d")
-        
-    doc_date_obj = datetime.strptime(doc_date_str, "%Y-%m-%d").date()
-    day_id = f"DAY_{doc_date_str}"
-    
-    try:
-        logger.info(f"Processing document {filename} ({len(text)} chars)")
-        
-        # Add DAY node if not exists
-        if not deps.graph.has_node(day_id):
-            deps.graph.add_node(day_id, 
-                               node_type="DAY", 
-                               graph_type="lexical_graph",
-                               date=doc_date_str,
-                               name=doc_date_str,
-                               segment_count=0)
-        
-        # Parse segments
-        segments = parser.parse(text, filename, doc_date_obj)
-        
-        segments_result = await add_segments_to_graph(deps, segments, day_id, config)
-        
-        # Update segment count on DAY node
-        deps.graph.nodes[day_id]['segment_count'] = (deps.graph.nodes[day_id].get('segment_count', 0) + 
-                                                   segments_result.get("segments_count", 0))
-        
-        return {
-            "day_id": day_id,
-            "segments_added": segments_result.get("segments_count", 0),
-            "chunks_added": segments_result.get("chunks_count", 0),
-            "errors": segments_result.get("errors", [])
-        }
-        
-    except Exception as e:
-        logger.error(f"Error processing {filename}: {str(e)}", exc_info=True)
-        return {"error": f"Error processing {filename}: {str(e)}", "segments_added": 0, "chunks_added": 0}
-
-async def build_lexical_graph(deps: PipelineContext, input_dir: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
-    """Phase 1: Build the complete lexical graph structure sequentially"""
-    config = config or {}
-    results = {"documents_processed": 0, "total_segments": 0, "total_chunks": 0, "errors": []}
-    
-    try:
-        if not os.path.exists(input_dir):
-            raise FileNotFoundError(f"Input directory {input_dir} not found")
-        
-        # Check if a specific file pattern is provided (for incremental processing)
-        extraction_config = config.get('extraction', {})
-        if hasattr(extraction_config, 'model_dump'):
-            extraction_config = extraction_config.model_dump()
-            
-        file_pattern = extraction_config.get('file_pattern')
-        if file_pattern:
-            # Process only the specified file
-            import fnmatch
-            all_files = os.listdir(input_dir)
-            filenames = [f for f in all_files if fnmatch.fnmatch(f, file_pattern)]
-            logger.info(f"Processing specific file(s) matching pattern '{file_pattern}': {filenames}")
-        else:
-            # Process all .txt files
-            filenames = [f for f in os.listdir(input_dir) if f.endswith('.txt')]
-            logger.info(f"Found {len(filenames)} files to process")
-        
-        for filename in filenames:
-            limit = config.get('segment_limit', config.get('speech_limit', 0))
-            if limit > 0 and deps.total_segments >= limit:
-                break
-                
-            doc_result = await process_single_document_lexical(deps, filename, input_dir, config)
-                
-            results["documents_processed"] += 1
-            results["total_segments"] += doc_result.get("segments_added", 0)
-            results["total_chunks"] += doc_result.get("chunks_added", 0)
-            
-            if doc_result.get("errors"):
-                results["errors"].extend(doc_result["errors"])
-                
-        return results
-        
-    except Exception as e:
-        error_msg = f"Error in build_lexical_graph: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        results["errors"].append(error_msg)
-        return results
-

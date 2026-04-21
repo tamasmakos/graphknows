@@ -27,15 +27,6 @@ class InfrastructureSettings(BaseSettings):
     neo4j_password: str = Field("changeme", alias="NEO4J_PASSWORD")
     neo4j_database: str = Field("neo4j", alias="NEO4J_DATABASE")
 
-    # --- Postgres ---
-    postgres_host: str = Field("pgvector", alias="POSTGRES_HOST")
-    postgres_port: int = Field(5432, alias="POSTGRES_PORT")
-    postgres_db: str = Field("graphknows", alias="POSTGRES_DB")
-    postgres_user: str = Field("postgres", alias="POSTGRES_USER")
-    postgres_password: str = Field("password", alias="POSTGRES_PASSWORD")
-    postgres_enabled: bool = True
-    postgres_table: str = "hybrid_embeddings"
-
     # --- API Keys ---
     groq_api_key: Optional[SecretStr] = Field(None, alias="GROQ_API_KEY")
     openai_api_key: Optional[SecretStr] = Field(None, alias="OPENAI_API_KEY")
@@ -72,7 +63,7 @@ class ExtractionSettings(BaseSettings):
     chunk_overlap: int = 100
 
     # Extraction Backend preference
-    backend: str = "spacy"  # options: "gliner", "spacy", "llm"
+    backend: str = "gliner"  # options: "gliner", "llm"
 
     # GLiNER Configuration
     gliner_model: str = "urchade/gliner_medium-v2.1"
@@ -126,7 +117,7 @@ class EmbeddingSettings(BaseSettings):
     Embedding Model Configuration.
     """
 
-    model_name: str = Field("all-MiniLM-L6-v2", alias="EMBEDDING_MODEL")
+    model_name: str = Field("BAAI/bge-small-en-v1.5", alias="EMBEDDING_MODEL")
     batch_size: int = Field(32, alias="EMBEDDING_BATCH_SIZE")
     device: str = Field("auto", alias="EMBEDDING_DEVICE")
     cache_folder: Optional[str] = Field(None, alias="EMBEDDING_CACHE_FOLDER")

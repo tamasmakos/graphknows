@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-falkordb
 pydantic
 python-dotenv
 langchain-core

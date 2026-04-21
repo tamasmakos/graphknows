@@ -1,27 +1,29 @@
 """
-MCP server that wraps the GraphRAG retrieval logic
-exposing it as MCP tools.
+MCP server that wraps the GraphRAG retrieval logic exposing it as MCP tools.
 
-The server exposes MCP tools that mirror the behavior of the FastAPI endpoints:
-- `kg_chat`  -> POST /chat
-- `kg_schema` -> GET /schema
-- `kg_health` -> GET /health
+Internal dev tool — not intended for public exposure.
+
+Tools:
+- ``kg_chat``   — run the LlamaIndex ReActAgent for a query
+- ``kg_schema`` — inspect the live Neo4j graph schema
+- ``kg_health`` — lightweight ping
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 
-from src.infrastructure.config import get_app_config
-from src.infrastructure.graph_db import get_database_client
-from src.workflow.graph_workflow import GraphWorkflow
+from src.agent.workflow import run_agent
+from src.infrastructure.neo4j_driver import get_driver
 
-
+logger = logging.getLogger(__name__)
 mcp = FastMCP("kg-chat-mcp")
+
 
 class Message(BaseModel):
     role: str
@@ -32,103 +34,78 @@ class Message(BaseModel):
 async def kg_chat(
     query: str,
     messages: Optional[List[Dict[str, str]]] = None,
-    database: str = "falkordb",
-    accumulated_graph_data: Optional[Dict[str, Any]] = None,
+    database: str = "neo4j",
 ) -> Dict[str, Any]:
     """
-    Run the focused retrieval pipeline, mirroring the /chat REST endpoint.
+    Run the GraphRAG ReActAgent for *query*.
 
     Parameters:
         query: User query text.
-        messages: Optional list of conversation messages, each with
-            {"role": "user" | "assistant", "content": str}.
-        database: Target database type ("falkordb").
-        accumulated_graph_data: Optional graph data from previous calls.
+        messages: Optional prior conversation as a list of
+            ``{"role": "user"|"assistant", "content": str}`` dicts.
+        database: Target Neo4j database name (default ``"neo4j"``).
 
     Returns:
-        A JSON-compatible dict with the same shape as the /chat endpoint.
+        A JSON-compatible dict with ``answer``, ``execution_time``, and optional ``error``.
     """
-    start_time = time.time()
-    
-    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-    
-    lc_messages = []
+    start = time.time()
+
+    # Convert plain dicts to LlamaIndex ChatMessage objects
+    from llama_index.core.llms import ChatMessage, MessageRole  # type: ignore[import]
+
+    chat_history: List[ChatMessage] = []
     if messages:
         for msg in messages:
-            role = msg.get("role", "")
+            role_str = msg.get("role", "user")
             content = msg.get("content", "")
-            if role == "user":
-                lc_messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                lc_messages.append(AIMessage(content=content))
-            else:
-                lc_messages.append(SystemMessage(content=content))
+            role = MessageRole.USER if role_str == "user" else MessageRole.ASSISTANT
+            chat_history.append(ChatMessage(role=role, content=content))
 
     try:
-        workflow = GraphWorkflow(timeout=60, verbose=True)
-        result = await workflow.run(query=query, messages=lc_messages)
-        
-        execution_time = time.time() - start_time
-        
+        async with get_driver() as driver:
+            result = await run_agent(
+                query=query,
+                driver=driver,
+                database=database,
+                chat_history=chat_history,
+            )
         return {
-            "answer": result.get("answer"),
-            "context": result.get("context"),
-            "execution_time": execution_time,
-            "graph_data": result.get("graph_data", {}),
-            "reasoning_chain": result.get("trace", []),
-            "cypher_query": "Workflow Execution",
-            "confidence_score": 1.0,
+            "answer": result.get("answer", ""),
+            "execution_time": time.time() - start,
+            "sources": result.get("sources", []),
         }
-    except Exception as e:
+    except Exception as exc:
+        logger.error("kg_chat error: %s", exc, exc_info=True)
         return {
-            "answer": f"Error: {e}",
-            "context": "",
-            "execution_time": time.time() - start_time,
-            "error": str(e)
+            "answer": f"Error: {exc}",
+            "execution_time": time.time() - start,
+            "error": str(exc),
         }
-
-
-def _extract_single_column(results: List[Dict[str, Any]], preferred_key: str) -> List[str]:
-    """Utility to pull a single column out of a list of row dicts."""
-    values: List[str] = []
-    for row in results:
-        if preferred_key in row:
-            val = row[preferred_key]
-        else:
-            val = next(iter(row.values()), None)
-        if isinstance(val, str):
-            values.append(val)
-    return values
 
 
 @mcp.tool()
-async def kg_schema(database: str = "falkordb") -> Dict[str, Any]:
+async def kg_schema(database: str = "neo4j") -> Dict[str, Any]:
     """
-    Dynamically inspect the graph schema for the requested database.
-    """
-    config = get_app_config()
+    Dynamically inspect the live Neo4j graph schema.
 
+    Returns node labels, relationship types, and property keys.
+    """
     try:
-        db = get_database_client(config, database)
-        try:
-            node_labels_raw = db.query("CALL db.labels()")
-            rel_types_raw = db.query("CALL db.relationshipTypes()")
-            prop_keys_raw = db.query("CALL db.propertyKeys()")
-
-            node_labels = _extract_single_column(node_labels_raw, "label")
-            relationship_types = _extract_single_column(rel_types_raw, "relationshipType")
-            property_keys = _extract_single_column(prop_keys_raw, "propertyKey")
+        async with get_driver() as driver:
+            async with driver.session(database=database) as session:
+                labels_result = await (await session.run("CALL db.labels()")).data()
+                rels_result = await (await session.run("CALL db.relationshipTypes()")).data()
+                props_result = await (await session.run("CALL db.propertyKeys()")).data()
 
             return {
                 "database": database,
-                "node_labels": sorted(set(node_labels)),
-                "relationship_types": sorted(set(relationship_types)),
-                "property_keys": sorted(set(property_keys)),
+                "node_labels": sorted({r.get("label", "") for r in labels_result}),
+                "relationship_types": sorted({r.get("relationshipType", "") for r in rels_result}),
+                "property_keys": sorted({r.get("propertyKey", "") for r in props_result}),
             }
-        finally:
-            db.close()
-    except Exception:
-        return {}
+    except Exception as exc:
+        logger.error("kg_schema error: %s", exc, exc_info=True)
+        return {"database": database, "error": str(exc)}
 
 
 @mcp.tool()
@@ -138,7 +115,7 @@ async def kg_health() -> Dict[str, str]:
 
 
 def main() -> None:
-    """Entry point."""
+    """Entry point for MCP server."""
     mcp.run()
 
 

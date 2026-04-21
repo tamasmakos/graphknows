@@ -10,11 +10,12 @@ import asyncio
 import uuid
 import logging
 import networkx as nx
+from pathlib import Path
 from typing import Dict, Any, List
 
-from kg.types import PipelineContext
+from kg.types import PipelineContext, ChunkExtractionTask
 from kg.config.settings import PipelineSettings
-from kg.graph.extraction import build_lexical_graph, extract_all_entities_relations
+from kg.graph.extraction import extract_all_entities_relations
 from kg.graph.extractors import BaseExtractor
 from kg.graph.pruning import prune_graph
 from kg.graph.utils import create_output_directory
@@ -54,7 +55,7 @@ class KnowledgePipeline:
         3. Semantic Enrichment (Embeddings, Similarity, Resolution)
         4. Community Detection & Summarization
         5. Pruning
-        6. Upload to FalkorDB
+        6. Upload entities/relations to Neo4j
         7. Save Artifacts to Disk
         """
         logger.info(f"🚀 Starting KnowledgePipeline run [{self.run_id}]...")
@@ -108,15 +109,82 @@ class KnowledgePipeline:
         logger.info("Preflight checks passed.")
 
     async def _step_lexical_graph(self, ctx: PipelineContext, config: Dict[str, Any]):
-        input_dir = self.settings.infra.input_dir
-        logger.info(f"Step 1: Building Lexical Graph from {input_dir}")
+        """
+        Phase 1: Parse all files in input_dir with the modern ParserRegistry,
+        upload each Document + Chunks to Neo4j, and populate the PipelineContext
+        graph with CHUNK nodes so Phase 2 extraction can run.
+        """
+        import importlib
+        from kg.parser import get_parser
 
-        results = await build_lexical_graph(ctx, input_dir, config)
+        # Ensure all parser subclasses are registered via __init_subclass__
+        importlib.import_module("kg.parser.registry")
 
-        ctx.stats["lexical"] = results
-        logger.info(
-            f"Lexical Graph Built: {results.get('documents_processed')} docs, {results.get('total_segments')} segments"
-        )
+        input_dir = Path(self.settings.infra.input_dir)
+        logger.info(f"Step 1: Parsing documents from {input_dir}")
+
+        if not input_dir.exists():
+            logger.warning(f"Input directory {input_dir} does not exist — skipping.")
+            ctx.stats["lexical"] = {"documents_processed": 0, "total_chunks": 0}
+            return
+
+        files = [p for p in input_dir.iterdir() if p.is_file() and not p.name.startswith(".")]
+        docs_processed = 0
+        total_chunks = 0
+        errors = []
+
+        for file_path in files:
+            try:
+                parser = get_parser(file_path)
+            except ValueError:
+                logger.debug(f"No parser for {file_path.name} — skipping.")
+                continue
+            try:
+                parsed = parser.parse(file_path)
+            except Exception as e:
+                logger.error(f"Parsing failed for {file_path.name}: {e}")
+                errors.append(str(e))
+                continue
+
+            # Upload Document + Chunks to Neo4j
+            if self.uploader:
+                try:
+                    await self.uploader.upload_parsed_document(parsed)
+                except Exception as e:
+                    logger.error(f"Upload failed for {file_path.name}: {e}")
+                    errors.append(str(e))
+
+            # Populate PipelineContext graph for downstream extraction
+            doc_node_id = parsed.doc_id
+            ctx.graph.add_node(doc_node_id, node_type="DOCUMENT", title=parsed.title)
+            for chunk in parsed.chunks:
+                ctx.graph.add_node(
+                    chunk.chunk_id,
+                    node_type="CHUNK",
+                    text=chunk.text,
+                    doc_id=parsed.doc_id,
+                )
+                ctx.graph.add_edge(doc_node_id, chunk.chunk_id, label="CONTAINS")
+                ctx.extraction_tasks.append(
+                    ChunkExtractionTask(
+                        chunk_id=chunk.chunk_id,
+                        chunk_text=chunk.text,
+                        entities=[],
+                        abstract_concepts=[],
+                        keywords=[],
+                    )
+                )
+                total_chunks += 1
+
+            docs_processed += 1
+            logger.info(f"Parsed {file_path.name}: {len(parsed.chunks)} chunks")
+
+        ctx.stats["lexical"] = {
+            "documents_processed": docs_processed,
+            "total_chunks": total_chunks,
+            "errors": errors,
+        }
+        logger.info(f"Step 1 complete: {docs_processed} docs, {total_chunks} chunks")
 
     async def _step_extraction(self, ctx: PipelineContext, config: Dict[str, Any]):
         if not self.extractor:
@@ -196,9 +264,12 @@ class KnowledgePipeline:
             logger.warning("Step 6: Skipped (no uploader provided).")
             return
 
-        logger.info("Step 6: Uploading to Neo4j...")
+        logger.info("Step 6: Uploading entities/relations to Neo4j...")
         try:
-            stats = await self.uploader.upload(ctx.graph, clean_database=self.clean_database)
+            # Documents and Chunks are already in Neo4j from Phase 1.
+            # clean_database only applies on the first run; skip it here to
+            # avoid wiping documents that were just uploaded.
+            stats = await self.uploader.upload(ctx.graph, clean_database=False)
             ctx.stats["upload"] = stats
             logger.info("Upload Stats: %s", stats)
         except Exception as e:
