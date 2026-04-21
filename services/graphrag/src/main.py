@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
         logger.info("Neo4j driver closed.")
 
 
-app = FastAPI(title="GraphRAG Agent Service", lifespan=lifespan)
+app = FastAPI(title="GraphRAG Agent Service")
 
 app.add_middleware(
     CORSMiddleware,

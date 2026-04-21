@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
     title: "GraphKnows",
     description: "Knowledge-graph RAG platform",
 };
+
+const NAV_ITEMS = [
+    { href: "/chat", label: "Chat", icon: "💬" },
+    { href: "/documents", label: "Documents", icon: "📄" },
+    { href: "/analytics", label: "Analytics", icon: "📊" },
+    { href: "/graph", label: "Graph", icon: "🕸️" },
+];
 
 export default function RootLayout({
     children,
@@ -14,31 +22,30 @@ export default function RootLayout({
     return (
         <html lang="en">
             <body>
-                <div className="flex h-screen overflow-hidden">
-                    <nav
-                        className="flex flex-col w-52 shrink-0 border-r p-4 gap-2"
-                        style={{ borderColor: "var(--border)", backgroundColor: "var(--surface)" }}
-                    >
-                        <span className="text-lg font-bold mb-4" style={{ color: "var(--accent)" }}>
-                            GraphKnows
-                        </span>
-                        {[
-                            { href: "/chat", label: "Chat" },
-                            { href: "/documents", label: "Documents" },
-                            { href: "/graph", label: "Graph" },
-                            { href: "/analytics", label: "Analytics" },
-                        ].map(({ href, label }) => (
-                            <a
-                                key={href}
-                                href={href}
-                                className="rounded px-3 py-2 transition-colors hover:bg-white/5"
-                                style={{ color: "var(--text-muted)" }}
-                            >
-                                {label}
-                            </a>
-                        ))}
+                <div className="flex h-screen w-full overflow-hidden">
+                    {/* Sidebar navigation */}
+                    <nav className="flex flex-col w-14 flex-shrink-0 border-r" style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}>
+                        <div className="flex items-center justify-center h-14 border-b" style={{ borderColor: "var(--border)" }}>
+                            <span className="text-lg font-bold" style={{ color: "var(--accent)" }}>⬡</span>
+                        </div>
+                        <div className="flex flex-col gap-1 p-2 flex-1">
+                            {NAV_ITEMS.map((item) => (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    title={item.label}
+                                    className="flex items-center justify-center w-10 h-10 rounded-lg text-lg transition-colors hover:opacity-80"
+                                    style={{ backgroundColor: "transparent" }}
+                                >
+                                    {item.icon}
+                                </Link>
+                            ))}
+                        </div>
                     </nav>
-                    <main className="flex-1 overflow-auto">{children}</main>
+                    {/* Page content */}
+                    <main className="flex-1 overflow-hidden">
+                        {children}
+                    </main>
                 </div>
             </body>
         </html>

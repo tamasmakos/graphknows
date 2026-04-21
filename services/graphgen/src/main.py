@@ -2,13 +2,13 @@
 Main Entry Point for GraphGen Service (API).
 Exposes an API to trigger the pipeline.
 """
-
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from neo4j.exceptions import ServiceUnavailable, SessionExpired, Neo4jError
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 
@@ -24,16 +24,21 @@ logger = logging.getLogger(__name__)
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 _neo4j_driver = None
+_neo4j_available = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _neo4j_driver
+    global _neo4j_driver, _neo4j_available
     settings = PipelineSettings()
     _neo4j_driver = create_driver()
-    await _neo4j_driver.verify_connectivity()
-    await create_indexes(_neo4j_driver, database=settings.infra.neo4j_database)
-    logger.info("Neo4j driver ready.")
+    try:
+        await asyncio.wait_for(_neo4j_driver.verify_connectivity(), timeout=5.0)
+        await create_indexes(_neo4j_driver, database=settings.infra.neo4j_database)
+        _neo4j_available = True
+        logger.info("Neo4j driver ready.")
+    except Exception as e:
+        logger.warning(f"Neo4j driver connection failed on startup: {e}")
     yield
     if _neo4j_driver:
         await _neo4j_driver.close()
@@ -99,7 +104,11 @@ async def run_pipeline_task(request: PipelineRunRequest) -> None:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.post("/run")
-async def run_pipeline(request: PipelineRunRequest, background_tasks: BackgroundTasks):
+async def run_pipeline(
+    request: PipelineRunRequest, background_tasks: BackgroundTasks
+):
+    if not _neo4j_available:
+        raise HTTPException(status_code=503, detail="Database not connected")
     if PIPELINE_LOCK.locked():
         raise HTTPException(status_code=409, detail="Pipeline is already running")
     background_tasks.add_task(run_pipeline_task, request)
@@ -113,12 +122,11 @@ async def health_check():
 
 # ── Document management endpoints ─────────────────────────────────────────────
 
-
 @app.get("/documents")
 async def list_documents(database: str = "neo4j") -> Dict[str, Any]:
     """Return all Document nodes with chunk counts."""
-    if _neo4j_driver is None:
-        raise HTTPException(status_code=503, detail="Database not connected")
+    if not _neo4j_available:
+        return {"documents": [], "error": "Database not connected"}
     cypher = """
     MATCH (d:Document)
     OPTIONAL MATCH (d)-[:CONTAINS]->(c:Chunk)
@@ -130,10 +138,13 @@ async def list_documents(database: str = "neo4j") -> Dict[str, Any]:
         count(c)      AS chunk_count
     ORDER BY d.created_at DESC
     """
-    async with _neo4j_driver.session(database=database) as session:
-        result = await session.run(cypher)
-        rows = await result.data()
-    return {"documents": rows}
+    try:
+        async with _neo4j_driver.session(database=database) as session:
+            result = await session.run(cypher)
+            rows = await result.data()
+        return {"documents": rows}
+    except (ServiceUnavailable, SessionExpired, Neo4jError) as e:
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
 
 
 @app.post("/documents")
@@ -146,17 +157,14 @@ async def upload_document(
     and store the Document + Chunks in Neo4j.
     Does not run entity extraction — use /run for full ETL.
     """
-    if _neo4j_driver is None:
+    if not _neo4j_available:
         raise HTTPException(status_code=503, detail="Database not connected")
 
     import tempfile, shutil
     from pathlib import Path
     from .kg.parser import get_parser
-
     # Ensure all parsers are registered
-    import importlib
-
-    importlib.import_module(".kg.parser.registry", package=__name__.rsplit(".", 1)[0])
+    import importlib; importlib.import_module(".kg.parser.registry", package=__name__.rsplit(".", 1)[0])
     from .kg.neo4j.uploader import Neo4jUploader
 
     suffix = Path(file.filename or "upload").suffix
@@ -174,6 +182,8 @@ async def upload_document(
         await uploader.upload_parsed_document(parsed)
 
         return {"doc_id": parsed.doc_id, "chunks": len(parsed.chunks), "title": parsed.title}
+    except (ServiceUnavailable, SessionExpired, Neo4jError) as e:
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -181,7 +191,7 @@ async def upload_document(
 @app.get("/documents/{doc_id}")
 async def get_document(doc_id: str, database: str = "neo4j") -> Dict[str, Any]:
     """Return a document with all its chunks."""
-    if _neo4j_driver is None:
+    if not _neo4j_available:
         raise HTTPException(status_code=503, detail="Database not connected")
     cypher = """
     MATCH (d:Document {doc_id: $doc_id})
@@ -200,9 +210,12 @@ async def get_document(doc_id: str, database: str = "neo4j") -> Dict[str, Any]:
         }) AS chunks
     LIMIT 1
     """
-    async with _neo4j_driver.session(database=database) as session:
-        result = await session.run(cypher, {"doc_id": doc_id})
-        record = await result.single()
+    try:
+        async with _neo4j_driver.session(database=database) as session:
+            result = await session.run(cypher, {"doc_id": doc_id})
+            record = await result.single()
+    except (ServiceUnavailable, SessionExpired, Neo4jError) as e:
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
     if not record:
         raise HTTPException(status_code=404, detail="Document not found")
     return dict(record)
@@ -211,15 +224,18 @@ async def get_document(doc_id: str, database: str = "neo4j") -> Dict[str, Any]:
 @app.delete("/documents/{doc_id}", status_code=204)
 async def delete_document(doc_id: str, database: str = "neo4j") -> None:
     """Delete a Document and all its Chunks from Neo4j."""
-    if _neo4j_driver is None:
+    if not _neo4j_available:
         raise HTTPException(status_code=503, detail="Database not connected")
     cypher = """
     MATCH (d:Document {doc_id: $doc_id})
     OPTIONAL MATCH (d)-[:CONTAINS]->(c:Chunk)
     DETACH DELETE d, c
     """
-    async with _neo4j_driver.session(database=database) as session:
-        await session.run(cypher, {"doc_id": doc_id})
+    try:
+        async with _neo4j_driver.session(database=database) as session:
+            await session.run(cypher, {"doc_id": doc_id})
+    except (ServiceUnavailable, SessionExpired, Neo4jError) as e:
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
 
 
 @app.post("/documents/{doc_id}/reprocess")
@@ -242,12 +258,11 @@ async def reprocess_document(
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
-
 @app.get("/analytics")
 async def get_analytics(database: str = "neo4j") -> Dict[str, Any]:
     """Return aggregate node/relationship counts."""
-    if _neo4j_driver is None:
-        raise HTTPException(status_code=503, detail="Database not connected")
+    if not _neo4j_available:
+        return {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
     cypher = """
     MATCH (d:Document) WITH count(d) AS documents
     MATCH (c:Chunk)    WITH documents, count(c) AS chunks
@@ -255,9 +270,11 @@ async def get_analytics(database: str = "neo4j") -> Dict[str, Any]:
     MATCH ()-[r]->()   WITH documents, chunks, entities, count(r) AS relationships
     RETURN documents, chunks, entities, relationships
     """
-    async with _neo4j_driver.session(database=database) as session:
-        result = await session.run(cypher)
-        record = await result.single()
-    return (
-        dict(record) if record else {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
-    )
+    try:
+        async with _neo4j_driver.session(database=database) as session:
+            result = await session.run(cypher)
+            record = await result.single()
+        return dict(record) if record else {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
+    except (ServiceUnavailable, SessionExpired, Neo4jError):
+        return {"documents": 0, "chunks": 0, "entities": 0, "relationships": 0}
+

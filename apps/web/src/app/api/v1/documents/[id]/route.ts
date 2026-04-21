@@ -10,8 +10,13 @@ export async function DELETE(
     { params }: { params: Promise<{ id: string }> }
 ) {
     const { id } = await params;
-    const res = await fetch(`${GRAPHGEN_URL}/documents/${id}`, {
-        method: "DELETE",
-    });
-    return new Response(null, { status: res.status });
+    try {
+        const res = await fetch(`${GRAPHGEN_URL}/documents/${id}`, {
+            method: "DELETE",
+            signal: AbortSignal.timeout(5000),
+        });
+        return new Response(null, { status: res.status });
+    } catch {
+        return new Response(null, { status: 503 });
+    }
 }

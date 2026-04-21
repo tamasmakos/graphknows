@@ -133,13 +133,14 @@ async def run_agent(
 
     answer_text = str(response)
 
-    # Extract citations from tool call results stored in agent memory
-    citations = _extract_citations(agent)
+    # Extract citations and graph from tool call results
+    citations = _extract_citations(response)
+    graph_data = _extract_graph(response)
 
     return {
         "answer": answer_text,
         "citations": citations,
-        "graph_data": {"nodes": [], "edges": []},
+        "graph_data": graph_data,
         "execution_time": elapsed,
     }
 
@@ -178,15 +179,56 @@ async def stream_agent(
     streaming_response = await agent.astream_chat(query, chat_history=chat_history or [])
 
     async for delta in streaming_response.async_response_gen():
-        yield json.dumps({"type": "delta", "data": delta})
+        yield json.dumps({"type": "token", "data": delta})
 
-    # Emit citations after streaming completes
-    citations = _extract_citations(agent)
-    yield json.dumps({"type": "citations", "data": citations})
+    # Emit citations and graph after streaming completes
+    citations = _extract_citations(streaming_response)
+    if citations:
+        yield json.dumps({"type": "citation", "data": citations})
+
+    graph_data = _extract_graph(streaming_response)
+    if graph_data.get("nodes"):
+        yield json.dumps({"type": "graph", "data": graph_data})
+
     yield json.dumps({"type": "done", "data": None})
 
 
-def _extract_citations(agent) -> list[dict[str, Any]]:
+def _extract_graph(response) -> dict[str, Any]:
+    """
+    Extract a simple graph representation from the agent's retrieved nodes/memory.
+    Builds nodes and edges based on entities and chunks retrieved.
+    """
+    nodes = {}
+    edges = []
+    seen_chunk_ids = set()
+    
+    try:
+        for source_node in getattr(response, "source_nodes", []):
+            meta = getattr(source_node, "metadata", {}) or {}
+            
+            # If it's a chunk
+            cid = meta.get("chunk_id") or getattr(source_node, "node_id", "")
+            if cid and cid not in seen_chunk_ids:
+                seen_chunk_ids.add(cid)
+                doc_id = meta.get("doc_id", "unknown_doc")
+                
+                nodes[cid] = {"id": cid, "label": "Chunk", "properties": {"title": meta.get("doc_title", "Chunk")}}
+                nodes[doc_id] = {"id": doc_id, "label": "Document", "properties": {"title": meta.get("doc_title", "Document")}}
+                
+                edges.append({
+                    "source": doc_id,
+                    "target": cid,
+                    "type": "CONTAINS"
+                })
+    except Exception as exc:
+        logger.debug("Graph extraction failed: %s", exc)
+
+    return {
+        "nodes": list(nodes.values()),
+        "edges": edges
+    }
+
+def _extract_citations(response) -> list[dict[str, Any]]:
     """
     Extract citation objects from the agent's tool call memory.
     Looks for search_chunks results and maps them to Citation schema.
@@ -195,7 +237,7 @@ def _extract_citations(agent) -> list[dict[str, Any]]:
     seen: set[str] = set()
 
     try:
-        for source_node in getattr(agent, "source_nodes", []):
+        for source_node in getattr(response, "source_nodes", []):
             cid = getattr(source_node, "node_id", "")
             if cid in seen:
                 continue

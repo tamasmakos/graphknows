@@ -9,7 +9,7 @@ export default function GraphPage() {
 
     useEffect(() => {
         fetch("/api/v1/graph/schema")
-            .then((r) => r.json())
+            .then((r) => r.json().then((data) => (r.ok ? data : null)))
             .then(setSchema)
             .catch(console.error)
             .finally(() => setLoading(false));
@@ -24,9 +24,9 @@ export default function GraphPage() {
                 <p style={{ color: "var(--text-muted)" }}>Failed to load schema.</p>
             ) : (
                 <div className="space-y-6 text-sm">
-                    <Section title="Node Labels" items={schema.node_labels} color="#6366f1" />
-                    <Section title="Relationship Types" items={schema.relationship_types} color="#22d3ee" />
-                    <Section title="Property Keys" items={schema.property_keys} color="#a3e635" />
+                    <Section title="Node Labels" items={schema.node_labels ?? []} color="#6366f1" />
+                    <Section title="Relationship Types" items={schema.relationship_types ?? []} color="#22d3ee" />
+                    <Section title="Property Keys" items={schema.property_keys ?? []} color="#a3e635" />
                 </div>
             )}
         </div>
@@ -35,20 +35,22 @@ export default function GraphPage() {
 
 function Section({
     title,
-    items,
+    items = [],
     color,
 }: {
     title: string;
-    items: string[];
+    items?: string[];
     color: string;
 }) {
+    const safeItems = Array.isArray(items) ? items : [];
     return (
         <div>
             <h2 className="font-medium mb-2" style={{ color }}>
                 {title}
             </h2>
+            {safeItems.length === 0 && <p style={{ color: "var(--text-muted)" }}>None</p>}
             <div className="flex flex-wrap gap-2">
-                {items.map((item) => (
+                {safeItems.map((item) => (
                     <span
                         key={item}
                         className="rounded-full px-3 py-1 text-xs"

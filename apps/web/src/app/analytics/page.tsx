@@ -14,12 +14,7 @@ export default function AnalyticsPage() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch("/api/v1/graph/schema")
-            .then((r) => r.json())
-            .then(() => {
-                // Fetch actual counts from graphgen
-                return fetch("/api/v1/analytics");
-            })
+        fetch("/api/v1/analytics")
             .then((r) => r.json())
             .then(setStats)
             .catch(() => setStats(null))
