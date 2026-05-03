@@ -37,6 +37,8 @@ packages/**/dist
 # ─── Data / generated output ─────────────────────────────────────────────────
 output/
 input/
+data/raw/
+demo_ingest.py
 
 # ─── Editor / OS ──────────────────────────────────────────────────────────────
 .vscode/settings.json
