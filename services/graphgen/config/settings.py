@@ -57,6 +57,9 @@ class InfrastructureSettings(BaseSettings):
 
     clean_start: bool = Field(True, alias="CLEAN_START")
 
+    # Embedding model — kept here for legacy .env / graphrag service compatibility
+    embed_model: str = Field("BAAI/bge-small-en-v1.5", alias="EMBED_MODEL")
+
     model_config = SettingsConfigDict(
         populate_by_name=True,
         extra="ignore"
@@ -213,7 +216,7 @@ class EmbeddingSettings(BaseSettings):
     """
     Embedding Model Configuration.
     """
-    model_name: str = Field("all-MiniLM-L6-v2", alias="EMBEDDING_MODEL")
+    model_name: str = Field("BAAI/bge-small-en-v1.5", alias="EMBEDDING_MODEL")
     batch_size: int = Field(32, alias="EMBEDDING_BATCH_SIZE")
     device: str = Field("auto", alias="EMBEDDING_DEVICE")
     cache_folder: Optional[str] = Field(None, alias="EMBEDDING_CACHE_FOLDER")

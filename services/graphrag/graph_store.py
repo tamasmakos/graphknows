@@ -17,6 +17,9 @@ import numpy as np
 
 log = logging.getLogger("graphrag.store")
 
+# ── Embedding model constant — single source of truth ───────────────────────
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+
 # ── Config ──────────────────────────────────────────────────────────────────
 
 def load_env() -> dict:
@@ -45,7 +48,7 @@ def load_env() -> dict:
 
 _embed_model = None
 
-def get_embedder(model_name: str = "BAAI/bge-small-en-v1.5"):
+def get_embedder(model_name: str = EMBED_MODEL):
     global _embed_model
     if _embed_model is None:
         from sentence_transformers import SentenceTransformer
@@ -54,7 +57,7 @@ def get_embedder(model_name: str = "BAAI/bge-small-en-v1.5"):
     return _embed_model
 
 
-def embed(texts: list[str], model_name: str = "BAAI/bge-small-en-v1.5") -> np.ndarray:
+def embed(texts: list[str], model_name: str = EMBED_MODEL) -> np.ndarray:
     m = get_embedder(model_name)
     return m.encode(texts, normalize_embeddings=True, show_progress_bar=False)
 
