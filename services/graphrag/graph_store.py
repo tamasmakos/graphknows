@@ -26,10 +26,13 @@ def load_env() -> dict:
     from dotenv import dotenv_values
     repo = Path(__file__).parent.parent.parent
     v = dotenv_values(str(repo / ".env"))
+    pwd = v.get("NEO4J_PASSWORD")
+    if not pwd:
+        raise EnvironmentError("NEO4J_PASSWORD env var is required")
     return {
-        "neo4j_uri":      f"bolt://{v.get('NEO4J_HOST','172.18.0.1')}:{v.get('NEO4J_PORT',7687)}",
+        "neo4j_uri":      f"bolt://{v.get('NEO4J_HOST','172.18.0.1')}:{v.get('NEO4J_PORT',7687)}",  # Docker bridge IP — override with NEO4J_HOST env var
         "neo4j_user":     v.get("NEO4J_USER", "neo4j"),
-        "neo4j_password": v.get("NEO4J_PASSWORD", "testpassword123"),
+        "neo4j_password": pwd,
         "neo4j_database": v.get("NEO4J_DATABASE", "neo4j"),
         "pgvector_dsn": (
             f"postgresql://{v.get('PGVECTOR_USER','postgres')}"

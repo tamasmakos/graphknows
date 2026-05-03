@@ -23,7 +23,7 @@ class InfrastructureSettings(BaseSettings):
     graph_db_type: str = Field("neo4j", alias="GRAPH_DB_TYPE")
 
     # --- Neo4j ---
-    neo4j_host: str = Field("neo4j", alias="NEO4J_HOST")
+    neo4j_host: str = Field("neo4j", alias="NEO4J_HOST")  # Docker bridge IP — override with NEO4J_HOST env var
     neo4j_port: int = Field(7687, alias="NEO4J_PORT")
     neo4j_user: str = Field("neo4j", alias="NEO4J_USER")
     neo4j_password: str = Field("password", alias="NEO4J_PASSWORD")
@@ -38,7 +38,16 @@ class InfrastructureSettings(BaseSettings):
     pgvector_port: int = Field(5432, alias="PGVECTOR_PORT")
     pgvector_db: str = Field("vectordb", alias="PGVECTOR_DB")
     pgvector_user: str = Field("postgres", alias="PGVECTOR_USER")
-    pgvector_password: str = Field("changeme", alias="PGVECTOR_PASSWORD")
+    pgvector_password: str = Field("", alias="PGVECTOR_PASSWORD")
+
+    @field_validator("pgvector_password")
+    @classmethod
+    def validate_pgvector_password(cls, v: str) -> str:
+        if not v or v == "changeme":
+            raise ValueError(
+                "PGVECTOR_PASSWORD must be set to a real password (not empty or 'changeme')"
+            )
+        return v
 
     @property
     def pgvector_dsn(self) -> str:
