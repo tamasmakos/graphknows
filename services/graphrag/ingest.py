@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent.parent
@@ -102,6 +102,33 @@ def ingest(chunks_file: Path, cfg: dict, summarize: bool = True):
     raw = json.loads(chunks_file.read_text())
     chunks = normalise(raw)
     log.info("Normalised %d chunks", len(chunks))
+
+    # ── NERValidator (optional, non-blocking) ─────────────────────────────
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent))
+        from ner_validator import NERValidator
+        _validator = NERValidator()
+        if _validator.available:
+            _total_rate = 0.0
+            _validated = 0
+            for _c in chunks[:20]:  # sample first 20 chunks
+                _ents = [{"text": e["text"], "label": e["label"]} for e in _c.get("entities", [])]
+                if _ents:
+                    _report = _validator.validate(_c["text"], _ents)
+                    _rate = _report.get("agreement_rate", 1.0)
+                    _total_rate += _rate
+                    _validated += 1
+            if _validated > 0:
+                _avg_rate = _total_rate / _validated
+                if _avg_rate < 0.3:
+                    log.warning("NERValidator: low spaCy agreement rate %.2f across %d sampled chunks", _avg_rate, _validated)
+                else:
+                    log.info("NERValidator: spaCy agreement rate %.2f across %d sampled chunks", _avg_rate, _validated)
+    except ImportError:
+        pass
+    except Exception as _e:
+        log.debug("NERValidator skipped: %s", _e)
 
     # ── Embed chunks ──────────────────────────────────────────────────────
     log.info("Embedding %d chunks ...", len(chunks))
