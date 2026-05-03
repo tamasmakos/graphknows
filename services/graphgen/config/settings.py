@@ -22,20 +22,39 @@ class InfrastructureSettings(BaseSettings):
     """
     graph_db_type: str = Field("neo4j", alias="GRAPH_DB_TYPE")
 
-    # --- Databases ---
+    # --- Neo4j ---
     neo4j_host: str = Field("neo4j", alias="NEO4J_HOST")
     neo4j_port: int = Field(7687, alias="NEO4J_PORT")
     neo4j_user: str = Field("neo4j", alias="NEO4J_USER")
     neo4j_password: str = Field("password", alias="NEO4J_PASSWORD")
-    
+    neo4j_database: str = Field("neo4j", alias="NEO4J_DATABASE")
+
+    @property
+    def neo4j_uri(self) -> str:
+        return f"bolt://{self.neo4j_host}:{self.neo4j_port}"
+
+    # --- pgvector ---
+    pgvector_host: str = Field("pgvector", alias="PGVECTOR_HOST")
+    pgvector_port: int = Field(5432, alias="PGVECTOR_PORT")
+    pgvector_db: str = Field("vectordb", alias="PGVECTOR_DB")
+    pgvector_user: str = Field("postgres", alias="PGVECTOR_USER")
+    pgvector_password: str = Field("changeme", alias="PGVECTOR_PASSWORD")
+
+    @property
+    def pgvector_dsn(self) -> str:
+        return (
+            f"postgresql://{self.pgvector_user}:{self.pgvector_password}"
+            f"@{self.pgvector_host}:{self.pgvector_port}/{self.pgvector_db}"
+        )
+
     # --- API Keys ---
     groq_api_key: Optional[SecretStr] = Field(None, alias="GROQ_API_KEY")
     openai_api_key: Optional[SecretStr] = Field(None, alias="OPENAI_API_KEY")
-    
+
     # --- Filesystem (Docker Volumes) ---
     input_dir: str = Field("/app/input", alias="INPUT_DIR")
     output_dir: str = Field("/app/output", alias="OUTPUT_DIR")
-    
+
     clean_start: bool = Field(True, alias="CLEAN_START")
 
     model_config = SettingsConfigDict(

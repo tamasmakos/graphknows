@@ -9,6 +9,20 @@ class AppSettings(BaseSettings):
     neo4j_password: str = "changeme"
     neo4j_database: str = "neo4j"
 
+    # pgvector
+    pgvector_host: str = "pgvector"
+    pgvector_port: int = 5432
+    pgvector_db: str = "vectordb"
+    pgvector_user: str = "postgres"
+    pgvector_password: str = "changeme"
+
+    @property
+    def pgvector_dsn(self) -> str:
+        return (
+            f"postgresql://{self.pgvector_user}:{self.pgvector_password}"
+            f"@{self.pgvector_host}:{self.pgvector_port}/{self.pgvector_db}"
+        )
+
     # LLM
     llm_provider: str = "groq"
     llm_model: str = "llama-3.3-70b-versatile"
