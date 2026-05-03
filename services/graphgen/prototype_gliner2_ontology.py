@@ -302,12 +302,20 @@ def refine_entities_with_ontology(
     label_space: Dict[str, Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    Post-process: add coarse ontology_label bucket (PERSON/ORG/POLICY/EVENT/CONCEPT).
-    The extracted label from GLiNER (which came from LKIF/W3C) is preserved as-is.
+    Post-process: add a coarse_bucket field for analytics grouping.
+
+    The fine-grained ontology label from GLiNER2 (e.g. "Treaty", "Directive",
+    "Legislative Body") is preserved as-is in entity["ontology_label"].
+    We add entity["coarse_bucket"] as a secondary analytics grouping only.
+
+    We do NOT overwrite ontology_label with the coarse bucket — that would
+    destroy the semantic richness the ontology injection was designed to produce.
     """
     refined = []
     for entity in entities:
         entity = dict(entity)
-        entity["ontology_label"] = _guess_bucket(entity.get("label", ""))
+        # Preserve fine-grained label; only add coarse_bucket for grouping
+        entity["coarse_bucket"] = _guess_bucket(entity.get("label", ""))
+        # ontology_label stays exactly as GLiNER2 assigned it (the LKIF/W3C label)
         refined.append(entity)
     return refined
