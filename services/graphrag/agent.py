@@ -277,7 +277,9 @@ class GraphRAGAgent:
         cited_chunks = list(set(re.findall(r"chunk_\w+", final_answer)))
         citations = []
         for cid in cited_chunks:
-            chunks = self._neo_store().get_chunks_for_entity("") if False else []
+            # TODO: implement chunk retrieval by entity name once NeoStore.get_chunks_for_entity
+            # is updated to accept a real entity name and return chunk data from Neo4j.
+            chunks = []
             # pull text directly from pgvector
             try:
                 cur = self._pg_store().conn.cursor()

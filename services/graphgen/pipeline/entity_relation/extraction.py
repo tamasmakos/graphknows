@@ -667,7 +667,7 @@ async def add_triplets_to_graph_for_segment(
         gliner_label = gliner_label_entry.get('label') if isinstance(gliner_label_entry, dict) else gliner_label_entry
             
         # Use LLM type if available, fallback to GLiNER/Spacy, then default
-        ontology_label = llm_type or gliner_label or "Concept"
+        ontology_label = llm_type or gliner_label or "UNKNOWN"
             
         if not graph.has_node(mapped_ent):
             # Create new node
@@ -692,11 +692,11 @@ async def add_triplets_to_graph_for_segment(
             # Smart update for ontology_class: prioritize LLM type, then GLiNER
             if llm_type:
                 node_data['ontology_class'] = llm_type
-            elif not node_data.get('ontology_class') or node_data.get('ontology_class') == 'Concept':
+            elif not node_data.get('ontology_class') or node_data.get('ontology_class') in ('Concept', 'UNKNOWN'):
                 if gliner_label:
                     node_data['ontology_class'] = gliner_label
                 elif 'ontology_class' not in node_data:
-                    node_data['ontology_class'] = 'Concept'
+                    node_data['ontology_class'] = 'UNKNOWN'
                 
             # Ensure node_type is set (if it was created implicitly)
             if 'node_type' not in node_data:

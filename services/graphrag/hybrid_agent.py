@@ -29,6 +29,8 @@ REPO = ROOT.parent.parent  # services/graphrag -> repo root
 sys.path.insert(0, str(REPO / "services" / "graphgen"))
 sys.path.insert(0, str(REPO / "services" / "graphrag"))
 
+from graph_store import EMBED_MODEL  # single source of truth for embedding model
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -59,7 +61,7 @@ def _get_model():
     global _embed_model
     if _embed_model is None:
         from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        _embed_model = SentenceTransformer(EMBED_MODEL)
     return _embed_model
 
 def _embed(text: str) -> list[float]:
