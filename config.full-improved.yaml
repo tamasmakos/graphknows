@@ -1,0 +1,79 @@
+# Full-corpus experiment config after medium validation
+
+test_mode:
+  enabled: false
+  max_documents: 0
+  max_chunks: 0
+
+infra:
+  graph_db_type: "none"
+  neo4j_user: "neo4j"
+  neo4j_password: "password"
+  input_dir: "input/txt/translated"
+  output_dir: "output_full_corpus_improved"
+  clean_start: true
+
+llm:
+  base_model: "llama-3.1-8b-instant"
+  extraction_model: "meta-llama/llama-4-scout-17b-16e-instruct"
+  summarization_model: "llama-3.1-8b-instant"
+  temperature: 0.0
+
+extraction:
+  chunk_size: 512
+  chunk_overlap: 64
+  backend: "gliner2"
+  ner_backend: "gliner2"
+  relation_backend: "dspy"
+  gliner_model: "fastino/gliner2-base-v1"
+  gliner_threshold: 0.25
+  gliner2_top_k_labels: 4
+  device: "cpu"
+  use_onnx: false
+  max_concurrent_chunks: 1
+  hierarchy_levels:
+    - "COMMUNITY"
+    - "SUBCOMMUNITY"
+  ontology:
+    enabled: true
+    ontology_dir: "input/ontology/cdm-4.13.2"
+    namespace_filter: null
+    merge_with_manual: true
+    top_level_only: true
+    min_subclasses: 1
+    include_local_names: true
+  file_pattern: "*.txt"
+
+community:
+  resolutions: [0.4, 0.5, 0.6, 0.8]
+  n_iterations: 3
+  min_community_size: 3
+  seed: 42
+  node2vec_enabled: true
+  node2vec_dimensions: 64
+  node2vec_walk_length: 16
+  node2vec_num_walks: 20
+
+analytics:
+  enabled: true
+  output_dir: "analytics_reports"
+  topic_separation_test: true
+  output_file: "topic_separation_report.json"
+  silhouette_min_samples: 3
+  silhouette_min_samples_per_cluster: 2
+  silhouette_max_clusters_ratio: 0.5
+  visualization:
+    interactive: true
+    heatmap: true
+
+analysis:
+  enabled: true
+  output_dir: "analytics_reports"
+  topic_separation_test: true
+  output_file: "topic_separation_report.json"
+  silhouette_min_samples: 3
+  silhouette_min_samples_per_cluster: 2
+  silhouette_max_clusters_ratio: 0.5
+  visualization:
+    interactive: true
+    heatmap: true
