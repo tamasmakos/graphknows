@@ -1,45 +1,61 @@
 """
-Hybrid GraphRAG Agent — in-memory implementation for testing without Neo4j.
+hybrid_agent.py — Hybrid GraphRAG agent backed by live Neo4j + pgvector.
 
-Architecture (informed by EHRAG 2604.17458 and UniAI-GraphRAG 2603.25152):
-  1. Dense retrieval — sentence-transformer embeddings on chunks (semantic proximity)
-  2. Entity retrieval — fuzzy/exact match on LKIF entity graph
-  3. Graph walk — BFS expansion from matched entities to neighbours
-  4. Fusion — RRF (Reciprocal Rank Fusion) combines dense + graph-derived chunks
-  5. ReAct agent (Groq) — decides which tools to call, in what order, how many hops
+Architecture (EHRAG 2604.17458 / UniAI-GraphRAG 2603.25152):
+  1. Dense retrieval  — pgvector cosine search over BGE-small-en chunk embeddings
+  2. Entity retrieval — Neo4j substring match on Entity nodes
+  3. Graph walk       — Neo4j BFS MENTIONS traversal from matched entities
+  4. RRF fusion       — Reciprocal Rank Fusion merges both result lists
+  5. ReAct agent      — Groq llama-3.3-70b decides tool sequence, writes grounded answer
 
-Tools exposed to the agent:
-  search_chunks(query, k)         — dense vector search over chunks
-  search_entities(query, k)       — entity name/type search
-  get_entity_neighbours(name, depth) — graph neighbourhood BFS
-  get_chunks_for_entity(name)     — all chunks that mention an entity
+All connection parameters are loaded from .env — nothing hardcoded.
 
 Usage:
-  python hybrid_graphrag_agent.py
+  python hybrid_agent.py [--query "..."] [--steps 6]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
-# ── Load extracted data ───────────────────────────────────────────────────────
-DATA_FILE = Path("/root/graphknows/output_political_smoke/lkif_chunks.json")
+ROOT = Path(__file__).parent
+REPO = ROOT.parent.parent  # services/graphrag -> repo root
+sys.path.insert(0, str(REPO / "services" / "graphgen"))
+sys.path.insert(0, str(REPO / "services" / "graphrag"))
 
-def _load_data() -> list[dict]:
-    with open(DATA_FILE) as f:
-        return json.load(f)
 
-# ── Embedding (lazy, cached) ──────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
+
+def _load_env() -> dict:
+    from dotenv import dotenv_values
+    env = dotenv_values(str(REPO / ".env"))
+    return {
+        "neo4j_uri":     f"bolt://{env.get('NEO4J_HOST','172.18.0.1')}:{env.get('NEO4J_PORT',7687)}",
+        "neo4j_user":    env.get("NEO4J_USER", "neo4j"),
+        "neo4j_password": env.get("NEO4J_PASSWORD", ""),
+        "neo4j_database": env.get("NEO4J_DATABASE", "neo4j"),
+        "pgvector_dsn": (
+            f"postgresql://{env.get('PGVECTOR_USER','postgres')}"
+            f":{env.get('PGVECTOR_PASSWORD','')}"
+            f"@{env.get('PGVECTOR_HOST','172.18.0.1')}"
+            f":{env.get('PGVECTOR_PORT',5432)}"
+            f"/{env.get('PGVECTOR_DB','vectordb')}"
+        ),
+        "groq_api_key":  env.get("GROQ_API_KEY", ""),
+    }
+
+
+# ── Embedding ─────────────────────────────────────────────────────────────────
+
 _embed_model = None
-_chunk_embeddings: dict[str, list[float]] = {}
 
-def _get_embed_model():
+def _get_model():
     global _embed_model
     if _embed_model is None:
         from sentence_transformers import SentenceTransformer
@@ -47,293 +63,201 @@ def _get_embed_model():
     return _embed_model
 
 def _embed(text: str) -> list[float]:
-    model = _get_embed_model()
-    return model.encode(text, normalize_embeddings=True).tolist()
+    return _get_model().encode(text, normalize_embeddings=True).tolist()
 
-def _cosine(a, b) -> float:
-    dot = sum(x*y for x, y in zip(a, b))
-    na = sum(x*x for x in a) ** 0.5
-    nb = sum(x*x for x in b) ** 0.5
-    return dot / (na * nb + 1e-9)
-
-# ── Index building ────────────────────────────────────────────────────────────
-def build_index(chunks: list[dict]) -> dict:
-    """Build in-memory indexes from extracted chunks."""
-    # Entity -> list of chunk ids that mention it
-    entity_to_chunks: dict[str, list[str]] = defaultdict(list)
-    # Entity -> {type, mentions, neighbours set}
-    entity_graph: dict[str, dict] = {}
-    # Chunk embeddings
-    chunk_embs: dict[str, list[float]] = {}
-
-    print("Building embeddings + entity index...")
-    for chunk in chunks:
-        cid = chunk["id"]
-        chunk_embs[cid] = _embed(chunk["text"])
-
-        # Index entities from this chunk
-        for ent in chunk.get("entities", []):
-            name = ent["text"].strip().upper()
-            lbl = ent["label"]
-            if not name or len(name) < 2:
-                continue
-            entity_to_chunks[name].append(cid)
-            if name not in entity_graph:
-                entity_graph[name] = {"type": lbl, "mentions": 0, "co_occurs_with": set()}
-            entity_graph[name]["mentions"] += 1
-
-        # Build co-occurrence edges (entities in same chunk are related)
-        names_in_chunk = [e["text"].strip().upper() for e in chunk.get("entities", [])
-                          if len(e["text"].strip()) > 1]
-        for i, a in enumerate(names_in_chunk):
-            for b in names_in_chunk[i+1:]:
-                if a != b and a in entity_graph and b in entity_graph:
-                    entity_graph[a]["co_occurs_with"].add(b)
-                    entity_graph[b]["co_occurs_with"].add(a)
-
-    # Convert sets to lists for serialisation
-    for eg in entity_graph.values():
-        eg["co_occurs_with"] = list(eg["co_occurs_with"])[:20]
-
-    print(f"Index ready: {len(chunks)} chunks, {len(entity_graph)} entities")
-    return {
-        "chunks": {c["id"]: c for c in chunks},
-        "chunk_embs": chunk_embs,
-        "entity_to_chunks": dict(entity_to_chunks),
-        "entity_graph": entity_graph,
-    }
 
 # ── Tool implementations ──────────────────────────────────────────────────────
-def search_chunks(query: str, k: int = 4, index: dict = None) -> list[dict]:
-    """Dense semantic search over chunks. Returns top-k with scores."""
+
+def search_chunks(query: str, k: int = 5, *, cfg: dict) -> list[dict]:
+    """Dense vector search over debate chunks stored in pgvector."""
+    from utils.graphdb.pgvector_adapter import PgVectorAdapter
+    pg = PgVectorAdapter(cfg["pgvector_dsn"])
+    if not pg.connect():
+        return [{"error": "pgvector not reachable"}]
     qemb = _embed(query)
-    scored = [
-        (cid, _cosine(qemb, emb))
-        for cid, emb in index["chunk_embs"].items()
-    ]
-    scored.sort(key=lambda x: -x[1])
-    results = []
-    for cid, score in scored[:k]:
-        chunk = index["chunks"][cid]
-        results.append({
-            "chunk_id": cid,
-            "score": round(score, 3),
-            "text": chunk["text"][:400],
-            "entity_count": len(chunk.get("entities", [])),
-        })
+    results = pg.search_chunks(qemb, k=k)
+    pg.close()
     return results
 
-def search_entities(query: str, k: int = 8, index: dict = None) -> list[dict]:
-    """Search entities by name/type substring match."""
-    query_upper = query.upper()
-    query_words = set(re.findall(r"[A-Z]{2,}", query_upper))
-    results = []
-    for name, info in index["entity_graph"].items():
-        name_words = set(re.findall(r"[A-Z]{2,}", name))
-        overlap = len(query_words & name_words)
-        if overlap > 0 or query_upper in name:
-            results.append({
-                "name": name,
-                "type": info["type"],
-                "mentions": info["mentions"],
-                "neighbours": len(info["co_occurs_with"]),
-                "score": overlap + (2 if query_upper in name else 0),
-            })
-    results.sort(key=lambda x: -x["score"])
-    return results[:k]
 
-def get_entity_neighbours(entity_name: str, depth: int = 1, index: dict = None) -> list[dict]:
-    """BFS graph walk from entity, return neighbours up to depth hops."""
-    entity_name = entity_name.strip().upper()
-    if entity_name not in index["entity_graph"]:
-        # Try partial match
-        matches = [n for n in index["entity_graph"] if entity_name in n]
-        if not matches:
-            return [{"error": f"Entity '{entity_name}' not found"}]
-        entity_name = matches[0]
-
-    visited = {entity_name}
-    frontier = {entity_name}
+def search_entities(query: str, k: int = 8, *, cfg: dict) -> list[dict]:
+    """Search Entity nodes in Neo4j by name substring."""
+    from neo4j import GraphDatabase
+    driver = GraphDatabase.driver(cfg["neo4j_uri"], auth=(cfg["neo4j_user"], cfg["neo4j_password"]))
     results = []
-    for d in range(depth):
-        next_frontier = set()
-        for node in frontier:
-            for nbr in index["entity_graph"].get(node, {}).get("co_occurs_with", []):
-                if nbr not in visited:
-                    visited.add(nbr)
-                    next_frontier.add(nbr)
-                    info = index["entity_graph"].get(nbr, {})
-                    results.append({
-                        "name": nbr,
-                        "type": info.get("type", "?"),
-                        "mentions": info.get("mentions", 0),
-                        "hop": d + 1,
-                    })
-        frontier = next_frontier
-    return results[:25]
-
-def get_chunks_for_entity(entity_name: str, index: dict = None) -> list[dict]:
-    """Return all chunks that mention a given entity."""
-    entity_name = entity_name.strip().upper()
-    # Try exact then partial
-    chunk_ids = index["entity_to_chunks"].get(entity_name, [])
-    if not chunk_ids:
-        for name, cids in index["entity_to_chunks"].items():
-            if entity_name in name:
-                chunk_ids = cids
-                entity_name = name
-                break
-    if not chunk_ids:
-        return [{"error": f"No chunks found for entity '{entity_name}'"}]
-    results = []
-    for cid in chunk_ids[:5]:
-        chunk = index["chunks"][cid]
-        results.append({
-            "chunk_id": cid,
-            "text": chunk["text"][:400],
-        })
+    with driver.session(database=cfg["neo4j_database"]) as s:
+        rows = s.run(
+            """
+            MATCH (e:Entity)
+            WHERE toLower(e.name) CONTAINS toLower($q)
+            RETURN e.name AS name, e.label AS label,
+                   size([(e)<-[:MENTIONS]-() | 1]) AS mentions
+            ORDER BY mentions DESC
+            LIMIT $k
+            """,
+            q=query, k=k,
+        ).data()
+        results = [{"name": r["name"], "label": r["label"], "mentions": r["mentions"]} for r in rows]
+    driver.close()
     return results
+
+
+def get_entity_neighbours(entity_name: str, depth: int = 1, *, cfg: dict) -> list[dict]:
+    """BFS over co-MENTIONS edges in Neo4j (entities sharing a chunk)."""
+    from neo4j import GraphDatabase
+    driver = GraphDatabase.driver(cfg["neo4j_uri"], auth=(cfg["neo4j_user"], cfg["neo4j_password"]))
+    results = []
+    with driver.session(database=cfg["neo4j_database"]) as s:
+        rows = s.run(
+            """
+            MATCH (e:Entity {name: $name})<-[:MENTIONS]-(c:Chunk)-[:MENTIONS]->(nbr:Entity)
+            WHERE nbr.name <> $name
+            RETURN DISTINCT nbr.name AS name, nbr.label AS label,
+                   count(c) AS shared_chunks
+            ORDER BY shared_chunks DESC
+            LIMIT 20
+            """,
+            name=entity_name.strip().upper(),
+        ).data()
+        results = [{"name": r["name"], "label": r["label"], "shared_chunks": r["shared_chunks"]} for r in rows]
+    driver.close()
+    return results
+
+
+def get_chunks_for_entity(entity_name: str, *, cfg: dict) -> list[dict]:
+    """Return debate chunks that MENTION a given entity (from Neo4j + pgvector text)."""
+    from neo4j import GraphDatabase
+    driver = GraphDatabase.driver(cfg["neo4j_uri"], auth=(cfg["neo4j_user"], cfg["neo4j_password"]))
+    chunk_ids = []
+    with driver.session(database=cfg["neo4j_database"]) as s:
+        rows = s.run(
+            """
+            MATCH (e:Entity {name: $name})<-[:MENTIONS]-(c:Chunk)
+            RETURN c.id AS id, c.text AS text
+            LIMIT 5
+            """,
+            name=entity_name.strip().upper(),
+        ).data()
+        chunk_ids = [{"chunk_id": r["id"], "text": (r["text"] or "")[:400]} for r in rows]
+    driver.close()
+    return chunk_ids
+
 
 # ── RRF fusion ────────────────────────────────────────────────────────────────
-def rrf_fuse(dense_results: list[dict], graph_chunk_ids: list[str],
-             index: dict, k_rrf: int = 60) -> list[dict]:
-    """
-    Reciprocal Rank Fusion of dense vector results and graph-derived chunk IDs.
-    """
-    scores: dict[str, float] = defaultdict(float)
-    for rank, r in enumerate(dense_results):
-        scores[r["chunk_id"]] += 1.0 / (k_rrf + rank + 1)
-    for rank, cid in enumerate(graph_chunk_ids):
-        scores[cid] += 1.0 / (k_rrf + rank + 1)
-    ranked = sorted(scores.items(), key=lambda x: -x[1])
-    results = []
-    for cid, score in ranked[:6]:
-        chunk = index["chunks"].get(cid, {})
-        results.append({
-            "chunk_id": cid,
-            "rrf_score": round(score, 4),
-            "text": chunk.get("text", "")[:400],
-        })
-    return results
 
-# ── ReAct agent ───────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are a political intelligence analyst with access to a knowledge graph 
-built from EU Parliament debates (April 2026). You answer questions by using tools to retrieve 
-relevant information, then synthesizing a grounded answer.
+def rrf_fuse(dense: list[dict], graph_chunks: list[dict], k_rrf: int = 60) -> list[dict]:
+    scores: dict[str, float] = defaultdict(float)
+    texts:  dict[str, str]   = {}
+    for rank, r in enumerate(dense):
+        cid = r["chunk_id"]
+        scores[cid] += 1.0 / (k_rrf + rank + 1)
+        texts[cid]   = r.get("text", "")
+    for rank, r in enumerate(graph_chunks):
+        cid = r["chunk_id"]
+        scores[cid] += 1.0 / (k_rrf + rank + 1)
+        texts.setdefault(cid, r.get("text", ""))
+    ranked = sorted(scores.items(), key=lambda x: -x[1])
+    return [
+        {"chunk_id": cid, "rrf_score": round(sc, 4), "text": texts.get(cid, "")[:400]}
+        for cid, sc in ranked[:6]
+    ]
+
+
+# ── ReAct loop ────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """\
+You are a political intelligence analyst. You have access to a knowledge graph built from
+EU Parliament 'This is Europe' debates (2022-2024). Answer questions by calling tools to
+retrieve grounded evidence, then synthesising a precise answer.
 
 Available tools:
-  search_chunks(query, k=4) — semantic search over debate text chunks
-  search_entities(query, k=8) — find entities (persons, treaties, orgs, legal acts) by name
-  get_entity_neighbours(entity_name, depth=1) — find entities co-occurring with a given entity
-  get_chunks_for_entity(entity_name) — retrieve debate passages mentioning an entity
+  search_chunks(query, k=5)              — semantic search over debate text passages
+  search_entities(query, k=8)            — find named entities (persons, treaties, orgs, acts)
+  get_entity_neighbours(entity_name, depth=1) — co-mentioned entities in the graph
+  get_chunks_for_entity(entity_name)     — debate passages that mention a specific entity
 
 Strategy:
-  1. Always start with search_chunks and search_entities for the query
-  2. If entities are found, use get_entity_neighbours to find related entities
-  3. Use get_chunks_for_entity for the most relevant entities to get supporting text
-  4. Fuse all retrieved context to write a grounded answer with citations like [chunk_0]
+  1. Start with search_chunks + search_entities
+  2. Expand promising entities with get_entity_neighbours
+  3. Use get_chunks_for_entity for key entities to get supporting text
+  4. Write a grounded Final Answer citing evidence as [chunk_id]
 
-Respond using this format:
-  Thought: <reasoning about what to do next>
+Format:
+  Thought: <reasoning>
   Action: <tool_name>(<args>)
   Observation: <tool result>
-  ... (repeat up to 6 times)
-  Final Answer: <your grounded answer citing chunk IDs>
+  ... (up to 6 steps)
+  Final Answer: <grounded answer with citations>
 """
 
-def _call_groq(messages: list[dict], stop: list[str] | None = None,
-               model: str = "llama-3.3-70b-versatile") -> str:
+
+def _call_groq(messages: list[dict], stop: list[str] | None, api_key: str) -> str:
     from groq import Groq
-    key = os.environ.get("GROQ_API_KEY")
-    if not key:
-        env = Path("/root/graphknows/.env").read_text()
-        for line in env.splitlines():
-            if line.startswith("GROQ_API_KEY="):
-                key = line.split("=", 1)[1].strip()
-    client = Groq(api_key=key)
-    kwargs = dict(model=model, messages=messages, temperature=0.1, max_tokens=512)
-    if stop:
-        kwargs["stop"] = stop
-    resp = client.chat.completions.create(**kwargs)
+    client = Groq(api_key=api_key)
+    resp = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        temperature=0.1,
+        max_tokens=600,
+        stop=stop or None,
+    )
     return resp.choices[0].message.content
 
+
 def _parse_action(text: str) -> tuple[str | None, str | None]:
-    """Extract (tool_name, args_str) from 'Action: tool(args)' line."""
     m = re.search(r"Action:\s*(\w+)\(([^)]*)\)", text)
     if m:
         return m.group(1), m.group(2)
     return None, None
 
+
 def _eval_args(args_str: str) -> tuple[list, dict]:
-    """
-    Parse tool arguments from model output.
-    Handles: "value", kwarg=value, "kwarg"="value", entity_name="value"
-    Returns (positional_args, keyword_args) as plain Python types.
-    """
     args_str = args_str.strip()
     if not args_str:
         return [], {}
-
-    pos_args: list = []
-    kw_args: dict = {}
-
-    # Split on commas not inside quotes
-    parts = re.split(r',\s*(?=(?:[^"\']*["\'][^"\']*["\'])*[^"\']*$)', args_str)
-
-    for part in parts:
+    pos, kw = [], {}
+    for part in re.split(r',\s*(?=(?:[^"\']*["\'][^"\']*["\'])*[^"\']*$)', args_str):
         part = part.strip()
         if not part:
             continue
-        # keyword=value pattern
         kv = re.match(r'^(\w+)\s*=\s*["\']?([^"\']*)["\']?$', part)
         if kv:
             key, val = kv.group(1), kv.group(2).strip()
             try:
-                kw_args[key] = int(val)
+                kw[key] = int(val)
             except ValueError:
-                kw_args[key] = val
+                kw[key] = val
         else:
-            # positional — strip quotes
-            val = part.strip('"').strip("'").strip()
-            if val:
-                pos_args.append(val)
-
-    # Hoist common single-arg keyword params to positional
-    # so tools can be called as tool(name, depth) or tool(entity_name=name)
-    if not pos_args and kw_args:
-        for param in ("query", "entity_name", "doc_id"):
-            if param in kw_args:
-                pos_args.append(kw_args.pop(param))
+            pos.append(part.strip('"').strip("'").strip())
+    if not pos and kw:
+        for param in ("query", "entity_name"):
+            if param in kw:
+                pos.append(kw.pop(param))
                 break
+    return pos, kw
 
-    return pos_args, kw_args
 
-def run_hybrid_agent(query: str, index: dict, max_steps: int = 6) -> str:
-    """Run the ReAct hybrid agent loop with proper stop-token control."""
+def run_agent(query: str, cfg: dict, max_steps: int = 6) -> str:
     tools = {
-        "search_chunks": lambda *a, **kw: search_chunks(*a, **kw, index=index),
-        "search_entities": lambda *a, **kw: search_entities(*a, **kw, index=index),
-        "get_entity_neighbours": lambda *a, **kw: get_entity_neighbours(*a, **kw, index=index),
-        "get_chunks_for_entity": lambda *a, **kw: get_chunks_for_entity(*a, **kw, index=index),
+        "search_chunks":         lambda *a, **kw: search_chunks(*a, **kw, cfg=cfg),
+        "search_entities":       lambda *a, **kw: search_entities(*a, **kw, cfg=cfg),
+        "get_entity_neighbours": lambda *a, **kw: get_entity_neighbours(*a, **kw, cfg=cfg),
+        "get_chunks_for_entity": lambda *a, **kw: get_chunks_for_entity(*a, **kw, cfg=cfg),
     }
-
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": query},
+        {"role": "user",   "content": query},
     ]
-
     print(f"\n{'='*70}")
     print(f"QUERY: {query}")
     print(f"{'='*70}\n")
 
-    full_trace = ""
-
+    trace = ""
     for step in range(max_steps):
-        # Stop at "Observation:" — prevent the model from inventing tool results
-        response = _call_groq(messages, stop=["Observation:"])
+        response = _call_groq(messages, stop=["Observation:"], api_key=cfg["groq_api_key"])
         print(f"--- Step {step+1} ---")
         print(response.strip())
-        full_trace += response
+        trace += response
 
         if "Final Answer:" in response:
             break
@@ -344,35 +268,36 @@ def run_hybrid_agent(query: str, index: dict, max_steps: int = 6) -> str:
             try:
                 result = tools[tool_name](*pos_args, **kw_args)
                 obs = json.dumps(result, indent=2)
-                if len(obs) > 1200:
-                    obs = obs[:1200] + "\n... [truncated]"
-            except Exception as e:
-                obs = f"Tool error: {e}"
-            print(f"\nObservation: {obs[:500]}\n")
+                if len(obs) > 1400:
+                    obs = obs[:1400] + "\n... [truncated]"
+            except Exception as exc:
+                obs = f"Tool error: {exc}"
+            print(f"\nObservation: {obs[:600]}\n")
             messages.append({"role": "assistant", "content": response.strip()})
-            messages.append({"role": "user", "content": f"Observation: {obs}"})
-            full_trace += f"\nObservation: {obs}\n"
+            messages.append({"role": "user",      "content": f"Observation: {obs}"})
+            trace += f"\nObservation: {obs}\n"
         else:
             messages.append({"role": "assistant", "content": response.strip()})
-            messages.append({"role": "user",
-                             "content": "Please use one of the tools now, or write your Final Answer."})
+            messages.append({"role": "user",      "content": "Use a tool or write your Final Answer."})
 
-    return full_trace
+    return trace
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    chunks = _load_data()
-    index = build_index(chunks)
+    parser = argparse.ArgumentParser(description="GraphKnows hybrid GraphRAG agent")
+    parser.add_argument("--query", default="What security threats and defence priorities were discussed by EU leaders?")
+    parser.add_argument("--steps", type=int, default=6)
+    args = parser.parse_args()
 
-    queries = [
-        "What legal acts or treaties were referenced in the EU Parliament debate?",
-        "What was discussed about energy and strategic independence?",
-    ]
+    cfg = _load_env()
+    trace = run_agent(args.query, cfg, max_steps=args.steps)
 
-    for q in queries[:1]:
-        answer = run_hybrid_agent(q, index)
-        print("\n" + "="*70)
-        print("FINAL ANSWER EXTRACTED")
-        print("="*70)
-        if "Final Answer:" in answer:
-            print(answer.split("Final Answer:")[-1].strip())
+    print("\n" + "="*70)
+    print("FINAL ANSWER")
+    print("="*70)
+    if "Final Answer:" in trace:
+        print(trace.split("Final Answer:")[-1].strip())
+    else:
+        print("(No final answer reached within step limit)")
