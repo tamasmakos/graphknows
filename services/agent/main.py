@@ -200,64 +200,199 @@ async def _call_graphrag(message: str, session_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
-    """
-    Extract entities_mentioned (and citation entities) from the graphrag
-    response and upsert them into the Memgraph session graph.
-    Runs synchronously (called via asyncio.to_thread).
-    """
-    # graphrag /retrieve returns citations list; each citation may have an
-    # 'entity' key.  The RetrieveResponse also surfaces entities_mentioned
-    # directly when present (future-proofing).
-    entities: list[dict] = []
+def _infer_doc_metadata(doc_id: str) -> dict[str, str]:
+    """Infer date, institution, and URL from a doc_id string.
 
-    # Flat list under 'entities_mentioned' if graphrag surfaces it
+    Args:
+        doc_id: Document identifier, e.g. 'ep_debate_2024_03_13'.
+
+    Returns:
+        Dict with keys 'date', 'institution', 'url'.
+    """
+    import re as _re
+    date = ""
+    institution = ""
+    url = ""
+    if doc_id.startswith("ep_debate_"):
+        institution = "European Parliament"
+        url = "https://europarl.europa.eu/plenary/en/debates.html"
+        m = _re.search(r"(\d{4})[_\-](\d{2})[_\-](\d{2})", doc_id)
+        if m:
+            date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    return {"date": date, "institution": institution, "url": url}
+
+
+def _extract_tool_name(action: str | None) -> str:
+    """Extract tool name from an action string like 'search_entities(query=..., k=8)'.
+
+    Args:
+        action: Raw action string from the reasoning trace.
+
+    Returns:
+        The tool name, or empty string if not parseable.
+    """
+    import re as _re
+    if not action:
+        return ""
+    m = _re.match(r"(\w+)\(", action.strip())
+    return m.group(1) if m else ""
+
+
+def _observation_type(tool_name: str) -> str:
+    """Map a tool name to a canonical observation_type label.
+
+    Args:
+        tool_name: Tool name string.
+
+    Returns:
+        One of 'entities'|'chunks'|'community'|'neighbours'|'ranked'|'error'|'unknown'.
+    """
+    mapping = {
+        "search_entities": "entities",
+        "search_chunks": "chunks",
+        "get_community": "community",
+        "get_neighbours": "neighbours",
+        "fuse_and_rank": "ranked",
+        "get_chunks_for_entity": "chunks",
+    }
+    return mapping.get(tool_name, "unknown")
+
+
+def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
+    """Extract entities, RELATES_TO edges, Topic nodes, and Chunk nodes from the
+    full graphrag agent trace and upsert them into the Memgraph session graph.
+
+    Processes every trace step's observation, not just the final answer text,
+    to mine the richest possible graph structure.
+
+    Args:
+        session_id: The active Memgraph session identifier.
+        graphrag_response: The full JSON response from the graphrag /retrieve endpoint.
+    """
+    import re as _re
+
+    entity_names: list[str] = []
+    relates_to: list[tuple[str, str]] = []   # (entity_a, entity_b) co-occurrence pairs
+    topic_nodes: list[dict] = []             # {id, community_id, summary, label, entity_name}
+    chunk_nodes: list[dict] = []             # {chunk_id, doc_id, excerpt, date, institution, url}
+
+    # ── Pull from explicit top-level fields ─────────────────────────────
     for name in graphrag_response.get("entities_mentioned", []):
         if isinstance(name, str):
-            entities.append({"name": name, "label": "Entity"})
-        elif isinstance(name, dict):
-            entities.append(name)
+            entity_names.append(name)
+        elif isinstance(name, dict) and name.get("name"):
+            entity_names.append(name["name"])
 
-    # Pull entity names from citations
     for citation in graphrag_response.get("citations", []):
         if isinstance(citation, dict):
-            entity_name = citation.get("entity") or citation.get("name")
-            if entity_name and isinstance(entity_name, str):
-                entities.append({"name": entity_name, "label": "Entity"})
+            # Enrich chunk node from citations
+            cid = citation.get("chunk_id", "")
+            doc_id = citation.get("doc_id", "")
+            if cid:
+                meta = _infer_doc_metadata(doc_id)
+                chunk_nodes.append({
+                    "chunk_id": cid,
+                    "doc_id": doc_id,
+                    "excerpt": citation.get("excerpt", "")[:300],
+                    **meta,
+                })
 
-    # Pull entities from reasoning_steps observations (main source of truth)
+    # ── Parse ALL trace steps ────────────────────────────────────────────
+    last_entity_list: list[str] = []  # entities seen in last search_entities step
+
     for step in graphrag_response.get("reasoning_steps", []):
-        obs = step.get("observation", [])
-        if isinstance(obs, list):
+        action: str = step.get("action", "") or ""
+        obs = step.get("observation")
+        tool = _extract_tool_name(action)
+
+        if obs is None:
+            continue
+
+        if tool in ("search_entities", "get_neighbours") and isinstance(obs, list):
+            step_entities: list[str] = []
             for item in obs:
                 if isinstance(item, dict) and item.get("name"):
-                    entities.append({
-                        "name": item["name"],
-                        "label": item.get("label", "Entity"),
-                    })
-        # Also mine entity names from answer text — extract [BRACKETED] names
-    import re
+                    step_entities.append(item["name"])
+                    entity_names.append(item["name"])
+            # Build co-occurrence pairs among entities in same get_neighbours call
+            if tool == "get_neighbours" and last_entity_list and step_entities:
+                for anchor in last_entity_list[:1]:  # use the top entity as anchor
+                    for neighbour in step_entities[:8]:
+                        if anchor != neighbour:
+                            relates_to.append((anchor, neighbour))
+            if tool == "search_entities":
+                last_entity_list = step_entities
+            elif tool == "get_neighbours":
+                # Also pair returned neighbours with each other (shared chunk context)
+                for i, ea in enumerate(step_entities[:6]):
+                    for eb in step_entities[i + 1:6]:
+                        relates_to.append((ea, eb))
+
+        elif tool == "get_community":
+            # obs is {id, community_id, summary, label} or a list thereof
+            items = obs if isinstance(obs, list) else [obs]
+            # Determine which entity was queried from action args
+            m = _re.search(r'get_community\(["\']?([^"\'(),]+)["\']?\)', action)
+            entity_name = m.group(1).strip() if m else ""
+            for item in items:
+                if isinstance(item, dict) and (item.get("id") or item.get("community_id")):
+                    topic_nodes.append({**item, "entity_name": entity_name})
+
+        elif tool in ("search_chunks", "fuse_and_rank", "get_chunks_for_entity") and isinstance(obs, list):
+            for item in obs:
+                if isinstance(item, dict):
+                    cid = item.get("chunk_id", "")
+                    if cid:
+                        doc_id = item.get("doc_id", "")
+                        meta = _infer_doc_metadata(doc_id)
+                        chunk_nodes.append({
+                            "chunk_id": cid,
+                            "doc_id": doc_id,
+                            "excerpt": item.get("text", "")[:300],
+                            **meta,
+                        })
+
+    # ── Mine [BRACKETED] names from final answer text ────────────────────
     answer_text = graphrag_response.get("answer", "")
-    for match in re.findall(r'\[([A-Z][A-Z0-9_\s]+)\]', answer_text):
+    for match in _re.findall(r'\[([A-Z][A-Z0-9_\s]+)\]', answer_text):
         clean = match.strip()
         if 2 < len(clean) < 60 and not clean.startswith("chunk"):
-            entities.append({"name": clean, "label": "Entity"})
+            entity_names.append(clean)
 
-    if not entities:
-        log.debug("No entities to upsert for session %s", session_id)
+    if not entity_names and not topic_nodes and not chunk_nodes:
+        log.debug("No graph enrichments to upsert for session %s", session_id)
         return
 
-    # De-duplicate by name
+    # De-duplicate entities
     seen: set[str] = set()
-    unique_entities = []
-    for e in entities:
-        n = e.get("name", "")
+    unique_entities: list[str] = []
+    for n in entity_names:
         if n and n not in seen:
             seen.add(n)
-            unique_entities.append(e)
+            unique_entities.append(n)
 
-    log.info("Upserting %d entities for session %s", len(unique_entities), session_id)
-    _sgm.seed_from_neo4j(session_id, [e["name"] for e in unique_entities])
+    # De-duplicate chunk_nodes by chunk_id (last write wins)
+    chunk_by_id: dict[str, dict] = {}
+    for c in chunk_nodes:
+        if c.get("chunk_id"):
+            chunk_by_id[c["chunk_id"]] = c
+
+    log.info(
+        "Session %s enrichment: %d entities, %d relates_to, %d topics, %d chunks",
+        session_id, len(unique_entities), len(relates_to), len(topic_nodes), len(chunk_by_id),
+    )
+
+    # Seed entities from Neo4j (creates Entity+Chunk nodes and MENTIONS edges)
+    if unique_entities:
+        _sgm.seed_from_neo4j(session_id, unique_entities)
+
+    # Enrich with richer graph structure
+    _sgm.add_graph_enrichments(
+        session_id,
+        relates_to=list(dict.fromkeys(relates_to)),  # de-dup preserving order
+        topic_nodes=topic_nodes,
+        chunk_nodes=list(chunk_by_id.values()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -298,13 +433,45 @@ async def chat(req: ChatRequest) -> ChatResponse:
     subgraph: dict = await asyncio.to_thread(_sgm.get_session_graph, session_id)
 
     answer: str = graphrag_resp.get("answer", "")
-    reasoning_steps: list = graphrag_resp.get("reasoning_steps", [])
+
+    # Enrich reasoning steps with tool_name, observation_type, and truncated observation
+    raw_steps: list = graphrag_resp.get("reasoning_steps", [])
+    reasoning_steps: list = []
+    for step in raw_steps:
+        tool_name = _extract_tool_name(step.get("action"))
+        obs = step.get("observation")
+        obs_type = _observation_type(tool_name) if tool_name else ("error" if isinstance(obs, dict) and obs.get("error") else "unknown")
+        # Truncate observation to avoid giant payloads
+        if obs is not None:
+            obs_str = obs if isinstance(obs, str) else __import__("json").dumps(obs, ensure_ascii=False)
+            obs_truncated = obs_str[:500] + ("…" if len(obs_str) > 500 else "")
+        else:
+            obs_truncated = None
+        reasoning_steps.append({
+            **{k: v for k, v in step.items() if k != "observation"},
+            "tool_name": tool_name,
+            "observation_type": obs_type,
+            "observation": obs_truncated,
+        })
 
     # Build sources from citations / chunk references in graphrag response
     sources: list = []
     for citation in graphrag_resp.get("citations", []):
-        if isinstance(citation, dict) and citation.get("text"):
-            sources.append({"id": citation.get("id", ""), "text": citation["text"]})
+        if isinstance(citation, dict):
+            src: dict = {}
+            if citation.get("chunk_id"):
+                src["id"] = citation["chunk_id"]
+            if citation.get("excerpt"):
+                src["text"] = citation["excerpt"]
+            elif citation.get("text"):
+                src["text"] = citation["text"]
+            if citation.get("doc_id"):
+                src["doc_id"] = citation["doc_id"]
+            if citation.get("url"):
+                src["url"] = citation["url"]
+            if src.get("text"):
+                sources.append(src)
+
 
     return ChatResponse(
         answer=answer,

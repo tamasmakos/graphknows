@@ -27,6 +27,9 @@
 - [[knowledge-graph-construction]] — KG construction methodology, ontology schema, scale-free topology, entity resolution, canonicalization
 - [[graphrag-and-downstream]] — GraphKnows hybrid GraphRAG agent, Neo4j+pgvector dual retrieval, pending tasks, RAGAS plan
 
+- [[architecture-reference]] — **canonical technical reference**: ASCII service map, full data-flow, API contracts, env vars, local startup commands, tunnel setup
+- [[product-roadmap-v2]] — **strategic roadmap v2**: shipped PRs, stability gates, prioritised next features, horizon bets, GTM beachhead
+
 ### Service Design (v2)
 
 - [[service-design-agent]] — `services/agent/` spec: HTTP API, tools (6), session lifecycle, Memgraph CRUD, write-back
@@ -61,3 +64,6 @@
 
 - raw/papers/graphgen-thesis-synthesis.md — Immutable synthesis of thesis findings and corpus results
 - [[thesis-findings-and-learnings]] — Empirical results, what worked/didn't, open questions, academic framing
+- [[test-results-frontend]] — Frontend v2 smoke test results (8/8 pass after fixes)
+- [[eu-source-taxonomy]] — Full taxonomy of EU public record types: 12 institutions, 25+ source types, PIV/difficulty ratings, adapter priority order
+- [[graph-visualisation-diagnosis]] — Root cause analysis: missing edges, no topic nodes, empty citations, node label issues, RAGAS plan

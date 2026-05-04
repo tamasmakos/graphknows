@@ -309,6 +309,170 @@ class SessionGraphManager:
         return {"nodes": nodes_list, "edges": list(mem["edges"])}
 
     # ------------------------------------------------------------------
+    # Graph enrichment from agent trace
+    # ------------------------------------------------------------------
+
+    def add_graph_enrichments(
+        self,
+        session_id: str,
+        relates_to: list[tuple[str, str]],
+        topic_nodes: list[dict],
+        chunk_nodes: list[dict],
+    ) -> None:
+        """Upsert RELATES_TO edges, Topic nodes, and annotated Chunk nodes into the session graph.
+
+        Args:
+            session_id: The active session identifier.
+            relates_to: List of (entity_a_name, entity_b_name) co-occurrence pairs.
+            topic_nodes: List of dicts with keys {id, community_id, summary, label,
+                         entity_name} — entity_name links entity → topic.
+            chunk_nodes: List of dicts with keys {chunk_id, doc_id, excerpt, date,
+                         institution, url}.
+        """
+        if session_id not in self._mem_sessions:
+            self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
+        mem = self._mem_sessions[session_id]
+
+        def _edge_exists(src: str, tgt: str, etype: str) -> bool:
+            return any(
+                e["source"] == src and e["target"] == tgt and e["type"] == etype
+                for e in mem["edges"]
+            )
+
+        # ── RELATES_TO edges ────────────────────────────────────────────
+        for entity_a, entity_b in relates_to:
+            nid_a = f"entity-{entity_a}-{session_id}"
+            nid_b = f"entity-{entity_b}-{session_id}"
+            # Ensure both entity nodes exist (stub if not seeded yet)
+            for nid, name in ((nid_a, entity_a), (nid_b, entity_b)):
+                if nid not in mem["nodes"]:
+                    mem["nodes"][nid] = {
+                        "id": nid, "label": "Entity", "type": "Entity", "name": name,
+                        "properties": {"name": name, "label": "Entity", "session_id": session_id},
+                    }
+            if not _edge_exists(nid_a, nid_b, "RELATES_TO"):
+                mem["edges"].append({"source": nid_a, "target": nid_b, "type": "RELATES_TO"})
+            logger.debug("RELATES_TO edge: %s → %s (session %s)", entity_a, entity_b, session_id)
+
+            # Mirror in Memgraph if available
+            if self._memgraph_ok:
+                try:
+                    with self._mg_driver.session() as mg:
+                        for name in (entity_a, entity_b):
+                            mg.run(
+                                "MERGE (e:Entity {name: $name, session_id: $sid})",
+                                name=name, sid=session_id,
+                            )
+                        mg.run(
+                            "MATCH (a:Entity {name: $a, session_id: $sid}) "
+                            "MATCH (b:Entity {name: $b, session_id: $sid}) "
+                            "MERGE (a)-[:RELATES_TO]->(b)",
+                            a=entity_a, b=entity_b, sid=session_id,
+                        )
+                except Exception as exc:
+                    logger.warning("Memgraph RELATES_TO upsert failed: %s", exc)
+                    self._memgraph_ok = False
+
+        # ── Topic nodes + IN_COMMUNITY edges ────────────────────────────
+        for topic in topic_nodes:
+            tid = topic.get("id") or topic.get("community_id", "")
+            if not tid:
+                continue
+            topic_node_id = f"topic-{tid}-{session_id}"
+            mem["nodes"][topic_node_id] = {
+                "id": topic_node_id,
+                "label": "Topic",
+                "type": "Topic",
+                "name": topic.get("summary", str(tid))[:80],
+                "properties": {
+                    "community_id": str(tid),
+                    "summary": topic.get("summary", ""),
+                    "label": topic.get("label", "Topic"),
+                    "session_id": session_id,
+                },
+            }
+            logger.debug("Topic node: %s (session %s)", tid, session_id)
+            # IN_COMMUNITY edge from entity to topic
+            entity_name = topic.get("entity_name", "")
+            if entity_name:
+                entity_nid = f"entity-{entity_name}-{session_id}"
+                if entity_nid not in mem["nodes"]:
+                    mem["nodes"][entity_nid] = {
+                        "id": entity_nid, "label": "Entity", "type": "Entity",
+                        "name": entity_name,
+                        "properties": {"name": entity_name, "session_id": session_id},
+                    }
+                if not _edge_exists(entity_nid, topic_node_id, "IN_COMMUNITY"):
+                    mem["edges"].append(
+                        {"source": entity_nid, "target": topic_node_id, "type": "IN_COMMUNITY"}
+                    )
+            # Memgraph
+            if self._memgraph_ok:
+                try:
+                    with self._mg_driver.session() as mg:
+                        mg.run(
+                            "MERGE (t:Topic {community_id: $cid, session_id: $sid}) "
+                            "ON CREATE SET t.summary = $summary, t.label = $lbl",
+                            cid=str(tid), sid=session_id,
+                            summary=topic.get("summary", ""),
+                            lbl=topic.get("label", "Topic"),
+                        )
+                        if entity_name:
+                            mg.run(
+                                "MERGE (e:Entity {name: $name, session_id: $sid})",
+                                name=entity_name, sid=session_id,
+                            )
+                            mg.run(
+                                "MATCH (e:Entity {name: $ename, session_id: $sid}) "
+                                "MATCH (t:Topic {community_id: $cid, session_id: $sid}) "
+                                "MERGE (e)-[:IN_COMMUNITY]->(t)",
+                                ename=entity_name, cid=str(tid), sid=session_id,
+                            )
+                except Exception as exc:
+                    logger.warning("Memgraph Topic upsert failed: %s", exc)
+                    self._memgraph_ok = False
+
+        # ── Chunk nodes with metadata ────────────────────────────────────
+        for chunk in chunk_nodes:
+            cid = chunk.get("chunk_id", "")
+            if not cid:
+                continue
+            chunk_node_id = f"chunk-{cid}-{session_id}"
+            props: dict = {
+                "id": cid,
+                "doc_id": chunk.get("doc_id", ""),
+                "excerpt": chunk.get("excerpt", ""),
+                "date": chunk.get("date", ""),
+                "institution": chunk.get("institution", ""),
+                "url": chunk.get("url", ""),
+                "session_id": session_id,
+            }
+            mem["nodes"][chunk_node_id] = {
+                "id": chunk_node_id,
+                "label": "Chunk",
+                "type": "Chunk",
+                "name": cid,
+                "properties": props,
+            }
+            logger.debug("Chunk node enriched: %s doc_id=%s (session %s)", cid, props["doc_id"], session_id)
+            # Memgraph
+            if self._memgraph_ok:
+                try:
+                    with self._mg_driver.session() as mg:
+                        mg.run(
+                            "MERGE (c:Chunk {id: $cid, session_id: $sid}) "
+                            "ON CREATE SET c.doc_id=$doc_id, c.excerpt=$excerpt, "
+                            "c.date=$date, c.institution=$inst, c.url=$url",
+                            cid=cid, sid=session_id,
+                            doc_id=props["doc_id"], excerpt=props["excerpt"],
+                            date=props["date"], inst=props["institution"],
+                            url=props["url"],
+                        )
+                except Exception as exc:
+                    logger.warning("Memgraph Chunk enrichment failed: %s", exc)
+                    self._memgraph_ok = False
+
+    # ------------------------------------------------------------------
     # Write-back to Neo4j
     # ------------------------------------------------------------------
 

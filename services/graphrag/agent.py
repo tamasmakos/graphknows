@@ -277,22 +277,40 @@ class GraphRAGAgent:
         cited_chunks = list(set(re.findall(r"chunk_\w+", final_answer)))
         citations = []
         for cid in cited_chunks:
-            # TODO: implement chunk retrieval by entity name once NeoStore.get_chunks_for_entity
-            # is updated to accept a real entity name and return chunk data from Neo4j.
-            chunks = []
-            # pull text directly from pgvector
             try:
-                cur = self._pg_store().conn.cursor()
-                cur.execute("SELECT doc_id, text FROM chunks WHERE id=%s", (cid,))
+                pg = self._pg_store()
+                # Use a fresh cursor; reset transaction state if needed
+                if pg.conn.closed:
+                    from graph_store import PgStore
+                    self._pg = PgStore(self.cfg["pgvector_dsn"])
+                    pg = self._pg
+                try:
+                    pg.conn.rollback()  # clear any aborted transaction
+                except Exception:
+                    pass
+                cur = pg.conn.cursor()
+                cur.execute("SELECT doc_id, text FROM chunks WHERE id = %s", (cid,))
                 row = cur.fetchone()
+                cur.close()
                 if row:
+                    doc_id: str = row[0]
+                    excerpt: str = row[1][:300]
+                    # Infer URL from doc_id
+                    if doc_id.startswith("ep_debate_"):
+                        url = "https://europarl.europa.eu/plenary/en/debates.html"
+                    else:
+                        url = ""
                     citations.append({
                         "chunk_id": cid,
-                        "doc_id": row[0],
-                        "excerpt": row[1][:200],
+                        "doc_id": doc_id,
+                        "excerpt": excerpt,
+                        "url": url,
                     })
-            except Exception:
-                pass
+                    log.debug("Citation resolved: %s → doc_id=%s", cid, doc_id)
+                else:
+                    log.warning("Citation chunk not found in pgvector: %s", cid)
+            except Exception as exc:
+                log.warning("Citation lookup failed for %s: %s", cid, exc)
 
         return {
             "query": query,

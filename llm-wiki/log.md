@@ -64,3 +64,80 @@
 - Added Memgraph session graph section: architecture, lifecycle, Cypher differences
 
 ## [2026-05-04] create | kanban: t_f5f3022a infra-memgraph-docker — Memgraph in docker-compose for agent service
+
+## [2026-05-05] update | frontend-v2-design
+- PR #10 merged: apps/web/ (SPA), services/agent/main.py
+- Agent at localhost:8002, full stack verified
+- Public URL: https://exposure-steel-corpus-parents.trycloudflare.com
+
+
+## [2026-05-04] create | concepts/architecture-reference.md
+- Canonical technical reference: ASCII service map (frontend :8080 → agent :8002 → graphrag :8001 → Neo4j/pgvector + Memgraph :17687)
+- Step-by-step 7-stage data flow for full query cycle
+- Complete API contracts for all endpoints (graphrag /retrieve, agent /chat + /session/{id}/graph + DELETE /session/{id}, frontend proxy)
+- All environment variables with defaults and descriptions (agent, graphrag, frontend)
+- Exact commands to start all three services locally
+- Cloudflare tunnel / ngrok launch via python3 apps/web/launch.py
+
+## [2026-05-04] create | concepts/product-roadmap-v2.md
+- Shipped: full registry of PRs #1–#10 with descriptions of what each delivers
+- Testing wave: 5 stability gates (A: health, B: data integrity, C: RAGAS quality, D: resilience, E: frontend)
+- Next features P1–P8 in priority order with acceptance criteria: corpus ingest, WebSocket streaming, named sessions, Neo4j write-back, Bundestag scraper, RAGAS eval, CI/CD, auth+rate-limiting
+- Horizon features: multi-country KG federation, argument cards, embed API, public data API
+- GTM beachhead: investigative journalists + policy researchers at $99/$199/$299/mo tiers
+
+## [2026-05-04] update | index.md
+- Added entries for architecture-reference and product-roadmap-v2 under Concepts — Architecture section
+
+## [2026-05-05] create | test-results-frontend
+- 3 bugs found and fixed during testing
+- All 8 smoke tests now PASS
+- Commits: f4741e2, 7b1b68a, 1a207a7
+
+## [2026-05-05] wave-3 | multi-stream development iteration
+
+### PRs merged:
+- PR #11: feat/websocket-streaming — live ReAct step streaming; reasoning trace updates in real time
+- PR #12: fix/frontend-ux-audit — 12-point UX audit: node rendering, reasoning_steps forwarded, elapsed timer, citation modal, edge labels, force tuning, node animations, reset button, error cards
+
+### Architecture decisions:
+- WebSocket endpoint: GET /ws/chat/:session_id on agent:8002, proxied through frontend:8080
+- WS protocol: status -> step frames -> answer (HTTP /chat preserved as fallback)
+- Ingestion redesign: BaseSource abstract class (in-progress on feat/base-source)
+- EU horizontal scaling: 6 new adapters planned (EP resolutions, Council conclusions, EC comms, ECB, ECA, EP committees)
+
+### Running services:
+- graphrag :8001, agent :8002, frontend :8080
+- cloudflare tunnel: https://exposure-steel-corpus-parents.trycloudflare.com
+
+### Next:
+- feat/base-source BaseSource + ParsedDocument
+- feat/eu-source-adapters 6 new EU document adapters
+- Named sessions, export suite, RAGAS eval
+
+## [2026-05-05] create | concepts/eu-source-taxonomy.md
+- 12 EU institutions mapped: EP, European Council, Council EU, Commission, EUR-Lex, ECB, ECA, CURIA, EPRS, CoR, EESC, Europol
+- 25+ document types with PIV/difficulty/endpoint/volume ratings
+- Adapter priority order: EP Resolutions, Council Conclusions, EC Press, CELLAR SPARQL, ECB, ECA, EPRS, CURIA, MEP votes, EP Committees
+
+## [2026-05-05] wave-4 | ingestion horizontal scaling + UX features
+
+### PRs committed to main:
+- PR #13: feat/base-source — BaseSource abstract class + ParsedDocument dataclass + EPResolutions adapter + 16 tests
+- PR #14: feat/eu-source-adapters — 5 EU adapters: Council Conclusions, EC Press, ECB Bulletins, ECA Reports, EPRS Briefings + 22 tests
+- PR #15: feat/named-sessions — investigation sidebar, localStorage persistence, inline rename, session restore via /api/session/{id}/graph
+
+### EU taxonomy written:
+- 12 EU institutions, 25+ source types, PIV/difficulty ratings, endpoint URLs, adapter priority order
+- See concepts/eu-source-taxonomy.md
+
+### Architecture now:
+- services/search/adapters/ has 9 adapters total (ep_debates, eurlex, uk_legislation, ep_resolutions, council_conclusions, ec_press, ecb_publications, eca_reports, eprs_briefings)
+- All new adapters inherit BaseSource -> ParsedDocument -> markdown_to_chunks() pipeline
+- frontend has named sessions sidebar with localStorage persistence
+
+### Running:
+- graphrag :8001, agent :8002, frontend :8080 (all healthy)
+## [2026-05-05] create | concepts/graph-visualisation-diagnosis.md
+- Full diagnostic: Neo4j schema, agent output shape, 5 root causes identified
+- Fix plan: entity co-occurrence edges, topic nodes, chunk metadata, citation lookup, frontend layout
