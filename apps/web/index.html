@@ -236,15 +236,52 @@
   #ask-btn:hover { background: #58a6ff; }
   #ask-btn:disabled { background: var(--border); cursor: not-allowed; }
 
-  /* Reasoning trace */
+  /* Reasoning trace — OLD panel (hidden; trace is now inline in chat bubbles) */
   #trace-panel {
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-    background: var(--bg);
-    max-height: 44%;
-    display: flex;
-    flex-direction: column;
+    display: none !important;
   }
+
+  /* ── Inline reasoning trace accordion ─────────────────────────────────── */
+  .inline-trace {
+    border: 1px solid #2a2a3a;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+    font-family: var(--font-mono, monospace);
+  }
+  .inline-trace > summary {
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #888;
+    background: #1a1a2e;
+    list-style: none;
+    user-select: none;
+  }
+  .inline-trace > summary::-webkit-details-marker { display: none; }
+  .inline-trace > summary:hover { color: #bbb; background: #1e1e35; }
+  .inline-trace-steps { padding: 4px 0; max-height: 400px; overflow-y: auto; }
+  .inline-trace-steps::-webkit-scrollbar { width: 4px; }
+  .inline-trace-steps::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .inline-step { padding: 5px 10px; border-bottom: 1px solid #1e1e2e; }
+  .inline-step:last-child { border-bottom: none; }
+  .inline-step-header {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;
+  }
+  .inline-step-icon { font-size: 14px; }
+  .inline-step-tool { font-weight: 600; color: #a0a8c0; }
+  .inline-step-input code {
+    font-size: 11px; color: #7a9fc0; background: #1a1f2e;
+    padding: 1px 4px; border-radius: 3px;
+  }
+  .inline-step-thought {
+    font-style: italic; color: #5a6a8a; font-size: 11px;
+    margin: 2px 0 4px; padding-left: 22px;
+  }
+  .inline-step-body { margin-top: 4px; font-size: 11px; color: #778; padding-left: 22px; }
+  .inline-step-body .trace-entity-table td,
+  .inline-step-body .trace-entity-table th { font-size: 10px; }
+  .inline-step-body .trace-chunk-list li { font-size: 10px; }
   #trace-header {
     display: flex;
     justify-content: space-between;
@@ -1163,6 +1200,11 @@ function toolIcon(toolName) {
     get_community: '🏘️',
     fuse_and_rank: '⚖️',
     get_chunks_for_entity: '🔗',
+    get_triplets: '🔗',
+    get_source_document: '📋',
+    get_topic_entities: '🗂️',
+    wikipedia_search: '📖',
+    web_search: '🌐',
   };
   return icons[toolName] || '🔧';
 }
@@ -1349,9 +1391,65 @@ function appendSpinner() {
   return div;
 }
 
-function appendAgentMsg(answer, sources) {
+function buildInlineTrace(steps) {
+  if (!steps || steps.length === 0) return null;
+  const details = document.createElement('details');
+  details.className = 'inline-trace';
+
+  const summary = document.createElement('summary');
+  summary.textContent = `🔍 ${steps.length} reasoning step${steps.length !== 1 ? 's' : ''}`;
+  details.appendChild(summary);
+
+  const stepsDiv = document.createElement('div');
+  stepsDiv.className = 'inline-trace-steps';
+
+  steps.forEach((s, idx) => {
+    const icon = toolIcon(s.tool_name);
+    // Extract args from action string, stripping function name prefix
+    const actionStr = s.action || '';
+    const argStr = actionStr.replace(/^\w+\(/, '(');
+
+    const stepDiv = document.createElement('div');
+    stepDiv.className = 'inline-step';
+
+    const header = document.createElement('div');
+    header.className = 'inline-step-header';
+    header.innerHTML = `
+      <span class="inline-step-icon">${icon}</span>
+      <span class="inline-step-tool">${escHtml(s.tool_name || 'step')}</span>
+      ${argStr ? `<span class="inline-step-input"><code>${escHtml(argStr)}</code></span>` : ''}
+    `;
+
+    stepDiv.appendChild(header);
+
+    if (s.thought) {
+      const thought = document.createElement('div');
+      thought.className = 'inline-step-thought';
+      thought.textContent = s.thought;
+      stepDiv.appendChild(thought);
+    }
+
+    if (s.observation != null) {
+      const obsDiv = document.createElement('div');
+      obsDiv.className = 'inline-step-body';
+      obsDiv.innerHTML = renderObservation(s.observation_type, s.observation);
+      stepDiv.appendChild(obsDiv);
+    }
+
+    stepsDiv.appendChild(stepDiv);
+  });
+
+  details.appendChild(stepsDiv);
+  return details;
+}
+
+function appendAgentMsg(answer, sources, steps) {
   const card = document.createElement('div');
   card.className = 'msg-agent';
+
+  // Inline reasoning trace accordion
+  const traceEl = buildInlineTrace(steps);
+  if (traceEl) card.appendChild(traceEl);
 
   const body = document.createElement('div');
   body.className = 'answer-body';
@@ -1447,6 +1545,8 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       return reject(e);
     }
 
+    const collectedSteps = [];
+
     ws.onopen = () => {
       ws.send(JSON.stringify({ message: text, session_id: sessionId }));
     };
@@ -1457,32 +1557,24 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
 
       if (data.type === 'status') {
         // thinking — spinner already shown
+
       } else if (data.type === 'step') {
-        // Live reasoning step — append a rich card to trace
-        if (!traceBody.querySelector('.trace-group')) {
-          renderTrace(text, [], []);
-        }
-        const groupBody = traceBody.querySelector('.trace-group-body');
-        if (groupBody) {
-          const stepObj = {
-            step: data.step_num,
-            thought: data.thought || '',
-            action: data.action || '',
-            tool_name: data.tool_name || '',
-            observation_type: data.observation_type || 'unknown',
-            observation: data.observation || null,
-            final: false,
-          };
-          groupBody.appendChild(buildTraceCard(stepObj));
-        }
-        traceBody.scrollTop = traceBody.scrollHeight;
+        // Collect step for inline trace in the final message
+        collectedSteps.push({
+          step: data.step_num,
+          thought: data.thought || '',
+          action: data.action || '',
+          tool_name: data.tool_name || '',
+          observation_type: data.observation_type || 'unknown',
+          observation: data.observation || null,
+        });
       } else if (data.type === 'answer') {
         spinner.remove();
         if (data.session_id) {
           sessionId = data.session_id;
           displaySessionId(sessionId);
         }
-        appendAgentMsg(data.answer || '(no answer)', data.sources || []);
+        appendAgentMsg(data.answer || '(no answer)', data.sources || [], collectedSteps);
         if (data.graph) {
           mergeGraph(data.graph.nodes || [], data.graph.edges || []);
         }
@@ -1541,10 +1633,10 @@ async function sendMessageViaHTTP(text, spinner) {
       displaySessionId(sessionId);
     }
 
-    appendAgentMsg(data.answer || '(no answer)', data.sources || []);
+    appendAgentMsg(data.answer || '(no answer)', data.sources || [], data.reasoning_steps || data.steps || []);
 
     if (data.reasoning_steps || data.steps) {
-      setTraceSteps(data.reasoning_steps || data.steps, text, data.sources || []);
+      // steps are now rendered inline — no separate panel call needed
     }
 
     if (data.graph) {
