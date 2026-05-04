@@ -37,7 +37,7 @@
   #app {
     display: flex;
     height: 100vh;
-    width: 100vw;
+    flex: 1;
     overflow: hidden;
   }
 
@@ -452,9 +452,121 @@
     flex-shrink: 0;
   }
 
+  /* ── Sidebar ── */
+  body {
+    display: flex;
+    overflow: hidden;
+  }
+
+  #sidebar {
+    width: 200px;
+    min-width: 200px;
+    height: 100vh;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+    z-index: 10;
+  }
+
+  #sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 12px 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  #btn-new-session {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+  #btn-new-session:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+
+  #session-list {
+    list-style: none;
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  #session-list::-webkit-scrollbar { width: 3px; }
+  #session-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .session-item {
+    padding: 8px 10px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: background 0.15s, border-color 0.15s;
+    user-select: none;
+  }
+  .session-item:hover { background: var(--bg3); }
+  .session-item.active {
+    border-left-color: var(--accent);
+    background: rgba(88,166,255,0.08);
+  }
+
+  .session-item-name {
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
+  }
+
+  .session-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .session-node-badge {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 5px;
+    font-size: 10px;
+    color: var(--accent);
+  }
+
+  .session-rename-input {
+    width: 100%;
+    background: var(--bg3);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 2px 5px;
+    outline: none;
+  }
+
   /* Responsive */
   @media (max-width: 700px) {
-    html, body { overflow: auto; }
+    html, body { overflow: auto; flex-direction: column; }
+    #sidebar { width: 100%; height: auto; min-width: unset; flex-direction: row; border-right: none; border-bottom: 1px solid var(--border); }
+    #session-list { display: flex; flex-direction: row; overflow-x: auto; padding: 0; }
     #app { flex-direction: column; height: auto; }
     #left { width: 100%; min-height: 50vh; border-right: none; border-bottom: 1px solid var(--border); }
     #right { height: 50vh; }
@@ -463,6 +575,14 @@
 </style>
 </head>
 <body>
+
+<aside id="sidebar">
+  <div id="sidebar-header">
+    <span>Investigations</span>
+    <button id="btn-new-session" title="New investigation">+</button>
+  </div>
+  <ul id="session-list"></ul>
+</aside>
 
 <div id="app">
   <!-- ── Left Panel ── -->
@@ -589,6 +709,145 @@ function displaySessionId(id) {
   el.title = id;
 }
 displaySessionId(sessionId);
+
+// ── Session Persistence ─────────────────────────────────────────────────────
+const SESSIONS_KEY = 'graphknows_sessions';
+
+function getSessions() {
+  try { return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]'); }
+  catch(_) { return []; }
+}
+
+function setSessions(sessions) {
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+}
+
+function saveSession(session) {
+  const sessions = getSessions();
+  const idx = sessions.findIndex(s => s.id === session.id);
+  if (idx >= 0) sessions[idx] = session;
+  else sessions.unshift(session);
+  setSessions(sessions);
+}
+
+function getCurrentSessionData() {
+  const sessions = getSessions();
+  return sessions.find(s => s.id === sessionId) || null;
+}
+
+function autoNameSession(query) {
+  const current = getCurrentSessionData();
+  if (current && !current.name) {
+    current.name = query.slice(0, 40);
+    saveSession(current);
+    renderSessionList();
+  }
+}
+
+function renderSessionList() {
+  const list = document.getElementById('session-list');
+  const sessions = getSessions();
+  list.innerHTML = '';
+  sessions.forEach(sess => {
+    const li = document.createElement('li');
+    li.className = 'session-item' + (sess.id === sessionId ? ' active' : '');
+    li.dataset.id = sess.id;
+
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'session-item-name';
+    nameDiv.textContent = sess.name || 'New Investigation';
+    nameDiv.title = 'Double-click to rename';
+
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'session-item-meta';
+
+    const dateSpan = document.createElement('span');
+    const d = new Date(sess.lastQuery || sess.created);
+    dateSpan.textContent = d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+
+    const badge = document.createElement('span');
+    badge.className = 'session-node-badge';
+    badge.textContent = (sess.nodeCount || 0) + ' nodes';
+
+    metaDiv.appendChild(dateSpan);
+    metaDiv.appendChild(badge);
+    li.appendChild(nameDiv);
+    li.appendChild(metaDiv);
+
+    li.addEventListener('click', () => switchSession(sess.id));
+    nameDiv.addEventListener('dblclick', e => { e.stopPropagation(); startEditing(sess.id, nameDiv); });
+
+    list.appendChild(li);
+  });
+}
+
+function loadSessions() {
+  // Ensure current session is in localStorage
+  const sessions = getSessions();
+  const exists = sessions.some(s => s.id === sessionId);
+  if (!exists) {
+    saveSession({ id: sessionId, name: '', created: new Date().toISOString(), nodeCount: 0, lastQuery: new Date().toISOString() });
+  }
+  renderSessionList();
+}
+
+async function switchSession(id) {
+  if (id === sessionId) return;
+  sessionId = id;
+  displaySessionId(sessionId);
+  resetAll();
+  renderSessionList();
+  // Restore graph from server
+  try {
+    const res = await fetch(`/api/session/${id}/graph`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.nodes && data.edges) mergeGraph(data.nodes, data.edges);
+    }
+  } catch(_) {}
+  // Update URL without reload
+  const url = new URL(window.location);
+  url.searchParams.set('session', id);
+  window.history.replaceState({}, '', url);
+}
+
+function newSession() {
+  sessionId = uuid();
+  displaySessionId(sessionId);
+  resetAll();
+  saveSession({ id: sessionId, name: '', created: new Date().toISOString(), nodeCount: 0, lastQuery: new Date().toISOString() });
+  renderSessionList();
+  const url = new URL(window.location);
+  url.searchParams.set('session', sessionId);
+  window.history.replaceState({}, '', url);
+  msgInput.focus();
+}
+
+function startEditing(sessId, nameDiv) {
+  const current = nameDiv.textContent;
+  const input = document.createElement('input');
+  input.className = 'session-rename-input';
+  input.value = current === 'New Investigation' ? '' : current;
+  nameDiv.replaceWith(input);
+  input.focus();
+  input.select();
+
+  function commit() {
+    const newName = input.value.trim() || current;
+    const sessions = getSessions();
+    const sess = sessions.find(s => s.id === sessId);
+    if (sess) { sess.name = newName; setSessions(sessions); }
+    renderSessionList();
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = current; input.blur(); }
+  });
+}
+
+// Initialize
+loadSessions();
 
 // ── Trace panel toggle ─────────────────────────────────────────────────────
 const traceHeader = document.getElementById('trace-header');
@@ -774,6 +1033,9 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         if (data.graph) {
           mergeGraph(data.graph.nodes || [], data.graph.edges || []);
         }
+        autoNameSession(text);
+        saveSession({ ...getCurrentSessionData(), id: sessionId, nodeCount: allNodes.length, lastQuery: new Date().toISOString() });
+        renderSessionList();
         ws.close();
         resolve();
       } else if (data.type === 'error') {
@@ -859,6 +1121,10 @@ async function sendMessageViaHTTP(text, spinner) {
       }
       mergeGraph(data.graph.nodes || [], data.graph.edges || []);
     }
+
+    autoNameSession(text);
+    saveSession({ ...getCurrentSessionData(), id: sessionId, nodeCount: allNodes.length, lastQuery: new Date().toISOString() });
+    renderSessionList();
 
   } catch(e) {
     try { spinner.remove(); } catch(_) {}
@@ -1228,6 +1494,8 @@ async function restoreSession(id) {
 if (params.get('session')) {
   restoreSession(sessionId);
 }
+
+document.getElementById('btn-new-session').addEventListener('click', newSession);
 
 // Initial focus
 msgInput.focus();
