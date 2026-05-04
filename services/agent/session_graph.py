@@ -341,10 +341,13 @@ class SessionGraphManager:
                                 "type": list(b.labels)[0] if b.labels else "Node",
                                 "properties": props,
                             }
+                        edge_id = f"{src_id}-{r.type}-{tgt_id}"
                         edges.append({
+                            "id": edge_id,
                             "source": src_id,
                             "target": tgt_id,
                             "type": r.type,
+                            "properties": dict(r.items()),
                         })
 
                 return {"nodes": list(nodes.values()), "edges": edges}
@@ -607,6 +610,9 @@ class SessionGraphManager:
         self, session_id: str, confidence_threshold: float = 0.7
     ) -> int:
         """Write high-confidence ReasoningStep-derived edges back to Neo4j."""
+        if not self._memgraph_ok:
+            logger.debug("Memgraph unavailable — skipping write_back_to_neo4j for session %s", session_id)
+            return 0
         written = 0
         try:
             with self._mg_driver.session() as mg:
