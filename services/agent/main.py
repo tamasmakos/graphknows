@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, model_validator
 
 from services.agent.session_graph import SessionGraphManager
@@ -163,6 +163,8 @@ class ChatResponse(BaseModel):
     answer: str
     session_id: str
     graph: GraphResponse
+    reasoning_steps: list = []
+    sources: list = []
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +298,13 @@ async def chat(req: ChatRequest) -> ChatResponse:
     subgraph: dict = await asyncio.to_thread(_sgm.get_session_graph, session_id)
 
     answer: str = graphrag_resp.get("answer", "")
+    reasoning_steps: list = graphrag_resp.get("reasoning_steps", [])
+
+    # Build sources from citations / chunk references in graphrag response
+    sources: list = []
+    for citation in graphrag_resp.get("citations", []):
+        if isinstance(citation, dict) and citation.get("text"):
+            sources.append({"id": citation.get("id", ""), "text": citation["text"]})
 
     return ChatResponse(
         answer=answer,
@@ -304,6 +313,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
             nodes=subgraph.get("nodes", []),
             edges=subgraph.get("edges", []),
         ),
+        reasoning_steps=reasoning_steps,
+        sources=sources,
     )
 
 
@@ -334,3 +345,71 @@ async def delete_session(session_id: str) -> Dict[str, str]:
     _active_sessions.discard(session_id)
     log.info("Session deleted: %s", session_id)
     return {"status": "deleted", "session_id": session_id}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint — streaming reasoning steps
+# ---------------------------------------------------------------------------
+
+
+@app.websocket("/ws/chat/{session_id}")
+async def ws_chat(websocket: WebSocket, session_id: str):
+    """Stream reasoning steps over WebSocket, then send final answer + graph."""
+    await websocket.accept()
+    try:
+        data = await websocket.receive_json()
+        message = data.get("message", "")
+        if not message:
+            await websocket.send_json({"type": "error", "error": "empty message"})
+            return
+
+        # Create session if new
+        is_new = session_id not in _active_sessions
+        if is_new:
+            log.info("WS: Creating new session: %s", session_id)
+            await asyncio.to_thread(_sgm.create_session, session_id)
+            _active_sessions.add(session_id)
+        else:
+            log.info("WS: Continuing session: %s", session_id)
+
+        await websocket.send_json({"type": "status", "status": "thinking"})
+
+        # Call graphrag (async)
+        graphrag_resp = await _call_graphrag(message, session_id)
+
+        # Stream reasoning steps
+        for step in graphrag_resp.get("reasoning_steps", []):
+            await websocket.send_json({
+                "type": "step",
+                "step_num": step.get("step", 0),
+                "thought": step.get("thought", ""),
+                "action": step.get("action", ""),
+                "observation": str(step.get("observation", ""))[:200],
+            })
+            await asyncio.sleep(0)  # yield to event loop
+
+        # Upsert entities
+        await asyncio.to_thread(_upsert_entities, session_id, graphrag_resp)
+
+        # Get graph
+        subgraph = await asyncio.to_thread(_sgm.get_session_graph, session_id)
+
+        await websocket.send_json({
+            "type": "answer",
+            "answer": graphrag_resp.get("answer", ""),
+            "graph": subgraph,
+            "session_id": session_id,
+        })
+    except WebSocketDisconnect:
+        log.info("WS: Client disconnected for session %s", session_id)
+    except Exception as exc:
+        log.error("WS: Error for session %s: %s", session_id, exc)
+        try:
+            await websocket.send_json({"type": "error", "error": str(exc)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
