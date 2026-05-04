@@ -52,7 +52,7 @@ def _build_cfg() -> dict:
     pg_db = env.get("PGVECTOR_DB") or env.get("PGDATABASE", "vectordb")
     pgvector_dsn = (
         env.get("PGVECTOR_DSN")
-        or f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+or f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
     )
 
     from graph_store import EMBED_MODEL
