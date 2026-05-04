@@ -241,7 +241,7 @@
     border-top: 1px solid var(--border);
     flex-shrink: 0;
     background: var(--bg);
-    max-height: 40%;
+    max-height: 44%;
     display: flex;
     flex-direction: column;
   }
@@ -262,26 +262,222 @@
   #trace-body {
     display: none;
     overflow-y: auto;
-    padding: 10px 16px 14px;
+    padding: 10px 14px 14px;
     flex: 1;
   }
   #trace-body::-webkit-scrollbar { width: 4px; }
   #trace-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   #trace-body.open { display: block; }
-  .trace-step {
+
+  /* Trace query group */
+  .trace-group { margin-bottom: 14px; }
+  .trace-group-header {
     display: flex;
+    align-items: center;
     gap: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 4px 0;
+    user-select: none;
+    border-bottom: 1px solid var(--border);
     margin-bottom: 8px;
+  }
+  .trace-group-header:hover { color: var(--text); }
+  .trace-group-chevron { font-size: 9px; transition: transform 0.2s; }
+  .trace-group-chevron.open { transform: rotate(90deg); }
+  .trace-group-body { display: none; }
+  .trace-group-body.open { display: block; }
+
+  /* Trace step card */
+  .trace-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .trace-card:hover { border-color: #444; }
+  .trace-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .trace-badge {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-family: monospace;
+    flex-shrink: 0;
+  }
+  .trace-tool-icon { font-size: 14px; }
+  .trace-tool-name {
+    font-family: monospace;
+    font-size: 11px;
+    color: #a78bfa;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trace-card-expand { font-size: 9px; color: var(--text-muted); transition: transform 0.2s; }
+  .trace-card-expand.open { transform: rotate(90deg); }
+
+  .trace-card-body {
+    display: none;
+    padding: 8px 12px 10px;
+    border-top: 1px solid var(--border);
     font-size: 12px;
     line-height: 1.5;
-    color: var(--text-muted);
   }
-  .trace-num {
-    min-width: 20px;
+  .trace-card-body.open { display: block; }
+
+  .trace-thought {
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    font-style: italic;
+    font-size: 11.5px;
+  }
+  .trace-action {
+    background: #0d1117;
+    border: 1px solid #2d333b;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: monospace;
+    font-size: 11px;
+    color: #79c0ff;
+    margin-bottom: 8px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .trace-obs-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .trace-entity-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .trace-entity-table th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    padding: 2px 6px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+  }
+  .trace-entity-table td {
+    padding: 2px 6px;
+    color: var(--text);
+    border-bottom: 1px solid rgba(48,54,61,0.4);
+  }
+  .trace-entity-table tr:last-child td { border-bottom: none; }
+  .trace-score { color: var(--text-muted); font-size: 10px; }
+
+  .trace-chunk-list { list-style: none; }
+  .trace-chunk-list li {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    padding-left: 16px;
+    position: relative;
+  }
+  .trace-chunk-list li::before {
+    content: attr(data-n);
+    position: absolute;
+    left: 0;
     color: var(--accent);
     font-weight: 600;
-    font-family: monospace;
   }
+
+  .trace-error-box {
+    background: rgba(248,81,73,0.1);
+    border: 1px solid rgba(248,81,73,0.4);
+    color: #f85149;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .trace-community-text {
+    background: var(--bg3);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text);
+    font-style: italic;
+  }
+
+  .trace-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+  .trace-pill {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  /* Final answer card */
+  .trace-answer-card {
+    background: var(--bg2);
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 6px;
+  }
+  .trace-answer-card .trace-answer-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .trace-answer-card .trace-answer-text {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .trace-answer-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .trace-cite-chip {
+    background: #0d1117;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--accent);
+    transition: background 0.15s;
+  }
+  .trace-cite-chip:hover { background: rgba(88,166,255,0.12); }
+
+  /* Observation sub-elements */
+  .obs-empty { color: var(--text-muted); font-size: 11px; font-style: italic; }
+  .obs-more { color: var(--text-muted); font-size: 10px; text-align: right; padding: 2px 6px; }
+  .obs-name { color: var(--text); }
+  .obs-chunk-id { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; color: #7ee787; font-size: 10px; }
+  .obs-excerpt { color: var(--text-muted); display: block; margin-top: 2px; font-size: 10px; }
+  .obs-json { font-size: 10px; color: var(--text-muted); overflow-x: auto; max-height: 120px; margin: 0; }
+  .trace-obs { margin-top: 4px; }
+  .trace-card-final .trace-card-header { background: rgba(88,166,255,0.08); }
+  .trace-card-final { border-color: var(--accent); }
 
   /* ── Right Panel ── */
   #right {
@@ -320,6 +516,7 @@
     white-space: nowrap;
   }
   .toolbar-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .toolbar-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,0.1); }
   #filter-select {
     background: var(--bg3);
     border: 1px solid var(--border);
@@ -331,6 +528,29 @@
     outline: none;
   }
   #filter-select:focus { border-color: var(--accent); }
+
+  /* Layout mode pills */
+  #layout-group {
+    display: flex;
+    gap: 2px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .layout-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .layout-btn:hover { color: var(--text); }
+  .layout-btn.active { background: var(--accent); color: #000; font-weight: 600; }
 
   #graph-canvas {
     flex: 1;
@@ -362,18 +582,29 @@
     position: fixed;
     background: #0d1117;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 12px;
+    border-radius: 10px;
+    padding: 12px 14px;
     font-size: 12px;
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.15s;
     z-index: 1000;
-    max-width: 220px;
+    max-width: 280px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   #tooltip.visible { opacity: 1; }
-  #tooltip .tt-name { font-weight: 600; color: var(--text); margin-bottom: 2px; }
-  #tooltip .tt-label { color: var(--text-muted); font-size: 11px; }
+  #tooltip .tt-name { font-weight: 700; color: var(--text); margin-bottom: 6px; font-size: 13px; }
+  #tooltip .tt-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; font-size: 11px; }
+  #tooltip .tt-key { color: var(--text-muted); min-width: 64px; flex-shrink: 0; }
+  #tooltip .tt-val { color: var(--text); word-break: break-word; }
+  #tooltip .tt-swatch {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; margin-right: 5px; vertical-align: middle;
+  }
+  #tooltip .tt-pill {
+    display: inline-block; background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1px 7px; margin: 1px; font-size: 10px; color: var(--accent);
+  }
 
   /* Toast */
   #toast {
@@ -436,20 +667,70 @@
   #legend {
     position: absolute;
     bottom: 16px;
-    right: 16px;
-    background: rgba(22,27,34,0.92);
+    left: 16px;
+    background: rgba(22,27,34,0.95);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 11px;
-    pointer-events: none;
+    pointer-events: all;
+    user-select: none;
+    max-width: 180px;
   }
-  .legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .legend-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .legend-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-top: 6px;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 2px 4px;
+    transition: background 0.15s;
+    font-size: 11px;
+  }
+  .legend-item:hover { background: rgba(88,166,255,0.08); }
+  .legend-item.filtered { background: rgba(88,166,255,0.15); }
   .legend-item:last-child { margin-bottom: 0; }
   .legend-dot {
     width: 10px; height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+  .legend-dot.diamond {
+    border-radius: 2px;
+    transform: rotate(45deg);
+    width: 9px; height: 9px;
+  }
+  .legend-line {
+    width: 18px; height: 2px;
+    flex-shrink: 0;
+    border-radius: 1px;
+  }
+  .legend-line.dashed {
+    background: repeating-linear-gradient(to right, #888 0, #888 3px, transparent 3px, transparent 6px);
+    height: 1px;
+  }
+  .legend-line.curved {
+    background: #888;
+    height: 1px;
+    border-radius: 1px;
   }
 
   /* ── Sidebar ── */
@@ -618,17 +899,26 @@
   <div id="right">
     <div id="graph-toolbar">
       <span id="graph-title">KNOWLEDGE GRAPH</span>
-      <button class="toolbar-btn" id="btn-share">🔗 Share Link</button>
-      <button class="toolbar-btn" id="btn-export-png">📤 Export PNG</button>
-      <button class="toolbar-btn" id="btn-reset">🔄 Reset</button>
-      <select id="filter-select">
-        <option value="">🔍 All Labels</option>
+      <!-- Layout mode pill group -->
+      <div id="layout-group" role="group" aria-label="Graph layout mode">
+        <button class="layout-btn active" data-layout="force" title="Force-directed layout">⚡ Force</button>
+        <button class="layout-btn" data-layout="radial" title="Radial layout by node type">🎯 Radial</button>
+        <button class="layout-btn" data-layout="hierarchical" title="Hierarchical layout">📊 Hierarchy</button>
+        <button class="layout-btn" data-layout="circular" title="Circular layout">⭕ Circle</button>
+      </div>
+      <button class="toolbar-btn" id="btn-share" aria-label="Share link">🔗 Share Link</button>
+      <button class="toolbar-btn" id="btn-export-png" aria-label="Export PNG">📤 Export PNG</button>
+      <button class="toolbar-btn" id="btn-reset" aria-label="Reset graph">🔄 Reset</button>
+      <select id="filter-select" aria-label="Filter by node type">
+        <option value="">🔍 All Types</option>
         <option value="PERSON">PERSON</option>
+        <option value="ORGANIZATION">ORGANIZATION</option>
         <option value="ORG">ORG</option>
         <option value="GEO">GEO</option>
         <option value="LAW">LAW</option>
         <option value="TOPIC">TOPIC</option>
         <option value="CONCEPT">CONCEPT</option>
+        <option value="Chunk">Chunk</option>
       </select>
     </div>
 
@@ -639,12 +929,12 @@
       </div>
       <!-- svg inserted by D3 -->
       <div id="legend">
-        <div class="legend-item"><div class="legend-dot" style="background:steelblue"></div> PERSON</div>
-        <div class="legend-item"><div class="legend-dot" style="background:mediumpurple"></div> ORG</div>
-        <div class="legend-item"><div class="legend-dot" style="background:seagreen"></div> GEO</div>
-        <div class="legend-item"><div class="legend-dot" style="background:darkorange"></div> LAW</div>
-        <div class="legend-item"><div class="legend-dot" style="background:crimson"></div> TOPIC</div>
-        <div class="legend-item"><div class="legend-dot" style="background:goldenrod"></div> CONCEPT</div>
+        <div class="legend-item" data-type="PERSON"><div class="legend-dot" style="background:steelblue"></div> PERSON</div>
+        <div class="legend-item" data-type="ORG"><div class="legend-dot" style="background:mediumpurple"></div> ORG</div>
+        <div class="legend-item" data-type="GEO"><div class="legend-dot" style="background:seagreen"></div> GEO</div>
+        <div class="legend-item" data-type="LAW"><div class="legend-dot" style="background:darkorange"></div> LAW</div>
+        <div class="legend-item" data-type="TOPIC"><div class="legend-dot" style="background:crimson"></div> TOPIC</div>
+        <div class="legend-item" data-type="CONCEPT"><div class="legend-dot" style="background:goldenrod"></div> CONCEPT</div>
       </div>
     </div>
   </div>
@@ -858,15 +1148,166 @@ traceHeader.addEventListener('click', () => {
   traceChevron.classList.toggle('open', open);
 });
 
-function setTraceSteps(steps) {
-  if (!steps || steps.length === 0) return;
-  traceBody.innerHTML = '';
-  steps.forEach((s, i) => {
-    const div = document.createElement('div');
-    div.className = 'trace-step';
-    div.innerHTML = `<span class="trace-num">${i+1}.</span><span>${escHtml(String(s))}</span>`;
-    traceBody.appendChild(div);
+// ── Trace helpers ─────────────────────────────────────────────────────────
+
+function toolIcon(toolName) {
+  const icons = {
+    search_entities: '🔍',
+    search_chunks: '📄',
+    get_neighbours: '🕸️',
+    get_community: '🏘️',
+    fuse_and_rank: '⚖️',
+    get_chunks_for_entity: '🔗',
+  };
+  return icons[toolName] || '🔧';
+}
+
+function humanLabel(s) {
+  if (!s) return '';
+  return String(s).replace(/_/g, ' ');
+}
+
+function renderObservation(obsType, obs) {
+  if (!obs || (Array.isArray(obs) && obs.length === 0)) {
+    return '<span class="obs-empty">No results</span>';
+  }
+  if (obsType === 'entities' || obsType === 'neighbours') {
+    const items = Array.isArray(obs) ? obs : [obs];
+    const rows = items.slice(0, 8).map(e => {
+      const label = (e.label || '').toLowerCase();
+      return `<tr>
+        <td><span class="trace-pill" style="font-size:9px">${escHtml(e.label || '?')}</span></td>
+        <td class="obs-name">${escHtml(humanLabel(e.name || e))}</td>
+        ${e.score != null ? `<td class="trace-score">${(+e.score).toFixed(3)}</td>` : '<td></td>'}
+      </tr>`;
+    }).join('');
+    const more = items.length > 8 ? `<tr><td colspan="3" class="obs-more">+${items.length - 8} more</td></tr>` : '';
+    return `<table class="trace-entity-table"><thead><tr><th>Type</th><th>Name</th><th>Score</th></tr></thead><tbody>${rows}${more}</tbody></table>`;
+  }
+  if (obsType === 'chunks' || obsType === 'ranked') {
+    const items = Array.isArray(obs) ? obs : [obs];
+    const lis = items.slice(0, 4).map((c, i) => {
+      const id = escHtml(c.chunk_id || c.id || '?');
+      const text = c.text ? escHtml(c.text.slice(0, 120)) + '…' : '';
+      const score = c.rrf_score != null
+        ? `<span class="trace-score">RRF ${c.rrf_score.toFixed(4)}</span>`
+        : c.score != null ? `<span class="trace-score">${(+c.score).toFixed(3)}</span>` : '';
+      return `<li data-n="${i + 1}"><code class="obs-chunk-id">${id}</code> ${score}${text ? `<span class="obs-excerpt">${text}</span>` : ''}</li>`;
+    }).join('');
+    return `<ul class="trace-chunk-list">${lis}</ul>`;
+  }
+  if (obsType === 'community') {
+    const item = Array.isArray(obs) ? obs[0] : obs;
+    if (!item) return '<span class="obs-empty">No community data</span>';
+    return `<div class="trace-community-text">
+      <strong>Community ${escHtml(String(item.community_id ?? item.id ?? '?'))}</strong>
+      ${item.summary ? `<div>${escHtml(item.summary)}</div>` : ''}
+      ${item.label ? `<div><em>${escHtml(item.label)}</em></div>` : ''}
+    </div>`;
+  }
+  if (obsType === 'error' || (obs && obs.error)) {
+    return `<div class="trace-error-box">⚠️ ${escHtml((obs.error || JSON.stringify(obs)).slice(0, 200))}</div>`;
+  }
+  // Fallback: pretty JSON
+  return `<pre class="obs-json">${escHtml(JSON.stringify(obs, null, 2).slice(0, 400))}</pre>`;
+}
+
+function buildTraceCard(s) {
+  const isFinal = s.final;
+  const icon = isFinal ? '✅' : toolIcon(s.tool_name);
+  const toolLabel = escHtml(s.tool_name || 'Final Answer');
+  const thoughtSnippet = s.thought ? escHtml(s.thought.slice(0, 80)) + (s.thought.length > 80 ? '…' : '') : '';
+  const obsHtml = (!isFinal && s.observation != null) ? renderObservation(s.observation_type, s.observation) : '';
+
+  const card = document.createElement('div');
+  card.className = 'trace-card' + (isFinal ? ' trace-card-final' : '');
+
+  const header = document.createElement('div');
+  header.className = 'trace-card-header';
+  header.innerHTML = `
+    <span class="trace-badge">${s.step}</span>
+    <span class="trace-tool-icon">${icon}</span>
+    <span class="trace-tool-name">${toolLabel}</span>
+    <span class="trace-card-expand">▶</span>
+  `;
+
+  const body = document.createElement('div');
+  body.className = 'trace-card-body' + (isFinal ? ' open' : '');
+  body.innerHTML = `
+    ${s.thought ? `<div class="trace-thought">${escHtml(s.thought)}</div>` : ''}
+    ${s.action ? `<div class="trace-action">${escHtml(s.action)}</div>` : ''}
+    ${obsHtml ? `<div class="trace-obs-label">${escHtml(s.observation_type || 'observation')}</div><div class="trace-obs">${obsHtml}</div>` : ''}
+  `;
+
+  header.addEventListener('click', () => {
+    const open = body.classList.toggle('open');
+    header.querySelector('.trace-card-expand').classList.toggle('open', open);
   });
+
+  card.appendChild(header);
+  card.appendChild(body);
+  return card;
+}
+
+function renderTrace(question, steps, sources) {
+  traceBody.innerHTML = '';
+
+  // Auto-open trace panel
+  traceBody.classList.add('open');
+  traceChevron.classList.add('open');
+
+  const group = document.createElement('div');
+  group.className = 'trace-group';
+
+  const groupHeader = document.createElement('div');
+  groupHeader.className = 'trace-group-header';
+  const chevron = document.createElement('span');
+  chevron.className = 'trace-group-chevron open';
+  chevron.textContent = '▶';
+  groupHeader.appendChild(chevron);
+  groupHeader.appendChild(document.createTextNode(' ❓ ' + question));
+
+  const groupBody = document.createElement('div');
+  groupBody.className = 'trace-group-body open';
+
+  groupHeader.addEventListener('click', () => {
+    const open = groupBody.classList.toggle('open');
+    chevron.classList.toggle('open', open);
+  });
+
+  (steps || []).forEach(s => {
+    groupBody.appendChild(buildTraceCard(s));
+  });
+
+  // Citation chips
+  if (sources && sources.length > 0) {
+    const citDiv = document.createElement('div');
+    citDiv.className = 'trace-answer-chips';
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin-right:4px;';
+    label.textContent = '📎 Sources:';
+    citDiv.appendChild(label);
+    sources.forEach(c => {
+      const chip = document.createElement('a');
+      chip.className = 'trace-cite-chip';
+      chip.href = c.url || '#';
+      chip.target = '_blank';
+      chip.rel = 'noopener';
+      chip.title = c.excerpt || c.text || '';
+      chip.textContent = c.doc_id || c.chunk_id || 'source';
+      citDiv.appendChild(chip);
+    });
+    groupBody.appendChild(citDiv);
+  }
+
+  group.appendChild(groupHeader);
+  group.appendChild(groupBody);
+  traceBody.appendChild(group);
+}
+
+function setTraceSteps(steps, question, sources) {
+  if (!steps || steps.length === 0) return;
+  renderTrace(question || 'Query', steps, sources || []);
 }
 
 // ── Chat ───────────────────────────────────────────────────────────────────
@@ -1012,16 +1453,23 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       if (data.type === 'status') {
         // thinking — spinner already shown
       } else if (data.type === 'step') {
-        // Live reasoning step — append to trace
-        const stepText = [
-          data.thought && `Thought: ${data.thought}`,
-          data.action  && `Action: ${data.action}`,
-          data.observation && `Obs: ${data.observation}`,
-        ].filter(Boolean).join(' | ');
-        const div = document.createElement('div');
-        div.className = 'trace-step';
-        div.innerHTML = `<span class="trace-num">${data.step_num}.</span><span>${escHtml(stepText)}</span>`;
-        traceBody.appendChild(div);
+        // Live reasoning step — append a rich card to trace
+        if (!traceBody.querySelector('.trace-group')) {
+          renderTrace(text, [], []);
+        }
+        const groupBody = traceBody.querySelector('.trace-group-body');
+        if (groupBody) {
+          const stepObj = {
+            step: data.step_num,
+            thought: data.thought || '',
+            action: data.action || '',
+            tool_name: data.tool_name || '',
+            observation_type: data.observation_type || 'unknown',
+            observation: data.observation || null,
+            final: false,
+          };
+          groupBody.appendChild(buildTraceCard(stepObj));
+        }
         traceBody.scrollTop = traceBody.scrollHeight;
       } else if (data.type === 'answer') {
         spinner.remove();
@@ -1091,7 +1539,7 @@ async function sendMessageViaHTTP(text, spinner) {
     appendAgentMsg(data.answer || '(no answer)', data.sources || []);
 
     if (data.reasoning_steps || data.steps) {
-      setTraceSteps(data.reasoning_steps || data.steps);
+      setTraceSteps(data.reasoning_steps || data.steps, text, data.sources || []);
     }
 
     if (data.graph) {
@@ -1154,8 +1602,29 @@ msgInput.addEventListener('input', () => {
 });
 
 // ── D3 Graph ───────────────────────────────────────────────────────────────
+/**
+ * Convert UNDERSCORE_CAPS entity names to Title Case for display.
+ * @param {string} s - Raw entity name from the graph API.
+ * @returns {string} Human-readable label.
+ */
+function humanLabel(s) {
+  if (!s) return '';
+  return s.replace(/_/g, ' ')
+          .toLowerCase()
+          .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Return the fill colour for a node based on its type/label.
+ * @param {object} d - D3 node datum.
+ * @returns {string} CSS colour value.
+ */
+function nodeColor(d) {
+  return COLORS[(d.properties && d.properties.label) || d.label] || COLORS[d.type] || '#666';
+}
+
+// ── D3 Graph ── (COLORS, canvas, svg setup)
 const COLORS = {
-  // Original labels
   PERSON: 'steelblue',
   ORG: 'mediumpurple',
   GEO: 'seagreen',
@@ -1214,7 +1683,67 @@ function updateCenter() {
 window.addEventListener('resize', () => { updateCenter(); simulation.alpha(0.3).restart(); });
 updateCenter();
 
-const tooltip = document.getElementById('tooltip');
+// ── Layout mode switcher ────────────────────────────────────────────
+let currentLayout = 'force';
+
+/**
+ * A reference to the current graph data for layout functions.
+ * Points to the allNodes/allEdges arrays.
+ */
+const graphData = { get nodes() { return allNodes; }, get edges() { return allEdges; } };
+
+/**
+ * Apply a graph layout mode by reconfiguring D3 forces or fixing node positions.
+ * @param {'force'|'radial'|'hierarchical'|'circular'} mode
+ */
+function applyLayout(mode) {
+  currentLayout = mode;
+  document.querySelectorAll('.layout-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.layout === mode)
+  );
+
+  const W = graphCanvas.clientWidth || 900;
+  const H = graphCanvas.clientHeight || 600;
+  const cx = W / 2, cy = H / 2;
+
+  // Remove all positional forces first
+  simulation.force('radial', null).force('x', null).force('y', null);
+
+  if (mode === 'force') {
+    graphData.nodes.forEach(d => { d.fx = null; d.fy = null; });
+    simulation
+      .force('charge', d3.forceManyBody().strength(-500))
+      .force('center', d3.forceCenter(cx, cy));
+  } else if (mode === 'radial') {
+    graphData.nodes.forEach(d => { d.fx = null; d.fy = null; });
+    const radius = d => d.type === 'Topic' ? 0 : d.type === 'Chunk' ? 280 : 150;
+    simulation
+      .force('radial', d3.forceRadial(radius, cx, cy).strength(0.8))
+      .force('center', null)
+      .force('charge', d3.forceManyBody().strength(-80));
+  } else if (mode === 'hierarchical') {
+    const yPos = d => d.type === 'Topic' ? cy - 200 : d.type === 'Chunk' ? cy + 200 : cy;
+    graphData.nodes.forEach(d => { d.fx = null; d.fy = yPos(d); });
+    simulation
+      .force('x', d3.forceX(cx).strength(0.05))
+      .force('charge', d3.forceManyBody().strength(-150))
+      .force('center', null);
+  } else if (mode === 'circular') {
+    const n = graphData.nodes.length;
+    graphData.nodes.forEach((d, i) => {
+      const angle = (2 * Math.PI * i) / n;
+      d.fx = cx + 250 * Math.cos(angle);
+      d.fy = cy + 250 * Math.sin(angle);
+    });
+    simulation.force('charge', null).force('center', null);
+  }
+
+  simulation.alpha(0.4).restart();
+}
+
+document.querySelectorAll('.layout-btn').forEach(btn => {
+  btn.addEventListener('click', () => applyLayout(btn.dataset.layout));
+});
 const ttName = document.getElementById('tt-name');
 const ttLabel = document.getElementById('tt-label');
 
@@ -1277,7 +1806,7 @@ function renderGraph() {
 
         g.append('circle')
           .attr('r', 20)
-          .attr('fill', d => COLORS[(d.properties && d.properties.label) || d.label] || COLORS[d.type] || '#666')
+          .attr('fill', d => nodeColor(d))
           .attr('stroke','#1c2333')
           .attr('stroke-width', 2)
           .style('opacity', 0)
@@ -1290,7 +1819,7 @@ function renderGraph() {
           .attr('font-size','10px')
           .attr('fill','#aaa')
           .style('opacity', 0)
-          .text(d => ((d.properties && d.properties.name) || d.name || d.id || '').substring(0,20))
+          .text(d => humanLabel(((d.properties && d.properties.name) || d.name || d.id || '').substring(0, 20)))
           .transition().duration(400)
           .style('opacity', 1);
 
@@ -1307,17 +1836,37 @@ function renderGraph() {
         );
 
         g.on('mouseover', (event, d) => {
-          const name = (d.properties && d.properties.name) || d.name || d.id;
-          const label = (d.properties && d.properties.label) || d.label || 'Unknown';
-          ttName.textContent = name;
-          ttLabel.textContent = label;
-          tooltip.classList.add('visible');
+          // Build sources list from graph edges
+          const sources = allEdges
+            .filter(e => (typeof e.target === 'object' ? e.target.id : e.target) === d.id && e.type === 'MENTIONS')
+            .map(e => { const src = typeof e.source === 'object' ? e.source.id : e.source; return src.replace(/^chunk-/, '').replace(/-[^-]+$/, ''); })
+            .slice(0, 3);
+          const connections = allEdges.filter(e =>
+            (typeof e.source === 'object' ? e.source.id : e.source) === d.id ||
+            (typeof e.target === 'object' ? e.target.id : e.target) === d.id
+          ).length;
+          const tip = document.getElementById('tooltip');
+          tip.innerHTML = `
+            <div class="tt-name">${humanLabel((d.properties && d.properties.name) || d.name || d.id)}</div>
+            <div class="tt-row"><span class="tt-key">Type</span><span class="tt-val"><span class="tt-swatch" style="background:${nodeColor(d)};display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle"></span>${(d.properties && d.properties.label) || d.type || d.label || 'Unknown'}</span></div>
+            ${d.properties && d.properties.date ? `<div class="tt-row"><span class="tt-key">Date</span><span class="tt-val">${d.properties.date}</span></div>` : ''}
+            ${d.properties && d.properties.institution ? `<div class="tt-row"><span class="tt-key">Source</span><span class="tt-val">${d.properties.institution}</span></div>` : ''}
+            ${sources.length ? `<div class="tt-row"><span class="tt-key">Docs</span><span class="tt-val">${sources.join(', ')}</span></div>` : ''}
+            <div class="tt-row"><span class="tt-key">Links</span><span class="tt-val">${connections}</span></div>
+            ${d.properties && d.properties.summary ? `<div class="tt-row"><span class="tt-key">Summary</span><span class="tt-val">${d.properties.summary.slice(0, 120)}…</span></div>` : ''}
+          `;
+          tip.classList.add('visible');
+          tip.style.left = (event.pageX + 14) + 'px';
+          tip.style.top  = (event.pageY - 10) + 'px';
         });
         g.on('mousemove', event => {
-          tooltip.style.left = (event.clientX + 14) + 'px';
-          tooltip.style.top = (event.clientY - 28) + 'px';
+          const tip = document.getElementById('tooltip');
+          tip.style.left = (event.pageX + 14) + 'px';
+          tip.style.top  = (event.pageY - 10) + 'px';
         });
-        g.on('mouseout', () => tooltip.classList.remove('visible'));
+        g.on('mouseleave', () => {
+          setTimeout(() => document.getElementById('tooltip').classList.remove('visible'), 200);
+        });
 
         g.on('click', (event, d) => {
           event.stopPropagation();
