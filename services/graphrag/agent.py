@@ -22,6 +22,7 @@ import json
 import logging
 import re
 import sys
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
@@ -97,16 +98,27 @@ Action: <tool_name>(<args>)
 
 When you have gathered enough evidence, output:
 Thought: I have sufficient evidence to answer.
-Final Answer: <your answer, citing [chunk_id] and [entity_name] as evidence>
+Final Answer: <your answer>
+Cite sources as [Source: Institution, Date, URL] — NOT as [chunk_id].
+For web results: [Source: Title, URL].
+For Wikipedia: [Wikipedia: Title, URL].
+Never expose internal chunk IDs or entity variable names to the user.
 
 Rules:
-- Always cite chunk IDs and entity names in your final answer
+- Always cite human-readable source metadata in your final answer, never internal chunk IDs
 - Use fuse_and_rank before giving a final answer when you have multiple chunk candidates
 - If search_entities returns results, follow up with get_neighbours on the top entity
-- REQUIRED: When get_neighbours returns results, immediately call get_triplets on the
-  highest-scoring entity to surface CO_OCCURS relations from the knowledge graph.
-- REQUIRED: When the KG yields fewer than 3 relevant chunks after search_chunks and
-  get_chunks_for_entity, call web_search then wikipedia_search before answering.
+- REQUIRED STEP ORDER:
+  1. search_entities or search_chunks first
+  2. get_neighbours on top entity
+  3. get_triplets on top entity (REQUIRED after get_neighbours)
+  4. IF top chunk score from search_chunks < 0.65: IMMEDIATELY call web_search
+     with query + 'site:europa.eu OR site:parliament.uk', then wikipedia_search
+  5. get_community on a relevant entity
+  6. fuse_and_rank on all collected chunk_ids
+  7. Final Answer
+- web_search and wikipedia_search MUST be called before fuse_and_rank when scores are weak
+- NEVER skip web_search when the KG does not have direct evidence for the question
 - For global/thematic questions, always call get_community on a relevant entity
 - Maximum MAX_STEPS reasoning steps before forced final answer
 """
@@ -142,6 +154,112 @@ class GraphRAGAgent:
     def _embed(self, text: str) -> list[float]:
         from graph_store import embed
         return embed([text], self.cfg["embed_model"])[0].tolist()
+
+    # ── Metadata cache helpers ─────────────────────────────────────────────
+
+    def _fetch_chunk_meta(self, chunk_id: str, meta_cache: dict) -> dict:
+        """Fetch and cache Postgres metadata for a single chunk_id.
+
+        Args:
+            chunk_id: The chunk identifier to look up.
+            meta_cache: Mutable dict mapping chunk_id -> metadata dict.
+
+        Returns:
+            The metadata dict (also stored in meta_cache under chunk_id).
+        """
+        if chunk_id in meta_cache:
+            return meta_cache[chunk_id]
+        try:
+            pg = self._pg_store()
+            try:
+                pg.conn.rollback()
+            except Exception:
+                pass
+            cur = pg.conn.cursor()
+            cur.execute("SELECT doc_id FROM chunks WHERE id = %s", (chunk_id,))
+            row = cur.fetchone()
+            cur.close()
+            if row:
+                doc_id: str = row[0] or ""
+                if doc_id.startswith("ep_debate_"):
+                    parts = doc_id.split("_")
+                    meta_cache[chunk_id] = {
+                        "institution": "European Parliament",
+                        "url": "https://europarl.europa.eu/plenary/en/debates.html",
+                        "date": "-".join(parts[2:5]) if len(parts) >= 5 else "",
+                        "doc_id": doc_id,
+                    }
+                else:
+                    meta_cache[chunk_id] = {
+                        "institution": "", "url": "", "date": "", "doc_id": doc_id,
+                    }
+            else:
+                meta_cache[chunk_id] = {"institution": "Unknown", "url": "", "date": "", "doc_id": ""}
+        except Exception as exc:
+            log.warning("meta fetch failed for %s: %s", chunk_id, exc)
+            meta_cache[chunk_id] = {"institution": "Unknown", "url": "", "date": "", "doc_id": ""}
+        return meta_cache[chunk_id]
+
+    # ── Observation XML formatter ──────────────────────────────────────────
+
+    def _format_obs_xml(self, tool_name: str, obs: Any, meta_cache: dict) -> str:
+        """Format a tool observation as XML with full source metadata.
+
+        Populates meta_cache as a side-effect for any new chunk_ids seen.
+
+        Args:
+            tool_name: The tool that produced this observation.
+            obs: The raw observation dict or list.
+            meta_cache: Cache of chunk_id -> {doc_id, institution, date, url}.
+
+        Returns:
+            XML string for LLM context.
+        """
+        root = ET.Element("observation", tool=tool_name)
+        if tool_name in ("search_chunks", "fuse_and_rank", "get_chunks_for_entity"):
+            for item in (obs if isinstance(obs, list) else [obs]):
+                if not isinstance(item, dict):
+                    continue
+                cid = item.get("chunk_id", "")
+                if cid:
+                    self._fetch_chunk_meta(cid, meta_cache)
+                meta = meta_cache.get(cid, {})
+                chunk_el = ET.SubElement(
+                    root, "chunk",
+                    id=cid,
+                    institution=meta.get("institution", "Unknown"),
+                    date=meta.get("date", ""),
+                    url=meta.get("url", ""),
+                    score=str(item.get("score", item.get("rrf_score", ""))),
+                )
+                ET.SubElement(chunk_el, "text").text = item.get("text", "")[:400]
+        elif tool_name in ("search_entities", "get_neighbours"):
+            for item in (obs if isinstance(obs, list) else [obs]):
+                if not isinstance(item, dict):
+                    continue
+                ET.SubElement(
+                    root, "entity",
+                    name=item.get("name", ""),
+                    label=item.get("label", ""),
+                    score=str(item.get("score", item.get("shared_chunks", ""))),
+                )
+        elif tool_name == "web_search":
+            for item in (obs if isinstance(obs, list) else [obs]):
+                if not isinstance(item, dict):
+                    continue
+                src = ET.SubElement(root, "result",
+                                    title=item.get("title", ""), url=item.get("url", ""))
+                ET.SubElement(src, "body").text = item.get("body", "")[:300]
+        elif tool_name == "wikipedia_search":
+            for item in (obs if isinstance(obs, list) else [obs]):
+                if not isinstance(item, dict):
+                    continue
+                src = ET.SubElement(root, "article",
+                                    title=item.get("title", ""), url=item.get("url", ""))
+                ET.SubElement(src, "summary").text = item.get("summary", "")[:400]
+        else:
+            ET.SubElement(root, "data").text = json.dumps(obs)[:500]
+        return ET.tostring(root, encoding="unicode")
 
     # ── Tools ──────────────────────────────────────────────────────────────
 
@@ -431,7 +549,7 @@ class GraphRAGAgent:
 
     # ── Main run loop ──────────────────────────────────────────────────────
 
-    def run(self, query: str, max_steps: int = 8) -> dict:
+    def run(self, query: str, max_steps: int = 12) -> dict:
         system = SYSTEM_PROMPT.replace("MAX_STEPS", str(max_steps))
         messages = [
             {"role": "system", "content": system},
@@ -440,6 +558,8 @@ class GraphRAGAgent:
 
         trace = []
         final_answer = None
+        meta_cache: dict[str, dict] = {}
+        hint_injected = False
 
         for step in range(1, max_steps + 1):
             response = self._call_llm(messages)
@@ -482,11 +602,30 @@ class GraphRAGAgent:
             })
 
             messages.append({"role": "assistant", "content": response})
-            messages.append({"role": "user", "content": f"Observation: {obs_str[:3000]}"})
+            xml_obs = self._format_obs_xml(tool_name, obs, meta_cache)
+
+            # Detect weak KG scores after search_chunks and inject a mandatory hint
+            if tool_name == "search_chunks" and isinstance(obs, list) and obs and not hint_injected:
+                top_score = obs[0].get("score", 1.0) if isinstance(obs[0], dict) else 1.0
+                if top_score < 0.65:
+                    hint_injected = True
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"Observation:\n{xml_obs}\n"
+                            f"[SYSTEM HINT: Top chunk score is {top_score:.2f} which is below "
+                            f"threshold 0.65. You MUST now call web_search to supplement KG evidence.]"
+                        ),
+                    })
+                    continue
+
+            messages.append({"role": "user", "content": f"Observation:\n{xml_obs}"})
 
         if not final_answer:
             # Force answer from last LLM response
             final_answer = _extract("Final Answer", response) or response.strip()
+
+        final_answer = _clean_citations(final_answer, meta_cache)
 
         # Build attribution: map chunk_ids mentioned in final_answer
         cited_chunks = list(set(re.findall(r"chunk_\w+", final_answer)))
@@ -543,6 +682,30 @@ class GraphRAGAgent:
 
 
 # ── Parsing helpers ───────────────────────────────────────────────────────
+
+def _clean_citations(answer: str, meta_cache: dict) -> str:
+    """Replace internal [chunk_N] references with human-readable source citations.
+
+    Args:
+        answer: The raw final answer string from the LLM.
+        meta_cache: Cache of chunk_id -> {institution, date, url} metadata.
+
+    Returns:
+        Answer string with chunk IDs replaced by formatted citation links.
+    """
+    def replace_chunk(m: re.Match) -> str:
+        cid = m.group(0)  # e.g. 'chunk_7'
+        meta = meta_cache.get(cid, {})
+        inst = meta.get("institution", "Source") or "Source"
+        date = meta.get("date", "")
+        url = meta.get("url", "")
+        if url:
+            label = f"{inst}, {date}" if date else inst
+            return f"[{label}]({url})"
+        return f"[{inst}, {date}]" if date else f"[{inst}]"
+
+    return re.sub(r"chunk_\w+", replace_chunk, answer)
+
 
 def _extract(label: str, text: str) -> Optional[str]:
     """Extract content after 'Label:' up to next label or end."""

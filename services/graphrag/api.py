@@ -78,7 +78,7 @@ class RetrieveRequest(BaseModel):
     """Request body for POST /retrieve."""
 
     query: str
-    max_steps: int = 8
+    max_steps: int = 12
     session_id: Optional[str] = None  # reserved for future Memgraph session
 
 
