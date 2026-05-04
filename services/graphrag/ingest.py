@@ -36,7 +36,7 @@ def normalise(raw: list[dict]) -> list[dict]:
         doc_id = chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else "ep_debate"
         ents = []
         for e in c.get("entities", []):
-            lbl = e.get("ontology_label") or e.get("label") or "Entity"
+            lbl = e.get("label") or e.get("ontology_label") or "Entity"
             txt = e.get("text", "").strip()
             if txt and len(txt) >= 2:
                 ents.append({"text": txt, "label": lbl})
@@ -200,6 +200,7 @@ def ingest(chunks_file: Path, cfg: dict, summarize: bool = True):
 
             topics.append({
                 "id": f"topic_{cid}",
+                "community_id": cid,
                 "label": summary[:80],
                 "summary": summary,
                 "members": members,
