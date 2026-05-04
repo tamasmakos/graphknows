@@ -535,6 +535,70 @@ class SessionGraphManager:
                     logger.warning("Memgraph Chunk enrichment failed: %s", exc)
                     self._memgraph_ok = False
 
+    def add_cooccurs_edges(
+        self,
+        session_id: str,
+        cooccurs: list[tuple[str, str, int]],
+    ) -> None:
+        """Upsert CO_OCCURS typed edges (from Neo4j) into the session graph.
+
+        Args:
+            session_id: The active session identifier.
+            cooccurs: List of (subject_name, object_name, weight) tuples sourced
+                from Neo4j CO_OCCURS relationships.
+        """
+        if session_id not in self._mem_sessions:
+            self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
+        mem = self._mem_sessions[session_id]
+
+        def _edge_exists(src: str, tgt: str, etype: str) -> bool:
+            return any(
+                e["source"] == src and e["target"] == tgt and e["type"] == etype
+                for e in mem["edges"]
+            )
+
+        for subj, obj, weight in cooccurs:
+            nid_a = f"entity-{subj}-{session_id}"
+            nid_b = f"entity-{obj}-{session_id}"
+            for nid, name in ((nid_a, subj), (nid_b, obj)):
+                if nid not in mem["nodes"]:
+                    mem["nodes"][nid] = {
+                        "id": nid, "label": "Entity", "type": "Entity", "name": name,
+                        "properties": {"name": name, "label": "Entity", "session_id": session_id},
+                    }
+            if not _edge_exists(nid_a, nid_b, "CO_OCCURS"):
+                mem["edges"].append({
+                    "id": f"{subj}-CO_OCCURS-{obj}",
+                    "source": nid_a,
+                    "target": nid_b,
+                    "type": "CO_OCCURS",
+                    "properties": {"weight": weight},
+                })
+                logger.debug(
+                    "CO_OCCURS edge: %s → %s weight=%d (session %s)",
+                    subj, obj, weight, session_id,
+                )
+            # Mirror in Memgraph if available
+            if self._memgraph_ok:
+                try:
+                    with self._mg_driver.session() as mg:
+                        for name in (subj, obj):
+                            mg.run(
+                                "MERGE (e:Entity {name: $name, session_id: $sid})",
+                                name=name, sid=session_id,
+                            )
+                        mg.run(
+                            "MATCH (a:Entity {name: $a, session_id: $sid}) "
+                            "MATCH (b:Entity {name: $b, session_id: $sid}) "
+                            "MERGE (a)-[r:CO_OCCURS]->(b) "
+                            "ON CREATE SET r.weight = $weight "
+                            "ON MATCH SET r.weight = $weight",
+                            a=subj, b=obj, sid=session_id, weight=weight,
+                        )
+                except Exception as exc:
+                    logger.warning("Memgraph CO_OCCURS upsert failed: %s", exc)
+                    self._memgraph_ok = False
+
     # ------------------------------------------------------------------
     # Write-back to Neo4j
     # ------------------------------------------------------------------

@@ -258,6 +258,44 @@ def _observation_type(tool_name: str) -> str:
     return mapping.get(tool_name, "unknown")
 
 
+def _fetch_cooccurs(entity_names: list[str], limit: int = 50) -> list[tuple[str, str, int]]:
+    """Fetch CO_OCCURS triplets for the given entity names from Neo4j.
+
+    Args:
+        entity_names: List of entity names to look up.
+        limit: Maximum number of triplets to return.
+
+    Returns:
+        List of (subject, object, weight) tuples.
+    """
+    if not entity_names:
+        return []
+    try:
+        from neo4j import GraphDatabase as _GraphDatabase
+        driver = _GraphDatabase.driver(
+            CONFIG["neo4j_uri"],
+            auth=(CONFIG["neo4j_user"], CONFIG["neo4j_password"]),
+        )
+        with driver.session() as neo_session:
+            result = neo_session.run(
+                """
+                MATCH (a:Entity)-[r:CO_OCCURS]->(b:Entity)
+                WHERE a.name IN $names OR b.name IN $names
+                RETURN a.name AS subject, b.name AS object, r.weight AS weight
+                ORDER BY r.weight DESC
+                LIMIT $limit
+                """,
+                names=entity_names,
+                limit=limit,
+            )
+            rows = [(r["subject"], r["object"], int(r["weight"] or 0)) for r in result]
+        driver.close()
+        return rows
+    except Exception as exc:
+        log.warning("_fetch_cooccurs failed: %s", exc)
+        return []
+
+
 def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
     """Extract entities, RELATES_TO edges, Topic nodes, and Chunk nodes from the
     full graphrag agent trace and upsert them into the Memgraph session graph.
@@ -371,6 +409,13 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
             seen.add(n)
             unique_entities.append(n)
 
+    # ── Query Neo4j CO_OCCURS edges for found entities ───────────────────
+    cooccurs_edges: list[tuple[str, str, int]] = _fetch_cooccurs(unique_entities)
+    log.info(
+        "Session %s CO_OCCURS from Neo4j: %d edges for %d entities",
+        session_id, len(cooccurs_edges), len(unique_entities),
+    )
+
     # De-duplicate chunk_nodes by chunk_id (last write wins)
     chunk_by_id: dict[str, dict] = {}
     for c in chunk_nodes:
@@ -393,6 +438,10 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
         topic_nodes=topic_nodes,
         chunk_nodes=list(chunk_by_id.values()),
     )
+
+    # Upsert CO_OCCURS edges from Neo4j into the session graph
+    if cooccurs_edges:
+        _sgm.add_cooccurs_edges(session_id, cooccurs_edges)
 
 
 # ---------------------------------------------------------------------------

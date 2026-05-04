@@ -103,10 +103,11 @@ Rules:
 - Always cite chunk IDs and entity names in your final answer
 - Use fuse_and_rank before giving a final answer when you have multiple chunk candidates
 - If search_entities returns results, follow up with get_neighbours on the top entity
-- After get_neighbours, call get_triplets on the top entity to surface direct KG relationships
+- REQUIRED: When get_neighbours returns results, immediately call get_triplets on the
+  highest-scoring entity to surface CO_OCCURS relations from the knowledge graph.
+- REQUIRED: When the KG yields fewer than 3 relevant chunks after search_chunks and
+  get_chunks_for_entity, call web_search then wikipedia_search before answering.
 - For global/thematic questions, always call get_community on a relevant entity
-- When the KG yields fewer than 3 relevant chunks, REQUIRED: call web_search with the query plus site:europa.eu, then wikipedia_search for key entities
-- Web search and Wikipedia results MUST be cited in the final answer with their URLs
 - Maximum MAX_STEPS reasoning steps before forced final answer
 """
 
