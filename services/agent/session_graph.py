@@ -1,6 +1,8 @@
 """
 SessionGraphManager — per-session ephemeral context graphs in Memgraph,
 overlaying the persistent Neo4j knowledge graph.
+
+Falls back gracefully to an in-memory store when Memgraph is unavailable.
 """
 import logging
 import time
@@ -19,11 +21,30 @@ class SessionGraphManager:
         neo4j_user: str,
         neo4j_password: str,
     ):
-        self._mg_driver = GraphDatabase.driver(memgraph_uri, auth=None)
+        # Short connection timeout so probe fails fast when Memgraph is down
+        self._mg_driver = GraphDatabase.driver(
+            memgraph_uri, auth=None, connection_timeout=2
+        )
         self._n4j_driver = GraphDatabase.driver(
             neo4j_uri, auth=(neo4j_user, neo4j_password)
         )
-        logger.info("SessionGraphManager initialised (mg=%s, n4j=%s)", memgraph_uri, neo4j_uri)
+        # In-memory fallback when Memgraph is unavailable
+        self._memgraph_ok: bool = self._probe_memgraph()
+        # Fallback in-memory session store: session_id → {nodes: dict, edges: list}
+        self._mem_sessions: dict[str, dict] = {}
+        logger.info(
+            "SessionGraphManager initialised (mg=%s ok=%s, n4j=%s)",
+            memgraph_uri, self._memgraph_ok, neo4j_uri,
+        )
+
+    def _probe_memgraph(self) -> bool:
+        try:
+            with self._mg_driver.session() as s:
+                s.run("RETURN 1").consume()
+            return True
+        except Exception as exc:
+            logger.warning("Memgraph unavailable — using in-memory fallback: %s", exc)
+            return False
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -31,29 +52,46 @@ class SessionGraphManager:
 
     def create_session(self, session_id: str) -> str:
         """Create isolated namespace for this session. Returns session_id."""
-        with self._mg_driver.session() as s:
-            s.run(
-                "MERGE (sess:Session {id: $sid}) "
-                "ON CREATE SET sess.session_id = $sid, sess.created_at = $ts",
-                sid=session_id,
-                ts=int(time.time() * 1000),
-            )
-        logger.info("Session created: %s", session_id)
+        if self._memgraph_ok:
+            try:
+                with self._mg_driver.session() as s:
+                    s.run(
+                        "MERGE (sess:Session {id: $sid}) "
+                        "ON CREATE SET sess.session_id = $sid, sess.created_at = $ts",
+                        sid=session_id,
+                        ts=int(time.time() * 1000),
+                    )
+            except Exception as exc:
+                logger.warning("Memgraph create_session failed, using fallback: %s", exc)
+                self._memgraph_ok = False
+        # Always ensure in-memory entry exists
+        if session_id not in self._mem_sessions:
+            self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
+        logger.info("Session created: %s (memgraph_ok=%s)", session_id, self._memgraph_ok)
         return session_id
 
     def close_session(self, session_id: str) -> None:
         """Delete all session nodes from Memgraph."""
-        with self._mg_driver.session() as s:
-            s.run("MATCH (n {session_id: $sid}) DETACH DELETE n", sid=session_id)
-            # Also delete the Session node itself
-            s.run("MATCH (n:Session {id: $sid}) DETACH DELETE n", sid=session_id)
+        if self._memgraph_ok:
+            try:
+                with self._mg_driver.session() as s:
+                    s.run("MATCH (n {session_id: $sid}) DETACH DELETE n", sid=session_id)
+                    s.run("MATCH (n:Session {id: $sid}) DETACH DELETE n", sid=session_id)
+            except Exception as exc:
+                logger.warning("Memgraph close_session failed: %s", exc)
+        self._mem_sessions.pop(session_id, None)
         logger.info("Session closed: %s", session_id)
 
     def list_sessions(self) -> list[str]:
         """Return all active session IDs."""
-        with self._mg_driver.session() as s:
-            result = s.run("MATCH (n:Session) RETURN n.id AS sid")
-            return [r["sid"] for r in result]
+        if self._memgraph_ok:
+            try:
+                with self._mg_driver.session() as s:
+                    result = s.run("MATCH (n:Session) RETURN n.id AS sid")
+                    return [r["sid"] for r in result]
+            except Exception as exc:
+                logger.warning("Memgraph list_sessions failed: %s", exc)
+        return list(self._mem_sessions.keys())
 
     # ------------------------------------------------------------------
     # Seeding from Neo4j
@@ -62,6 +100,10 @@ class SessionGraphManager:
     def seed_from_neo4j(self, session_id: str, entity_names: list[str]) -> int:
         """Pull entities + 1-hop neighbours from Neo4j into Memgraph session."""
         count = 0
+        if session_id not in self._mem_sessions:
+            self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
+        mem = self._mem_sessions[session_id]
+
         try:
             with self._n4j_driver.session() as n4j:
                 for name in entity_names:
@@ -80,36 +122,67 @@ class SessionGraphManager:
                         logger.debug("Entity not found in Neo4j: %s", name)
                         continue
 
-                    with self._mg_driver.session() as mg:
-                        for row in rows:
-                            # Merge entity node
-                            mg.run(
-                                "MERGE (e:Entity {name: $name, session_id: $sid}) "
-                                "ON CREATE SET e.label = $label",
-                                name=row["ename"],
-                                sid=session_id,
-                                label=row.get("elabel", ""),
-                            )
-                            count += 1
+                    if self._memgraph_ok:
+                        try:
+                            with self._mg_driver.session() as mg:
+                                for row in rows:
+                                    mg.run(
+                                        "MERGE (e:Entity {name: $name, session_id: $sid}) "
+                                        "ON CREATE SET e.label = $label",
+                                        name=row["ename"],
+                                        sid=session_id,
+                                        label=row.get("elabel", ""),
+                                    )
+                                    count += 1
+                                    if row.get("cid"):
+                                        mg.run(
+                                            "MERGE (c:Chunk {id: $cid, session_id: $sid}) "
+                                            "ON CREATE SET c.text = $text",
+                                            cid=row["cid"],
+                                            sid=session_id,
+                                            text=row.get("ctext", ""),
+                                        )
+                                        mg.run(
+                                            "MATCH (c:Chunk {id: $cid, session_id: $sid}) "
+                                            "MATCH (e:Entity {name: $ename, session_id: $sid}) "
+                                            "MERGE (c)-[:MENTIONS]->(e)",
+                                            cid=row["cid"],
+                                            ename=row["ename"],
+                                            sid=session_id,
+                                        )
+                                        count += 1
+                        except Exception as exc:
+                            logger.warning("Memgraph seed failed, using fallback: %s", exc)
+                            self._memgraph_ok = False
 
-                            # Merge chunk + relationship if present
-                            if row.get("cid"):
-                                mg.run(
-                                    "MERGE (c:Chunk {id: $cid, session_id: $sid}) "
-                                    "ON CREATE SET c.text = $text",
-                                    cid=row["cid"],
-                                    sid=session_id,
-                                    text=row.get("ctext", ""),
-                                )
-                                mg.run(
-                                    "MATCH (c:Chunk {id: $cid, session_id: $sid}) "
-                                    "MATCH (e:Entity {name: $ename, session_id: $sid}) "
-                                    "MERGE (c)-[:MENTIONS]->(e)",
-                                    cid=row["cid"],
-                                    ename=row["ename"],
-                                    sid=session_id,
-                                )
-                                count += 1
+                    # Always store in memory fallback
+                    for row in rows:
+                        ename = row["ename"]
+                        elabel = row.get("elabel", "Entity") or "Entity"
+                        node_id = f"entity-{ename}-{session_id}"
+                        mem["nodes"][node_id] = {
+                            "id": node_id,
+                            "label": elabel,
+                            "type": elabel,
+                            "name": ename,
+                            "properties": {"name": ename, "label": elabel, "session_id": session_id},
+                        }
+                        count += 1
+                        if row.get("cid"):
+                            cid = row["cid"]
+                            chunk_node_id = f"chunk-{cid}-{session_id}"
+                            mem["nodes"][chunk_node_id] = {
+                                "id": chunk_node_id,
+                                "label": "Chunk",
+                                "type": "Chunk",
+                                "name": cid,
+                                "properties": {"id": cid, "text": row.get("ctext", ""), "session_id": session_id},
+                            }
+                            edge_key = f"{chunk_node_id}-{node_id}"
+                            existing_keys = {f"{e['source']}-{e['target']}" for e in mem["edges"]}
+                            if edge_key not in existing_keys:
+                                mem["edges"].append({"source": chunk_node_id, "target": node_id, "type": "MENTIONS"})
+                            count += 1
 
         except Exception as exc:
             logger.warning("Neo4j seed warning (continuing): %s", exc)
@@ -124,32 +197,38 @@ class SessionGraphManager:
     def add_reasoning_step(self, session_id: str, step: dict) -> None:
         """Add a ReasoningStep node to the session graph."""
         step_num = step.get("step_num", 0)
-        with self._mg_driver.session() as mg:
-            mg.run(
-                "MERGE (rs:ReasoningStep {session_id: $sid, step_num: $sn}) "
-                "ON CREATE SET rs.thought = $thought, rs.action = $action, "
-                "rs.observation = $obs, rs.created_at = $ts",
-                sid=session_id,
-                sn=step_num,
-                thought=step.get("thought", ""),
-                action=step.get("action", ""),
-                obs=step.get("observation", ""),
-                ts=int(time.time() * 1000),
-            )
-            for chunk_id in step.get("chunk_ids", []):
+        if not self._memgraph_ok:
+            return  # Skip if Memgraph unavailable
+        try:
+            with self._mg_driver.session() as mg:
                 mg.run(
-                    "MERGE (c:Chunk {id: $cid, session_id: $sid})",
-                    cid=chunk_id,
-                    sid=session_id,
-                )
-                mg.run(
-                    "MATCH (rs:ReasoningStep {session_id: $sid, step_num: $sn}) "
-                    "MATCH (c:Chunk {id: $cid, session_id: $sid}) "
-                    "MERGE (rs)-[:RETRIEVED]->(c)",
+                    "MERGE (rs:ReasoningStep {session_id: $sid, step_num: $sn}) "
+                    "ON CREATE SET rs.thought = $thought, rs.action = $action, "
+                    "rs.observation = $obs, rs.created_at = $ts",
                     sid=session_id,
                     sn=step_num,
-                    cid=chunk_id,
+                    thought=step.get("thought", ""),
+                    action=step.get("action", ""),
+                    obs=step.get("observation", ""),
+                    ts=int(time.time() * 1000),
                 )
+                for chunk_id in step.get("chunk_ids", []):
+                    mg.run(
+                        "MERGE (c:Chunk {id: $cid, session_id: $sid})",
+                        cid=chunk_id,
+                        sid=session_id,
+                    )
+                    mg.run(
+                        "MATCH (rs:ReasoningStep {session_id: $sid, step_num: $sn}) "
+                        "MATCH (c:Chunk {id: $cid, session_id: $sid}) "
+                        "MERGE (rs)-[:RETRIEVED]->(c)",
+                        sid=session_id,
+                        sn=step_num,
+                        cid=chunk_id,
+                    )
+        except Exception:
+            logger.exception("Failed to add reasoning step for session %s", session_id)
+            return
         logger.debug("Added reasoning step %d for session %s", step_num, session_id)
 
     # ------------------------------------------------------------------
@@ -158,64 +237,76 @@ class SessionGraphManager:
 
     def get_session_graph(self, session_id: str) -> dict[str, list]:
         """Return full session graph as {nodes, edges} for D3.js."""
-        nodes: dict[str, dict] = {}
-        edges: list[dict] = []
+        # Try Memgraph first
+        if self._memgraph_ok:
+            try:
+                nodes: dict[str, dict] = {}
+                edges: list[dict] = []
 
-        with self._mg_driver.session() as mg:
-            # All nodes in session
-            result = mg.run(
-                "MATCH (n) WHERE n.session_id = $sid RETURN n",
-                sid=session_id,
-            )
-            for record in result:
-                n = record["n"]
-                node_id = n.element_id
-                labels = list(n.labels)
-                props = dict(n.items())
-                nodes[node_id] = {
-                    "id": node_id,
-                    "label": labels[0] if labels else "Node",
-                    "type": labels[0] if labels else "Node",
-                    "properties": props,
-                }
+                with self._mg_driver.session() as mg:
+                    result = mg.run(
+                        "MATCH (n) WHERE n.session_id = $sid RETURN n",
+                        sid=session_id,
+                    )
+                    for record in result:
+                        n = record["n"]
+                        node_id = n.element_id
+                        labels = list(n.labels)
+                        props = dict(n.items())
+                        nodes[node_id] = {
+                            "id": node_id,
+                            "label": labels[0] if labels else "Node",
+                            "type": labels[0] if labels else "Node",
+                            "properties": props,
+                        }
 
-            # All edges where both endpoints belong to session
-            result = mg.run(
-                "MATCH (a)-[r]->(b) "
-                "WHERE a.session_id = $sid AND b.session_id = $sid "
-                "RETURN a, r, b",
-                sid=session_id,
-            )
-            for record in result:
-                a = record["a"]
-                b = record["b"]
-                r = record["r"]
-                src_id = a.element_id
-                tgt_id = b.element_id
-                # Ensure endpoints in nodes dict
-                if src_id not in nodes:
-                    props = dict(a.items())
-                    nodes[src_id] = {
-                        "id": src_id,
-                        "label": list(a.labels)[0] if a.labels else "Node",
-                        "type": list(a.labels)[0] if a.labels else "Node",
-                        "properties": props,
-                    }
-                if tgt_id not in nodes:
-                    props = dict(b.items())
-                    nodes[tgt_id] = {
-                        "id": tgt_id,
-                        "label": list(b.labels)[0] if b.labels else "Node",
-                        "type": list(b.labels)[0] if b.labels else "Node",
-                        "properties": props,
-                    }
-                edges.append({
-                    "source": src_id,
-                    "target": tgt_id,
-                    "type": r.type,
-                })
+                    result = mg.run(
+                        "MATCH (a)-[r]->(b) "
+                        "WHERE a.session_id = $sid AND b.session_id = $sid "
+                        "RETURN a, r, b",
+                        sid=session_id,
+                    )
+                    for record in result:
+                        a = record["a"]
+                        b = record["b"]
+                        r = record["r"]
+                        src_id = a.element_id
+                        tgt_id = b.element_id
+                        if src_id not in nodes:
+                            props = dict(a.items())
+                            nodes[src_id] = {
+                                "id": src_id,
+                                "label": list(a.labels)[0] if a.labels else "Node",
+                                "type": list(a.labels)[0] if a.labels else "Node",
+                                "properties": props,
+                            }
+                        if tgt_id not in nodes:
+                            props = dict(b.items())
+                            nodes[tgt_id] = {
+                                "id": tgt_id,
+                                "label": list(b.labels)[0] if b.labels else "Node",
+                                "type": list(b.labels)[0] if b.labels else "Node",
+                                "properties": props,
+                            }
+                        edges.append({
+                            "source": src_id,
+                            "target": tgt_id,
+                            "type": r.type,
+                        })
 
-        return {"nodes": list(nodes.values()), "edges": edges}
+                return {"nodes": list(nodes.values()), "edges": edges}
+            except Exception as exc:
+                logger.warning("Memgraph get_session_graph failed, using fallback: %s", exc)
+                self._memgraph_ok = False
+
+        # In-memory fallback
+        mem = self._mem_sessions.get(session_id, {"nodes": {}, "edges": []})
+        nodes_list = list(mem["nodes"].values())
+        # Add name field to properties for D3 label rendering
+        for node in nodes_list:
+            if "name" not in node:
+                node["name"] = node.get("properties", {}).get("name", node["id"])
+        return {"nodes": nodes_list, "edges": list(mem["edges"])}
 
     # ------------------------------------------------------------------
     # Write-back to Neo4j
