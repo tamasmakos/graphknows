@@ -571,7 +571,12 @@ let sessionId = params.get('session') || null;
 if (!sessionId) {
   sessionId = uuid();
 }
-document.getElementById('session-id').textContent = sessionId;
+function displaySessionId(id) {
+  const el = document.getElementById('session-id');
+  el.textContent = id.substring(0,8) + '…';
+  el.title = id;
+}
+displaySessionId(sessionId);
 
 // ── Trace panel toggle ─────────────────────────────────────────────────────
 const traceHeader = document.getElementById('trace-header');
@@ -614,9 +619,16 @@ function appendUserMsg(text) {
 function appendSpinner() {
   const div = document.createElement('div');
   div.className = 'spinner';
-  div.innerHTML = '<span></span><span></span><span></span>';
+  div.innerHTML = '<span></span><span></span><span></span><em class="spinner-time">0s…</em>';
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
+  const start = Date.now();
+  div._timerInterval = setInterval(() => {
+    const el = div.querySelector('.spinner-time');
+    if (el) el.textContent = Math.floor((Date.now() - start) / 1000) + 's…';
+  }, 1000);
+  const origRemove = div.remove.bind(div);
+  div.remove = () => { clearInterval(div._timerInterval); origRemove(); };
   return div;
 }
 
@@ -672,12 +684,104 @@ function appendOfflineMsg() {
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
+function appendErrorMsg(msg) {
+  const card = document.createElement('div');
+  card.className = 'msg-agent';
+  card.style.borderColor = '#f85149';
+  const body = document.createElement('div');
+  body.className = 'answer-body';
+  body.style.color = '#f85149';
+  body.innerHTML = `🔴 <strong>Error</strong> — ${escHtml(msg)}`;
+  card.appendChild(body);
+  chatArea.appendChild(card);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
 async function sendMessage(text) {
   appendUserMsg(text);
   const spinner = appendSpinner();
   askBtn.disabled = true;
   msgInput.disabled = true;
 
+  // Try WebSocket first, fall back to HTTP
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProto}//${location.host}/ws/chat/${sessionId}`;
+
+  try {
+    await sendMessageViaWebSocket(wsUrl, text, spinner);
+  } catch(e) {
+    console.warn('WS failed, falling back to HTTP', e);
+    try { spinner.remove(); } catch(_) {}
+    const spinner2 = appendSpinner();
+    await sendMessageViaHTTP(text, spinner2);
+  } finally {
+    askBtn.disabled = false;
+    msgInput.disabled = false;
+    msgInput.focus();
+  }
+}
+
+async function sendMessageViaWebSocket(wsUrl, text, spinner) {
+  return new Promise((resolve, reject) => {
+    let ws;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch(e) {
+      return reject(e);
+    }
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ message: text, session_id: sessionId }));
+    };
+
+    ws.onmessage = (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch(_) { return; }
+
+      if (data.type === 'status') {
+        // thinking — spinner already shown
+      } else if (data.type === 'step') {
+        // Live reasoning step — append to trace
+        const stepText = [
+          data.thought && `Thought: ${data.thought}`,
+          data.action  && `Action: ${data.action}`,
+          data.observation && `Obs: ${data.observation}`,
+        ].filter(Boolean).join(' | ');
+        const div = document.createElement('div');
+        div.className = 'trace-step';
+        div.innerHTML = `<span class="trace-num">${data.step_num}.</span><span>${escHtml(stepText)}</span>`;
+        traceBody.appendChild(div);
+        traceBody.scrollTop = traceBody.scrollHeight;
+      } else if (data.type === 'answer') {
+        spinner.remove();
+        if (data.session_id) {
+          sessionId = data.session_id;
+          displaySessionId(sessionId);
+        }
+        appendAgentMsg(data.answer || '(no answer)', data.sources || []);
+        if (data.graph) {
+          mergeGraph(data.graph.nodes || [], data.graph.edges || []);
+        }
+        ws.close();
+        resolve();
+      } else if (data.type === 'error') {
+        spinner.remove();
+        ws.close();
+        reject(new Error(data.error));
+      }
+    };
+
+    ws.onerror = (e) => {
+      reject(new Error('WebSocket error'));
+    };
+
+    ws.onclose = () => {
+      // resolve in case answer was already handled
+    };
+  });
+}
+
+async function sendMessageViaHTTP(text, spinner) {
   try {
     const payload = { message: text, session_id: sessionId };
     const res = await fetch('/api/chat', {
@@ -693,7 +797,7 @@ async function sendMessage(text) {
         appendOfflineMsg();
       } else {
         const err = await res.text();
-        appendAgentMsg(`Error ${res.status}: ${err}`, []);
+        appendErrorMsg(`Error ${res.status}: ${err}`);
       }
       return;
     }
@@ -705,10 +809,9 @@ async function sendMessage(text) {
       return;
     }
 
-    // Update session id if new
     if (data.session_id) {
       sessionId = data.session_id;
-      document.getElementById('session-id').textContent = sessionId;
+      displaySessionId(sessionId);
     }
 
     appendAgentMsg(data.answer || '(no answer)', data.sources || []);
@@ -722,12 +825,8 @@ async function sendMessage(text) {
     }
 
   } catch(e) {
-    spinner.remove();
+    try { spinner.remove(); } catch(_) {}
     appendOfflineMsg();
-  } finally {
-    askBtn.disabled = false;
-    msgInput.disabled = false;
-    msgInput.focus();
   }
 }
 
@@ -754,12 +853,21 @@ msgInput.addEventListener('input', () => {
 
 // ── D3 Graph ───────────────────────────────────────────────────────────────
 const COLORS = {
+  // Original labels
   PERSON: 'steelblue',
   ORG: 'mediumpurple',
   GEO: 'seagreen',
   LAW: 'darkorange',
   TOPIC: 'crimson',
   CONCEPT: 'goldenrod',
+  // Extended labels from actual API
+  SOCIETY: 'mediumpurple',
+  SITE: 'seagreen',
+  REASON: 'darkorange',
+  EVENT: 'crimson',
+  ORGANIZATION: 'mediumpurple',
+  ENTITY: '#888',
+  Chunk: '#3a3a5c',
 };
 
 const graphCanvas = document.getElementById('graph-canvas');
@@ -810,7 +918,10 @@ const ttLabel = document.getElementById('tt-label');
 
 function getVisibleNodes() {
   if (!activeFilter) return allNodes;
-  return allNodes.filter(n => (n.label || '').toUpperCase() === activeFilter.toUpperCase());
+  return allNodes.filter(n => {
+    const lbl = ((n.properties && n.properties.label) || n.label || '').toUpperCase();
+    return lbl === activeFilter.toUpperCase();
+  });
 }
 
 function getVisibleEdges(visNodes) {
@@ -839,10 +950,15 @@ function renderGraph() {
           .attr('stroke','#444')
           .attr('stroke-width',1.5)
           .attr('marker-end','url(#arrowhead)');
+        // Background rect for edge label readability
+        g.append('rect')
+          .attr('class','edge-label-bg')
+          .attr('fill','rgba(15,17,23,0.8)')
+          .attr('rx',3).attr('ry',3);
         g.append('text')
           .attr('class','edge-label')
-          .attr('fill','#666')
-          .attr('font-size','9px')
+          .attr('fill','#999')
+          .attr('font-size','11px')
           .attr('text-anchor','middle')
           .attr('dominant-baseline','middle')
           .text(d => d.type || '');
@@ -859,16 +975,22 @@ function renderGraph() {
 
         g.append('circle')
           .attr('r', 20)
-          .attr('fill', d => COLORS[d.label] || '#666')
+          .attr('fill', d => COLORS[(d.properties && d.properties.label) || d.label] || COLORS[d.type] || '#666')
           .attr('stroke','#1c2333')
-          .attr('stroke-width', 2);
+          .attr('stroke-width', 2)
+          .style('opacity', 0)
+          .transition().duration(400)
+          .style('opacity', 1);
 
         g.append('text')
           .attr('y', 34)
           .attr('text-anchor','middle')
           .attr('font-size','10px')
           .attr('fill','#aaa')
-          .text(d => (d.name || d.id || '').substring(0,20));
+          .style('opacity', 0)
+          .text(d => ((d.properties && d.properties.name) || d.name || d.id || '').substring(0,20))
+          .transition().duration(400)
+          .style('opacity', 1);
 
         g.call(d3.drag()
           .on('start', (event, d) => {
@@ -883,8 +1005,10 @@ function renderGraph() {
         );
 
         g.on('mouseover', (event, d) => {
-          ttName.textContent = d.name || d.id;
-          ttLabel.textContent = d.label || 'Unknown';
+          const name = (d.properties && d.properties.name) || d.name || d.id;
+          const label = (d.properties && d.properties.label) || d.label || 'Unknown';
+          ttName.textContent = name;
+          ttLabel.textContent = label;
           tooltip.classList.add('visible');
         });
         g.on('mousemove', event => {
@@ -912,8 +1036,13 @@ function renderGraph() {
         const g = d3.select(this);
         const sx = d.source.x || 0, sy = d.source.y || 0;
         const tx = d.target.x || 0, ty = d.target.y || 0;
+        const mx = (sx+tx)/2, my = (sy+ty)/2;
         g.select('.edge-line').attr('x1',sx).attr('y1',sy).attr('x2',tx).attr('y2',ty);
-        g.select('.edge-label').attr('x',(sx+tx)/2).attr('y',(sy+ty)/2);
+        const lbl = g.select('.edge-label').attr('x', mx).attr('y', my);
+        const bbox = lbl.node() ? lbl.node().getBBox() : {x:mx, y:my, width:0, height:0};
+        g.select('.edge-label-bg')
+          .attr('x', bbox.x - 3).attr('y', bbox.y - 2)
+          .attr('width', bbox.width + 6).attr('height', bbox.height + 4);
       });
       nodeG.selectAll('.node-g').attr('transform', d => `translate(${d.x||0},${d.y||0})`);
     });

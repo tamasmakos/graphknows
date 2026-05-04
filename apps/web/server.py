@@ -1,9 +1,11 @@
+import asyncio
 import os
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, Response, FileResponse
+import websockets
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 AGENT_URL = os.getenv("AGENT_URL", "http://localhost:8002")
@@ -64,6 +66,39 @@ async def proxy(path: str, request: Request):
             status_code=503,
             media_type="application/json",
         )
+
+
+@app.websocket("/ws/chat/{session_id}")
+async def ws_proxy(websocket: WebSocket, session_id: str):
+    """Proxy WebSocket connections to the agent service."""
+    agent_ws_url = AGENT_URL.replace("http://", "ws://") + f"/ws/chat/{session_id}"
+    await websocket.accept()
+    try:
+        async with websockets.connect(agent_ws_url) as agent_ws:
+
+            async def forward_to_agent():
+                async for msg in websocket.iter_text():
+                    await agent_ws.send(msg)
+
+            async def forward_to_client():
+                async for msg in agent_ws:
+                    await websocket.send_text(msg)
+
+            # Run both directions concurrently; stop when either finishes
+            done, pending = await asyncio.wait(
+                [
+                    asyncio.ensure_future(forward_to_agent()),
+                    asyncio.ensure_future(forward_to_client()),
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
