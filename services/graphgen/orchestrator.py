@@ -158,6 +158,7 @@ class KnowledgePipeline:
             )
 
         logger.info(f"Pipeline run [{self.run_id}] finished successfully.")
+        return ctx.stats
 
     def _run_preflight_checks(self) -> None:
         """Check external dependencies."""
@@ -374,6 +375,11 @@ class KnowledgePipeline:
             logger.error(f"Upload failed: {e}")
             ctx.add_error("upload", str(e))
 
+    async def run_and_return_stats(self) -> dict:
+        """Run the pipeline and return collected stats rather than exiting."""
+        stats = await self.run()
+        return stats or {}
+
     def _step_save_artifacts(self, ctx: PipelineContext) -> None:
         output_dir = self.settings.infra.output_dir
         logger.info(f"Step 7: Saving artifacts to {output_dir}")
@@ -435,3 +441,85 @@ class KnowledgePipeline:
         except Exception as e:
             logger.error(f"Failed to save artifacts: {e}")
             ctx.add_error("artifacts", str(e))
+
+
+# ---------------------------------------------------------------------------
+# Module-level programmatic entry point (used by the REST API)
+# ---------------------------------------------------------------------------
+
+async def run_pipeline(
+    input_files: list,
+    config_override: dict = None,
+    output_dir: str = None,
+) -> dict:
+    """Programmatic entry point for the GraphGen pipeline.
+
+    Loads configuration from the default env/config sources, applies any
+    ``config_override`` key/value pairs, constructs the pipeline with the
+    required dependencies, runs it, and returns a stats dictionary.
+
+    Args:
+        input_files: List of file paths to process.  When non-empty these are
+            written to a temporary directory and ``settings.infra.input_dir``
+            is pointed at that directory.  Pass an empty list to use the
+            directory configured in the environment.
+        config_override: Optional flat or nested dict whose keys override
+            matching ``PipelineSettings`` fields before the pipeline starts.
+        output_dir: Optional output directory.  Overrides
+            ``settings.infra.output_dir`` when provided.
+
+    Returns:
+        A dict of pipeline stats collected across all stages (lexical,
+        extraction, enrichment, communities, pruning, upload, etc.).
+    """
+    import os
+    from pathlib import Path
+    from dotenv import load_dotenv
+    from graphgen.config.settings import PipelineSettings
+    from graphgen.utils.logging import configure_logging
+
+    # Resolve and load .env the same way main.py does
+    env_file_override = os.environ.get("GRAPHGEN_ENV_FILE")
+    if env_file_override:
+        env_file = env_file_override
+    else:
+        repo_root = Path(__file__).resolve().parents[1]
+        candidates = [repo_root / ".env", repo_root / "graphgen" / ".env"]
+        env_file = next((str(c) for c in candidates if c.exists()), str(candidates[0]))
+
+    load_dotenv(env_file)
+    configure_logging()
+
+    settings = PipelineSettings.load(env_file=env_file)
+
+    # Apply overrides
+    if output_dir:
+        settings.infra.output_dir = output_dir
+    if config_override:
+        for key, value in config_override.items():
+            # Support top-level settings attributes only
+            if hasattr(settings, key):
+                setattr(settings, key, value)
+
+    # When explicit input_files are given, point input_dir at their common parent
+    if input_files:
+        first = Path(input_files[0])
+        settings.infra.input_dir = str(first.parent if first.is_file() else first)
+
+    # Build dependencies
+    from graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
+    uploader = Neo4jGraphUploader(
+        host=settings.infra.neo4j_host,
+        port=settings.infra.neo4j_port,
+        username=settings.infra.neo4j_user,
+        password=settings.infra.neo4j_password,
+        database="neo4j",
+    )
+
+    from graphgen.pipeline.entity_relation.extractors import get_extractor
+    extractor = get_extractor(settings.model_dump())
+
+    pipeline = KnowledgePipeline(settings, uploader, extractor)
+    stats = await pipeline.run()
+    return stats or {}
+
