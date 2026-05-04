@@ -209,12 +209,13 @@ class NeoStore:
                 )
 
     def upsert_topics(self, topics: list[dict]):
-        """topics: [{id, label, summary, members: [entity_names]}]"""
+        """topics: [{id, community_id, label, summary, members: [entity_names]}]"""
         for t in topics:
             self._run(
                 """MERGE (tp:Topic {id:$id})
-                   SET tp.label=$label, tp.summary=$summary""",
-                id=t["id"], label=t["label"], summary=t["summary"]
+                   SET tp.label=$label, tp.summary=$summary, tp.community_id=$community_id""",
+                id=t["id"], label=t["label"], summary=t["summary"],
+                community_id=t.get("community_id")
             )
             for name in t.get("members", []):
                 self._run(
