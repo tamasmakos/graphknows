@@ -50,7 +50,10 @@ def get_gliner2_model(config: Optional[Dict[str, Any]] = None):
             logger.info("GLiNER2 model loaded.")
         except Exception as e:
             logger.error(f"Failed to load GLiNER2: {e}")
-            return None
+            raise RuntimeError(
+                f"GLiNER2 model could not be loaded ({type(e).__name__}: {e}). "
+                "Check RAM availability — model requires ~2 GB. No silent fallback."
+            ) from e
     return GLINER2_MODEL
 
 def get_gliner_model(config: Optional[Dict[str, Any]] = None):
@@ -110,7 +113,10 @@ def get_gliner_model(config: Optional[Dict[str, Any]] = None):
             logger.info(f"GLiNER model loaded on {device}.")
         except Exception as e:
             logger.error(f"Failed to load GLiNER: {e}")
-            return None
+            raise RuntimeError(
+                f"GLiNER model could not be loaded ({type(e).__name__}: {e}). "
+                "Check RAM availability — model requires ~1.5 GB. No silent fallback."
+            ) from e
     return GLINER_MODEL
 
 def get_spacy_model(model_name: str = "en_core_web_lg"):
@@ -180,8 +186,8 @@ async def extract_relations_with_llm_async(
         logger.warning("Extractor returned unexpected result shape; treating as empty extraction")
         return [], [], {}
     except Exception as e:
-        logger.error(f"Extraction failed: {str(e)}")
-        return [], [], {}
+        logger.error(f"Extraction failed: {str(e)}", exc_info=True)
+        raise RuntimeError(f"extract_relations_with_llm_async failed: {e}") from e
 
 
 async def _extract_entities_for_chunk(
