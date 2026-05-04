@@ -13,22 +13,20 @@ For fetch()  we look for a cached JSON file by itm_id, or run a targeted fetch.
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Allow importing from repo root
-import sys
-sys.path.insert(0, "/tmp/wt-search")
-
-import scrapers.ep_debates as _ep  # noqa: E402
+import scrapers.ep_debates as _ep
 
 from services.search.adapters.base import SourceAdapter
 from services.search.models import Document, SearchQuery, SearchResult
 
-_OUT_DIR = Path("/tmp/wt-search/data/raw/ep_debates")
+# Default output dir — override via EP_DEBATES_OUT_DIR env var for non-Docker usage
+_OUT_DIR = Path(os.environ.get("EP_DEBATES_OUT_DIR", "/data/raw/ep_debates"))
 
 
 class EPDebatesAdapter(SourceAdapter):
@@ -52,9 +50,7 @@ class EPDebatesAdapter(SourceAdapter):
         cached = self._load_cached()
         if not cached:
             # Run incremental scrape in a thread so we don't block the event loop
-            cached = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _ep.run_incremental(max_speeches=100)
-            )
+            cached = await asyncio.to_thread(_ep.run_incremental, max_speeches=100)
 
         # 2. Simple text filter
         q_lower = query.query.lower()

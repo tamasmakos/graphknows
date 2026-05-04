@@ -16,15 +16,14 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-import sys
-sys.path.insert(0, "/tmp/wt-search")
+import os
 
-import scrapers.uk_legislation as _ukleg  # noqa: E402
+import scrapers.uk_legislation as _ukleg
 
 from services.search.adapters.base import SourceAdapter
 from services.search.models import Document, SearchQuery, SearchResult
 
-_OUT_DIR = Path("/tmp/wt-search/data/raw/uk_legislation")
+_OUT_DIR = Path(os.environ.get("UK_LEGISLATION_OUT_DIR", "/data/raw/uk_legislation"))
 
 
 class UKLegislationAdapter(SourceAdapter):
@@ -40,9 +39,7 @@ class UKLegislationAdapter(SourceAdapter):
     async def search(self, query: SearchQuery) -> list[SearchResult]:
         cached = self._load_cached()
         if not cached:
-            cached = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _ukleg.run_incremental(days=2)
-            )
+            cached = await asyncio.to_thread(_ukleg.run_incremental, days=2)
 
         q_lower = query.query.lower()
         results: list[SearchResult] = []

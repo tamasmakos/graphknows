@@ -16,15 +16,14 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-import sys
-sys.path.insert(0, "/tmp/wt-search")
+import os
 
-import scrapers.eurlex as _eurlex  # noqa: E402
+import scrapers.eurlex as _eurlex
 
 from services.search.adapters.base import SourceAdapter
 from services.search.models import Document, SearchQuery, SearchResult
 
-_OUT_DIR = Path("/tmp/wt-search/data/raw/eurlex")
+_OUT_DIR = Path(os.environ.get("EURLEX_OUT_DIR", "/data/raw/eurlex"))
 
 
 class EurLexAdapter(SourceAdapter):
@@ -40,9 +39,7 @@ class EurLexAdapter(SourceAdapter):
     async def search(self, query: SearchQuery) -> list[SearchResult]:
         cached = self._load_cached()
         if not cached:
-            cached = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _eurlex.run_incremental(days=2)
-            )
+            cached = await asyncio.to_thread(_eurlex.run_incremental, days=2)
 
         q_lower = query.query.lower()
         results: list[SearchResult] = []
@@ -78,10 +75,7 @@ class EurLexAdapter(SourceAdapter):
         raw = self._find_cached(document_id)
         if raw is None:
             # Live fetch from EUR-Lex
-            raw = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: _eurlex.fetch_celex(document_id, "", "", ""),
-            )
+            raw = await asyncio.to_thread(_eurlex.fetch_celex, document_id, "", "", "")
         if raw is None:
             raise FileNotFoundError(f"eurlex document not found: {document_id}")
 
