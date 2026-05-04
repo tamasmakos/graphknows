@@ -376,7 +376,13 @@ class KnowledgePipeline:
             ctx.add_error("upload", str(e))
 
     async def run_and_return_stats(self) -> dict:
-        """Run the pipeline and return collected stats rather than exiting."""
+        """Run the pipeline and return collected stats rather than exiting.
+
+        .. deprecated::
+            Use the module-level :func:`run_pipeline` programmatic entry point
+            instead.  This method exists for backward compatibility only and
+            will be removed in a future release.
+        """
         stats = await self.run()
         return stats or {}
 
@@ -496,10 +502,18 @@ async def run_pipeline(
     if output_dir:
         settings.infra.output_dir = output_dir
     if config_override:
+        unknown_keys = []
         for key, value in config_override.items():
-            # Support top-level settings attributes only
             if hasattr(settings, key):
                 setattr(settings, key, value)
+            else:
+                unknown_keys.append(key)
+        if unknown_keys:
+            import logging
+            logging.getLogger(__name__).warning(
+                "run_pipeline: config_override contained unrecognised keys (ignored): %s",
+                unknown_keys,
+            )
 
     # When explicit input_files are given, point input_dir at their common parent
     if input_files:
