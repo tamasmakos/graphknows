@@ -245,7 +245,10 @@ async def _extract_entities_for_chunk(
             })
             model = get_gliner2_model(config)
             if not model:
-                return []
+                raise RuntimeError(
+                    "GLiNER2 model failed to load (OOM or missing weights). "
+                    "Free memory or use ner_backend='spacy'. Cannot proceed silently."
+                )
 
             threshold = extraction_config.get('gliner_threshold', 0.5)
             # GLiNER2 extract_entities() takes a plain list of label strings,
@@ -287,44 +290,49 @@ async def _extract_entities_for_chunk(
         # GLiNER Default
         try:
             model = get_gliner_model(config)
-            if model:
-                # Split sentences for better GLiNER performance on long text
-                sentences = split_sentences(text)
-                if not sentences:
-                    sentences = [text]
-                
-                # Read threshold from config (avoid hardcoding)
-                threshold = extraction_config.get('gliner_threshold', 0.5)
-                
-                # Check for empty labels to prevent GLiNER internal max() error
-                if not labels:
-                    logger.warning("No labels provided for GLiNER extraction. Skipping inference.")
-                    return []
-                
-                # Use the modern inference API (batch_predict_entities is deprecated in GLiNER >= 0.2.x)
-                predict_func = functools.partial(
-                    model.inference, 
-                    sentences, 
-                    labels, 
-                    threshold=threshold
+            if not model:
+                raise RuntimeError(
+                    "GLiNER model failed to load (OOM or missing weights). "
+                    "Free memory or use ner_backend='spacy'. Cannot proceed silently."
                 )
-                
-                predictions = await asyncio.to_thread(predict_func)
-                flat_predictions = []
-                for batch in predictions or []:
-                    if isinstance(batch, list):
-                        flat_predictions.extend(batch)
-                    elif isinstance(batch, dict):
-                        flat_predictions.append(batch)
-                return [{
-                    "text": standardize_label(item.get('text', '')),
-                    "label": standardize_label(item.get('label', '')),
-                    "ontology_label": standardize_label(item.get('label', '')),
-                    "confidence": float(item.get('score', item.get('confidence', 0.0)) or 0.0),
-                    "candidate_labels": labels,
-                    "backend": 'gliner'
-                } for item in flat_predictions]
-                
+
+            # Split sentences for better GLiNER performance on long text
+            sentences = split_sentences(text)
+            if not sentences:
+                sentences = [text]
+
+            # Read threshold from config (avoid hardcoding)
+            threshold = extraction_config.get('gliner_threshold', 0.5)
+
+            # Check for empty labels to prevent GLiNER internal max() error
+            if not labels:
+                logger.warning("No labels provided for GLiNER extraction. Skipping inference.")
+                return []
+
+            # Use the modern inference API (batch_predict_entities is deprecated in GLiNER >= 0.2.x)
+            predict_func = functools.partial(
+                model.inference,
+                sentences,
+                labels,
+                threshold=threshold,
+            )
+
+            predictions = await asyncio.to_thread(predict_func)
+            flat_predictions = []
+            for batch in predictions or []:
+                if isinstance(batch, list):
+                    flat_predictions.extend(batch)
+                elif isinstance(batch, dict):
+                    flat_predictions.append(batch)
+            return [{
+                "text": standardize_label(item.get('text', '')),
+                "label": standardize_label(item.get('label', '')),
+                "ontology_label": standardize_label(item.get('label', '')),
+                "confidence": float(item.get('score', item.get('confidence', 0.0)) or 0.0),
+                "candidate_labels": labels,
+                "backend": 'gliner',
+            } for item in flat_predictions]
+
         except Exception as e:
             logger.error(f"GLiNER extraction failed for chunk: {e}")
             return []
