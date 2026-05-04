@@ -62,7 +62,18 @@ fuse_and_rank(chunk_ids: list, k: int = 5)
   RRF fusion: takes a list of chunk_ids (can contain duplicates from multiple tools),
   reranks by reciprocal rank frequency, returns top-k with final scores.
   Use for: final ranking before synthesizing the answer.
-""".strip()
+
+get_triplets(entity: str, limit: int = 10)
+  Returns CO_OCCURS triplets for an entity: (entity_a, CO_OCCURS, entity_b, weight, via_chunks).
+  Use for: discovering direct knowledge-graph relationships after get_neighbours.
+
+get_source_document(chunk_id: str)
+  Returns full provenance for a chunk: id, doc_id, text, institution, url, date.
+  Use for: resolving attribution and verifying source metadata for a cited chunk.
+
+get_topic_entities(topic_id: str)
+  Returns all entities belonging to a Leiden topic/community cluster.
+  Use for: exploring the full membership of a thematic cluster.""".strip()
 
 SYSTEM_PROMPT = f"""You are a political intelligence analyst operating a knowledge graph of EU Parliament debates.
 You answer questions by reasoning step by step, using tools to retrieve evidence from the graph.
@@ -81,6 +92,7 @@ Rules:
 - Always cite chunk IDs and entity names in your final answer
 - Use fuse_and_rank before giving a final answer when you have multiple chunk candidates
 - If search_entities returns results, follow up with get_neighbours on the top entity
+- After get_neighbours, call get_triplets on the top entity to surface direct KG relationships
 - For global/thematic questions, always call get_community on a relevant entity
 - Maximum MAX_STEPS reasoning steps before forced final answer
 """
@@ -163,6 +175,108 @@ class GraphRAGAgent:
         ranked = sorted(scores.items(), key=lambda x: -x[1])[:k]
         return [{"chunk_id": cid, "rrf_score": round(score, 6)} for cid, score in ranked]
 
+    def get_triplets(self, entity: str, limit: int = 10) -> list[dict]:
+        """Return CO_OCCURS triplets for an entity from the Neo4j knowledge graph.
+
+        Args:
+            entity: The entity name to look up.
+            limit: Maximum number of triplets to return.
+
+        Returns:
+            List of dicts with keys entity_a, relation, entity_b, weight, via_chunks.
+        """
+        rows = self._neo_store()._run(
+            """
+            MATCH (a:Entity {name: $name})-[r:CO_OCCURS]->(b:Entity)
+            RETURN a.name AS entity_a, 'CO_OCCURS' AS relation,
+                   b.name AS entity_b, r.weight AS weight, r.via_chunks AS via_chunks
+            ORDER BY r.weight DESC
+            LIMIT $limit
+            """,
+            name=entity,
+            limit=limit,
+        )
+        return [
+            {
+                "entity_a": row["entity_a"],
+                "relation": row["relation"],
+                "entity_b": row["entity_b"],
+                "weight": row["weight"],
+                "via_chunks": row["via_chunks"] or [],
+            }
+            for row in rows
+        ]
+
+    def get_source_document(self, chunk_id: str) -> dict:
+        """Return full provenance metadata for a chunk from the Postgres store.
+
+        Args:
+            chunk_id: The chunk identifier to look up.
+
+        Returns:
+            Dict with keys id, doc_id, text, institution, url, date.
+        """
+        pg = self._pg_store()
+        try:
+            pg.conn.rollback()
+        except Exception:
+            pass
+        cur = pg.conn.cursor()
+        cur.execute("SELECT id, doc_id, text FROM chunks WHERE id = %s", (chunk_id,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return {"error": f"Chunk not found: {chunk_id}"}
+        chunk_id_val: str = row[0]
+        doc_id: str = row[1] or ""
+        text: str = row[2] or ""
+        # Infer institution/url/date from doc_id
+        if doc_id.startswith("ep_debate_"):
+            institution = "European Parliament"
+            url = "https://europarl.europa.eu/plenary/en/debates.html"
+            # Extract date portion: ep_debate_YYYY_MM_DD
+            parts = doc_id.split("_")
+            date = "-".join(parts[2:5]) if len(parts) >= 5 else ""
+        else:
+            institution = ""
+            url = ""
+            date = ""
+        return {
+            "id": chunk_id_val,
+            "doc_id": doc_id,
+            "text": text[:600],
+            "institution": institution,
+            "url": url,
+            "date": date,
+        }
+
+    def get_topic_entities(self, topic_id: str) -> list[dict]:
+        """Return all entities belonging to a Leiden topic/community cluster.
+
+        Args:
+            topic_id: The topic/community identifier (string or numeric id).
+
+        Returns:
+            List of dicts with keys name, label, community_id.
+        """
+        rows = self._neo_store()._run(
+            """
+            MATCH (t:Topic)-[:IN_COMMUNITY]-(e:Entity)
+            WHERE t.id = $tid OR t.community_id = $tid
+            RETURN e.name AS name, e.label AS label, t.id AS community_id
+            ORDER BY e.name
+            """,
+            tid=topic_id,
+        )
+        return [
+            {
+                "name": row["name"],
+                "label": row["label"] or "Entity",
+                "community_id": row["community_id"],
+            }
+            for row in rows
+        ]
+
     # ── Tool dispatch ──────────────────────────────────────────────────────
 
     def _dispatch(self, tool_name: str, args_str: str) -> Any:
@@ -197,6 +311,15 @@ class GraphRAGAgent:
             if isinstance(raw, str):
                 raw = [x.strip().strip('"\'') for x in raw.strip("[]").split(",") if x.strip()]
             return self.fuse_and_rank(raw or [], int(get_arg("k", 1, 5)))
+        elif tool_name == "get_triplets":
+            return self.get_triplets(
+                get_arg("entity", 0, ""),
+                int(get_arg("limit", 1, 10)),
+            )
+        elif tool_name == "get_source_document":
+            return self.get_source_document(get_arg("chunk_id", 0, ""))
+        elif tool_name == "get_topic_entities":
+            return self.get_topic_entities(get_arg("topic_id", 0, ""))
         else:
             return {"error": f"Unknown tool: {tool_name}"}
 

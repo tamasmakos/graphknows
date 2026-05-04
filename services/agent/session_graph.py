@@ -178,10 +178,18 @@ class SessionGraphManager:
                                 "name": cid,
                                 "properties": {"id": cid, "text": row.get("ctext", ""), "session_id": session_id},
                             }
-                            edge_key = f"{chunk_node_id}-{node_id}"
-                            existing_keys = {f"{e['source']}-{e['target']}" for e in mem["edges"]}
+                            edge_key = f"{chunk_node_id}-MENTIONS-{node_id}"
+                            existing_keys = {
+                                f"{e['source']}-{e['type']}-{e['target']}" for e in mem["edges"]
+                            }
                             if edge_key not in existing_keys:
-                                mem["edges"].append({"source": chunk_node_id, "target": node_id, "type": "MENTIONS"})
+                                mem["edges"].append({
+                                    "id": edge_key,
+                                    "source": chunk_node_id,
+                                    "target": node_id,
+                                    "type": "MENTIONS",
+                                    "properties": {},
+                                })
                             count += 1
 
         except Exception as exc:
@@ -195,10 +203,55 @@ class SessionGraphManager:
     # ------------------------------------------------------------------
 
     def add_reasoning_step(self, session_id: str, step: dict) -> None:
-        """Add a ReasoningStep node to the session graph."""
+        """Add a ReasoningStep node to the session graph.
+
+        Args:
+            session_id: The active session identifier.
+            step: Dict with keys step_num, thought, action, observation, chunk_ids.
+        """
         step_num = step.get("step_num", 0)
+
+        # Always store in in-memory fallback
+        if session_id not in self._mem_sessions:
+            self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
+        mem = self._mem_sessions[session_id]
+        rs_node_id = f"reasoning-{session_id}-{step_num}"
+        mem["nodes"][rs_node_id] = {
+            "id": rs_node_id,
+            "label": "ReasoningStep",
+            "type": "ReasoningStep",
+            "name": f"Step {step_num}",
+            "properties": {
+                "step_num": step_num,
+                "thought": step.get("thought", ""),
+                "action": step.get("action", ""),
+                "observation": step.get("observation", ""),
+                "session_id": session_id,
+            },
+        }
+        for chunk_id in step.get("chunk_ids", []):
+            chunk_node_id = f"chunk-{chunk_id}-{session_id}"
+            if chunk_node_id not in mem["nodes"]:
+                mem["nodes"][chunk_node_id] = {
+                    "id": chunk_node_id,
+                    "label": "Chunk",
+                    "type": "Chunk",
+                    "name": chunk_id,
+                    "properties": {"id": chunk_id, "session_id": session_id},
+                }
+            edge_id = f"{rs_node_id}-RETRIEVED-{chunk_node_id}"
+            if not any(e.get("id") == edge_id for e in mem["edges"]):
+                mem["edges"].append({
+                    "id": edge_id,
+                    "source": rs_node_id,
+                    "target": chunk_node_id,
+                    "type": "RETRIEVED",
+                    "properties": {},
+                })
+
         if not self._memgraph_ok:
-            return  # Skip if Memgraph unavailable
+            logger.debug("Stored reasoning step %d for session %s (in-memory only)", step_num, session_id)
+            return
         try:
             with self._mg_driver.session() as mg:
                 mg.run(
@@ -351,7 +404,13 @@ class SessionGraphManager:
                         "properties": {"name": name, "label": "Entity", "session_id": session_id},
                     }
             if not _edge_exists(nid_a, nid_b, "RELATES_TO"):
-                mem["edges"].append({"source": nid_a, "target": nid_b, "type": "RELATES_TO"})
+                mem["edges"].append({
+                    "id": f"{nid_a}-RELATES_TO-{nid_b}",
+                    "source": nid_a,
+                    "target": nid_b,
+                    "type": "RELATES_TO",
+                    "properties": {},
+                })
             logger.debug("RELATES_TO edge: %s → %s (session %s)", entity_a, entity_b, session_id)
 
             # Mirror in Memgraph if available
@@ -403,9 +462,13 @@ class SessionGraphManager:
                         "properties": {"name": entity_name, "session_id": session_id},
                     }
                 if not _edge_exists(entity_nid, topic_node_id, "IN_COMMUNITY"):
-                    mem["edges"].append(
-                        {"source": entity_nid, "target": topic_node_id, "type": "IN_COMMUNITY"}
-                    )
+                    mem["edges"].append({
+                        "id": f"{entity_nid}-IN_COMMUNITY-{topic_node_id}",
+                        "source": entity_nid,
+                        "target": topic_node_id,
+                        "type": "IN_COMMUNITY",
+                        "properties": {},
+                    })
             # Memgraph
             if self._memgraph_ok:
                 try:

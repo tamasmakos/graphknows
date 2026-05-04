@@ -593,6 +593,7 @@
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   #tooltip.visible { opacity: 1; }
+  #graph-hint { text-align: center; font-size: 10px; color: var(--text-muted); margin: 2px 0 0; opacity: 0.6; }
   #tooltip .tt-name { font-weight: 700; color: var(--text); margin-bottom: 6px; font-size: 13px; }
   #tooltip .tt-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; font-size: 11px; }
   #tooltip .tt-key { color: var(--text-muted); min-width: 64px; flex-shrink: 0; }
@@ -937,10 +938,9 @@
         <div class="legend-item" data-type="CONCEPT"><div class="legend-dot" style="background:goldenrod"></div> CONCEPT</div>
       </div>
     </div>
+    <p id="graph-hint">Drag to pin · Double-click to release · Scroll to zoom</p>
   </div>
 </div>
-
-<!-- Tooltip -->
 <div id="tooltip">
   <div class="tt-name" id="tt-name"></div>
   <div class="tt-label" id="tt-label"></div>
@@ -1764,6 +1764,8 @@ function getVisibleEdges(visNodes) {
 
 let selectedNode = null;
 
+let _tooltipTimer = null;
+
 function renderGraph() {
   const visNodes = getVisibleNodes();
   const visEdges = getVisibleEdges(visNodes);
@@ -1829,11 +1831,17 @@ function renderGraph() {
           .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
           .on('end', (event, d) => {
             if (!event.active) simulation.alphaTarget(0);
-            d.fx = null; d.fy = null;
+            // DO NOT clear fx/fy — keep node pinned where user dropped it
           })
         );
 
+        g.on('dblclick', (event, d) => {
+          d.fx = null; d.fy = null;
+          simulation.alphaTarget(0.3).restart();
+        });
+
         g.on('mouseover', (event, d) => {
+          if (_tooltipTimer) { clearTimeout(_tooltipTimer); _tooltipTimer = null; }
           // Build sources list from graph edges
           const sources = allEdges
             .filter(e => (typeof e.target === 'object' ? e.target.id : e.target) === d.id && e.type === 'MENTIONS')
@@ -1863,7 +1871,7 @@ function renderGraph() {
           tip.style.top  = (event.pageY - 10) + 'px';
         });
         g.on('mouseleave', () => {
-          setTimeout(() => document.getElementById('tooltip').classList.remove('visible'), 200);
+          _tooltipTimer = setTimeout(() => document.getElementById('tooltip').classList.remove('visible'), 800);
         });
 
         g.on('click', (event, d) => {
