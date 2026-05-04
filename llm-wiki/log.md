@@ -52,3 +52,15 @@
 
 ## [2026-05-03] update | index.md
 - Consolidated canonical index after parallel wiki population
+
+## [2026-05-04] create | concepts/product-architecture-v2.md
+- Full product architecture redesign: search service (from scrapers), agent service (from graphrag), service decomposition, session-scoped context graph, frontend viz exports, market/academic validation synthesis
+
+
+## [2026-05-04] update | concepts/product-architecture-v2.md
+- Added Memgraph as session graph layer (replaces Redis/in-memory Neo4j); full technical rationale, Docker config, Cypher schema, MAGE algorithms
+
+## [2026-05-04] update | concepts/graphrag-and-downstream.md
+- Added Memgraph session graph section: architecture, lifecycle, Cypher differences
+
+## [2026-05-04] create | kanban: t_f5f3022a infra-memgraph-docker — Memgraph in docker-compose for agent service

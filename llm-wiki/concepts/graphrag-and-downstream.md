@@ -1,9 +1,9 @@
 ---
 title: GraphRAG and Downstream Applications
 type: concept
-tags: [pipeline, graph, architecture, neo4j, pgvector]
+tags: [pipeline, graph, architecture, neo4j, pgvector, memgraph, session-graph]
 created: 2026-05-03
-updated: 2026-05-03
+updated: 2026-05-04
 confidence: medium
 ---
 
@@ -51,3 +51,30 @@ Once the pending fixes are applied and full corpus is ingested, RAGAS evaluation
 ---
 
 Links: [[graphgen-project]] [[graphgen-architecture]] [[project-roadmap]]
+
+## Session Graph Layer — Memgraph
+
+Per-session ephemeral context graphs use **Memgraph** (`memgraph/memgraph-mage` Docker image), not Redis or in-memory Neo4j.
+
+### Architecture
+- **Neo4j (bolt://172.18.0.1:7687)** — persistent shared KG for the full corpus
+- **Memgraph (bolt://172.18.0.1:7688)** — per-session in-memory overlay; sub-ms traversal latency
+
+### Why Memgraph
+- Native in-memory C++ engine: sub-millisecond multi-hop traversals
+- MAGE algorithms bundled in the Docker image: PageRank, Leiden/Louvain, Betweenness Centrality, BFS/DFS — no GDS license required
+- Bolt + openCypher compatible: same `neo4j` Python driver works for both databases; ~90% of Neo4j Cypher runs unchanged
+- Memory-bounded per container (`--memory-limit`); clean teardown via `MATCH (n) DETACH DELETE n`
+
+### Session lifecycle
+1. **Session start**: query Neo4j for relevant political subgraph → seed Memgraph via `IN_MEMORY_ANALYTICAL` mode (fast bulk load)
+2. **Session active**: switch to `IN_MEMORY_TRANSACTIONAL`; agent accumulates new entities/edges; MAGE analytics on demand
+3. **Session end**: export graph (user-triggered); optionally write confirmed inferences back to Neo4j; teardown Memgraph session data
+
+### Cypher differences (Neo4j → Memgraph)
+- Path traversal: `[*BFS]` / `[*DFS]` instead of `shortestPath()`
+- Index DDL: `CREATE INDEX ON :Label(prop)` (not `FOR (n:Label) ON (n.prop)`)
+- `!` label negation not supported — use `WHERE NOT n:Label` instead
+
+### Links
+[[product-architecture-v2]] [[administration]]
