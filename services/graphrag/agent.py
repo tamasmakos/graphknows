@@ -73,7 +73,18 @@ get_source_document(chunk_id: str)
 
 get_topic_entities(topic_id: str)
   Returns all entities belonging to a Leiden topic/community cluster.
-  Use for: exploring the full membership of a thematic cluster.""".strip()
+  Use for: exploring the full membership of a thematic cluster.
+
+wikipedia_search(query: str, sentences: int = 5)
+  Search Wikipedia for background context on a topic. Free, no API key.
+  Use when: entity/topic not found in KG, need definitional background, need historical context.
+  Output: [{title, url, summary}]
+
+web_search(query: str, max_results: int = 5)
+  Search the web via DuckDuckGo for public records, news, and official documents.
+  Free, no API key. Prioritise with 'site:europa.eu OR site:parliament.uk' suffix for EU/UK docs.
+  Use when: KG has fewer than 3 relevant results, need recent events, need source URLs for citations.
+  Output: [{title, url, body}]""".strip()
 
 SYSTEM_PROMPT = f"""You are a political intelligence analyst operating a knowledge graph of EU Parliament debates.
 You answer questions by reasoning step by step, using tools to retrieve evidence from the graph.
@@ -92,7 +103,10 @@ Rules:
 - Always cite chunk IDs and entity names in your final answer
 - Use fuse_and_rank before giving a final answer when you have multiple chunk candidates
 - If search_entities returns results, follow up with get_neighbours on the top entity
-- After get_neighbours, call get_triplets on the top entity to surface direct KG relationships
+- REQUIRED: When get_neighbours returns results, immediately call get_triplets on the
+  highest-scoring entity to surface CO_OCCURS relations from the knowledge graph.
+- REQUIRED: When the KG yields fewer than 3 relevant chunks after search_chunks and
+  get_chunks_for_entity, call web_search then wikipedia_search before answering.
 - For global/thematic questions, always call get_community on a relevant entity
 - Maximum MAX_STEPS reasoning steps before forced final answer
 """
@@ -276,6 +290,74 @@ class GraphRAGAgent:
             }
             for row in rows
         ]
+    def wikipedia_search(self, query: str, sentences: int = 5) -> list[dict]:
+        """Search Wikipedia for background context on a topic.
+
+        Free tool — no API key required. Uses the wikipedia-api package.
+        Returns article summaries to supplement KG knowledge.
+
+        Args:
+            query: Search query string.
+            sentences: Number of summary sentences to return per article.
+
+        Returns:
+            List of {title, url, summary} dicts (up to 3 results).
+        """
+        try:
+            import wikipediaapi  # type: ignore[import]
+            wiki = wikipediaapi.Wikipedia(
+                language="en",
+                user_agent="graphknows-agent/1.0 (political-intelligence-research)",
+            )
+            page = wiki.page(query)
+            if page.exists():
+                summary = " ".join(page.summary.split(".")[:sentences]) + "."
+                return [{"title": page.title, "url": page.fullurl, "summary": summary}]
+            # Try search if exact page not found
+            import wikipedia  # type: ignore[import]
+            results = wikipedia.search(query, results=3)
+            out = []
+            for title in results[:3]:
+                try:
+                    p = wiki.page(title)
+                    if p.exists():
+                        s = " ".join(p.summary.split(".")[:sentences]) + "."
+                        out.append({"title": p.title, "url": p.fullurl, "summary": s})
+                except Exception:
+                    continue
+            return out
+        except Exception as exc:
+            log.warning("wikipedia_search failed for %r: %s", query, exc)
+            return [{"error": str(exc)}]
+
+    def web_search(self, query: str, max_results: int = 5) -> list[dict]:
+        """Search the web via DuckDuckGo for public records and news.
+
+        Free tool — no API key required. Uses the duckduckgo-search package.
+        Prioritises .europa.eu, .parliament.uk, .un.org, .gov domains.
+
+        Args:
+            query: Search query string. Append 'site:europa.eu OR site:parliament.uk'
+                   for EU/UK public record focus.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            List of {title, url, body} dicts.
+        """
+        try:
+            from duckduckgo_search import DDGS  # type: ignore[import]
+            results = []
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=max_results):
+                    results.append({
+                        "title": r.get("title", ""),
+                        "url": r.get("href", ""),
+                        "body": r.get("body", "")[:400],
+                    })
+            return results
+        except Exception as exc:
+            log.warning("web_search failed for %r: %s", query, exc)
+            return [{"error": str(exc)}]
 
     # ── Tool dispatch ──────────────────────────────────────────────────────
 
@@ -320,6 +402,16 @@ class GraphRAGAgent:
             return self.get_source_document(get_arg("chunk_id", 0, ""))
         elif tool_name == "get_topic_entities":
             return self.get_topic_entities(get_arg("topic_id", 0, ""))
+        elif tool_name == "wikipedia_search":
+            return self.wikipedia_search(
+                get_arg("query", 0, ""),
+                int(get_arg("sentences", 1, 5)),
+            )
+        elif tool_name == "web_search":
+            return self.web_search(
+                get_arg("query", 0, ""),
+                int(get_arg("max_results", 1, 5)),
+            )
         else:
             return {"error": f"Unknown tool: {tool_name}"}
 
