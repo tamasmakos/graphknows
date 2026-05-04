@@ -223,6 +223,24 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
             if entity_name and isinstance(entity_name, str):
                 entities.append({"name": entity_name, "label": "Entity"})
 
+    # Pull entities from reasoning_steps observations (main source of truth)
+    for step in graphrag_response.get("reasoning_steps", []):
+        obs = step.get("observation", [])
+        if isinstance(obs, list):
+            for item in obs:
+                if isinstance(item, dict) and item.get("name"):
+                    entities.append({
+                        "name": item["name"],
+                        "label": item.get("label", "Entity"),
+                    })
+        # Also mine entity names from answer text — extract [BRACKETED] names
+    import re
+    answer_text = graphrag_response.get("answer", "")
+    for match in re.findall(r'\[([A-Z][A-Z0-9_\s]+)\]', answer_text):
+        clean = match.strip()
+        if 2 < len(clean) < 60 and not clean.startswith("chunk"):
+            entities.append({"name": clean, "label": "Entity"})
+
     if not entities:
         log.debug("No entities to upsert for session %s", session_id)
         return
