@@ -139,7 +139,7 @@ def upload_pgvector(chunks: list[dict], dsn: str) -> int:
 def main():
     cfg = load_config()
 
-    chunks_file = ROOT / "output_political_smoke" / "lkif_chunks.json"
+    chunks_file = ROOT / "output" / "lkif_chunks.json"
     log.info("Loading extracted chunks from %s", chunks_file)
     with open(chunks_file) as f:
         raw = json.load(f)
@@ -163,7 +163,7 @@ def main():
     print("\n" + "="*65)
     print("INGESTION COMPLETE")
     print("="*65)
-    print(f"  Source file:      output_political_smoke/lkif_chunks.json")
+    print(f"  Source file:      output/lkif_chunks.json")
     print(f"  Corpus:           EP 'This is Europe' debates (LKIF extraction)")
     print(f"  Chunks uploaded:  {len(chunks)}")
     print(f"  Entities:         {total_ents}  ({len(unique_labels)} unique LKIF labels)")

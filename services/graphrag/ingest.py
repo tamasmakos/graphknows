@@ -237,7 +237,7 @@ if __name__ == "__main__":
     from graph_store import load_env
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--chunks", default=str(ROOT / "output_political_smoke" / "lkif_chunks.json"))
+    parser.add_argument("--chunks", default=str(ROOT / "output" / "lkif_chunks.json"))
     parser.add_argument("--no-summarize", action="store_true")
     args = parser.parse_args()
 

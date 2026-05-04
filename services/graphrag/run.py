@@ -155,7 +155,7 @@ def main():
 
     # ingest
     p_ingest = sub.add_parser("ingest", help="Ingest LKIF chunks into Neo4j + pgvector")
-    p_ingest.add_argument("--chunks", default=str(ROOT / "output_political_smoke" / "lkif_chunks.json"))
+    p_ingest.add_argument("--chunks", default=str(ROOT / "output" / "lkif_chunks.json"))
     p_ingest.add_argument("--no-summarize", action="store_true", help="Skip LLM community summaries")
 
     # query
