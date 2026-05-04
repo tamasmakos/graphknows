@@ -53,7 +53,7 @@ _KNOWN_ENV_KEYS = {
 
 def _load_config() -> dict[str, Any]:
     cfg: dict[str, Any] = {
-        "graphrag_url": os.environ.get("GRAPHRAG_URL", "http://graphrag:8001"),
+        "graphrag_url": os.environ.get("GRAPHRAG_URL", "http://localhost:8001"),
         "memgraph_uri": os.environ.get("MEMGRAPH_URI", "bolt://172.17.0.1:17687"),
         "neo4j_uri": os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
         "neo4j_user": os.environ.get("NEO4J_USER", "neo4j"),
