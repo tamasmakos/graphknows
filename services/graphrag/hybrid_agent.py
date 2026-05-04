@@ -43,11 +43,11 @@ def _load_env() -> dict:
         "neo4j_password": env.get("NEO4J_PASSWORD", ""),
         "neo4j_database": env.get("NEO4J_DATABASE", "neo4j"),
         "pgvector_dsn": (
-            f"postgresql://{env.get('PGVECTOR_USER','postgres')}"
-                 f":{env.get('PGVECTOR_PASSWORD','pgvectorpass123')}"
-            f"@{env.get('PGVECTOR_HOST','172.18.0.1')}"
-            f":{env.get('PGVECTOR_PORT',5432)}"
-            f"/{env.get('PGVECTOR_DB','vectordb')}"
+            f"postgresql://{env.get('PGVECTOR_USER', 'postgres')}"
+            f":{env.get('PGVECTOR_PASSWORD', '')}"
+            f"@{env.get('PGVECTOR_HOST', '172.18.0.1')}"
+            f":{env.get('PGVECTOR_PORT', 5432)}"
+            f"/{env.get('PGVECTOR_DB', 'vectordb')}"
         ),
         "groq_api_key":  env.get("GROQ_API_KEY", ""),
     }
