@@ -163,6 +163,8 @@ class ChatResponse(BaseModel):
     answer: str
     session_id: str
     graph: GraphResponse
+    reasoning_steps: list = []
+    sources: list = []
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +298,13 @@ async def chat(req: ChatRequest) -> ChatResponse:
     subgraph: dict = await asyncio.to_thread(_sgm.get_session_graph, session_id)
 
     answer: str = graphrag_resp.get("answer", "")
+    reasoning_steps: list = graphrag_resp.get("reasoning_steps", [])
+
+    # Build sources from citations / chunk references in graphrag response
+    sources: list = []
+    for citation in graphrag_resp.get("citations", []):
+        if isinstance(citation, dict) and citation.get("text"):
+            sources.append({"id": citation.get("id", ""), "text": citation["text"]})
 
     return ChatResponse(
         answer=answer,
@@ -304,6 +313,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
             nodes=subgraph.get("nodes", []),
             edges=subgraph.get("edges", []),
         ),
+        reasoning_steps=reasoning_steps,
+        sources=sources,
     )
 
 
