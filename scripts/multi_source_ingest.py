@@ -69,6 +69,8 @@ def _build_base_source_adapters() -> list:
     from services.search.adapters.ecb_publications import ECBPublicationsSource
     from services.search.adapters.ep_resolutions import EPResolutionsSource
     from services.search.adapters.eprs_briefings import EPRSBriefingsSource
+    from services.search.adapters.wikipedia_eu import WikipediaEUSource
+    from services.search.adapters.cellar_sparql import CellarSPARQLSource
 
     return [
         CouncilConclusionsSource(rate_limit_rps=0.5, timeout=60),
@@ -77,6 +79,9 @@ def _build_base_source_adapters() -> list:
         ECBPublicationsSource(rate_limit_rps=0.5, timeout=60),
         EPResolutionsSource(rate_limit_rps=0.5, timeout=45),
         EPRSBriefingsSource(rate_limit_rps=0.5, timeout=45),
+        WikipediaEUSource(rate_limit_rps=1.0, timeout=30),
+        CellarSPARQLSource(doc_type="press_release", rate_limit_rps=0.5, timeout=30),
+        CellarSPARQLSource(doc_type="regulation", rate_limit_rps=0.5, timeout=30),
     ]
 
 
