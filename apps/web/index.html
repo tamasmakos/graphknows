@@ -930,12 +930,17 @@
       </div>
       <!-- svg inserted by D3 -->
       <div id="legend">
-        <div class="legend-item" data-type="PERSON"><div class="legend-dot" style="background:steelblue"></div> PERSON</div>
-        <div class="legend-item" data-type="ORG"><div class="legend-dot" style="background:mediumpurple"></div> ORG</div>
-        <div class="legend-item" data-type="GEO"><div class="legend-dot" style="background:seagreen"></div> GEO</div>
-        <div class="legend-item" data-type="LAW"><div class="legend-dot" style="background:darkorange"></div> LAW</div>
-        <div class="legend-item" data-type="TOPIC"><div class="legend-dot" style="background:crimson"></div> TOPIC</div>
-        <div class="legend-item" data-type="CONCEPT"><div class="legend-dot" style="background:goldenrod"></div> CONCEPT</div>
+        <div class="legend-item" data-type="Chunk"><div class="legend-dot" style="background:#3a3a5c"></div> Chunk</div>
+        <div class="legend-item" data-type="Topic"><div class="legend-dot" style="background:crimson"></div> Topic</div>
+        <div class="legend-item" data-type="Document"><div class="legend-dot" style="background:#2a4a7f"></div> Document</div>
+        <div class="legend-item" data-type="PERSON"><div class="legend-dot" style="background:steelblue"></div> Person</div>
+        <div class="legend-item" data-type="ORGANIZATION"><div class="legend-dot" style="background:mediumpurple"></div> Organisation</div>
+        <div class="legend-item" data-type="GEO"><div class="legend-dot" style="background:seagreen"></div> Geography</div>
+        <div class="legend-item" data-type="LEGAL_DOCTRINE"><div class="legend-dot" style="background:darkorange"></div> Law / Doctrine</div>
+        <div class="legend-item" data-type="PLAN"><div class="legend-dot" style="background:#d4a017"></div> Plan / Policy</div>
+        <div class="legend-item" data-type="PROBLEM"><div class="legend-dot" style="background:#e05252"></div> Problem</div>
+        <div class="legend-item" data-type="CHANGE_EVENT"><div class="legend-dot" style="background:#20b2aa"></div> Event</div>
+        <div class="legend-item" data-type="CONCEPT"><div class="legend-dot" style="background:goldenrod"></div> Concept</div>
       </div>
     </div>
     <p id="graph-hint">Drag to pin · Double-click to release · Scroll to zoom</p>
@@ -1625,12 +1630,40 @@ function nodeColor(d) {
 
 // ── D3 Graph ── (COLORS, canvas, svg setup)
 const COLORS = {
+  // Canonical types (LKIF/GLiNER2 ontology)
   PERSON: 'steelblue',
-  ORG: 'mediumpurple',
+  ORGANIZATION: 'mediumpurple',
+  FORMAL_ORGANIZATION: 'mediumpurple',
+  ORGANIZATIONALUNIT: '#9b72cf',
   GEO: 'seagreen',
+  LOCATION: 'seagreen',
+  PLACE: 'seagreen',
   LAW: 'darkorange',
+  LEGAL_DOCTRINE: 'darkorange',
+  TREATY: '#e08c1a',
+  LEGISLATION: '#e08c1a',
   TOPIC: 'crimson',
+  Topic: 'crimson',
   CONCEPT: 'goldenrod',
+  PLAN: '#d4a017',
+  PROPOSITION: '#c8a400',
+  ENDEAVOUR: '#b8860b',
+  PROBLEM: '#e05252',
+  CHANGE_EVENT: '#20b2aa',
+  MOMENT: '#708090',
+  TERMINATION: '#cd5c5c',
+  LIBERTY_RIGHT: '#5f9ea0',
+  PLC: '#6495ed',
+  PHYSICAL_OBJECT: '#8fbc8f',
+  MENTAL_ENTITY: '#9370db',
+  ACTION: '#ff8c69',
+  // Node kinds
+  Chunk: '#3a3a5c',
+  Document: '#2a4a7f',
+  CO_OCCURS: '#555',
+  // Legacy aliases
+  ORG: 'mediumpurple',
+  PERSON_ALIAS: 'steelblue',
   // Extended labels from actual API
   SOCIETY: 'mediumpurple',
   SITE: 'seagreen',
@@ -1776,10 +1809,19 @@ function renderGraph() {
     .join(
       enter => {
         const g = enter.append('g').attr('class','link-g');
+        const edgeColor = (d) => ({
+          MENTIONS: '#3a5a8a',
+          CO_OCCURS: '#5a7a3a',
+          RELATES_TO: '#7a5a3a',
+          IN_COMMUNITY: '#8a3a5a',
+          DISCUSSES: '#4a6a7a',
+        }[d.type] || '#444');
         g.append('line')
           .attr('class','edge-line')
-          .attr('stroke','#444')
-          .attr('stroke-width',1.5)
+          .attr('stroke', d => edgeColor(d))
+          .attr('stroke-width', d => d.type === 'CO_OCCURS' ? 1 : d.type === 'IN_COMMUNITY' ? 1.5 : 1.5)
+          .attr('stroke-dasharray', d => d.type === 'CO_OCCURS' ? '4,3' : d.type === 'IN_COMMUNITY' ? '2,2' : null)
+          .attr('opacity', d => d.type === 'CO_OCCURS' ? 0.6 : 0.85)
           .attr('marker-end','url(#arrowhead)');
         // Background rect for edge label readability
         g.append('rect')
@@ -1913,7 +1955,10 @@ function renderGraph() {
 
 function highlightConnected() {
   if (!selectedNode) {
-    linkG.selectAll('.edge-line').attr('stroke','#444').attr('stroke-width',1.5).attr('opacity',1);
+    linkG.selectAll('.edge-line')
+      .attr('stroke', d => ({MENTIONS:'#3a5a8a',CO_OCCURS:'#5a7a3a',RELATES_TO:'#7a5a3a',IN_COMMUNITY:'#8a3a5a',DISCUSSES:'#4a6a7a'}[d.type]||'#444'))
+      .attr('stroke-width', d => d.type === 'CO_OCCURS' ? 1 : 1.5)
+      .attr('opacity', d => d.type === 'CO_OCCURS' ? 0.6 : 0.85);
     nodeG.selectAll('circle').attr('opacity',1);
     return;
   }
