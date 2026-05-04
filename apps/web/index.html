@@ -179,10 +179,22 @@
   }
   .spinner span:nth-child(2) { animation-delay: 0.2s; }
   .spinner span:nth-child(3) { animation-delay: 0.4s; }
+  .spinner-time {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--text-muted);
+    align-self: center;
+    margin-left: 4px;
+  }
   @keyframes bounce {
     0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
     40% { transform: scale(1); opacity: 1; }
   }
+  @keyframes nodeGlow {
+    0% { filter: drop-shadow(0 0 8px #58a6ff); }
+    100% { filter: drop-shadow(0 0 0px transparent); }
+  }
+  .node-new { animation: nodeGlow 1.5s ease-out forwards; }
 
   /* Input */
   #input-row {
@@ -718,6 +730,30 @@ async function sendMessage(text) {
     }
 
     if (data.graph) {
+      // Also extract chunk nodes as sources if no server-side sources
+      let sources = data.sources || [];
+      if (sources.length === 0 && data.graph.nodes) {
+        sources = data.graph.nodes
+          .filter(n => (n.label === 'Chunk' || n.type === 'Chunk') && n.properties && n.properties.text)
+          .map(n => ({ id: n.properties.id || n.id, text: n.properties.text }));
+      }
+      if (sources.length > 0) {
+        // Retroactively update the last agent message's footer with chips
+        const lastMsg = chatArea.querySelector('.msg-agent:last-child');
+        const footer = lastMsg && lastMsg.querySelector('.answer-footer');
+        if (footer) {
+          // Remove existing chips (regenerate)
+          footer.querySelectorAll('.chip').forEach(c => c.remove());
+          sources.forEach((src, i) => {
+            const chip = document.createElement('span');
+            chip.className = 'chip';
+            chip.textContent = `[${i+1}]`;
+            chip.title = 'Click to view source';
+            chip.addEventListener('click', () => openModal(`Source ${i+1}`, src.text || src));
+            footer.insertBefore(chip, footer.firstChild);
+          });
+        }
+      }
       mergeGraph(data.graph.nodes || [], data.graph.edges || []);
     }
 
@@ -792,10 +828,10 @@ let allEdges = [];
 let activeFilter = '';
 
 const simulation = d3.forceSimulation()
-  .force('link', d3.forceLink().id(d => d.id).distance(120))
-  .force('charge', d3.forceManyBody().strength(-350))
+  .force('link', d3.forceLink().id(d => d.id).distance(160))
+  .force('charge', d3.forceManyBody().strength(-500))
   .force('center', d3.forceCenter())
-  .force('collision', d3.forceCollide(35));
+  .force('collision', d3.forceCollide(45));
 
 function updateCenter() {
   simulation.force('center', d3.forceCenter(WIDTH()/2, HEIGHT()/2));
@@ -954,10 +990,12 @@ function highlightConnected() {
 
 function mergeGraph(newNodes, newEdges) {
   const existingIds = new Set(allNodes.map(n => n.id));
+  const freshIds = new Set();
   newNodes.forEach(n => {
     if (!existingIds.has(n.id)) {
       allNodes.push(n);
       existingIds.add(n.id);
+      freshIds.add(n.id);
     }
   });
 
@@ -975,6 +1013,33 @@ function mergeGraph(newNodes, newEdges) {
   });
 
   renderGraph();
+
+  // Glow newly added nodes
+  if (freshIds.size > 0) {
+    setTimeout(() => {
+      nodeG.selectAll('.node-g').each(function(d) {
+        if (freshIds.has(d.id)) {
+          const el = d3.select(this);
+          el.classed('node-new', true);
+          setTimeout(() => el.classed('node-new', false), 1600);
+        }
+      });
+    }, 50);
+  }
+}
+
+function resetAll() {
+  // Clear chat history
+  chatArea.innerHTML = '';
+  // Reset trace
+  traceBody.innerHTML = '<div class="trace-step" style="color:var(--text-muted);font-style:italic;font-size:12px;">No reasoning steps yet.</div>';
+  // Clear graph
+  allNodes = [];
+  allEdges = [];
+  selectedNode = null;
+  nodeG.selectAll('*').remove();
+  linkG.selectAll('*').remove();
+  document.getElementById('empty-state').style.display = 'flex';
 }
 
 function resetGraph() {
@@ -993,7 +1058,7 @@ document.getElementById('filter-select').addEventListener('change', e => {
 });
 
 // Toolbar buttons
-document.getElementById('btn-reset').addEventListener('click', resetGraph);
+document.getElementById('btn-reset').addEventListener('click', resetAll);
 
 document.getElementById('btn-share').addEventListener('click', () => {
   const url = window.location.origin + window.location.pathname + '?session=' + sessionId;
