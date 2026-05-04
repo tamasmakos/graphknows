@@ -1744,8 +1744,6 @@ function applyLayout(mode) {
 document.querySelectorAll('.layout-btn').forEach(btn => {
   btn.addEventListener('click', () => applyLayout(btn.dataset.layout));
 });
-const ttName = document.getElementById('tt-name');
-const ttLabel = document.getElementById('tt-label');
 
 function getVisibleNodes() {
   if (!activeFilter) return allNodes;
@@ -2045,6 +2043,22 @@ if (params.get('session')) {
 }
 
 document.getElementById('btn-new-session').addEventListener('click', newSession);
+
+// ── Legend filter ────────────────────────────────────────────────────
+let filteredTypes = new Set();
+document.querySelectorAll('#legend .legend-item[data-type]').forEach(item => {
+  item.style.cursor = 'pointer';
+  item.addEventListener('click', () => {
+    const t = item.dataset.type;
+    item.classList.toggle('filtered');
+    if (filteredTypes.has(t)) filteredTypes.delete(t); else filteredTypes.add(t);
+    // Show/hide nodes by opacity
+    nodeG.selectAll('.node-g').style('opacity', d => {
+      const nodeType = (d.properties && d.properties.label) || d.type || d.label || '';
+      return filteredTypes.size === 0 || filteredTypes.has(nodeType) ? 1 : 0.1;
+    });
+  });
+});
 
 // Initial focus
 msgInput.focus();
