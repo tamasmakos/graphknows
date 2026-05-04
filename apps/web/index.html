@@ -261,6 +261,13 @@
   .inline-trace > summary::-webkit-details-marker { display: none; }
   .inline-trace > summary:hover { color: #bbb; background: #1e1e35; }
   .inline-trace-steps { padding: 4px 0; max-height: 400px; overflow-y: auto; }
+  @keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .trace-placeholder { color: #555; font-style: italic; font-size: 11px; padding: 8px 10px; }
+  .trace-spinner { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .inline-trace-steps::-webkit-scrollbar { width: 4px; }
   .inline-trace-steps::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   .inline-step { padding: 5px 10px; border-bottom: 1px solid #1e1e2e; }
@@ -1391,6 +1398,41 @@ function appendSpinner() {
   return div;
 }
 
+function buildStepCard(s) {
+  // Normalise WS step data (step_num, action) vs HTTP step data (step, tool_name)
+  const toolName = s.tool_name || (s.action ? s.action.replace(/\(.*/, '') : 'step');
+  const icon = toolIcon(toolName);
+  const actionStr = (s.action || '').replace(/^\w+\(/, '(');
+
+  const stepDiv = document.createElement('div');
+  stepDiv.className = 'inline-step';
+
+  const header = document.createElement('div');
+  header.className = 'inline-step-header';
+  header.innerHTML = `
+    <span class="inline-step-icon">${icon}</span>
+    <span class="inline-step-tool">${escHtml(toolName)}</span>
+    ${actionStr ? `<span class="inline-step-input"><code>${escHtml(actionStr)}</code></span>` : ''}
+  `;
+  stepDiv.appendChild(header);
+
+  if (s.thought) {
+    const thought = document.createElement('div');
+    thought.className = 'inline-step-thought';
+    thought.textContent = s.thought;
+    stepDiv.appendChild(thought);
+  }
+
+  if (s.observation != null) {
+    const obsDiv = document.createElement('div');
+    obsDiv.className = 'inline-step-body';
+    obsDiv.innerHTML = renderObservation(s.observation_type || 'unknown', s.observation);
+    stepDiv.appendChild(obsDiv);
+  }
+
+  return stepDiv;
+}
+
 function buildInlineTrace(steps) {
   if (!steps || steps.length === 0) return null;
   const details = document.createElement('details');
@@ -1403,40 +1445,8 @@ function buildInlineTrace(steps) {
   const stepsDiv = document.createElement('div');
   stepsDiv.className = 'inline-trace-steps';
 
-  steps.forEach((s, idx) => {
-    const icon = toolIcon(s.tool_name);
-    // Extract args from action string, stripping function name prefix
-    const actionStr = s.action || '';
-    const argStr = actionStr.replace(/^\w+\(/, '(');
-
-    const stepDiv = document.createElement('div');
-    stepDiv.className = 'inline-step';
-
-    const header = document.createElement('div');
-    header.className = 'inline-step-header';
-    header.innerHTML = `
-      <span class="inline-step-icon">${icon}</span>
-      <span class="inline-step-tool">${escHtml(s.tool_name || 'step')}</span>
-      ${argStr ? `<span class="inline-step-input"><code>${escHtml(argStr)}</code></span>` : ''}
-    `;
-
-    stepDiv.appendChild(header);
-
-    if (s.thought) {
-      const thought = document.createElement('div');
-      thought.className = 'inline-step-thought';
-      thought.textContent = s.thought;
-      stepDiv.appendChild(thought);
-    }
-
-    if (s.observation != null) {
-      const obsDiv = document.createElement('div');
-      obsDiv.className = 'inline-step-body';
-      obsDiv.innerHTML = renderObservation(s.observation_type, s.observation);
-      stepDiv.appendChild(obsDiv);
-    }
-
-    stepsDiv.appendChild(stepDiv);
+  steps.forEach((s) => {
+    stepsDiv.appendChild(buildStepCard(s));
   });
 
   details.appendChild(stepsDiv);
@@ -1537,15 +1547,57 @@ async function sendMessage(text) {
 }
 
 async function sendMessageViaWebSocket(wsUrl, text, spinner) {
+  // 1. Immediately insert assistant bubble with open accordion + live timer
+  const card = document.createElement('div');
+  card.className = 'msg-agent';
+
+  const details = document.createElement('details');
+  details.className = 'inline-trace';
+  details.open = true;
+
+  const summary = document.createElement('summary');
+  summary.textContent = '🔍 Thinking... ⏱ 0s';
+  details.appendChild(summary);
+
+  const stepsDiv = document.createElement('div');
+  stepsDiv.className = 'inline-trace-steps';
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'trace-placeholder';
+  placeholder.innerHTML = '<span class="trace-spinner">⟳</span> Waiting for agent...';
+  stepsDiv.appendChild(placeholder);
+
+  details.appendChild(stepsDiv);
+  card.appendChild(details);
+
+  const answerBody = document.createElement('div');
+  answerBody.className = 'answer-body';
+  card.appendChild(answerBody);
+
+  const footer = document.createElement('div');
+  footer.className = 'answer-footer';
+  card.appendChild(footer);
+
+  chatArea.appendChild(card);
+  chatArea.scrollTop = chatArea.scrollHeight;
+
+  // 2. Live timer
+  const startTime = Date.now();
+  let stepCount = 0;
+  const timerInterval = setInterval(() => {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    summary.textContent = `🔍 ${stepCount} step${stepCount !== 1 ? 's' : ''} · ⏱ ${elapsed}s`;
+  }, 500);
+
   return new Promise((resolve, reject) => {
     let ws;
     try {
       ws = new WebSocket(wsUrl);
     } catch(e) {
+      clearInterval(timerInterval);
+      card.remove();
       return reject(e);
     }
-
-    const collectedSteps = [];
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ message: text, session_id: sessionId }));
@@ -1556,11 +1608,13 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       try { data = JSON.parse(e.data); } catch(_) { return; }
 
       if (data.type === 'status') {
-        // thinking — spinner already shown
+        // spinner already shown via accordion
 
       } else if (data.type === 'step') {
-        // Collect step for inline trace in the final message
-        collectedSteps.push({
+        // Remove placeholder on first real step
+        if (placeholder.parentNode) stepsDiv.removeChild(placeholder);
+        stepCount++;
+        const stepCard = buildStepCard({
           step: data.step_num,
           thought: data.thought || '',
           action: data.action || '',
@@ -1568,13 +1622,50 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
           observation_type: data.observation_type || 'unknown',
           observation: data.observation || null,
         });
+        stepCard.style.animation = 'fadeInDown 0.2s ease';
+        stepsDiv.appendChild(stepCard);
+        stepsDiv.scrollTop = stepsDiv.scrollHeight;
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+        summary.textContent = `🔍 ${stepCount} step${stepCount !== 1 ? 's' : ''} · ⏱ ${elapsed}s`;
+
       } else if (data.type === 'answer') {
+        clearInterval(timerInterval);
         spinner.remove();
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        summary.textContent = `🔍 ${stepCount} step${stepCount !== 1 ? 's' : ''} · ${elapsed}s`;
+
         if (data.session_id) {
           sessionId = data.session_id;
           displaySessionId(sessionId);
         }
-        appendAgentMsg(data.answer || '(no answer)', data.sources || [], collectedSteps);
+
+        const answer = data.answer || '(no answer)';
+        answerBody.textContent = answer;
+
+        const sources = data.sources || [];
+        if (sources.length > 0) {
+          sources.forEach((src, i) => {
+            const chip = document.createElement('span');
+            chip.className = 'chip';
+            chip.textContent = `[${i+1}]`;
+            chip.title = 'Click to view source';
+            chip.addEventListener('click', () => openModal(`Source ${i+1}`, src.text || src));
+            footer.appendChild(chip);
+          });
+        }
+
+        const expBtn = document.createElement('button');
+        expBtn.className = 'btn-export-msg';
+        expBtn.textContent = '⬇ Export';
+        expBtn.addEventListener('click', () => {
+          const blob = new Blob([answer], {type:'text/plain'});
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'graphknows-answer.txt';
+          a.click();
+        });
+        footer.appendChild(expBtn);
+
         if (data.graph) {
           mergeGraph(data.graph.nodes || [], data.graph.edges || []);
         }
@@ -1583,7 +1674,9 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         renderSessionList();
         ws.close();
         resolve();
+
       } else if (data.type === 'error') {
+        clearInterval(timerInterval);
         spinner.remove();
         ws.close();
         reject(new Error(data.error));
@@ -1591,6 +1684,8 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
     };
 
     ws.onerror = (e) => {
+      clearInterval(timerInterval);
+      card.remove();
       reject(new Error('WebSocket error'));
     };
 
