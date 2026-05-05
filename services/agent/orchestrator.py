@@ -106,7 +106,9 @@ class IterativeOrchestrator:
 
             # Done
             if tool_name == "answer":
-                yield StreamEvent(event="answer", data={"text": params.get("text", ""), "steps": step_id})
+                # LLM may use "text", "answer", or "content" as the key.
+                text = params.get("text") or params.get("answer") or params.get("content") or ""
+                yield StreamEvent(event="answer", data={"text": text, "steps": step_id})
                 return
 
             # Emit step_start
