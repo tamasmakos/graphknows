@@ -13,16 +13,28 @@ from graphknows.shared.models.session import StreamEvent, ReasoningStep
 
 log = logging.getLogger("agent.orchestrator")
 
-SYSTEM_PROMPT = """You are a political intelligence assistant with access to a knowledge graph
+_SYSTEM_PROMPT_TEMPLATE = """You are a political intelligence assistant with access to a knowledge graph
 of European Parliament debates, legislation, and regulatory documents.
 
-You have tools to retrieve information. Think step by step. Use tools to gather evidence
-before synthesising an answer. Always cite your sources.
+You have the following tools available. Use ONLY these tool names exactly as listed:
+
+{tool_list}
+
+CRITICAL — use EXACTLY these parameter field names (copy-paste from the Params spec above):
+- retrieve: {{"query": "...", "k": 10}}
+- get_chunks: {{"entity_id": "ENTITY_NAME", "top_k": 5}}   <- entity name in UPPER_SNAKE_CASE from retrieve results
+- get_community: {{"entity_id": "ENTITY_NAME"}}              <- same entity name format
+- get_path: {{"entity_a": "ENTITY_A", "entity_b": "ENTITY_B"}}  <- not entity1/entity2
+- build: {{"input_files": []}}
+- search: {{"query": "..."}}
+
+Think step by step. Use tools to gather evidence before synthesising an answer.
+Always cite your sources.
 
 Respond ONLY with valid JSON in this format:
-{"thought": "...", "tool": "<tool_name>", "params": {...}}
+{{"thought": "...", "tool": "<tool_name>", "params": {{...}}}}
 OR when done:
-{"thought": "...", "tool": "answer", "params": {"text": "..."}}
+{{"thought": "...", "tool": "answer", "params": {{"text": "..."}}}}
 """
 
 
@@ -57,8 +69,12 @@ class IterativeOrchestrator:
         Yields:
             StreamEvent frames: step_start, step_result, answer, or error.
         """
+        tool_list = "\n".join(
+            f"- {name}: {tool.description}" for name, tool in self._tools.items()
+        )
+        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(tool_list=tool_list)
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": query},
         ]
         step_id = 0

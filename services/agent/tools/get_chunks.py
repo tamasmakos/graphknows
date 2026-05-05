@@ -12,13 +12,22 @@ class GetChunksTool(BaseTool):
         description: Tool description for LLM.
     """
     name = "get_chunks"
-    description = "Get source document chunks that mention a specific entity."
+    description = (
+        'Get source document chunks that mention a specific entity. '
+        'Params: {"entity_id": "<entity name from retrieve results, e.g. ENERGY_PRICES>", "top_k": <int, default 5>}'
+    )
 
     def __init__(self, graphrag_url: str, client: httpx.AsyncClient) -> None:
         self._base = graphrag_url
         self._client = client
 
     async def run(self, params: dict) -> dict:
-        resp = await self._client.post(f"{self._base}/chunks", json=params)
+        # Accept both entity_id and entity (LLM sometimes uses wrong field name)
+        entity_id = params.get("entity_id") or params.get("entity", "")
+        top_k = params.get("top_k", 5)
+        resp = await self._client.post(
+            f"{self._base}/chunks",
+            json={"entity_id": entity_id, "top_k": top_k},
+        )
         resp.raise_for_status()
         return resp.json()

@@ -12,7 +12,10 @@ class RetrieveTool(BaseTool):
         description: Tool description for LLM.
     """
     name = "retrieve"
-    description = "Search the knowledge graph for chunks and entities relevant to a query."
+    description = (
+        'Search the knowledge graph for chunks and entities relevant to a query. '
+        'Params: {"query": "<string>", "k": <int, default 10>}'
+    )
 
     def __init__(self, graphrag_url: str, client: httpx.AsyncClient) -> None:
         self._base = graphrag_url

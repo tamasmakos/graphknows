@@ -12,14 +12,18 @@ class GetCommunityTool(BaseTool):
         description: Tool description for LLM.
     """
     name = "get_community"
-    description = "Get the Leiden community (topic cluster) an entity belongs to."
+    description = (
+        'Get the Leiden community (topic cluster) an entity belongs to. '
+        'Params: {"entity_id": "<entity name from retrieve results, e.g. ENERGY_PRICES>"}'
+    )
 
     def __init__(self, graphrag_url: str, client: httpx.AsyncClient) -> None:
         self._base = graphrag_url
         self._client = client
 
     async def run(self, params: dict) -> dict:
-        entity_id = params.get("entity_id", "")
+        # Accept both entity_id and entity (LLM sometimes uses wrong field name)
+        entity_id = params.get("entity_id") or params.get("entity", "")
         resp = await self._client.get(f"{self._base}/community/{entity_id}")
         resp.raise_for_status()
         return resp.json()
