@@ -97,10 +97,10 @@ Action: <tool_name>(<args>)
 
 When you have gathered enough evidence, output:
 Thought: I have sufficient evidence to answer.
-Final Answer: <your answer, citing [chunk_id] and [entity_name] as evidence>
+Final Answer: <Write 3-5 sentences of fluent analytical prose. NEVER mention chunk IDs, chunk names, or entity names in brackets. NEVER say "as mentioned in chunk". Synthesise the retrieved facts into a coherent narrative as a political analyst would write for a policy brief.>
 
 Rules:
-- Always cite chunk IDs and entity names in your final answer
+- Write your Final Answer as flowing analytical prose with no chunk references, no bracket notation, no bullet points
 - Use fuse_and_rank before giving a final answer when you have multiple chunk candidates
 - If search_entities returns results, follow up with get_neighbours on the top entity
 - REQUIRED: When get_neighbours returns results, immediately call get_triplets on the

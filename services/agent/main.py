@@ -285,7 +285,7 @@ def _fetch_cooccurs(entity_names: list[str], limit: int = 50) -> list[tuple[str,
                 ORDER BY r.weight DESC
                 LIMIT $limit
                 """,
-                names=entity_names,
+                names=[n.upper() for n in entity_names],
                 limit=limit,
             )
             rows = [(r["subject"], r["object"], int(r["weight"] or 0)) for r in result]
