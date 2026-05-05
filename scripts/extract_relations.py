@@ -133,13 +133,20 @@ def extract_triplets(client: OpenAI, chunk_id: str, text: str) -> list[dict]:
     return valid
 
 
-def store_triplets(session, triplets: list[dict], chunk_id: str) -> int:
+def store_triplets(
+    session,
+    triplets: list[dict],
+    chunk_id: str,
+    source_doc: str = "",
+) -> int:
     """Merge triplets into Neo4j as RELATION edges.
 
     Args:
         session: Active Neo4j session.
-        triplets: List of subject/predicate/object dicts.
+        triplets: List of dicts with subject/predicate/object and optional
+            confidence, evidence, source_doc keys.
         chunk_id: Source chunk id for edge metadata.
+        source_doc: Optional source document identifier.
 
     Returns:
         Number of edges created or merged.
@@ -150,13 +157,22 @@ def store_triplets(session, triplets: list[dict], chunk_id: str) -> int:
             """
             MERGE (a:Entity {name: $subject})
             MERGE (b:Entity {name: $object})
-            MERGE (a)-[r:RELATION {predicate: $predicate, chunk_id: $chunk_id}]->(b)
-            SET r.source = 'llm_extraction'
+            MERGE (a)-[r:RELATION {
+                predicate: $predicate,
+                chunk_id: $chunk_id
+            }]->(b)
+            SET r.source = 'llm_extraction',
+                r.confidence = $confidence,
+                r.evidence = $evidence,
+                r.source_doc = $source_doc
             """,
             subject=t["subject"],
             predicate=t["predicate"],
             object=t["object"],
             chunk_id=chunk_id,
+            confidence=t.get("confidence"),
+            evidence=t.get("evidence", ""),
+            source_doc=t.get("source_doc") or source_doc,
         )
         count += 1
     return count

@@ -197,9 +197,15 @@ class NeoStore:
                 if not name or len(name) < 2:
                     continue
                 label = ent.get("label", "Entity")
+                etype = (
+                    ent.get("type")
+                    or ent.get("ontology_label")
+                    or ent.get("coarse_bucket")
+                    or label
+                )
                 self._run(
-                    "MERGE (e:Entity {name:$name}) SET e.label=$label",
-                    name=name, label=label
+                    "MERGE (e:Entity {name:$name}) SET e.label=$label, e.type=$type",
+                    name=name, label=label, type=etype,
                 )
                 self._run(
                     """MATCH (ch:Chunk {id:$cid})

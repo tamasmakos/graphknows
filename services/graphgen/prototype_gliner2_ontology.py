@@ -236,45 +236,93 @@ def build_top_level_label_space(
     return {"ontology": {"children": all_labels, "aliases": []}}
 
 
+# Political/legal text canonical label set — always relevant for EU/parliamentary text.
+# These map to LKIF classes and cover person, org, location, legislation, policy, event.
+_POLITICAL_CORE_LABELS: List[str] = [
+    "Person", "Natural Person", "Organisation", "Organization", "Formal Organization",
+    "Legislative Body", "Public Body", "Foundation",
+    "Treaty", "Directive", "Regulation", "Decision", "Statute",
+    "International Agreement", "Resolution", "Declaration",
+    "Action", "Plan", "Problem", "Obligation", "Right",
+    "Legal Document", "Legal Speech Act",
+]
+
+# Heuristic keyword patterns → extra labels to include when detected in text
+_TEXT_SIGNAL_LABELS: List[tuple] = [
+    # (regex pattern, extra labels)
+    (r"\b(war|conflict|crisis|attack|ceasefire|military)\b", ["Problem", "Action"]),
+    (r"\b(law|legislation|directive|regulation|statute|code)\b", ["Directive", "Statute", "Regulation"]),
+    (r"\b(treaty|convention|agreement|protocol|accord)\b", ["Treaty", "International Agreement"]),
+    (r"\b(commission|council|parliament|assembly|senate)\b", ["Legislative Body", "Public Body"]),
+    (r"\b(budget|fund|revenue|tax|fiscal|financial)\b", ["Transaction", "Obligation"]),
+    (r"\b(right|freedom|liberty|immunity|privilege)\b", ["Right", "Liberty Right"]),
+    (r"\b(vote|election|referendum|ballot)\b", ["Decision", "Action"]),
+]
+
+
 def select_candidate_labels(
     text: str,
     label_space: Dict[str, Dict[str, Any]],
-    top_k: int = 6,
+    top_k: int = 20,
 ) -> List[str]:
-    """
-    Select the most text-relevant ontology NER labels for a chunk.
+    """Select relevant NER labels for a political/legal text chunk.
 
-    Scores each label by word-overlap with the chunk text.
-    Returns up to top_k * 8 labels — all from the ontology.
-    If fewer than 10 labels score > 0, falls back to returning all labels
-    (the set is small enough that GLiNER2 handles it without issue).
+    Uses a curated core set of political/legal LKIF labels, then adds
+    signal-based extras detected from the text. Word-overlap scoring on
+    ontology label names is intentionally NOT used — label names like
+    "Person" or "Treaty" rarely appear verbatim in political text.
+
+    Args:
+        text: The chunk text to select labels for.
+        label_space: Ontology label space from build_top_level_label_space().
+        top_k: Maximum number of labels to return. Default 20.
+
+    Returns:
+        Deduplicated list of up to top_k label strings.
     """
-    all_labels: List[str] = label_space.get("ontology", {}).get("children", [])
+    all_labels: Set[str] = set(label_space.get("ontology", {}).get("children", []))
     if not all_labels:
-        return []
+        return list(_POLITICAL_CORE_LABELS)[:top_k]
 
-    text_lower = text.lower()
-    text_words: Set[str] = set(re.findall(r"[a-z]{3,}", text_lower))
+    selected: List[str] = []
+    seen: Set[str] = set()
 
-    scored: List[tuple] = []
-    unscored: List[str] = []
-    for label in all_labels:
-        label_words = set(re.findall(r"[a-z]{3,}", label.lower()))
-        score = len(label_words & text_words)
-        if score > 0:
-            scored.append((score, label))
+    # Always include core political labels that exist in ontology
+    for lbl in _POLITICAL_CORE_LABELS:
+        # Try exact match, then case-insensitive match
+        if lbl in all_labels and lbl not in seen:
+            selected.append(lbl)
+            seen.add(lbl)
         else:
-            unscored.append(label)
+            # Case-insensitive fallback
+            for ontology_lbl in all_labels:
+                if ontology_lbl.lower() == lbl.lower() and ontology_lbl not in seen:
+                    selected.append(ontology_lbl)
+                    seen.add(ontology_lbl)
+                    break
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    top = [lbl for _, lbl in scored]
+    # Add signal-based extras
+    text_lower = text.lower()
+    for pattern, extra_labels in _TEXT_SIGNAL_LABELS:
+        if re.search(pattern, text_lower):
+            for lbl in extra_labels:
+                if lbl not in seen:
+                    # Try to find in ontology (exact or case-insensitive)
+                    if lbl in all_labels:
+                        selected.append(lbl)
+                        seen.add(lbl)
+                    else:
+                        for ontology_lbl in all_labels:
+                            if ontology_lbl.lower() == lbl.lower() and ontology_lbl not in seen:
+                                selected.append(ontology_lbl)
+                                seen.add(ontology_lbl)
+                                break
 
-    # If we have fewer than 10 scored labels, return the full label set —
-    # it's small (LKIF has ~145 types) and GLiNER2 handles that fine.
-    if len(top) < 10:
-        return all_labels
+    if not selected:
+        # Ultimate fallback: first top_k labels from ontology
+        return list(all_labels)[:top_k]
 
-    return top[: top_k * 8]
+    return selected[:top_k]
 
 
 def build_gliner2_schema(

@@ -406,7 +406,7 @@ class DSPyExtractor(BaseExtractor):
                         "target_grounded": _is_grounded_relation_endpoint(target, entity_hints, ontology_classes, evidence),
                     }
 
-                    if not _relation_endpoints_in_hints(source, target, entity_hints):
+                    if entity_hints and not _relation_endpoints_in_hints(source, target, entity_hints):
                         decision["drop_reason"] = "endpoint_not_grounded_in_hints"
                         triplet_decisions.append(decision)
                         logger.debug(
