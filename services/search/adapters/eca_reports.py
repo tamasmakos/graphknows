@@ -21,8 +21,9 @@ class ECAReportsSource(BaseSource):
         try:
             html = await self._get(_LISTING)
         except Exception as exc:
-            print(f"[eca_reports] listing failed: {exc}")
-            return []
+            raise NotImplementedError(  # TODO: implement eca_reports adapter
+                f"[eca_reports] listing failed: {exc}"
+            ) from exc
 
         # Extract report links – ECA uses /en/publications/SR-YYYY-NN style URLs
         pattern = re.compile(

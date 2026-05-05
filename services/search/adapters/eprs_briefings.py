@@ -21,8 +21,9 @@ class EPRSBriefingsSource(BaseSource):
         try:
             html = await self._get(_LISTING)
         except Exception as exc:
-            print(f"[eprs_briefings] listing failed: {exc}")
-            return []
+            raise NotImplementedError(  # TODO: implement eprs_briefings adapter
+                f"[eprs_briefings] listing failed: {exc}"
+            ) from exc
 
         # Extract briefing links from think tank search results
         # URLs like /thinktank/en/document/EPRS_BRI(YYYY)NNNNNN

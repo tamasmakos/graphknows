@@ -21,8 +21,9 @@ class CouncilConclusionsSource(BaseSource):
         try:
             html = await self._get(_LISTING)
         except Exception as exc:
-            print(f"[council_conclusions] listing failed: {exc}")
-            return []
+            raise NotImplementedError(  # TODO: implement council_conclusions adapter
+                f"[council_conclusions] listing failed: {exc}"
+            ) from exc
 
         # Find PDF links that contain /media/ in the href
         pattern = re.compile(r'href=["\']([^"\']*?/media/[^"\']*?\.pdf)["\']', re.IGNORECASE)

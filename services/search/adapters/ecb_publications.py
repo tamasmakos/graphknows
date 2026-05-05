@@ -21,8 +21,9 @@ class ECBPublicationsSource(BaseSource):
         try:
             html = await self._get(_LISTING)
         except Exception as exc:
-            print(f"[ecb_publications] listing failed: {exc}")
-            return []
+            raise NotImplementedError(  # TODO: implement ecb_publications adapter
+                f"[ecb_publications] listing failed: {exc}"
+            ) from exc
 
         pattern = re.compile(
             r'href=["\']([^"\']*?/pub/economic-bulletin/html/eb[^"\']*?\.en\.html)["\']',
