@@ -26,13 +26,28 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from pydantic import BaseModel
+from graphknows.shared.config import BaseServiceSettings
+from graphknows.shared.models.pipeline import Document
+from pydantic import BaseModel, Field
+
+try:
+    from graphgen.orchestrator import run_pipeline
+except ImportError as exc:
+    raise RuntimeError("graphgen orchestrator could not be imported") from exc
 
 app = FastAPI(
     title="Graphknows GraphGen",
     version="1.0.0",
     description="REST API for the GraphGen knowledge-graph pipeline.",
 )
+
+
+class GraphGenSettings(BaseServiceSettings):
+    """GraphGen service settings."""
+
+    graphgen_host: str = Field(default="0.0.0.0", alias="GRAPHGEN_HOST")
+    graphgen_port: int = Field(default=8003, alias="GRAPHGEN_PORT")
+
 
 # In-memory job store (sufficient for single-process deployments).
 # Replace with Redis / a DB for multi-worker deployments.
@@ -42,6 +57,12 @@ _jobs: Dict[str, Dict[str, Any]] = {}
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+#
+# NOTE: We keep local BuildRequest / BuildJob instead of using the shared-py
+# BuildJob because the shared model is designed for document-based ingestion
+# (tracks documents_total / documents_done) whereas the graphgen REST API
+# tracks pipeline runs with created_at and result payloads.  Unifying these
+# two concepts is left for a future refactor.
 
 
 class BuildRequest(BaseModel):
@@ -106,18 +127,57 @@ async def get_job(job_id: str) -> BuildJob:
     return BuildJob(job_id=job_id, **j)
 
 
+@app.post("/ingest", response_model=BuildJob, status_code=202, summary="Ingest a document")
+async def ingest_document(doc: Document, background_tasks: BackgroundTasks) -> BuildJob:
+    """Accept a single document from the search service and queue it for KG ingestion.
+
+    This is a fire-and-forget endpoint — returns a job_id immediately.
+    The caller can poll GET /jobs/{job_id} for status.
+    """
+    job_id = f"job_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc).isoformat()
+    _jobs[job_id] = {
+        "status": "queued",
+        "created_at": now,
+        "documents_total": 1,
+        "documents_done": 0,
+    }
+    background_tasks.add_task(_run_ingest, job_id, doc)
+    return BuildJob(job_id=job_id, status="queued", created_at=now)
+
+
 # ---------------------------------------------------------------------------
 # Background worker
 # ---------------------------------------------------------------------------
+
+
+async def _run_ingest(job_id: str, doc: Document) -> None:
+    """Process a single document ingestion in a thread pool and update the job store."""
+    _jobs[job_id]["status"] = "running"
+    try:
+        # Convert Document to input the pipeline can use
+        import tempfile
+        import json
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(doc.model_dump(), f)
+            tmp_path = f.name
+
+        result = await run_pipeline(
+            input_files=[tmp_path],
+            config_override={},
+            output_dir=None,
+        )
+        _jobs[job_id].update({"status": "complete", "result": result, "documents_done": 1})
+    except Exception as exc:
+        _jobs[job_id].update({"status": "failed", "error": str(exc)})
 
 
 async def _run_build(job_id: str, req: BuildRequest) -> None:
     """Execute the pipeline in a thread pool and update the job store."""
     _jobs[job_id]["status"] = "running"
     try:
-        from graphgen.orchestrator import run_pipeline  # noqa: PLC0415
-
-        # run_pipeline is an async coroutine; run it directly.
+        # run_pipeline is an async coroutine imported at module level.
         result = await run_pipeline(
             input_files=req.input_files,
             config_override=req.config_override or {},
