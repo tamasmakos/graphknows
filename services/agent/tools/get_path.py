@@ -38,6 +38,9 @@ class GetPathTool(BaseTool):
             or params.get("entity_2")
             or ""
         )
+        # Normalise to UPPER_SNAKE_CASE
+        entity_a = entity_a.upper().replace(" ", "_").replace("-", "_")
+        entity_b = entity_b.upper().replace(" ", "_").replace("-", "_")
         max_hops = params.get("max_hops", 3)
         resp = await self._client.post(
             f"{self._base}/path",
