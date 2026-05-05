@@ -231,6 +231,17 @@ class NeoStore:
                     name=name, tid=t["id"]
                 )
 
+    def upsert_co_occurs(self, cooccurrences: list[tuple]) -> None:
+        """Write (entity_a, entity_b, weight) co-occurrence edges to Neo4j."""
+        for a, b, w in cooccurrences:
+            self._run(
+                """MATCH (ea:Entity {name:$a})
+                   MATCH (eb:Entity {name:$b})
+                   MERGE (ea)-[r:CO_OCCURS]->(eb)
+                   SET r.weight=$w""",
+                a=a, b=b, w=int(w)
+            )
+
     def get_entity_neighbours(self, entity_name: str, depth: int = 2) -> list[dict]:
         rows = self._run(
             """MATCH (e:Entity {name:$name})<-[:MENTIONS]-(c:Chunk)-[:MENTIONS]->(nbr:Entity)
