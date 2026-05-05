@@ -6,7 +6,7 @@ import json
 import os
 from abc import ABC, abstractmethod
 
-from services.search.models import Document, SearchQuery, SearchResult
+from search.models import Document, SearchQuery, SearchResult
 
 
 class SourceAdapter(ABC):

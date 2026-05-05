@@ -20,8 +20,8 @@ import os
 
 import scrapers.eurlex as _eurlex
 
-from services.search.adapters.base import SourceAdapter
-from services.search.models import Document, SearchQuery, SearchResult
+from search.adapters.base import SourceAdapter
+from search.models import Document, SearchQuery, SearchResult
 
 _OUT_DIR = Path(os.environ.get("EURLEX_OUT_DIR", "/data/raw/eurlex"))
 

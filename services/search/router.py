@@ -11,11 +11,11 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from services.search.adapters.ep_debates import EPDebatesAdapter
-from services.search.adapters.eurlex import EurLexAdapter
-from services.search.adapters.uk_legislation import UKLegislationAdapter
-from services.search.job_queue import enqueue, get_job, make_job, update_job
-from services.search.models import (
+from search.adapters.ep_debates import EPDebatesAdapter
+from search.adapters.eurlex import EurLexAdapter
+from search.adapters.uk_legislation import UKLegislationAdapter
+from search.job_queue import enqueue, get_job, make_job, update_job
+from search.models import (
     Document,
     ScrapeJob,
     ScrapeRequest,

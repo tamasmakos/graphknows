@@ -10,7 +10,7 @@ from typing import Optional
 
 import httpx
 
-from services.search.parsed_document import ParsedDocument
+from search.parsed_document import ParsedDocument
 
 _USER_AGENT = 'Graphknows/1.0 (https://graphknows.io; research@graphknows.io)'
 
