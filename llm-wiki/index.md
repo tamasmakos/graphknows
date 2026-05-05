@@ -30,6 +30,8 @@
 - [[architecture-reference]] — **canonical technical reference**: ASCII service map, full data-flow, API contracts, env vars, local startup commands, tunnel setup
 - [[product-roadmap-v2]] — **strategic roadmap v2**: shipped PRs, stability gates, prioritised next features, horizon bets, GTM beachhead
 
+- [[services-refactor-phases-0-5]] — **COMPLETE refactor log**: all 5 phases, what changed, pitfalls, test status, Google style enforcement
+
 ### Service Design (v2)
 
 - [[service-design-agent]] — `services/agent/` spec: HTTP API, tools (6), session lifecycle, Memgraph CRUD, write-back

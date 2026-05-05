@@ -22,10 +22,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Load .env early so InfrastructureSettings and run_pipeline both see it.
+# python-dotenv override=False means process env always wins over .env values.
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parents[2] / ".env"  # services/graphgen/../../.env
+    if not _env_path.exists():
+        _env_path = Path("/root/graphknows/.env")
+    load_dotenv(_env_path, override=True)
+except ImportError:
+    pass  # dotenv not installed — rely on env vars being set externally
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from graphknows.shared.config import BaseServiceSettings
