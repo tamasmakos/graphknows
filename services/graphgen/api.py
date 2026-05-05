@@ -21,7 +21,9 @@ Or from the repo root with the installed package::
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -29,16 +31,45 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from graphknows.shared.config import BaseServiceSettings
 from graphknows.shared.models.pipeline import Document
 from pydantic import BaseModel, Field
+from pythonjsonlogger import jsonlogger
+
+log = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Configure root logger for structured JSON output."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+    )
+    logging.root.handlers = [handler]
+    logging.root.setLevel(logging.INFO)
 
 try:
     from graphgen.orchestrator import run_pipeline
 except ImportError as exc:
     raise RuntimeError("graphgen orchestrator could not be imported") from exc
 
+_configure_logging()
+
+settings = GraphGenSettings() if False else None  # instantiated in lifespan below
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):  # noqa: ARG001
+    """Configure logging and validate secrets on startup."""
+    global settings
+    settings = GraphGenSettings()
+    settings.check_production_secrets()
+    log.info("GraphGen service starting", extra={"env": settings.graphknows_env})
+    yield
+
+
 app = FastAPI(
     title="Graphknows GraphGen",
     version="1.0.0",
     description="REST API for the GraphGen knowledge-graph pipeline.",
+    lifespan=_lifespan,
 )
 
 

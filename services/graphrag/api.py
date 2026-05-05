@@ -30,8 +30,19 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from pythonjsonlogger import jsonlogger
 
 from graphknows.shared.config import BaseServiceSettings
+
+
+def _configure_logging() -> None:
+    """Configure root logger for structured JSON output."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+    )
+    logging.root.handlers = [handler]
+    logging.root.setLevel(logging.INFO)
 
 # Ensure the graphrag package directory is on sys.path so relative imports work
 _SVC_DIR = Path(__file__).parent
@@ -128,6 +139,7 @@ _retriever = None  # module-level holder so endpoints can reference it
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _configure_logging()
     global _retriever
     log.info("Initialising HybridRetriever …")
     from retriever import HybridRetriever

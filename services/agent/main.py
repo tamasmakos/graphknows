@@ -1,11 +1,30 @@
 """Graphknows Agent Service entry point."""
 from __future__ import annotations
+
+import logging
 from contextlib import asynccontextmanager
+
 import httpx
 from fastapi import FastAPI
+from pythonjsonlogger import jsonlogger
+
 from agent.config import AgentSettings
 from agent.session.manager import SessionGraphManager
 from agent.router import _init_router, router
+
+
+def _configure_logging() -> None:
+    """Configure root logger for structured JSON output."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+    )
+    logging.root.handlers = [handler]
+    logging.root.setLevel(logging.INFO)
+
+
+_configure_logging()
+log = logging.getLogger(__name__)
 
 _settings: AgentSettings | None = None
 _sgm: SessionGraphManager | None = None
