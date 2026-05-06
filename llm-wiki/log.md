@@ -68,7 +68,7 @@
 ## [2026-05-05] update | frontend-v2-design
 - PR #10 merged: apps/web/ (SPA), services/agent/main.py
 - Agent at localhost:8002, full stack verified
-- Public URL: https://exposure-steel-corpus-parents.trycloudflare.com
+- Public tunnel was verified during that checkpoint
 
 
 ## [2026-05-04] create | concepts/architecture-reference.md
@@ -108,7 +108,7 @@
 
 ### Running services:
 - graphrag :8001, agent :8002, frontend :8080
-- cloudflare tunnel: https://exposure-steel-corpus-parents.trycloudflare.com
+- cloudflare tunnel was active during that checkpoint
 
 ### Next:
 - feat/base-source BaseSource + ParsedDocument
@@ -141,3 +141,40 @@
 ## [2026-05-05] create | concepts/graph-visualisation-diagnosis.md
 - Full diagnostic: Neo4j schema, agent output shape, 5 root causes identified
 - Fix plan: entity co-occurrence edges, topic nodes, chunk metadata, citation lookup, frontend layout
+
+## [2026-05-06] create | concepts/mobile-first-frontend-revamp-2026-05-06.md
+- Recorded the mobile-first SPA restructuring of apps/web/index.html in the clean integration worktree
+- Captured answer/graph split, drawer investigations, collapsed reasoning, mobile source footer, and mobile graph decluttering steps
+- Verified on a temporary local integration surface and matched public HTML before review
+
+## [2026-05-06] create | concepts/immersive-answer-graph-redesign-2026-05-06.md
+- Recorded grounded redesign direction after inspecting live `apps/web/index.html` on :8080 and current `services/agent/main.py` WebSocket/API behavior
+- Captured main diagnosis: multi-layout graph is wrong direction, click lacks persistent metadata inspector, provenance graph must become navigational, reasoning stream is replay-based not live, and citations are often absent at the agent payload level
+- Set target UX direction: Neo4j-like entity graph interaction, separate provenance/evidence graph, Perplexity-grade answer/citation surface, and real streaming graph/reasoning deltas
+
+## [2026-05-06] create | concepts/mobile-graph-usability-pass-2026-05-06.md
+- Recorded the graph-specific follow-up pass on top of the mobile-first SPA revamp in the richer same-day frontend worktree
+- Captured tighter mobile graph framing, smaller graph chrome, tap-to-focus, zoom-to-node offset tuning, curated mobile label selection, and stronger selected-neighborhood highlighting
+- Logged final QA evidence from repeated Playwright mobile runs plus the exact local/public SHA match for the live tunnel build
+
+## [2026-05-06] create | concepts/integration-qa-immersive-answer-graph-2026-05-06.md
+- Integrated reviewed immersive-answer diffs into clean worktree/branch
+- Backend validation passed: py_compile, pytest (4 passed, 5 skipped), ruff check, ruff format --check
+- Live QA on temporary local agent/web instances found remaining blockers: raw JSON reasoning leakage, no real source cards/citations, shallow inspector metadata, visible Force layout control
+- Principal-engineer decision: hold commit/push; branch is a valid integration checkpoint but not redesign-complete
+
+## [2026-05-06] create | concepts/canonical-frontend-promotion-2026-05-06.md
+- Promoted the immersive integration SPA into the canonical served frontend
+- Verified the canonical served HTML matched the intended promoted frontend at that checkpoint
+- Verified the publicly exposed HTML matched the same canonical build before sharing it
+- Established rule: do not publish a public frontend link without verifying served canonical file vs intended source
+
+## [2026-05-06] update | index.md
+- Added canonical frontend promotion note for the public SPA entrypoint
+
+## [2026-05-06] create | concepts/frontend-reconciliation-2026-05-06.md
+- Reconciled canonical frontend against the richer same-day integration variant
+- Promoted richer same-day frontend variant into canonical served SPA
+- Verified local/public HTML parity via SHA256: `cc4f0f931302830e83c387289d0542cc823ec79890fea7411d048d4e76ad1c16`
+- Ran real mobile viewport QA for empty/result/graph/focused-node states on local and public builds
+- Confirmed earlier version-drift problem was resolved; remaining run-to-run differences are backend response variability, not frontend mismatch

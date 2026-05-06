@@ -12,9 +12,11 @@ GET    /session/{session_id}/graph — return current session subgraph (D3.js)
 DELETE /session/{session_id}     — close/destroy a session
 GET    /health                   — liveness probe
 """
+
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import uuid
@@ -47,6 +49,7 @@ _KNOWN_ENV_KEYS = {
     "NEO4J_URI",
     "NEO4J_USER",
     "NEO4J_PASSWORD",
+    "PGVECTOR_DSN",
     "HTTPX_TIMEOUT",
 }
 
@@ -58,6 +61,10 @@ def _load_config() -> dict[str, Any]:
         "neo4j_uri": os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
         "neo4j_user": os.environ.get("NEO4J_USER", "neo4j"),
         "neo4j_password": os.environ.get("NEO4J_PASSWORD", "testpassword123"),
+        "pgvector_dsn": os.environ.get(
+            "PGVECTOR_DSN",
+            "postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",
+        ),
         "httpx_timeout": float(os.environ.get("HTTPX_TIMEOUT", "60")),
     }
 
@@ -78,11 +85,12 @@ CONFIG: dict[str, Any] = _load_config()
 # Module-level singletons (initialised in lifespan)
 # ---------------------------------------------------------------------------
 
-_sgm = None          # SessionGraphManager instance
+_sgm = None  # SessionGraphManager instance
 _http_client = None  # shared httpx.AsyncClient
 
 # In-memory session registry — maps session_id → True (session is active)
 _active_sessions: set[str] = set()
+_session_graph_views: dict[str, dict[str, Any]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +112,7 @@ async def lifespan(app: FastAPI):
         neo4j_uri=CONFIG["neo4j_uri"],
         neo4j_user=CONFIG["neo4j_user"],
         neo4j_password=CONFIG["neo4j_password"],
+        pgvector_dsn=CONFIG["pgvector_dsn"],
     )
 
     _http_client = httpx.AsyncClient(
@@ -159,10 +168,17 @@ class GraphResponse(BaseModel):
     edges: List[Dict[str, Any]]
 
 
+class GraphViewsResponse(BaseModel):
+    knowledge: GraphResponse
+    lexical: GraphResponse
+    active: str = "knowledge"
+
+
 class ChatResponse(BaseModel):
     answer: str
     session_id: str
     graph: GraphResponse
+    graph_views: Optional[GraphViewsResponse] = None
     reasoning_steps: list = []
     sources: list = []
 
@@ -210,6 +226,7 @@ def _infer_doc_metadata(doc_id: str) -> dict[str, str]:
         Dict with keys 'date', 'institution', 'url'.
     """
     import re as _re
+
     date = ""
     institution = ""
     url = ""
@@ -232,6 +249,7 @@ def _extract_tool_name(action: str | None) -> str:
         The tool name, or empty string if not parseable.
     """
     import re as _re
+
     if not action:
         return ""
     m = _re.match(r"(\w+)\(", action.strip())
@@ -239,14 +257,7 @@ def _extract_tool_name(action: str | None) -> str:
 
 
 def _observation_type(tool_name: str) -> str:
-    """Map a tool name to a canonical observation_type label.
-
-    Args:
-        tool_name: Tool name string.
-
-    Returns:
-        One of 'entities'|'chunks'|'community'|'neighbours'|'ranked'|'error'|'unknown'.
-    """
+    """Map tool name to a frontend-friendly observation type label."""
     mapping = {
         "search_entities": "entities",
         "search_chunks": "chunks",
@@ -254,8 +265,209 @@ def _observation_type(tool_name: str) -> str:
         "get_neighbours": "neighbours",
         "fuse_and_rank": "ranked",
         "get_chunks_for_entity": "chunks",
+        "get_triplets": "triplets",
+        "get_source_document": "source_document",
     }
     return mapping.get(tool_name, "unknown")
+
+
+def _normalise_chunk_id(raw: str | None) -> str:
+    if not raw:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    return text.replace("chunk-", "", 1).rsplit("-", 1)[0] if text.startswith("chunk-") else text
+
+
+def _make_edge_id(parts: list[str]) -> str:
+    digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]
+    safe = "-".join(p.replace(" ", "_") for p in parts[:3])
+    return f"edge-{safe}-{digest}"
+
+
+def _build_graph_views(
+    subgraph: dict[str, list], reasoning_steps: list[dict], sources: list[dict]
+) -> dict[str, dict[str, list]]:
+    nodes = subgraph.get("nodes", []) or []
+    edges = subgraph.get("edges", []) or []
+    node_by_id = {node.get("id"): node for node in nodes if node.get("id")}
+
+    lexical_chunk_ids = {
+        str(src.get("id") or src.get("chunk_id") or "")
+        for src in sources
+        if str(src.get("id") or src.get("chunk_id") or "")
+    }
+    for step in reasoning_steps:
+        tool_name = step.get("tool_name") or _extract_tool_name(step.get("action"))
+        obs = step.get("observation")
+        if tool_name in {"search_chunks", "fuse_and_rank", "get_chunks_for_entity"} and isinstance(
+            obs, list
+        ):
+            for item in obs:
+                if isinstance(item, dict):
+                    cid = str(item.get("chunk_id") or item.get("id") or "")
+                    if cid:
+                        lexical_chunk_ids.add(cid)
+
+    if not lexical_chunk_ids:
+        lexical_chunk_ids = {
+            _normalise_chunk_id(
+                str((node.get("properties") or {}).get("id") or node.get("id") or "")
+            )
+            for node in nodes
+            if (node.get("label") == "Chunk" or node.get("type") == "Chunk")
+        }
+        lexical_chunk_ids.discard("")
+
+    lexical_nodes_map: dict[str, dict] = {}
+    lexical_edges_map: dict[str, dict] = {}
+
+    def add_lexical_node(node_id: str) -> None:
+        node = node_by_id.get(node_id)
+        if node and node_id not in lexical_nodes_map:
+            lexical_nodes_map[node_id] = node
+
+    for edge in edges:
+        edge_type = edge.get("type")
+        source_id = (
+            edge.get("source", {}).get("id")
+            if isinstance(edge.get("source"), dict)
+            else edge.get("source")
+        )
+        target_id = (
+            edge.get("target", {}).get("id")
+            if isinstance(edge.get("target"), dict)
+            else edge.get("target")
+        )
+        if edge_type != "MENTIONS":
+            continue
+        source_node = node_by_id.get(str(source_id)) if source_id else None
+        chunk_id = str(
+            ((source_node or {}).get("properties") or {}).get("id")
+            or _normalise_chunk_id(source_id)
+        )
+        if chunk_id and chunk_id in lexical_chunk_ids:
+            lexical_edges_map[
+                str(
+                    edge.get("id")
+                    or _make_edge_id([str(source_id), edge_type or "MENTIONS", str(target_id)])
+                )
+            ] = edge
+            if source_id:
+                add_lexical_node(str(source_id))
+            if target_id:
+                add_lexical_node(str(target_id))
+
+    relation_chunks_by_pair: dict[tuple[str, str, str], set[str]] = {}
+    for step in reasoning_steps:
+        tool_name = step.get("tool_name") or _extract_tool_name(step.get("action"))
+        obs = step.get("observation")
+        if tool_name != "get_triplets" or not isinstance(obs, list):
+            continue
+        for item in obs:
+            if not isinstance(item, dict):
+                continue
+            entity_a = str(item.get("entity_a") or "").strip()
+            entity_b = str(item.get("entity_b") or "").strip()
+            via_chunks = item.get("via_chunks") or []
+            if entity_a and entity_b:
+                relation_type = str(
+                    item.get("relation") or item.get("predicate") or "CO_OCCURS"
+                ).strip()
+                key = tuple(sorted((entity_a, entity_b)) + [relation_type])
+                relation_chunks_by_pair.setdefault(key, set()).update(
+                    str(cid) for cid in via_chunks if str(cid)
+                )
+
+    knowledge_nodes_map: dict[str, dict] = {}
+    knowledge_edges_map: dict[str, dict] = {}
+
+    def add_knowledge_node(node_id: str) -> None:
+        node = node_by_id.get(node_id)
+        if node and node_id not in knowledge_nodes_map:
+            knowledge_nodes_map[node_id] = node
+
+    for edge in edges:
+        edge_type = edge.get("type")
+        if edge_type not in {"CO_OCCURS", "RELATES_TO"}:
+            continue
+        source_id = (
+            edge.get("source", {}).get("id")
+            if isinstance(edge.get("source"), dict)
+            else edge.get("source")
+        )
+        target_id = (
+            edge.get("target", {}).get("id")
+            if isinstance(edge.get("target"), dict)
+            else edge.get("target")
+        )
+        if not source_id or not target_id:
+            continue
+        src_node = node_by_id.get(str(source_id))
+        tgt_node = node_by_id.get(str(target_id))
+        if not src_node or not tgt_node:
+            continue
+        src_name = str(
+            (src_node.get("properties") or {}).get("name") or src_node.get("name") or ""
+        ).strip()
+        tgt_name = str(
+            (tgt_node.get("properties") or {}).get("name") or tgt_node.get("name") or ""
+        ).strip()
+        key = (
+            tuple(sorted((src_name, tgt_name)) + [edge_type])
+            if src_name and tgt_name and edge_type == "CO_OCCURS"
+            else None
+        )
+        existing_chunk_ids = {
+            str(cid) for cid in ((edge.get("properties") or {}).get("chunk_ids") or []) if str(cid)
+        }
+        traced_chunk_ids = relation_chunks_by_pair.get(key, set()) if key else set()
+        merged_chunk_ids = sorted(existing_chunk_ids | traced_chunk_ids)
+        relation_label = (
+            "CO_OCCURS"
+            if edge_type == "CO_OCCURS"
+            else str((edge.get("properties") or {}).get("predicate") or edge_type)
+        )
+        knowledge_edge = {
+            **edge,
+            "type": "KG_RELATION",
+            "properties": {
+                **(edge.get("properties") or {}),
+                "view": "knowledge",
+                "relation_type": relation_label,
+                "source_name": src_name,
+                "target_name": tgt_name,
+                "chunk_ids": merged_chunk_ids,
+                "chunk_count": len(merged_chunk_ids),
+                "source_mode": "triplet_chunks"
+                if traced_chunk_ids
+                else (
+                    "edge_provenance"
+                    if existing_chunk_ids
+                    else ("cooccurrence_only" if edge_type == "CO_OCCURS" else "session_relation")
+                ),
+            },
+        }
+        knowledge_edges_map[
+            str(
+                knowledge_edge.get("id")
+                or _make_edge_id([str(source_id), relation_label, str(target_id)])
+            )
+        ] = knowledge_edge
+        add_knowledge_node(str(source_id))
+        add_knowledge_node(str(target_id))
+
+    return {
+        "knowledge": {
+            "nodes": list(knowledge_nodes_map.values()),
+            "edges": list(knowledge_edges_map.values()),
+        },
+        "lexical": {
+            "nodes": list(lexical_nodes_map.values()),
+            "edges": list(lexical_edges_map.values()),
+        },
+    }
 
 
 def _fetch_cooccurs(entity_names: list[str], limit: int = 50) -> list[tuple[str, str, int]]:
@@ -272,6 +484,7 @@ def _fetch_cooccurs(entity_names: list[str], limit: int = 50) -> list[tuple[str,
         return []
     try:
         from neo4j import GraphDatabase as _GraphDatabase
+
         driver = _GraphDatabase.driver(
             CONFIG["neo4j_uri"],
             auth=(CONFIG["neo4j_user"], CONFIG["neo4j_password"]),
@@ -310,9 +523,9 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
     import re as _re
 
     entity_names: list[str] = []
-    relates_to: list[tuple[str, str]] = []   # (entity_a, entity_b) co-occurrence pairs
-    topic_nodes: list[dict] = []             # {id, community_id, summary, label, entity_name}
-    chunk_nodes: list[dict] = []             # {chunk_id, doc_id, excerpt, date, institution, url}
+    relates_to: list[tuple[str, str]] = []  # (entity_a, entity_b) co-occurrence pairs
+    topic_nodes: list[dict] = []  # {id, community_id, summary, label, entity_name}
+    chunk_nodes: list[dict] = []  # {chunk_id, doc_id, excerpt, date, institution, url}
 
     # ── Pull from explicit top-level fields ─────────────────────────────
     for name in graphrag_response.get("entities_mentioned", []):
@@ -328,12 +541,14 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
             doc_id = citation.get("doc_id", "")
             if cid:
                 meta = _infer_doc_metadata(doc_id)
-                chunk_nodes.append({
-                    "chunk_id": cid,
-                    "doc_id": doc_id,
-                    "excerpt": citation.get("excerpt", "")[:300],
-                    **meta,
-                })
+                chunk_nodes.append(
+                    {
+                        "chunk_id": cid,
+                        "doc_id": doc_id,
+                        "excerpt": citation.get("excerpt", "")[:300],
+                        **meta,
+                    }
+                )
 
     # ── Parse ALL trace steps ────────────────────────────────────────────
     last_entity_list: list[str] = []  # entities seen in last search_entities step
@@ -363,7 +578,7 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
             elif tool == "get_neighbours":
                 # Also pair returned neighbours with each other (shared chunk context)
                 for i, ea in enumerate(step_entities[:6]):
-                    for eb in step_entities[i + 1:6]:
+                    for eb in step_entities[i + 1 : 6]:
                         relates_to.append((ea, eb))
 
         elif tool == "get_community":
@@ -376,23 +591,27 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
                 if isinstance(item, dict) and (item.get("id") or item.get("community_id")):
                     topic_nodes.append({**item, "entity_name": entity_name})
 
-        elif tool in ("search_chunks", "fuse_and_rank", "get_chunks_for_entity") and isinstance(obs, list):
+        elif tool in ("search_chunks", "fuse_and_rank", "get_chunks_for_entity") and isinstance(
+            obs, list
+        ):
             for item in obs:
                 if isinstance(item, dict):
                     cid = item.get("chunk_id", "")
                     if cid:
                         doc_id = item.get("doc_id", "")
                         meta = _infer_doc_metadata(doc_id)
-                        chunk_nodes.append({
-                            "chunk_id": cid,
-                            "doc_id": doc_id,
-                            "excerpt": item.get("text", "")[:300],
-                            **meta,
-                        })
+                        chunk_nodes.append(
+                            {
+                                "chunk_id": cid,
+                                "doc_id": doc_id,
+                                "excerpt": item.get("text", "")[:300],
+                                **meta,
+                            }
+                        )
 
     # ── Mine [BRACKETED] names from final answer text ────────────────────
     answer_text = graphrag_response.get("answer", "")
-    for match in _re.findall(r'\[([A-Z][A-Z0-9_\s]+)\]', answer_text):
+    for match in _re.findall(r"\[([A-Z][A-Z0-9_\s]+)\]", answer_text):
         clean = match.strip()
         if 2 < len(clean) < 60 and not clean.startswith("chunk"):
             entity_names.append(clean)
@@ -413,7 +632,9 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
     cooccurs_edges: list[tuple[str, str, int]] = _fetch_cooccurs(unique_entities)
     log.info(
         "Session %s CO_OCCURS from Neo4j: %d edges for %d entities",
-        session_id, len(cooccurs_edges), len(unique_entities),
+        session_id,
+        len(cooccurs_edges),
+        len(unique_entities),
     )
 
     # De-duplicate chunk_nodes by chunk_id (last write wins)
@@ -424,7 +645,11 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
 
     log.info(
         "Session %s enrichment: %d entities, %d relates_to, %d topics, %d chunks",
-        session_id, len(unique_entities), len(relates_to), len(topic_nodes), len(chunk_by_id),
+        session_id,
+        len(unique_entities),
+        len(relates_to),
+        len(topic_nodes),
+        len(chunk_by_id),
     )
 
     # Seed entities from Neo4j (creates Entity+Chunk nodes and MENTIONS edges)
@@ -489,19 +714,27 @@ async def chat(req: ChatRequest) -> ChatResponse:
     for step in raw_steps:
         tool_name = _extract_tool_name(step.get("action"))
         obs = step.get("observation")
-        obs_type = _observation_type(tool_name) if tool_name else ("error" if isinstance(obs, dict) and obs.get("error") else "unknown")
+        obs_type = (
+            _observation_type(tool_name)
+            if tool_name
+            else ("error" if isinstance(obs, dict) and obs.get("error") else "unknown")
+        )
         # Truncate observation to avoid giant payloads
         if obs is not None:
-            obs_str = obs if isinstance(obs, str) else __import__("json").dumps(obs, ensure_ascii=False)
+            obs_str = (
+                obs if isinstance(obs, str) else __import__("json").dumps(obs, ensure_ascii=False)
+            )
             obs_truncated = obs_str[:500] + ("…" if len(obs_str) > 500 else "")
         else:
             obs_truncated = None
-        reasoning_steps.append({
-            **{k: v for k, v in step.items() if k != "observation"},
-            "tool_name": tool_name,
-            "observation_type": obs_type,
-            "observation": obs_truncated,
-        })
+        reasoning_steps.append(
+            {
+                **{k: v for k, v in step.items() if k != "observation"},
+                "tool_name": tool_name,
+                "observation_type": obs_type,
+                "observation": obs_truncated,
+            }
+        )
 
     # Build sources from citations / chunk references in graphrag response
     sources: list = []
@@ -521,13 +754,28 @@ async def chat(req: ChatRequest) -> ChatResponse:
             if src.get("text"):
                 sources.append(src)
 
+    graph_views = _build_graph_views(subgraph, raw_steps, sources)
+    _session_graph_views[session_id] = graph_views
+    knowledge_graph = graph_views["knowledge"]
+    lexical_graph = graph_views["lexical"]
 
     return ChatResponse(
         answer=answer,
         session_id=session_id,
         graph=GraphResponse(
-            nodes=subgraph.get("nodes", []),
-            edges=subgraph.get("edges", []),
+            nodes=knowledge_graph["nodes"],
+            edges=knowledge_graph["edges"],
+        ),
+        graph_views=GraphViewsResponse(
+            knowledge=GraphResponse(
+                nodes=knowledge_graph["nodes"],
+                edges=knowledge_graph["edges"],
+            ),
+            lexical=GraphResponse(
+                nodes=lexical_graph["nodes"],
+                edges=lexical_graph["edges"],
+            ),
+            active="knowledge",
         ),
         reasoning_steps=reasoning_steps,
         sources=sources,
@@ -539,16 +787,101 @@ async def chat(req: ChatRequest) -> ChatResponse:
     response_model=GraphResponse,
     summary="Get the current session subgraph",
 )
-async def get_session_graph(session_id: str) -> GraphResponse:
-    """Return the D3.js-ready subgraph for the given session."""
+async def get_session_graph(session_id: str, view: str = "knowledge") -> GraphResponse:
+    """Return the current session subgraph for the requested view."""
     if session_id not in _active_sessions:
         raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
 
     subgraph: dict = await asyncio.to_thread(_sgm.get_session_graph, session_id)
+    cached_views = _session_graph_views.get(session_id)
+    if view == "raw":
+        selected = subgraph
+    elif cached_views and view in {"knowledge", "lexical"}:
+        selected = cached_views.get(view, {"nodes": [], "edges": []})
+    else:
+        selected = _build_graph_views(subgraph, [], []).get(
+            view if view in {"knowledge", "lexical"} else "knowledge",
+            {"nodes": [], "edges": []},
+        )
     return GraphResponse(
-        nodes=subgraph.get("nodes", []),
-        edges=subgraph.get("edges", []),
+        nodes=selected.get("nodes", []),
+        edges=selected.get("edges", []),
     )
+
+
+@app.get(
+    "/session/{session_id}/relation-sources",
+    summary="Get chunk-level provenance for a graph relation",
+)
+async def get_relation_sources(
+    session_id: str,
+    relation_type: str,
+    source_name: str,
+    target_name: str,
+    chunk_ids: str | None = None,
+) -> Dict[str, Any]:
+    if session_id not in _active_sessions:
+        raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
+
+    requested_chunk_ids = [cid for cid in (chunk_ids or "").split(",") if cid]
+    cached_views = _session_graph_views.get(session_id, {})
+    allowed_chunk_ids: list[str] = []
+    for graph_view in cached_views.values():
+        if not isinstance(graph_view, dict):
+            continue
+        for edge in graph_view.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            edge_source = (
+                edge.get("source", {}).get("id")
+                if isinstance(edge.get("source"), dict)
+                else edge.get("source")
+            )
+            edge_target = (
+                edge.get("target", {}).get("id")
+                if isinstance(edge.get("target"), dict)
+                else edge.get("target")
+            )
+            edge_props = edge.get("properties") or {}
+            edge_relation_type = str(edge_props.get("relation_type") or edge.get("type") or "")
+            edge_source_name = str(
+                edge_props.get("source_name") or edge_props.get("source_entity") or edge_source
+            )
+            edge_target_name = str(
+                edge_props.get("target_name") or edge_props.get("target_entity") or edge_target
+            )
+            if (
+                edge_relation_type == relation_type
+                and edge_source_name == source_name
+                and edge_target_name == target_name
+            ):
+                allowed_chunk_ids = [
+                    str(cid) for cid in edge_props.get("chunk_ids", []) if str(cid)
+                ]
+                break
+        if allowed_chunk_ids:
+            break
+    if requested_chunk_ids:
+        allowed = set(allowed_chunk_ids)
+        chunk_list = [cid for cid in requested_chunk_ids if cid in allowed]
+    else:
+        chunk_list = allowed_chunk_ids
+
+    sources = await asyncio.to_thread(
+        _sgm.get_relation_sources,
+        session_id,
+        relation_type,
+        source_name,
+        target_name,
+        chunk_list,
+    )
+    return {
+        "session_id": session_id,
+        "relation_type": relation_type,
+        "source_name": source_name,
+        "target_name": target_name,
+        "sources": sources,
+    }
 
 
 @app.delete("/session/{session_id}", summary="Close and destroy a session")
@@ -559,6 +892,7 @@ async def delete_session(session_id: str) -> Dict[str, str]:
 
     await asyncio.to_thread(_sgm.close_session, session_id)
     _active_sessions.discard(session_id)
+    _session_graph_views.pop(session_id, None)
     log.info("Session deleted: %s", session_id)
     return {"status": "deleted", "session_id": session_id}
 
@@ -595,13 +929,15 @@ async def ws_chat(websocket: WebSocket, session_id: str):
 
         # Stream reasoning steps
         for step in graphrag_resp.get("reasoning_steps", []):
-            await websocket.send_json({
-                "type": "step",
-                "step_num": step.get("step", 0),
-                "thought": step.get("thought", ""),
-                "action": step.get("action", ""),
-                "observation": str(step.get("observation", ""))[:200],
-            })
+            await websocket.send_json(
+                {
+                    "type": "step",
+                    "step_num": step.get("step", 0),
+                    "thought": step.get("thought", ""),
+                    "action": step.get("action", ""),
+                    "observation": str(step.get("observation", ""))[:200],
+                }
+            )
             await asyncio.sleep(0)  # yield to event loop
 
         # Upsert entities
@@ -610,12 +946,63 @@ async def ws_chat(websocket: WebSocket, session_id: str):
         # Get graph
         subgraph = await asyncio.to_thread(_sgm.get_session_graph, session_id)
 
-        await websocket.send_json({
-            "type": "answer",
-            "answer": graphrag_resp.get("answer", ""),
-            "graph": subgraph,
-            "session_id": session_id,
-        })
+        # Enrich reasoning steps like the HTTP path
+        raw_steps = graphrag_resp.get("reasoning_steps", [])
+        reasoning_steps: list[dict[str, Any]] = []
+        for step in raw_steps:
+            tool_name = _extract_tool_name(step.get("action"))
+            obs = step.get("observation")
+            obs_type = (
+                _observation_type(tool_name)
+                if tool_name
+                else ("error" if isinstance(obs, dict) and obs.get("error") else "unknown")
+            )
+            reasoning_steps.append(
+                {
+                    **step,
+                    "tool_name": tool_name,
+                    "observation_type": obs_type,
+                }
+            )
+
+        sources: list[dict[str, Any]] = []
+        for citation in graphrag_resp.get("citations", []):
+            if isinstance(citation, dict):
+                src: dict[str, Any] = {}
+                if citation.get("chunk_id"):
+                    src["id"] = citation["chunk_id"]
+                if citation.get("excerpt"):
+                    src["text"] = citation["excerpt"]
+                elif citation.get("text"):
+                    src["text"] = citation["text"]
+                if citation.get("doc_id"):
+                    src["doc_id"] = citation["doc_id"]
+                if citation.get("url"):
+                    src["url"] = citation["url"]
+                if src.get("text"):
+                    sources.append(src)
+
+        graph_views = _build_graph_views(
+            subgraph, graphrag_resp.get("reasoning_steps", []), sources
+        )
+        _session_graph_views[session_id] = graph_views
+        knowledge_graph = graph_views["knowledge"]
+
+        await websocket.send_json(
+            {
+                "type": "answer",
+                "answer": graphrag_resp.get("answer", ""),
+                "graph": knowledge_graph,
+                "graph_views": {
+                    "knowledge": knowledge_graph,
+                    "lexical": graph_views["lexical"],
+                    "active": "knowledge",
+                },
+                "reasoning_steps": reasoning_steps,
+                "sources": sources,
+                "session_id": session_id,
+            }
+        )
     except WebSocketDisconnect:
         log.info("WS: Client disconnected for session %s", session_id)
     except Exception as exc:

@@ -36,6 +36,7 @@ packages/**/dist
 
 # ─── Data / generated output ─────────────────────────────────────────────────
 output/
+dogfood-output/
 input/
 data/raw/
 demo_ingest.py
