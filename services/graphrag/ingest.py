@@ -208,6 +208,8 @@ def ingest(chunks_file: Path, cfg: dict, summarize: bool = True):
 
         neo.upsert_topics(topics)
         log.info("Stored %d topic nodes in Neo4j", len(topics))
+        neo.upsert_co_occurs(cooc)
+        log.info("Stored %d CO_OCCURS edges in Neo4j", len(cooc))
     else:
         log.warning("No co-occurrences found — Leiden skipped")
 

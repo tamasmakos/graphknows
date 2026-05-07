@@ -251,15 +251,17 @@
   }
   .inline-trace > summary {
     padding: 6px 10px;
-    cursor: pointer;
     font-size: 12px;
     color: #888;
     background: #1a1a2e;
-    list-style: none;
-    user-select: none;
   }
-  .inline-trace > summary::-webkit-details-marker { display: none; }
-  .inline-trace > summary:hover { color: #bbb; background: #1e1e35; }
+  .inline-trace-label {
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #888;
+    background: #1a1a2e;
+    font-family: var(--font-mono, monospace);
+  }
   .inline-trace-steps { padding: 4px 0; max-height: 400px; overflow-y: auto; }
   .inline-trace-steps::-webkit-scrollbar { width: 4px; }
   .inline-trace-steps::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
@@ -933,6 +935,12 @@
     </div>
   </div>
 
+  <!-- ── Debug Panel ── -->
+  <div id="debug-panel" style="display:none;background:#0a0c14;font-family:monospace;font-size:11px;color:#9ab;padding:8px 12px;border-top:1px solid #2a2a3a;max-height:260px;overflow-y:auto;">
+    <div style="font-size:12px;color:#5af;margin-bottom:6px;">🔬 Retrieved Sources</div>
+    <div id="debug-panel-body" style="color:#778;">No sources yet.</div>
+  </div>
+
   <!-- ── Right Panel ── -->
   <div id="right">
     <div id="graph-toolbar">
@@ -944,6 +952,7 @@
         <button class="layout-btn" data-layout="hierarchical" title="Hierarchical layout">📊 Hierarchy</button>
         <button class="layout-btn" data-layout="circular" title="Circular layout">⭕ Circle</button>
       </div>
+      <button class="toolbar-btn" id="btn-devmode" aria-label="Toggle dev debug panel">🔬 Dev</button>
       <button class="toolbar-btn" id="btn-share" aria-label="Share link">🔗 Share Link</button>
       <button class="toolbar-btn" id="btn-export-png" aria-label="Export PNG">📤 Export PNG</button>
       <button class="toolbar-btn" id="btn-reset" aria-label="Reset graph">🔄 Reset</button>
@@ -1393,12 +1402,13 @@ function appendSpinner() {
 
 function buildInlineTrace(steps) {
   if (!steps || steps.length === 0) return null;
-  const details = document.createElement('details');
+  const details = document.createElement('div');
   details.className = 'inline-trace';
 
-  const summary = document.createElement('summary');
-  summary.textContent = `🔍 ${steps.length} reasoning step${steps.length !== 1 ? 's' : ''}`;
-  details.appendChild(summary);
+  const label = document.createElement('div');
+  label.className = 'inline-trace-label';
+  label.textContent = `🔍 Reasoning chain (${steps.length} step${steps.length !== 1 ? 's' : ''})`;
+  details.appendChild(label);
 
   const stepsDiv = document.createElement('div');
   stepsDiv.className = 'inline-trace-steps';
@@ -1575,6 +1585,7 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
           displaySessionId(sessionId);
         }
         appendAgentMsg(data.answer || '(no answer)', data.sources || [], collectedSteps);
+        updateDebugPanel(data.sources || []);
         if (data.graph) {
           mergeGraph(data.graph.nodes || [], data.graph.edges || []);
         }
@@ -1634,6 +1645,7 @@ async function sendMessageViaHTTP(text, spinner) {
     }
 
     appendAgentMsg(data.answer || '(no answer)', data.sources || [], data.reasoning_steps || data.steps || []);
+    updateDebugPanel(data.sources || []);
 
     if (data.reasoning_steps || data.steps) {
       // steps are now rendered inline — no separate panel call needed
@@ -2146,6 +2158,41 @@ document.getElementById('filter-select').addEventListener('change', e => {
 
 // Toolbar buttons
 document.getElementById('btn-reset').addEventListener('click', resetAll);
+
+// Dev mode toggle
+(function() {
+  const btn = document.getElementById('btn-devmode');
+  const panel = document.getElementById('debug-panel');
+  let devOn = false;
+  btn.addEventListener('click', () => {
+    devOn = !devOn;
+    panel.style.display = devOn ? 'block' : 'none';
+    btn.style.background = devOn ? '#1a2a1a' : '';
+    btn.style.color = devOn ? '#5f5' : '';
+  });
+})();
+
+function updateDebugPanel(sources) {
+  const body = document.getElementById('debug-panel-body');
+  const btn = document.getElementById('btn-devmode');
+  if (!sources || sources.length === 0) {
+    body.innerHTML = '<em>No sources returned.</em>';
+    btn.textContent = '🔬 Dev';
+    return;
+  }
+  btn.textContent = `🔬 Dev (${sources.length})`;
+  body.innerHTML = sources.map((s, i) => {
+    const excerpt = (s.text || '').slice(0, 200).replace(/</g,'&lt;');
+    const score = s.rrf_score != null ? s.rrf_score.toFixed(4) : (s.score != null ? s.score.toFixed(4) : '—');
+    return `<div style="border-bottom:1px solid #1a1a2e;padding:4px 0;">
+      <span style="color:#5af;">[${i+1}]</span>
+      <span style="color:#fa5;"> chunk:</span> <span style="color:#eee;">${s.id || '?'}</span>
+      <span style="color:#fa5;"> doc:</span> <span style="color:#eee;">${s.doc_id || '?'}</span>
+      <span style="color:#fa5;"> score:</span> <span style="color:#af5;">${score}</span>
+      <div style="color:#667;margin-top:2px;">${excerpt}</div>
+    </div>`;
+  }).join('');
+}
 
 document.getElementById('btn-share').addEventListener('click', () => {
   const url = window.location.origin + window.location.pathname + '?session=' + sessionId;
