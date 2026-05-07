@@ -3,17 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from services.search.adapters.council_conclusions import CouncilConclusionsSource
 from services.search.adapters.ec_press import ECPressSource
-from services.search.adapters.ecb_publications import ECBPublicationsSource
 from services.search.adapters.eca_reports import ECAReportsSource
+from services.search.adapters.ecb_publications import ECBPublicationsSource
 from services.search.adapters.eprs_briefings import EPRSBriefingsSource
 from services.search.parsed_document import ParsedDocument, markdown_to_chunks
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -68,7 +67,7 @@ class TestCouncilConclusionsSource:
                 institution=src.institution,
                 language="en",
                 raw_text="sample text",
-                markdown=f"# Test Conclusions\n\n## Page 1\n\nSample content",
+                markdown="# Test Conclusions\n\n## Page 1\n\nSample content",
             )
         src.fetch_one = fake_fetch
 

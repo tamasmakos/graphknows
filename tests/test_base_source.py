@@ -1,13 +1,12 @@
 """Tests for BaseSource + ParsedDocument ingestion contract."""
 from __future__ import annotations
 
-import asyncio
 import hashlib
+
 import pytest
 
-from services.search.parsed_document import ParsedDocument, markdown_to_chunks
 from services.search.base_source import BaseSource
-
+from services.search.parsed_document import ParsedDocument, markdown_to_chunks
 
 # ------------------------------------------------------------------ #
 # ParsedDocument tests

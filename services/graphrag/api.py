@@ -125,7 +125,7 @@ class ChunksResult(BaseModel):
 class CommunityResult(BaseModel):
     """Leiden community lookup result."""
 
-    community_id: Optional[int] = None
+    community_id: Optional[str] = None
     label: Optional[str] = None
     members: List[Dict[str, Any]] = []
 

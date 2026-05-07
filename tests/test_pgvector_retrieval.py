@@ -1,5 +1,4 @@
-"""
-Integration test: pgvector end-to-end retrieval with BAAI/bge-small-en-v1.5 embeddings.
+"""Integration test: pgvector end-to-end retrieval with BAAI/bge-small-en-v1.5 embeddings.
 
 Verifies:
 1. PgVectorAdapter connects successfully.
@@ -9,8 +8,8 @@ Verifies:
 5. Embedding model name is consistent between graph_store and hybrid_agent.
 """
 
-import sys
 import os
+import sys
 
 # Add service paths so imports resolve regardless of install state
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -45,7 +44,7 @@ def test_pgvector_connection():
 
 
 def test_chunks_table_populated():
-    """chunks table must have at least one row."""
+    """Chunks table must have at least one row."""
     from utils.graphdb.pgvector_adapter import PgVectorAdapter
     pg = PgVectorAdapter(PGVECTOR_DSN)
     assert pg.connect()

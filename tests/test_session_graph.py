@@ -1,13 +1,13 @@
 """Integration tests for SessionGraphManager."""
-import sys
 import os
 import socket
+import sys
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.agent.session_graph import SessionGraphManager
+from agent.session.manager import SessionGraphManager
 
 MEMGRAPH_URI = "bolt://127.0.0.1:17687"
 NEO4J_URI = "bolt://172.18.0.1:7687"

@@ -9,7 +9,7 @@ import logging
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 # Ensure the graphrag package directory is on sys.path so relative imports work
 _SVC_DIR = Path(__file__).parent
