@@ -32,6 +32,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from pythonjsonlogger import jsonlogger
 
+_SHARED_PKG_DIR = Path(__file__).resolve().parents[2] / "packages" / "shared-py"
+if str(_SHARED_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_SHARED_PKG_DIR))
+
 from graphknows.shared.config import BaseServiceSettings
 
 
@@ -125,7 +129,7 @@ class ChunksResult(BaseModel):
 class CommunityResult(BaseModel):
     """Leiden community lookup result."""
 
-    community_id: Optional[int] = None
+    community_id: Optional[int | str] = None
     label: Optional[str] = None
     members: List[Dict[str, Any]] = []
 
