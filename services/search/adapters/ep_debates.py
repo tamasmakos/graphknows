@@ -22,8 +22,8 @@ from typing import Any
 
 import scrapers.ep_debates as _ep
 
-from services.search.adapters.base import SourceAdapter
-from services.search.models import Document, SearchQuery, SearchResult
+from search.adapters.base import SourceAdapter
+from search.models import Document, SearchQuery, SearchResult
 
 # Default output dir — override via EP_DEBATES_OUT_DIR env var for non-Docker usage
 _OUT_DIR = Path(os.environ.get("EP_DEBATES_OUT_DIR", "/data/raw/ep_debates"))

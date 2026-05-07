@@ -5,8 +5,8 @@ import re
 from datetime import datetime
 from urllib.parse import urljoin
 
-from services.search.base_source import BaseSource
-from services.search.parsed_document import ParsedDocument
+from search.base_source import BaseSource
+from search.parsed_document import ParsedDocument
 
 _BASE = "https://www.ecb.europa.eu"
 _LISTING = f"{_BASE}/pub/economic-bulletin/html/index.en.html"
@@ -21,8 +21,9 @@ class ECBPublicationsSource(BaseSource):
         try:
             html = await self._get(_LISTING)
         except Exception as exc:
-            print(f"[ecb_publications] listing failed: {exc}")
-            return []
+            raise NotImplementedError(  # TODO: implement ecb_publications adapter
+                f"[ecb_publications] listing failed: {exc}"
+            ) from exc
 
         pattern = re.compile(
             r'href=["\']([^"\']*?/pub/economic-bulletin/html/eb[^"\']*?\.en\.html)["\']',

@@ -5,8 +5,8 @@ import re
 from datetime import datetime
 from urllib.parse import urljoin
 
-from services.search.base_source import BaseSource
-from services.search.parsed_document import ParsedDocument
+from search.base_source import BaseSource
+from search.parsed_document import ParsedDocument
 
 _BASE = "https://www.europarl.europa.eu"
 _LISTING = f"{_BASE}/thinktank/en/search.html?category=briefing&documentType=BRIE"
@@ -21,8 +21,9 @@ class EPRSBriefingsSource(BaseSource):
         try:
             html = await self._get(_LISTING)
         except Exception as exc:
-            print(f"[eprs_briefings] listing failed: {exc}")
-            return []
+            raise NotImplementedError(  # TODO: implement eprs_briefings adapter
+                f"[eprs_briefings] listing failed: {exc}"
+            ) from exc
 
         # Extract briefing links from think tank search results
         # URLs like /thinktank/en/document/EPRS_BRI(YYYY)NNNNNN

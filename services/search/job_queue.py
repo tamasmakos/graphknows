@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 
-from services.search.models import ScrapeJob
+from search.models import ScrapeJob
 
 _jobs: dict[str, dict] = {}
 _queue: asyncio.Queue = asyncio.Queue()

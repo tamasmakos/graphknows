@@ -141,3 +141,13 @@
 ## [2026-05-05] create | concepts/graph-visualisation-diagnosis.md
 - Full diagnostic: Neo4j schema, agent output shape, 5 root causes identified
 - Fix plan: entity co-occurrence edges, topic nodes, chunk metadata, citation lookup, frontend layout
+## [2026-05-05] create | services-refactor-phases-0-5 — all 5 phases complete, 54 tests pass, Google style enforced
+## [2026-05-05] session-2 fixes | services-refactor-phases-0-5
+- Fixed get_langchain_llm missing import in graphgen/extractors.py (root cause: Neo4j never populated)
+- Fixed agent tool field aliasing: entity/entity_id/entity1_id → UPPER_SNAKE_CASE normalisation
+- Fixed agent answer empty: orchestrator now accepts text|answer|content keys
+- Added GRAPHRAG_URL/GRAPHGEN_URL/SEARCH_URL to .env (were missing — caused silent 8001 default)
+- Fixed PYTHONPATH: /root/graphknows/services (not services/agent)
+- Full SSE ReAct demo verified: 5-tool chain, 10 chunks retrieved, graceful Neo4j empty fallback
+- Commits 3049d4a, c584958, 1c96d3a pushed to PR #10
+- GraphGen build job_6f755304 running — will populate Neo4j with get_langchain_llm fix

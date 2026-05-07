@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from services.search.router import router, _ADAPTERS
+from search.router import router, _ADAPTERS
 
 logging.basicConfig(
     level=logging.INFO,

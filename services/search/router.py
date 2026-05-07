@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from services.search.adapters.ep_debates import EPDebatesAdapter
-from services.search.adapters.eurlex import EurLexAdapter
-from services.search.adapters.uk_legislation import UKLegislationAdapter
-from services.search.job_queue import enqueue, get_job, make_job, update_job
-from services.search.models import (
+from search.adapters.ep_debates import EPDebatesAdapter
+from search.adapters.eurlex import EurLexAdapter
+from search.adapters.uk_legislation import UKLegislationAdapter
+from search.job_queue import enqueue, get_job, make_job, update_job
+from search.models import (
     Document,
     ScrapeJob,
     ScrapeRequest,
@@ -114,6 +116,16 @@ async def _run_scrape_job(job_id: str, req: ScrapeRequest) -> None:
         progress=1.0,
         result=docs,
     )
+
+    # Fire-and-forget: send each scraped document to graphgen for KG ingestion.
+    # Uses a fresh client per job — no blocking, errors are logged only.
+    graphgen_url = os.environ.get("GRAPHGEN_URL", "http://graphgen:8003")
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for doc in docs:
+            try:
+                await client.post(f"{graphgen_url}/ingest", json=doc)
+            except Exception as exc:
+                logger.warning("graphgen ingest fire-and-forget failed for %s: %s", doc.get("id"), exc)
 
 
 @router.post("/scrape", response_model=ScrapeJob)

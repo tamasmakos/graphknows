@@ -5,8 +5,8 @@ import re
 from datetime import datetime
 from urllib.parse import urljoin
 
-from services.search.base_source import BaseSource
-from services.search.parsed_document import ParsedDocument
+from search.base_source import BaseSource
+from search.parsed_document import ParsedDocument
 
 _BASE = "https://www.eca.europa.eu"
 _LISTING = f"{_BASE}/en/publications?category=special_report"
@@ -21,8 +21,9 @@ class ECAReportsSource(BaseSource):
         try:
             html = await self._get(_LISTING)
         except Exception as exc:
-            print(f"[eca_reports] listing failed: {exc}")
-            return []
+            raise NotImplementedError(  # TODO: implement eca_reports adapter
+                f"[eca_reports] listing failed: {exc}"
+            ) from exc
 
         # Extract report links – ECA uses /en/publications/SR-YYYY-NN style URLs
         pattern = re.compile(

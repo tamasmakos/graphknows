@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import logging
 
-from services.search.base_source import BaseSource, _USER_AGENT
-from services.search.parsed_document import ParsedDocument
+from search.base_source import BaseSource, _USER_AGENT
+from search.parsed_document import ParsedDocument
 
 log = logging.getLogger(__name__)
 
