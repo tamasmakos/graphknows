@@ -41,8 +41,8 @@ def main() -> None:
         select_candidate_labels,
     )
 
-    schema_graph, top_labels = build_gliner2_schema()
-    candidate_labels = select_candidate_labels(top_labels, domain, max_labels=40)
+    top_labels = build_top_level_label_space()
+    schema = build_gliner2_schema(list(top_labels.get("ontology", {}).get("children", [])))
     model = get_gliner2_model()
 
     nodes: list[dict] = []
@@ -53,8 +53,18 @@ def main() -> None:
         if not text.strip():
             continue
         try:
-            raw_ents = model.predict_entities(text, candidate_labels, threshold=0.4)
-            refined = refine_entities_with_ontology(raw_ents, schema_graph)
+            candidate_labels = select_candidate_labels(text, top_labels, top_k=40)
+            raw_result = model.extract_entities(text, candidate_labels, threshold=0.4)
+            # extract_entities returns {"entities": {"Label": ["name1", ...]}}
+            raw_ents_dict = raw_result.get("entities", {}) if isinstance(raw_result, dict) else {}
+            # Convert to flat list for refine_entities_with_ontology
+            flat_ents = [
+                {"text": name, "label": label}
+                for label, names in raw_ents_dict.items()
+                for name in names
+                if name and name.strip()
+            ]
+            refined = refine_entities_with_ontology(flat_ents, schema)
             for ent in refined:
                 label = ent.get("label", "CONCEPT")
                 name = ent.get("text", "").strip()
