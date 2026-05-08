@@ -120,15 +120,29 @@ class IterativeOrchestrator:
                 model=self._model,
                 messages=messages,
                 temperature=0.1,
-                max_tokens=512,
+                max_tokens=2048,
             )
             raw = response.choices[0].message.content.strip()
 
             try:
                 parsed = json.loads(raw)
             except json.JSONDecodeError:
-                yield StreamEvent(event="error", data={"detail": f"LLM returned non-JSON: {raw[:200]}"})
-                return
+                # Try to extract JSON object from response (LLM sometimes adds preamble/markdown)
+                import re
+                json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+                if json_match:
+                    try:
+                        parsed = json.loads(json_match.group())
+                    except json.JSONDecodeError:
+                        parsed = None
+                else:
+                    parsed = None
+
+                if parsed is None:
+                    # If the LLM produced plain text with no JSON, treat it as the final answer
+                    log.warning("LLM returned non-JSON, treating as final answer: %s", raw[:200])
+                    yield StreamEvent(event="answer", data={"text": raw, "steps": step_id})
+                    return
 
             tool_name = parsed.get("tool", "")
             params = parsed.get("params", {})
