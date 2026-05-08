@@ -132,20 +132,46 @@ class IterativeOrchestrator:
                 parsed = json.loads(raw)
             except json.JSONDecodeError:
                 # Try to extract JSON object from response (LLM sometimes adds preamble/markdown)
-                import re
-                json_match = re.search(r'\{.*\}', raw, re.DOTALL)
-                if json_match:
-                    try:
-                        parsed = json.loads(json_match.group())
-                    except json.JSONDecodeError:
-                        parsed = None
-                else:
-                    parsed = None
+                parsed = None
+                brace_idx = raw.find('{')
+                if brace_idx >= 0:
+                    # Count braces to find the matching closing brace
+                    depth = 0
+                    in_str = False
+                    escape = False
+                    for end_idx, ch in enumerate(raw[brace_idx:], start=brace_idx):
+                        if escape:
+                            escape = False
+                            continue
+                        if ch == '\\' and in_str:
+                            escape = True
+                            continue
+                        if ch == '"':
+                            in_str = not in_str
+                            continue
+                        if in_str:
+                            continue
+                        if ch == '{':
+                            depth += 1
+                        elif ch == '}':
+                            depth -= 1
+                            if depth == 0:
+                                try:
+                                    parsed = json.loads(raw[brace_idx:end_idx + 1])
+                                except json.JSONDecodeError:
+                                    pass
+                                break
 
                 if parsed is None:
-                    # If the LLM produced plain text with no JSON, treat it as the final answer
+                    # LLM produced text with no extractable JSON — treat as final answer
                     log.warning("LLM returned non-JSON, treating as final answer: %s", raw[:200])
-                    yield StreamEvent(event="answer", data={"text": raw, "steps": step_id})
+                    import re as _re2
+                    text_fallback = raw.strip()
+                    text_fallback = _re2.sub(r'\{"?tool"?.*$', '', text_fallback, flags=_re2.DOTALL).strip()
+                    report_fb = _re2.search(r'^##\s+(?!Step\s+\d)', text_fallback, flags=_re2.MULTILINE)
+                    if report_fb and report_fb.start() > 0:
+                        text_fallback = text_fallback[report_fb.start():]
+                    yield StreamEvent(event="answer", data={"text": text_fallback, "steps": step_id})
                     return
 
             tool_name = parsed.get("tool", "")
