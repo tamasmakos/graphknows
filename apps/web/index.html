@@ -3523,11 +3523,15 @@ function renderGraph() {
           .attr('rx',3).attr('ry',3);
         g.append('text')
           .attr('class','edge-label')
-          .attr('fill','#999')
-          .attr('font-size', isMobileGraph ? '0px' : '11px')
+          .attr('fill','#ccc')
+          .attr('font-size', isMobileGraph ? '0px' : '10px')
           .attr('text-anchor','middle')
           .attr('dominant-baseline','middle')
-          .text(d => isMobileGraph ? '' : (d.type || ''));
+          .text(d => {
+            if (isMobileGraph) return '';
+            const rel = (d.properties && d.properties.relation_type) || d.label || d.type || '';
+            return humanLabel(rel).substring(0, 18);
+          });
         return g;
       }
     );
@@ -3654,13 +3658,11 @@ function renderGraph() {
   });
 
   link.select('.edge-label')
-    .attr('font-size', isMobileGraph ? '0px' : '11px')
+    .attr('font-size', isMobileGraph ? '0px' : '10px')
     .text(d => {
       if (isMobileGraph) return '';
-      if (d.type === 'KG_RELATION') {
-        return (d.properties && d.properties.relation_type) || 'relation';
-      }
-      return d.type || '';
+      const rel = (d.properties && d.properties.relation_type) || d.label || d.type || '';
+      return humanLabel(rel).substring(0, 18);
     });
   link.select('.edge-label-bg')
     .attr('opacity', isMobileGraph ? 0 : 1);
