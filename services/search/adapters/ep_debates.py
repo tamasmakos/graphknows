@@ -25,8 +25,9 @@ import scrapers.ep_debates as _ep
 from search.adapters.base import SourceAdapter
 from search.models import Document, SearchQuery, SearchResult
 
-# Default output dir — override via EP_DEBATES_OUT_DIR env var for non-Docker usage
-_OUT_DIR = Path(os.environ.get("EP_DEBATES_OUT_DIR", "/data/raw/ep_debates"))
+# Default output dir — co-located with repo; override via EP_DEBATES_OUT_DIR env var
+_REPO_DEFAULT = Path(__file__).resolve().parents[3] / "data" / "raw" / "ep_debates"
+_OUT_DIR = Path(os.environ.get("EP_DEBATES_OUT_DIR", str(_REPO_DEFAULT)))
 
 
 class EPDebatesAdapter(SourceAdapter):
@@ -52,12 +53,13 @@ class EPDebatesAdapter(SourceAdapter):
             # Run incremental scrape in a thread so we don't block the event loop
             cached = await asyncio.to_thread(_ep.run_incremental, max_speeches=100)
 
-        # 2. Simple text filter
-        q_lower = query.query.lower()
+        # 2. Fuzzy token-overlap filter — match if ANY query token appears in title/text
+        q_tokens = set(query.query.lower().split())
         for doc in cached:
             title = doc.get("title", "")
             text = doc.get("text", "")
-            if q_lower not in title.lower() and q_lower not in text.lower():
+            combined = (title + " " + text).lower()
+            if not any(tok in combined for tok in q_tokens):
                 continue
             # Date filters
             session_date = doc.get("session_date", "")

@@ -1,8 +1,9 @@
-"""Search tool — queries EU public archives and returns parsed documents."""
+"""Search tool — queries EU public archives + Tavily web search, merges and ranks results."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -34,12 +35,19 @@ log = logging.getLogger("agent.tools.search")
 
 
 class SearchTool(BaseTool):
-    """Search EU public sources via direct adapter invocation."""
+    """Search EU public sources + Tavily web in parallel, merge and rank results.
+
+    EU adapters provide authoritative official records (EP debates, EUR-Lex legislation,
+    EC press releases, ECB publications, ECA reports).  Tavily fills the general web
+    context gap and surfaces recent news the specialized archives may not yet carry.
+    Both result sets are normalised to the same document shape before BM25 ranking.
+    """
 
     name = "search"
     description = (
-        "Search live EU public sources. "
-        'Params: {"query": "...", "sources": ["ep_debates", "eurlex"], "max_docs": 8, "session_id": "..."}'
+        "Search EU public archives AND the live web simultaneously. "
+        'Params: {"query": "...", "sources": ["ep_debates", "eurlex", "tavily"], '
+        '"max_docs": 8, "session_id": "...", "time_range": "day|week|month|year"}'
     )
 
     def __init__(
@@ -58,6 +66,7 @@ class SearchTool(BaseTool):
 
             max_docs = int(params.get("max_docs", 8) or 8)
             max_docs = max(1, min(max_docs, 20))
+            time_range = params.get("time_range")
 
             source_ids = params.get("sources") or route_sources(query)
             if isinstance(source_ids, str):
@@ -65,31 +74,56 @@ class SearchTool(BaseTool):
             source_ids = [str(s).strip() for s in source_ids if str(s).strip()]
             if not source_ids:
                 source_ids = route_sources(query)
-            source_ids = source_ids[:3]
 
-            tasks = [
-                asyncio.wait_for(
-                    self._search_single_source(source_id, query, max_docs),
-                    timeout=15,
+            # Split: Tavily handled separately, EU adapters handled by existing path
+            use_tavily = "tavily" in source_ids or os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API")
+            eu_source_ids = [s for s in source_ids if s != "tavily"][:3]
+
+            # Build tasks — EU adapters (up to 3) + Tavily in parallel
+            all_tasks: list[Any] = []
+            all_labels: list[str] = []
+
+            for source_id in eu_source_ids:
+                all_tasks.append(
+                    asyncio.wait_for(
+                        self._search_single_source(source_id, query, max_docs),
+                        timeout=15,
+                    )
                 )
-                for source_id in source_ids
-            ]
-            per_source = await asyncio.gather(*tasks, return_exceptions=True)
+                all_labels.append(source_id)
+
+            if use_tavily:
+                from agent.tools.tavily_tool import TavilySearchTool
+                tavily = TavilySearchTool()
+                all_tasks.append(
+                    asyncio.wait_for(
+                        tavily.run({"query": query, "max_results": max_docs, "time_range": time_range}),
+                        timeout=20,
+                    )
+                )
+                all_labels.append("tavily")
+
+            results = await asyncio.gather(*all_tasks, return_exceptions=True)
 
             documents: list[dict[str, Any]] = []
-            for source_id, result in zip(source_ids, per_source):
+            for label, result in zip(all_labels, results):
                 if isinstance(result, Exception):
-                    log.warning("Search source timed out/failed (%s): %s", source_id, result)
+                    log.warning("Search source timed out/failed (%s): %s", label, result)
                     continue
-                documents.extend(result)
+                # Tavily returns {documents: [...]} same as EU adapter post-processing
+                if isinstance(result, dict) and "documents" in result:
+                    documents.extend(result["documents"])
+                elif isinstance(result, list):
+                    documents.extend(result)
 
-            ranked = rank_documents(query, documents, top_k=8)
+            log.info("Search merged %d documents from %s", len(documents), all_labels)
+            ranked = rank_documents(query, documents, top_k=min(max_docs, 12))
 
             session_id = str(params.get("session_id", "")).strip()
             if session_id and self._sgm and documents:
                 from agent.tools.graphgen_tool import GraphGenTool
 
-                domain = _detect_domain_from_sources(source_ids)
+                domain = _detect_domain_from_sources(eu_source_ids)
                 graphgen = GraphGenTool(sgm=self._sgm, ws_broadcaster=self._ws_broadcaster)
                 task = asyncio.create_task(
                     graphgen.run(

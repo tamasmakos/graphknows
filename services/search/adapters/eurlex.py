@@ -23,7 +23,9 @@ import scrapers.eurlex as _eurlex
 from search.adapters.base import SourceAdapter
 from search.models import Document, SearchQuery, SearchResult
 
-_OUT_DIR = Path(os.environ.get("EURLEX_OUT_DIR", "/data/raw/eurlex"))
+# Default output dir — co-located with repo; override via EURLEX_OUT_DIR env var
+_REPO_DEFAULT = Path(__file__).resolve().parents[3] / "data" / "raw" / "eurlex"
+_OUT_DIR = Path(os.environ.get("EURLEX_OUT_DIR", str(_REPO_DEFAULT)))
 
 
 class EurLexAdapter(SourceAdapter):
@@ -41,12 +43,14 @@ class EurLexAdapter(SourceAdapter):
         if not cached:
             cached = await asyncio.to_thread(_eurlex.run_incremental, days=2)
 
-        q_lower = query.query.lower()
+        # Fuzzy token-overlap filter
+        q_tokens = set(query.query.lower().split())
         results: list[SearchResult] = []
         for doc in cached:
             title = doc.get("title", "")
             text = doc.get("text", "")
-            if q_lower not in title.lower() and q_lower not in text.lower():
+            combined = (title + " " + text).lower()
+            if not any(tok in combined for tok in q_tokens):
                 continue
             published = doc.get("published", "")
             if query.date_from and published and published < query.date_from:
