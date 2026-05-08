@@ -177,6 +177,13 @@ class IterativeOrchestrator:
                             break
                     except (json.JSONDecodeError, AttributeError):
                         break
+                # Strip any trailing JSON tool calls the model accidentally included in the text
+                import re as _re
+                text = _re.sub(r'\{["\']tool["\'].*$', '', text, flags=_re.DOTALL).strip()
+                # Strip planning preamble like "## Step 1: Search..." if the real report starts later
+                report_start = _re.search(r'^##\s+(?!Step\s+\d)', text, flags=_re.MULTILINE)
+                if report_start and report_start.start() > 0:
+                    text = text[report_start.start():]
                 yield StreamEvent(event="answer", data={"text": text, "steps": step_id})
                 return
 
