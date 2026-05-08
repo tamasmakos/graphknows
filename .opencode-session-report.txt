@@ -1,0 +1,17 @@
+.opencode exists in the current repository at `/root/graphknows/.opencode`.
+
+From what is visible, it appears to contain repo-local OpenCode support files:
+
+- `skills/` with three skill definitions:
+  - `pragmatic-engineer`: instructions for validation-first, repo-aware engineering work.
+  - `neo4j-info`: guidance about the project's Neo4j schema and using a `neo4j-query` tool.
+  - `knowledge_management` (skill name `knowledge-management`): instructions for note-taking, linking, and knowledge-base workflows.
+- `tools/` with custom tool implementations:
+  - `neo4j-query.ts`, `memgraph-query.ts`, and `pgvector-query.ts` for read-only database queries.
+  - `neo4j-status.ts` for checking Neo4j connectivity.
+  - `tools/internal/db_debug.py`, a shared Python runner that loads `.env`, enforces read-only query rules, and connects to Neo4j, Memgraph, and PostgreSQL/pgvector.
+- `.opencode/package.json` declaring the `@opencode-ai/plugin` dependency.
+- `.opencode/node_modules/`, which looks like installed dependencies for that local plugin/tool setup.
+- `.opencode/.gitignore`, which ignores the local dependency/install files in that folder.
+
+Careful inference: this does appear to be used as repo-local OpenCode context/configuration, because it contains OpenCode-style skills and custom tool definitions, and in this session the available skills/tools line up with what is inside this folder. I can only say that it appears to be used this way based on the files present and the tool/skill exposure I can observe here.

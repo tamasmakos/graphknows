@@ -121,17 +121,14 @@ class SearchTool(BaseTool):
 
             session_id = str(params.get("session_id", "")).strip()
             if session_id and self._sgm and documents:
-                from agent.tools.graphgen_tool import GraphGenTool
-
                 domain = _detect_domain_from_sources(eu_source_ids)
-                graphgen = GraphGenTool(sgm=self._sgm, ws_broadcaster=self._ws_broadcaster)
                 task = asyncio.create_task(
-                    graphgen.run(
-                        {
-                            "documents": documents,
-                            "session_id": session_id,
-                            "ontology_domain": domain,
-                        }
+                    _run_graphgen_subprocess(
+                        documents=documents,
+                        session_id=session_id,
+                        domain=domain,
+                        sgm=self._sgm,
+                        ws_broadcaster=self._ws_broadcaster,
                     )
                 )
                 task.add_done_callback(_log_background_graphgen_failure)
@@ -256,3 +253,74 @@ def _log_background_graphgen_failure(task: asyncio.Task[dict[str, Any]]) -> None
             log.warning("Background graphgen returned error: %s", result.get("error"))
     except Exception as exc:
         log.warning("Background graphgen failed: %s", exc)
+
+
+async def _run_graphgen_subprocess(
+    documents: list[dict[str, Any]],
+    session_id: str,
+    domain: str,
+    sgm: Any,
+    ws_broadcaster: Any,
+) -> dict[str, Any]:
+    """Run GLiNER2 graphgen in an isolated subprocess so it cannot crash the agent."""
+    import json as _json
+
+    worker = Path(__file__).parent / "graphgen_worker.py"
+    payload = _json.dumps({
+        "documents": documents,
+        "session_id": session_id,
+        "ontology_domain": domain,
+    }).encode()
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(worker),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=120)
+        if stderr:
+            log.debug("Graphgen worker stderr: %s", stderr.decode()[:500])
+        if proc.returncode != 0:
+            log.warning("Graphgen worker exited %d: %s", proc.returncode, stderr.decode()[:200])
+            return {"error": f"worker exited {proc.returncode}", "nodes": 0, "edges": 0}
+
+        result = _json.loads(stdout)
+        nodes_data = result.get("entities", [])
+        edges_data = result.get("relations", [])
+
+        log.info("Graphgen subprocess: %d nodes, %d edges for session %s",
+                 len(nodes_data), len(edges_data), session_id)
+
+        # Persist to session graph manager
+        if nodes_data and sgm:
+            try:
+                for node in nodes_data:
+                    await sgm.add_entity(session_id, node.get("id", ""), node.get("type", "CONCEPT"), {})
+                for edge in edges_data:
+                    await sgm.add_relation(
+                        session_id,
+                        edge.get("source", ""), edge.get("target", ""), edge.get("type", "co-occurs"), {}
+                    )
+            except Exception as exc:
+                log.warning("Failed to persist graph to session manager: %s", exc)
+
+        if ws_broadcaster:
+            try:
+                await ws_broadcaster(session_id, {
+                    "type": "graph_update",
+                    "nodes": len(nodes_data),
+                    "edges": len(edges_data),
+                })
+            except Exception:
+                pass
+
+        return result
+
+    except asyncio.TimeoutError:
+        log.warning("Graphgen subprocess timed out for session %s", session_id)
+        return {"error": "timeout", "nodes": 0, "edges": 0}
+    except Exception as exc:
+        log.warning("Graphgen subprocess error: %s", exc)
+        return {"error": str(exc), "nodes": 0, "edges": 0}
