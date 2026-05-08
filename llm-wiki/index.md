@@ -2,7 +2,7 @@
 
 > Political Intelligence & Knowledge Graph Research — Graphknows v2 knowledge base.
 > Read this first to find relevant pages for any query.
-> Last updated: 2026-05-04 | Total pages: 20
+> Last updated: 2026-05-06 | Total pages: 21
 
 ---
 
@@ -37,6 +37,12 @@
 - [[service-design-agent]] — `services/agent/` spec: HTTP API, tools (6), session lifecycle, Memgraph CRUD, write-back
 - [[service-design-search]] — `services/search/` spec: source adapters, job queue, idempotent ingestion, reference resolver
 - [[frontend-v2-design]] — `apps/web/` v2: split-pane layout, D3.js graph, reasoning trace, export suite, investigation sessions
+- [[mobile-first-frontend-revamp-2026-05-06]] — mobile-first SPA restructuring of `apps/web/index.html`: answer/graph split, drawer investigations, collapsed reasoning, mobile graph controls
+- [[mobile-graph-usability-pass-2026-05-06]] — focused mobile graph pass: tighter framing, tap-to-focus, mobile zoom/focus behavior, label prioritisation, selected-neighborhood emphasis
+- [[immersive-answer-graph-redesign-2026-05-06]] — redesign direction: Neo4j-like entity graph, navigational provenance graph, live reasoning timeline, Perplexity-grade citations
+- [[integration-qa-immersive-answer-graph-2026-05-06]] — integrated immersive answer/graph branch QA: backend clean, live UX still below product bar, held as checkpoint
+- [[canonical-frontend-promotion-2026-05-06]] — promoted integration dark-blue SPA into the canonical served frontend and verified local/public parity
+- [[frontend-reconciliation-2026-05-06]] — reconciled canonical frontend against newer `/tmp/gk-ux-integration` work, promoted the richer variant, and verified local/public/mobile parity
 
 ---
 

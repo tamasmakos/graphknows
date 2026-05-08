@@ -13,23 +13,44 @@ from graphknows.shared.models.session import StreamEvent, ReasoningStep
 
 log = logging.getLogger("agent.orchestrator")
 
-_SYSTEM_PROMPT_TEMPLATE = """You are a political intelligence assistant with access to a knowledge graph
-of European Parliament debates, legislation, and regulatory documents.
+_SYSTEM_PROMPT_TEMPLATE = """You are a European Union public records investigator.
 
-You have the following tools available. Use ONLY these tool names exactly as listed:
+You search live EU public archives (European Parliament, EUR-Lex, European Commission, Council)
+to answer questions with primary source evidence.
 
+Available tools:
 {tool_list}
 
-CRITICAL — use EXACTLY these parameter field names (copy-paste from the Params spec above):
-- retrieve: {{"query": "...", "k": 10}}
-- get_chunks: {{"entity_id": "ENTITY_NAME", "top_k": 5}}   <- entity name in UPPER_SNAKE_CASE from retrieve results
-- get_community: {{"entity_id": "ENTITY_NAME"}}              <- same entity name format
-- get_path: {{"entity_a": "ENTITY_A", "entity_b": "ENTITY_B"}}  <- not entity1/entity2
-- build: {{"input_files": []}}
-- search: {{"query": "..."}}
+TOOL USAGE RULES:
+- ALWAYS start with `search` (include session_id in params)
+- THEN optionally use `retrieve` for additional KG context
+- End with `answer` — the KG builds automatically in background from search results
 
-Think step by step. Use tools to gather evidence before synthesising an answer.
-Always cite your sources.
+For `search`: {{"query": "...", "sources": ["ep_debates", "eurlex"], "max_docs": 8, "session_id": "..."}}
+  - sources: ep_debates, ep_resolutions, eurlex, council_conclusions, ec_press, ecb_publications, eca_reports, eprs_briefings
+  - Omit sources to let the router decide
+For `retrieve`: {{"query": "...", "k": 5}}
+For `answer`: {{"text": "..."}}
+
+REPORT FORMAT for `answer` text:
+## [Investigation Title]
+
+**Executive Summary**: 2-3 sentence overview of findings.
+
+### Key Findings
+1. [Finding 1] — supported by [Doc-1: Title (Institution, Date)](url)
+2. [Finding 2] — supported by [Doc-2: Title (Institution, Date)](url)
+
+### Key Entities
+- **People**: [list]
+- **Organizations**: [list]
+- **Legislation**: [list]
+
+### Sources Consulted
+- [Doc-1]: [Full title] — [Institution] — [Date] — [URL]
+- [Doc-2]: ...
+
+Always cite with [Doc-N] inline references matching the Sources section.
 
 Respond ONLY with valid JSON in this format:
 {{"thought": "...", "tool": "<tool_name>", "params": {{...}}}}
@@ -103,6 +124,9 @@ class IterativeOrchestrator:
             tool_name = parsed.get("tool", "")
             params = parsed.get("params", {})
             thought = parsed.get("thought", "")
+
+            if tool_name == "search" and isinstance(params, dict) and not params.get("session_id"):
+                params["session_id"] = session_id
 
             # Done
             if tool_name == "answer":

@@ -39,6 +39,122 @@
     height: 100vh;
     flex: 1;
     overflow: hidden;
+    min-width: 0;
+  }
+
+  #sources-panel {
+    width: 280px;
+    min-width: 280px;
+    border-left: 1px solid var(--border);
+    background: var(--bg2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #sources-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  #sources-panel-header h3 {
+    font-size: 11px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  #sources-count {
+    font-size: 11px;
+    color: var(--accent);
+  }
+  #sources-list {
+    padding: 10px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  #sources-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 8px;
+  }
+  .source-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    background: rgba(13,17,23,0.8);
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .source-item.active {
+    border-color: var(--accent);
+    background: rgba(88,166,255,0.08);
+  }
+  .source-item-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .inst-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: #0b1320;
+  }
+  .inst-chip.ep { background: #60a5fa; }
+  .inst-chip.eurlex { background: #f59e0b; }
+  .inst-chip.ec { background: #34d399; }
+  .inst-chip.council { background: #f87171; }
+  .inst-chip.other { background: #9ca3af; }
+  .source-date {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .source-title-link {
+    display: block;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .source-title-link:hover {
+    color: var(--accent);
+  }
+  .citation {
+    color: var(--accent);
+    text-decoration: none;
+    border: 1px solid rgba(88,166,255,0.35);
+    border-radius: 999px;
+    padding: 0 6px;
+    margin: 0 2px;
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .citation:hover {
+    background: rgba(88,166,255,0.12);
+  }
+
+  .mobile-only { display: none !important; }
+  .desktop-only { display: initial; }
+
+  #sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 35;
   }
 
   /* ── Left Panel ── */
@@ -50,17 +166,27 @@
     border-right: 1px solid var(--border);
     background: var(--bg2);
     overflow: hidden;
+    min-width: 0;
   }
 
   #header {
-    padding: 18px 20px 14px;
+    padding: 20px 24px 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
+  #header-topline {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .header-brand {
+    flex: 1;
+    min-width: 0;
+  }
   #header h1 {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.75px;
     background: linear-gradient(135deg, #58a6ff, #a78bfa);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -70,10 +196,10 @@
     color: var(--text-muted);
     letter-spacing: 1.5px;
     text-transform: uppercase;
-    margin-top: 2px;
+    margin-top: 6px;
   }
   #session-row {
-    margin-top: 8px;
+    margin-top: 12px;
     font-size: 11px;
     color: var(--text-muted);
     display: flex;
@@ -89,6 +215,46 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  #btn-mobile-sidebar {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text);
+    font-size: 18px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  #mobile-view-switcher {
+    display: none;
+    margin-top: 14px;
+    padding: 4px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    gap: 6px;
+  }
+  .mobile-view-btn {
+    flex: 1;
+    min-height: 40px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+  }
+  .mobile-view-btn.active {
+    background: var(--accent);
+    color: #08111f;
+  }
 
   /* Chat area */
   #chat-area {
@@ -99,6 +265,61 @@
     flex-direction: column;
     gap: 12px;
     scroll-behavior: smooth;
+  }
+  #chat-area.is-empty {
+    justify-content: flex-end;
+  }
+  #chat-empty-state {
+    display: none;
+    align-self: stretch;
+    background: linear-gradient(180deg, rgba(28,35,51,0.92), rgba(15,17,23,0.92));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px 16px;
+    color: var(--text);
+    gap: 12px;
+  }
+  #chat-empty-state.visible {
+    display: flex;
+    flex-direction: column;
+  }
+  .chat-empty-title {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .chat-empty-copy {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+  .chat-suggestion-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chat-suggestion-btn {
+    border: 1px solid var(--border);
+    background: rgba(13, 17, 23, 0.9);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.3;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, color 0.2s;
+    position: relative;
+  }
+  .chat-suggestion-btn::after {
+    content: '↗';
+    margin-left: 8px;
+    color: var(--accent);
+    font-size: 11px;
+  }
+  .chat-suggestion-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(88,166,255,0.08);
   }
   #chat-area::-webkit-scrollbar { width: 4px; }
   #chat-area::-webkit-scrollbar-track { background: transparent; }
@@ -123,33 +344,111 @@
     max-width: 92%;
     overflow: hidden;
   }
-  .msg-agent .answer-body {
-    padding: 12px 14px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
+  .answer-label {
+    padding: 14px 18px 0;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
   }
+.msg-agent .answer-body {
+  padding: 16px 18px;
+  line-height: 1.7;
+  white-space: normal;
+  word-break: break-word;
+  font-size: 15px;
+  border-left: 3px solid var(--accent);
+  margin: 4px 0;
+}
   .msg-agent .answer-footer {
     padding: 8px 12px;
     border-top: 1px solid var(--border);
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
+    flex-direction: column;
+    gap: 10px;
+    align-items: stretch;
   }
   .chip {
     background: #0d1117;
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 2px 10px;
-    font-size: 11px;
+    padding: 6px 14px;
+    font-size: 12px;
     cursor: pointer;
     color: var(--accent);
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, background 0.2s;
+    min-height: 32px;
+    min-width: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    text-align: center;
+    flex-shrink: 0;
   }
-  .chip:hover { border-color: var(--accent); }
+  .chip:hover {
+    border-color: var(--accent);
+    background: rgba(88,166,255,0.08);
+  }
+
+  /* Source section styles */
+  .source-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .source-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .source-count-badge {
+    background: var(--accent);
+    color: #000;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+  }
+  .source-chips-container {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .source-chips-container::-webkit-scrollbar { height: 4px; }
+  .source-chips-container::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+  }
+  .source-section {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+  }
+  .source-footer-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .source-section::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 20px;
+    background: linear-gradient(to left, var(--card), transparent);
+    pointer-events: none;
+  }
   .btn-export-msg {
-    margin-left: auto;
+    align-self: flex-end;
     background: transparent;
     border: 1px solid var(--border);
     color: var(--text-muted);
@@ -220,7 +519,7 @@
     max-height: 120px;
   }
   #msg-input:focus { border-color: var(--accent); }
-  #msg-input::placeholder { color: var(--text-muted); }
+  #msg-input::placeholder { color: #8b949e; }
   #ask-btn {
     background: var(--blue);
     border: none;
@@ -228,10 +527,11 @@
     color: #fff;
     font-size: 13px;
     font-weight: 600;
-    padding: 0 18px;
+    padding: 0 20px;
     cursor: pointer;
     transition: background 0.2s;
     flex-shrink: 0;
+    min-height: 44px;
   }
   #ask-btn:hover { background: #58a6ff; }
   #ask-btn:disabled { background: var(--border); cursor: not-allowed; }
@@ -243,32 +543,57 @@
 
   /* ── Inline reasoning trace accordion ─────────────────────────────────── */
   .inline-trace {
-    border: 1px solid #2a2a3a;
-    border-radius: 6px;
-    margin-bottom: 8px;
+    margin: 0 12px 12px;
+    border: 1px solid #273248;
+    border-radius: 12px;
     overflow: hidden;
+    background: rgba(10, 14, 24, 0.72);
     font-family: var(--font-mono, monospace);
   }
-  .inline-trace > summary {
-    padding: 6px 10px;
-    font-size: 12px;
-    color: #888;
-    background: #1a1a2e;
+  .inline-trace-summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 11px 14px;
+    background: #141b29;
+    color: #9fb2d1;
+    cursor: pointer;
+    position: relative;
+    padding-right: 42px;
   }
-  .inline-trace-label {
-    padding: 6px 10px;
+  .inline-trace-summary::after {
+    content: '▾';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
     font-size: 12px;
-    color: #888;
-    background: #1a1a2e;
-    font-family: var(--font-mono, monospace);
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
   }
-  .inline-trace-steps { padding: 4px 0; max-height: 400px; overflow-y: auto; }
+  .inline-trace[open] .inline-trace-summary::after {
+    transform: translateY(-50%) rotate(180deg);
+  }
+  .inline-trace-summary::-webkit-details-marker { display: none; }
+  .inline-trace-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #c4d4ee;
+  }
+  .inline-trace-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .inline-trace-steps { padding: 6px 0; max-height: 340px; overflow-y: auto; }
   .inline-trace-steps::-webkit-scrollbar { width: 4px; }
   .inline-trace-steps::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-  .inline-step { padding: 5px 10px; border-bottom: 1px solid #1e1e2e; }
+  .inline-step { padding: 8px 14px; border-bottom: 1px solid #1e1e2e; }
   .inline-step:last-child { border-bottom: none; }
   .inline-step-header {
-    display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: default;
   }
   .inline-step-icon { font-size: 14px; }
   .inline-step-tool { font-weight: 600; color: #a0a8c0; }
@@ -277,10 +602,22 @@
     padding: 1px 4px; border-radius: 3px;
   }
   .inline-step-thought {
-    font-style: italic; color: #5a6a8a; font-size: 11px;
-    margin: 2px 0 4px; padding-left: 22px;
+    font-style: normal; color: #97a8c4; font-size: 11.5px;
+    margin: 8px 0 6px; line-height: 1.55;
   }
-  .inline-step-body { margin-top: 4px; font-size: 11px; color: #778; padding-left: 22px; }
+  .inline-step-body {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #778;
+  }
+  .inline-step-body .trace-score,
+  .inline-step-body .obs-chunk-id {
+    display: none;
+  }
+  .inline-step-body .obs-excerpt {
+    display: inline;
+    color: #aeb8cb;
+  }
   .inline-step-body .trace-entity-table td,
   .inline-step-body .trace-entity-table th { font-size: 10px; }
   .inline-step-body .trace-chunk-list li { font-size: 10px; }
@@ -525,23 +862,77 @@
     flex-direction: column;
     overflow: hidden;
     background: var(--bg);
+    min-width: 0;
   }
 
   #graph-toolbar {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
     padding: 10px 16px;
     border-bottom: 1px solid var(--border);
     background: var(--bg2);
     flex-shrink: 0;
+  }
+  #graph-toolbar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  #graph-view-tabs {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 3px;
+    border-radius: 10px;
+    background: rgba(13,17,23,0.75);
+    border: 1px solid var(--border);
+  }
+  .graph-view-tab {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+  }
+  .graph-view-tab:hover {
+    color: var(--text);
+  }
+  .graph-view-tab.active {
+    background: rgba(88,166,255,0.16);
+    color: var(--accent);
+  }
+  #graph-toolbar-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     flex-wrap: wrap;
+  }
+  #graph-toolbar-mobile-actions {
+    display: none;
+    gap: 8px;
+    align-items: center;
   }
   #graph-title {
     font-size: 12px;
     color: var(--text-muted);
-    margin-right: 4px;
     letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  #kg-updating {
+    display: none;
+    font-size: 11px;
+    color: #fbbf24;
+  }
+  #kg-updating.visible {
+    display: inline;
   }
   .toolbar-btn {
     background: var(--bg3);
@@ -556,6 +947,11 @@
   }
   .toolbar-btn:hover { border-color: var(--accent); color: var(--accent); }
   .toolbar-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,0.1); }
+  .toolbar-filter-group {
+    display:flex;
+    align-items:center;
+    gap:4px;
+  }
   #filter-select {
     background: var(--bg3);
     border: 1px solid var(--border);
@@ -591,30 +987,106 @@
   .layout-btn:hover { color: var(--text); }
   .layout-btn.active { background: var(--accent); color: #000; font-weight: 600; }
 
-  #graph-canvas {
-    flex: 1;
-    position: relative;
-    overflow: hidden;
-  }
+#graph-canvas {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 8px 8px 4px 8px;
+  background: var(--bg2);
+}
   #graph-canvas svg {
     width: 100%;
     height: 100%;
     display: block;
+    touch-action: none;
+    cursor: grab;
   }
-
-  /* Empty state */
-  #empty-state {
+  #graph-canvas.is-interacting svg {
+    cursor: grabbing;
+  }
+  #graph-focus-chip {
     position: absolute;
-    inset: 0;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    z-index: 4;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(12, 17, 27, 0.92);
+    border: 1px solid rgba(88,166,255,0.32);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.34);
+    backdrop-filter: blur(10px);
+  }
+  #graph-focus-chip.visible {
+    display: flex;
+  }
+  .graph-focus-copy {
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    pointer-events: none;
+    gap: 3px;
   }
-  #empty-state .icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
-  #empty-state p { font-size: 13px; opacity: 0.6; }
+  .graph-focus-eyebrow {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-muted);
+  }
+  .graph-focus-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .graph-focus-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .graph-focus-tap {
+    font-size: 10px;
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  #graph-focus-clear {
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    background: rgba(22,27,34,0.95);
+    color: var(--text);
+    border-radius: 999px;
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0 10px;
+    cursor: pointer;
+  }
+  #graph-focus-clear:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+/* Empty state */
+#empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  pointer-events: none;
+  gap: 8px;
+}
+#empty-state .icon { font-size: 52px; margin-bottom: 4px; opacity: 0.35; }
+#empty-state p { font-size: 13px; opacity: 0.6; font-weight: 500; }
+#empty-state .hint { font-size: 11px; opacity: 0.4; margin-top: 4px; }
 
   /* Tooltip */
   #tooltip {
@@ -689,8 +1161,68 @@
     overflow-y: auto;
     padding: 24px;
   }
+  #modal.relation-modal {
+    max-width: 720px;
+  }
   #modal h3 { font-size: 14px; margin-bottom: 12px; color: var(--accent); }
   #modal p { font-size: 13px; line-height: 1.6; color: var(--text-muted); white-space: pre-wrap; }
+  .relation-modal-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 14px;
+  }
+  .relation-modal-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(88,166,255,0.08);
+    border: 1px solid rgba(88,166,255,0.2);
+    color: var(--text);
+    font-size: 11px;
+  }
+  .relation-source-list {
+    display: grid;
+    gap: 12px;
+  }
+  .relation-source-card {
+    border: 1px solid var(--border);
+    background: rgba(13,17,23,0.86);
+    border-radius: 12px;
+    padding: 14px;
+  }
+  .relation-source-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .relation-source-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .relation-source-doc {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .relation-source-body {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  .relation-source-link {
+    display: inline-flex;
+    margin-top: 10px;
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 600;
+  }
   #modal-close {
     float: right;
     background: none;
@@ -703,75 +1235,98 @@
   }
   #modal-close:hover { color: var(--text); }
 
-  /* Legend */
-  #legend {
-    position: absolute;
-    bottom: 16px;
-    left: 16px;
-    background: rgba(22,27,34,0.95);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 11px;
-    pointer-events: all;
-    user-select: none;
-    max-width: 180px;
-  }
-  .legend-title {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-muted);
-    margin-bottom: 6px;
-  }
-  .legend-section-label {
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--text-muted);
-    margin-top: 6px;
-    margin-bottom: 3px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-    cursor: pointer;
-    border-radius: 4px;
-    padding: 2px 4px;
-    transition: background 0.15s;
-    font-size: 11px;
-  }
-  .legend-item:hover { background: rgba(88,166,255,0.08); }
-  .legend-item.filtered { background: rgba(88,166,255,0.15); }
-  .legend-item:last-child { margin-bottom: 0; }
-  .legend-dot {
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .legend-dot.diamond {
-    border-radius: 2px;
-    transform: rotate(45deg);
-    width: 9px; height: 9px;
-  }
-  .legend-line {
-    width: 18px; height: 2px;
-    flex-shrink: 0;
-    border-radius: 1px;
-  }
-  .legend-line.dashed {
-    background: repeating-linear-gradient(to right, #888 0, #888 3px, transparent 3px, transparent 6px);
-    height: 1px;
-  }
-  .legend-line.curved {
-    background: #888;
-    height: 1px;
-    border-radius: 1px;
-  }
+/* Legend */
+#legend {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(22,27,34,0.97);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 11px;
+  pointer-events: all;
+  user-select: none;
+  max-width: 200px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  backdrop-filter: blur(8px);
+}
+.legend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.legend-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  flex: 1;
+}
+.legend-close {
+  display: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(12, 17, 27, 0.95);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.legend-close:hover { color: var(--text); border-color: var(--accent); }
+.legend-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 8px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 3px 6px;
+  transition: background 0.15s;
+  font-size: 11px;
+}
+.legend-item:hover { background: rgba(88,166,255,0.1); }
+.legend-item.filtered { background: rgba(88,166,255,0.15); }
+.legend-item:last-child { margin-bottom: 0; }
+.legend-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.legend-dot.diamond {
+  border-radius: 2px;
+  transform: rotate(45deg);
+  width: 9px; height: 9px;
+}
+.legend-line {
+  width: 18px; height: 2px;
+  flex-shrink: 0;
+  border-radius: 1px;
+}
+.legend-line.dashed {
+  background: repeating-linear-gradient(to right, #888 0, #888 3px, transparent 3px, transparent 6px);
+  height: 1px;
+}
+.legend-line.curved {
+  background: #888;
+  height: 1px;
+  border-radius: 1px;
+}
 
   /* ── Sidebar ── */
   body {
@@ -884,18 +1439,354 @@
   }
 
   /* Responsive */
-  @media (max-width: 700px) {
-    html, body { overflow: auto; flex-direction: column; }
-    #sidebar { width: 100%; height: auto; min-width: unset; flex-direction: row; border-right: none; border-bottom: 1px solid var(--border); }
-    #session-list { display: flex; flex-direction: row; overflow-x: auto; padding: 0; }
-    #app { flex-direction: column; height: auto; }
-    #left { width: 100%; min-height: 50vh; border-right: none; border-bottom: 1px solid var(--border); }
-    #right { height: 50vh; }
-    #chat-area { overflow-y: auto; }
+@media (max-width: 900px) {
+  html, body {
+    height: 100%;
+    overflow: hidden;
   }
+  body {
+    display: block;
+  }
+  .mobile-only { display: inline-flex !important; }
+  .desktop-only { display: none !important; }
+  #sidebar-backdrop { display: block; }
+  body.sidebar-open #sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(84vw, 320px);
+    min-width: unset;
+    height: 100dvh;
+    transform: translateX(-100%);
+    transition: transform 0.24s ease;
+    z-index: 40;
+    box-shadow: 20px 0 48px rgba(0, 0, 0, 0.35);
+  }
+  body.sidebar-open #sidebar {
+    transform: translateX(0);
+  }
+  #sidebar-header {
+    padding: 16px 14px 12px;
+  }
+  #btn-new-session {
+    width: 30px;
+    height: 30px;
+    font-size: 20px;
+  }
+  #session-list {
+    padding: 8px 0 20px;
+  }
+  .session-item {
+    padding: 12px 14px;
+  }
+  #app {
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 100dvh;
+    width: 100%;
+  }
+  #left,
+  #right {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    border: none;
+  }
+  #sources-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    min-width: 0;
+    height: 56dvh;
+    transform: translateY(100%);
+    transition: transform 0.24s ease;
+    z-index: 38;
+    box-shadow: 0 -20px 48px rgba(0, 0, 0, 0.35);
+  }
+  body.sources-open #sources-panel {
+    transform: translateY(0);
+  }
+  body.mobile-answer-view #left {
+    display: flex;
+    flex: 1;
+  }
+  body.mobile-answer-view #right {
+    display: none;
+  }
+  body.mobile-graph-view #left {
+    display: flex;
+    flex: 0 0 auto;
+  }
+  body.mobile-graph-view #right {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  body.mobile-graph-view #chat-area,
+  body.mobile-graph-view #input-row,
+  body.mobile-graph-view #debug-panel,
+  body.mobile-graph-view #trace-panel {
+    display: none !important;
+  }
+  #header {
+    padding: 14px 14px 12px;
+  }
+  body.mobile-graph-view #header {
+    padding: 10px 12px 8px;
+    border-bottom: none;
+  }
+  #header h1 {
+    font-size: 22px;
+    line-height: 1.05;
+  }
+  body.mobile-graph-view #header h1 {
+    font-size: 18px;
+  }
+  #header .subtitle {
+    margin-top: 4px;
+    font-size: 10px;
+  }
+  body.mobile-graph-view #header .subtitle {
+    display: none;
+  }
+  #session-row {
+    margin-top: 8px;
+    font-size: 10px;
+  }
+  body.mobile-answer-view #session-row,
+  body.mobile-graph-view #session-row {
+    display: none;
+  }
+  #session-id {
+    max-width: 110px;
+  }
+  #mobile-view-switcher {
+    display: flex;
+    margin-top: 10px;
+  }
+  body.mobile-graph-view #mobile-view-switcher {
+    margin-top: 6px;
+    padding: 3px;
+  }
+  body.mobile-graph-view .mobile-view-btn {
+    min-height: 34px;
+    font-size: 12px;
+  }
+  #chat-area {
+    padding: 14px 12px 16px;
+    gap: 10px;
+  }
+  #chat-empty-state {
+    margin-top: 4px;
+    padding: 16px 14px;
+  }
+  #chat-area.is-empty #chat-empty-state {
+    margin-top: auto;
+    margin-bottom: auto;
+  }
+  .chat-empty-title {
+    font-size: 14px;
+  }
+  .chat-empty-copy {
+    font-size: 12px;
+  }
+  .chat-suggestion-row {
+    flex-direction: column;
+  }
+  .chat-suggestion-btn {
+    width: 100%;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .msg-user,
+  .msg-agent {
+    max-width: 100%;
+  }
+  .answer-label {
+    padding: 12px 14px 0;
+  }
+  .msg-agent .answer-body {
+    padding: 14px;
+    font-size: 14px;
+    border-left: none;
+    border-top: 2px solid var(--accent);
+    margin: 8px 0 0;
+  }
+  .msg-agent .answer-footer {
+    padding: 10px 12px 12px;
+  }
+  .inline-trace {
+    margin: 0 12px 12px;
+  }
+  .inline-trace-summary {
+    padding: 12px 14px;
+  }
+  .inline-step {
+    padding: 10px 14px;
+  }
+  .inline-step-header {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .inline-step-thought,
+  .inline-step-body {
+    font-size: 12px;
+  }
+  .inline-step-body .trace-score,
+  .inline-step-body .obs-chunk-id {
+    display: none;
+  }
+  #input-row {
+    padding: 12px;
+    gap: 10px;
+    position: sticky;
+    bottom: 0;
+    z-index: 6;
+    background: linear-gradient(to top, rgba(22,27,34,0.98), rgba(22,27,34,0.94));
+    border-top: 1px solid rgba(48,54,61,0.8);
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  #msg-input {
+    font-size: 16px;
+    min-height: 48px;
+  }
+  #ask-btn {
+    min-height: 48px;
+    min-width: 74px;
+    padding: 0 18px;
+  }
+  .chip {
+    padding: 8px 14px;
+    min-height: 36px;
+    font-size: 13px;
+  }
+  #graph-toolbar {
+    padding: 10px 12px 8px;
+    gap: 8px;
+  }
+  #graph-toolbar-header {
+    align-items: center;
+  }
+  body.mobile-graph-view #graph-toolbar {
+    padding: 6px 12px 4px;
+    border-bottom: none;
+    background: transparent;
+  }
+  body.mobile-graph-view #graph-toolbar-header {
+    gap: 8px;
+    align-items: center;
+  }
+  body.mobile-graph-view #graph-title {
+    font-size: 10px;
+    letter-spacing: 0.9px;
+  }
+  #graph-toolbar-controls {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    width: 100%;
+    padding-top: 2px;
+  }
+  body.graph-tools-open #graph-toolbar-controls {
+    display: flex;
+  }
+  #layout-group {
+    width: 100%;
+    overflow-x: auto;
+    padding: 4px;
+  }
+  .layout-btn,
+  .toolbar-btn,
+  #filter-select {
+    min-height: 38px;
+  }
+  .toolbar-filter-group {
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 8px;
+  }
+  #filter-select {
+    flex: 1;
+    min-width: 0;
+  }
+  #graph-canvas {
+    margin: 0 12px 0;
+    min-height: 0;
+  }
+  body.mobile-graph-view #graph-canvas {
+    min-height: calc(100dvh - 154px - env(safe-area-inset-bottom, 0px));
+  }
+  #graph-focus-chip {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    padding: 9px 10px;
+  }
+  body.mobile-graph-view #graph-focus-chip {
+    top: 6px;
+    left: 8px;
+    right: 8px;
+    padding: 7px 9px;
+    gap: 8px;
+    border-radius: 10px;
+    background: rgba(11, 15, 23, 0.86);
+  }
+  .graph-focus-title {
+    font-size: 12px;
+  }
+  body.mobile-graph-view .graph-focus-title {
+    font-size: 11px;
+  }
+  .graph-focus-meta {
+    font-size: 10px;
+  }
+  body.mobile-graph-view .graph-focus-meta {
+    font-size: 9px;
+  }
+  .graph-focus-tap {
+    font-size: 9px;
+  }
+  body.mobile-graph-view .graph-focus-tap {
+    font-size: 8px;
+  }
+  #graph-focus-clear {
+    min-width: 32px;
+    min-height: 32px;
+  }
+  #graph-hint {
+    display: none;
+  }
+  #legend {
+    display: none;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+    max-height: min(58vh, 420px);
+    overflow-y: auto;
+    z-index: 5;
+  }
+  body.legend-open #legend {
+    display: block;
+  }
+  .legend-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
 </style>
 </head>
 <body>
+<button id="sidebar-backdrop" aria-label="Close investigations"></button>
 
 <aside id="sidebar">
   <div id="sidebar-header">
@@ -909,15 +1800,34 @@
   <!-- ── Left Panel ── -->
   <div id="left">
     <div id="header">
-      <h1>Graphknows</h1>
-      <div class="subtitle">Political Intelligence</div>
-      <div id="session-row">
-        <span>Session:</span>
-        <span id="session-id">—</span>
+      <div id="header-topline">
+        <div class="header-brand">
+          <h1>Graphknows</h1>
+          <div class="subtitle">Political Intelligence</div>
+          <div id="session-row">
+            <span>Session:</span>
+            <span id="session-id">—</span>
+          </div>
+        </div>
+        <button id="btn-mobile-sidebar" class="mobile-only" aria-label="Open investigations">☰</button>
+      </div>
+      <div id="mobile-view-switcher" class="mobile-only" role="tablist" aria-label="Mobile view switcher">
+        <button type="button" class="mobile-view-btn active" data-mobile-view="answer">Answer</button>
+        <button type="button" class="mobile-view-btn" data-mobile-view="graph">Graph</button>
       </div>
     </div>
 
-    <div id="chat-area"></div>
+    <div id="chat-area">
+      <div id="chat-empty-state" class="visible">
+        <div class="chat-empty-title">Ask one focused question, then inspect the graph separately.</div>
+        <div class="chat-empty-copy">On mobile, the answer view stays concise and the graph gets its own tab. Start with a policy, institution, person, or legislative topic.</div>
+        <div class="chat-suggestion-row">
+          <button type="button" class="chat-suggestion-btn" data-suggestion="What does the knowledge graph show about European climate policy?">European climate policy</button>
+          <button type="button" class="chat-suggestion-btn" data-suggestion="Which organisations are most connected in this investigation?">Most connected organisations</button>
+          <button type="button" class="chat-suggestion-btn" data-suggestion="Show the key laws and doctrines mentioned in this investigation.">Key laws and doctrines</button>
+        </div>
+      </div>
+    </div>
 
     <div id="input-row">
       <textarea id="msg-input" placeholder="Ask about politicians, organizations, laws…" rows="1"></textarea>
@@ -943,21 +1853,31 @@
 
   <!-- ── Right Panel ── -->
   <div id="right">
-    <div id="graph-toolbar">
-      <span id="graph-title">KNOWLEDGE GRAPH</span>
-      <!-- Layout mode pill group -->
-      <div id="layout-group" role="group" aria-label="Graph layout mode">
-        <button class="layout-btn active" data-layout="force" title="Force-directed layout">⚡ Force</button>
-        <button class="layout-btn" data-layout="radial" title="Radial layout by node type">🎯 Radial</button>
-        <button class="layout-btn" data-layout="hierarchical" title="Hierarchical layout">📊 Hierarchy</button>
-        <button class="layout-btn" data-layout="circular" title="Circular layout">⭕ Circle</button>
-      </div>
-      <button class="toolbar-btn" id="btn-devmode" aria-label="Toggle dev debug panel">🔬 Dev</button>
-      <button class="toolbar-btn" id="btn-share" aria-label="Share link">🔗 Share Link</button>
-      <button class="toolbar-btn" id="btn-export-png" aria-label="Export PNG">📤 Export PNG</button>
-      <button class="toolbar-btn" id="btn-reset" aria-label="Reset graph">🔄 Reset</button>
+<div id="graph-toolbar">
+  <div id="graph-toolbar-header">
+    <span id="graph-title">Knowledge Graph</span>
+    <span id="kg-updating">KG updating...</span>
+    <div id="graph-view-tabs" role="tablist" aria-label="Graph view selector">
+      <button class="graph-view-tab active" type="button" data-graph-view="knowledge">Knowledge Graph</button>
+      <button class="graph-view-tab" type="button" data-graph-view="lexical">Lexical Graph</button>
+    </div>
+    <div id="graph-toolbar-mobile-actions" class="mobile-only">
+      <button class="toolbar-btn" id="btn-mobile-legend" type="button" aria-label="Toggle legend">🗂 Legend</button>
+      <button class="toolbar-btn" id="btn-mobile-graph-tools" type="button" aria-label="Toggle graph tools">⚙ Tools</button>
+      <button class="toolbar-btn" id="btn-mobile-sources" type="button" aria-label="Toggle sources">📚 Sources</button>
+    </div>
+  </div>
+  <div id="graph-toolbar-controls">
+    <div id="layout-group" role="group" aria-label="Graph layout mode">
+      <button class="layout-btn active" data-layout="force" title="Force-directed layout">⚡ Force</button>
+      <button class="layout-btn" data-layout="radial" title="Radial layout by node type">🎯 Radial</button>
+      <button class="layout-btn" data-layout="hierarchical" title="Hierarchical layout">📊 Hierarchy</button>
+      <button class="layout-btn" data-layout="circular" title="Circular layout">⭕ Circle</button>
+    </div>
+    <div class="toolbar-filter-group">
+      <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Filter:</span>
       <select id="filter-select" aria-label="Filter by node type">
-        <option value="">🔍 All Types</option>
+        <option value="">All Types</option>
         <option value="PERSON">PERSON</option>
         <option value="ORGANIZATION">ORGANIZATION</option>
         <option value="ORG">ORG</option>
@@ -968,29 +1888,57 @@
         <option value="Chunk">Chunk</option>
       </select>
     </div>
-
-    <div id="graph-canvas">
-      <div id="empty-state">
-        <div class="icon">🕸️</div>
-        <p>Ask a question to build the knowledge graph</p>
-      </div>
-      <!-- svg inserted by D3 -->
-      <div id="legend">
-        <div class="legend-item" data-type="Chunk"><div class="legend-dot" style="background:#3a3a5c"></div> Chunk</div>
-        <div class="legend-item" data-type="Topic"><div class="legend-dot" style="background:crimson"></div> Topic</div>
-        <div class="legend-item" data-type="Document"><div class="legend-dot" style="background:#2a4a7f"></div> Document</div>
-        <div class="legend-item" data-type="PERSON"><div class="legend-dot" style="background:steelblue"></div> Person</div>
-        <div class="legend-item" data-type="ORGANIZATION"><div class="legend-dot" style="background:mediumpurple"></div> Organisation</div>
-        <div class="legend-item" data-type="GEO"><div class="legend-dot" style="background:seagreen"></div> Geography</div>
-        <div class="legend-item" data-type="LEGAL_DOCTRINE"><div class="legend-dot" style="background:darkorange"></div> Law / Doctrine</div>
-        <div class="legend-item" data-type="PLAN"><div class="legend-dot" style="background:#d4a017"></div> Plan / Policy</div>
-        <div class="legend-item" data-type="PROBLEM"><div class="legend-dot" style="background:#e05252"></div> Problem</div>
-        <div class="legend-item" data-type="CHANGE_EVENT"><div class="legend-dot" style="background:#20b2aa"></div> Event</div>
-        <div class="legend-item" data-type="CONCEPT"><div class="legend-dot" style="background:goldenrod"></div> Concept</div>
-      </div>
-    </div>
-    <p id="graph-hint">Drag to pin · Double-click to release · Scroll to zoom</p>
+    <button class="toolbar-btn" id="btn-devmode" aria-label="Toggle dev debug panel">🔬 Dev</button>
+    <button class="toolbar-btn" id="btn-share" aria-label="Share link">🔗 Share Link</button>
+    <button class="toolbar-btn" id="btn-export-png" aria-label="Export PNG">📤 Export PNG</button>
+    <button class="toolbar-btn" id="btn-reset" aria-label="Reset graph">🔄 Reset</button>
   </div>
+</div>
+
+<div id="graph-canvas">
+  <div id="graph-focus-chip" aria-live="polite">
+    <div class="graph-focus-copy">
+      <div class="graph-focus-eyebrow">Focused node</div>
+      <div class="graph-focus-title">Nothing selected</div>
+      <div class="graph-focus-meta">Tap a node to isolate nearby relationships.</div>
+      <div class="graph-focus-tap">Tap again to clear focus</div>
+    </div>
+    <button id="graph-focus-clear" type="button" aria-label="Clear graph focus">✕</button>
+  </div>
+  <div id="empty-state">
+    <div class="icon">🕸️</div>
+    <p>Ask a question to build the knowledge graph</p>
+    <span class="hint">Results will appear here as a graph</span>
+  </div>
+  <!-- svg inserted by D3 -->
+  <div id="legend">
+    <div class="legend-head">
+      <div class="legend-title">Legend</div>
+      <button class="legend-close mobile-only" id="btn-close-legend" type="button" aria-label="Close legend">✕</button>
+    </div>
+    <div class="legend-item" data-type="Chunk"><div class="legend-dot" style="background:#3a3a5c"></div> Chunk</div>
+    <div class="legend-item" data-type="Topic"><div class="legend-dot" style="background:crimson"></div> Topic</div>
+    <div class="legend-item" data-type="Document"><div class="legend-dot" style="background:#2a4a7f"></div> Document</div>
+    <div class="legend-item" data-type="PERSON"><div class="legend-dot" style="background:steelblue"></div> Person</div>
+    <div class="legend-item" data-type="ORGANIZATION"><div class="legend-dot" style="background:mediumpurple"></div> Organisation</div>
+    <div class="legend-item" data-type="GEO"><div class="legend-dot" style="background:seagreen"></div> Geography</div>
+    <div class="legend-item" data-type="LEGAL_DOCTRINE"><div class="legend-dot" style="background:darkorange"></div> Law / Doctrine</div>
+    <div class="legend-item" data-type="PLAN"><div class="legend-dot" style="background:#d4a017"></div> Plan / Policy</div>
+    <div class="legend-item" data-type="PROBLEM"><div class="legend-dot" style="background:#e05252"></div> Problem</div>
+    <div class="legend-item" data-type="CHANGE_EVENT"><div class="legend-dot" style="background:#20b2aa"></div> Event</div>
+    <div class="legend-item" data-type="CONCEPT"><div class="legend-dot" style="background:goldenrod"></div> Concept</div>
+  </div>
+</div>
+    <p id="graph-hint">Drag to pin · Double-click to release · Scroll to zoom</p>
+  <aside id="sources-panel">
+    <div id="sources-panel-header">
+      <h3>Sources</h3>
+      <span id="sources-count">0</span>
+    </div>
+    <div id="sources-list">
+      <div id="sources-empty">No sources yet. Run a search to populate evidence.</div>
+    </div>
+  </aside>
 </div>
 <div id="tooltip">
   <div class="tt-name" id="tt-name"></div>
@@ -1023,10 +1971,95 @@ function showToast(msg = 'Link copied!') {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-function openModal(title, content) {
-  document.getElementById('modal-title').textContent = title;
-  document.getElementById('modal-content').textContent = content;
+function escAttr(value) {
+  return escHtml(String(value || '')).replace(/"/g, '&quot;');
+}
+
+function formatRelationSource(source, index) {
+  if (!source) return '';
+  const chunkId = source.chunk_id || source.id || `source-${index + 1}`;
+  const docId = source.doc_id || source.document_id || 'Unknown document';
+  const text = source.text || source.excerpt || 'No supporting excerpt available.';
+  const url = source.url || '';
+  return `
+    <article class="relation-source-card">
+      <div class="relation-source-header">
+        <div>
+          <div class="relation-source-title">Chunk ${escHtml(chunkId)}</div>
+          <div class="relation-source-doc">${escHtml(docId)}</div>
+        </div>
+        <span class="relation-modal-pill">evidence ${index + 1}</span>
+      </div>
+      <div class="relation-source-body">${escHtml(text)}</div>
+      ${url ? `<a class="relation-source-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a>` : ''}
+    </article>
+  `;
+}
+
+function openModal(title, content, options = {}) {
+  const modal = document.getElementById('modal');
+  const modalTitle = document.getElementById('modal-title');
+  const modalContent = document.getElementById('modal-content');
+  modalTitle.textContent = title;
+  modal.classList.toggle('relation-modal', !!options.relation);
+  if (options.html) {
+    modalContent.innerHTML = content;
+  } else {
+    modalContent.textContent = content;
+  }
   document.getElementById('modal-overlay').classList.add('open');
+}
+
+async function openRelationSources(edge) {
+  const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+  const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+  const sourceNode = allNodes.find(n => n.id === sourceId);
+  const targetNode = allNodes.find(n => n.id === targetId);
+  const sourceName = (sourceNode && ((sourceNode.properties && sourceNode.properties.name) || sourceNode.name || sourceNode.id)) || sourceId;
+  const targetName = (targetNode && ((targetNode.properties && targetNode.properties.name) || targetNode.name || targetNode.id)) || targetId;
+  const relationType = (edge.properties && edge.properties.relation_type) || edge.type || 'relation';
+  const chunkIds = ((edge.properties && edge.properties.chunk_ids) || []).filter(Boolean);
+  const params = new URLSearchParams({
+    relation_type: relationType,
+    source_name: sourceName,
+    target_name: targetName,
+  });
+  if (chunkIds.length) params.set('chunk_ids', chunkIds.join(','));
+
+  openModal(
+    `${humanLabel(sourceName)} → ${humanLabel(targetName)}`,
+    '<div class="relation-source-body">Loading supporting chunks…</div>',
+    { html: true, relation: true },
+  );
+  try {
+    const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}/relation-sources?${params.toString()}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const sources = Array.isArray(data.sources) ? data.sources : [];
+    const meta = `
+      <div class="relation-modal-meta">
+        <span class="relation-modal-pill">${escHtml(humanLabel(relationType))}</span>
+        <span class="relation-modal-pill">${sources.length} supporting chunk${sources.length === 1 ? '' : 's'}</span>
+        ${chunkIds.length ? `<span class="relation-modal-pill">${chunkIds.length} linked id${chunkIds.length === 1 ? '' : 's'}</span>` : ''}
+      </div>
+    `;
+    const body = sources.length
+      ? `<div class="relation-source-list">${sources.map((src, index) => formatRelationSource(src, index)).join('')}</div>`
+      : '<div class="relation-source-body">No supporting chunk was resolved for this relation yet.</div>';
+    openModal(
+      `${humanLabel(sourceName)} → ${humanLabel(targetName)}`,
+      `${meta}${body}`,
+      { html: true, relation: true },
+    );
+  } catch (error) {
+    openModal(
+      `${humanLabel(sourceName)} → ${humanLabel(targetName)}`,
+      `<div class="relation-source-body">Could not load relation provenance. ${escHtml(error.message || String(error))}</div>`,
+      { html: true, relation: true },
+    );
+  }
 }
 
 document.getElementById('modal-close').addEventListener('click', () => {
@@ -1046,10 +2079,29 @@ if (!sessionId) {
 }
 function displaySessionId(id) {
   const el = document.getElementById('session-id');
+  const row = document.getElementById('session-row');
+  if (isMobileViewport()) {
+    row.style.display = 'none';
+    el.textContent = id.substring(0,8) + '…';
+    el.title = id;
+    return;
+  }
+  row.style.display = '';
   el.textContent = id.substring(0,8) + '…';
   el.title = id;
 }
 displaySessionId(sessionId);
+
+let latestSearchDocuments = [];
+let sourceDocsByCitation = {};
+let sourceHighlightTimer = null;
+let kgUpdateTimer = null;
+
+// Core chat element refs are declared early so all later handlers can safely use them.
+const chatArea = document.getElementById('chat-area');
+const chatEmptyState = document.getElementById('chat-empty-state');
+const msgInput = document.getElementById('msg-input');
+const askBtn = document.getElementById('ask-btn');
 
 // ── Session Persistence ─────────────────────────────────────────────────────
 const SESSIONS_KEY = 'graphknows_sessions';
@@ -1138,12 +2190,15 @@ async function switchSession(id) {
   displaySessionId(sessionId);
   resetAll();
   renderSessionList();
+  closeSidebar();
   // Restore graph from server
   try {
-    const res = await fetch(`/api/session/${id}/graph`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.nodes && data.edges) mergeGraph(data.nodes, data.edges);
+    const knowledgeRes = await fetch(`/api/session/${id}/graph?view=knowledge`);
+    const lexicalRes = await fetch(`/api/session/${id}/graph?view=lexical`);
+    if (knowledgeRes.ok || lexicalRes.ok) {
+      const knowledge = knowledgeRes.ok ? await knowledgeRes.json() : { nodes: [], edges: [] };
+      const lexical = lexicalRes.ok ? await lexicalRes.json() : { nodes: [], edges: [] };
+      hydrateGraphStateFromPayload({ graph_views: { knowledge, lexical, active: 'knowledge' } });
     }
   } catch(_) {}
   // Update URL without reload
@@ -1158,6 +2213,8 @@ function newSession() {
   resetAll();
   saveSession({ id: sessionId, name: '', created: new Date().toISOString(), nodeCount: 0, lastQuery: new Date().toISOString() });
   renderSessionList();
+  closeSidebar();
+  setMobileView('answer');
   const url = new URL(window.location);
   url.searchParams.set('session', sessionId);
   window.history.replaceState({}, '', url);
@@ -1188,7 +2245,104 @@ function startEditing(sessId, nameDiv) {
 }
 
 // Initialize
-loadSessions();
+
+const bodyEl = document.body;
+const graphTitleEl = document.getElementById('graph-title');
+const kgUpdatingEl = document.getElementById('kg-updating');
+const graphViewTabs = Array.from(document.querySelectorAll('.graph-view-tab'));
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+const mobileSidebarBtn = document.getElementById('btn-mobile-sidebar');
+const mobileViewButtons = Array.from(document.querySelectorAll('.mobile-view-btn'));
+const mobileGraphToolsBtn = document.getElementById('btn-mobile-graph-tools');
+const mobileLegendBtn = document.getElementById('btn-mobile-legend');
+const mobileLegendCloseBtn = document.getElementById('btn-close-legend');
+const mobileSourcesBtn = document.getElementById('btn-mobile-sources');
+const sourcesListEl = document.getElementById('sources-list');
+const sourcesCountEl = document.getElementById('sources-count');
+
+function isMobileViewport() {
+  return window.matchMedia('(max-width: 900px)').matches;
+}
+
+function closeSidebar() {
+  bodyEl.classList.remove('sidebar-open');
+}
+
+function setMobileView(view) {
+  if (!isMobileViewport()) return;
+  const nextView = view === 'graph' ? 'graph' : 'answer';
+  bodyEl.classList.remove('mobile-answer-view', 'mobile-graph-view');
+  bodyEl.classList.add(nextView === 'graph' ? 'mobile-graph-view' : 'mobile-answer-view');
+  mobileViewButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.mobileView === nextView));
+  if (nextView !== 'graph') {
+    bodyEl.classList.remove('graph-tools-open', 'legend-open', 'sources-open');
+  }
+  requestAnimationFrame(() => {
+    updateCenter();
+    renderGraph();
+    if (nextView === 'graph') {
+      const defaultLayout = allNodes.length > 18 ? 'radial' : 'force';
+      if (currentLayout !== defaultLayout) applyLayout(defaultLayout);
+      if (selectedNode) {
+        zoomToNode(selectedNode);
+      } else {
+        svg.call(zoomBehavior.transform, lastZoomTransform || d3.zoomIdentity);
+      }
+    }
+    simulation.alpha(0.45).restart();
+  });
+}
+
+function syncResponsiveState() {
+  if (isMobileViewport()) {
+    if (!bodyEl.classList.contains('mobile-answer-view') && !bodyEl.classList.contains('mobile-graph-view')) {
+      setMobileView('answer');
+      return;
+    }
+    updateCenter();
+    renderGraph();
+  } else {
+    bodyEl.classList.remove('mobile-answer-view', 'mobile-graph-view', 'sidebar-open', 'graph-tools-open', 'legend-open', 'sources-open');
+    updateCenter();
+    renderGraph();
+  }
+}
+
+mobileSidebarBtn.addEventListener('click', () => {
+  if (!isMobileViewport()) return;
+  bodyEl.classList.toggle('sidebar-open');
+});
+sidebarBackdrop.addEventListener('click', closeSidebar);
+mobileViewButtons.forEach(btn => {
+  btn.addEventListener('click', () => setMobileView(btn.dataset.mobileView));
+});
+document.querySelectorAll('.chat-suggestion-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    msgInput.value = btn.dataset.suggestion || btn.textContent.trim();
+    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+    msgInput.focus();
+  });
+});
+document.getElementById('graph-focus-clear')?.addEventListener('click', () => {
+  resetGraphView();
+  if (isMobileViewport()) bodyEl.classList.remove('legend-open', 'graph-tools-open');
+});
+mobileGraphToolsBtn.addEventListener('click', () => {
+  if (!isMobileViewport()) return;
+  bodyEl.classList.toggle('graph-tools-open');
+});
+mobileLegendBtn.addEventListener('click', () => {
+  if (!isMobileViewport()) return;
+  bodyEl.classList.toggle('legend-open');
+  if (bodyEl.classList.contains('legend-open')) bodyEl.classList.remove('sources-open');
+});
+mobileLegendCloseBtn.addEventListener('click', () => bodyEl.classList.remove('legend-open'));
+mobileSourcesBtn.addEventListener('click', () => {
+  if (!isMobileViewport()) return;
+  bodyEl.classList.toggle('sources-open');
+  if (bodyEl.classList.contains('sources-open')) bodyEl.classList.remove('legend-open', 'graph-tools-open');
+});
+syncResponsiveState();
 
 // ── Trace panel toggle ─────────────────────────────────────────────────────
 const traceHeader = document.getElementById('trace-header');
@@ -1367,12 +2521,247 @@ function setTraceSteps(steps, question, sources) {
 }
 
 // ── Chat ───────────────────────────────────────────────────────────────────
-const chatArea = document.getElementById('chat-area');
-const msgInput = document.getElementById('msg-input');
-const askBtn = document.getElementById('ask-btn');
+
+loadSessions();
+
+function syncChatEmptyState() {
+  if (!chatEmptyState) return;
+  const hasMessages = chatArea.querySelector('.msg-user, .msg-agent, .spinner');
+  const isEmpty = !hasMessages;
+  chatEmptyState.classList.toggle('visible', isEmpty);
+  chatArea.classList.toggle('is-empty', isEmpty);
+}
 
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function institutionCode(source) {
+  const src = String(source || '').toLowerCase();
+  if (src.startsWith('ep_')) return { code: 'EP', cls: 'ep' };
+  if (src.includes('eurlex') || src.includes('cellar')) return { code: 'EUR-Lex', cls: 'eurlex' };
+  if (src.startsWith('ec_')) return { code: 'EC', cls: 'ec' };
+  if (src.includes('council')) return { code: 'Council', cls: 'council' };
+  return { code: 'Other', cls: 'other' };
+}
+
+function truncateTitle(title, max = 60) {
+  const t = String(title || '').trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1)}...`;
+}
+
+function normalizeSourceDoc(doc) {
+  const meta = institutionCode(doc.source);
+  return {
+    citation_id: doc.citation_id || '',
+    title: doc.title || doc.id || 'Untitled document',
+    url: doc.url || '#',
+    date: doc.date || '',
+    source: doc.source || '',
+    snippet: (doc.text || doc.snippet || '').slice(0, 220),
+    institution_code: meta.code,
+    institution_class: meta.cls,
+  };
+}
+
+function renderSourcesPanel(documents) {
+  latestSearchDocuments = Array.isArray(documents) ? documents.map(normalizeSourceDoc) : [];
+  sourceDocsByCitation = {};
+  latestSearchDocuments.forEach((doc) => {
+    if (doc.citation_id) sourceDocsByCitation[doc.citation_id] = doc;
+  });
+
+  if (!sourcesListEl || !sourcesCountEl) return;
+  sourcesCountEl.textContent = String(latestSearchDocuments.length);
+
+  if (!latestSearchDocuments.length) {
+    sourcesListEl.innerHTML = '<div id="sources-empty">No sources yet. Run a search to populate evidence.</div>';
+    return;
+  }
+
+  sourcesListEl.innerHTML = latestSearchDocuments.map((doc, index) => `
+    <article class="source-item" data-citation-id="${escAttr(doc.citation_id || '')}">
+      <div class="source-item-top">
+        <span class="inst-chip ${doc.institution_class}">${escHtml(doc.institution_code)}</span>
+        <span class="source-date">${escHtml(doc.date || 'n/a')}</span>
+      </div>
+      <a class="source-title-link" href="${escAttr(doc.url || '#')}" target="_blank" rel="noopener noreferrer" title="${escAttr(doc.title)}">
+        ${escHtml(`${index + 1}. ${truncateTitle(doc.title, 60)}`)}
+      </a>
+    </article>
+  `).join('');
+}
+
+function highlightSourceByCitation(citationId) {
+  if (!citationId) return;
+  const nodes = document.querySelectorAll('.source-item');
+  nodes.forEach((node) => node.classList.remove('active'));
+  const active = document.querySelector(`.source-item[data-citation-id="${CSS.escape(citationId)}"]`);
+  if (!active) return;
+  active.classList.add('active');
+  active.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (sourceHighlightTimer) clearTimeout(sourceHighlightTimer);
+  sourceHighlightTimer = setTimeout(() => active.classList.remove('active'), 2200);
+}
+
+function renderAnswerWithCitations(text) {
+  const raw = cleanAnswer(text || '');
+  const withBlockBreaks = raw
+    .split('\n\n')
+    .map((para) => `<p>${escHtml(para).replace(/\n/g, '<br>')}</p>`)
+    .join('');
+  const citationPattern = /\[(Doc-(\d+))(?:\s*:\s*([^\]]+))?\]\(([^)]+)\)/g;
+  return withBlockBreaks.replace(citationPattern, (_m, citationId, number, title, url) => {
+    const doc = sourceDocsByCitation[citationId] || {};
+    const tipTitle = title || doc.title || citationId;
+    const tipSnippet = doc.snippet || '';
+    const tooltip = `${tipTitle}${tipSnippet ? ` - ${tipSnippet}` : ''}`;
+    return `<a class="citation" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" data-citation-id="${escAttr(citationId)}" title="${escAttr(tooltip)}">[${number}]</a>`;
+  });
+}
+
+function setKgUpdating(active) {
+  if (!kgUpdatingEl) return;
+  if (active) {
+    kgUpdatingEl.classList.add('visible');
+    if (kgUpdateTimer) clearTimeout(kgUpdateTimer);
+    kgUpdateTimer = setTimeout(() => {
+      kgUpdatingEl.classList.remove('visible');
+      kgUpdateTimer = null;
+    }, 1400);
+    return;
+  }
+  kgUpdatingEl.classList.remove('visible');
+}
+
+function updateGraphWithNewData(nodes, edges, lexicalEdges = []) {
+  const incomingNodes = Array.isArray(nodes) ? nodes.map((n) => ({
+    id: n.id,
+    label: n.label || 'Entity',
+    type: n.label || 'Entity',
+    name: n.name || n.id,
+    properties: {
+      name: n.name || n.id,
+      label: n.label || 'Entity',
+    },
+  })) : [];
+  const incomingEdges = Array.isArray(edges) ? edges.map((e) => ({
+    source: e.from,
+    target: e.to,
+    type: e.type || 'RELATION',
+  })) : [];
+
+  const lexicalNodeMap = new Map((graphViewsState.lexical?.nodes || []).map((n) => [n.id, n]));
+  const lexicalEdgeList = [...(graphViewsState.lexical?.edges || [])];
+  const lexicalEdgeKey = (edge) => `${typeof edge.source === 'object' ? edge.source.id : edge.source}-${typeof edge.target === 'object' ? edge.target.id : edge.target}-${edge.type || ''}`;
+  const lexicalEdgeKeys = new Set(lexicalEdgeList.map(lexicalEdgeKey));
+  if (Array.isArray(lexicalEdges)) {
+    lexicalEdges.forEach((edge) => {
+      const docA = edge.from;
+      const docB = edge.to;
+      if (!docA || !docB) return;
+
+      const docNodeA = {
+        id: docA,
+        label: 'Document',
+        type: 'Document',
+        name: docA,
+        properties: { name: docA, label: 'Document' },
+      };
+      const docNodeB = {
+        id: docB,
+        label: 'Document',
+        type: 'Document',
+        name: docB,
+        properties: { name: docB, label: 'Document' },
+      };
+      lexicalNodeMap.set(docA, lexicalNodeMap.get(docA) || docNodeA);
+      lexicalNodeMap.set(docB, lexicalNodeMap.get(docB) || docNodeB);
+
+      const shared = Array.isArray(edge.shared_entities) ? edge.shared_entities : [];
+      shared.forEach((entity) => {
+        const entId = `ENT::${entity}`;
+        lexicalNodeMap.set(entId, lexicalNodeMap.get(entId) || {
+          id: entId,
+          label: 'SharedEntity',
+          type: 'SharedEntity',
+          name: entity,
+          properties: { name: entity, label: 'SharedEntity' },
+        });
+
+        const edgeA = { source: docA, target: entId, type: 'SHARES_ENTITY' };
+        const edgeB = { source: docB, target: entId, type: 'SHARES_ENTITY' };
+        const keyA = lexicalEdgeKey(edgeA);
+        const keyB = lexicalEdgeKey(edgeB);
+        if (!lexicalEdgeKeys.has(keyA)) {
+          lexicalEdgeList.push(edgeA);
+          lexicalEdgeKeys.add(keyA);
+        }
+        if (!lexicalEdgeKeys.has(keyB)) {
+          lexicalEdgeList.push(edgeB);
+          lexicalEdgeKeys.add(keyB);
+        }
+      });
+    });
+  }
+
+  if (!incomingNodes.length && !incomingEdges.length) return;
+  graphViewsState.knowledge = graphViewsState.knowledge || { nodes: [], edges: [] };
+  graphViewsState.lexical = graphViewsState.lexical || { nodes: [], edges: [] };
+  graphViewsState.knowledge.nodes = graphViewsState.knowledge.nodes || [];
+  graphViewsState.knowledge.edges = graphViewsState.knowledge.edges || [];
+  graphViewsState.lexical.nodes = Array.from(lexicalNodeMap.values());
+  graphViewsState.lexical.edges = lexicalEdgeList;
+
+  const nodeIds = new Set(graphViewsState.knowledge.nodes.map((n) => n.id));
+  incomingNodes.forEach((node) => {
+    if (!node.id || nodeIds.has(node.id)) return;
+    graphViewsState.knowledge.nodes.push(node);
+    nodeIds.add(node.id);
+  });
+
+  const edgeKey = (edge) => `${typeof edge.source === 'object' ? edge.source.id : edge.source}-${typeof edge.target === 'object' ? edge.target.id : edge.target}-${edge.type || ''}`;
+  const edgeKeys = new Set(graphViewsState.knowledge.edges.map(edgeKey));
+  incomingEdges.forEach((edge) => {
+    const key = edgeKey(edge);
+    if (edgeKeys.has(key)) return;
+    graphViewsState.knowledge.edges.push(edge);
+    edgeKeys.add(key);
+  });
+
+  if (currentGraphView === 'knowledge') {
+    allNodes = graphViewsState.knowledge.nodes.map((n) => ({ ...n }));
+    allEdges = graphViewsState.knowledge.edges.map((e) => ({ ...e }));
+    renderGraph();
+    simulation.nodes(allNodes).alpha(0.45).restart();
+  }
+}
+
+function cleanAnswer(text) {
+  if (!text) return text;
+  return text
+    // Convert inline hash-style citations to compact numeric references
+    .replace(/\[([a-f0-9]{8,}|chunk[-_A-Za-z0-9]+)\]/gi, '[source]')
+    // Remove raw citation brackets like [1], [2] that appear mid-sentence
+    .replace(/\[(\d+)\]/g, '')
+    // Remove bracketed chunk ids leaked into prose
+    .replace(/\[chunk_id:\s*[^\]]+\]/gi, '')
+    // Remove inline chunk_id/topic ids leaked into prose
+    .replace(/\b(?:chunk|topic)_id?:\s*[A-Za-z0-9_-]+/gi, '')
+    .replace(/\b(?:chunk|topic)_[A-Za-z0-9_-]+\b/gi, '')
+    // Remove hash patterns like #12abc, #chunk_123
+    .replace(/#[\w_]+/g, '')
+    // Remove empty bracket artifacts left after stripping citations
+    .replace(/\[\s*(?:,\s*)*\]/g, '')
+    // Remove stray comma-only citation artifacts
+    .replace(/\s*,\s*(?=[.\n])/g, '')
+    // Collapse repeated blank lines
+    .replace(/\n{3,}/g, '\n\n')
+    // Collapse multiple spaces
+    .replace(/  +/g, ' ')
+    // Clean up any trailing/leading whitespace per line
+    .split('\n').map(l => l.trimEnd()).join('\n')
+    .trim();
 }
 
 function appendUserMsg(text) {
@@ -1380,6 +2769,7 @@ function appendUserMsg(text) {
   div.className = 'msg-user';
   div.textContent = text;
   chatArea.appendChild(div);
+  syncChatEmptyState();
   chatArea.scrollTop = chatArea.scrollHeight;
   return div;
 }
@@ -1389,6 +2779,7 @@ function appendSpinner() {
   div.className = 'spinner';
   div.innerHTML = '<span></span><span></span><span></span><em class="spinner-time">0s…</em>';
   chatArea.appendChild(div);
+  syncChatEmptyState();
   chatArea.scrollTop = chatArea.scrollHeight;
   const start = Date.now();
   div._timerInterval = setInterval(() => {
@@ -1396,26 +2787,28 @@ function appendSpinner() {
     if (el) el.textContent = Math.floor((Date.now() - start) / 1000) + 's…';
   }, 1000);
   const origRemove = div.remove.bind(div);
-  div.remove = () => { clearInterval(div._timerInterval); origRemove(); };
+  div.remove = () => { clearInterval(div._timerInterval); origRemove(); syncChatEmptyState(); };
   return div;
 }
 
 function buildInlineTrace(steps) {
   if (!steps || steps.length === 0) return null;
-  const details = document.createElement('div');
+  const details = document.createElement('details');
   details.className = 'inline-trace';
 
-  const label = document.createElement('div');
-  label.className = 'inline-trace-label';
-  label.textContent = `🔍 Reasoning chain (${steps.length} step${steps.length !== 1 ? 's' : ''})`;
-  details.appendChild(label);
+  const summary = document.createElement('summary');
+  summary.className = 'inline-trace-summary';
+  summary.innerHTML = `
+    <span class="inline-trace-title">🔍 Reasoning trace</span>
+    <span class="inline-trace-count">${steps.length} step${steps.length !== 1 ? 's' : ''}</span>
+  `;
+  details.appendChild(summary);
 
   const stepsDiv = document.createElement('div');
   stepsDiv.className = 'inline-trace-steps';
 
-  steps.forEach((s, idx) => {
+  steps.forEach((s) => {
     const icon = toolIcon(s.tool_name);
-    // Extract args from action string, stripping function name prefix
     const actionStr = s.action || '';
     const argStr = actionStr.replace(/^\w+\(/, '(');
 
@@ -1453,6 +2846,69 @@ function buildInlineTrace(steps) {
   return details;
 }
 
+function buildSourceSection(sources) {
+  if (!sources || sources.length === 0) return null;
+
+  const section = document.createElement('div');
+  section.className = 'source-section';
+
+  const header = document.createElement('div');
+  header.className = 'source-header';
+
+  const title = document.createElement('span');
+  title.className = 'source-title';
+  title.textContent = 'Sources';
+  header.appendChild(title);
+
+  const badge = document.createElement('span');
+  badge.className = 'source-count-badge';
+  badge.textContent = sources.length;
+  header.appendChild(badge);
+
+  section.appendChild(header);
+
+  const container = document.createElement('div');
+  container.className = 'source-chips-container';
+  sources.forEach((src, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = `[${i + 1}]`;
+    chip.title = 'Click to view source';
+    chip.addEventListener('click', () => openModal(`Source ${i + 1}`, src.text || src));
+    container.appendChild(chip);
+  });
+  section.appendChild(container);
+
+  return section;
+}
+
+function resolveSources(sources, graph) {
+  if (sources && sources.length > 0) return sources;
+  if (!graph || !graph.nodes) return [];
+
+  return graph.nodes
+    .filter(
+      n => (n.label === 'Chunk' || n.type === 'Chunk') && n.properties && n.properties.text,
+    )
+    .map(n => ({ id: n.properties.id || n.id, text: n.properties.text }));
+}
+
+function setCardSources(card, sources) {
+  const footer = card && card.querySelector('.answer-footer');
+  if (!footer) return;
+
+  footer.querySelector('.source-footer-row')?.remove();
+  const section = buildSourceSection(sources);
+  if (!section) return;
+
+  const exportBtn = footer.querySelector('.btn-export-msg');
+  const row = document.createElement('div');
+  row.className = 'source-footer-row';
+  row.appendChild(section);
+  if (exportBtn) row.appendChild(exportBtn);
+  footer.prepend(row);
+}
+
 function appendAgentMsg(answer, sources, steps) {
   const card = document.createElement('div');
   card.className = 'msg-agent';
@@ -1461,24 +2917,24 @@ function appendAgentMsg(answer, sources, steps) {
   const traceEl = buildInlineTrace(steps);
   if (traceEl) card.appendChild(traceEl);
 
+  const answerLabel = document.createElement('div');
+  answerLabel.className = 'answer-label';
+  answerLabel.textContent = 'Answer';
+  card.appendChild(answerLabel);
+
   const body = document.createElement('div');
   body.className = 'answer-body';
-  body.textContent = answer;
+  body.innerHTML = renderAnswerWithCitations(answer);
+  body.querySelectorAll('.citation').forEach((node) => {
+    node.addEventListener('click', () => {
+      const citationId = node.getAttribute('data-citation-id') || '';
+      highlightSourceByCitation(citationId);
+    });
+  });
   card.appendChild(body);
 
   const footer = document.createElement('div');
   footer.className = 'answer-footer';
-
-  if (sources && sources.length > 0) {
-    sources.forEach((src, i) => {
-      const chip = document.createElement('span');
-      chip.className = 'chip';
-      chip.textContent = `[${i+1}]`;
-      chip.title = 'Click to view source';
-      chip.addEventListener('click', () => openModal(`Source ${i+1}`, src.text || src));
-      footer.appendChild(chip);
-    });
-  }
 
   const expBtn = document.createElement('button');
   expBtn.className = 'btn-export-msg';
@@ -1492,8 +2948,10 @@ function appendAgentMsg(answer, sources, steps) {
   });
   footer.appendChild(expBtn);
   card.appendChild(footer);
+  setCardSources(card, sources);
 
   chatArea.appendChild(card);
+  syncChatEmptyState();
   chatArea.scrollTop = chatArea.scrollHeight;
   return card;
 }
@@ -1506,6 +2964,7 @@ function appendOfflineMsg() {
   body.innerHTML = `⚠️ <strong>Agent offline</strong> — start <code>services/agent/</code> to continue.`;
   card.appendChild(body);
   chatArea.appendChild(card);
+  syncChatEmptyState();
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
@@ -1519,10 +2978,12 @@ function appendErrorMsg(msg) {
   body.innerHTML = `🔴 <strong>Error</strong> — ${escHtml(msg)}`;
   card.appendChild(body);
   chatArea.appendChild(card);
+  syncChatEmptyState();
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
 async function sendMessage(text) {
+  setMobileView('answer');
   appendUserMsg(text);
   const spinner = appendSpinner();
   askBtn.disabled = true;
@@ -1578,6 +3039,14 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
           observation_type: data.observation_type || 'unknown',
           observation: data.observation || null,
         });
+      } else if (data.type === 'step_result') {
+        const toolName = data.tool || '';
+        if (toolName === 'search' && data.result && Array.isArray(data.result.documents)) {
+          renderSourcesPanel(data.result.documents);
+        }
+      } else if (data.type === 'graph_update') {
+        setKgUpdating(true);
+        updateGraphWithNewData(data.nodes || [], data.edges || [], data.lexical_edges || []);
       } else if (data.type === 'answer') {
         spinner.remove();
         if (data.session_id) {
@@ -1586,8 +3055,11 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         }
         appendAgentMsg(data.answer || '(no answer)', data.sources || [], collectedSteps);
         updateDebugPanel(data.sources || []);
-        if (data.graph) {
-          mergeGraph(data.graph.nodes || [], data.graph.edges || []);
+        hydrateGraphStateFromPayload(data);
+        const resolvedSources = resolveSources(data.sources || [], data.graph);
+        if (resolvedSources.length > 0) {
+          const lastMsg = chatArea.querySelector('.msg-agent:last-child');
+          setCardSources(lastMsg, resolvedSources);
         }
         autoNameSession(text);
         saveSession({ ...getCurrentSessionData(), id: sessionId, nodeCount: allNodes.length, lastQuery: new Date().toISOString() });
@@ -1651,32 +3123,11 @@ async function sendMessageViaHTTP(text, spinner) {
       // steps are now rendered inline — no separate panel call needed
     }
 
-    if (data.graph) {
-      // Also extract chunk nodes as sources if no server-side sources
-      let sources = data.sources || [];
-      if (sources.length === 0 && data.graph.nodes) {
-        sources = data.graph.nodes
-          .filter(n => (n.label === 'Chunk' || n.type === 'Chunk') && n.properties && n.properties.text)
-          .map(n => ({ id: n.properties.id || n.id, text: n.properties.text }));
-      }
-      if (sources.length > 0) {
-        // Retroactively update the last agent message's footer with chips
-        const lastMsg = chatArea.querySelector('.msg-agent:last-child');
-        const footer = lastMsg && lastMsg.querySelector('.answer-footer');
-        if (footer) {
-          // Remove existing chips (regenerate)
-          footer.querySelectorAll('.chip').forEach(c => c.remove());
-          sources.forEach((src, i) => {
-            const chip = document.createElement('span');
-            chip.className = 'chip';
-            chip.textContent = `[${i+1}]`;
-            chip.title = 'Click to view source';
-            chip.addEventListener('click', () => openModal(`Source ${i+1}`, src.text || src));
-            footer.insertBefore(chip, footer.firstChild);
-          });
-        }
-      }
-      mergeGraph(data.graph.nodes || [], data.graph.edges || []);
+    hydrateGraphStateFromPayload(data);
+    const resolvedSources = resolveSources(data.sources || [], data.graph);
+    if (resolvedSources.length > 0) {
+      const lastMsg = chatArea.querySelector('.msg-agent:last-child');
+      setCardSources(lastMsg, resolvedSources);
     }
 
     autoNameSession(text);
@@ -1764,6 +3215,7 @@ const COLORS = {
   // Node kinds
   Chunk: '#3a3a5c',
   Document: '#2a4a7f',
+  SharedEntity: '#1f8f8a',
   CO_OCCURS: '#555',
   // Legacy aliases
   ORG: 'mediumpurple',
@@ -1779,6 +3231,10 @@ const COLORS = {
 };
 
 const graphCanvas = document.getElementById('graph-canvas');
+const graphFocusChip = document.getElementById('graph-focus-chip');
+const graphFocusTitle = graphFocusChip.querySelector('.graph-focus-title');
+const graphFocusMeta = graphFocusChip.querySelector('.graph-focus-meta');
+const graphFocusClearBtn = document.getElementById('graph-focus-clear');
 const WIDTH = () => graphCanvas.clientWidth;
 const HEIGHT = () => graphCanvas.clientHeight;
 
@@ -1786,11 +3242,18 @@ const svg = d3.select('#graph-canvas').append('svg')
   .attr('width', '100%')
   .attr('height', '100%');
 
+const zoomBehavior = d3.zoom().scaleExtent([0.45, 4]).on('start', () => {
+  graphCanvas.classList.add('is-interacting');
+}).on('zoom', e => {
+  lastZoomTransform = e.transform;
+  zoomG.attr('transform', e.transform);
+}).on('end', () => {
+  graphCanvas.classList.remove('is-interacting');
+});
+
 // Zoom
 const zoomG = svg.append('g');
-svg.call(d3.zoom().scaleExtent([0.1, 5]).on('zoom', e => {
-  zoomG.attr('transform', e.transform);
-}));
+svg.call(zoomBehavior);
 
 // Defs arrow
 svg.append('defs').append('marker')
@@ -1806,6 +3269,11 @@ const nodeG = zoomG.append('g').attr('class','nodes');
 let allNodes = [];
 let allEdges = [];
 let activeFilter = '';
+let currentGraphView = 'knowledge';
+let graphViewsState = {
+  knowledge: { nodes: [], edges: [] },
+  lexical: { nodes: [], edges: [] },
+};
 
 const simulation = d3.forceSimulation()
   .force('link', d3.forceLink().id(d => d.id).distance(160))
@@ -1814,10 +3282,17 @@ const simulation = d3.forceSimulation()
   .force('collision', d3.forceCollide(45));
 
 function updateCenter() {
-  simulation.force('center', d3.forceCenter(WIDTH()/2, HEIGHT()/2));
+  const width = WIDTH();
+  const height = HEIGHT();
+  const offsetY = document.body.classList.contains('mobile-graph-view') ? Math.max(72, height * 0.26) : 0;
+  simulation.force('center', d3.forceCenter(width / 2, (height / 2) + offsetY));
 }
 
-window.addEventListener('resize', () => { updateCenter(); simulation.alpha(0.3).restart(); });
+window.addEventListener('resize', () => {
+  syncResponsiveState();
+  updateCenter();
+  simulation.alpha(0.3).restart();
+});
 updateCenter();
 
 // ── Layout mode switcher ────────────────────────────────────────────
@@ -1879,20 +3354,25 @@ function applyLayout(mode) {
 }
 
 document.querySelectorAll('.layout-btn').forEach(btn => {
-  btn.addEventListener('click', () => applyLayout(btn.dataset.layout));
+  btn.addEventListener('click', () => {
+    applyLayout(btn.dataset.layout);
+    if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
+  });
 });
 
 function getVisibleNodes() {
-  if (!activeFilter) return allNodes;
-  return allNodes.filter(n => {
+  const sourceNodes = graphViewsState[currentGraphView]?.nodes || allNodes;
+  if (!activeFilter) return sourceNodes;
+  return sourceNodes.filter(n => {
     const lbl = ((n.properties && n.properties.label) || n.label || '').toUpperCase();
     return lbl === activeFilter.toUpperCase();
   });
 }
 
 function getVisibleEdges(visNodes) {
+  const sourceEdges = graphViewsState[currentGraphView]?.edges || allEdges;
   const ids = new Set(visNodes.map(n => n.id));
-  return allEdges.filter(e => {
+  return sourceEdges.filter(e => {
     const sid = typeof e.source === 'object' ? e.source.id : e.source;
     const tid = typeof e.target === 'object' ? e.target.id : e.target;
     return ids.has(sid) && ids.has(tid);
@@ -1900,12 +3380,106 @@ function getVisibleEdges(visNodes) {
 }
 
 let selectedNode = null;
+let selectedEdge = null;
+let lastZoomTransform = d3.zoomIdentity;
+let mobileLabelIds = new Set();
 
 let _tooltipTimer = null;
 
 function renderGraph() {
-  const visNodes = getVisibleNodes();
-  const visEdges = getVisibleEdges(visNodes);
+  let visNodes = getVisibleNodes();
+  let visEdges = getVisibleEdges(visNodes);
+  const isMobileGraph = isMobileViewport() && document.body.classList.contains('mobile-graph-view');
+  mobileLabelIds = new Set();
+
+  if (isMobileGraph) {
+    const width = WIDTH() || 360;
+    const height = HEIGHT() || 520;
+    const maxNodes = 20;
+    const priority = (node) => {
+      const nodeType = ((node.properties && node.properties.label) || node.type || node.label || '').toLowerCase();
+      if (selectedNode && node.id === selectedNode) return 100;
+      if (selectedNode) {
+        const isConnected = visEdges.some(e => {
+          const sid = typeof e.source === 'object' ? e.source.id : e.source;
+          const tid = typeof e.target === 'object' ? e.target.id : e.target;
+          return (sid === selectedNode && tid === node.id) || (tid === selectedNode && sid === node.id);
+        });
+        if (isConnected) return 90;
+      }
+      if (nodeType === 'chunk') return 10;
+      if (nodeType === 'entity' || nodeType === 'event' || nodeType === 'problem') return 24;
+      if (nodeType.includes('organization') || nodeType.includes('org')) return 82;
+      if (nodeType.includes('person') || nodeType.includes('law') || nodeType.includes('topic')) return 70;
+      if (nodeType.includes('concept') || nodeType.includes('geo')) return 52;
+      return 42;
+    };
+    const labelValue = (node) => String((node.properties && node.properties.name) || node.name || node.id || '');
+    const mobileNodes = visNodes
+      .slice()
+      .sort((a, b) => priority(b) - priority(a) || labelValue(a).localeCompare(labelValue(b)))
+      .slice(0, maxNodes);
+    const mobileIds = new Set(mobileNodes.map(n => n.id));
+    visNodes = mobileNodes;
+    visEdges = visEdges.filter(e => {
+      const sid = typeof e.source === 'object' ? e.source.id : e.source;
+      const tid = typeof e.target === 'object' ? e.target.id : e.target;
+      return mobileIds.has(sid) && mobileIds.has(tid);
+    });
+    const degreeById = new Map();
+    visEdges.forEach(e => {
+      const sid = typeof e.source === 'object' ? e.source.id : e.source;
+      const tid = typeof e.target === 'object' ? e.target.id : e.target;
+      degreeById.set(sid, (degreeById.get(sid) || 0) + 1);
+      degreeById.set(tid, (degreeById.get(tid) || 0) + 1);
+    });
+    mobileLabelIds = new Set(
+      visNodes
+        .filter(node => {
+          const nodeType = ((node.properties && node.properties.label) || node.type || node.label || '').toLowerCase();
+          return nodeType !== 'chunk';
+        })
+        .sort((a, b) => {
+          const aSelected = a.id === selectedNode ? 1 : 0;
+          const bSelected = b.id === selectedNode ? 1 : 0;
+          if (aSelected !== bSelected) return bSelected - aSelected;
+          const aConnected = selectedNode && visEdges.some(e => {
+            const sid = typeof e.source === 'object' ? e.source.id : e.source;
+            const tid = typeof e.target === 'object' ? e.target.id : e.target;
+            return (sid === selectedNode && tid === a.id) || (tid === selectedNode && sid === a.id);
+          }) ? 1 : 0;
+          const bConnected = selectedNode && visEdges.some(e => {
+            const sid = typeof e.source === 'object' ? e.source.id : e.source;
+            const tid = typeof e.target === 'object' ? e.target.id : e.target;
+            return (sid === selectedNode && tid === b.id) || (tid === selectedNode && sid === b.id);
+          }) ? 1 : 0;
+          if (aConnected !== bConnected) return bConnected - aConnected;
+          const aType = ((a.properties && a.properties.label) || a.type || a.label || '').toLowerCase();
+          const bType = ((b.properties && b.properties.label) || b.type || b.label || '').toLowerCase();
+          const aImportant = (aType.includes('organization') || aType.includes('org') || aType.includes('law') || aType.includes('topic') || aType.includes('person')) ? 1 : 0;
+          const bImportant = (bType.includes('organization') || bType.includes('org') || bType.includes('law') || bType.includes('topic') || bType.includes('person')) ? 1 : 0;
+          if (aImportant !== bImportant) return bImportant - aImportant;
+          return (degreeById.get(b.id) || 0) - (degreeById.get(a.id) || 0);
+        })
+        .slice(0, selectedNode ? 8 : 6)
+        .map(node => node.id)
+    );
+    const cols = Math.max(2, Math.ceil(Math.sqrt(Math.max(visNodes.length, 1))));
+    const spacingX = Math.max(98, Math.min(146, Math.floor((width - 56) / cols)));
+    const rowCount = Math.max(1, Math.ceil(Math.max(visNodes.length, 1) / cols));
+    const spacingY = Math.max(94, Math.min(134, Math.floor((height - 108) / rowCount)));
+    visNodes.forEach((d, index) => {
+      if (d.fx != null && d.fy != null) return;
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      const xBase = 34 + col * spacingX;
+      const yBase = 72 + row * spacingY;
+      const jitterX = ((index % 3) - 1) * 4;
+      const jitterY = ((index % 4) - 1.5) * 3;
+      d.x = Math.max(30, Math.min(width - 30, xBase + jitterX));
+      d.y = Math.max(52, Math.min(height - 62, yBase + jitterY));
+    });
+  }
 
   // Links
   const link = linkG.selectAll('.link-g')
@@ -1919,14 +3493,16 @@ function renderGraph() {
           RELATES_TO: '#7a5a3a',
           IN_COMMUNITY: '#8a3a5a',
           DISCUSSES: '#4a6a7a',
+          KG_RELATION: '#58a6ff',
         }[d.type] || '#444');
         g.append('line')
           .attr('class','edge-line')
           .attr('stroke', d => edgeColor(d))
-          .attr('stroke-width', d => d.type === 'CO_OCCURS' ? 1 : d.type === 'IN_COMMUNITY' ? 1.5 : 1.5)
+          .attr('stroke-width', d => d.type === 'CO_OCCURS' ? 1 : d.type === 'IN_COMMUNITY' ? 1.5 : d.type === 'KG_RELATION' ? 2.2 : 1.5)
           .attr('stroke-dasharray', d => d.type === 'CO_OCCURS' ? '4,3' : d.type === 'IN_COMMUNITY' ? '2,2' : null)
-          .attr('opacity', d => d.type === 'CO_OCCURS' ? 0.6 : 0.85)
-          .attr('marker-end','url(#arrowhead)');
+          .attr('opacity', d => d.type === 'CO_OCCURS' ? 0.6 : d.type === 'KG_RELATION' ? 0.98 : 0.85)
+          .attr('marker-end','url(#arrowhead)')
+          .style('cursor', d => d.type === 'KG_RELATION' ? 'pointer' : 'default');
         // Background rect for edge label readability
         g.append('rect')
           .attr('class','edge-label-bg')
@@ -1935,10 +3511,10 @@ function renderGraph() {
         g.append('text')
           .attr('class','edge-label')
           .attr('fill','#999')
-          .attr('font-size','11px')
+          .attr('font-size', isMobileGraph ? '0px' : '11px')
           .attr('text-anchor','middle')
           .attr('dominant-baseline','middle')
-          .text(d => d.type || '');
+          .text(d => isMobileGraph ? '' : (d.type || ''));
         return g;
       }
     );
@@ -1951,7 +3527,12 @@ function renderGraph() {
         const g = enter.append('g').attr('class','node-g').style('cursor','pointer');
 
         g.append('circle')
-          .attr('r', 20)
+          .attr('r', d => {
+            if (!isMobileGraph) return 20;
+            const nodeType = ((d.properties && d.properties.label) || d.type || d.label || '').toLowerCase();
+            if (nodeType === 'sharedentity') return 8;
+            return nodeType === 'chunk' ? 10 : 16;
+          })
           .attr('fill', d => nodeColor(d))
           .attr('stroke','#1c2333')
           .attr('stroke-width', 2)
@@ -1962,10 +3543,18 @@ function renderGraph() {
         g.append('text')
           .attr('y', 34)
           .attr('text-anchor','middle')
-          .attr('font-size','10px')
+          .attr('font-size', isMobileGraph ? '8px' : '10px')
           .attr('fill','#aaa')
           .style('opacity', 0)
-          .text(d => humanLabel(((d.properties && d.properties.name) || d.name || d.id || '').substring(0, 20)))
+          .text(d => {
+            const raw = ((d.properties && d.properties.name) || d.name || d.id || '');
+            const nodeType = ((d.properties && d.properties.label) || d.type || d.label || '').toLowerCase();
+            if (isMobileGraph && /^([a-f0-9]{8,}|chunk[-_]?\d+)/i.test(String(raw))) return '';
+            if (isMobileGraph && !selectedNode && !mobileLabelIds.has(d.id)) {
+              return '';
+            }
+            return humanLabel(String(raw).substring(0, isMobileGraph ? 14 : 20));
+          })
           .transition().duration(400)
           .style('opacity', 1);
 
@@ -1987,6 +3576,7 @@ function renderGraph() {
         });
 
         g.on('mouseover', (event, d) => {
+          if (isMobileViewport()) return;
           if (_tooltipTimer) { clearTimeout(_tooltipTimer); _tooltipTimer = null; }
           // Build sources list from graph edges
           const sources = allEdges
@@ -2012,61 +3602,285 @@ function renderGraph() {
           tip.style.top  = (event.pageY - 10) + 'px';
         });
         g.on('mousemove', event => {
+          if (isMobileViewport()) return;
           const tip = document.getElementById('tooltip');
           tip.style.left = (event.pageX + 14) + 'px';
           tip.style.top  = (event.pageY - 10) + 'px';
         });
         g.on('mouseleave', () => {
+          if (isMobileViewport()) return;
           _tooltipTimer = setTimeout(() => document.getElementById('tooltip').classList.remove('visible'), 800);
         });
 
         g.on('click', (event, d) => {
           event.stopPropagation();
           selectedNode = selectedNode === d.id ? null : d.id;
+          selectedEdge = null;
           highlightConnected();
+          updateGraphFocusChip();
+          if (selectedNode) {
+            zoomToNode(selectedNode);
+          }
+          if (isMobileViewport()) {
+            bodyEl.classList.remove('graph-tools-open', 'legend-open');
+          }
         });
 
         return g;
       }
     );
 
-  svg.on('click', () => { selectedNode = null; highlightConnected(); });
+  link.on('click', (event, d) => {
+    event.stopPropagation();
+    if (d.type !== 'KG_RELATION') return;
+    selectedEdge = d;
+    openRelationSources(d);
+    if (isMobileViewport()) {
+      bodyEl.classList.remove('graph-tools-open', 'legend-open');
+    }
+  });
 
-  simulation
-    .nodes(visNodes)
-    .on('tick', () => {
-      linkG.selectAll('.link-g').each(function(d) {
-        const g = d3.select(this);
-        const sx = d.source.x || 0, sy = d.source.y || 0;
-        const tx = d.target.x || 0, ty = d.target.y || 0;
-        const mx = (sx+tx)/2, my = (sy+ty)/2;
-        g.select('.edge-line').attr('x1',sx).attr('y1',sy).attr('x2',tx).attr('y2',ty);
-        const lbl = g.select('.edge-label').attr('x', mx).attr('y', my);
-        const bbox = lbl.node() ? lbl.node().getBBox() : {x:mx, y:my, width:0, height:0};
-        g.select('.edge-label-bg')
-          .attr('x', bbox.x - 3).attr('y', bbox.y - 2)
-          .attr('width', bbox.width + 6).attr('height', bbox.height + 4);
-      });
-      nodeG.selectAll('.node-g').attr('transform', d => `translate(${d.x||0},${d.y||0})`);
+  link.select('.edge-label')
+    .attr('font-size', isMobileGraph ? '0px' : '11px')
+    .text(d => {
+      if (isMobileGraph) return '';
+      if (d.type === 'KG_RELATION') {
+        return (d.properties && d.properties.relation_type) || 'relation';
+      }
+      return d.type || '';
+    });
+  link.select('.edge-label-bg')
+    .attr('opacity', isMobileGraph ? 0 : 1);
+
+  node.select('text')
+    .attr('font-size', isMobileGraph ? '8px' : '10px')
+    .attr('y', d => {
+      if (!isMobileGraph) return 34;
+      const nodeType = ((d.properties && d.properties.label) || d.type || d.label || '').toLowerCase();
+      if (nodeType === 'sharedentity') return 18;
+      return nodeType === 'chunk' ? 22 : 26;
+    })
+    .text(d => {
+      const raw = ((d.properties && d.properties.name) || d.name || d.id || '');
+      const nodeType = (d.properties && d.properties.label) || d.type || d.label || '';
+      const lowerType = String(nodeType).toLowerCase();
+      if (isMobileGraph && (lowerType === 'chunk' || /^([a-f0-9]{8,}|chunk[-_]?\d+)/i.test(String(raw)))) {
+        return '';
+      }
+      if (isMobileGraph && !selectedNode && !mobileLabelIds.has(d.id)) {
+        return '';
+      }
+      if (isMobileGraph && selectedNode && !mobileLabelIds.has(d.id)) {
+        return '';
+      }
+      return humanLabel(String(raw).substring(0, isMobileGraph ? 14 : 20));
     });
 
+  svg.on('click', () => { selectedNode = null; highlightConnected(); });
+
+simulation
+  .nodes(visNodes)
+  .on('tick', () => {
+    const pad = 50;
+    const w = WIDTH(), h = HEIGHT();
+    visNodes.forEach(d => {
+      d.x = Math.max(pad, Math.min(w - pad, d.x || pad));
+      d.y = Math.max(pad, Math.min(h - pad, d.y || pad));
+    });
+    linkG.selectAll('.link-g').each(function(d) {
+      const g = d3.select(this);
+      const sx = d.source.x || 0, sy = d.source.y || 0;
+      const tx = d.target.x || 0, ty = d.target.y || 0;
+      const mx = (sx+tx)/2, my = (sy+ty)/2;
+      g.select('.edge-line').attr('x1',sx).attr('y1',sy).attr('x2',tx).attr('y2',ty);
+      const lbl = g.select('.edge-label').attr('x', mx).attr('y', my);
+      const bbox = lbl.node() ? lbl.node().getBBox() : {x:mx, y:my, width:0, height:0};
+      g.select('.edge-label-bg')
+        .attr('x', bbox.x - 3).attr('y', bbox.y - 2)
+        .attr('width', bbox.width + 6).attr('height', bbox.height + 4);
+    });
+    nodeG.selectAll('.node-g').attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
   simulation.force('link').links(visEdges);
-  simulation.alpha(0.5).restart();
+  if (isMobileGraph) {
+    simulation.force('charge', d3.forceManyBody().strength(-120));
+    simulation.force('collision', d3.forceCollide(28));
+  } else {
+    simulation.force('charge', d3.forceManyBody().strength(-500));
+    simulation.force('collision', d3.forceCollide(45));
+  }
+  simulation.alpha(isMobileGraph ? 0.1 : 0.5).restart();
 
   // Toggle empty state
   document.getElementById('empty-state').style.display = allNodes.length === 0 ? 'flex' : 'none';
 }
 
+function updateGraphToolbar() {
+  if (graphTitleEl) {
+    graphTitleEl.textContent = currentGraphView === 'lexical' ? 'Lexical Match Graph' : 'Knowledge Graph';
+  }
+  graphViewTabs.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.graphView === currentGraphView);
+  });
+}
+
+function setGraphViews(nextViews, activeView = currentGraphView) {
+  graphViewsState = {
+    knowledge: {
+      nodes: Array.isArray(nextViews?.knowledge?.nodes) ? nextViews.knowledge.nodes : [],
+      edges: Array.isArray(nextViews?.knowledge?.edges) ? nextViews.knowledge.edges : [],
+    },
+    lexical: {
+      nodes: Array.isArray(nextViews?.lexical?.nodes) ? nextViews.lexical.nodes : [],
+      edges: Array.isArray(nextViews?.lexical?.edges) ? nextViews.lexical.edges : [],
+    },
+  };
+  currentGraphView = activeView === 'lexical' ? 'lexical' : 'knowledge';
+  allNodes = graphViewsState[currentGraphView].nodes.map(n => ({ ...n }));
+  allEdges = graphViewsState[currentGraphView].edges.map(e => ({ ...e }));
+  selectedNode = null;
+  selectedEdge = null;
+  updateGraphToolbar();
+  renderGraph();
+  updateGraphFocusChip();
+}
+
+function switchGraphView(nextView) {
+  const target = nextView === 'lexical' ? 'lexical' : 'knowledge';
+  if (target === currentGraphView) return;
+  currentGraphView = target;
+  allNodes = (graphViewsState[target]?.nodes || []).map(n => ({ ...n }));
+  allEdges = (graphViewsState[target]?.edges || []).map(e => ({ ...e }));
+  selectedNode = null;
+  selectedEdge = null;
+  activeFilter = '';
+  const filterSelect = document.getElementById('filter-select');
+  if (filterSelect) filterSelect.value = '';
+  updateGraphToolbar();
+  renderGraph();
+  updateGraphFocusChip();
+  if (isMobileViewport()) {
+    bodyEl.classList.remove('graph-tools-open');
+    setMobileView('graph');
+  }
+}
+
+function hydrateGraphStateFromPayload(payload) {
+  const nextViews = payload && payload.graph_views
+    ? payload.graph_views
+    : { knowledge: payload.graph || { nodes: [], edges: [] }, lexical: { nodes: [], edges: [] } };
+  const active = (payload && payload.graph_views && payload.graph_views.active) || 'knowledge';
+  setGraphViews(nextViews, active);
+}
+
+function updateGraphFocusChip() {
+  if (!graphFocusChip) return;
+  if (!selectedNode) {
+    graphFocusChip.classList.remove('visible');
+    const eyebrow = graphFocusChip.querySelector('.graph-focus-eyebrow');
+    const tap = graphFocusChip.querySelector('.graph-focus-tap');
+    if (eyebrow) {
+      eyebrow.textContent = currentGraphView === 'lexical' ? 'Focused lexical node' : 'Focused node';
+    }
+    if (tap) {
+      tap.textContent = currentGraphView === 'lexical'
+        ? 'Tap a chunk or entity to isolate lexical evidence'
+        : 'Tap a node to isolate nearby relationships';
+    }
+    return;
+  }
+
+  const node = allNodes.find(n => n.id === selectedNode);
+  if (!node) {
+    graphFocusChip.classList.remove('visible');
+    return;
+  }
+
+  const nodeType = (node.properties && node.properties.label) || node.type || node.label || 'Entity';
+  const label = humanLabel((node.properties && node.properties.name) || node.name || node.id || 'Entity');
+  const eyebrow = graphFocusChip.querySelector('.graph-focus-eyebrow');
+  const tap = graphFocusChip.querySelector('.graph-focus-tap');
+  if (eyebrow) {
+    eyebrow.textContent = currentGraphView === 'lexical' ? 'Focused lexical node' : 'Focused node';
+  }
+  const connectedNodes = new Set();
+  const connectionTypes = new Set();
+  allEdges.forEach(e => {
+    const sid = typeof e.source === 'object' ? e.source.id : e.source;
+    const tid = typeof e.target === 'object' ? e.target.id : e.target;
+    if (sid === selectedNode || tid === selectedNode) {
+      connectionTypes.add(e.type || 'link');
+      if (sid !== selectedNode) connectedNodes.add(sid);
+      if (tid !== selectedNode) connectedNodes.add(tid);
+    }
+  });
+  const connections = connectedNodes.size;
+  const metaText = currentGraphView === 'lexical'
+    ? `${humanLabel(nodeType)} • ${connections} linked node${connections === 1 ? '' : 's'} in lexical evidence`
+    : `${humanLabel(nodeType)} • ${connections} nearby node${connections === 1 ? '' : 's'} • ${connectionTypes.size || 1} relation type${connectionTypes.size === 1 ? '' : 's'}`;
+
+  graphFocusTitle.textContent = label;
+  graphFocusMeta.textContent = metaText;
+  if (tap) {
+    tap.textContent = currentGraphView === 'lexical'
+      ? 'Chunks show literal matches that pulled evidence into retrieval'
+      : 'Tap a relation line to inspect the exact supporting chunk';
+  }
+  graphFocusChip.classList.add('visible');
+}
+
+function zoomToNode(nodeId) {
+  const node = allNodes.find(n => n.id === nodeId);
+  if (!node) return;
+  const width = WIDTH() || 360;
+  const height = HEIGHT() || 520;
+  const scale = isMobileViewport() ? 1.85 : 1.25;
+  const focusOffsetY = isMobileViewport() ? 74 : 0;
+  const x = node.x || width / 2;
+  const y = node.y || height / 2;
+  const transform = d3.zoomIdentity
+    .translate(width / 2 - (x * scale), (height / 2 + focusOffsetY) - (y * scale))
+    .scale(scale);
+  lastZoomTransform = transform;
+  svg.transition().duration(280).call(zoomBehavior.transform, transform);
+}
+
+function resetGraphView() {
+  selectedNode = null;
+  selectedEdge = null;
+  updateGraphFocusChip();
+  lastZoomTransform = d3.zoomIdentity;
+  svg.transition().duration(220).call(zoomBehavior.transform, d3.zoomIdentity);
+  highlightConnected();
+}
+
 function highlightConnected() {
   if (!selectedNode) {
     linkG.selectAll('.edge-line')
-      .attr('stroke', d => ({MENTIONS:'#3a5a8a',CO_OCCURS:'#5a7a3a',RELATES_TO:'#7a5a3a',IN_COMMUNITY:'#8a3a5a',DISCUSSES:'#4a6a7a'}[d.type]||'#444'))
-      .attr('stroke-width', d => d.type === 'CO_OCCURS' ? 1 : 1.5)
-      .attr('opacity', d => d.type === 'CO_OCCURS' ? 0.6 : 0.85);
-    nodeG.selectAll('circle').attr('opacity',1);
+      .attr('stroke', d => edgePalette[d.type] || '#444')
+      .attr('stroke-width', d => d.type === 'KG_RELATION' ? 2.2 : (d.type === 'CO_OCCURS' ? 1 : 1.5))
+      .attr('opacity', d => {
+        if (d.type === 'KG_RELATION') return 0.98;
+        return isMobileViewport() ? 0.38 : (d.type === 'CO_OCCURS' ? 0.6 : 0.85);
+      });
+    nodeG.selectAll('circle')
+      .attr('opacity', 1)
+      .attr('r', d => isMobileViewport() ? (((d.properties && d.properties.label) || d.type || d.label || '').toLowerCase() === 'chunk' ? 10 : 16) : 20)
+      .attr('stroke', '#1c2333')
+      .attr('stroke-width', 2);
+    nodeG.selectAll('text').attr('opacity', 1);
     return;
   }
   const connected = new Set([selectedNode]);
+  const edgePalette = {
+    MENTIONS:'#3a5a8a',
+    CO_OCCURS:'#5a7a3a',
+    RELATES_TO:'#7a5a3a',
+    IN_COMMUNITY:'#8a3a5a',
+    DISCUSSES:'#4a6a7a',
+    KG_RELATION:'#58a6ff',
+  };
   allEdges.forEach(e => {
     const sid = typeof e.source==='object'?e.source.id:e.source;
     const tid = typeof e.target==='object'?e.target.id:e.target;
@@ -2084,7 +3898,25 @@ function highlightConnected() {
       .attr('opacity', active ? 1 : 0.2);
   });
 
-  nodeG.selectAll('circle').attr('opacity', d => connected.has(d.id) ? 1 : 0.25);
+  nodeG.selectAll('circle')
+    .attr('opacity', d => connected.has(d.id) ? 1 : (isMobileViewport() ? 0.12 : 0.25))
+    .attr('r', d => {
+      const nodeType = ((d.properties && d.properties.label) || d.type || d.label || '').toLowerCase();
+      if (nodeType === 'sharedentity') return connected.has(d.id) ? 12 : 10;
+      if (!isMobileViewport()) return connected.has(d.id) ? 20 : 18;
+      if (d.id === selectedNode) return nodeType === 'chunk' ? 16 : 24;
+      if (connected.has(d.id)) return nodeType === 'chunk' ? 11 : 16;
+      return nodeType === 'chunk' ? 8 : 13;
+    })
+    .attr('stroke', d => d.id === selectedNode ? '#f5c542' : '#1c2333')
+    .attr('stroke-width', d => d.id === selectedNode ? 3.5 : 2);
+  nodeG.selectAll('text')
+    .attr('opacity', d => {
+      if (!isMobileViewport()) return 1;
+      if (d.id === selectedNode) return 1;
+      if (!mobileLabelIds.has(d.id)) return 0;
+      return connected.has(d.id) ? 0.95 : 0;
+    });
 }
 
 function mergeGraph(newNodes, newEdges) {
@@ -2112,6 +3944,7 @@ function mergeGraph(newNodes, newEdges) {
   });
 
   renderGraph();
+  updateGraphFocusChip();
 
   // Glow newly added nodes
   if (freshIds.size > 0) {
@@ -2130,12 +3963,25 @@ function mergeGraph(newNodes, newEdges) {
 function resetAll() {
   // Clear chat history
   chatArea.innerHTML = '';
+  chatArea.appendChild(chatEmptyState);
+  syncChatEmptyState();
   // Reset trace
   traceBody.innerHTML = '<div class="trace-step" style="color:var(--text-muted);font-style:italic;font-size:12px;">No reasoning steps yet.</div>';
   // Clear graph
   allNodes = [];
   allEdges = [];
+  graphViewsState = {
+    knowledge: { nodes: [], edges: [] },
+    lexical: { nodes: [], edges: [] },
+  };
+  currentGraphView = 'knowledge';
+  activeFilter = '';
+  const filterSelect = document.getElementById('filter-select');
+  if (filterSelect) filterSelect.value = '';
   selectedNode = null;
+  selectedEdge = null;
+  updateGraphToolbar();
+  updateGraphFocusChip();
   nodeG.selectAll('*').remove();
   linkG.selectAll('*').remove();
   document.getElementById('empty-state').style.display = 'flex';
@@ -2144,7 +3990,18 @@ function resetAll() {
 function resetGraph() {
   allNodes = [];
   allEdges = [];
+  graphViewsState = {
+    knowledge: { nodes: [], edges: [] },
+    lexical: { nodes: [], edges: [] },
+  };
+  currentGraphView = 'knowledge';
+  activeFilter = '';
+  const filterSelect = document.getElementById('filter-select');
+  if (filterSelect) filterSelect.value = '';
   selectedNode = null;
+  selectedEdge = null;
+  updateGraphToolbar();
+  updateGraphFocusChip();
   nodeG.selectAll('*').remove();
   linkG.selectAll('*').remove();
   document.getElementById('empty-state').style.display = 'flex';
@@ -2154,10 +4011,18 @@ function resetGraph() {
 document.getElementById('filter-select').addEventListener('change', e => {
   activeFilter = e.target.value;
   renderGraph();
+  if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
+});
+
+graphViewTabs.forEach(btn => {
+  btn.addEventListener('click', () => switchGraphView(btn.dataset.graphView));
 });
 
 // Toolbar buttons
-document.getElementById('btn-reset').addEventListener('click', resetAll);
+document.getElementById('btn-reset').addEventListener('click', () => {
+  resetAll();
+  bodyEl.classList.remove('legend-open', 'graph-tools-open');
+});
 
 // Dev mode toggle
 (function() {
@@ -2196,12 +4061,14 @@ function updateDebugPanel(sources) {
 
 document.getElementById('btn-share').addEventListener('click', () => {
   const url = window.location.origin + window.location.pathname + '?session=' + sessionId;
+  if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
   navigator.clipboard.writeText(url).then(() => showToast('Link copied!')).catch(() => {
     prompt('Copy this link:', url);
   });
 });
 
 document.getElementById('btn-export-png').addEventListener('click', async () => {
+  if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
   try {
     const canvas = await html2canvas(graphCanvas, {
       backgroundColor: '#0f1117',
@@ -2220,12 +4087,12 @@ document.getElementById('btn-export-png').addEventListener('click', async () => 
 // ── Session restore ────────────────────────────────────────────────────────
 async function restoreSession(id) {
   try {
-    const res = await fetch(`/api/session/${id}/graph`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.nodes && data.edges) {
-        mergeGraph(data.nodes, data.edges);
-      }
+    const knowledgeRes = await fetch(`/api/session/${id}/graph?view=knowledge`);
+    const lexicalRes = await fetch(`/api/session/${id}/graph?view=lexical`);
+    if (knowledgeRes.ok || lexicalRes.ok) {
+      const knowledge = knowledgeRes.ok ? await knowledgeRes.json() : { nodes: [], edges: [] };
+      const lexical = lexicalRes.ok ? await lexicalRes.json() : { nodes: [], edges: [] };
+      hydrateGraphStateFromPayload({ graph_views: { knowledge, lexical, active: 'knowledge' } });
     }
   } catch(e) { /* ignore */ }
 }
@@ -2253,6 +4120,8 @@ document.querySelectorAll('#legend .legend-item[data-type]').forEach(item => {
 });
 
 // Initial focus
+updateGraphToolbar();
+syncChatEmptyState();
 msgInput.focus();
 </script>
 </body>
