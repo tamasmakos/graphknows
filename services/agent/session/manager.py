@@ -655,6 +655,106 @@ class SessionGraphManager:
                     logger.warning("Memgraph CO_OCCURS upsert failed: %s", exc)
                     self._memgraph_ok = False
 
+    def add_node(self, session_id: str, node_id: str, label: str, properties: dict[str, Any]) -> None:
+        """Upsert a single node into the session graph."""
+        if session_id not in self._mem_sessions:
+            self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
+        mem = self._mem_sessions[session_id]
+
+        node_key = f"entity-{node_id}-{session_id}"
+        node_name = properties.get("name", node_id)
+        merged_props = {**properties, "session_id": session_id}
+        mem["nodes"][node_key] = {
+            "id": node_key,
+            "label": label,
+            "type": label,
+            "name": node_name,
+            "properties": merged_props,
+        }
+
+        if self._memgraph_ok:
+            try:
+                with self._mg_driver.session() as mg:
+                    mg.run(
+                        f"MERGE (n:{label} {{name: $name, session_id: $sid}}) "
+                        "SET n += $props",
+                        name=node_name,
+                        sid=session_id,
+                        props=merged_props,
+                    )
+            except Exception as exc:
+                logger.warning("Memgraph add_node failed: %s", exc)
+                self._memgraph_ok = False
+
+    def add_edge(
+        self,
+        session_id: str,
+        source_name: str,
+        target_name: str,
+        edge_type: str,
+        properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Upsert a single typed edge into the session graph."""
+        props = properties or {}
+        if session_id not in self._mem_sessions:
+            self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
+        mem = self._mem_sessions[session_id]
+
+        src_id = f"entity-{source_name}-{session_id}"
+        tgt_id = f"entity-{target_name}-{session_id}"
+        if src_id not in mem["nodes"]:
+            mem["nodes"][src_id] = {
+                "id": src_id,
+                "label": "Entity",
+                "type": "Entity",
+                "name": source_name,
+                "properties": {"name": source_name, "session_id": session_id},
+            }
+        if tgt_id not in mem["nodes"]:
+            mem["nodes"][tgt_id] = {
+                "id": tgt_id,
+                "label": "Entity",
+                "type": "Entity",
+                "name": target_name,
+                "properties": {"name": target_name, "session_id": session_id},
+            }
+
+        edge_id = f"{src_id}-{edge_type}-{tgt_id}"
+        if not any(e.get("id") == edge_id for e in mem["edges"]):
+            mem["edges"].append(
+                {
+                    "id": edge_id,
+                    "source": src_id,
+                    "target": tgt_id,
+                    "type": edge_type,
+                    "properties": props,
+                }
+            )
+
+        if self._memgraph_ok:
+            try:
+                with self._mg_driver.session() as mg:
+                    mg.run(
+                        "MERGE (a:Entity {name: $a, session_id: $sid}) "
+                        "MERGE (b:Entity {name: $b, session_id: $sid})",
+                        a=source_name,
+                        b=target_name,
+                        sid=session_id,
+                    )
+                    mg.run(
+                        f"MATCH (a:Entity {{name: $a, session_id: $sid}}) "
+                        f"MATCH (b:Entity {{name: $b, session_id: $sid}}) "
+                        f"MERGE (a)-[r:{edge_type}]->(b) "
+                        "SET r += $props",
+                        a=source_name,
+                        b=target_name,
+                        sid=session_id,
+                        props=props,
+                    )
+            except Exception as exc:
+                logger.warning("Memgraph add_edge failed: %s", exc)
+                self._memgraph_ok = False
+
     # ------------------------------------------------------------------
     # Write-back to Neo4j
     # ------------------------------------------------------------------

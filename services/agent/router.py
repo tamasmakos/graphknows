@@ -16,6 +16,7 @@ from pydantic import BaseModel, model_validator
 from agent.config import AgentSettings
 from agent.orchestrator import IterativeOrchestrator
 from agent.session.manager import SessionGraphManager
+from agent.session_end import merge_session_to_neo4j
 from graphknows.shared.models.session import StreamEvent
 
 log = logging.getLogger("agent.router")
@@ -27,6 +28,16 @@ _settings: AgentSettings | None = None
 _sgm: SessionGraphManager | None = None
 _http_client: httpx.AsyncClient | None = None
 _orchestrator: IterativeOrchestrator | None = None
+_ws_connections: dict[str, WebSocket] = {}
+
+
+async def _broadcast_graph_update(session_id: str, payload: dict) -> None:
+    ws = _ws_connections.get(session_id)
+    if ws:
+        try:
+            await ws.send_text(json.dumps({"type": "graph_update", **payload}))
+        except Exception:
+            pass
 
 
 def _get_settings() -> AgentSettings:
@@ -72,7 +83,7 @@ def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client:
         "get_chunks": GetChunksTool(settings.graphrag_url, http_client),
         "get_community": GetCommunityTool(settings.graphrag_url, http_client),
         "build": BuildTool(settings.graphgen_url, http_client),
-        "search": SearchTool(),
+        "search": SearchTool(sgm=sgm, ws_broadcaster=_broadcast_graph_update),
     }
     _orchestrator = IterativeOrchestrator(
         tools=tools,
@@ -545,7 +556,13 @@ async def delete_session(session_id: str) -> Dict[str, str]:
     if session_id not in _active_sessions:
         raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
 
-    # Write back high-confidence data before closing
+    # Merge entire session graph before closing
+    try:
+        await asyncio.to_thread(merge_session_to_neo4j, session_id, sgm)
+    except Exception as exc:
+        log.warning("Session merge failed for session %s: %s", session_id, exc)
+
+    # Legacy write-back high-confidence data before closing
     try:
         sgm.write_back_to_neo4j(session_id, confidence_threshold=0.7)
     except Exception as exc:
@@ -555,6 +572,19 @@ async def delete_session(session_id: str) -> Dict[str, str]:
     _active_sessions.discard(session_id)
     log.info("Session deleted: %s", session_id)
     return {"status": "deleted", "session_id": session_id}
+
+
+@router.post("/session/{session_id}/merge", summary="Merge session graph into persistent Neo4j")
+async def merge_session(session_id: str) -> Dict[str, Any]:
+    """Merge all session-scoped graph data from Memgraph into Neo4j."""
+    if session_id not in _active_sessions:
+        raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
+
+    sgm = _get_sgm()
+    result = await asyncio.to_thread(merge_session_to_neo4j, session_id, sgm)
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
 
 
 @router.post("/sessions/{session_id}/query", summary="Query session with SSE streaming")
@@ -629,6 +659,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         session_id: The session identifier.
     """
     await websocket.accept()
+    _ws_connections[session_id] = websocket
     try:
         data = await websocket.receive_json()
         message = data.get("message", "")
@@ -690,6 +721,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         except Exception:
             pass
     finally:
+        _ws_connections.pop(session_id, None)
         try:
             await websocket.close()
         except Exception:
