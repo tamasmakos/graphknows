@@ -3059,7 +3059,8 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         }
       } else if (data.type === 'graph_update') {
         setKgUpdating(true);
-        updateGraphWithNewData(data.nodes || [], data.edges || [], data.lexical_edges || []);
+        const g = data.graph || data;
+        updateGraphWithNewData(g.nodes || [], g.edges || [], g.lexical_edges || []);
       } else if (data.type === 'answer') {
         spinner.remove();
         if (data.session_id) {

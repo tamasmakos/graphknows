@@ -262,12 +262,27 @@ async def _run_graphgen_subprocess(
     sgm: Any,
     ws_broadcaster: Any,
 ) -> dict[str, Any]:
-    """Run GLiNER2 graphgen in an isolated subprocess so it cannot crash the agent."""
+    """Run GLiNER2 graphgen in an isolated subprocess so it cannot crash the agent.
+
+    Skips if available RAM < 2 GB to avoid OOM on the host.
+    """
     import json as _json
+    import psutil  # type: ignore
+
+    # RAM guard — GLiNER2 needs ~2 GB; skip if too tight
+    try:
+        mem = psutil.virtual_memory()
+        available_gb = mem.available / (1024 ** 3)
+        if available_gb < 2.0:
+            log.warning("Skipping graphgen — only %.1f GB RAM available (need 2 GB)", available_gb)
+            # Fall back to lightweight keyword co-occurrence graph
+            return await _run_keyword_graph(documents, session_id, sgm, ws_broadcaster)
+    except Exception:
+        pass
 
     worker = Path(__file__).parent / "graphgen_worker.py"
     payload = _json.dumps({
-        "documents": documents,
+        "documents": documents[:5],  # cap at 5 docs to limit RAM pressure
         "session_id": session_id,
         "ontology_domain": domain,
     }).encode()
@@ -279,12 +294,12 @@ async def _run_graphgen_subprocess(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=120)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=180)
         if stderr:
             log.debug("Graphgen worker stderr: %s", stderr.decode()[:500])
         if proc.returncode != 0:
             log.warning("Graphgen worker exited %d: %s", proc.returncode, stderr.decode()[:200])
-            return {"error": f"worker exited {proc.returncode}", "nodes": 0, "edges": 0}
+            return await _run_keyword_graph(documents, session_id, sgm, ws_broadcaster)
 
         result = _json.loads(stdout)
         nodes_data = result.get("entities", [])
@@ -310,8 +325,10 @@ async def _run_graphgen_subprocess(
             try:
                 await ws_broadcaster(session_id, {
                     "type": "graph_update",
-                    "nodes": len(nodes_data),
-                    "edges": len(edges_data),
+                    "graph": {
+                        "nodes": nodes_data[:200],
+                        "edges": edges_data[:500],
+                    },
                 })
             except Exception:
                 pass
@@ -320,7 +337,66 @@ async def _run_graphgen_subprocess(
 
     except asyncio.TimeoutError:
         log.warning("Graphgen subprocess timed out for session %s", session_id)
-        return {"error": "timeout", "nodes": 0, "edges": 0}
+        return await _run_keyword_graph(documents, session_id, sgm, ws_broadcaster)
     except Exception as exc:
         log.warning("Graphgen subprocess error: %s", exc)
         return {"error": str(exc), "nodes": 0, "edges": 0}
+
+
+async def _run_keyword_graph(
+    documents: list[dict[str, Any]],
+    session_id: str,
+    sgm: Any,
+    ws_broadcaster: Any,
+) -> dict[str, Any]:
+    """Lightweight fallback: build a co-occurrence graph from noun phrases without ML models."""
+    import re as _re
+
+    _STOPWORDS = frozenset({"the", "a", "an", "of", "in", "to", "and", "or", "for",
+                            "is", "are", "was", "were", "on", "at", "by", "with",
+                            "this", "that", "as", "be", "has", "have", "its", "it"})
+
+    def _extract_terms(text: str) -> list[str]:
+        words = _re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        return [w for w in words if w.lower() not in _STOPWORDS and len(w) > 3]
+
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_nodes: set[str] = set()
+
+    for doc in documents[:12]:
+        text = str(doc.get("text", "") or doc.get("title", ""))[:2000]
+        terms = _extract_terms(text)
+        # Deduplicate
+        unique = list(dict.fromkeys(terms))[:15]
+        for term in unique:
+            if term not in seen_nodes:
+                nodes.append({"id": term, "type": "CONCEPT", "doc_id": doc.get("id", ""), "name": term})
+                seen_nodes.add(term)
+        for i, a in enumerate(unique):
+            for b in unique[i + 1: i + 4]:
+                edges.append({"source": a, "target": b, "type": "CO_OCCURS",
+                               "properties": {"relation_type": "co-occurs"}})
+
+    log.info("Keyword fallback graph: %d nodes, %d edges for session %s",
+             len(nodes), len(edges), session_id)
+
+    if nodes and sgm:
+        try:
+            for node in nodes:
+                await sgm.add_entity(session_id, node["id"], node["type"], {})
+            for edge in edges:
+                await sgm.add_relation(session_id, edge["source"], edge["target"], edge["type"], {})
+        except Exception as exc:
+            log.warning("Failed to persist keyword graph: %s", exc)
+
+    if ws_broadcaster:
+        try:
+            await ws_broadcaster(session_id, {
+                "type": "graph_update",
+                "graph": {"nodes": nodes, "edges": edges},
+            })
+        except Exception:
+            pass
+
+    return {"nodes": len(nodes), "edges": len(edges), "entities": nodes, "relations": edges}
