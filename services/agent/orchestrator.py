@@ -34,6 +34,10 @@ For `search`: {{"query": "...", "sources": ["ep_debates", "eurlex", "tavily"], "
   - Omit sources to auto-route
 For `retrieve`: {{"query": "...", "k": 5}}
 For `answer`: {{"text": "..."}}
+  IMPORTANT: The `text` value must be a PLAIN MARKDOWN STRING — NOT JSON, NOT escaped, NOT nested objects.
+  Write the report directly as markdown text starting with ## heading. Example:
+  {{"tool": "answer", "params": {{"text": "## My Report\n\n**Executive Summary**: ..."}}}}
+  Do NOT put another JSON object inside the text field.
 
 REPORT FORMAT — the `answer` text must be a full investigative report:
 ## [Investigation Title]
@@ -155,8 +159,10 @@ class IterativeOrchestrator:
             if tool_name == "answer":
                 # LLM may use "text", "answer", or "content" as the key.
                 text = params.get("text") or params.get("answer") or params.get("content") or ""
-                # Guard: if text is itself a JSON string (double-wrapped), unwrap it
-                if isinstance(text, str) and text.strip().startswith("{"):
+                # Recursively unwrap: Groq sometimes wraps the full JSON response inside params.text
+                for _ in range(3):
+                    if not (isinstance(text, str) and text.strip().startswith("{")):
+                        break
                     try:
                         inner = json.loads(text)
                         inner_text = (
@@ -165,10 +171,12 @@ class IterativeOrchestrator:
                             or inner.get("answer")
                             or inner.get("content")
                         )
-                        if inner_text:
+                        if inner_text and inner_text != text:
                             text = inner_text
+                        else:
+                            break
                     except (json.JSONDecodeError, AttributeError):
-                        pass
+                        break
                 yield StreamEvent(event="answer", data={"text": text, "steps": step_id})
                 return
 
