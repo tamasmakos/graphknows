@@ -171,6 +171,19 @@ class IterativeOrchestrator:
                     report_fb = _re2.search(r'^##\s+(?!Step\s+\d)', text_fallback, flags=_re2.MULTILINE)
                     if report_fb and report_fb.start() > 0:
                         text_fallback = text_fallback[report_fb.start():]
+                    else:
+                        lines_fb = text_fallback.split('\n')
+                        clean_fb: list[str] = []
+                        in_step_fb = False
+                        for line in lines_fb:
+                            if _re2.match(r'^##\s+Step\s+\d', line):
+                                in_step_fb = True
+                                continue
+                            if _re2.match(r'^##\s+', line):
+                                in_step_fb = False
+                            if not in_step_fb:
+                                clean_fb.append(line)
+                        text_fallback = '\n'.join(clean_fb).strip()
                     yield StreamEvent(event="answer", data={"text": text_fallback, "steps": step_id})
                     return
 
@@ -206,10 +219,30 @@ class IterativeOrchestrator:
                 # Strip any trailing JSON tool calls the model accidentally included in the text
                 import re as _re
                 text = _re.sub(r'\{["\']tool["\'].*$', '', text, flags=_re.DOTALL).strip()
-                # Strip planning preamble like "## Step 1: Search..." if the real report starts later
+                # Strip planning preamble: "## Step N: ..." sections that leak LLM reasoning
+                # Strategy 1: find first non-Step ## heading and start there
                 report_start = _re.search(r'^##\s+(?!Step\s+\d)', text, flags=_re.MULTILINE)
                 if report_start and report_start.start() > 0:
                     text = text[report_start.start():]
+                else:
+                    # Strategy 2: drop all lines that are ## Step ... headings and their content
+                    # Keep only lines that look like real report content
+                    lines = text.split('\n')
+                    clean: list[str] = []
+                    in_step = False
+                    for line in lines:
+                        if _re.match(r'^##\s+Step\s+\d', line):
+                            in_step = True
+                            continue
+                        if _re.match(r'^##\s+', line):
+                            in_step = False  # new non-step section starts
+                        if not in_step:
+                            clean.append(line)
+                    text = '\n'.join(clean).strip()
+                    # If still all Step-preamble, just take the last paragraph as answer
+                    if not text or _re.match(r'^##\s+Step', text):
+                        last_para = [p.strip() for p in _re.split(r'\n\n+', text_fallback if 'text_fallback' in dir() else text) if p.strip()]
+                        text = last_para[-1] if last_para else text
                 yield StreamEvent(event="answer", data={"text": text, "steps": step_id})
                 return
 
