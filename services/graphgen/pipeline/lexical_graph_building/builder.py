@@ -47,6 +47,7 @@ async def process_single_segment(
 
         deps.graph.add_node(segment_node_id,
                           node_type=segment_label,
+                          ontology_class="STRUCTURAL_SEGMENT",
                           graph_type="lexical_graph",
                           content=segment.content,
                           line_number=segment.line_number,
@@ -71,6 +72,7 @@ async def process_single_segment(
                 # 4. Add Chunk Node
                 deps.graph.add_node(chunk_id,
                                   node_type=chunk_label,
+                                  ontology_class="STRUCTURAL_CHUNK",
                                   graph_type="lexical_graph",
                                   text=chunk_text,
                                   length=len(chunk_text),
@@ -182,6 +184,7 @@ async def process_single_document_lexical(deps: PipelineContext, filename: str, 
         if not deps.graph.has_node(doc_id):
             deps.graph.add_node(doc_id, 
                                node_type=doc_label, 
+                               ontology_class="STRUCTURAL_DOCUMENT",
                                graph_type="lexical_graph",
                                date=doc_date_str,
                                name=filename, 

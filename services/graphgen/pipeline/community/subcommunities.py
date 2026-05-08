@@ -26,6 +26,7 @@ def add_enhanced_community_attributes_to_graph(
             graph.add_node(topic_node_id,
                           id=topic_node_id,
                           node_type="TOPIC", 
+                          ontology_class="TOPIC",
                           graph_type="topic",
                           community_id=comm_id,
                           name=f"Topic {comm_id}")  # Temporary name until summarization sets title
@@ -58,6 +59,7 @@ def add_enhanced_community_attributes_to_graph(
                 graph.add_node(sub_node_id,
                               id=sub_node_id,
                               node_type="SUBTOPIC",
+                              ontology_class="SUBTOPIC",
                               graph_type="topic",
                               community_id=parent_comm_id,
                               subtopic_local_id=local_sub_id,
@@ -101,6 +103,7 @@ def add_enhanced_community_attributes_to_graph(
         if topic_node_id not in graph:
             # Should already exist, but just in case
             graph.add_node(topic_node_id, id=topic_node_id, node_type="TOPIC", 
+                          ontology_class="TOPIC",
                           graph_type="topic", community_id=comm_id, name=f"Topic {comm_id}")
             
         if not graph.has_edge(node_id, topic_node_id):

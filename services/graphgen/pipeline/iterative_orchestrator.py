@@ -201,7 +201,12 @@ class IterativeOrchestrator:
         for filename, file_segments in by_file.items():
             doc_id = f"DOC_{filename}"
             if not ctx.graph.has_node(doc_id):
-                ctx.graph.add_node(doc_id, node_type=self.DOCUMENT_NODE_TYPE, name=filename)
+                ctx.graph.add_node(
+                    doc_id,
+                    node_type=self.DOCUMENT_NODE_TYPE,
+                    ontology_class="STRUCTURAL_DOCUMENT",
+                    name=filename,
+                )
             await add_segments_to_graph(ctx, file_segments, doc_id, config_dict, schema)
 
     async def _stage_extract(self, ctx: PipelineContext, config_dict: Dict[str, Any]) -> None:
