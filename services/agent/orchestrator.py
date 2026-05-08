@@ -155,6 +155,20 @@ class IterativeOrchestrator:
             if tool_name == "answer":
                 # LLM may use "text", "answer", or "content" as the key.
                 text = params.get("text") or params.get("answer") or params.get("content") or ""
+                # Guard: if text is itself a JSON string (double-wrapped), unwrap it
+                if isinstance(text, str) and text.strip().startswith("{"):
+                    try:
+                        inner = json.loads(text)
+                        inner_text = (
+                            inner.get("params", {}).get("text")
+                            or inner.get("text")
+                            or inner.get("answer")
+                            or inner.get("content")
+                        )
+                        if inner_text:
+                            text = inner_text
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
                 yield StreamEvent(event="answer", data={"text": text, "steps": step_id})
                 return
 

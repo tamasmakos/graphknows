@@ -1784,6 +1784,7 @@
   }
 }
 </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 </head>
 <body>
 <button id="sidebar-backdrop" aria-label="Close investigations"></button>
@@ -2318,9 +2319,11 @@ mobileViewButtons.forEach(btn => {
 });
 document.querySelectorAll('.chat-suggestion-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    msgInput.value = btn.dataset.suggestion || btn.textContent.trim();
+    const text = btn.dataset.suggestion || btn.textContent.trim();
+    msgInput.value = text;
     msgInput.dispatchEvent(new Event('input', { bubbles: true }));
-    msgInput.focus();
+    // Auto-submit immediately
+    sendMessage(text);
   });
 });
 document.getElementById('graph-focus-clear')?.addEventListener('click', () => {
@@ -2538,10 +2541,11 @@ function escHtml(s) {
 
 function institutionCode(source) {
   const src = String(source || '').toLowerCase();
-  if (src.startsWith('ep_')) return { code: 'EP', cls: 'ep' };
+  if (src.startsWith('ep_') || src.includes('europarl')) return { code: 'EP', cls: 'ep' };
   if (src.includes('eurlex') || src.includes('cellar')) return { code: 'EUR-Lex', cls: 'eurlex' };
-  if (src.startsWith('ec_')) return { code: 'EC', cls: 'ec' };
+  if (src.startsWith('ec_') || src.includes('ec.europa')) return { code: 'EC', cls: 'ec' };
   if (src.includes('council')) return { code: 'Council', cls: 'council' };
+  if (src.startsWith('tavily')) return { code: 'Web', cls: 'web' };
   return { code: 'Other', cls: 'other' };
 }
 
@@ -2606,12 +2610,21 @@ function highlightSourceByCitation(citationId) {
 
 function renderAnswerWithCitations(text) {
   const raw = cleanAnswer(text || '');
-  const withBlockBreaks = raw
-    .split('\n\n')
-    .map((para) => `<p>${escHtml(para).replace(/\n/g, '<br>')}</p>`)
-    .join('');
+  // Render markdown to HTML using marked.js if available
+  let html;
+  if (typeof marked !== 'undefined') {
+    // Sanitize then render
+    html = marked.parse(raw, { breaks: true, gfm: true });
+  } else {
+    // Fallback: plain paragraph split
+    html = raw
+      .split('\n\n')
+      .map((para) => `<p>${escHtml(para).replace(/\n/g, '<br>')}</p>`)
+      .join('');
+  }
+  // Replace citation links [Doc-N](url) with interactive citation chips
   const citationPattern = /\[(Doc-(\d+))(?:\s*:\s*([^\]]+))?\]\(([^)]+)\)/g;
-  return withBlockBreaks.replace(citationPattern, (_m, citationId, number, title, url) => {
+  return html.replace(citationPattern, (_m, citationId, number, title, url) => {
     const doc = sourceDocsByCitation[citationId] || {};
     const tipTitle = title || doc.title || citationId;
     const tipSnippet = doc.snippet || '';
