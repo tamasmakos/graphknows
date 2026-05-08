@@ -439,70 +439,48 @@ async def health() -> Dict[str, str]:
 
 @router.post("/chat", response_model=ChatResponse, summary="Send a message to the agent")
 async def chat(req: ChatRequest) -> ChatResponse:
-    """Create or continue a session, call graphrag /retrieve, upsert returned
-    entities into the Memgraph session graph, and return the agent answer
-    together with the current session subgraph for D3.js rendering.
+    """HTTP fallback for /chat — routes through the orchestrator (same path as WS).
+
+    The orchestrator handles EU source search, graphgen, and answer synthesis.
+    This endpoint collects the streamed frames and assembles a single response.
     """
     sgm = _get_sgm()
 
-    # Resolve or create session
     session_id: str = req.session_id or str(uuid.uuid4())
     is_new = session_id not in _active_sessions
 
     if is_new:
-        log.info("Creating new session: %s", session_id)
+        log.info("Creating new session via HTTP: %s", session_id)
         await asyncio.to_thread(sgm.create_session, session_id)
         _active_sessions.add(session_id)
     else:
-        log.info("Continuing session: %s", session_id)
+        log.info("Continuing session via HTTP: %s", session_id)
 
-    # Call graphrag
-    graphrag_resp = await _call_graphrag(req.message, session_id)
-
-    # Upsert entities into Memgraph
-    await asyncio.to_thread(_upsert_entities, session_id, graphrag_resp)
-
-    # Fetch the live subgraph
-    subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)
-
-    answer: str = graphrag_resp.get("answer", "")
-
-    # Enrich reasoning steps
-    raw_steps: list = graphrag_resp.get("reasoning_steps", [])
+    # Run orchestrator — collect all frames until answer
+    orchestrator = _get_orchestrator()
+    answer = ""
     reasoning_steps: list = []
-    for step in raw_steps:
-        tool_name = _extract_tool_name(step.get("action"))
-        obs = step.get("observation")
-        obs_type = _observation_type(tool_name) if tool_name else ("error" if isinstance(obs, dict) and obs.get("error") else "unknown")
-        if obs is not None:
-            obs_str = obs if isinstance(obs, str) else json.dumps(obs, ensure_ascii=False)
-            obs_truncated = obs_str[:500] + ("…" if len(obs_str) > 500 else "")
-        else:
-            obs_truncated = None
-        reasoning_steps.append({
-            **{k: v for k, v in step.items() if k != "observation"},
-            "tool_name": tool_name,
-            "observation_type": obs_type,
-            "observation": obs_truncated,
-        })
-
-    # Build sources from citations
     sources: list = []
-    for citation in graphrag_resp.get("citations", []):
-        if isinstance(citation, dict):
-            src: dict = {}
-            if citation.get("chunk_id"):
-                src["id"] = citation["chunk_id"]
-            if citation.get("excerpt"):
-                src["text"] = citation["excerpt"]
-            elif citation.get("text"):
-                src["text"] = citation["text"]
-            if citation.get("doc_id"):
-                src["doc_id"] = citation["doc_id"]
-            if citation.get("url"):
-                src["url"] = citation["url"]
-            if src.get("text"):
-                sources.append(src)
+
+    async for event in orchestrator.run(req.message, session_id):
+        ftype = event.event
+        if ftype == "answer":
+            answer = event.data.get("text", "")
+        elif ftype == "step_result":
+            obs = event.data.get("result")
+            obs_str = obs if isinstance(obs, str) else json.dumps(obs, ensure_ascii=False) if obs else None
+            reasoning_steps.append({
+                "thought": "",
+                "action": event.data.get("tool"),
+                "tool_name": event.data.get("tool"),
+                "observation_type": "text",
+                "observation": (obs_str[:500] + "…" if obs_str and len(obs_str) > 500 else obs_str),
+            })
+        elif ftype == "sources":
+            sources = event.data.get("sources", [])
+
+    # Note: graphgen fires inside orchestrator.run() via asyncio.create_task — no action needed here
+    subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)
 
     return ChatResponse(
         answer=answer,
