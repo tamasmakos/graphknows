@@ -128,3 +128,131 @@ def investigate_verify_claims(state: InvestigativeState) -> dict[str, Any]:
         updated.append({**claim, "status": new_status})
 
     return {"claims": updated}
+
+
+# ---------------------------------------------------------------------------
+# Slice 4 — contradiction tracking and report synthesis
+# ---------------------------------------------------------------------------
+
+
+def investigate_surface_contradictions(
+    state: InvestigativeState,
+) -> dict[str, list[ContradictionRecord]]:
+    """Surface contradiction records from contradicted claims.
+
+    For each ClaimRecord whose status is ``"contradicted"`` and that does not
+    already have a matching ContradictionRecord, a new record is created and
+    appended.  If a claim has contradicting evidence but zero supporting evidence
+    the resolution_status is set to ``"needs_more_evidence"``; otherwise ``"open"``.
+
+    Args:
+        state: Investigative workflow state containing claims and existing
+            contradictions.
+
+    Returns:
+        A partial state update with the merged ``contradictions`` list.
+    """
+    existing = state["contradictions"]
+    existing_claim_ids = {record["claim_id"] for record in existing}
+
+    new_contradictions: list[ContradictionRecord] = []
+    for claim in state["claims"]:
+        if claim["status"] != "contradicted":
+            continue
+        if claim["claim_id"] in existing_claim_ids:
+            continue
+
+        supporting = claim["supporting_evidence_ids"]
+        contradicting = claim["contradicting_evidence_ids"]
+        resolution: str = (
+            "needs_more_evidence"
+            if len(contradicting) > 0 and len(supporting) == 0
+            else "open"
+        )
+        new_contradictions.append(
+            ContradictionRecord(
+                contradiction_id=f"contradiction-{claim['claim_id']}",
+                claim_id=claim["claim_id"],
+                summary=f"Claim '{claim['text'][:80]}' is contradicted by evidence.",
+                evidence_for_ids=supporting,
+                evidence_against_ids=contradicting,
+                resolution_status=resolution,
+            )
+        )
+
+    return {"contradictions": [*existing, *new_contradictions]}
+
+
+def route_after_contradictions(state: InvestigativeState) -> str:
+    """Route the workflow after contradiction detection.
+
+    If any contradiction requires additional evidence, the workflow loops back
+    to evidence collection.  Otherwise it proceeds to report generation.
+
+    Args:
+        state: Investigative workflow state containing contradiction records.
+
+    Returns:
+        ``"investigate_collect_thread_evidence"`` when additional evidence is
+        needed, otherwise ``"communicate_report"``.
+    """
+    needs_more = any(
+        c["resolution_status"] == "needs_more_evidence"
+        for c in state["contradictions"]
+    )
+    return "investigate_collect_thread_evidence" if needs_more else "communicate_report"
+
+
+def render_contradictions_section(contradictions: list[ContradictionRecord]) -> str:
+    """Render a markdown contradictions section for the final report.
+
+    Args:
+        contradictions: Contradiction records accumulated during the investigation.
+
+    Returns:
+        Empty string when no contradictions exist, otherwise a markdown section
+        starting with ``"## Contradictions"``.
+    """
+    if not contradictions:
+        return ""
+
+    lines: list[str] = [
+        "## Contradictions",
+        "",
+        f"{len(contradictions)} unresolved contradiction(s) identified during the investigation.",
+        "",
+    ]
+    for i, c in enumerate(contradictions, start=1):
+        lines.append(f"{i}. **{c['summary']}** (Status: {c['resolution_status']})")
+        lines.append(f"   Supporting evidence: {len(c['evidence_for_ids'])} item(s)")
+        lines.append(f"   Contradicting evidence: {len(c['evidence_against_ids'])} item(s)")
+
+    return "\n".join(lines)
+
+
+def communicate_report(state: InvestigativeState) -> dict[str, Any]:
+    """Build the final investigation report from verified claims and contradictions.
+
+    Supported claims populate the Verified Findings section.  Contradictions are
+    appended as an explicit section when present so that unresolved conflicts
+    are never silently collapsed.
+
+    Args:
+        state: Investigative workflow state with verified claims and contradictions.
+
+    Returns:
+        Partial state dict with ``report`` (str) and ``findings`` (list[str]).
+    """
+    supported = [c for c in state["claims"] if c["status"] == "supported"]
+    findings = [c["text"] for c in supported]
+
+    lines: list[str] = ["# Investigation Report", "", "## Verified Findings", ""]
+    lines.extend(
+        f"- {c['text']} (importance: {c['importance']})" for c in supported
+    )
+
+    contradictions_md = render_contradictions_section(state["contradictions"])
+    if contradictions_md:
+        lines.extend(["", contradictions_md])
+
+    return {"report": "\n".join(lines), "findings": findings}
