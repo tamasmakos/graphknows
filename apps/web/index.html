@@ -2655,17 +2655,17 @@ function setKgUpdating(active) {
 function updateGraphWithNewData(nodes, edges, lexicalEdges = []) {
   const incomingNodes = Array.isArray(nodes) ? nodes.map((n) => ({
     id: n.id,
-    label: n.label || 'Entity',
-    type: n.label || 'Entity',
+    label: n.label || n.type || 'Entity',
+    type: n.label || n.type || 'Entity',
     name: n.name || n.id,
     properties: {
       name: n.name || n.id,
-      label: n.label || 'Entity',
+      label: n.label || n.type || 'Entity',
     },
   })) : [];
   const incomingEdges = Array.isArray(edges) ? edges.map((e) => ({
-    source: e.from,
-    target: e.to,
+    source: e.source || e.from,
+    target: e.target || e.to,
     type: e.type || 'RELATION',
   })) : [];
 
@@ -3189,8 +3189,10 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
           sessionId = data.session_id;
           displaySessionId(sessionId);
         }
-        // Remove live answer card if present (we'll use appendAgentMsg)
+        // Remove live answer card — appendAgentMsg renders the final markdown version
         if (liveAnswerCard) liveAnswerCard.remove();
+        liveAnswerCard = null;
+        thoughtBuffer = '';
         // Remove live trace placeholder if empty
         if (!liveTrace.children.length) liveTrace.remove();
         appendAgentMsg(data.answer || '(no answer)', data.sources || [], []);

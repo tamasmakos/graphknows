@@ -30,6 +30,10 @@ class AgentState(TypedDict):
 _ws_broadcaster: Callable[[str, dict], Awaitable[None]] | None = None
 _session_id: str = ""
 
+# Session-scoped document accumulator: session_id → list of collected docs
+# Populated by search_eu/search_web tools; consumed by graphgen
+_session_docs: dict[str, list[dict]] = {}
+
 
 async def _noop_broadcaster(session_id: str, payload: dict) -> None:
     pass
@@ -158,8 +162,16 @@ async def _keyword_fallback(
 
     for doc in documents[:12]:
         text = str(doc.get("text", "") or doc.get("title", ""))[:2000]
-        terms = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
-        unique = list(dict.fromkeys(t for t in terms if t.lower() not in _STOPWORDS and len(t) > 3))[:15]
+        # Extract capitalized proper nouns AND acronyms (EU, ECB, NATO, etc.)
+        terms_proper = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        terms_acronyms = re.findall(r'\b[A-Z]{2,6}\b', text)
+        # Also extract title as entity
+        title_terms = re.findall(r'\b[A-Z][a-zA-Z]+\b', doc.get("title", ""))
+        all_terms = title_terms + terms_proper + terms_acronyms
+        unique = list(dict.fromkeys(
+            t for t in all_terms
+            if t.lower() not in _STOPWORDS and len(t) > 2
+        ))[:15]
         for term in unique:
             if term not in seen:
                 nodes.append({"id": term, "type": "CONCEPT", "name": term})
@@ -217,12 +229,16 @@ def build_graph(
             )
             results = resp.get("results", [])
             lines = []
+            docs_to_store = []
             for i, r in enumerate(results, 1):
                 title = r.get("title", "")
                 url = r.get("url", "")
                 snippet = (r.get("raw_content") or r.get("content") or "")[:300]
                 date = r.get("published_date", "")
                 lines.append(f"{i}. {title}\n   URL: {url}\n   Date: {date}\n   {snippet}")
+                docs_to_store.append({"title": title, "url": url, "text": snippet, "date": date, "source": "web"})
+            # Accumulate into session doc store for graphgen
+            _session_docs.setdefault(session_id, []).extend(docs_to_store)
             return "\n\n".join(lines) if lines else "No results found."
         except Exception as exc:
             log.warning("search_web failed: %s", exc)
@@ -352,24 +368,25 @@ def build_graph(
                 f"   URL: {doc.get('url', '')}\n"
                 f"   {str(doc.get('text', ''))[:300]}"
             )
+        # Accumulate into session doc store for graphgen
+        _session_docs.setdefault(session_id, []).extend(documents[:max_docs])
         return "\n\n".join(lines)
 
     # ── Tool 3: graphgen ─────────────────────────────────────────────────────
     @tool
-    async def graphgen(session_id_arg: str, documents_json: str) -> str:
-        """Build a knowledge graph from collected documents.
+    async def graphgen(session_id_arg: str) -> str:
+        """Build a knowledge graph from all documents collected so far in this session.
 
         Args:
-            session_id_arg: The session ID for this investigation.
-            documents_json: JSON string of document list (title, text, url, source, date).
+            session_id_arg: The session ID for this investigation (use the current session ID).
         """
-        try:
-            docs = json.loads(documents_json)
-        except Exception as exc:
-            return f"Error parsing documents JSON: {exc}"
-
+        docs = _session_docs.get(session_id_arg) or _session_docs.get(session_id, [])
         if not docs:
-            return "No documents provided for graph generation."
+            # Search tools may be running in parallel — wait briefly and retry
+            await asyncio.sleep(3)
+            docs = _session_docs.get(session_id_arg) or _session_docs.get(session_id, [])
+        if not docs:
+            return "No documents collected yet — run search_eu or search_web first."
 
         _, _, summary = await _run_graphgen(docs, session_id_arg, broadcaster)
         return summary
@@ -409,16 +426,16 @@ def build_graph(
     SYSTEM_PROMPT = f"""You are an EU public records investigator for the European Parliamentary Research Service.
 Today's date: {today}
 
-STRICT RESEARCH PROTOCOL:
-1. Call search_eu to find official EU records (EP debates, EUR-Lex, Council decisions, EC press releases)
-2. Call search_web for live news, context, academic analysis
-3. Call graphgen to build a knowledge graph from the collected documents (pass all docs as JSON)
-4. Optionally call graphrag for deeper entity analysis from the accumulated KG
-5. Write a full EPRS-style investigative report as your final response
+STRICT RESEARCH PROTOCOL — follow this EXACT sequence:
+STEP 1: Call search_eu AND search_web simultaneously (both in one response)
+STEP 2: After receiving search results, call graphgen(session_id_arg=SESSION_ID) — it reads collected docs automatically
+STEP 3: Optionally call graphrag for deeper KG insights
+STEP 4: Write your final EPRS-style investigative report
 
-DO NOT loop. Max 2 search calls, 1 graphgen call, 1 graphrag call, then write your final ANSWER.
+CRITICAL: Do NOT call graphgen in the same turn as search_eu/search_web. Always wait for search results first.
+DO NOT loop. After step 4, write the report and stop.
 
-When calling graphgen, construct the documents_json parameter as a JSON array of objects with keys: title, text, url, source, date.
+DO NOT pass a documents_json argument to graphgen — the tool reads documents automatically from the session store.
 The session_id_arg for graphgen and graphrag is: {session_id}
 
 REPORT FORMAT (use this exact structure):
