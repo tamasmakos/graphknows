@@ -2371,6 +2371,11 @@ function toolIcon(toolName) {
     get_topic_entities: '🗂️',
     wikipedia_search: '📖',
     web_search: '🌐',
+    // LangGraph tools
+    search_eu: '🏛️',
+    search_web: '🌐',
+    graphgen: '🔬',
+    graphrag: '🧠',
   };
   return icons[toolName] || '🔧';
 }
@@ -3035,6 +3040,47 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       ws.send(JSON.stringify({ message: text, session_id: sessionId }));
     };
 
+    // LangGraph streaming state
+    let currentStepCard = null;
+    let currentStepTool = null;
+    let thoughtBuffer = '';
+    let allToolsDone = false;
+    let liveAnswerCard = null;
+    let liveAnswerBody = null;
+
+    const TOOL_ICONS = {
+      search_eu: '🏛️',
+      search_web: '🌐',
+      graphgen: '🔬',
+      graphrag: '🧠',
+    };
+
+    function getToolIcon(toolName) {
+      return TOOL_ICONS[toolName] || toolIcon(toolName) || '🔧';
+    }
+
+    function createStepCard(toolName, inputStr) {
+      const card = document.createElement('div');
+      card.className = 'inline-step';
+      card.style.cssText = 'margin:4px 0;padding:8px 10px;border-radius:8px;background:rgba(28,35,51,0.9);border:1px solid var(--border);';
+      card.innerHTML = `
+        <div class="inline-step-header" style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <span class="inline-step-icon">${getToolIcon(toolName)}</span>
+          <span class="inline-step-tool" style="font-weight:600;">${escHtml(toolName)}</span>
+          <span class="step-spinner" style="display:inline-block;animation:spin 1s linear infinite;">⏳</span>
+        </div>
+        <div class="step-thought" style="font-size:11px;color:var(--text-muted);margin-top:4px;font-family:monospace;white-space:pre-wrap;"></div>
+        <div class="step-result" style="font-size:11px;color:#7ec8a0;margin-top:4px;display:none;"></div>
+      `;
+      return card;
+    }
+
+    // Container for live steps (before final answer card)
+    const liveTrace = document.createElement('div');
+    liveTrace.className = 'msg-agent';
+    liveTrace.style.cssText = 'background:transparent;border:none;padding:4px 0;';
+    chatArea.appendChild(liveTrace);
+
     ws.onmessage = (e) => {
       let data;
       try { data = JSON.parse(e.data); } catch(_) { return; }
@@ -3042,39 +3088,114 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       if (data.type === 'status') {
         // thinking — spinner already shown
 
-      } else if (data.type === 'step') {
-        // Collect step for inline trace in the final message
-        collectedSteps.push({
-          step: data.step_num,
-          thought: data.thought || '',
-          action: data.action || '',
-          tool_name: data.tool_name || '',
-          observation_type: data.observation_type || 'unknown',
-          observation: data.observation || null,
-        });
-      } else if (data.type === 'step_result') {
-        const toolName = data.tool || '';
-        if (toolName === 'search' && data.result && Array.isArray(data.result.documents)) {
-          renderSourcesPanel(data.result.documents);
+      } else if (data.type === 'tool_start') {
+        // New tool invocation — create a step card
+        allToolsDone = false;
+        thoughtBuffer = '';
+        currentStepTool = data.tool || '';
+        currentStepCard = createStepCard(currentStepTool, data.input || '');
+        liveTrace.appendChild(currentStepCard);
+        chatArea.scrollTop = chatArea.scrollHeight;
+
+      } else if (data.type === 'thought_token') {
+        const token = data.token || '';
+        if (currentStepCard && !allToolsDone) {
+          // Stream into the current step card's thought area
+          thoughtBuffer += token;
+          const thoughtEl = currentStepCard.querySelector('.step-thought');
+          if (thoughtEl) thoughtEl.textContent = thoughtBuffer;
+        } else {
+          // After all tools done — stream into answer panel
+          if (!liveAnswerCard) {
+            liveAnswerCard = document.createElement('div');
+            liveAnswerCard.className = 'msg-agent';
+            const label = document.createElement('div');
+            label.className = 'answer-label';
+            label.textContent = 'Answer';
+            liveAnswerBody = document.createElement('div');
+            liveAnswerBody.className = 'answer-body';
+            liveAnswerCard.appendChild(label);
+            liveAnswerCard.appendChild(liveAnswerBody);
+            chatArea.appendChild(liveAnswerCard);
+          }
+          thoughtBuffer += token;
+          if (window.marked) {
+            liveAnswerBody.innerHTML = marked.parse(thoughtBuffer);
+          } else {
+            liveAnswerBody.textContent = thoughtBuffer;
+          }
+          chatArea.scrollTop = chatArea.scrollHeight;
         }
+
+      } else if (data.type === 'tool_result') {
+        // Mark step card as done
+        if (currentStepCard) {
+          const spinnerEl = currentStepCard.querySelector('.step-spinner');
+          if (spinnerEl) spinnerEl.remove();
+          const resultEl = currentStepCard.querySelector('.step-result');
+          if (resultEl) {
+            resultEl.textContent = data.summary || '';
+            resultEl.style.display = '';
+          }
+        }
+        // Parse source chips from search results
+        const toolName = data.tool || '';
+        if ((toolName === 'search_eu' || toolName === 'search_web') && data.summary) {
+          const lines = data.summary.split('\n');
+          const sourceDocs = [];
+          let currentDoc = null;
+          for (const line of lines) {
+            const m = line.match(/^(\d+)\.\s+(.+)/);
+            if (m) { currentDoc = { title: m[2], url: '', text: '' }; sourceDocs.push(currentDoc); }
+            else if (currentDoc && line.includes('URL:')) currentDoc.url = line.replace(/.*URL:\s*/, '').trim();
+            else if (currentDoc && line.trim() && !line.includes('Institution:') && !line.includes('Date:')) {
+              currentDoc.text = (currentDoc.text + ' ' + line.trim()).trim().slice(0, 300);
+            }
+          }
+          if (sourceDocs.length > 0) renderSourcesPanel(sourceDocs);
+        }
+        allToolsDone = true;
+        thoughtBuffer = '';
+        currentStepCard = null;
+        currentStepTool = null;
+
       } else if (data.type === 'graph_update') {
         setKgUpdating(true);
-        const g = data.graph || data;
-        updateGraphWithNewData(g.nodes || [], g.edges || [], g.lexical_edges || []);
+        // Handle new format: data.graph = KG, data.lexical = lexical graph
+        if (data.graph) {
+          const g = data.graph;
+          const lexNodes = (data.lexical && data.lexical.nodes) || [];
+          const lexEdges = (data.lexical && data.lexical.edges) || [];
+          // Map lexical nodes/edges into graphViewsState directly
+          graphViewsState.lexical = graphViewsState.lexical || { nodes: [], edges: [] };
+          const lexNodeMap = new Map(graphViewsState.lexical.nodes.map(n => [n.id, n]));
+          lexNodes.forEach(n => lexNodeMap.set(n.id, {
+            id: n.id, label: n.type || 'CONCEPT', type: n.type || 'CONCEPT',
+            name: n.name || n.id, properties: { name: n.name || n.id, label: n.type || 'CONCEPT' },
+          }));
+          graphViewsState.lexical.nodes = Array.from(lexNodeMap.values());
+          graphViewsState.lexical.edges = [...(graphViewsState.lexical.edges || []), ...lexEdges.map(e => ({
+            source: e.source || e.from, target: e.target || e.to, type: e.type || 'MENTIONS',
+          }))];
+          updateGraphWithNewData(g.nodes || [], g.edges || [], []);
+        } else {
+          const g = data;
+          updateGraphWithNewData(g.nodes || [], g.edges || [], g.lexical_edges || []);
+        }
+
       } else if (data.type === 'answer') {
         spinner.remove();
         if (data.session_id) {
           sessionId = data.session_id;
           displaySessionId(sessionId);
         }
-        appendAgentMsg(data.answer || '(no answer)', data.sources || [], collectedSteps);
+        // Remove live answer card if present (we'll use appendAgentMsg)
+        if (liveAnswerCard) liveAnswerCard.remove();
+        // Remove live trace placeholder if empty
+        if (!liveTrace.children.length) liveTrace.remove();
+        appendAgentMsg(data.answer || '(no answer)', data.sources || [], []);
         updateDebugPanel(data.sources || []);
         hydrateGraphStateFromPayload(data);
-        const resolvedSources = resolveSources(data.sources || [], data.graph);
-        if (resolvedSources.length > 0) {
-          const lastMsg = chatArea.querySelector('.msg-agent:last-child');
-          setCardSources(lastMsg, resolvedSources);
-        }
         autoNameSession(text);
         saveSession({ ...getCurrentSessionData(), id: sessionId, nodeCount: allNodes.length, lastQuery: new Date().toISOString() });
         renderSessionList();

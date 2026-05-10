@@ -14,10 +14,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, model_validator
 
 from agent.config import AgentSettings
-from agent.orchestrator import IterativeOrchestrator
 from agent.session.manager import SessionGraphManager
 from agent.session_end import merge_session_to_neo4j
-from graphknows.shared.models.session import StreamEvent
+try:
+    from graphknows.shared.models.session import StreamEvent
+except Exception:
+    StreamEvent = None  # type: ignore
 
 log = logging.getLogger("agent.router")
 
@@ -27,7 +29,6 @@ router = APIRouter()
 _settings: AgentSettings | None = None
 _sgm: SessionGraphManager | None = None
 _http_client: httpx.AsyncClient | None = None
-_orchestrator: IterativeOrchestrator | None = None
 _ws_connections: dict[str, WebSocket] = {}
 
 
@@ -58,31 +59,12 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-def _get_orchestrator() -> IterativeOrchestrator:
-    if _orchestrator is None:
-        raise HTTPException(status_code=500, detail="Orchestrator not initialized")
-    return _orchestrator
-
-
 def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client, _orchestrator
+    global _settings, _sgm, _http_client
     _settings = settings
     _sgm = sgm
     _http_client = http_client
-    # Build tools dict for orchestrator — live-search mode only needs search + answer
-    # GraphRAG tools (retrieve, get_chunks, etc.) are excluded: they confuse the model
-    # into looping through empty KG results instead of synthesising from live docs.
-    from agent.tools.search import SearchTool
-    tools = {
-        "search": SearchTool(sgm=sgm, ws_broadcaster=_broadcast_graph_update),
-    }
-    _orchestrator = IterativeOrchestrator(
-        tools=tools,
-        groq_api_key=settings.groq_api_key,
-        llm_model=settings.llm_model,
-        max_steps=3,  # search → optional 2nd search → answer; no looping
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -432,12 +414,12 @@ async def health() -> Dict[str, str]:
 
 @router.post("/chat", response_model=ChatResponse, summary="Send a message to the agent")
 async def chat(req: ChatRequest) -> ChatResponse:
-    """HTTP fallback for /chat — routes through the orchestrator (same path as WS).
+    """HTTP fallback for /chat — routes through the LangGraph agent."""
+    from agent.langgraph_agent import build_graph
+    from langchain_core.messages import HumanMessage
 
-    The orchestrator handles EU source search, graphgen, and answer synthesis.
-    This endpoint collects the streamed frames and assembles a single response.
-    """
     sgm = _get_sgm()
+    settings = _get_settings()
 
     session_id: str = req.session_id or str(uuid.uuid4())
     is_new = session_id not in _active_sessions
@@ -446,44 +428,35 @@ async def chat(req: ChatRequest) -> ChatResponse:
         log.info("Creating new session via HTTP: %s", session_id)
         await asyncio.to_thread(sgm.create_session, session_id)
         _active_sessions.add(session_id)
-    else:
-        log.info("Continuing session via HTTP: %s", session_id)
 
-    # Run orchestrator — collect all frames until answer
-    orchestrator = _get_orchestrator()
-    answer = ""
-    reasoning_steps: list = []
-    sources: list = []
+    graph = build_graph(
+        ws_broadcaster=None,
+        session_id=session_id,
+        groq_api_key=settings.groq_api_key,
+    )
 
-    async for event in orchestrator.run(req.message, session_id):
-        ftype = event.event
-        if ftype == "answer":
-            answer = event.data.get("text", "")
-        elif ftype == "step_result":
-            obs = event.data.get("result")
-            obs_str = obs if isinstance(obs, str) else json.dumps(obs, ensure_ascii=False) if obs else None
-            reasoning_steps.append({
-                "thought": "",
-                "action": event.data.get("tool"),
-                "tool_name": event.data.get("tool"),
-                "observation_type": "text",
-                "observation": (obs_str[:500] + "…" if obs_str and len(obs_str) > 500 else obs_str),
-            })
-        elif ftype == "sources":
-            sources = event.data.get("sources", [])
+    full_answer = ""
+    async for event in graph.astream_events(
+        {"messages": [HumanMessage(content=req.message)]},
+        config={"recursion_limit": 12},
+        version="v2",
+    ):
+        if event["event"] == "on_chat_model_stream":
+            token = event["data"]["chunk"].content
+            if token:
+                full_answer += token
 
-    # Note: graphgen fires inside orchestrator.run() via asyncio.create_task — no action needed here
     subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)
 
     return ChatResponse(
-        answer=answer,
+        answer=full_answer,
         session_id=session_id,
         graph=GraphResponse(
             nodes=subgraph.get("nodes", []),
             edges=subgraph.get("edges", []),
         ),
-        reasoning_steps=reasoning_steps,
-        sources=sources,
+        reasoning_steps=[],
+        sources=[],
     )
 
 
@@ -560,35 +533,37 @@ async def merge_session(session_id: str) -> Dict[str, Any]:
 
 @router.post("/sessions/{session_id}/query", summary="Query session with SSE streaming")
 async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse:
-    """Send a message to the orchestrator and stream back reasoning steps via SSE.
-
-    Args:
-        session_id: The session identifier.
-        req: The query request containing the message.
-
-    Returns:
-        StreamingResponse with text/event-stream content type.
-    """
+    """Send a message to the LangGraph agent and stream back events via SSE."""
     if session_id not in _active_sessions:
         raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
 
-    orchestrator = _get_orchestrator()
-    sgm = _get_sgm()
+    from agent.langgraph_agent import build_graph
+    from langchain_core.messages import HumanMessage
+    settings = _get_settings()
 
     async def _event_generator():
-        """Generate SSE events from the orchestrator."""
-        # Ensure session exists in graph manager
-        await asyncio.to_thread(sgm.create_session, session_id)
+        graph = build_graph(
+            ws_broadcaster=None,
+            session_id=session_id,
+            groq_api_key=settings.groq_api_key,
+        )
+        async for event in graph.astream_events(
+            {"messages": [HumanMessage(content=req.message)]},
+            config={"recursion_limit": 12},
+            version="v2",
+        ):
+            kind = event["event"]
+            if kind == "on_chat_model_stream":
+                token = event["data"]["chunk"].content
+                if token:
+                    yield f"event: thought_token\ndata: {json.dumps({'token': token})}\n\n"
+            elif kind == "on_tool_start":
+                yield f"event: tool_start\ndata: {json.dumps({'tool': event['name'], 'input': str(event['data'].get('input', ''))[:200]})}\n\n"
+            elif kind == "on_tool_end":
+                result = str(event["data"].get("output", ""))
+                yield f"event: tool_result\ndata: {json.dumps({'tool': event['name'], 'summary': result[:500]})}\n\n"
 
-        async for event in orchestrator.run(req.message, session_id):
-            # Yield SSE-formatted event
-            data = json.dumps(event.data)
-            yield f"event: {event.event}\ndata: {data}\n\n"
-
-    return StreamingResponse(
-        _event_generator(),
-        media_type="text/event-stream",
-    )
+    return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
 
 @router.get(
@@ -623,12 +598,7 @@ async def get_session_graph(session_id: str) -> GraphResponse:
 
 @router.websocket("/sessions/{session_id}/stream")
 async def ws_stream(websocket: WebSocket, session_id: str):
-    """Stream reasoning steps over WebSocket, then send final answer + graph.
-
-    Args:
-        websocket: The WebSocket connection.
-        session_id: The session identifier.
-    """
+    """Stream LangGraph agent reasoning over WebSocket."""
     await websocket.accept()
     _ws_connections[session_id] = websocket
     try:
@@ -639,7 +609,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
             return
 
         sgm = _get_sgm()
-        orchestrator = _get_orchestrator()
+        settings = _get_settings()
 
         # Create session if new
         is_new = session_id not in _active_sessions
@@ -647,41 +617,58 @@ async def ws_stream(websocket: WebSocket, session_id: str):
             log.info("WS: Creating new session: %s", session_id)
             await asyncio.to_thread(sgm.create_session, session_id)
             _active_sessions.add(session_id)
-        else:
-            log.info("WS: Continuing session: %s", session_id)
 
         await websocket.send_json({"type": "status", "status": "thinking"})
 
-        # Use orchestrator for streaming
-        async for event in orchestrator.run(message, session_id):
-            if event.event == "step_start":
+        from agent.langgraph_agent import build_graph
+        from langchain_core.messages import HumanMessage
+
+        async def broadcaster(sid: str, payload: dict) -> None:
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                pass
+
+        graph = build_graph(
+            ws_broadcaster=broadcaster,
+            session_id=session_id,
+            groq_api_key=settings.groq_api_key,
+        )
+
+        full_answer = ""
+        async for event in graph.astream_events(
+            {"messages": [HumanMessage(content=message)]},
+            config={"recursion_limit": 12},
+            version="v2",
+        ):
+            kind = event["event"]
+
+            if kind == "on_chat_model_stream":
+                token = event["data"]["chunk"].content
+                if token:
+                    await websocket.send_json({"type": "thought_token", "token": token})
+                    full_answer += token
+
+            elif kind == "on_tool_start":
                 await websocket.send_json({
-                    "type": "step",
-                    "step_id": event.data.get("step_id"),
-                    "thought": event.data.get("thought", ""),
-                    "tool": event.data.get("tool", ""),
-                    "params": event.data.get("params", {}),
+                    "type": "tool_start",
+                    "tool": event["name"],
+                    "input": str(event["data"].get("input", ""))[:200],
                 })
-            elif event.event == "step_result":
+
+            elif kind == "on_tool_end":
+                result = str(event["data"].get("output", ""))
                 await websocket.send_json({
-                    "type": "step_result",
-                    "step_id": event.data.get("step_id"),
-                    "tool": event.data.get("tool", ""),
-                    "result": event.data.get("result", {}),
+                    "type": "tool_result",
+                    "tool": event["name"],
+                    "summary": result[:500],
                 })
-            elif event.event == "answer":
-                # Get graph
-                subgraph = await asyncio.to_thread(sgm.get_session_graph, session_id)
-                await websocket.send_json({
-                    "type": "answer",
-                    "answer": event.data.get("text", ""),
-                    "graph": subgraph,
-                    "session_id": session_id,
-                    "steps": event.data.get("steps", 0),
-                })
-            elif event.event == "error":
-                await websocket.send_json({"type": "error", "error": event.data.get("detail", "Unknown error")})
-            await asyncio.sleep(0)
+
+        await websocket.send_json({
+            "type": "answer",
+            "answer": full_answer,
+            "session_id": session_id,
+        })
 
     except WebSocketDisconnect:
         log.info("WS: Client disconnected for session %s", session_id)
