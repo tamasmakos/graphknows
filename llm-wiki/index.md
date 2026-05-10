@@ -21,6 +21,7 @@
 ---
 
 ## Concepts — Architecture
+- [[langgraph-agent-architecture-2026-05-08]] — **v3 agent architecture**: LangGraph StateGraph, 4 tools (search_web/search_eu/graphgen/graphrag), EPRS report format, live WS streaming
 
 - [[graphgen-architecture]] — Full pipeline architecture: DOC→SEGMENT→CHUNK→ENTITY→TOPIC, PipelineContext bus, module tree, config system
 - [[pipeline-stages]] — Each pipeline stage in detail: OntologyLabelExtractor, chunking, GLiNER2, DSPy, graph assembly, Node2Vec, Leiden, summarization
