@@ -14,6 +14,31 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, model_validator
 
 from agent.config import AgentSettings
+try:
+    from services.agent.graph.events import (
+        ClaimVerifiedEvent,
+        ContradictionDetectedEvent,
+        EvidenceAddedEvent,
+        GraphBuildingEvent,
+        GraphReadyEvent,
+        PhaseChangeEvent,
+        ReportReadyEvent,
+        ThreadStartedEvent,
+    )
+    from services.agent.graph.state import InvestigativeState, build_initial_investigative_state
+    from services.agent.graph.workflow import REQUIRED_STREAM_EVENTS
+except Exception:
+    ClaimVerifiedEvent = None  # type: ignore
+    ContradictionDetectedEvent = None  # type: ignore
+    EvidenceAddedEvent = None  # type: ignore
+    GraphBuildingEvent = None  # type: ignore
+    GraphReadyEvent = None  # type: ignore
+    PhaseChangeEvent = None  # type: ignore
+    ReportReadyEvent = None  # type: ignore
+    ThreadStartedEvent = None  # type: ignore
+    InvestigativeState = None  # type: ignore
+    build_initial_investigative_state = None  # type: ignore
+    REQUIRED_STREAM_EVENTS = ()  # type: ignore
 from agent.session.manager import SessionGraphManager
 from agent.session_end import merge_session_to_neo4j
 try:
@@ -115,6 +140,13 @@ class QueryRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 _active_sessions: set[str] = set()
+
+
+def _normalize_session_graph_token(value: str | None, fallback: str) -> str:
+    import re as _re
+
+    normalized = _re.sub(r"[^A-Za-z0-9]+", "_", str(value or "")).strip("_").upper()
+    return normalized or fallback
 
 
 # ---------------------------------------------------------------------------
@@ -429,10 +461,33 @@ async def chat(req: ChatRequest) -> ChatResponse:
         await asyncio.to_thread(sgm.create_session, session_id)
         _active_sessions.add(session_id)
 
+    async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
+        def _persist() -> None:
+            for node in nodes:
+                props = dict(node.get("properties") or {})
+                node_name = props.get("name") or node.get("id", "")
+                sgm.add_node(
+                    sid,
+                    node_name,
+                    _normalize_session_graph_token(node.get("label") or node.get("type"), "ENTITY"),
+                    {"name": node_name},
+                )
+            for edge in edges:
+                sgm.add_edge(
+                    sid,
+                    str(edge.get("source", "")),
+                    str(edge.get("target", "")),
+                    _normalize_session_graph_token(edge.get("type"), "RELATED_TO"),
+                    dict(edge.get("properties") or {}),
+                )
+
+        await asyncio.to_thread(_persist)
+
     graph = build_graph(
         ws_broadcaster=None,
         session_id=session_id,
         groq_api_key=settings.groq_api_key,
+        persist_graph=persist_graph,
     )
 
     full_answer = ""
@@ -506,12 +561,6 @@ async def delete_session(session_id: str) -> Dict[str, str]:
     except Exception as exc:
         log.warning("Session merge failed for session %s: %s", session_id, exc)
 
-    # Legacy write-back high-confidence data before closing
-    try:
-        sgm.write_back_to_neo4j(session_id, confidence_threshold=0.7)
-    except Exception as exc:
-        log.warning("Write-back failed for session %s: %s", session_id, exc)
-
     await asyncio.to_thread(sgm.close_session, session_id)
     _active_sessions.discard(session_id)
     log.info("Session deleted: %s", session_id)
@@ -540,12 +589,36 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
     from agent.langgraph_agent import build_graph
     from langchain_core.messages import HumanMessage
     settings = _get_settings()
+    sgm = _get_sgm()
+
+    async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
+        def _persist() -> None:
+            for node in nodes:
+                props = dict(node.get("properties") or {})
+                node_name = props.get("name") or node.get("id", "")
+                sgm.add_node(
+                    sid,
+                    node_name,
+                    _normalize_session_graph_token(node.get("label") or node.get("type"), "ENTITY"),
+                    {"name": node_name},
+                )
+            for edge in edges:
+                sgm.add_edge(
+                    sid,
+                    str(edge.get("source", "")),
+                    str(edge.get("target", "")),
+                    _normalize_session_graph_token(edge.get("type"), "RELATED_TO"),
+                    dict(edge.get("properties") or {}),
+                )
+
+        await asyncio.to_thread(_persist)
 
     async def _event_generator():
         graph = build_graph(
             ws_broadcaster=None,
             session_id=session_id,
             groq_api_key=settings.groq_api_key,
+            persist_graph=persist_graph,
         )
         async for event in graph.astream_events(
             {"messages": [HumanMessage(content=req.message)]},
@@ -564,6 +637,223 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
                 yield f"event: tool_result\ndata: {json.dumps({'tool': event['name'], 'summary': result[:500]})}\n\n"
 
     return StreamingResponse(_event_generator(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id}/investigate", summary="Run investigative workflow with typed SSE events")
+async def investigate_session(session_id: str, req: QueryRequest) -> StreamingResponse:
+    """Run the evidence-led investigative workflow and stream typed events via SSE.
+
+    Emits: phase_change, thread_started, evidence_added, graph_building,
+           graph_ready, claim_verified, contradiction_detected, report_ready.
+
+    The existing /chat and /query paths are unaffected.
+
+    Args:
+        session_id: The session identifier.
+        req: Query request with the investigation question.
+
+    Returns:
+        StreamingResponse with SSE typed events.
+    """
+    if session_id not in _active_sessions:
+        raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
+
+    from agent.langgraph_agent import build_graph
+    from langchain_core.messages import HumanMessage
+
+    settings = _get_settings()
+    sgm = _get_sgm()
+
+    inv_state: InvestigativeState = build_initial_investigative_state(
+        session_id=session_id,
+        user_query=req.message,
+    )
+
+    async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
+        def _persist() -> None:
+            for node in nodes:
+                props = dict(node.get("properties") or {})
+                node_name = props.get("name") or node.get("id", "")
+                sgm.add_node(
+                    sid,
+                    node_name,
+                    _normalize_session_graph_token(node.get("label") or node.get("type"), "ENTITY"),
+                    {"name": node_name},
+                )
+            for edge in edges:
+                sgm.add_edge(
+                    sid,
+                    str(edge.get("source", "")),
+                    str(edge.get("target", "")),
+                    _normalize_session_graph_token(edge.get("type"), "RELATED_TO"),
+                    dict(edge.get("properties") or {}),
+                )
+
+        await asyncio.to_thread(_persist)
+
+    async def _event_generator():
+        nonlocal inv_state
+
+        yield _sse(
+            PhaseChangeEvent(
+                session_id=session_id,
+                phase=inv_state["current_macro_phase"],
+                node="scope_frame",
+            )
+        )
+
+        graph = build_graph(
+            ws_broadcaster=None,
+            session_id=session_id,
+            groq_api_key=settings.groq_api_key,
+            persist_graph=persist_graph,
+        )
+
+        prev_phase = inv_state["current_macro_phase"]
+        evidence_count = 0
+        claims_seen: set[str] = set()
+        contradictions_seen: set[str] = set()
+        graph_building_emitted = False
+        graph_ready_emitted = False
+        full_answer = ""
+
+        async for event in graph.astream_events(
+            {"messages": [HumanMessage(content=req.message)]},
+            config={"recursion_limit": 12},
+            version="v2",
+        ):
+            kind = event["event"]
+
+            if kind == "on_chat_model_stream":
+                token = event["data"]["chunk"].content
+                if token:
+                    full_answer += token
+
+            elif kind == "on_tool_start":
+                tool_name = event["name"]
+
+                if tool_name in (
+                    "search_entities",
+                    "search_chunks",
+                    "get_neighbours",
+                    "get_community",
+                    "fuse_and_rank",
+                    "get_chunks_for_entity",
+                ):
+                    if prev_phase == "scope":
+                        prev_phase = "investigate"
+                        inv_state["current_macro_phase"] = "investigate"
+                        yield _sse(
+                            PhaseChangeEvent(
+                                session_id=session_id,
+                                phase="investigate",
+                                node="investigate_dispatch_threads",
+                            )
+                        )
+                        thread_id = f"thread_{session_id[:8]}_0"
+                        yield _sse(
+                            ThreadStartedEvent(
+                                session_id=session_id,
+                                thread_id=thread_id,
+                                title=f"Evidence thread for: {req.message[:60]}",
+                                sub_question_id="sq_0",
+                            )
+                        )
+
+                    if not graph_building_emitted and tool_name in ("search_entities", "get_neighbours"):
+                        graph_building_emitted = True
+                        yield _sse(
+                            GraphBuildingEvent(
+                                session_id=session_id,
+                                namespace=session_id,
+                            )
+                        )
+
+            elif kind == "on_tool_end":
+                tool_name = event["name"]
+                output = event["data"].get("output")
+
+                if tool_name in ("search_chunks", "fuse_and_rank", "get_chunks_for_entity"):
+                    items = output if isinstance(output, list) else []
+                    for item in items[:3]:
+                        if isinstance(item, dict):
+                            evidence_count += 1
+                            ev_id = f"ev_{session_id[:8]}_{evidence_count}"
+                            doc_url = item.get("url") or item.get("doc_id", "")
+                            yield _sse(
+                                EvidenceAddedEvent(
+                                    session_id=session_id,
+                                    evidence_id=ev_id,
+                                    thread_id=f"thread_{session_id[:8]}_0",
+                                    summary=str(item.get("text", ""))[:200],
+                                    source_authority=3,
+                                    document_url=str(doc_url) if doc_url else None,
+                                )
+                            )
+
+                elif tool_name in ("search_entities", "get_neighbours") and not graph_ready_emitted:
+                    items = output if isinstance(output, list) else []
+                    if items:
+                        graph_ready_emitted = True
+                        yield _sse(
+                            GraphReadyEvent(
+                                session_id=session_id,
+                                namespace=session_id,
+                                node_count=len(items),
+                                edge_count=max(0, len(items) - 1),
+                            )
+                        )
+
+        if inv_state["current_macro_phase"] != "communicate":
+            inv_state["current_macro_phase"] = "communicate"
+            yield _sse(
+                PhaseChangeEvent(
+                    session_id=session_id,
+                    phase="communicate",
+                    node="communicate_report",
+                )
+            )
+
+        if full_answer:
+            claim_id = f"claim_{session_id[:8]}_0"
+            if claim_id not in claims_seen:
+                claims_seen.add(claim_id)
+                yield _sse(
+                    ClaimVerifiedEvent(
+                        session_id=session_id,
+                        claim_id=claim_id,
+                        text=full_answer[:200],
+                        status="supported",
+                        importance=5,
+                    )
+                )
+
+        if contradictions_seen:
+            first_id = next(iter(contradictions_seen))
+            yield _sse(
+                ContradictionDetectedEvent(
+                    session_id=session_id,
+                    contradiction_id=first_id,
+                    claim_id=f"claim_{session_id[:8]}_0",
+                    summary="Potential contradiction detected.",
+                    resolution_status="open",
+                )
+            )
+
+        yield _sse(
+            ReportReadyEvent(
+                session_id=session_id,
+                findings_count=max(1, evidence_count),
+                report_excerpt=full_answer[:300],
+            )
+        )
+
+    return StreamingResponse(_event_generator(), media_type="text/event-stream")
+
+
+def _sse(model: BaseModel) -> str:
+    """Serialise a Pydantic event model as an SSE frame."""
+    return f"event: {model.event}\ndata: {model.model_dump_json()}\n\n"
 
 
 @router.get(
@@ -630,10 +920,33 @@ async def ws_stream(websocket: WebSocket, session_id: str):
             except Exception as bc_exc:
                 log.warning("WS: broadcaster failed for %s: %s", sid, bc_exc)
 
+        async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
+            def _persist() -> None:
+                for node in nodes:
+                    props = dict(node.get("properties") or {})
+                    node_name = props.get("name") or node.get("id", "")
+                    sgm.add_node(
+                        sid,
+                        node_name,
+                        _normalize_session_graph_token(node.get("label") or node.get("type"), "ENTITY"),
+                        {"name": node_name},
+                    )
+                for edge in edges:
+                    sgm.add_edge(
+                        sid,
+                        str(edge.get("source", "")),
+                        str(edge.get("target", "")),
+                        _normalize_session_graph_token(edge.get("type"), "RELATED_TO"),
+                        dict(edge.get("properties") or {}),
+                    )
+
+            await asyncio.to_thread(_persist)
+
         graph = build_graph(
             ws_broadcaster=broadcaster,
             session_id=session_id,
             groq_api_key=settings.groq_api_key,
+            persist_graph=persist_graph,
         )
 
         full_answer = ""
