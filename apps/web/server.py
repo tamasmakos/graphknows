@@ -97,8 +97,9 @@ async def ws_proxy(websocket: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger("ws_proxy").warning("ws_proxy error for %s: %s", session_id, exc)
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

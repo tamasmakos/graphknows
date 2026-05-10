@@ -626,8 +626,9 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         async def broadcaster(sid: str, payload: dict) -> None:
             try:
                 await websocket.send_json(payload)
-            except Exception:
-                pass
+                log.info("WS: broadcast %s (%d bytes) for %s", payload.get("type"), len(str(payload)), sid)
+            except Exception as bc_exc:
+                log.warning("WS: broadcaster failed for %s: %s", sid, bc_exc)
 
         graph = build_graph(
             ws_broadcaster=broadcaster,
@@ -636,6 +637,16 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         )
 
         full_answer = ""
+        thought_buf = ""
+        last_thought_flush = 0.0
+
+        async def flush_thoughts():
+            nonlocal thought_buf, last_thought_flush
+            if thought_buf:
+                await websocket.send_json({"type": "thought_token", "token": thought_buf})
+                thought_buf = ""
+                last_thought_flush = asyncio.get_event_loop().time()
+
         async for event in graph.astream_events(
             {"messages": [HumanMessage(content=message)]},
             config={"recursion_limit": 12},
@@ -646,10 +657,14 @@ async def ws_stream(websocket: WebSocket, session_id: str):
             if kind == "on_chat_model_stream":
                 token = event["data"]["chunk"].content
                 if token:
-                    await websocket.send_json({"type": "thought_token", "token": token})
+                    thought_buf += token
                     full_answer += token
+                    now = asyncio.get_event_loop().time()
+                    if now - last_thought_flush >= 0.35:
+                        await flush_thoughts()
 
             elif kind == "on_tool_start":
+                await flush_thoughts()
                 await websocket.send_json({
                     "type": "tool_start",
                     "tool": event["name"],
@@ -657,6 +672,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
                 })
 
             elif kind == "on_tool_end":
+                await flush_thoughts()
                 result = str(event["data"].get("output", ""))
                 await websocket.send_json({
                     "type": "tool_result",
@@ -664,6 +680,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
                     "summary": result[:500],
                 })
 
+        await flush_thoughts()
         await websocket.send_json({
             "type": "answer",
             "answer": full_answer,
