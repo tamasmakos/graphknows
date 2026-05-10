@@ -101,6 +101,16 @@ class EvidenceThread(TypedDict):
     notes: list[str]
 
 
+class ThreadProgressEvent(TypedDict):
+    """Progress event emitted as evidence threads are dispatched and populated."""
+
+    event_id: str
+    kind: Literal["thread_started", "evidence_added"]
+    thread_id: str
+    evidence_id: str | None
+    emitted_at: str
+
+
 class ClaimRecord(TypedDict):
     """A claim extracted from draft findings and sent through verification."""
 
@@ -151,6 +161,7 @@ class InvestigativeState(TypedDict):
     evidence_plan: list[dict[str, Any]]
     evidence_threads: list[EvidenceThread]
     evidence_ledger: list[EvidenceRecord]
+    thread_events: list[ThreadProgressEvent]
     claims: list[ClaimRecord]
     contradictions: list[ContradictionRecord]
     findings: list[str]
@@ -186,6 +197,7 @@ def build_initial_investigative_state(session_id: str, user_query: str) -> Inves
         evidence_plan=[],
         evidence_threads=[],
         evidence_ledger=[],
+        thread_events=[],
         claims=[],
         contradictions=[],
         findings=[],
