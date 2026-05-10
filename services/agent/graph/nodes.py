@@ -1,6 +1,6 @@
-"""LangGraph node implementations for claim extraction and verification.
+"""LangGraph node implementations for claim extraction, verification, and contradiction tracking.
 
-Slice 3 of the evidence-led investigative workflow redesign.
+Slices 3–4 of the evidence-led investigative workflow redesign.
 Nodes are pure functions: they receive InvestigativeState and return a partial
 state dict that LangGraph merges back into the shared state.
 """
@@ -11,6 +11,7 @@ from typing import Any
 
 from services.agent.graph.state import (
     ClaimRecord,
+    ContradictionRecord,
     EvidenceRecord,
     InvestigativeState,
     claim_has_document_support,
