@@ -2209,6 +2209,7 @@ async function switchSession(id) {
 }
 
 function newSession() {
+  window.__graphTabSwitched = false; // reset so graph tab auto-switches on next query
   sessionId = uuid();
   displaySessionId(sessionId);
   resetAll();
@@ -3160,7 +3161,19 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         currentStepTool = null;
 
       } else if (data.type === 'graph_update') {
+        const isPartial = data.partial === true;
         setKgUpdating(true);
+
+        // Auto-switch to Knowledge Graph tab on first graph update
+        if (!window.__graphTabSwitched) {
+          window.__graphTabSwitched = true;
+          const kgTab = document.querySelector('.graph-view-tab[data-graph-view="knowledge"]');
+          if (kgTab && !kgTab.classList.contains('active')) kgTab.click();
+          // On mobile, reveal the right panel
+          const rightPanel = document.getElementById('right');
+          if (rightPanel) rightPanel.classList.add('visible');
+        }
+
         // Handle new format: data.graph = KG, data.lexical = lexical graph
         if (data.graph) {
           const g = data.graph;
@@ -3178,6 +3191,22 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
             source: e.source || e.from, target: e.target || e.to, type: e.type || 'MENTIONS',
           }))];
           updateGraphWithNewData(g.nodes || [], g.edges || [], []);
+
+          // Update live node/edge count badge in KG updating indicator
+          const nodeCount = (g.nodes || []).length;
+          const edgeCount = (g.edges || []).length;
+          const kgUpdatingEl = document.getElementById('kg-updating');
+          if (kgUpdatingEl) {
+            if (isPartial) {
+              kgUpdatingEl.textContent = `⚡ ${nodeCount}n / ${edgeCount}e — extracting…`;
+              kgUpdatingEl.style.opacity = '1';
+              kgUpdatingEl.style.color = 'var(--accent, #7c6ff7)';
+            } else {
+              kgUpdatingEl.textContent = `✓ ${nodeCount} entities / ${edgeCount} relations`;
+              kgUpdatingEl.style.color = 'var(--success, #22c55e)';
+              setTimeout(() => { kgUpdatingEl.style.opacity = '0.5'; }, 3000);
+            }
+          }
         } else {
           const g = data;
           updateGraphWithNewData(g.nodes || [], g.edges || [], g.lexical_edges || []);

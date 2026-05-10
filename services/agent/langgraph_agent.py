@@ -1,4 +1,13 @@
-"""LangGraph-based EU investigator agent for Graphknows."""
+"""LangGraph-based EU investigator agent for Graphknows.
+
+Architecture (wiki: concepts/langgraph-agent-architecture-2026-05-08.md):
+- 4 LLM tools: search_web, search_eu, graphgen, graphrag
+- GLiNER2 + DSPy entity-relation extraction (graphgen_worker.py subprocess)
+- Streaming partial graphs: keyword graph fires immediately after each search;
+  GLiNER2/DSPy full graph fires when graphgen tool is called
+- Session doc store (_session_docs) accumulates all retrieved documents
+- AgentState carries extracted_entities so LLM reasons from the graph
+"""
 from __future__ import annotations
 
 import asyncio
@@ -24,23 +33,23 @@ class AgentState(TypedDict):
     """Shared state passed through the LangGraph agent graph."""
     messages: Annotated[list, add_messages]
 
-# ── Tool definitions ──────────────────────────────────────────────────────────
 
-# Broadcaster closure — injected by build_graph()
+# ── Module-level singletons — set by build_graph() per call ──────────────────
 _ws_broadcaster: Callable[[str, dict], Awaitable[None]] | None = None
 _session_id: str = ""
 
 # Session-scoped document accumulator: session_id → list of collected docs
-# Populated by search_eu/search_web tools; consumed by graphgen
 _session_docs: dict[str, list[dict]] = {}
+
+# Session-scoped extracted entities (from GLiNER2): session_id → entity names
+_session_entities: dict[str, list[str]] = {}
 
 
 async def _noop_broadcaster(session_id: str, payload: dict) -> None:
     pass
 
 
-# ── Lexical graph builder ────────────────────────────────────────────────────
-
+# ── Stopwords ────────────────────────────────────────────────────────────────
 _STOPWORDS = frozenset({
     "the", "a", "an", "of", "in", "to", "and", "or", "for", "is", "are",
     "was", "were", "on", "at", "by", "with", "this", "that", "as", "be",
@@ -51,30 +60,30 @@ _STOPWORDS = frozenset({
 })
 
 
+# ── Lexical graph builder (source-anchored) ───────────────────────────────────
 def _build_lexical_graph(documents: list[dict]) -> dict:
-    """Build a simple term co-occurrence graph from document titles/snippets."""
+    """Build a source-anchored term graph: doc nodes linked to key terms."""
     nodes: list[dict] = []
     edges: list[dict] = []
     seen_terms: set[str] = set()
 
     for i, doc in enumerate(documents[:15]):
         doc_id = doc.get("id", f"doc-{i}")
-        doc_title = doc.get("title", "")
-        text = f"{doc_title} {doc.get('text', '')}"[:2000]
+        doc_title = doc.get("title", "") or doc_id
+        text = f"{doc_title} {doc.get('text', '')}".strip()[:2000]
 
-        # Extract capitalized terms / noun phrases
         raw_terms = re.findall(r'\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*\b', text)
         terms = [t for t in raw_terms if t.lower() not in _STOPWORDS and len(t) > 3]
         unique_terms = list(dict.fromkeys(terms))[:15]
 
-        # Add doc node
         doc_node_id = f"DOC::{doc_id}"
         if doc_node_id not in seen_terms:
             nodes.append({
                 "id": doc_node_id,
                 "type": "Document",
-                "name": doc_title[:60] or doc_id,
+                "name": doc_title[:60],
                 "doc_id": doc_id,
+                "url": doc.get("url", ""),
             })
             seen_terms.add(doc_node_id)
 
@@ -87,31 +96,84 @@ def _build_lexical_graph(documents: list[dict]) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
-# ── Graphgen subprocess ───────────────────────────────────────────────────────
+# ── Keyword-only partial graph (fires immediately, no model needed) ──────────
+async def _emit_keyword_graph(
+    documents: list[dict],
+    session_id: str,
+    broadcaster: Callable[[str, dict], Awaitable[None]],
+) -> list[str]:
+    """Build + broadcast a fast keyword co-occurrence graph. Returns entity names."""
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen: set[str] = set()
+    entity_names: list[str] = []
 
+    for doc in documents[:12]:
+        text = str(doc.get("text", "") or doc.get("title", ""))[:2000]
+        title_terms = re.findall(r'\b[A-Z][a-zA-Z]+\b', doc.get("title", ""))
+        proper_terms = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        acronyms = re.findall(r'\b[A-Z]{2,6}\b', text)
+        all_terms = title_terms + proper_terms + acronyms
+        unique = list(dict.fromkeys(
+            t for t in all_terms if t.lower() not in _STOPWORDS and len(t) > 2
+        ))[:15]
+
+        for term in unique:
+            if term not in seen:
+                nodes.append({"id": term, "type": "CONCEPT", "name": term})
+                seen.add(term)
+                entity_names.append(term)
+        for i, a in enumerate(unique):
+            for b in unique[i + 1: i + 4]:
+                edges.append({"source": a, "target": b, "type": "CO_OCCURS"})
+
+    lexical = _build_lexical_graph(documents)
+    try:
+        await broadcaster(session_id, {
+            "type": "graph_update",
+            "graph": {"nodes": nodes, "edges": edges},
+            "lexical": lexical,
+            "partial": True,  # signal: GLiNER2 graph is still running
+        })
+    except Exception:
+        pass
+
+    return entity_names
+
+
+# ── GLiNER2 + DSPy subprocess graphgen ───────────────────────────────────────
 async def _run_graphgen(
     documents: list[dict],
     session_id: str,
     broadcaster: Callable[[str, dict], Awaitable[None]],
 ) -> tuple[list[dict], list[dict], str]:
-    """Run graphgen subprocess or keyword fallback. Returns (nodes, edges, summary_str)."""
+    """Run GLiNER2+DSPy graphgen subprocess. Returns (nodes, edges, summary_str)."""
     import psutil  # type: ignore
 
     lexical = _build_lexical_graph(documents)
 
+    # Check available RAM — GLiNER2 needs ~1.5GB
     try:
-        mem = psutil.virtual_memory()
-        if mem.available < 2.0 * 1024 ** 3:
-            log.warning("Low RAM — using keyword graph fallback")
-            return await _keyword_fallback(documents, session_id, broadcaster, lexical)
+        mem_avail = psutil.virtual_memory().available
     except Exception:
-        pass
+        mem_avail = 4 * 1024 ** 3  # assume 4GB if psutil fails
+
+    if mem_avail < 1.5 * 1024 ** 3:
+        log.warning("Low RAM (%.1fGB) — skipping GLiNER2, using keyword graph", mem_avail / 1024**3)
+        return await _keyword_fallback_graphgen(documents, session_id, broadcaster, lexical)
 
     worker = Path(__file__).parent / "tools" / "graphgen_worker.py"
     payload = json.dumps({
-        "documents": documents[:5],
+        "documents": [
+            {
+                "id": d.get("id", d.get("url", "")[:60]),
+                "title": d.get("title", ""),
+                "text": str(d.get("text", ""))[:2000],
+            }
+            for d in documents[:10]
+        ],
         "session_id": session_id,
-        "ontology_domain": "general",
+        "ontology_domain": "eu_politics",
     }).encode()
 
     try:
@@ -120,56 +182,68 @@ async def _run_graphgen(
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env={**os.environ},
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=180)
-        if proc.returncode != 0:
-            log.warning("Graphgen worker failed: %s", stderr.decode()[:200])
-            return await _keyword_fallback(documents, session_id, broadcaster, lexical)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=240)
+
+        if proc.returncode != 0 or not stdout.strip():
+            err_msg = stderr.decode()[:300] if stderr else "empty stdout"
+            log.warning("Graphgen worker failed (rc=%d): %s", proc.returncode, err_msg)
+            return await _keyword_fallback_graphgen(documents, session_id, broadcaster, lexical)
 
         result = json.loads(stdout)
-        nodes = result.get("entities", [])[:200]
-        edges = result.get("relations", [])[:500]
-        summary = f"Graph built: {len(nodes)} nodes, {len(edges)} edges"
+        nodes = result.get("entities", [])[:300]
+        edges = result.get("relations", [])[:600]
+        n_nodes, n_edges = len(nodes), len(edges)
+        summary = f"Graph built: {n_nodes} entities, {n_edges} relations (GLiNER2 + DSPy)"
+
+        # Store extracted entity names for LLM reasoning
+        entity_names = list(dict.fromkeys(
+            node.get("name", node.get("id", "")) for node in nodes
+        ))[:50]
+        _session_entities.setdefault(session_id, [])
+        existing = set(_session_entities[session_id])
+        _session_entities[session_id].extend(e for e in entity_names if e not in existing)
 
         try:
             await broadcaster(session_id, {
                 "type": "graph_update",
                 "graph": {"nodes": nodes, "edges": edges},
                 "lexical": lexical,
+                "partial": False,
             })
         except Exception:
             pass
 
+        log.info("Graph update broadcast: %d nodes, %d edges for %s", n_nodes, n_edges, session_id)
         return nodes, edges, summary
 
     except asyncio.TimeoutError:
-        log.warning("Graphgen timed out")
-        return await _keyword_fallback(documents, session_id, broadcaster, lexical)
+        log.warning("Graphgen subprocess timed out after 180s")
+        return await _keyword_fallback_graphgen(documents, session_id, broadcaster, lexical)
     except Exception as exc:
         log.warning("Graphgen error: %s", exc)
-        return await _keyword_fallback(documents, session_id, broadcaster, lexical)
+        return await _keyword_fallback_graphgen(documents, session_id, broadcaster, lexical)
 
 
-async def _keyword_fallback(
+async def _keyword_fallback_graphgen(
     documents: list[dict],
     session_id: str,
     broadcaster: Callable[[str, dict], Awaitable[None]],
     lexical: dict,
 ) -> tuple[list[dict], list[dict], str]:
+    """Co-occurrence keyword graph as final fallback when GLiNER2 fails."""
     nodes: list[dict] = []
     edges: list[dict] = []
     seen: set[str] = set()
 
     for doc in documents[:12]:
         text = str(doc.get("text", "") or doc.get("title", ""))[:2000]
-        # Extract capitalized proper nouns AND acronyms (EU, ECB, NATO, etc.)
-        terms_proper = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
-        terms_acronyms = re.findall(r'\b[A-Z]{2,6}\b', text)
-        # Also extract title as entity
         title_terms = re.findall(r'\b[A-Z][a-zA-Z]+\b', doc.get("title", ""))
-        all_terms = title_terms + terms_proper + terms_acronyms
+        proper_terms = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        acronyms = re.findall(r'\b[A-Z]{2,6}\b', text)
         unique = list(dict.fromkeys(
-            t for t in all_terms
+            t for t in (title_terms + proper_terms + acronyms)
             if t.lower() not in _STOPWORDS and len(t) > 2
         ))[:15]
         for term in unique:
@@ -185,6 +259,7 @@ async def _keyword_fallback(
             "type": "graph_update",
             "graph": {"nodes": nodes, "edges": edges},
             "lexical": lexical,
+            "partial": False,
         })
     except Exception:
         pass
@@ -193,7 +268,6 @@ async def _keyword_fallback(
 
 
 # ── LangGraph agent factory ──────────────────────────────────────────────────
-
 def build_graph(
     ws_broadcaster: Callable[[str, dict], Awaitable[None]] | None,
     session_id: str,
@@ -206,6 +280,9 @@ def build_graph(
     @tool
     async def search_web(query: str, max_results: int = 8) -> str:
         """Search the live web for news, context, and general information.
+
+        After results are returned, a partial knowledge graph is automatically
+        streamed to the UI — you do NOT need to call graphgen manually yet.
 
         Args:
             query: Search query string.
@@ -228,17 +305,35 @@ def build_graph(
                 timeout=25,
             )
             results = resp.get("results", [])
-            lines = []
             docs_to_store = []
+            lines = []
             for i, r in enumerate(results, 1):
                 title = r.get("title", "")
                 url = r.get("url", "")
-                snippet = (r.get("raw_content") or r.get("content") or "")[:300]
+                snippet = (r.get("raw_content") or r.get("content") or "")[:400]
                 date = r.get("published_date", "")
                 lines.append(f"{i}. {title}\n   URL: {url}\n   Date: {date}\n   {snippet}")
-                docs_to_store.append({"title": title, "url": url, "text": snippet, "date": date, "source": "web"})
-            # Accumulate into session doc store for graphgen
+                docs_to_store.append({
+                    "id": url[:80],
+                    "title": title,
+                    "url": url,
+                    "text": snippet,
+                    "date": date,
+                    "source": "web",
+                })
+
             _session_docs.setdefault(session_id, []).extend(docs_to_store)
+
+            # Fire partial keyword graph immediately — non-blocking background task
+            if docs_to_store:
+                asyncio.create_task(
+                    _emit_keyword_graph(
+                        _session_docs.get(session_id, []),
+                        session_id,
+                        broadcaster,
+                    )
+                )
+
             return "\n\n".join(lines) if lines else "No results found."
         except Exception as exc:
             log.warning("search_web failed: %s", exc)
@@ -251,7 +346,10 @@ def build_graph(
         sources: str = "ep_debates,eurlex,ec_press",
         max_docs: int = 8,
     ) -> str:
-        """Search EU official archives: EP debates, EUR-Lex, Council, EC press releases.
+        """Search EU official public archives: EP debates, EUR-Lex, Council, EC press releases.
+
+        After results are returned, a partial knowledge graph is automatically
+        streamed to the UI — you do NOT need to call graphgen manually yet.
 
         Args:
             query: Search query string.
@@ -266,41 +364,20 @@ def build_graph(
         from search.adapters.base import SourceAdapter
 
         ADAPTER_REGISTRY: dict[str, Any] = {}
-        try:
-            from search.adapters.ep_debates import EPDebatesAdapter
-            ADAPTER_REGISTRY["ep_debates"] = EPDebatesAdapter
-        except Exception:
-            pass
-        try:
-            from search.adapters.eurlex import EurLexAdapter
-            ADAPTER_REGISTRY["eurlex"] = EurLexAdapter
-        except Exception:
-            pass
-        try:
-            from search.adapters.ec_press import ECPressSource
-            ADAPTER_REGISTRY["ec_press"] = ECPressSource
-        except Exception:
-            pass
-        try:
-            from search.adapters.ep_resolutions import EPResolutionsSource
-            ADAPTER_REGISTRY["ep_resolutions"] = EPResolutionsSource
-        except Exception:
-            pass
-        try:
-            from search.adapters.council_conclusions import CouncilConclusionsSource
-            ADAPTER_REGISTRY["council_conclusions"] = CouncilConclusionsSource
-        except Exception:
-            pass
-        try:
-            from search.adapters.ecb_publications import ECBPublicationsSource
-            ADAPTER_REGISTRY["ecb_publications"] = ECBPublicationsSource
-        except Exception:
-            pass
-        try:
-            from search.adapters.eprs_briefings import EPRSBriefingsSource
-            ADAPTER_REGISTRY["eprs_briefings"] = EPRSBriefingsSource
-        except Exception:
-            pass
+        for mod_name, cls_name, key in [
+            ("search.adapters.ep_debates", "EPDebatesAdapter", "ep_debates"),
+            ("search.adapters.eurlex", "EurLexAdapter", "eurlex"),
+            ("search.adapters.ec_press", "ECPressSource", "ec_press"),
+            ("search.adapters.ep_resolutions", "EPResolutionsSource", "ep_resolutions"),
+            ("search.adapters.council_conclusions", "CouncilConclusionsSource", "council_conclusions"),
+            ("search.adapters.ecb_publications", "ECBPublicationsSource", "ecb_publications"),
+            ("search.adapters.eprs_briefings", "EPRSBriefingsSource", "eprs_briefings"),
+        ]:
+            try:
+                mod = __import__(mod_name, fromlist=[cls_name])
+                ADAPTER_REGISTRY[key] = getattr(mod, cls_name)
+            except Exception:
+                pass
 
         source_ids = [s.strip() for s in sources.split(",") if s.strip()]
         documents: list[dict] = []
@@ -321,7 +398,7 @@ def build_graph(
                             docs.append({
                                 "id": doc.id,
                                 "title": doc.title,
-                                "text": doc.text,
+                                "text": str(doc.text or "")[:4000],
                                 "url": getattr(r, "url", "") or doc.metadata.get("url", ""),
                                 "source": sid,
                                 "date": getattr(r, "date", "") or doc.metadata.get("published", ""),
@@ -330,22 +407,24 @@ def build_graph(
                             pass
                     return docs
                 else:
-                    # BaseScraper style
                     async with adapter:
                         parsed = await asyncio.wait_for(adapter.scrape(limit=max_docs), timeout=15)
                         q = query.lower()
-                        filtered = [d for d in parsed if q in (d.title or "").lower() or q in (d.raw_text or "").lower()][:max_docs]
-                        docs = []
-                        for d in filtered:
-                            docs.append({
+                        filtered = [
+                            d for d in parsed
+                            if q in (d.title or "").lower() or q in (d.raw_text or "").lower()
+                        ][:max_docs]
+                        return [
+                            {
                                 "id": getattr(d, "doc_id", d.url),
                                 "title": d.title,
-                                "text": d.raw_text or d.markdown or "",
+                                "text": str(d.raw_text or d.markdown or "")[:4000],
                                 "url": d.url,
                                 "source": sid,
                                 "date": getattr(d, "date", ""),
-                            })
-                        return docs
+                            }
+                            for d in filtered
+                        ]
             except Exception as exc:
                 log.warning("search_eu adapter %s failed: %s", sid, exc)
                 return []
@@ -359,6 +438,18 @@ def build_graph(
         if not documents:
             return "No EU documents found for this query."
 
+        _session_docs.setdefault(session_id, []).extend(documents[:max_docs])
+
+        # Fire partial keyword graph immediately — non-blocking
+        if documents:
+            asyncio.create_task(
+                _emit_keyword_graph(
+                    _session_docs.get(session_id, []),
+                    session_id,
+                    broadcaster,
+                )
+            )
+
         lines = []
         for i, doc in enumerate(documents[:max_docs], 1):
             lines.append(
@@ -368,55 +459,100 @@ def build_graph(
                 f"   URL: {doc.get('url', '')}\n"
                 f"   {str(doc.get('text', ''))[:300]}"
             )
-        # Accumulate into session doc store for graphgen
-        _session_docs.setdefault(session_id, []).extend(documents[:max_docs])
         return "\n\n".join(lines)
 
     # ── Tool 3: graphgen ─────────────────────────────────────────────────────
     @tool
     async def graphgen(session_id_arg: str) -> str:
-        """Build a knowledge graph from all documents collected so far in this session.
+        """Run full GLiNER2 + DSPy entity-relation extraction on all collected documents.
+
+        This produces a high-quality knowledge graph with real named entities and
+        typed relations (extracted by GLiNER2 ontology-guided NER + DSPy LLM triplets).
+        Call this ONCE after both search tools have returned results.
+
+        The extracted entities will be listed in the result so you can reference them
+        in your final report.
 
         Args:
-            session_id_arg: The session ID for this investigation (use the current session ID).
+            session_id_arg: The session ID for this investigation.
         """
         docs = _session_docs.get(session_id_arg) or _session_docs.get(session_id, [])
         if not docs:
-            # Search tools may be running in parallel — wait briefly and retry
             await asyncio.sleep(3)
             docs = _session_docs.get(session_id_arg) or _session_docs.get(session_id, [])
         if not docs:
             return "No documents collected yet — run search_eu or search_web first."
 
-        _, _, summary = await _run_graphgen(docs, session_id_arg, broadcaster)
+        nodes, edges, summary = await _run_graphgen(docs, session_id_arg or session_id, broadcaster)
+
+        # Return entity list so LLM can reason from it
+        entities = _session_entities.get(session_id_arg or session_id, [])
+        if entities:
+            top_entities = ", ".join(entities[:30])
+            return (
+                f"{summary}\n\n"
+                f"**Key entities extracted:** {top_entities}\n\n"
+                f"Use these entities in your final report under 'Key Graph Entities'. "
+                f"Reference specific people, organizations, and legislation found."
+            )
         return summary
 
     # ── Tool 4: graphrag ─────────────────────────────────────────────────────
     @tool
     async def graphrag(query: str, session_id_arg: str, k: int = 5) -> str:
-        """Query the GraphRAG service for deeper entity analysis from the knowledge graph.
+        """Query the accumulated knowledge graph for entity relationships and patterns.
+
+        Uses the session's extracted entities to answer graph-structure questions.
+        Also queries the persistent Neo4j KG for cross-session knowledge.
 
         Args:
-            query: The query to send to GraphRAG.
+            query: The graph query (e.g. 'who is most connected to Von der Leyen?').
             session_id_arg: Session ID for context.
             k: Number of results to retrieve.
         """
+        # First try in-session entity index
+        sid = session_id_arg or session_id
+        entities = _session_entities.get(sid, [])
+        if entities and any(e.lower() in query.lower() for e in entities[:20]):
+            matched = [e for e in entities if e.lower() in query.lower()]
+            docs = _session_docs.get(sid, [])
+            related = [
+                d.get("title", "") for d in docs
+                if any(m.lower() in (d.get("text", "") + d.get("title", "")).lower()
+                       for m in matched[:3])
+            ][:5]
+            if related:
+                return (
+                    f"Session graph entities related to '{query}':\n"
+                    f"Matched: {', '.join(matched[:5])}\n"
+                    f"Supporting documents: {'; '.join(related)}"
+                )
+
+        # Fall back to Neo4j GraphRAG service
         import httpx
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post(
                     "http://localhost:8001/retrieve",
-                    json={"query": query, "session_id": session_id_arg, "max_steps": k},
+                    json={"query": query, "session_id": sid, "max_steps": k},
                 )
                 resp.raise_for_status()
                 data = resp.json()
                 answer = data.get("answer", "")
-                entities = data.get("entities_mentioned", [])
-                if entities:
-                    entity_str = ", ".join(str(e) if not isinstance(e, dict) else e.get("name", "") for e in entities[:10])
+                entity_list = data.get("entities_mentioned", [])
+                if entity_list:
+                    entity_str = ", ".join(
+                        str(e) if not isinstance(e, dict) else e.get("name", "")
+                        for e in entity_list[:10]
+                    )
                     return f"Entities: {entity_str}\n\nAnswer: {answer}"
                 return answer or "No results from GraphRAG."
         except Exception as exc:
+            if entities:
+                return (
+                    f"GraphRAG service unavailable. Session entities so far: "
+                    f"{', '.join(entities[:20])}"
+                )
             return f"GraphRAG unavailable: {exc}"
 
     # ── System prompt ────────────────────────────────────────────────────────
@@ -425,50 +561,56 @@ def build_graph(
 
     SYSTEM_PROMPT = f"""You are an EU public records investigator for the European Parliamentary Research Service.
 Today's date: {today}
+Session ID: {session_id}
 
-STRICT RESEARCH PROTOCOL — follow this EXACT sequence:
-STEP 1: Call search_eu AND search_web simultaneously (both in one response)
-STEP 2: After receiving search results, call graphgen(session_id_arg=SESSION_ID) — it reads collected docs automatically
-STEP 3: Optionally call graphrag for deeper KG insights
-STEP 4: Write your final EPRS-style investigative report
+RESEARCH PROTOCOL — follow this EXACT sequence:
 
-CRITICAL: Do NOT call graphgen in the same turn as search_eu/search_web. Always wait for search results first.
-DO NOT loop. After step 4, write the report and stop.
+STEP 1 (one LLM response): Call search_eu AND search_web simultaneously.
+  → A partial keyword graph is automatically streamed to the user as you search.
 
-DO NOT pass a documents_json argument to graphgen — the tool reads documents automatically from the session store.
-The session_id_arg for graphgen and graphrag is: {session_id}
+STEP 2 (next LLM response): Call graphgen(session_id_arg="{session_id}")
+  → This runs GLiNER2 + DSPy to extract real named entities and typed relations.
+  → The result includes the key entities found — use them in your report.
+  → CRITICAL: Call graphgen in a SEPARATE response AFTER receiving search results.
 
-REPORT FORMAT (use this exact structure):
+STEP 3 (optional): Call graphrag if the user needs entity connectivity analysis.
+
+STEP 4: Write your final EPRS-style investigative report.
+
+RULES:
+- Do NOT call graphgen in the same response as search tools (they run in parallel, docs won't be ready)
+- Do NOT loop or re-search without a clear reason
+- The report MUST include a 'Key Graph Entities' section listing the entities from graphgen
+- Cite sources inline with [🏛️ Source] for EU institutions, [🌐 Source] for web
+
+REPORT FORMAT:
 ## [Investigation Title]
-**European Parliamentary Research Service** | {today}
+**EPRS Intelligence Brief** | Session {session_id[:8]} | {today}
 
 ### Executive Summary
-[3-4 sentences, key finding, confidence]
-
-### Background
-[Policy context]
+[2-3 sentences, key finding, confidence level]
 
 ### Key Findings
-1. [Finding] — [🏛️ Source title](url)
+1. [Finding] — [🏛️ Source](url)
 2. [Finding] — [🌐 Source](url)
 
 ### Legislative Record
-- [CELEX if available] — [title] — [institution] — [date]
+- [CELEX/ELI if available] — [title] — [institution] — [date]
 
 ### Context & Analysis
-[web sources, commentary]
+[synthesis across sources, tensions, open questions]
 
-### Key Entities
-**People:** ... **Organizations:** ... **Legislation:** ...
+### Key Graph Entities
+**People:** [list from graphgen result]
+**Organizations:** [list from graphgen result]
+**Legislation & Policies:** [list from graphgen result]
 
 ### Sources
 - [🏛️ Doc-1] Full citation — institution — date — url
 - [🌐 Doc-2] ...
 """
 
-    # ── State & graph ────────────────────────────────────────────────────────
-    # AgentState defined at module level (Python 3.13 get_type_hints compat)
-
+    # ── Build graph ──────────────────────────────────────────────────────────
     tools_list = [search_web, search_eu, graphgen, graphrag]
 
     llm_base = ChatGroq(
@@ -477,7 +619,6 @@ REPORT FORMAT (use this exact structure):
         temperature=0.1,
         streaming=True,
     )
-    # Bind tools — force tool use on first call to prevent direct answer
     llm_with_tools = llm_base.bind_tools(tools_list)
     llm_force_tools = llm_base.bind_tools(tools_list, tool_choice="required")
 
@@ -485,22 +626,17 @@ REPORT FORMAT (use this exact structure):
 
     async def agent_node(state: AgentState) -> AgentState:
         messages = state["messages"]
-        # Prepend system message if not present
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
-        # On first turn (only 2 messages: system + human), force tool use
-        human_msgs = [m for m in messages if getattr(m, "type", None) == "human"]
         tool_msgs = [m for m in messages if getattr(m, "type", None) == "tool"]
-        force = len(tool_msgs) == 0  # No tool results yet → force a search
+        force = len(tool_msgs) == 0
         active_llm = llm_force_tools if force else llm_with_tools
         response = await active_llm.ainvoke(messages)
         return {"messages": [response]}
 
-    def should_continue(state):  # no type hints — LangGraph introspects with get_type_hints
+    def should_continue(state):  # no type hints — Python 3.13 get_type_hints compat
         last = state["messages"][-1]
-        if hasattr(last, "tool_calls") and last.tool_calls:
-            return "tools"
-        return END
+        return "tools" if (hasattr(last, "tool_calls") and last.tool_calls) else END
 
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
@@ -508,5 +644,4 @@ REPORT FORMAT (use this exact structure):
     graph.set_entry_point("agent")
     graph.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
     graph.add_edge("tools", "agent")
-
     return graph.compile()
