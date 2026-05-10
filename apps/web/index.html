@@ -1860,7 +1860,7 @@
     <span id="kg-updating">KG updating...</span>
     <div id="graph-view-tabs" role="tablist" aria-label="Graph view selector">
       <button class="graph-view-tab active" type="button" data-graph-view="knowledge">Knowledge Graph</button>
-      <button class="graph-view-tab" type="button" data-graph-view="lexical">Lexical Graph</button>
+      <button class="graph-view-tab" type="button" data-graph-view="sources" id="sources-graph-tab">📚 Sources</button>
     </div>
     <div id="graph-toolbar-mobile-actions" class="mobile-only">
       <button class="toolbar-btn" id="btn-mobile-legend" type="button" aria-label="Toggle legend">🗂 Legend</button>
@@ -1897,6 +1897,14 @@
 </div>
 
 <div id="graph-canvas">
+  <div id="inline-sources-panel" style="display:none;height:100%;overflow-y:auto;padding:16px;box-sizing:border-box;">
+    <div id="inline-sources-header" style="font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted,#8899aa);margin-bottom:12px;">
+      📚 Sources from this session
+    </div>
+    <div id="inline-sources-list" style="display:flex;flex-direction:column;gap:10px;">
+      <p style="color:var(--text-muted,#8899aa);font-size:13px;">Sources will appear here after the agent searches.</p>
+    </div>
+  </div>
   <div id="graph-focus-chip" aria-live="polite">
     <div class="graph-focus-copy">
       <div class="graph-focus-eyebrow">Focused node</div>
@@ -2210,6 +2218,9 @@ async function switchSession(id) {
 
 function newSession() {
   window.__graphTabSwitched = false; // reset so graph tab auto-switches on next query
+  window.__sessionSources = []; // reset inline sources
+  const sourcesTab = document.getElementById('sources-graph-tab');
+  if (sourcesTab) sourcesTab.textContent = '📚 Sources';
   sessionId = uuid();
   displaySessionId(sessionId);
   resetAll();
@@ -3153,7 +3164,15 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
               currentDoc.text = (currentDoc.text + ' ' + line.trim()).trim().slice(0, 300);
             }
           }
-          if (sourceDocs.length > 0) renderSourcesPanel(sourceDocs);
+          if (sourceDocs.length > 0) {
+            renderSourcesPanel(sourceDocs);
+            // Also accumulate into inline sources panel (persists across tool calls)
+            window.__sessionSources = (window.__sessionSources || []).concat(sourceDocs);
+            updateInlineSourcesPanel(window.__sessionSources);
+            // Badge the Sources tab
+            const sourcesTab = document.getElementById('sources-graph-tab');
+            if (sourcesTab) sourcesTab.textContent = `📚 Sources (${window.__sessionSources.length})`;
+          }
         }
         allToolsDone = true;
         thoughtBuffer = '';
@@ -3676,8 +3695,9 @@ function renderGraph() {
           .attr('rx',3).attr('ry',3);
         g.append('text')
           .attr('class','edge-label')
-          .attr('fill','#ccc')
-          .attr('font-size', isMobileGraph ? '0px' : '10px')
+          .attr('fill','#94a3b8')
+          .attr('font-size', isMobileGraph ? '8px' : '10px')
+          .attr('font-weight', '500')
           .attr('text-anchor','middle')
           .attr('dominant-baseline','middle')
           .text(d => {
@@ -3713,17 +3733,14 @@ function renderGraph() {
         g.append('text')
           .attr('y', 34)
           .attr('text-anchor','middle')
-          .attr('font-size', isMobileGraph ? '8px' : '10px')
-          .attr('fill','#aaa')
+          .attr('font-size', isMobileGraph ? '9px' : '11px')
+          .attr('font-weight', '600')
+          .attr('fill','#e2e8f0')
+          .style('pointer-events', 'none')
           .style('opacity', 0)
           .text(d => {
             const raw = ((d.properties && d.properties.name) || d.name || d.id || '');
-            const nodeType = ((d.properties && d.properties.label) || d.type || d.label || '').toLowerCase();
-            if (isMobileGraph && /^([a-f0-9]{8,}|chunk[-_]?\d+)/i.test(String(raw))) return '';
-            if (isMobileGraph && !selectedNode && !mobileLabelIds.has(d.id)) {
-              return '';
-            }
-            return humanLabel(String(raw).substring(0, isMobileGraph ? 14 : 20));
+            return humanLabel(String(raw).substring(0, isMobileGraph ? 16 : 22));
           })
           .transition().duration(400)
           .style('opacity', 1);
@@ -3811,7 +3828,7 @@ function renderGraph() {
   });
 
   link.select('.edge-label')
-    .attr('font-size', isMobileGraph ? '0px' : '10px')
+    .attr('font-size', isMobileGraph ? '8px' : '10px')
     .text(d => {
       if (isMobileGraph) return '';
       const rel = (d.properties && d.properties.relation_type) || d.label || d.type || '';
@@ -3915,6 +3932,30 @@ function setGraphViews(nextViews, activeView = currentGraphView) {
 }
 
 function switchGraphView(nextView) {
+  const inlineSourcesPanel = document.getElementById('inline-sources-panel');
+  const graphFocusChip = document.getElementById('graph-focus-chip');
+  const emptyState = document.getElementById('empty-state');
+  const legend = document.getElementById('legend');
+  const graphSvg = document.querySelector('#graph-canvas svg');
+
+  if (nextView === 'sources') {
+    // Show inline sources, hide graph SVG elements
+    currentGraphView = 'sources';
+    if (inlineSourcesPanel) inlineSourcesPanel.style.display = 'block';
+    if (graphFocusChip) graphFocusChip.style.display = 'none';
+    if (emptyState) emptyState.style.display = 'none';
+    if (legend) legend.style.display = 'none';
+    if (graphSvg) graphSvg.style.display = 'none';
+    graphViewTabs.forEach(b => b.classList.toggle('active', b.dataset.graphView === 'sources'));
+    return;
+  }
+
+  // Restore graph elements when switching back from sources
+  if (inlineSourcesPanel) inlineSourcesPanel.style.display = 'none';
+  if (graphFocusChip) graphFocusChip.style.removeProperty('display');
+  if (legend) legend.style.removeProperty('display');
+  if (graphSvg) graphSvg.style.removeProperty('display');
+
   const target = nextView === 'lexical' ? 'lexical' : 'knowledge';
   if (target === currentGraphView) return;
   currentGraphView = target;
@@ -3934,11 +3975,34 @@ function switchGraphView(nextView) {
   }
 }
 
+// Populate inline sources panel from collected session docs
+function updateInlineSourcesPanel(docs) {
+  const list = document.getElementById('inline-sources-list');
+  if (!list || !docs || !docs.length) return;
+  list.innerHTML = docs.map((doc, i) => {
+    const icon = doc.source === 'web' ? '🌐' : '🏛️';
+    const title = doc.title || doc.url || `Source ${i+1}`;
+    const url = doc.url || '';
+    const date = doc.date ? `<span style="color:var(--text-muted,#8899aa);font-size:11px;margin-left:6px">${doc.date}</span>` : '';
+    const institution = doc.source && doc.source !== 'web' ? `<span style="font-size:11px;color:var(--accent,#7c6ff7);margin-bottom:2px;display:block">${doc.source.toUpperCase()}</span>` : '';
+    const snippet = (doc.text || '').substring(0, 200).trim();
+    return `<div style="background:var(--surface,#1c2333);border-radius:8px;padding:12px;border:1px solid var(--border,#2a3347);">
+      ${institution}
+      <div style="font-weight:600;font-size:13px;margin-bottom:4px;">
+        ${icon} ${url ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--text,#e2e8f0);text-decoration:none;">${escHtml(title)}</a>` : escHtml(title)}${date}
+      </div>
+      ${snippet ? `<div style="font-size:12px;color:var(--text-muted,#8899aa);line-height:1.5">${escHtml(snippet)}…</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
 function hydrateGraphStateFromPayload(payload) {
-  const nextViews = payload && payload.graph_views
+  // Guard: if payload has no graph data at all (e.g. answer payload), keep existing graph
+  if (!payload || (!payload.graph_views && !payload.graph)) return;
+  const nextViews = payload.graph_views
     ? payload.graph_views
-    : { knowledge: payload.graph || { nodes: [], edges: [] }, lexical: { nodes: [], edges: [] } };
-  const active = (payload && payload.graph_views && payload.graph_views.active) || 'knowledge';
+    : { knowledge: payload.graph, lexical: graphViewsState.lexical || { nodes: [], edges: [] } };
+  const active = (payload.graph_views && payload.graph_views.active) || currentGraphView || 'knowledge';
   setGraphViews(nextViews, active);
 }
 
