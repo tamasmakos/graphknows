@@ -2,20 +2,8 @@
 from __future__ import annotations
 
 import json
-import sys
-import types
 
-
-if "services" not in sys.modules:
-    import agent as _agent
-
-    services_mod = types.ModuleType("services")
-    services_mod.agent = _agent
-    sys.modules["services"] = services_mod
-    sys.modules["services.agent"] = _agent
-
-
-from agent.graph.events import (
+from services.agent.graph.events import (
     ClaimVerifiedEvent,
     ContradictionDetectedEvent,
     EvidenceAddedEvent,
@@ -25,8 +13,8 @@ from agent.graph.events import (
     ReportReadyEvent,
     ThreadStartedEvent,
 )
-from agent.graph.state import build_initial_investigative_state
-from agent.graph.workflow import REQUIRED_STREAM_EVENTS, build_workflow_spec
+from services.agent.graph.state import build_initial_investigative_state
+from services.agent.graph.workflow import REQUIRED_STREAM_EVENTS, build_workflow_spec
 
 
 def test_all_required_events_have_model():

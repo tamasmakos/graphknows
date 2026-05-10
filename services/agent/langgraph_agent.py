@@ -49,6 +49,149 @@ async def _noop_broadcaster(session_id: str, payload: dict) -> None:
     pass
 
 
+try:
+    from services.agent.graph.workflow import REQUIRED_STREAM_EVENTS as _REQUIRED_STREAM_EVENTS
+except Exception:
+    _REQUIRED_STREAM_EVENTS = ()  # type: ignore
+
+
+async def _emit_investigative_event(
+    broadcaster: Callable[[str, dict], Awaitable[None]],
+    session_id: str,
+    event_type: str,
+    **kwargs: object,
+) -> None:
+    """Emit a typed investigative stream event via the WS broadcaster.
+
+    Args:
+        broadcaster: Async callable that sends payloads to the WS client.
+        session_id: Current agent session identifier.
+        event_type: One of REQUIRED_STREAM_EVENTS (phase_change, thread_started, …).
+        **kwargs: Additional fields merged into the event payload.
+    """
+    try:
+        payload = {"type": event_type, **kwargs}
+        await broadcaster(session_id, payload)
+        log.debug("investigative event emitted: %s for session %s", event_type, session_id)
+    except Exception as exc:  # pragma: no cover
+        log.warning("investigative event emission failed (%s): %s", event_type, exc)
+
+
+def _normalize_session_graph_token(value: str, fallback: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", str(value or "")).strip("_").upper()
+    return normalized or fallback
+
+
+_SESSION_GRAPH_LABEL_ALIASES = {
+    "ORGANISATION": "ORGANIZATION",
+}
+
+
+_SESSION_GRAPH_NAME_ALIASES = {
+    "EU": "European Union",
+    "E U": "European Union",
+    "EUROPEAN UNION": "European Union",
+}
+
+
+def _canonicalize_session_graph_label(value: str) -> str:
+    label = _normalize_session_graph_token(value, "ENTITY")
+    return _SESSION_GRAPH_LABEL_ALIASES.get(label, label)
+
+
+def _canonicalize_session_graph_name(value: str) -> str:
+    name = re.sub(r"\s+", " ", str(value or "")).strip(" \t\r\n.,;:")
+    if not name:
+        return ""
+    alias_key = re.sub(r"[^A-Za-z0-9]+", " ", name).strip().upper()
+    return _SESSION_GRAPH_NAME_ALIASES.get(alias_key, name)
+
+
+def _session_graph_label_rank(label: str) -> int:
+    if label == "ENTITY":
+        return 0
+    return 1
+
+
+def _normalize_session_graph_payload(
+    nodes: list[dict],
+    edges: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    normalized_nodes: list[dict] = []
+    normalized_edges: list[dict] = []
+    canonical_nodes: dict[str, dict] = {}
+    alias_to_canonical: dict[str, str] = {}
+
+    for node in nodes:
+        node_id = node.get("id", "")
+        raw_name = node.get("name") or node_id
+        canonical_name = _canonicalize_session_graph_name(raw_name) or _canonicalize_session_graph_name(node_id)
+        canonical_label = _canonicalize_session_graph_label(
+            node.get("type") or node.get("label") or "ENTITY"
+        )
+        if not canonical_name:
+            continue
+
+        alias_to_canonical[str(node_id or "")] = canonical_name
+        alias_to_canonical[str(raw_name or "")] = canonical_name
+        alias_to_canonical[_canonicalize_session_graph_name(node_id)] = canonical_name
+        alias_to_canonical[_canonicalize_session_graph_name(raw_name)] = canonical_name
+
+        existing = canonical_nodes.get(canonical_name)
+        if existing is None:
+            canonical_nodes[canonical_name] = {
+                "id": canonical_name,
+                "label": canonical_label,
+                "properties": {"name": canonical_name},
+            }
+            continue
+
+        if _session_graph_label_rank(canonical_label) > _session_graph_label_rank(existing["label"]):
+            existing["label"] = canonical_label
+
+    normalized_nodes.extend(canonical_nodes.values())
+
+    for edge in edges:
+        raw_source = edge.get("source", "")
+        raw_target = edge.get("target", "")
+        source = alias_to_canonical.get(str(raw_source)) or alias_to_canonical.get(
+            _canonicalize_session_graph_name(raw_source)
+        ) or _canonicalize_session_graph_name(raw_source)
+        target = alias_to_canonical.get(str(raw_target)) or alias_to_canonical.get(
+            _canonicalize_session_graph_name(raw_target)
+        ) or _canonicalize_session_graph_name(raw_target)
+        if not source or not target:
+            continue
+
+        properties = {
+            key: value
+            for key, value in edge.items()
+            if key not in {"source", "target", "type"}
+        }
+        normalized_edges.append({
+            "source": source,
+            "target": target,
+            "type": _normalize_session_graph_token(edge.get("type", "RELATED_TO"), "RELATED_TO"),
+            "properties": properties,
+        })
+
+    deduped_edges: list[dict] = []
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    for edge in normalized_edges:
+        edge_key = (
+            edge["source"],
+            edge["target"],
+            edge["type"],
+            json.dumps(edge["properties"], sort_keys=True),
+        )
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+        deduped_edges.append(edge)
+
+    return normalized_nodes, deduped_edges
+
+
 # ── Stopwords ────────────────────────────────────────────────────────────────
 _STOPWORDS = frozenset({
     "the", "a", "an", "of", "in", "to", "and", "or", "for", "is", "are",
@@ -58,6 +201,213 @@ _STOPWORDS = frozenset({
     "before", "than", "into", "through", "during", "between", "against",
     "each", "other", "those", "these", "such", "when", "where", "would",
 })
+
+
+def _query_terms(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"\b[a-z0-9]{3,}\b", (text or "").lower())
+        if token not in _STOPWORDS
+    }
+
+
+def _score_query_overlap(query: str, title: str, text: str) -> int:
+    query_terms = _query_terms(query)
+    if not query_terms:
+        return 0
+    document_terms = _query_terms(f"{title or ''} {text or ''}")
+    return len(query_terms & document_terms)
+
+
+_SEARCH_WEB_NAV_PHRASES = frozenset({
+    "about us",
+    "boards",
+    "contact us",
+    "email us",
+    "experts",
+    "home",
+    "library",
+    "members login",
+    "newsletter",
+    "privacy policy",
+    "staff",
+    "subscribe",
+    "the institute",
+})
+
+_SEARCH_WEB_MENU_PREFIX_RE = re.compile(
+    r"^(?:(?:[A-Za-z][A-Za-z&'\- ]{1,30})\s*(?:/|\||•|·)\s*){3,}"
+)
+
+
+def _clean_search_web_fragment(text: str) -> str:
+    cleaned = re.sub(r"[\t\r\n]+", " ", text or "")
+    cleaned = _SEARCH_WEB_MENU_PREFIX_RE.sub("", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" -•|/:;")
+
+
+def _search_web_noise_penalty(text: str) -> int:
+    lowered = (text or "").lower()
+    penalty = sum(1 for phrase in _SEARCH_WEB_NAV_PHRASES if phrase in lowered)
+
+    separator_parts = [
+        part.strip()
+        for part in re.split(r"\s*(?:\||/|•|·|»)\s*", text or "")
+        if part.strip()
+    ]
+    short_parts = sum(1 for part in separator_parts if len(part.split()) <= 3)
+    if len(separator_parts) >= 4 and short_parts >= len(separator_parts) - 1:
+        penalty += 4
+
+    return penalty
+
+
+def _iter_search_web_candidates(raw_content: str, content: str) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(text: str) -> None:
+        cleaned = _clean_search_web_fragment(text)
+        if len(cleaned) < 35:
+            return
+        key = cleaned.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(cleaned)
+
+    _add(content)
+
+    raw_text = raw_content or ""
+    for block in re.split(r"[\r\n]+", raw_text):
+        _add(block)
+        sentences = re.split(r"(?<=[.!?])\s+", block)
+        for index, sentence in enumerate(sentences):
+            _add(sentence)
+            if index + 1 < len(sentences):
+                _add(f"{sentence} {sentences[index + 1]}")
+
+    collapsed = re.sub(r"[\r\n]+", " ", raw_text)
+    for sentence in re.split(r"(?<=[.!?])\s+", collapsed):
+        _add(sentence)
+
+    return candidates
+
+
+def _choose_search_web_snippet(
+    query: str,
+    title: str,
+    raw_content: str,
+    content: str,
+    max_chars: int = 400,
+) -> str:
+    candidates = _iter_search_web_candidates(raw_content, content)
+    if not candidates:
+        return _clean_search_web_fragment(content or raw_content)[:max_chars]
+
+    def _score(candidate: str) -> tuple[int, int, int, int]:
+        return (
+            _score_query_overlap(query, "", candidate),
+            -_search_web_noise_penalty(candidate),
+            1 if re.search(r"[.!?]", candidate) else 0,
+            min(len(candidate), max_chars),
+        )
+
+    return max(candidates, key=_score)[:max_chars]
+
+
+_SEARCH_EU_SAFE_SOURCE_IDS = ("eprs_briefings",)
+_SEARCH_EU_ADAPTER_TIMEOUT_SECONDS = 15
+_SEARCH_EU_QUERY_AWARE_TIMEOUT_SECONDS = 30
+_SEARCH_EU_QUERY_EXPANSIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\beuropean defence industrial strategy\b", re.IGNORECASE),
+        "EDIS EDIP defence readiness 2024",
+    ),
+)
+
+_SEARCH_EU_TITLE_BOOST_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str], int], ...] = (
+    (
+        re.compile(r"\beuropean defence industrial strategy\b", re.IGNORECASE),
+        re.compile(r"\beuropean defence industrial strategy\b", re.IGNORECASE),
+        6,
+    ),
+    (
+        re.compile(r"\bedis\b", re.IGNORECASE),
+        re.compile(r"\beuropean defence industrial strategy\b|\bedis\b", re.IGNORECASE),
+        4,
+    ),
+    (
+        re.compile(r"\bedip\b", re.IGNORECASE),
+        re.compile(r"\beuropean defence industry programme\b|\beu defence industry programme and strategy\b|\bedip\b", re.IGNORECASE),
+        4,
+    ),
+)
+
+
+def _normalize_search_eu_sources(sources: str) -> list[str]:
+    requested_source_ids = [
+        source_id.strip()
+        for source_id in (sources or "").split(",")
+        if source_id.strip()
+    ]
+    normalized_source_ids = list(dict.fromkeys(
+        source_id
+        for source_id in requested_source_ids
+        if source_id in _SEARCH_EU_SAFE_SOURCE_IDS
+    ))
+
+    # Replace empty or noisy mixes with the validated briefing path.
+    if not requested_source_ids or len(normalized_source_ids) != len(requested_source_ids):
+        return list(_SEARCH_EU_SAFE_SOURCE_IDS)
+    return normalized_source_ids or list(_SEARCH_EU_SAFE_SOURCE_IDS)
+
+
+def _search_eu_candidate_queries(source_id: str, query: str) -> list[str]:
+    normalized_query = re.sub(r"\s+", " ", (query or "")).strip()
+    if not normalized_query:
+        return []
+
+    candidates = [normalized_query]
+    if source_id != "eprs_briefings":
+        return candidates
+
+    query_terms = _query_terms(normalized_query)
+    for pattern, expansion in _SEARCH_EU_QUERY_EXPANSIONS:
+        if not pattern.search(normalized_query):
+            continue
+        if _query_terms(expansion).issubset(query_terms):
+            continue
+        expanded_query = f"{normalized_query} {expansion}".strip()
+        candidates.append(expanded_query)
+    return candidates
+
+
+def _score_search_eu_document(
+    query: str,
+    candidate_queries: list[str],
+    title: str,
+    text: str,
+) -> tuple[int, int]:
+    combined_terms = _query_terms(f"{title or ''} {text or ''}")
+    title_bonus = sum(
+        bonus
+        for query_pattern, title_pattern, bonus in _SEARCH_EU_TITLE_BOOST_RULES
+        if query_pattern.search(query or "") and title_pattern.search(title or "")
+    )
+    best_overlap = max(
+        (_score_query_overlap(candidate_query, title, text) for candidate_query in candidate_queries),
+        default=0,
+    )
+    expansion_bonus = max(
+        (
+            len((_query_terms(candidate_query) - _query_terms(query)) & combined_terms)
+            for candidate_query in candidate_queries
+        ),
+        default=0,
+    )
+    return best_overlap, expansion_bonus + title_bonus
 
 
 # ── Lexical graph builder (source-anchored) ───────────────────────────────────
@@ -146,6 +496,7 @@ async def _run_graphgen(
     documents: list[dict],
     session_id: str,
     broadcaster: Callable[[str, dict], Awaitable[None]],
+    persist_graph: Callable[[str, list[dict], list[dict]], Awaitable[None]] | None = None,
 ) -> tuple[list[dict], list[dict], str]:
     """Run GLiNER2+DSPy graphgen subprocess. Returns (nodes, edges, summary_str)."""
     import psutil  # type: ignore
@@ -176,6 +527,22 @@ async def _run_graphgen(
         "ontology_domain": "eu_politics",
     }).encode()
 
+    def _parse_graphgen_stdout(stdout_bytes: bytes) -> dict[str, Any]:
+        text = stdout_bytes.decode(errors="replace").strip()
+        decoder = json.JSONDecoder()
+        for idx, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                result, end = decoder.raw_decode(text[idx:])
+            except json.JSONDecodeError:
+                continue
+            if text[idx + end:].strip():
+                continue
+            if isinstance(result, dict):
+                return result
+        raise json.JSONDecodeError("No JSON object found in stdout", text, 0)
+
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, str(worker),
@@ -191,19 +558,32 @@ async def _run_graphgen(
             log.warning("Graphgen worker failed (rc=%d): %s", proc.returncode, err_msg)
             return await _keyword_fallback_graphgen(documents, session_id, broadcaster, lexical)
 
-        result = json.loads(stdout)
+        result = _parse_graphgen_stdout(stdout)
+        if result.get("error"):
+            log.warning("Graphgen worker returned error payload: %s", result["error"])
+            return await _keyword_fallback_graphgen(documents, session_id, broadcaster, lexical)
+
         nodes = result.get("entities", [])[:300]
         edges = result.get("relations", [])[:600]
         n_nodes, n_edges = len(nodes), len(edges)
         summary = f"Graph built: {n_nodes} entities, {n_edges} relations (GLiNER2 + DSPy)"
 
-        # Store extracted entity names for LLM reasoning
+        normalized_nodes, normalized_edges = _normalize_session_graph_payload(nodes, edges)
+
+        # Store canonical entity names for LLM reasoning
         entity_names = list(dict.fromkeys(
-            node.get("name", node.get("id", "")) for node in nodes
+            node.get("properties", {}).get("name", node.get("id", ""))
+            for node in normalized_nodes
         ))[:50]
         _session_entities.setdefault(session_id, [])
         existing = set(_session_entities[session_id])
         _session_entities[session_id].extend(e for e in entity_names if e not in existing)
+
+        if persist_graph is not None:
+            try:
+                await persist_graph(session_id, normalized_nodes, normalized_edges)
+            except Exception:
+                log.exception("Graph persistence callback failed for %s", session_id)
 
         try:
             await broadcaster(session_id, {
@@ -272,6 +652,7 @@ def build_graph(
     ws_broadcaster: Callable[[str, dict], Awaitable[None]] | None,
     session_id: str,
     groq_api_key: str,
+    persist_graph: Callable[[str, list[dict], list[dict]], Awaitable[None]] | None = None,
 ):
     """Build and return a compiled LangGraph agent graph."""
     broadcaster = ws_broadcaster or _noop_broadcaster
@@ -310,7 +691,12 @@ def build_graph(
             for i, r in enumerate(results, 1):
                 title = r.get("title", "")
                 url = r.get("url", "")
-                snippet = (r.get("raw_content") or r.get("content") or "")[:400]
+                snippet = _choose_search_web_snippet(
+                    query=query,
+                    title=title,
+                    raw_content=r.get("raw_content") or "",
+                    content=r.get("content") or "",
+                )
                 date = r.get("published_date", "")
                 lines.append(f"{i}. {title}\n   URL: {url}\n   Date: {date}\n   {snippet}")
                 docs_to_store.append({
@@ -323,6 +709,20 @@ def build_graph(
                 })
 
             _session_docs.setdefault(session_id, []).extend(docs_to_store)
+
+            # Emit evidence_added event for each new document
+            for doc in docs_to_store:
+                asyncio.create_task(
+                    _emit_investigative_event(
+                        broadcaster,
+                        session_id,
+                        "evidence_added",
+                        evidence_id=doc.get("id", ""),
+                        title=doc.get("title", ""),
+                        url=doc.get("url", ""),
+                        source="search_web",
+                    )
+                )
 
             # Fire partial keyword graph immediately — non-blocking background task
             if docs_to_store:
@@ -343,7 +743,7 @@ def build_graph(
     @tool
     async def search_eu(
         query: str,
-        sources: str = "ep_debates,eurlex,ec_press",
+        sources: str = "eprs_briefings",
         max_docs: int = 8,
     ) -> str:
         """Search EU official public archives: EP debates, EUR-Lex, Council, EC press releases.
@@ -353,7 +753,7 @@ def build_graph(
 
         Args:
             query: Search query string.
-            sources: Comma-separated source IDs (ep_debates, eurlex, ec_press, etc.).
+            sources: Comma-separated source IDs, normalized server-side to reliable briefing sources.
             max_docs: Maximum documents to return (default 8).
         """
         _SERVICES_DIR = Path(__file__).resolve().parents[1]
@@ -379,8 +779,9 @@ def build_graph(
             except Exception:
                 pass
 
-        source_ids = [s.strip() for s in sources.split(",") if s.strip()]
+        source_ids = _normalize_search_eu_sources(sources)
         documents: list[dict] = []
+        minimum_overlap = 2
 
         async def _search_one(sid: str) -> list[dict]:
             cls = ADAPTER_REGISTRY.get(sid)
@@ -408,23 +809,91 @@ def build_graph(
                     return docs
                 else:
                     async with adapter:
-                        parsed = await asyncio.wait_for(adapter.scrape(limit=max_docs), timeout=15)
-                        q = query.lower()
-                        filtered = [
-                            d for d in parsed
-                            if q in (d.title or "").lower() or q in (d.raw_text or "").lower()
-                        ][:max_docs]
+                        query_search = getattr(adapter, "search_query", None)
+                        if callable(query_search):
+                            candidate_queries = _search_eu_candidate_queries(sid, query)
+                            ranked_by_id: dict[str, tuple[int, int, str, dict]] = {}
+                            for candidate_query in candidate_queries:
+                                parsed = await asyncio.wait_for(
+                                    query_search(candidate_query, limit=max_docs),
+                                    timeout=_SEARCH_EU_QUERY_AWARE_TIMEOUT_SECONDS,
+                                )
+                                for d in parsed:
+                                    title = d.title or ""
+                                    text = str(d.raw_text or d.markdown or "")[:4000]
+                                    overlap_score, expansion_bonus = _score_search_eu_document(
+                                        query,
+                                        candidate_queries,
+                                        title,
+                                        text,
+                                    )
+                                    if overlap_score < minimum_overlap:
+                                        continue
+                                    doc = {
+                                        "id": getattr(d, "doc_id", d.url),
+                                        "title": title,
+                                        "text": text,
+                                        "url": d.url,
+                                        "source": sid,
+                                        "date": getattr(d, "date", ""),
+                                    }
+                                    doc_id = str(doc["id"])
+                                    rank_key = (
+                                        overlap_score,
+                                        expansion_bonus,
+                                        doc["date"],
+                                        doc,
+                                    )
+                                    existing = ranked_by_id.get(doc_id)
+                                    if existing is None or rank_key[:3] > existing[:3]:
+                                        ranked_by_id[doc_id] = rank_key
+                            ranked = sorted(
+                                ranked_by_id.values(),
+                                key=lambda item: item[:3],
+                                reverse=True,
+                            )
+                            return [doc for _, _, _, doc in ranked[:max_docs]]
+                        else:
+                            parsed = await asyncio.wait_for(
+                                adapter.scrape(limit=max_docs),
+                                timeout=_SEARCH_EU_ADAPTER_TIMEOUT_SECONDS,
+                            )
+                        ranked: list[tuple[int, str, dict]] = []
+                        for d in parsed:
+                            title = d.title or ""
+                            text = str(d.raw_text or d.markdown or "")[:4000]
+                            score = _score_query_overlap(query, title, text)
+                            if score < minimum_overlap:
+                                continue
+                            ranked.append((
+                                score,
+                                getattr(d, "date", "") or "",
+                                {
+                                    "id": getattr(d, "doc_id", d.url),
+                                    "title": title,
+                                    "text": text,
+                                    "url": d.url,
+                                    "source": sid,
+                                    "date": getattr(d, "date", ""),
+                                },
+                            ))
+                        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
                         return [
-                            {
-                                "id": getattr(d, "doc_id", d.url),
-                                "title": d.title,
-                                "text": str(d.raw_text or d.markdown or "")[:4000],
-                                "url": d.url,
-                                "source": sid,
-                                "date": getattr(d, "date", ""),
-                            }
-                            for d in filtered
+                            doc
+                            for _, _, doc in ranked[:max_docs]
                         ]
+            except asyncio.TimeoutError:
+                timeout_seconds = (
+                    _SEARCH_EU_QUERY_AWARE_TIMEOUT_SECONDS
+                    if callable(getattr(adapter, "search_query", None))
+                    else _SEARCH_EU_ADAPTER_TIMEOUT_SECONDS
+                )
+                log.warning(
+                    "search_eu adapter %s timed out after %ss",
+                    sid,
+                    timeout_seconds,
+                )
+                return []
             except Exception as exc:
                 log.warning("search_eu adapter %s failed: %s", sid, exc)
                 return []
@@ -483,7 +952,12 @@ def build_graph(
         if not docs:
             return "No documents collected yet — run search_eu or search_web first."
 
-        nodes, edges, summary = await _run_graphgen(docs, session_id_arg or session_id, broadcaster)
+        nodes, edges, summary = await _run_graphgen(
+            docs,
+            session_id_arg or session_id,
+            broadcaster,
+            persist_graph,
+        )
 
         # Return entity list so LLM can reason from it
         entities = _session_entities.get(session_id_arg or session_id, [])
@@ -626,6 +1100,21 @@ REPORT FORMAT:
 
     async def agent_node(state: AgentState) -> AgentState:
         messages = state["messages"]
+        is_first_call = not any(getattr(m, "type", None) == "tool" for m in messages)
+        if is_first_call:
+            first_human = next(
+                (m.content for m in messages if getattr(m, "type", None) == "human"), ""
+            )
+            await _emit_investigative_event(
+                broadcaster, session_id, "phase_change", phase="scope"
+            )
+            await _emit_investigative_event(
+                broadcaster,
+                session_id,
+                "thread_started",
+                thread_id=session_id,
+                query=first_human,
+            )
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
         tool_msgs = [m for m in messages if getattr(m, "type", None) == "tool"]
