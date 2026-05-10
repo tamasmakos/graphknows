@@ -70,25 +70,18 @@ def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client:
     _settings = settings
     _sgm = sgm
     _http_client = http_client
-    # Build tools dict for orchestrator
-    from agent.tools.retrieve import RetrieveTool
-    from agent.tools.get_path import GetPathTool
-    from agent.tools.get_chunks import GetChunksTool
-    from agent.tools.get_community import GetCommunityTool
-    from agent.tools.build import BuildTool
+    # Build tools dict for orchestrator — live-search mode only needs search + answer
+    # GraphRAG tools (retrieve, get_chunks, etc.) are excluded: they confuse the model
+    # into looping through empty KG results instead of synthesising from live docs.
     from agent.tools.search import SearchTool
     tools = {
-        "retrieve": RetrieveTool(settings.graphrag_url, http_client),
-        "get_path": GetPathTool(settings.graphrag_url, http_client),
-        "get_chunks": GetChunksTool(settings.graphrag_url, http_client),
-        "get_community": GetCommunityTool(settings.graphrag_url, http_client),
-        "build": BuildTool(settings.graphgen_url, http_client),
         "search": SearchTool(sgm=sgm, ws_broadcaster=_broadcast_graph_update),
     }
     _orchestrator = IterativeOrchestrator(
         tools=tools,
         groq_api_key=settings.groq_api_key,
         llm_model=settings.llm_model,
+        max_steps=3,  # search → optional 2nd search → answer; no looping
     )
 
 
