@@ -9,8 +9,10 @@ from fastapi import FastAPI
 from pythonjsonlogger import jsonlogger
 
 from agent.config import AgentSettings
+from agent.infra.pgvector_client import PgVectorClient
 from agent.session.manager import SessionGraphManager
 from agent.router import _init_router, router
+from services.agent.tools.search_client import SearchServiceClient
 
 
 def _configure_logging() -> None:
@@ -43,12 +45,19 @@ async def lifespan(app: FastAPI):
         neo4j_user=_settings.neo4j_user,
         neo4j_password=_settings.neo4j_password,
     )
-    _init_router(_settings, _sgm, _http_client)
+    pg_client = PgVectorClient(dsn=_settings.pgvector_dsn)
+    await pg_client.connect()
+    await pg_client.ensure_schema()
+    app.state.pg_client = pg_client
+    search_client = SearchServiceClient(base_url=_settings.search_url)
+    _init_router(_settings, _sgm, _http_client, pg_client, search_client)
     app.state.settings = _settings
     app.state.sgm = _sgm
     app.state.http_client = _http_client
+    app.state.search_client = search_client
     yield
     await _http_client.aclose()
+    await app.state.pg_client.close()
 
 
 app = FastAPI(title="Graphknows Agent", version="1.0.0", lifespan=lifespan)

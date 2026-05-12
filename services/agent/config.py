@@ -26,5 +26,9 @@ class AgentSettings(BaseServiceSettings):
     graphrag_url: str = Field(default="http://localhost:8001", alias="GRAPHRAG_URL")
     graphgen_url: str = Field(default="http://localhost:8003", alias="GRAPHGEN_URL")
     search_url: str = Field(default="http://localhost:8004", alias="SEARCH_URL")
+    pgvector_dsn: str = Field(
+        default="postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",
+        alias="PGVECTOR_DSN",
+    )
     memgraph_uri: str = Field(default="bolt://172.17.0.1:17687", alias="MEMGRAPH_URI")
     httpx_timeout: float = Field(default=60.0, alias="HTTPX_TIMEOUT")

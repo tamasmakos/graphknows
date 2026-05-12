@@ -55,6 +55,15 @@ class SessionGraphManager:
             memgraph_uri, self._memgraph_ok, neo4j_uri,
         )
 
+    @property
+    def mg_driver(self):
+        """Return the Memgraph (Neo4j) driver instance.
+
+        Allows external writers (e.g. DualWriter) to run Cypher without
+        duplicating connections.
+        """
+        return self._mg_driver
+
     def _probe_memgraph(self) -> bool:
         """Probe Memgraph connection and return availability status.
 

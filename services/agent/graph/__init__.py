@@ -1,37 +1,24 @@
-"""Evidence-led investigative workflow prototype package."""
-
+"""ADR-002 3-phase macro graph package."""
 from services.agent.graph.state import (
-    ClaimRecord,
-    ContradictionRecord,
-    EvidenceRecord,
-    EvidenceThread,
-    GraphPathRef,
-    HypothesisGraph,
+    Chunk,
+    Entity,
     InvestigativeState,
-    ProvenanceEnvelope,
+    RawDoc,
+    Relation,
+    SubQuestion,
+    WSEvent,
     build_initial_investigative_state,
-    claim_has_document_support,
-    claim_has_graph_support,
-    claim_is_publishable,
-    index_evidence_by_id,
 )
-from services.agent.graph.workflow import NodeSpec, build_workflow_spec, node_names_by_phase
+from services.agent.graph.workflow import build_workflow
 
 __all__ = [
-    "ClaimRecord",
-    "ContradictionRecord",
-    "EvidenceRecord",
-    "EvidenceThread",
-    "GraphPathRef",
-    "HypothesisGraph",
+    "Chunk",
+    "Entity",
     "InvestigativeState",
-    "NodeSpec",
-    "ProvenanceEnvelope",
+    "RawDoc",
+    "Relation",
+    "SubQuestion",
+    "WSEvent",
     "build_initial_investigative_state",
-    "build_workflow_spec",
-    "claim_has_document_support",
-    "claim_has_graph_support",
-    "claim_is_publishable",
-    "index_evidence_by_id",
-    "node_names_by_phase",
+    "build_workflow",
 ]
