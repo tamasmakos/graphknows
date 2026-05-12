@@ -4,6 +4,23 @@
 > Format: ## [YYYY-MM-DD] action | subject
 > Rotate when >500 entries.
 
+## [2026-05-12] restructure | wiki cleanup — flat concepts/ → typed folders
+- Deleted concepts/ folder entirely (was a catch-all with 33 files)
+- New structure: architecture/ adr/ product/ research/ ops/ entities/ raw/
+- Deleted 12 noise files: 6 dated session notes (2026-05-06), graph-viz-diagnosis, test-results-frontend, kanban-plan, graphgen-architecture, graphrag-and-downstream, pipeline-stages
+- Promoted 4 files to adr/: 001-langgraph-agent, 002-investigative-workflow, 003-services-refactor, 004-ontology-patch
+- Moved 6 files to architecture/, 4 to research/, 5 to product/, 2 to ops/
+- Rewrote SCHEMA.md: full structure definition, folder conventions, tag taxonomy, log format rules
+- Rewrote index.md: table-per-folder layout, [[wikilinks]], page count 26
+
+## [2026-05-12] pivot | deep-research-agent model
+- Major product pivot: monolith shared KG → per-session deep research agent
+- Archived 35 stale kanban cards from old model
+- Created 7 new cards: product-vision-rewrite, deep-research-loop, dual-write, hybrid-retrieval, brief-node, session-lifecycle, pgvector-namespacing
+- Rewrote: product-architecture-v2.md, project-roadmap.md
+- Created: deep-research-agent-design.md, dual-write-hybrid-retrieval.md
+- Updated: index.md
+
 ## [2026-05-10] create | concepts/investigative-agent-architecture-redesign-2026-05-10.md
 - Captured the 3 macro-phase investigative workflow redesign: Scope → Investigate → Communicate
 - Documented strict HTTP-only boundaries for search/graphgen, async session graph jobs, and Memgraph session ingest mode

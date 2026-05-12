@@ -56,3 +56,4 @@ lib/
 
 mcp.json
 .hermes
+.worktrees/

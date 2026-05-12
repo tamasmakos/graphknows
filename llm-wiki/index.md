@@ -1,79 +1,76 @@
-# Wiki Index
+# Wiki Index — Graphknows
 
-> Political Intelligence & Knowledge Graph Research — Graphknows v2 knowledge base.
-> Read this first to find relevant pages for any query.
-> Last updated: 2026-05-06 | Total pages: 21
-
----
-
-## ⚡ Start Here for Development
-
-- [[product-architecture-v2]] — v2 architecture overview: service decomposition, Memgraph session graphs, frontend, rationale
-- [[project-roadmap]] — **4-phase roadmap with exit criteria, timeline, and all task IDs**
-- [[kanban-plan]] — **full Kanban registry** — all tasks with IDs, status, dependencies
+> Deep research agent for political intelligence.
+> Last updated: 2026-05-12 | Pages: 26
 
 ---
 
-## Entities
+## architecture/ — Authoritative Design Docs
 
-- [[graphgen-project]] — The GraphGen Python package: KG generation from political text, tech stack, key results, infrastructure
-
----
-
-## Concepts — Architecture
-- [[investigative-agent-architecture-redesign-2026-05-10]] — redesign plan for a 3-phase investigative LangGraph workflow, HTTP-only service boundaries, and async session graph jobs
-- [[langgraph-agent-architecture-2026-05-08]] — **v3 agent architecture**: LangGraph StateGraph, 4 tools (search_web/search_eu/graphgen/graphrag), EPRS report format, live WS streaming
-
-- [[graphgen-architecture]] — Full pipeline architecture: DOC→SEGMENT→CHUNK→ENTITY→TOPIC, PipelineContext bus, module tree, config system
-- [[pipeline-stages]] — Each pipeline stage in detail: OntologyLabelExtractor, chunking, GLiNER2, DSPy, graph assembly, Node2Vec, Leiden, summarization
-- [[knowledge-graph-construction]] — KG construction methodology, ontology schema, scale-free topology, entity resolution, canonicalization
-- [[graphrag-and-downstream]] — GraphKnows hybrid GraphRAG agent, Neo4j+pgvector dual retrieval, pending tasks, RAGAS plan
-
-- [[architecture-reference]] — **canonical technical reference**: ASCII service map, full data-flow, API contracts, env vars, local startup commands, tunnel setup
-- [[product-roadmap-v2]] — **strategic roadmap v2**: shipped PRs, stability gates, prioritised next features, horizon bets, GTM beachhead
-
-- [[services-refactor-phases-0-5]] — **COMPLETE refactor log**: all 5 phases, what changed, pitfalls, test status, Google style enforcement
-
-### Service Design (v2)
-
-- [[service-design-agent]] — `services/agent/` spec: HTTP API, tools (6), session lifecycle, Memgraph CRUD, write-back
-- [[service-design-search]] — `services/search/` spec: source adapters, job queue, idempotent ingestion, reference resolver
-- [[frontend-v2-design]] — `apps/web/` v2: split-pane layout, D3.js graph, reasoning trace, export suite, investigation sessions
-- [[mobile-first-frontend-revamp-2026-05-06]] — mobile-first SPA restructuring of `apps/web/index.html`: answer/graph split, drawer investigations, collapsed reasoning, mobile graph controls
-- [[mobile-graph-usability-pass-2026-05-06]] — focused mobile graph pass: tighter framing, tap-to-focus, mobile zoom/focus behavior, label prioritisation, selected-neighborhood emphasis
-- [[immersive-answer-graph-redesign-2026-05-06]] — redesign direction: Neo4j-like entity graph, navigational provenance graph, live reasoning timeline, Perplexity-grade citations
-- [[integration-qa-immersive-answer-graph-2026-05-06]] — integrated immersive answer/graph branch QA: backend clean, live UX still below product bar, held as checkpoint
-- [[canonical-frontend-promotion-2026-05-06]] — promoted integration dark-blue SPA into the canonical served frontend and verified local/public parity
-- [[frontend-reconciliation-2026-05-06]] — reconciled canonical frontend against newer `/tmp/gk-ux-integration` work, promoted the richer variant, and verified local/public/mobile parity
+| Page | Summary |
+|---|---|
+| [[architecture/product-architecture]] | Vision, service map, agent loop, infrastructure roles, non-goals |
+| [[architecture/agent-design]] | Deep research agent: generate→search→reflect loop, novelty stopping, InvestigativeState, WS events |
+| [[architecture/dual-write-retrieval]] | DualWriter (Memgraph + pgvector), RRF hybrid retrieval, HybridRetriever interface |
+| [[architecture/reference]] | Full service topology, API contracts, ports, env vars, local dev setup |
+| [[architecture/service-agent]] | services/agent/ internal design: LangGraph nodes, session graph, HTTP clients |
+| [[architecture/service-search]] | services/search/ design: BaseSource, adapter pattern, EU source adapters |
 
 ---
 
-## Concepts — Product & Business
+## adr/ — Architecture Decision Records
 
-- [[business-plan]] — Problem, solution, target customers, value prop, revenue model, competitive landscape, moat, funding
-- [[market-analysis]] — TAM/SAM/SOM, comparable SaaS pricing, EU regulatory demand, buyer personas
-- [[project-roadmap]] — Phase 0–4 roadmap: Foundation → Architecture → Frontend → Hardening → Pilot
-
----
-
-## Concepts — Operations
-
-- [[technical-debt]] — 10-item debt register with severity, description, and remediation (label collapse, community_id, pgvector, etc.)
-- [[administration]] — Repo structure, branch/PR workflow, config management, key commands, infrastructure endpoints (Neo4j 7687, Memgraph 7688, pgvector 5432)
-- [[kanban-plan]] — Full task registry: all phases, IDs, status, dependencies
+| # | Page | Decision | Status |
+|---|---|---|---|
+| 001 | [[adr/001-langgraph-agent]] | Replace ReAct loop with LangGraph StateGraph | accepted |
+| 002 | [[adr/002-investigative-workflow]] | 3-phase investigative workflow (Scope→Investigate→Communicate) | accepted |
+| 003 | [[adr/003-services-refactor]] | Decompose monolith into search/graphgen/graphrag/agent microservices | accepted |
+| 004 | [[adr/004-ontology-patch]] | Ontology injection bug + 3-phase patch runner | accepted |
 
 ---
 
-## Queries
+## product/ — Vision, Roadmap, Business
 
-- [[gtm-strategy]] — Three-phase GTM: EU Parliament → national parliaments → regulatory bodies
+| Page | Summary |
+|---|---|
+| [[product/roadmap]] | Current sprint, next features, horizon — living document |
+| [[product/business-plan]] | Business model, target users, monetisation |
+| [[product/market-analysis]] | Competitive landscape, market sizing |
+| [[product/frontend-design]] | Frontend v2 spec: split-pane chat + D3 graph canvas + export suite |
+| [[product/gtm-strategy]] | Go-to-market: beachhead users, channels, pricing |
 
 ---
 
-## Raw Sources
+## research/ — Domain Knowledge & Evaluation
 
-- raw/papers/graphgen-thesis-synthesis.md — Immutable synthesis of thesis findings and corpus results
-- [[thesis-findings-and-learnings]] — Empirical results, what worked/didn't, open questions, academic framing
-- [[test-results-frontend]] — Frontend v2 smoke test results (8/8 pass after fixes)
-- [[eu-source-taxonomy]] — Full taxonomy of EU public record types: 12 institutions, 25+ source types, PIV/difficulty ratings, adapter priority order
-- [[graph-visualisation-diagnosis]] — Root cause analysis: missing edges, no topic nodes, empty citations, node label issues, RAGAS plan
+| Page | Summary |
+|---|---|
+| [[research/eu-source-taxonomy]] | Full taxonomy of EU public record types, endpoints, formats, political value |
+| [[research/kg-construction]] | KG construction methodology: GLiNER2, DSPy, Leiden, ontology |
+| [[research/thesis-findings]] | ELTE MSc thesis findings: EP debate corpus, Node2Vec, modularity results |
+| [[research/ragas-evaluation]] | RAGAS eval results (baseline): context_precision, faithfulness, relevancy |
+
+---
+
+## ops/ — Operations & Infra
+
+| Page | Summary |
+|---|---|
+| [[ops/administration]] | Service startup, tunnel, environment setup |
+| [[ops/technical-debt]] | Known tech debt items, prioritised |
+
+---
+
+## entities/ — Tools, Models, Services
+
+| Page | Summary |
+|---|---|
+| [[entities/graphgen-project]] | GraphGen pipeline: history, capabilities, current role |
+
+---
+
+## raw/ — Immutable Source Material
+
+| Page | Summary |
+|---|---|
+| [[raw/papers/graphgen-thesis-synthesis]] | Synthesised GraphGen MSc thesis — source material |
