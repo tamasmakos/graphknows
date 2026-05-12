@@ -477,7 +477,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         _active_sessions.add(session_id)
 
     initial_state = build_initial_investigative_state(session_id, req.message)
-    workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver, search_client=_get_search_client())
+    workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client())
     result = await workflow.ainvoke(initial_state)
 
     subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)
@@ -573,7 +573,7 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
 
     async def _event_generator():
         initial_state = build_initial_investigative_state(session_id, req.message)
-        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver, search_client=_get_search_client())
+        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client())
         result = await workflow.ainvoke(initial_state)
         briefing = result.get("briefing") or ""
         yield f"event: briefing\ndata: {json.dumps({'briefing': briefing})}\n\n"
@@ -835,111 +835,47 @@ async def ws_stream(websocket: WebSocket, session_id: str):
     _ws_connections[session_id] = websocket
     try:
         data = await websocket.receive_json()
-        message = data.get("message", "")
-        if not message:
-            await websocket.send_json({"type": "error", "error": "empty message"})
+        query = data.get("query") or data.get("message", "")
+        if not query:
+            await websocket.send_json({"type": "error", "message": "empty query"})
             return
 
         sgm = _get_sgm()
-        settings = _get_settings()
 
-        # Create session if new
+        # Create session if new (gracefully handle Memgraph-down)
         is_new = session_id not in _active_sessions
         if is_new:
             log.info("WS: Creating new session: %s", session_id)
-            await asyncio.to_thread(sgm.create_session, session_id)
+            try:
+                await asyncio.to_thread(sgm.create_session, session_id)
+            except Exception as sg_err:
+                log.warning("WS: create_session failed (non-fatal, continuing): %s", sg_err)
             _active_sessions.add(session_id)
 
         await websocket.send_json({"type": "status", "status": "thinking"})
 
-        from agent.langgraph_agent import build_graph
-        from langchain_core.messages import HumanMessage
+        from agent.graph.state import build_initial_investigative_state
+        from agent.graph.workflow import build_workflow
 
-        async def broadcaster(sid: str, payload: dict) -> None:
-            try:
-                await websocket.send_json(payload)
-                log.info("WS: broadcast %s (%d bytes) for %s", payload.get("type"), len(str(payload)), sid)
-            except Exception as bc_exc:
-                log.warning("WS: broadcaster failed for %s: %s", sid, bc_exc)
-
-        async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
-            def _persist() -> None:
-                for node in nodes:
-                    props = dict(node.get("properties") or {})
-                    node_name = props.get("name") or node.get("id", "")
-                    sgm.add_node(
-                        sid,
-                        node_name,
-                        _normalize_session_graph_token(node.get("label") or node.get("type"), "ENTITY"),
-                        {"name": node_name},
-                    )
-                for edge in edges:
-                    sgm.add_edge(
-                        sid,
-                        str(edge.get("source", "")),
-                        str(edge.get("target", "")),
-                        _normalize_session_graph_token(edge.get("type"), "RELATED_TO"),
-                        dict(edge.get("properties") or {}),
-                    )
-
-            await asyncio.to_thread(_persist)
-
-        graph = build_graph(
-            ws_broadcaster=broadcaster,
-            session_id=session_id,
-            groq_api_key=settings.groq_api_key,
-            persist_graph=persist_graph,
+        initial_state = build_initial_investigative_state(session_id, topic=query)
+        workflow = build_workflow(
+            pg_client=_get_pg_client(),
+            mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None,
+            search_client=_get_search_client(),
         )
+        result = await workflow.ainvoke(initial_state)
 
-        full_answer = ""
-        thought_buf = ""
-        last_thought_flush = 0.0
+        for event in result.get("ws_events", []):
+            try:
+                await websocket.send_json(event)
+            except Exception:
+                pass
 
-        async def flush_thoughts():
-            nonlocal thought_buf, last_thought_flush
-            if thought_buf:
-                await websocket.send_json({"type": "thought_token", "token": thought_buf})
-                thought_buf = ""
-                last_thought_flush = asyncio.get_event_loop().time()
-
-        async for event in graph.astream_events(
-            {"messages": [HumanMessage(content=message)]},
-            config={"recursion_limit": 12},
-            version="v2",
-        ):
-            kind = event["event"]
-
-            if kind == "on_chat_model_stream":
-                token = event["data"]["chunk"].content
-                if token:
-                    thought_buf += token
-                    full_answer += token
-                    now = asyncio.get_event_loop().time()
-                    if now - last_thought_flush >= 0.35:
-                        await flush_thoughts()
-
-            elif kind == "on_tool_start":
-                await flush_thoughts()
-                await websocket.send_json({
-                    "type": "tool_start",
-                    "tool": event["name"],
-                    "input": str(event["data"].get("input", ""))[:200],
-                })
-
-            elif kind == "on_tool_end":
-                await flush_thoughts()
-                result = str(event["data"].get("output", ""))
-                await websocket.send_json({
-                    "type": "tool_result",
-                    "tool": event["name"],
-                    "summary": result[:500],
-                })
-
-        await flush_thoughts()
         await websocket.send_json({
-            "type": "answer",
-            "answer": full_answer,
-            "session_id": session_id,
+            "type": "done",
+            "briefing": result.get("briefing") or "",
+            "iteration_count": result.get("iteration_count", 0),
+            "dup_ratio": result.get("dup_ratio", 0.0),
         })
 
     except WebSocketDisconnect:

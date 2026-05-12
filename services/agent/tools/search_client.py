@@ -26,8 +26,8 @@ class SearchServiceClient:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = (base_url or os.environ.get(
-            "SEARCH_SERVICE_URL", "http://localhost:8002",
-        )).rstrip("/")
+            "SEARCH_SERVICE_URL", "http://localhost:8040"
+        )).rstrip("/") + "/api/v1"
         self._client = http_client or httpx.AsyncClient(timeout=30.0)
 
     async def search(
