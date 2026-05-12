@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 set -a && source .env && set +a
 export LANG=C LC_ALL=C
 
-PYPATH="/root/graphknows/services/agent:/root/graphknows/services:/root/graphknows/services/graphgen"
+PYPATH="/root/graphknows/services/agent:/root/graphknows/services:/root/graphknows/services/graphgen:/root/graphknows/services/scrapers"
 
 echo "=== Graphknows startup $(date) ==="
 
@@ -49,9 +49,22 @@ frontend_watchdog() {
   done
 }
 
+# ── Search service watchdog ─────────────────────────────────────────────────
+search_watchdog() {
+  while true; do
+    echo "[watchdog] Starting search service on :8040..."
+    PYTHONPATH="$PYPATH" uvicorn services.search.main:app \
+      --host 0.0.0.0 --port 8040 --log-level info \
+      >> /tmp/search.log 2>&1 || true
+    echo "[watchdog] Search exited — restarting in 5s..."
+    sleep 5
+  done
+}
+
 # Kill anything on our ports first
 fuser -k 8001/tcp 2>/dev/null || true
 fuser -k 8002/tcp 2>/dev/null || true
+fuser -k 8040/tcp 2>/dev/null || true
 # Don't kill 8080 — old frontend may still be the right one
 
 agent_watchdog &
@@ -60,10 +73,13 @@ AGENT_PID=$!
 graphrag_watchdog &
 GRAPHRAG_PID=$!
 
+search_watchdog &
+SEARCH_PID=$!
+
 frontend_watchdog &
 FRONTEND_PID=$!
 
-echo "Watchdogs started: agent=$AGENT_PID graphrag=$GRAPHRAG_PID frontend=$FRONTEND_PID"
+echo "Watchdogs started: agent=$AGENT_PID graphrag=$GRAPHRAG_PID search=$SEARCH_PID frontend=$FRONTEND_PID"
 
 # ── Cloudflare tunnel ───────────────────────────────────────────────────────
 if [[ "${1:-}" != "--no-tunnel" ]]; then
