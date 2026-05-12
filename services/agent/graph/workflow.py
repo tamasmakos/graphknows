@@ -1,6 +1,8 @@
 """LangGraph StateGraph for the ADR-002 3-phase macro graph."""
 from __future__ import annotations
 
+from typing import Any
+
 from langgraph.graph import END, StateGraph
 
 from services.agent.graph.nodes.communicate import communicate_node
@@ -29,12 +31,24 @@ def should_continue(state: InvestigativeState) -> str:
     return "continue"
 
 
-def build_workflow() -> StateGraph:
+def build_workflow(
+    pg_client: Any | None = None,
+    mg_driver: Any | None = None,
+) -> StateGraph:
     """Build the 3-phase macro StateGraph.
 
+    Args:
+        pg_client: Optional PgVectorClient for hybrid retrieval wiring
+            (reserved for Wave 4).
+        mg_driver: Optional Memgraph driver for hybrid retrieval wiring
+            (reserved for Wave 4).
+
     Returns:
-        A compiled StateGraph with scope → investigate → communicate flow.
+        A compiled StateGraph with scope -> investigate -> communicate flow.
     """
+    # TODO(Wave 4): wire pg_client and mg_driver into make_communicate_node
+    _ = (pg_client, mg_driver)
+
     workflow = StateGraph(InvestigativeState)
     workflow.add_node("scope", scope_node)
     workflow.add_node("investigate", investigate_node)

@@ -206,3 +206,33 @@ class PgVectorClient:
             {"id": r["id"], "doc_id": r["doc_id"], "text": r["text"], "score": round(float(r["score"]), 4)}
             for r in rows
         ]
+
+    async def get_chunks_by_doc_ids(
+        self, session_id: str, doc_ids: list[str]
+    ) -> list[dict[str, Any]]:
+        """Fetch chunks by doc_id list, filtered by session_id.
+
+        Args:
+            session_id: Session namespace to filter on.
+            doc_ids: List of document IDs to retrieve chunks for.
+
+        Returns:
+            List of dicts with keys id, doc_id, text.
+        """
+        assert self._pool is not None
+        if not doc_ids:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, doc_id, text
+                FROM chunks
+                WHERE session_id = $1 AND doc_id = ANY($2::text[])
+                """,
+                session_id,
+                doc_ids,
+            )
+        return [
+            {"id": r["id"], "doc_id": r["doc_id"], "text": r["text"]}
+            for r in rows
+        ]
