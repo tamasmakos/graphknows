@@ -91,17 +91,28 @@ async def communicate_node(
 
 def make_communicate_node(
     retriever: HybridRetriever | None = None,
+    pg_client: Any = None,
+    mg_driver: Any = None,
 ):
-    """Factory: return a communicate_node closure with a bound retriever.
+    """Factory: return a communicate_node closure with bound dependencies.
+
+    If ``retriever`` is None but ``pg_client`` and ``mg_driver`` are provided,
+    a HybridRetriever is lazily constructed at invocation time (when the
+    session_id is available from state).
 
     Args:
-        retriever: Optional HybridRetriever instance to bind.
+        retriever: Optional pre-built HybridRetriever instance.
+        pg_client: Optional PgVectorClient for lazy retriever construction.
+        mg_driver: Optional Memgraph driver for lazy retriever construction.
 
     Returns:
         Async callable compatible with LangGraph node signature.
     """
 
     async def _communicate_node(state: InvestigativeState) -> dict[str, Any]:
-        return await communicate_node(state, retriever=retriever)
+        actual_retriever = retriever
+        if actual_retriever is None and pg_client is not None and mg_driver is not None:
+            actual_retriever = HybridRetriever(state["session_id"], pg_client, mg_driver)
+        return await communicate_node(state, retriever=actual_retriever)
 
     return _communicate_node

@@ -5,8 +5,8 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from services.agent.graph.nodes.communicate import communicate_node
-from services.agent.graph.nodes.investigate import investigate_node
+from services.agent.graph.nodes.communicate import make_communicate_node
+from services.agent.graph.nodes.investigate import make_investigate_node
 from services.agent.graph.nodes.scope import scope_node
 from services.agent.graph.state import InvestigativeState
 
@@ -38,21 +38,19 @@ def build_workflow(
     """Build the 3-phase macro StateGraph.
 
     Args:
-        pg_client: Optional PgVectorClient for hybrid retrieval wiring
-            (reserved for Wave 4).
-        mg_driver: Optional Memgraph driver for hybrid retrieval wiring
-            (reserved for Wave 4).
+        pg_client: Optional PgVectorClient for hybrid retrieval wiring.
+        mg_driver: Optional Memgraph driver for hybrid retrieval wiring.
 
     Returns:
         A compiled StateGraph with scope -> investigate -> communicate flow.
     """
-    # TODO(Wave 4): wire pg_client and mg_driver into make_communicate_node
-    _ = (pg_client, mg_driver)
+    inv_node = make_investigate_node(pg_client, mg_driver)
+    comm_node = make_communicate_node(pg_client=pg_client, mg_driver=mg_driver)
 
     workflow = StateGraph(InvestigativeState)
     workflow.add_node("scope", scope_node)
-    workflow.add_node("investigate", investigate_node)
-    workflow.add_node("communicate", communicate_node)
+    workflow.add_node("investigate", inv_node)
+    workflow.add_node("communicate", comm_node)
     workflow.set_entry_point("scope")
     workflow.add_edge("scope", "investigate")
     workflow.add_conditional_edges(

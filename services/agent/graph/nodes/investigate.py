@@ -144,11 +144,8 @@ def _compute_duplication_ratio(
     if not existing_chunks:
         return 0.0
 
-    existing_texts: list[str] = []
-    for c in existing_chunks:
-        if c.text:
-            existing_texts.append(c.text)
-    if not existing_texts:
+    existing_texts = [c.text for c in existing_chunks if c.text]
+    if len(existing_texts) < 2:
         return 0.0
 
     new_texts = [c.text for c in new_chunks if c.text]
@@ -157,6 +154,12 @@ def _compute_duplication_ratio(
 
     existing_embs: np.ndarray = embedder.encode(existing_texts, show_progress_bar=False)
     new_embs: np.ndarray = embedder.encode(new_texts, show_progress_bar=False)
+
+    # Ensure 2D arrays (n_samples, dim) — encode may return 1D for single text
+    if existing_embs.ndim == 1:
+        existing_embs = existing_embs.reshape(1, -1)
+    if new_embs.ndim == 1:
+        new_embs = new_embs.reshape(1, -1)
 
     existing_norm = existing_embs / np.linalg.norm(existing_embs, axis=1, keepdims=True)
     new_norm = new_embs / np.linalg.norm(new_embs, axis=1, keepdims=True)

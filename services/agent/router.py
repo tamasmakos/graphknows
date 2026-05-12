@@ -39,6 +39,7 @@ except Exception:
     InvestigativeState = None  # type: ignore
     build_initial_investigative_state = None  # type: ignore
     REQUIRED_STREAM_EVENTS = ()  # type: ignore
+from agent.infra.pgvector_client import PgVectorClient
 from agent.session.manager import SessionGraphManager
 from agent.session_end import merge_session_to_neo4j
 try:
@@ -54,6 +55,7 @@ router = APIRouter()
 _settings: AgentSettings | None = None
 _sgm: SessionGraphManager | None = None
 _http_client: httpx.AsyncClient | None = None
+_pg_client: PgVectorClient | None = None
 _ws_connections: dict[str, WebSocket] = {}
 
 
@@ -84,12 +86,19 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient) -> None:
+def _get_pg_client() -> PgVectorClient:
+    if _pg_client is None:
+        raise HTTPException(status_code=500, detail="PgVectorClient not initialized")
+    return _pg_client
+
+
+def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client
+    global _settings, _sgm, _http_client, _pg_client
     _settings = settings
     _sgm = sgm
     _http_client = http_client
+    _pg_client = pg_client
 
 
 # ---------------------------------------------------------------------------
@@ -446,12 +455,12 @@ async def health() -> Dict[str, str]:
 
 @router.post("/chat", response_model=ChatResponse, summary="Send a message to the agent")
 async def chat(req: ChatRequest) -> ChatResponse:
-    """HTTP fallback for /chat — routes through the LangGraph agent."""
-    from agent.langgraph_agent import build_graph
-    from langchain_core.messages import HumanMessage
+    """HTTP endpoint — runs the ADR-002 investigative workflow and returns a briefing."""
+    from services.agent.graph.state import build_initial_investigative_state
+    from services.agent.graph.workflow import build_workflow
 
     sgm = _get_sgm()
-    settings = _get_settings()
+    pg = _get_pg_client()
 
     session_id: str = req.session_id or str(uuid.uuid4())
     is_new = session_id not in _active_sessions
@@ -461,56 +470,20 @@ async def chat(req: ChatRequest) -> ChatResponse:
         await asyncio.to_thread(sgm.create_session, session_id)
         _active_sessions.add(session_id)
 
-    async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
-        def _persist() -> None:
-            for node in nodes:
-                props = dict(node.get("properties") or {})
-                node_name = props.get("name") or node.get("id", "")
-                sgm.add_node(
-                    sid,
-                    node_name,
-                    _normalize_session_graph_token(node.get("label") or node.get("type"), "ENTITY"),
-                    {"name": node_name},
-                )
-            for edge in edges:
-                sgm.add_edge(
-                    sid,
-                    str(edge.get("source", "")),
-                    str(edge.get("target", "")),
-                    _normalize_session_graph_token(edge.get("type"), "RELATED_TO"),
-                    dict(edge.get("properties") or {}),
-                )
-
-        await asyncio.to_thread(_persist)
-
-    graph = build_graph(
-        ws_broadcaster=None,
-        session_id=session_id,
-        groq_api_key=settings.groq_api_key,
-        persist_graph=persist_graph,
-    )
-
-    full_answer = ""
-    async for event in graph.astream_events(
-        {"messages": [HumanMessage(content=req.message)]},
-        config={"recursion_limit": 12},
-        version="v2",
-    ):
-        if event["event"] == "on_chat_model_stream":
-            token = event["data"]["chunk"].content
-            if token:
-                full_answer += token
+    initial_state = build_initial_investigative_state(session_id, req.message)
+    workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver)
+    result = await workflow.ainvoke(initial_state)
 
     subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)
 
     return ChatResponse(
-        answer=full_answer,
+        answer=result.get("briefing") or "",
         session_id=session_id,
         graph=GraphResponse(
             nodes=subgraph.get("nodes", []),
             edges=subgraph.get("edges", []),
         ),
-        reasoning_steps=[],
+        reasoning_steps=result.get("ws_events", []),
         sources=[],
     )
 
@@ -582,59 +555,22 @@ async def merge_session(session_id: str) -> Dict[str, Any]:
 
 @router.post("/sessions/{session_id}/query", summary="Query session with SSE streaming")
 async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse:
-    """Send a message to the LangGraph agent and stream back events via SSE."""
+    """Run the ADR-002 investigative workflow and stream the briefing as a single SSE event."""
     if session_id not in _active_sessions:
         raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
 
-    from agent.langgraph_agent import build_graph
-    from langchain_core.messages import HumanMessage
-    settings = _get_settings()
+    from services.agent.graph.state import build_initial_investigative_state
+    from services.agent.graph.workflow import build_workflow
+
     sgm = _get_sgm()
-
-    async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
-        def _persist() -> None:
-            for node in nodes:
-                props = dict(node.get("properties") or {})
-                node_name = props.get("name") or node.get("id", "")
-                sgm.add_node(
-                    sid,
-                    node_name,
-                    _normalize_session_graph_token(node.get("label") or node.get("type"), "ENTITY"),
-                    {"name": node_name},
-                )
-            for edge in edges:
-                sgm.add_edge(
-                    sid,
-                    str(edge.get("source", "")),
-                    str(edge.get("target", "")),
-                    _normalize_session_graph_token(edge.get("type"), "RELATED_TO"),
-                    dict(edge.get("properties") or {}),
-                )
-
-        await asyncio.to_thread(_persist)
+    pg = _get_pg_client()
 
     async def _event_generator():
-        graph = build_graph(
-            ws_broadcaster=None,
-            session_id=session_id,
-            groq_api_key=settings.groq_api_key,
-            persist_graph=persist_graph,
-        )
-        async for event in graph.astream_events(
-            {"messages": [HumanMessage(content=req.message)]},
-            config={"recursion_limit": 12},
-            version="v2",
-        ):
-            kind = event["event"]
-            if kind == "on_chat_model_stream":
-                token = event["data"]["chunk"].content
-                if token:
-                    yield f"event: thought_token\ndata: {json.dumps({'token': token})}\n\n"
-            elif kind == "on_tool_start":
-                yield f"event: tool_start\ndata: {json.dumps({'tool': event['name'], 'input': str(event['data'].get('input', ''))[:200]})}\n\n"
-            elif kind == "on_tool_end":
-                result = str(event["data"].get("output", ""))
-                yield f"event: tool_result\ndata: {json.dumps({'tool': event['name'], 'summary': result[:500]})}\n\n"
+        initial_state = build_initial_investigative_state(session_id, req.message)
+        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver)
+        result = await workflow.ainvoke(initial_state)
+        briefing = result.get("briefing") or ""
+        yield f"event: briefing\ndata: {json.dumps({'briefing': briefing})}\n\n"
 
     return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
