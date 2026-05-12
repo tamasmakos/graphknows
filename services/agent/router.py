@@ -56,6 +56,7 @@ _settings: AgentSettings | None = None
 _sgm: SessionGraphManager | None = None
 _http_client: httpx.AsyncClient | None = None
 _pg_client: PgVectorClient | None = None
+_search_client: Any | None = None
 _ws_connections: dict[str, WebSocket] = {}
 
 
@@ -92,13 +93,18 @@ def _get_pg_client() -> PgVectorClient:
     return _pg_client
 
 
-def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None) -> None:
+def _get_search_client() -> Any | None:
+    return _search_client
+
+
+def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None, search_client: Any | None = None) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client, _pg_client
+    global _settings, _sgm, _http_client, _pg_client, _search_client
     _settings = settings
     _sgm = sgm
     _http_client = http_client
     _pg_client = pg_client
+    _search_client = search_client
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +477,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         _active_sessions.add(session_id)
 
     initial_state = build_initial_investigative_state(session_id, req.message)
-    workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver)
+    workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver, search_client=_get_search_client())
     result = await workflow.ainvoke(initial_state)
 
     subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)
@@ -567,7 +573,7 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
 
     async def _event_generator():
         initial_state = build_initial_investigative_state(session_id, req.message)
-        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver)
+        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver, search_client=_get_search_client())
         result = await workflow.ainvoke(initial_state)
         briefing = result.get("briefing") or ""
         yield f"event: briefing\ndata: {json.dumps({'briefing': briefing})}\n\n"

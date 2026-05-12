@@ -18,14 +18,39 @@ from services.agent.graph.events import (
     search_done_event,
     search_start_event,
 )
-from services.agent.graph.state import Chunk, Entity, InvestigativeState, RawDoc, Relation
+from services.agent.graph.state import Chunk, Entity, InvestigativeState, RawDoc, Relation, SubQuestion
 
 if TYPE_CHECKING:
     from services.agent.infra.pgvector_client import PgVectorClient
+    from services.agent.tools.search_client import SearchServiceClient
 
 logger = logging.getLogger(__name__)
 
 EMBED_MODEL: str = "BAAI/bge-small-en-v1.5"
+
+
+def _make_stub_doc(iteration: int, topic: str) -> RawDoc:
+    """Create a placeholder RawDoc when the search service is unavailable."""
+    stub_doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    return RawDoc(
+        id=stub_doc_id,
+        title=f"Stub Document {iteration}",
+        text=f"This is placeholder content for search iteration {iteration} on topic: {topic}",
+        url=f"https://example.test/doc/{stub_doc_id}",
+        source="stub",
+        date=None,
+    )
+
+
+def _pick_sources(plan: list[SubQuestion]) -> list[str]:
+    """Flatten *source_priorities* from all sub-questions, deduplicate, filter to known adapters."""
+    known = {"ep_debates", "eurlex", "uk_legislation", "web"}
+    sources: list[str] = []
+    for sq in plan:
+        for src in sq.source_priorities:
+            if src in known and src not in sources:
+                sources.append(src)
+    return sources or ["ep_debates", "eurlex"]
 
 
 class DualWriter:
@@ -201,12 +226,15 @@ def _novelty_check(
 def make_investigate_node(
     pg_client: PgVectorClient | None = None,
     mg_driver: Any = None,
+    search_client: SearchServiceClient | None = None,
 ) -> Any:
     """Factory for investigate_node with injected dependencies.
 
     Args:
         pg_client: Optional PgVectorClient for chunk persistence.
         mg_driver: Optional Memgraph driver for graph persistence.
+        search_client: Optional SearchServiceClient for real document fetching.
+            If None, falls back to stub documents.
 
     Returns:
         Async function matching the LangGraph node signature.
@@ -218,7 +246,7 @@ def make_investigate_node(
     async def investigate_node(state: InvestigativeState) -> dict[str, Any]:
         """Execute a single pass of the investigate loop.
 
-        Increments iteration_count, runs placeholder search, creates chunks/
+        Increments iteration_count, runs search (real or stub), creates chunks/
         entities/relations, persists via DualWriter if dependencies are wired,
         performs a novelty check, and emits appropriate WS events.
 
@@ -236,27 +264,33 @@ def make_investigate_node(
 
         ws_events.append(search_start_event(session_id, iteration, state.get("queries", [])))
 
-        stub_doc_id = f"doc-{uuid.uuid4().hex[:8]}"
-        raw_docs = [
-            RawDoc(
-                id=stub_doc_id,
-                title=f"Stub Document {iteration}",
-                text=f"This is placeholder content for search iteration {iteration} on topic: {state['topic']}",
-                url=f"https://example.test/doc/{stub_doc_id}",
-                source="stub",
-                date=None,
-            ),
-        ]
+        if search_client is not None:
+            try:
+                raw_docs = await search_client.fetch_documents(
+                    query=state["queries"][0] if state["queries"] else state["topic"],
+                    sources=_pick_sources(state.get("plan", [])),
+                    limit=5,
+                )
+            except Exception:
+                logger.warning(
+                    "Search service call failed, falling back to stub doc",
+                    exc_info=True,
+                )
+                raw_docs = [_make_stub_doc(iteration, state["topic"])]
+        else:
+            raw_docs = [_make_stub_doc(iteration, state["topic"])]
+
         ws_events.append(docs_fetched_event(session_id, iteration, len(raw_docs)))
 
         new_chunks = [
             Chunk(
                 id=f"chunk-{uuid.uuid4().hex[:8]}",
-                doc_id=stub_doc_id,
-                text=raw_docs[0].text,
+                doc_id=doc.id,
+                text=doc.text,
                 embedding=None,
-                metadata={"source": "stub", "iteration": iteration},
-            ),
+                metadata={"source": doc.source, "iteration": iteration},
+            )
+            for doc in raw_docs
         ]
 
         new_entities = [
@@ -265,7 +299,7 @@ def make_investigate_node(
                 name=f"Entity_{iteration}",
                 label="ORG",
                 confidence=0.85,
-                doc_ids=[stub_doc_id],
+                doc_ids=[doc.id for doc in raw_docs],
             ),
         ]
         new_relations = [

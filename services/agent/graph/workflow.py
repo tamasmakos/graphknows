@@ -34,17 +34,19 @@ def should_continue(state: InvestigativeState) -> str:
 def build_workflow(
     pg_client: Any | None = None,
     mg_driver: Any | None = None,
+    search_client: Any | None = None,
 ) -> StateGraph:
     """Build the 3-phase macro StateGraph.
 
     Args:
         pg_client: Optional PgVectorClient for hybrid retrieval wiring.
         mg_driver: Optional Memgraph driver for hybrid retrieval wiring.
+        search_client: Optional SearchServiceClient for real document fetching.
 
     Returns:
         A compiled StateGraph with scope -> investigate -> communicate flow.
     """
-    inv_node = make_investigate_node(pg_client, mg_driver)
+    inv_node = make_investigate_node(pg_client, mg_driver, search_client)
     comm_node = make_communicate_node(pg_client=pg_client, mg_driver=mg_driver)
 
     workflow = StateGraph(InvestigativeState)
