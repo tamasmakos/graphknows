@@ -20,8 +20,8 @@ import os
 
 import scrapers.uk_legislation as _ukleg
 
-from search.adapters.base import SourceAdapter
-from search.models import Document, SearchQuery, SearchResult
+from .base import SourceAdapter
+from ..models import Document, SearchQuery, SearchResult
 
 _OUT_DIR = Path(os.environ.get("UK_LEGISLATION_OUT_DIR", "/data/raw/uk_legislation"))
 

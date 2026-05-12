@@ -5,8 +5,8 @@ import re
 from datetime import datetime
 from urllib.parse import urljoin
 
-from search.base_source import BaseSource
-from search.parsed_document import ParsedDocument
+from ..base_source import BaseSource
+from ..parsed_document import ParsedDocument
 
 _BASE = "https://www.ecb.europa.eu"
 _LISTING = f"{_BASE}/pub/economic-bulletin/html/index.en.html"

@@ -22,8 +22,8 @@ from typing import Any
 
 import scrapers.ep_debates as _ep
 
-from search.adapters.base import SourceAdapter
-from search.models import Document, SearchQuery, SearchResult
+from .base import SourceAdapter
+from ..models import Document, SearchQuery, SearchResult
 
 # Default output dir — co-located with repo; override via EP_DEBATES_OUT_DIR env var
 _REPO_DEFAULT = Path(__file__).resolve().parents[3] / "data" / "raw" / "ep_debates"

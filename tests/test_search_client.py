@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+pytestmark = pytest.mark.asyncio
+
 from services.agent.tools.search_client import SearchServiceClient
 from services.search.models import ScrapeJob, SearchResult
 

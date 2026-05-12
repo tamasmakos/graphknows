@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import unittest.mock
 import os
 import sys
 import types
@@ -29,10 +30,9 @@ def _install_langgraph_agent_import_stubs() -> None:
         graph_message.add_messages = lambda messages, new_messages: messages + new_messages
         sys.modules["langgraph.graph.message"] = graph_message
 
-    if "langgraph.prebuilt" not in sys.modules:
-        prebuilt_module = types.ModuleType("langgraph.prebuilt")
-        prebuilt_module.ToolNode = type("ToolNode", (), {})
-        sys.modules["langgraph.prebuilt"] = prebuilt_module
+    prebuilt_module = types.ModuleType("langgraph.prebuilt")
+    prebuilt_module.ToolNode = type("ToolNode", (), {})
+    sys.modules["langgraph.prebuilt"] = prebuilt_module
 
     if "langchain_groq" not in sys.modules:
         groq_module = types.ModuleType("langchain_groq")
@@ -52,8 +52,13 @@ def _install_langgraph_agent_import_stubs() -> None:
 
 
 def _load_langgraph_agent_module():
+    # Purge real langgraph/langchain modules so our stubs always win on re-import.
+    for key in ("langgraph.prebuilt", "langchain_core.tools", "langchain_groq",
+                "langchain_core.messages"):
+        sys.modules.pop(key, None)
     _install_langgraph_agent_import_stubs()
     sys.modules.pop("services.agent.langgraph_agent", None)
+    sys.modules.pop("agent.langgraph_agent", None)
     return importlib.import_module("services.agent.langgraph_agent")
 
 
@@ -95,10 +100,10 @@ class _FakeStateGraph:
 def _build_search_web_tool(agent_module):
     _FakeToolNode.last_tools = []
     agent_module.ChatGroq = _FakeChatGroq
-    agent_module.ToolNode = _FakeToolNode
     agent_module.StateGraph = _FakeStateGraph
     agent_module.END = object()
-    agent_module.build_graph(None, "session-search-web", "fake-key")
+    with unittest.mock.patch.object(agent_module, "ToolNode", _FakeToolNode):
+        agent_module.build_graph(None, "session-search-web", "fake-key")
     return next(tool for tool in _FakeToolNode.last_tools if tool.__name__ == "search_web")
 
 
