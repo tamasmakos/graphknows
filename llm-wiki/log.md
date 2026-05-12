@@ -4,9 +4,10 @@
 > Format: ## [YYYY-MM-DD] action | subject
 > Rotate when >500 entries.
 
-## [2026-05-03] create | Wiki initialized
-- Domain: Political Intelligence & Knowledge Graph Research (GraphGen project)
-- Structure: SCHEMA.md, index.md, log.md, raw/, entities/, concepts/, comparisons/, queries/
+## [2026-05-10] create | concepts/investigative-agent-architecture-redesign-2026-05-10.md
+- Captured the 3 macro-phase investigative workflow redesign: Scope → Investigate → Communicate
+- Documented strict HTTP-only boundaries for search/graphgen, async session graph jobs, and Memgraph session ingest mode
+- Defined the first implementation slice: search_client boundary before deeper workflow/stategraph changes
 
 ## [2026-05-03] create | entities/graphgen-project.md
 - GraphGen project entity page: tech stack, key results, infrastructure

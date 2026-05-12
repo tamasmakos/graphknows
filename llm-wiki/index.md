@@ -21,6 +21,7 @@
 ---
 
 ## Concepts — Architecture
+- [[investigative-agent-architecture-redesign-2026-05-10]] — redesign plan for a 3-phase investigative LangGraph workflow, HTTP-only service boundaries, and async session graph jobs
 - [[langgraph-agent-architecture-2026-05-08]] — **v3 agent architecture**: LangGraph StateGraph, 4 tools (search_web/search_eu/graphgen/graphrag), EPRS report format, live WS streaming
 
 - [[graphgen-architecture]] — Full pipeline architecture: DOC→SEGMENT→CHUNK→ENTITY→TOPIC, PipelineContext bus, module tree, config system
