@@ -101,6 +101,27 @@ def _get_graph_backend():
     return _graph_backend
 
 
+# Lazy-initialised ontology singletons (created on first ws_stream call to avoid startup delay)
+_ontology_router: Any | None = None
+_rel_extractor: Any | None = None
+
+
+def _get_ontology_components() -> tuple[Any | None, Any | None]:
+    """Return (OntologyRouter, OntologyRelExtractor), initialising lazily."""
+    global _ontology_router, _rel_extractor
+    if _ontology_router is None:
+        try:
+            from agent.ontology.loader import OntologyLoader
+            from agent.ontology.router import OntologyRouter
+            from agent.ontology.rel_extractor import OntologyRelExtractor
+            _ontology_router = OntologyRouter(OntologyLoader())
+            _rel_extractor = OntologyRelExtractor()
+            log.info("Ontology components initialised")
+        except Exception as exc:
+            log.warning("Ontology components unavailable (non-fatal): %s", exc)
+    return _ontology_router, _rel_extractor
+
+
 def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None, search_client: Any | None = None, graph_backend=None) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
     global _settings, _sgm, _http_client, _pg_client, _search_client, _graph_backend
@@ -868,24 +889,38 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         from agent.graph.workflow import build_workflow
 
         initial_state = build_initial_investigative_state(session_id, topic=query)
+        ont_router, ont_extractor = _get_ontology_components()
         workflow = build_workflow(
             pg_client=_get_pg_client(),
             mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None,
             search_client=_get_search_client(),
+            ontology_router=ont_router,
+            rel_extractor=ont_extractor,
         )
-        result = await workflow.ainvoke(initial_state)
-
-        for event in result.get("ws_events", []):
-            try:
-                await websocket.send_json(event)
-            except Exception:
-                pass
-
+        seen: set[tuple] = set()
+        last_chunk: dict = {}
+        async for chunk in workflow.astream(initial_state):
+            last_chunk = chunk
+            for event in chunk.get("ws_events", []):
+                key = (event.get("event_type"), event.get("ts"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                normalized = {
+                    "type": event.get("event_type", "unknown"),
+                    "session_id": event.get("session_id"),
+                    "ts": event.get("ts"),
+                    **event.get("payload", {}),
+                }
+                try:
+                    await websocket.send_json(normalized)
+                except Exception:
+                    break
         await websocket.send_json({
             "type": "done",
-            "briefing": result.get("briefing") or "",
-            "iteration_count": result.get("iteration_count", 0),
-            "dup_ratio": result.get("dup_ratio", 0.0),
+            "briefing": last_chunk.get("briefing") or "",
+            "iteration_count": last_chunk.get("iteration_count", 0),
+            "dup_ratio": last_chunk.get("dup_ratio", 0.0),
         })
 
     except WebSocketDisconnect:

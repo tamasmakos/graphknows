@@ -16,7 +16,9 @@ from services.agent.graph.events import (
     chunks_written_event,
     docs_fetched_event,
     entities_written_event,
+    graph_update_event,
     novelty_check_event,
+    relations_extracted_event,
     search_done_event,
     search_start_event,
 )
@@ -264,6 +266,8 @@ def make_investigate_node(
     mg_driver: Any = None,
     search_client: SearchServiceClient | None = None,
     backend: Any = None,
+    ontology_router: Any | None = None,
+    rel_extractor: Any | None = None,
 ) -> Any:
     """Factory for investigate_node with injected dependencies.
 
@@ -273,6 +277,10 @@ def make_investigate_node(
         search_client: Optional SearchServiceClient for real document fetching.
             If None, falls back to stub documents.
         backend: Optional GraphBackend for swappable session graph.
+        ontology_router: Optional OntologyRouter for domain-adaptive extraction.
+            If None, ontology-guided relation extraction is skipped.
+        rel_extractor: Optional OntologyRelExtractor for typed relation triples.
+            If None, ontology-guided relation extraction is skipped.
 
     Returns:
         Async function matching the LangGraph node signature.
@@ -419,6 +427,45 @@ def make_investigate_node(
         ws_events.append(
             entities_written_event(session_id, iteration, len(new_entities), len(new_relations))
         )
+        ws_events.append(
+            graph_update_event(
+                session_id=session_id,
+                iteration=iteration,
+                entities=[{"id": e.id, "name": e.name, "label": e.label} for e in new_entities],
+                relations=[{"source": r.source, "target": r.target, "type": r.type} for r in new_relations],
+            )
+        )
+
+        # Ontology-guided relation extraction (non-blocking — failures are non-fatal)
+        if ontology_router is not None and rel_extractor is not None and raw_docs:
+            try:
+                combined_text = " ".join(d.text for d in raw_docs)[:2000]
+                ontology = await asyncio.to_thread(ontology_router.select, combined_text)
+                entity_dicts = [{"name": e.name, "label": e.label} for e in new_entities]
+                onto_triples = await asyncio.to_thread(
+                    rel_extractor.extract,
+                    combined_text,
+                    entity_dicts,
+                    ontology.summary_jsonld,
+                    ontology.id,
+                )
+                if onto_triples and backend is not None and hasattr(backend, "write_ontology_relations"):
+                    await backend.write_ontology_relations(session_id, onto_triples, ontology.id)
+                ws_events.append(
+                    relations_extracted_event(
+                        session_id=session_id,
+                        iteration=iteration,
+                        count=len(onto_triples),
+                        ontology_id=ontology.id,
+                        ontology_name=ontology.name,
+                    )
+                )
+                logger.debug(
+                    "Ontology extraction [%s]: %d triples for session %s iter %d",
+                    ontology.id, len(onto_triples), session_id, iteration,
+                )
+            except Exception as exc:
+                logger.warning("Ontology-guided extraction failed (non-fatal): %s", exc)
 
         dup_ratio = _novelty_check(state, new_chunks, embedder)
         ws_events.append(novelty_check_event(session_id, iteration, dup_ratio))

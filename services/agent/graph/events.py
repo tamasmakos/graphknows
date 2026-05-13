@@ -110,6 +110,53 @@ def brief_done_event(session_id: str, briefing: str) -> WSEvent:
     )
 
 
+def graph_update_event(
+    session_id: str,
+    iteration: int,
+    entities: list[dict],
+    relations: list[dict],
+) -> WSEvent:
+    """Emit live entity/relation data so the frontend can update the graph in real time.
+
+    Args:
+        session_id: Active session identifier.
+        iteration: Current investigation iteration index.
+        entities: List of dicts with keys ``id``, ``name``, ``label``.
+        relations: List of dicts with keys ``source``, ``target``, ``type``.
+    """
+    return WSEvent(
+        session_id=session_id,
+        event_type="graph_update",
+        payload={
+            "iteration": iteration,
+            "nodes": entities,
+            "edges": relations,
+        },
+        ts=_ts(),
+    )
+
+
+def relations_extracted_event(
+    session_id: str,
+    iteration: int,
+    count: int,
+    ontology_id: str,
+    ontology_name: str,
+) -> WSEvent:
+    """Emit after ontology-guided relation extraction completes."""
+    return WSEvent(
+        session_id=session_id,
+        event_type="relations_extracted",
+        payload={
+            "iteration": iteration,
+            "count": count,
+            "ontology_id": ontology_id,
+            "ontology_name": ontology_name,
+        },
+        ts=_ts(),
+    )
+
+
 def error_event(session_id: str, message: str) -> WSEvent:
     """Emit when an error occurs during workflow execution."""
     return WSEvent(
