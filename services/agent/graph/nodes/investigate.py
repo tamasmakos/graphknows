@@ -27,6 +27,8 @@ from services.agent.graph.state import Chunk, Entity, InvestigativeState, RawDoc
 if TYPE_CHECKING:
     from services.agent.infra.pgvector_client import PgVectorClient
     from services.agent.tools.search_client import SearchServiceClient
+    from services.agent.tools.tavily_tool import TavilySearchTool
+    from services.agent.tools.cellar_tool import CellarSPARQLTool
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +262,105 @@ def _novelty_check(
 WORKER_PATH = Path(__file__).resolve().parents[2] / "tools" / "graphgen_worker.py"
 
 
+async def _fetch_multi_source(
+    tavily: "TavilySearchTool | None",
+    search_client: "SearchServiceClient | None",
+    cellar: "CellarSPARQLTool | None",
+    query: str,
+    limit: int = 10,
+) -> list[RawDoc]:
+    """Fetch documents from multiple sources with priority ordering.
+
+    Priority: (1) Tavily full-text, (2) CELLAR SPARQL metadata, (3) SearchServiceClient excerpts.
+    Falls back to empty list if all fail (caller emits stub doc).
+
+    Args:
+        tavily: Optional TavilySearchTool (Priority 1).
+        search_client: Optional SearchServiceClient (Priority 3).
+        cellar: Optional CellarSPARQLTool (Priority 2).
+        query: Search query string.
+        limit: Maximum total documents to return.
+
+    Returns:
+        Deduplicated list of RawDoc instances capped at *limit*.
+    """
+    seen_urls: set[str] = set()
+    tavily_docs: list[RawDoc] = []
+    cellar_docs: list[RawDoc] = []
+    eurlex_docs: list[RawDoc] = []
+
+    # Priority 1: Tavily
+    if tavily is not None:
+        try:
+            result = await asyncio.wait_for(
+                tavily.run({"query": query, "max_results": limit}),
+                timeout=15,
+            )
+            for d in result.get("documents", []):
+                url = d.get("url", "")
+                if url and url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                tavily_docs.append(RawDoc(
+                    id=d.get("id", f"tavily:{url}"),
+                    title=d.get("title", url),
+                    text=d.get("text", ""),
+                    url=url,
+                    source="tavily",
+                    date=d.get("date"),
+                ))
+        except Exception:
+            logger.warning("Tavily fetch failed (non-fatal)", exc_info=True)
+
+    # Priority 2: CELLAR SPARQL
+    if cellar is not None:
+        try:
+            result = await asyncio.wait_for(
+                cellar.run({"query": query, "limit": limit}),
+                timeout=10,
+            )
+            for d in result.get("documents", []):
+                url = d.get("url", "")
+                if url and url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                cellar_docs.append(RawDoc(
+                    id=d.get("id", f"cellar:{url}"),
+                    title=d.get("title", url),
+                    text=d.get("text", ""),
+                    url=url,
+                    source="cellar",
+                    date=d.get("date"),
+                ))
+        except Exception:
+            logger.warning("CELLAR SPARQL fetch failed (non-fatal)", exc_info=True)
+
+    # Priority 3: SearchServiceClient (EUR-Lex excerpts)
+    if search_client is not None:
+        try:
+            raw = await asyncio.wait_for(
+                search_client.fetch_documents(query=query, sources=["eurlex"], limit=5),
+                timeout=8,
+            )
+            for d in raw:
+                url = getattr(d, "url", "") or ""
+                if url and url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                eurlex_docs.append(d)
+        except Exception:
+            logger.warning("SearchServiceClient fetch failed (non-fatal)", exc_info=True)
+
+    logger.info(
+        "Sources: tavily=%d cellar=%d eurlex=%d",
+        len(tavily_docs), len(cellar_docs), len(eurlex_docs),
+    )
+
+    # Combine with priority ordering, capped at limit
+    combined = (tavily_docs + cellar_docs + eurlex_docs)[:limit]
+    return combined
+
+
 async def _run_extraction(raw_docs: list[RawDoc]) -> dict:
     payload = json.dumps(
         {"documents": [
@@ -280,12 +381,14 @@ async def _run_extraction(raw_docs: list[RawDoc]) -> dict:
 
 
 def make_investigate_node(
-    pg_client: PgVectorClient | None = None,
+    pg_client: "PgVectorClient | None" = None,
     mg_driver: Any = None,
-    search_client: SearchServiceClient | None = None,
+    search_client: "SearchServiceClient | None" = None,
     backend: Any = None,
     ontology_router: Any | None = None,
     rel_extractor: Any | None = None,
+    tavily: "TavilySearchTool | None" = None,
+    cellar: "CellarSPARQLTool | None" = None,
 ) -> Any:
     """Factory for investigate_node with injected dependencies.
 
@@ -299,6 +402,8 @@ def make_investigate_node(
             If None, ontology-guided relation extraction is skipped.
         rel_extractor: Optional OntologyRelExtractor for typed relation triples.
             If None, ontology-guided relation extraction is skipped.
+        tavily: Optional TavilySearchTool (Priority 1 source).
+        cellar: Optional CellarSPARQLTool (Priority 2 source).
 
     Returns:
         Async function matching the LangGraph node signature.
@@ -329,18 +434,22 @@ def make_investigate_node(
 
         ws_events.append(search_start_event(session_id, iteration, state.get("queries", [])))
 
-        if search_client is not None:
+        if tavily is not None or search_client is not None or cellar is not None:
             try:
-                raw_docs = await search_client.fetch_documents(
+                raw_docs = await _fetch_multi_source(
+                    tavily=tavily,
+                    search_client=search_client,
+                    cellar=cellar,
                     query=state["queries"][0] if state["queries"] else state["topic"],
-                    sources=_pick_sources(state.get("plan", [])),
-                    limit=5,
+                    limit=10,
                 )
             except Exception:
                 logger.warning(
-                    "Search service call failed, falling back to stub doc",
+                    "Multi-source fetch failed, falling back to stub doc",
                     exc_info=True,
                 )
+                raw_docs = [_make_stub_doc(iteration, state["topic"])]
+            if not raw_docs:
                 raw_docs = [_make_stub_doc(iteration, state["topic"])]
         else:
             raw_docs = [_make_stub_doc(iteration, state["topic"])]

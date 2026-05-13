@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import httpx
@@ -16,6 +17,8 @@ from services.agent.config import SESSION_GRAPH_BACKEND
 from services.agent.graph.backends.memgraph import MemgraphBackend
 from services.agent.graph.backends.neo4j_gds import Neo4jGDSBackend
 from services.agent.tools.search_client import SearchServiceClient
+from services.agent.tools.tavily_tool import TavilySearchTool
+from services.agent.tools.cellar_tool import CellarSPARQLTool
 
 
 def _configure_logging() -> None:
@@ -66,7 +69,9 @@ async def lifespan(app: FastAPI):
     app.state.pg_client = pg_client
     app.state.graph_backend = _graph_backend
     search_client = SearchServiceClient(base_url=_settings.search_url)
-    _init_router(_settings, _sgm, _http_client, pg_client, search_client, _graph_backend)
+    tavily = TavilySearchTool() if os.environ.get("TAVILY_API") or os.environ.get("TAVILY_API_KEY") else None
+    cellar = CellarSPARQLTool()
+    _init_router(_settings, _sgm, _http_client, pg_client, search_client, _graph_backend, tavily=tavily, cellar=cellar)
     app.state.settings = _settings
     app.state.sgm = _sgm
     app.state.http_client = _http_client
