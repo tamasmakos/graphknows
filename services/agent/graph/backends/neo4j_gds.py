@@ -51,6 +51,49 @@ class Neo4jGDSBackend:
 
         await asyncio.to_thread(_sync)
 
+    async def write_ontology_relations(
+        self,
+        session_id: str,
+        ontology_triples: list[dict],
+        ontology_id: str,
+    ) -> None:
+        """Write ontology-typed relation triples to Neo4j as ONTOLOGY_REL edges.
+
+        Args:
+            session_id: Active session identifier.
+            ontology_triples: List of dicts with keys ``subject``, ``predicate``,
+                ``object``, and ``confidence``.
+            ontology_id: Identifier of the ontology used for extraction.
+        """
+        if not ontology_triples:
+            return
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                for triple in ontology_triples:
+                    s.run(
+                        """
+                        MERGE (a:SessionEntity {name: $subj, session_id: $sid})
+                          ON CREATE SET a.label = 'CONCEPT', a.entity_id = $subj + '_' + $sid
+                        MERGE (b:SessionEntity {name: $obj, session_id: $sid})
+                          ON CREATE SET b.label = 'CONCEPT', b.entity_id = $obj + '_' + $sid
+                        MERGE (a)-[r:ONTOLOGY_REL {
+                            type: $pred,
+                            ontology: $ont,
+                            session_id: $sid
+                        }]->(b)
+                          ON CREATE SET r.confidence = $conf
+                        """,
+                        subj=triple["subject"],
+                        obj=triple["object"],
+                        pred=triple["predicate"],
+                        ont=ontology_id,
+                        sid=session_id,
+                        conf=triple.get("confidence", 0.5),
+                    ).consume()
+
+        await asyncio.to_thread(_sync)
+
     async def write_relations(self, session_id: str, relations: list[Any]) -> None:
         if not relations:
             return

@@ -36,6 +36,8 @@ def build_workflow(
     mg_driver: Any | None = None,
     search_client: Any | None = None,
     backend: Any | None = None,
+    ontology_router: Any | None = None,
+    rel_extractor: Any | None = None,
 ) -> StateGraph:
     """Build the 3-phase macro StateGraph.
 
@@ -44,11 +46,17 @@ def build_workflow(
         mg_driver: Optional Memgraph driver for hybrid retrieval wiring.
         search_client: Optional SearchServiceClient for real document fetching.
         backend: Optional GraphBackend for swappable session graph implementation.
+        ontology_router: Optional OntologyRouter for domain-adaptive extraction.
+        rel_extractor: Optional OntologyRelExtractor for typed ONTOLOGY_REL edges.
 
     Returns:
         A compiled StateGraph with scope -> investigate -> communicate flow.
     """
-    inv_node = make_investigate_node(pg_client, mg_driver, search_client, backend)
+    inv_node = make_investigate_node(
+        pg_client, mg_driver, search_client, backend,
+        ontology_router=ontology_router,
+        rel_extractor=rel_extractor,
+    )
     comm_node = make_communicate_node(pg_client=pg_client, mg_driver=mg_driver)
 
     workflow = StateGraph(InvestigativeState)
