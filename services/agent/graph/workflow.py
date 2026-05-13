@@ -38,6 +38,8 @@ def build_workflow(
     backend: Any | None = None,
     ontology_router: Any | None = None,
     rel_extractor: Any | None = None,
+    tavily: Any | None = None,
+    cellar: Any | None = None,
 ) -> StateGraph:
     """Build the 3-phase macro StateGraph.
 
@@ -56,6 +58,8 @@ def build_workflow(
         pg_client, mg_driver, search_client, backend,
         ontology_router=ontology_router,
         rel_extractor=rel_extractor,
+        tavily=tavily,
+        cellar=cellar,
     )
     comm_node = make_communicate_node(pg_client=pg_client, mg_driver=mg_driver)
 
