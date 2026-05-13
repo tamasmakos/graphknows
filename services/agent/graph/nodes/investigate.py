@@ -389,6 +389,7 @@ def make_investigate_node(
     rel_extractor: Any | None = None,
     tavily: "TavilySearchTool | None" = None,
     cellar: "CellarSPARQLTool | None" = None,
+    extractor: Any | None = None,
 ) -> Any:
     """Factory for investigate_node with injected dependencies.
 
@@ -471,7 +472,14 @@ def make_investigate_node(
         new_relations: list[Relation] = []
         if raw_docs:
             try:
-                result = await _run_extraction(raw_docs)
+                if extractor is not None:
+                    docs_for_extractor = [
+                        {"id": d.id, "title": d.title, "text": d.text, "source": d.source}
+                        for d in raw_docs
+                    ]
+                    result = await asyncio.to_thread(extractor.extract, docs_for_extractor, session_id)
+                else:
+                    result = await _run_extraction(raw_docs)
                 raw_entities = result.get("entities", []) or []
                 raw_relations = result.get("relations", []) or []
             except Exception:

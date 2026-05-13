@@ -71,7 +71,9 @@ async def lifespan(app: FastAPI):
     search_client = SearchServiceClient(base_url=_settings.search_url)
     tavily = TavilySearchTool() if os.environ.get("TAVILY_API") or os.environ.get("TAVILY_API_KEY") else None
     cellar = CellarSPARQLTool()
-    _init_router(_settings, _sgm, _http_client, pg_client, search_client, _graph_backend, tavily=tavily, cellar=cellar)
+    from services.agent.tools.extractor import load_extractor
+    extractor = load_extractor()
+    _init_router(_settings, _sgm, _http_client, pg_client, search_client, _graph_backend, tavily=tavily, cellar=cellar, extractor=extractor)
     app.state.settings = _settings
     app.state.sgm = _sgm
     app.state.http_client = _http_client
