@@ -900,26 +900,31 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         seen: set[tuple] = set()
         last_chunk: dict = {}
         async for chunk in workflow.astream(initial_state):
-            last_chunk = chunk
-            for event in chunk.get("ws_events", []):
-                key = (event.get("event_type"), event.get("ts"))
-                if key in seen:
+            # LangGraph astream yields {"node_name": state_update} per node
+            # ws_events live inside the node's state update, not at the top level
+            for node_name, node_state in chunk.items():
+                if not isinstance(node_state, dict):
                     continue
-                seen.add(key)
-                normalized = {
-                    "type": event.get("event_type", "unknown"),
-                    "session_id": event.get("session_id"),
-                    "ts": event.get("ts"),
-                    **event.get("payload", {}),
-                }
-                try:
-                    await websocket.send_json(normalized)
-                except Exception:
-                    break
+                last_chunk = node_state
+                for event in node_state.get("ws_events", []):
+                    key = (event.get("event_type"), event.get("ts"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    normalized = {
+                        "type": "ws_event",
+                        "payload": event,
+                    }
+                    try:
+                        await websocket.send_json(normalized)
+                    except Exception:
+                        break
         await websocket.send_json({
             "type": "done",
             "briefing": last_chunk.get("briefing") or "",
             "iteration_count": last_chunk.get("iteration_count", 0),
+            "entity_count": len(last_chunk.get("entities", [])),
+            "relation_count": len(last_chunk.get("relations", [])),
             "dup_ratio": last_chunk.get("dup_ratio", 0.0),
         })
 
