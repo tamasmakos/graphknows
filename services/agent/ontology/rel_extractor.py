@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,15 @@ class OntologyRelExtractor:
             )
             if lm is not None:
                 dspy.settings.configure(lm=lm)
+            elif os.environ.get("GROQ_API_KEY"):
+                import dspy as _dspy
+                _lm = _dspy.LM(
+                    model="groq/llama-3.1-8b-instant",
+                    api_key=os.environ["GROQ_API_KEY"],
+                    temperature=0.1,
+                    max_tokens=1024,
+                )
+                _dspy.settings.configure(lm=_lm)
             self._available = True
             log.info("OntologyRelExtractor: DSPy ready")
         except ImportError:

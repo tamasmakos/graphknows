@@ -158,7 +158,7 @@ class InProcessExtractor:
                     for ent in refined:
                         label = ent.get("label", "CONCEPT")
                         name = ent.get("text", "").strip()
-                        if not name or len(name) < 2:
+                        if not name or len(name) < 3:
                             continue
                         node_key = f"{label}::{name.lower()}"
                         if node_key not in node_map:
@@ -180,10 +180,10 @@ class InProcessExtractor:
                     if self._dspy_ok and self._dspy_module and len(chunk_ent_names) >= 2:
                         try:
                             ontology_classes = list({
-                                node_map[f"{ent.get('label','CONCEPT')}::{ent.get('text','').lower()}"]["type"]
+                                ent.get("label", "CONCEPT")
                                 for ent in refined
                                 if ent.get("text", "").strip()
-                            })
+                            }) or ["PERSON", "ORGANIZATION", "POLICY", "LOCATION", "EVENT", "CONCEPT"]
                             result = self._dspy_module(
                                 text=chunk[:1500],
                                 ontology_classes=ontology_classes or ["PERSON", "ORGANIZATION", "POLICY", "CONCEPT"],
@@ -193,7 +193,7 @@ class InProcessExtractor:
                             for triplet in triplets:
                                 if not (triplet.source and triplet.target):
                                     continue
-                                if triplet.confidence < 0.3:
+                                if triplet.confidence < 0.4:
                                     continue
                                 edge_list.append({
                                     "source": triplet.source,
