@@ -131,3 +131,73 @@ class TestFetchDocuments:
 
         raw_docs = await client.fetch_documents(query="nothing", limit=10)
         assert raw_docs == []
+
+    async def test_fetch_documents_excerpt_fallback_when_scrape_empty(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
+        """When scrape returns empty result, fall back to search excerpts."""
+        search_resp = MagicMock(spec=httpx.Response)
+        search_resp.json.return_value = [
+            {"id": "d1", "source": "eurlex", "title": "Doc 1", "date": "2024-01-01", "url": "http://ex.com/1", "excerpt": "Excerpt one"},
+            {"id": "d2", "source": "eurlex", "title": "Doc 2", "date": "2024-01-02", "url": "http://ex.com/2", "excerpt": "Excerpt two"},
+        ]
+        scrape_resp = MagicMock(spec=httpx.Response)
+        scrape_resp.json.return_value = {"job_id": "j1", "status": "queued", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        poll_resp = MagicMock(spec=httpx.Response)
+        poll_resp.json.return_value = {"job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0, "result": [], "error": None}
+
+        mock_http_client.post = AsyncMock(side_effect=[search_resp, scrape_resp])
+        mock_http_client.get = AsyncMock(return_value=poll_resp)
+
+        raw_docs = await client.fetch_documents(query="test", sources=["eurlex"], limit=5)
+        assert len(raw_docs) == 2
+        assert raw_docs[0].id == "d1"
+        assert raw_docs[0].text == "Excerpt one"
+        assert raw_docs[1].text == "Excerpt two"
+
+    async def test_fetch_documents_scrape_results_take_priority_over_excerpts(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
+        """When scrape returns real content, it takes priority over excerpts."""
+        search_resp = MagicMock(spec=httpx.Response)
+        search_resp.json.return_value = [
+            {"id": "d1", "source": "eurlex", "title": "Doc 1", "date": "2024-01-01", "url": "http://ex.com/1", "excerpt": "Short excerpt"},
+        ]
+        scrape_resp = MagicMock(spec=httpx.Response)
+        scrape_resp.json.return_value = {"job_id": "j1", "status": "queued", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        poll_resp = MagicMock(spec=httpx.Response)
+        poll_resp.json.return_value = {
+            "job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0,
+            "result": [{"id": "d1", "source": "eurlex", "title": "Doc 1", "text": "Full scraped text", "metadata": {"url": "http://ex.com/1"}, "ingested_at": "2024-01-01T00:00:00Z"}],
+            "error": None,
+        }
+
+        mock_http_client.post = AsyncMock(side_effect=[search_resp, scrape_resp])
+        mock_http_client.get = AsyncMock(return_value=poll_resp)
+
+        raw_docs = await client.fetch_documents(query="test", sources=["eurlex"], limit=5)
+        assert len(raw_docs) == 1
+        assert raw_docs[0].text == "Full scraped text"
+
+    async def test_fetch_documents_fallback_skips_none_or_empty_excerpts(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
+        """Results with None or empty excerpts are skipped in fallback."""
+        search_resp = MagicMock(spec=httpx.Response)
+        search_resp.json.return_value = [
+            {"id": "d1", "source": "eurlex", "title": "Has excerpt", "date": None, "url": "http://ex.com/1", "excerpt": "Valid excerpt"},
+            {"id": "d2", "source": "eurlex", "title": "No excerpt", "date": None, "url": "http://ex.com/2", "excerpt": None},
+            {"id": "d3", "source": "eurlex", "title": "Empty excerpt", "date": None, "url": "http://ex.com/3", "excerpt": ""},
+        ]
+        scrape_resp = MagicMock(spec=httpx.Response)
+        scrape_resp.json.return_value = {"job_id": "j1", "status": "queued", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        poll_resp = MagicMock(spec=httpx.Response)
+        poll_resp.json.return_value = {"job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0, "result": [], "error": None}
+
+        mock_http_client.post = AsyncMock(side_effect=[search_resp, scrape_resp])
+        mock_http_client.get = AsyncMock(return_value=poll_resp)
+
+        raw_docs = await client.fetch_documents(query="test", sources=["eurlex"], limit=5)
+        assert len(raw_docs) == 1
+        assert raw_docs[0].id == "d1"
+        assert raw_docs[0].text == "Valid excerpt"

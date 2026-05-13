@@ -898,14 +898,22 @@ async def ws_stream(websocket: WebSocket, session_id: str):
             rel_extractor=ont_extractor,
         )
         seen: set[tuple] = set()
-        last_chunk: dict = {}
+        max_iter = 0
+        best_briefing = ""
+        max_entities = 0
+        max_relations = 0
+        last_dup = 0.0
         async for chunk in workflow.astream(initial_state):
             # LangGraph astream yields {"node_name": state_update} per node
             # ws_events live inside the node's state update, not at the top level
             for node_name, node_state in chunk.items():
                 if not isinstance(node_state, dict):
                     continue
-                last_chunk = node_state
+                max_iter = max(max_iter, node_state.get("iteration_count", 0))
+                best_briefing = node_state.get("briefing") or best_briefing
+                max_entities = max(max_entities, len(node_state.get("entities", [])))
+                max_relations = max(max_relations, len(node_state.get("relations", [])))
+                last_dup = node_state.get("dup_ratio", 0.0) or last_dup
                 for event in node_state.get("ws_events", []):
                     key = (event.get("event_type"), event.get("ts"))
                     if key in seen:
@@ -921,11 +929,11 @@ async def ws_stream(websocket: WebSocket, session_id: str):
                         break
         await websocket.send_json({
             "type": "done",
-            "briefing": last_chunk.get("briefing") or "",
-            "iteration_count": last_chunk.get("iteration_count", 0),
-            "entity_count": len(last_chunk.get("entities", [])),
-            "relation_count": len(last_chunk.get("relations", [])),
-            "dup_ratio": last_chunk.get("dup_ratio", 0.0),
+            "briefing": best_briefing,
+            "iteration_count": max_iter,
+            "entity_count": max_entities,
+            "relation_count": max_relations,
+            "dup_ratio": last_dup,
         })
 
     except WebSocketDisconnect:

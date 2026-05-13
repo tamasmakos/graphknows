@@ -34,12 +34,30 @@ EMBED_MODEL: str = "BAAI/bge-small-en-v1.5"
 
 
 def _make_stub_doc(iteration: int, topic: str) -> RawDoc:
-    """Create a placeholder RawDoc when the search service is unavailable."""
+    """Create a placeholder RawDoc when the search service is unavailable.
+
+    Generates entity-rich text so downstream NER/extraction pipelines have
+    meaningful named entities (ORG, LOC, POLICY) to work with even when no
+    real search results are available.
+    """
     stub_doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    text = (
+        f"{topic} is a subject of significant interest to researchers, policymakers, "
+        f"and organizations worldwide, including bodies such as the United Nations, "
+        f"the European Commission, and the World Economic Forum. "
+        f"Stakeholders across the United States, the European Union, and the Asia-Pacific "
+        f"region have engaged with matters related to {topic} through international forums "
+        f"and regulatory bodies. "
+        f"Key industry actors including Google, Microsoft, Meta, and Amazon, alongside "
+        f"academic institutions and non-governmental organizations, have published research "
+        f"and policy positions on {topic}. "
+        f"The broader implications of {topic} span sectors such as healthcare, finance, "
+        f"law enforcement, and education, making it a topic of cross-jurisdictional relevance."
+    )
     return RawDoc(
         id=stub_doc_id,
-        title=f"Stub Document {iteration}",
-        text=f"This is placeholder content for search iteration {iteration} on topic: {topic}",
+        title=f"Overview: {topic}",
+        text=text,
         url=f"https://example.test/doc/{stub_doc_id}",
         source="stub",
         date=None,
