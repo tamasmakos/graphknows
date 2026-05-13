@@ -1,0 +1,28 @@
+{
+  "@context": {"@vocab": "https://graphknows.io/ontologies/political/"},
+  "@id": "political-summary",
+  "classes": [
+    "PoliticalParty", "GovernmentInstitution", "Parliament", "Senate", "Congress",
+    "ElectedOffice", "President", "PrimeMinister", "Minister", "Senator",
+    "Member", "Representative", "MEP", "Politician",
+    "Election", "Vote", "Referendum", "Poll",
+    "Legislation", "Bill", "Motion", "Amendment", "Directive",
+    "Sanction", "Treaty", "Agreement", "Accord",
+    "Committee", "Commission", "Council", "Cabinet",
+    "Coalition", "Alliance", "Bloc", "Opposition",
+    "Constituency", "State", "Region", "Municipality"
+  ],
+  "properties": [
+    "memberOf", "leaderOf", "electedTo", "representedBy", "votedFor",
+    "coalitionWith", "opposedBy", "sponsoredBy", "endorsedBy",
+    "ruledBy", "governedBy", "authorisedBy", "ratifiedBy",
+    "imposedSanctionOn", "signedTreaty", "chairOf", "appointedBy"
+  ],
+  "typical_relations": [
+    {"subject": "Politician", "predicate": "memberOf", "object": "PoliticalParty"},
+    {"subject": "Minister", "predicate": "appointedBy", "object": "President"},
+    {"subject": "Parliament", "predicate": "ratifiedBy", "object": "Treaty"},
+    {"subject": "GovernmentInstitution", "predicate": "imposedSanctionOn", "object": "State"},
+    {"subject": "PoliticalParty", "predicate": "coalitionWith", "object": "PoliticalParty"}
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "@context": {"@vocab": "https://schema.org/"},
+  "@id": "schemaorg-core-summary",
+  "classes": [
+    "Person", "Organization", "Corporation", "GovernmentOrganization", "NGO",
+    "Event", "PublicEvent", "SportsEvent", "BusinessEvent",
+    "CreativeWork", "Article", "Report", "Dataset", "Book", "ScholarlyArticle",
+    "Place", "Country", "City", "AdministrativeArea",
+    "Action", "CommunicateAction", "SearchAction", "PublishAction",
+    "Product", "SoftwareApplication", "ResearchProject",
+    "Role", "EmployeeRole", "LeadershipRole",
+    "Grant", "MonetaryAmount", "PriceSpecification"
+  ],
+  "properties": [
+    "name", "description", "identifier", "url", "sameAs",
+    "member", "memberOf", "employee", "founder", "funder",
+    "author", "creator", "publisher", "isPartOf", "hasPart",
+    "about", "mentions", "citation", "isBasedOn",
+    "location", "startDate", "endDate", "duration",
+    "award", "affiliation", "alumniOf", "worksFor"
+  ],
+  "typical_relations": [
+    {"subject": "Person", "predicate": "memberOf", "object": "Organization"},
+    {"subject": "Organization", "predicate": "funder", "object": "ResearchProject"},
+    {"subject": "Article", "predicate": "author", "object": "Person"},
+    {"subject": "Event", "predicate": "location", "object": "Place"},
+    {"subject": "Person", "predicate": "affiliation", "object": "GovernmentOrganization"}
+  ]
+}
