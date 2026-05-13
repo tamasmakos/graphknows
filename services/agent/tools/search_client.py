@@ -97,7 +97,11 @@ class SearchServiceClient:
         raw_docs: list[RawDoc] = []
         for source, doc_ids in by_source.items():
             job = await self.scrape(source, doc_ids)
-            job = await self.poll_job(job.job_id)
+            try:
+                job = await self.poll_job(job.job_id, timeout=8.0)
+            except TimeoutError:
+                logger.warning("Scrape job %s timed out for source %s", job.job_id, source)
+                continue
             if job.status == "complete" and job.result:
                 for doc_dict in job.result:
                     raw_docs.append(RawDoc(
@@ -108,4 +112,20 @@ class SearchServiceClient:
                         source=doc_dict.get("source", source),
                         date=doc_dict.get("ingested_at", None),
                     ))
+
+        if not raw_docs:
+            logger.warning(
+                "Scrape returned empty for all sources; using search excerpts as fallback text"
+            )
+            for r in results:
+                if r.excerpt:
+                    raw_docs.append(RawDoc(
+                        id=r.id,
+                        title=r.title,
+                        text=r.excerpt,
+                        url=r.url,
+                        source=r.source,
+                        date=r.date,
+                    ))
+
         return raw_docs
