@@ -40,6 +40,7 @@ def build_workflow(
     rel_extractor: Any | None = None,
     tavily: Any | None = None,
     cellar: Any | None = None,
+    extractor: Any | None = None,
 ) -> StateGraph:
     """Build the 3-phase macro StateGraph.
 
@@ -60,6 +61,7 @@ def build_workflow(
         rel_extractor=rel_extractor,
         tavily=tavily,
         cellar=cellar,
+        extractor=extractor,
     )
     comm_node = make_communicate_node(pg_client=pg_client, mg_driver=mg_driver)
 

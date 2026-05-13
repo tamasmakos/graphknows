@@ -59,6 +59,7 @@ _search_client: Any | None = None
 _graph_backend = None
 _tavily: Any | None = None
 _cellar: Any | None = None
+_extractor: Any | None = None
 _ws_connections: dict[str, WebSocket] = {}
 
 
@@ -102,6 +103,9 @@ def _get_search_client() -> Any | None:
 def _get_graph_backend():
     return _graph_backend
 
+def _get_extractor():
+    return _extractor
+
 
 # Lazy-initialised ontology singletons (created on first ws_stream call to avoid startup delay)
 _ontology_router: Any | None = None
@@ -124,9 +128,9 @@ def _get_ontology_components() -> tuple[Any | None, Any | None]:
     return _ontology_router, _rel_extractor
 
 
-def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None, search_client: Any | None = None, graph_backend=None, tavily: Any | None = None, cellar: Any | None = None) -> None:
+def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None, search_client: Any | None = None, graph_backend=None, tavily: Any | None = None, cellar: Any | None = None, extractor: Any | None = None) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client, _pg_client, _search_client, _graph_backend, _tavily, _cellar
+    global _settings, _sgm, _http_client, _pg_client, _search_client, _graph_backend, _tavily, _cellar, _extractor
     _settings = settings
     _sgm = sgm
     _http_client = http_client
@@ -135,6 +139,7 @@ def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client:
     _graph_backend = graph_backend
     _tavily = tavily
     _cellar = cellar
+    _extractor = extractor
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +519,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         backend=_get_graph_backend(),
         tavily=_tavily,
         cellar=_cellar,
+        extractor=_get_extractor(),
     )
     result = await workflow.ainvoke(initial_state)
 
@@ -610,7 +616,7 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
 
     async def _event_generator():
         initial_state = build_initial_investigative_state(session_id, req.message)
-        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client(), tavily=_tavily, cellar=_cellar)
+        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client(), tavily=_tavily, cellar=_cellar, extractor=_get_extractor())
         result = await workflow.ainvoke(initial_state)
         briefing = result.get("briefing") or ""
         yield f"event: briefing\ndata: {json.dumps({'briefing': briefing})}\n\n"
@@ -904,6 +910,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
             rel_extractor=ont_extractor,
             tavily=_tavily,
             cellar=_cellar,
+            extractor=_get_extractor(),
         )
         seen: set[tuple] = set()
         max_iter = 0

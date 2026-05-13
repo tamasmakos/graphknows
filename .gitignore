@@ -38,6 +38,7 @@ packages/**/dist
 output/
 input/
 data/raw/
+services/data/
 demo_ingest.py
 
 # ─── Editor / OS ──────────────────────────────────────────────────────────────
