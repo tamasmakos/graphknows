@@ -26,6 +26,7 @@
 | 002 | [[adr/002-investigative-workflow]] | 3-phase investigative workflow (Scope→Investigate→Communicate) | accepted |
 | 003 | [[adr/003-services-refactor]] | Decompose monolith into search/graphgen/graphrag/agent microservices | accepted |
 | 004 | [[adr/004-ontology-patch]] | Ontology injection bug + 3-phase patch runner | accepted |
+| 005 | [[adr/005-pluggable-session-graph-backend]] | Pluggable session KG backend (Memgraph/Neo4j+GDS) + NodeFeatures for reasoning | accepted |
 
 ---
 

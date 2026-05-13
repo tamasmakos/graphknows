@@ -18,7 +18,6 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import scrapers.ep_debates as _ep
 

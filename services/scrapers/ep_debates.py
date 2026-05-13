@@ -132,7 +132,7 @@ def _build_itm_document(
         "title": title,
         "text": text,
         "speaker_count": len(speeches),
-        "url": f"https://www.europarl.europa.eu/plenary/en/plenary.html",
+        "url": "https://www.europarl.europa.eu/plenary/en/plenary.html",
         "fetched_at": datetime.now().isoformat(),
         "char_count": len(text),
     }

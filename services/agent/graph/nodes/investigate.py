@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import math
+import sys
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -54,30 +56,34 @@ def _pick_sources(plan: list[SubQuestion]) -> list[str]:
 
 
 class DualWriter:
-    """Persists chunks to pgvector and entities/relations to Memgraph.
+    """Persists chunks to pgvector and entities/relations to the session graph backend.
 
     Attributes:
         session_id: Active session namespace.
         pg: PgVectorClient instance for chunk persistence.
-        mg: Memgraph (Neo4j) driver instance for graph persistence.
+        backend: Optional GraphBackend for graph persistence.
+        mg: Legacy Memgraph driver (for backward compatibility).
     """
 
     def __init__(
         self,
         session_id: str,
         pg_client: PgVectorClient,
-        mg_driver: Any,
+        mg_driver: Any = None,
+        backend: Any = None,
     ) -> None:
         """Initialise DualWriter.
 
         Args:
             session_id: Session namespace for all writes.
             pg_client: Initialised PgVectorClient.
-            mg_driver: Neo4j driver connected to Memgraph.
+            mg_driver: Optional legacy Neo4j driver connected to Memgraph.
+            backend: Optional GraphBackend instance.
         """
         self.session_id = session_id
         self.pg = pg_client
         self.mg = mg_driver
+        self.backend = backend
 
     async def write(
         self,
@@ -85,7 +91,7 @@ class DualWriter:
         entities: list[Entity],
         relations: list[Relation],
     ) -> None:
-        """Persist chunks to pgvector and entities/relations to Memgraph concurrently.
+        """Persist chunks to pgvector and entities/relations to graph concurrently.
 
         Args:
             chunks: Chunks to write to the vector store.
@@ -94,10 +100,10 @@ class DualWriter:
         """
         if not chunks and not entities and not relations:
             return
-        await asyncio.gather(
-            self._write_chunks(chunks),
-            self._write_graph(entities, relations),
-        )
+        ops = [self._write_chunks(chunks)]
+        if entities or relations:
+            ops.append(self._write_graph(entities, relations))
+        await asyncio.gather(*ops)
 
     async def _write_chunks(self, chunks: list[Chunk]) -> None:
         """Write chunks to pgvector.
@@ -110,7 +116,7 @@ class DualWriter:
         await self.pg.upsert_chunks(self.session_id, chunks)
 
     async def _write_graph(self, entities: list[Entity], relations: list[Relation]) -> None:
-        """Write entities and relations to Memgraph via Cypher.
+        """Write entities and relations via GraphBackend or legacy mg_driver.
 
         Args:
             entities: Entities to merge.
@@ -119,31 +125,39 @@ class DualWriter:
         if not entities and not relations:
             return
 
-        def _sync() -> None:
-            with self.mg.session() as s:
-                for e in entities:
-                    s.run(
-                        "MERGE (n:Entity {id: $id, session_id: $sid}) SET n += $props",
-                        id=e.id,
-                        sid=self.session_id,
-                        props={
-                            "name": e.name,
-                            "label": e.label,
-                            "confidence": e.confidence,
-                            "doc_ids": e.doc_ids,
-                        },
-                    )
-                for r in relations:
-                    s.run(
-                        """MATCH (a:Entity {id:$src, session_id:$sid}), (b:Entity {id:$tgt, session_id:$sid})
-                           MERGE (a)-[rel:RELATES {type:$rtype, session_id:$sid}]->(b)""",
-                        src=r.source,
-                        tgt=r.target,
-                        rtype=r.type,
-                        sid=self.session_id,
-                    )
+        if self.backend is not None:
+            await asyncio.gather(
+                self.backend.write_entities(self.session_id, entities),
+                self.backend.write_relations(self.session_id, relations),
+            )
+            return
 
-        await asyncio.to_thread(_sync)
+        if self.mg is not None:
+            def _sync() -> None:
+                with self.mg.session() as s:
+                    for e in entities:
+                        s.run(
+                            "MERGE (n:Entity {id: $id, session_id: $sid}) SET n += $props",
+                            id=e.id,
+                            sid=self.session_id,
+                            props={
+                                "name": e.name,
+                                "label": e.label,
+                                "confidence": e.confidence,
+                                "doc_ids": e.doc_ids,
+                            },
+                        )
+                    for r in relations:
+                        s.run(
+                            """MATCH (a:Entity {id:$src, session_id:$sid}), (b:Entity {id:$tgt, session_id:$sid})
+                               MERGE (a)-[rel:RELATES {type:$rtype, session_id:$sid}]->(b)""",
+                            src=r.source,
+                            tgt=r.target,
+                            rtype=r.type,
+                            sid=self.session_id,
+                        )
+
+            await asyncio.to_thread(_sync)
 
 
 def _compute_duplication_ratio(
@@ -223,18 +237,42 @@ def _novelty_check(
     return _compute_duplication_ratio(new_chunks, existing, embedder)
 
 
+WORKER_PATH = Path(__file__).resolve().parents[2] / "tools" / "graphgen_worker.py"
+
+
+async def _run_extraction(raw_docs: list[RawDoc]) -> dict:
+    payload = json.dumps(
+        {"documents": [
+            {"id": d.id, "title": d.title, "text": d.text, "source": d.source}
+            for d in raw_docs
+        ]}
+    ).encode()
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, str(WORKER_PATH),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(input=payload), timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"graphgen_worker failed: {stderr.decode()[:400]}")
+    return json.loads(stdout)
+
+
 def make_investigate_node(
     pg_client: PgVectorClient | None = None,
     mg_driver: Any = None,
     search_client: SearchServiceClient | None = None,
+    backend: Any = None,
 ) -> Any:
     """Factory for investigate_node with injected dependencies.
 
     Args:
         pg_client: Optional PgVectorClient for chunk persistence.
-        mg_driver: Optional Memgraph driver for graph persistence.
+        mg_driver: Optional Memgraph driver for graph persistence (legacy).
         search_client: Optional SearchServiceClient for real document fetching.
             If None, falls back to stub documents.
+        backend: Optional GraphBackend for swappable session graph.
 
     Returns:
         Async function matching the LangGraph node signature.
@@ -261,6 +299,7 @@ def make_investigate_node(
         iteration = state.get("iteration_count", 0) + 1
         ws_events = list(state.get("ws_events", []))
         session_id = state["session_id"]
+        node_features = dict(state.get("node_features", {}))
 
         ws_events.append(search_start_event(session_id, iteration, state.get("queries", [])))
 
@@ -293,26 +332,65 @@ def make_investigate_node(
             for doc in raw_docs
         ]
 
-        new_entities = [
-            Entity(
-                id=f"ent-{uuid.uuid4().hex[:8]}",
-                name=f"Entity_{iteration}",
-                label="ORG",
-                confidence=0.85,
-                doc_ids=[doc.id for doc in raw_docs],
-            ),
-        ]
-        new_relations = [
-            Relation(
-                source=new_entities[0].id,
-                target=f"ent-{uuid.uuid4().hex[:8]}",
-                type="RELATED_TO",
-                confidence=0.7,
-            ),
-        ]
+        new_entities: list[Entity] = []
+        new_relations: list[Relation] = []
+        if raw_docs:
+            try:
+                result = await _run_extraction(raw_docs)
+                raw_entities = result.get("entities", []) or []
+                raw_relations = result.get("relations", []) or []
+            except Exception:
+                logger.warning("Entity extraction failed, falling back to stub", exc_info=True)
+                raw_entities = []
+                raw_relations = []
+            if raw_entities:
+                name_to_entity: dict[str, Entity] = {}
+                for ent in raw_entities:
+                    e = Entity(
+                        id=ent.get("id") or f"ent-{uuid.uuid4().hex[:8]}",
+                        name=ent.get("name", ""),
+                        label=ent.get("type", "CONCEPT"),
+                        confidence=0.5,
+                        doc_ids=[ent["doc_id"]] if ent.get("doc_id") else [doc.id for doc in raw_docs],
+                    )
+                    name_to_entity[ent["name"]] = e
+                    new_entities.append(e)
 
-        if pg_client is not None and mg_driver is not None:
-            writer = DualWriter(session_id, pg_client, mg_driver)
+                for rel in raw_relations:
+                    src_ent = name_to_entity.get(rel.get("source", ""))
+                    tgt_ent = name_to_entity.get(rel.get("target", ""))
+                    if src_ent is not None and tgt_ent is not None:
+                        new_relations.append(Relation(
+                            source=src_ent.id,
+                            target=tgt_ent.id,
+                            type=rel.get("type", "RELATED_TO"),
+                            confidence=rel.get("confidence", 0.5),
+                        ))
+
+        if not new_entities:
+            new_entities = [
+                Entity(
+                    id=f"ent-{uuid.uuid4().hex[:8]}",
+                    name=f"Entity_{iteration}",
+                    label="ORG",
+                    confidence=0.85,
+                    doc_ids=[doc.id for doc in raw_docs],
+                ),
+            ]
+            new_relations = [
+                Relation(
+                    source=new_entities[0].id,
+                    target=f"ent-{uuid.uuid4().hex[:8]}",
+                    type="RELATED_TO",
+                    confidence=0.7,
+                ),
+            ]
+
+        has_graph_writer = (pg_client is not None and mg_driver is not None) or (
+            pg_client is not None and backend is not None
+        )
+        if has_graph_writer:
+            writer = DualWriter(session_id, pg_client, mg_driver, backend)
             await writer.write(new_chunks, new_entities, new_relations)
             logger.debug(
                 "DualWriter persisted %d chunks, %d entities, %d relations for session %s iter %d",
@@ -322,6 +400,20 @@ def make_investigate_node(
                 session_id,
                 iteration,
             )
+
+            if backend is not None:
+                try:
+                    nf = await backend.compute_node_features(session_id)
+                    node_features = {
+                        eid: {
+                            "pagerank": ef.pagerank,
+                            "betweenness": ef.betweenness,
+                            "community": ef.community,
+                        }
+                        for eid, ef in nf.by_entity_id.items()
+                    }
+                except Exception as exc:
+                    logger.warning("GDS feature computation failed (non-fatal): %s", exc)
 
         ws_events.append(chunks_written_event(session_id, iteration, len(new_chunks)))
         ws_events.append(
@@ -342,6 +434,7 @@ def make_investigate_node(
             "chunks": [*state.get("chunks", []), *new_chunks],
             "entities": [*state.get("entities", []), *new_entities],
             "relations": [*state.get("relations", []), *new_relations],
+            "node_features": node_features,
             "ws_events": ws_events,
         }
 

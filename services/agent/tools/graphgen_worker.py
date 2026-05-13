@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import sys
-import textwrap
 import time
 from pathlib import Path
 from typing import Any
@@ -82,11 +81,26 @@ def main() -> None:
             refine_entities_with_ontology,
             select_candidate_labels,
         )
-        gliner_model = get_gliner2_model()
-        top_labels = build_top_level_label_space()
-        schema = build_gliner2_schema(
-            list(top_labels.get("ontology", {}).get("children", []))
-        )
+        # GLiNER prints a banner to stdout which corrupts the JSON protocol.
+        # Redirect stdout→stderr during model load, then restore.
+        import contextlib
+        with contextlib.redirect_stdout(sys.stderr):
+            gliner_model = get_gliner2_model()
+        # Default label set covering EU-policy / general NER domains.
+        # build_top_level_label_space([]) returns an empty dict (no ontology nodes),
+        # so we seed it with a broad label set that the grouping rules can map.
+        _DEFAULT_LABELS = [
+            "Person", "Organization", "Location", "Country", "Institution",
+            "Legislative Body", "Policy", "Law", "Regulation", "Directive",
+            "Treaty", "Agreement", "Decision", "Action", "Event",
+            "Date", "Concept", "Topic", "Product", "Technology",
+        ]
+        top_labels = build_top_level_label_space(_DEFAULT_LABELS)
+        # If grouping produces nothing, fall back to the raw labels directly.
+        _children = list(top_labels.get("ontology", {}).get("children", []))
+        if not _children:
+            _children = _DEFAULT_LABELS
+        schema = build_gliner2_schema(_children)
         log.warning("GLiNER2 loaded in %.1fs", time.time() - t0)
     except Exception as exc:
         log.error("GLiNER2 load failed: %s", exc)

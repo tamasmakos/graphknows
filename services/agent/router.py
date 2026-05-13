@@ -5,11 +5,10 @@ import asyncio
 import json
 import logging
 import uuid
-from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, model_validator
 
@@ -57,6 +56,7 @@ _sgm: SessionGraphManager | None = None
 _http_client: httpx.AsyncClient | None = None
 _pg_client: PgVectorClient | None = None
 _search_client: Any | None = None
+_graph_backend = None
 _ws_connections: dict[str, WebSocket] = {}
 
 
@@ -97,14 +97,19 @@ def _get_search_client() -> Any | None:
     return _search_client
 
 
-def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None, search_client: Any | None = None) -> None:
+def _get_graph_backend():
+    return _graph_backend
+
+
+def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None, search_client: Any | None = None, graph_backend=None) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client, _pg_client, _search_client
+    global _settings, _sgm, _http_client, _pg_client, _search_client, _graph_backend
     _settings = settings
     _sgm = sgm
     _http_client = http_client
     _pg_client = pg_client
     _search_client = search_client
+    _graph_backend = graph_backend
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +482,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
         _active_sessions.add(session_id)
 
     initial_state = build_initial_investigative_state(session_id, req.message)
-    workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client())
+    workflow = build_workflow(
+        pg_client=pg,
+        mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None,
+        search_client=_get_search_client(),
+        backend=_get_graph_backend(),
+    )
     result = await workflow.ainvoke(initial_state)
 
     subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)

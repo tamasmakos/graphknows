@@ -1,7 +1,7 @@
 """Wikipedia EU topics adapter — fetches Wikipedia articles on EU institutions and policies."""
 from __future__ import annotations
 
-from ..base_source import BaseSource, _USER_AGENT
+from ..base_source import BaseSource
 from ..parsed_document import ParsedDocument
 
 EU_TOPICS = [

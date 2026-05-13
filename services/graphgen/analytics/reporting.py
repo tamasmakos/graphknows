@@ -95,11 +95,11 @@ def interpret_separation(
     
     if p_value is not None:
         if p_value < 0.001:
-            parts.append(f"Highly significant difference (p<0.001)")
+            parts.append("Highly significant difference (p<0.001)")
         elif p_value < 0.01:
-            parts.append(f"Significant difference (p<0.01)")
+            parts.append("Significant difference (p<0.01)")
         elif p_value < 0.05:
-            parts.append(f"Marginally significant difference (p<0.05)")
+            parts.append("Marginally significant difference (p<0.05)")
         else:
             parts.append(f"No significant difference (p={p_value:.4f})")
     

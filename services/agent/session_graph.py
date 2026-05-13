@@ -6,7 +6,6 @@ Falls back gracefully to an in-memory store when Memgraph is unavailable.
 """
 import logging
 import time
-from typing import Any
 
 from neo4j import GraphDatabase
 

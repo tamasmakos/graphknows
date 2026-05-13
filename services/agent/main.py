@@ -12,6 +12,9 @@ from agent.config import AgentSettings
 from agent.infra.pgvector_client import PgVectorClient
 from agent.session.manager import SessionGraphManager
 from agent.router import _init_router, router
+from services.agent.config import SESSION_GRAPH_BACKEND
+from services.agent.graph.backends.memgraph import MemgraphBackend
+from services.agent.graph.backends.neo4j_gds import Neo4jGDSBackend
 from services.agent.tools.search_client import SearchServiceClient
 
 
@@ -31,11 +34,12 @@ log = logging.getLogger(__name__)
 _settings: AgentSettings | None = None
 _sgm: SessionGraphManager | None = None
 _http_client: httpx.AsyncClient | None = None
+_graph_backend = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _settings, _sgm, _http_client
+    global _settings, _sgm, _http_client, _graph_backend
     _settings = AgentSettings()
     _settings.check_production_secrets()
     _http_client = httpx.AsyncClient(timeout=_settings.httpx_timeout)
@@ -45,12 +49,24 @@ async def lifespan(app: FastAPI):
         neo4j_user=_settings.neo4j_user,
         neo4j_password=_settings.neo4j_password,
     )
+
+    if SESSION_GRAPH_BACKEND == "neo4j":
+        _graph_backend = Neo4jGDSBackend(
+            _settings.neo4j_uri,
+            _settings.neo4j_user,
+            _settings.neo4j_password,
+        )
+    else:
+        _graph_backend = MemgraphBackend(_settings.memgraph_uri)
+    await _graph_backend.ensure_indexes()
+
     pg_client = PgVectorClient(dsn=_settings.pgvector_dsn)
     await pg_client.connect()
     await pg_client.ensure_schema()
     app.state.pg_client = pg_client
+    app.state.graph_backend = _graph_backend
     search_client = SearchServiceClient(base_url=_settings.search_url)
-    _init_router(_settings, _sgm, _http_client, pg_client, search_client)
+    _init_router(_settings, _sgm, _http_client, pg_client, search_client, _graph_backend)
     app.state.settings = _settings
     app.state.sgm = _sgm
     app.state.http_client = _http_client

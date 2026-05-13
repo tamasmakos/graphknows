@@ -31,6 +31,21 @@ Rules:
 """
 
 
+def _format_node_features(nf: dict, top_n: int = 8) -> str:
+    if not nf:
+        return ""
+    top = sorted(nf.items(), key=lambda x: x[1].get("pagerank", 0), reverse=True)[:top_n]
+    lines = ["## Graph Feature Analysis (session KG)", ""]
+    for eid, feat in top:
+        lines.append(
+            f"- **{eid}**: PageRank={feat['pagerank']:.4f}, "
+            f"Betweenness={feat['betweenness']:.4f}, "
+            f"Community={feat['community']}"
+        )
+    lines += ["", "Use this to highlight structurally central entities in the EPRS brief.", ""]
+    return "\n".join(lines)
+
+
 async def communicate_node(
     state: InvestigativeState,
     retriever: HybridRetriever | None = None,
@@ -65,14 +80,23 @@ async def communicate_node(
         evidence_lines.append(f"[Doc-{i}] {hit.doc_id}: {hit.text[:400]}")
     evidence_text = "\n\n".join(evidence_lines)
 
+    # 2b. Graph feature analysis section (if available)
+    node_features = state.get("node_features", {})
+    graph_features_section = _format_node_features(node_features)
+
     # 3. LLM synthesis
     llm = ChatGroq(
         api_key=os.environ.get("GROQ_API_KEY"),
         model="llama-3.3-70b-versatile",
         temperature=0.2,
     )
+
+    system_prompt_content = EPRS_SYSTEM_PROMPT
+    if graph_features_section:
+        system_prompt_content = EPRS_SYSTEM_PROMPT + "\n\n" + graph_features_section
+
     messages = [
-        SystemMessage(content=EPRS_SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt_content),
         HumanMessage(
             content=f"Topic: {state['topic']}\n\nEvidence:\n{evidence_text}\n\nWrite the briefing."
         ),

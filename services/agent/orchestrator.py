@@ -5,11 +5,10 @@ import json
 import logging
 from typing import AsyncIterator
 
-import httpx
 from groq import AsyncGroq
 
 from agent.tools.base import BaseTool
-from graphknows.shared.models.session import StreamEvent, ReasoningStep
+from graphknows.shared.models.session import StreamEvent
 
 log = logging.getLogger("agent.orchestrator")
 

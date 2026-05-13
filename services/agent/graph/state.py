@@ -1,8 +1,6 @@
 """Typed state contracts for the ADR-002 3-phase macro graph."""
 from __future__ import annotations
 
-import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Literal, TypedDict
 
@@ -89,6 +87,7 @@ class InvestigativeState(TypedDict):
     retrieval_hits: list[Chunk]
     briefing: str | None
     ws_events: list[WSEvent]
+    node_features: dict
 
 
 def build_initial_investigative_state(session_id: str, topic: str) -> InvestigativeState:
@@ -115,4 +114,5 @@ def build_initial_investigative_state(session_id: str, topic: str) -> Investigat
         retrieval_hits=[],
         briefing=None,
         ws_events=[],
+        node_features={},
     )

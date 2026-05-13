@@ -93,7 +93,7 @@ def cmd_query(args):
             preview = obs_str[:300] + ("..." if len(obs_str) > 300 else "")
             console.print(f"  [dim]Observation:[/] {preview}")
         if is_final:
-            console.print(f"  [bold yellow]→ Final answer synthesized[/]")
+            console.print("  [bold yellow]→ Final answer synthesized[/]")
 
     # ── Final Answer ──────────────────────────────────────────────────────
     console.print()

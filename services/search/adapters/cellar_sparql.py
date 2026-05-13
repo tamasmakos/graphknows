@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from ..base_source import BaseSource, _USER_AGENT
+from ..base_source import BaseSource
 from ..parsed_document import ParsedDocument
 
 log = logging.getLogger(__name__)

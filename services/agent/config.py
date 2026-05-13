@@ -1,6 +1,7 @@
 """Agent service settings."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,8 @@ if str(_SHARED_PKG_DIR) not in sys.path:
     sys.path.insert(0, str(_SHARED_PKG_DIR))
 
 from graphknows.shared.config import BaseServiceSettings
+
+SESSION_GRAPH_BACKEND: str = os.getenv("SESSION_GRAPH_BACKEND", "memgraph")
 
 
 class AgentSettings(BaseServiceSettings):

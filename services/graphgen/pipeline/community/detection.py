@@ -192,7 +192,7 @@ class CommunityDetector:
         max_size = max(community_sizes) if community_sizes else 0
         avg_size = float(np.mean(community_sizes)) if community_sizes else 0.0
         
-        logger.info(f"Selected Best Configuration:")
+        logger.info("Selected Best Configuration:")
         logger.info(f"  Resolution: {best_res:.2f}")
         logger.info(f"  Merged Modularity: {best_modularity:.4f}")
         logger.info(f"  Final Community Count: {len(set(best_partition.values()))}")
