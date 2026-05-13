@@ -5,6 +5,20 @@ import { DocumentsPane } from "@/components/DocumentsPane";
 import { GraphVisualizer } from "@/components/GraphVisualizer";
 import { Message, SSEChunk } from "@/lib/types";
 import { Send, User as UserIcon, Bot, Loader2 } from "lucide-react";
+import { useAgentWebSocket } from "@/hooks/useAgentWebSocket";
+
+function mergeGraphData(
+    prev: { nodes: any[]; edges: any[] } | null,
+    incoming: { nodes: any[]; edges: any[] },
+): { nodes: any[]; edges: any[] } {
+    if (!prev) return incoming;
+    const existingNodes = new Set(prev.nodes.map((n: any) => n.id));
+    const existingEdges = new Set(prev.edges.map((e: any) => `${e.source}-${e.target}-${e.type}`));
+    return {
+        nodes: [...prev.nodes, ...incoming.nodes.filter((n: any) => !existingNodes.has(n.id))],
+        edges: [...prev.edges, ...incoming.edges.filter((e: any) => !existingEdges.has(`${e.source}-${e.target}-${e.type}`))],
+    };
+}
 
 export default function ChatPage() {
     const [messages, setMessages] = useState<Message[]>([]);
@@ -12,6 +26,13 @@ export default function ChatPage() {
     const [streaming, setStreaming] = useState(false);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [graphData, setGraphData] = useState<{ nodes: any[], edges: any[] } | null>(null);
+    const sessionId = useRef<string>(crypto.randomUUID());
+
+    const { connect, disconnect } = useAgentWebSocket(sessionId.current, (msg) => {
+        if (msg.type === "graph_update" && msg.nodes) {
+            setGraphData((prev) => mergeGraphData(prev, msg as unknown as { nodes: any[]; edges: any[] }));
+        }
+    });
 
     async function send() {
         const query = input.trim();
@@ -22,6 +43,7 @@ export default function ChatPage() {
         const userMsg: Message = { role: "user", content: query };
         setMessages((prev) => [...prev, userMsg]);
         setStreaming(true);
+        connect(query);
 
         const assistantMsg: Message = { role: "assistant", content: "", citations: [], toolCalls: [] };
         setMessages((prev) => [...prev, assistantMsg]);
@@ -32,6 +54,7 @@ export default function ChatPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     query,
+                    session_id: sessionId.current,
                     messages: messages.map((m) => ({ role: m.role, content: m.content })),
                 }),
             });
@@ -86,21 +109,7 @@ export default function ChatPage() {
                                 return copy;
                             });
                         } else if (chunk.type === "graph") {
-                            // Extract Neo4j subgraph contexts to explicitly draw the user visual focus
-                            setGraphData(prev => {
-                                if (!prev) return chunk.data;
-                                // Basic merge of incoming Graph node data (e.g., from multiple tools)
-                                const existingNodes = new Set(prev.nodes.map((n: any) => n.id));
-                                const existingEdges = new Set(prev.edges.map((e: any) => `${e.source}-${e.target}-${e.type}`));
-
-                                const newNodes = chunk.data.nodes.filter((n: any) => !existingNodes.has(n.id));
-                                const newEdges = chunk.data.edges.filter((e: any) => !existingEdges.has(`${e.source}-${e.target}-${e.type}`));
-
-                                return {
-                                    nodes: [...prev.nodes, ...newNodes],
-                                    edges: [...prev.edges, ...newEdges]
-                                }
-                            });
+                            setGraphData((prev) => mergeGraphData(prev, chunk.data));
                         }
                     } catch (e) {
                         console.error("SSE parse error", e, line);
@@ -118,6 +127,7 @@ export default function ChatPage() {
                 return copy;
             });
         } finally {
+            disconnect();
             setStreaming(false);
             bottomRef.current?.scrollIntoView({ behavior: "smooth" });
         }
