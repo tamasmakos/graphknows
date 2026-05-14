@@ -9,7 +9,7 @@ from ..base_source import BaseSource
 from ..parsed_document import ParsedDocument
 
 _BASE = "https://www.europarl.europa.eu"
-_LISTING = f"{_BASE}/thinktank/en/search.html?category=briefing&documentType=BRIE"
+_LISTING = f"{_BASE}/thinktank/en/research/advanced-search?category=briefing&documentType=BRIE"
 
 
 class EPRSBriefingsSource(BaseSource):

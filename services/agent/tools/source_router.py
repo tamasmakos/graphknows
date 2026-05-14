@@ -2,24 +2,33 @@
 from __future__ import annotations
 
 
-_DEFAULT_SOURCES = ["ep_debates", "eurlex", "ec_press"]
+_DEFAULT_SOURCES = ["eprs_briefings", "ep_resolutions", "ep_debates"]
 
 _KEYWORD_RULES: list[tuple[set[str], list[str]]] = [
     (
-        {"regulation", "directive", "law", "legislation"},
-        ["eurlex", "cellar_sparql", "ep_resolutions"],
+        {"regulation", "directive", "law", "legislation", "celex"},
+        ["ep_resolutions", "eprs_briefings"],
     ),
     (
-        {"debate", "speech", "mep", "parliament"},
+        {"debate", "speech", "mep", "parliament", "plenary"},
         ["ep_debates", "ep_resolutions"],
     ),
     (
+        {"disinformation", "fimi", "interference", "manipulation", "propaganda",
+         "doppelganger", "hybrid", "influence", "kremlin", "russia"},
+        ["eprs_briefings", "ep_resolutions", "ep_debates"],
+    ),
+    (
+        {"election", "vote", "campaign", "democratic"},
+        ["eprs_briefings", "ep_resolutions"],
+    ),
+    (
         {"budget", "finance", "monetary"},
-        ["ecb_publications", "council_conclusions", "eca_reports"],
+        ["eprs_briefings", "ep_resolutions"],
     ),
     (
         {"commission", "press release", "announcement"},
-        ["ec_press"],
+        ["eprs_briefings"],
     ),
 ]
 

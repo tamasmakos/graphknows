@@ -317,7 +317,7 @@ def _choose_search_web_snippet(
     return max(candidates, key=_score)[:max_chars]
 
 
-_SEARCH_EU_SAFE_SOURCE_IDS = ("eprs_briefings",)
+_SEARCH_EU_SAFE_SOURCE_IDS = ("eprs_briefings", "ep_resolutions", "ep_debates")
 _SEARCH_EU_ADAPTER_TIMEOUT_SECONDS = 15
 _SEARCH_EU_QUERY_AWARE_TIMEOUT_SECONDS = 30
 _SEARCH_EU_QUERY_EXPANSIONS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -359,9 +359,10 @@ def _normalize_search_eu_sources(sources: str) -> list[str]:
     ))
 
     # Replace empty or noisy mixes with the validated briefing path.
-    if not requested_source_ids or len(normalized_source_ids) != len(requested_source_ids):
+    # Accept any recognized source; fill with defaults only if empty
+    if not normalized_source_ids:
         return list(_SEARCH_EU_SAFE_SOURCE_IDS)
-    return normalized_source_ids or list(_SEARCH_EU_SAFE_SOURCE_IDS)
+    return normalized_source_ids
 
 
 def _search_eu_candidate_queries(source_id: str, query: str) -> list[str]:
@@ -971,6 +972,94 @@ def build_graph(
             )
         return summary
 
+    # ── Tool 5: search_archives ──────────────────────────────────────────────
+    @tool
+    async def search_archives(
+        query: str,
+        archives: str,
+        date_from: str = "",
+        date_to: str = "",
+        limit_per_archive: int = 5,
+    ) -> str:
+        """Search specific high-quality public archives for authoritative primary sources.
+
+        Use this tool when you need targeted depth from specific official archives —
+        legislation text, parliamentary debates, court decisions, central bank reports.
+        Complements search_eu (which uses EPRS/EP sources) and search_web (open web).
+        Results are cosine-reranked against the query and cached in the knowledge graph.
+
+        ARCHIVE IDs — pick only the most relevant ones for the query:
+          eprs_briefings       EU policy briefs & impact assessments (best for policy overview)
+          eurlex               EU legislation: regulations, directives, treaties (primary law text)
+          ep_debates           EP plenary debate transcripts (MEP positions, political dynamics)
+          ep_resolutions       EP adopted resolutions (Parliament's official position)
+          council_conclusions  Council of EU conclusions & press releases (member state positions)
+          ec_press             European Commission press releases (executive announcements)
+          ecb_publications     ECB monetary policy, financial stability reports
+          uk_legislation       UK Acts of Parliament & Statutory Instruments
+          wikipedia_eu         Wikipedia background context (secondary source only)
+
+        Args:
+            query: Natural language search query.
+            archives: Comma-separated archive IDs from the list above.
+            date_from: Optional ISO date filter YYYY-MM-DD.
+            date_to: Optional ISO date filter YYYY-MM-DD.
+            limit_per_archive: Documents to fetch per archive (default 5, max 10).
+        """
+        _SERVICES_DIR = Path(__file__).resolve().parents[1]
+        if str(_SERVICES_DIR) not in sys.path:
+            sys.path.insert(0, str(_SERVICES_DIR))
+
+        from search.archive_engine import ArchiveEngine, ArchiveQuery
+
+        archive_ids = [a.strip() for a in archives.split(",") if a.strip()]
+        if not archive_ids:
+            return "No archives specified. Provide comma-separated archive IDs."
+
+        aq = ArchiveQuery(
+            query=query,
+            archives=archive_ids,
+            date_from=date_from or None,
+            date_to=date_to or None,
+            limit_per_archive=min(limit_per_archive, 10),
+            top_k=8,
+        )
+
+        engine = ArchiveEngine()
+        results = await engine.search(aq)
+        formatted = engine.format_for_agent(results)
+
+        # Accumulate docs into session store for graphgen
+        docs_for_session = [
+            {
+                "id":     r.doc_id,
+                "title":  r.title,
+                "text":   r.excerpt,
+                "url":    r.url,
+                "source": r.source,
+                "date":   r.date,
+            }
+            for r in results
+        ]
+        _session_docs.setdefault(session_id, []).extend(docs_for_session)
+
+        # Emit keyword graph (non-blocking)
+        if docs_for_session:
+            asyncio.create_task(
+                _emit_keyword_graph(
+                    _session_docs.get(session_id, []),
+                    session_id,
+                    broadcaster,
+                )
+            )
+
+        cached_count = sum(1 for r in results if r.from_cache)
+        header = (
+            f"[search_archives] {len(results)} results from {archive_ids} "
+            f"({cached_count} from cache)\n\n"
+        )
+        return header + formatted
+
     # ── Tool 4: graphrag ─────────────────────────────────────────────────────
     @tool
     async def graphrag(query: str, session_id_arg: str, k: int = 5) -> str:
@@ -1040,7 +1129,17 @@ Session ID: {session_id}
 RESEARCH PROTOCOL — follow this EXACT sequence:
 
 STEP 1 (one LLM response): Call search_eu AND search_web simultaneously.
+  → search_eu: Use sources="eprs_briefings,ep_resolutions,ep_debates" — these are our primary authoritative EU sources.
+    EPRS briefings = EP Research Service analysis. EP resolutions = adopted Parliament texts. EP debates = plenary speeches.
+  → search_web: Use for context, news coverage, and any sources not in EU official archives.
   → A partial keyword graph is automatically streamed to the user as you search.
+
+STEP 1b (optional, same response as STEP 1): Call search_archives if the query benefits from targeted depth.
+  → Use search_archives when you need: specific legislation text (eurlex), ECB/monetary data (ecb_publications),
+    UK law (uk_legislation), Council positions (council_conclusions), or Commission announcements (ec_press).
+  → Pick only the 1-2 most relevant archive IDs — do not fan out to all archives.
+  → search_archives complements search_eu and search_web — it does not replace them.
+  → Results are cosine-reranked and cached in the knowledge graph automatically.
 
 STEP 2 (next LLM response): Call graphgen(session_id_arg="{session_id}")
   → This runs GLiNER2 + DSPy to extract real named entities and typed relations.
@@ -1052,10 +1151,12 @@ STEP 3 (optional): Call graphrag if the user needs entity connectivity analysis.
 STEP 4: Write your final EPRS-style investigative report.
 
 RULES:
+- ALWAYS call search_eu with sources="eprs_briefings,ep_resolutions,ep_debates" — never omit this
 - Do NOT call graphgen in the same response as search tools (they run in parallel, docs won't be ready)
 - Do NOT loop or re-search without a clear reason
 - The report MUST include a 'Key Graph Entities' section listing the entities from graphgen
-- Cite sources inline with [🏛️ Source] for EU institutions, [🌐 Source] for web
+- Cite EU sources inline with [🏛️ Source] and web sources with [🌐 Source]
+- EU official sources (EPRS, EP resolutions, debates) take priority over web sources
 
 REPORT FORMAT:
 ## [Investigation Title]
@@ -1085,7 +1186,7 @@ REPORT FORMAT:
 """
 
     # ── Build graph ──────────────────────────────────────────────────────────
-    tools_list = [search_web, search_eu, graphgen, graphrag]
+    tools_list = [search_web, search_eu, search_archives, graphgen, graphrag]
 
     llm_base = ChatGroq(
         api_key=groq_api_key,
