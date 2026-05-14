@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.agent.session_graph import SessionGraphManager
 
-MEMGRAPH_URI = "bolt://127.0.0.1:17687"
+MEMGRAPH_URI = "bolt://172.18.0.1:17687"
 NEO4J_URI = "bolt://172.18.0.1:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASS = "testpassword123"
@@ -21,7 +21,7 @@ def _memgraph_available() -> bool:
     try:
         s = socket.socket()
         s.settimeout(2)
-        result = s.connect_ex(("127.0.0.1", 17687))
+        result = s.connect_ex(("172.18.0.1", 17687))
         s.close()
         return result == 0
     except OSError:
