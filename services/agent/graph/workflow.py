@@ -78,3 +78,6 @@ def build_workflow(
     )
     workflow.add_edge("communicate", END)
     return workflow.compile()
+
+# Events to stream from the LangGraph agent
+REQUIRED_STREAM_EVENTS = ("on_chat_model_stream", "on_tool_start", "on_tool_end", "on_chain_end")

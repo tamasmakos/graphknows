@@ -159,8 +159,8 @@ class PgVectorClient:
                     session_id,
                     chunk.doc_id,
                     chunk.text,
-                    str(emb),
-                    str(chunk.metadata) if chunk.metadata else "{}",
+                    "[" + ",".join(str(x) for x in emb) + "]",
+                    json.dumps(chunk.metadata) if chunk.metadata else "{}",
                 )
                 inserted += 1
         logger.debug("Upserted %d chunks for session %s", inserted, session_id)

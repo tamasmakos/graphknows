@@ -14,18 +14,32 @@ from pydantic import BaseModel, model_validator
 
 from agent.config import AgentSettings
 try:
-    from services.agent.graph.events import (
-        ClaimVerifiedEvent,
-        ContradictionDetectedEvent,
-        EvidenceAddedEvent,
-        GraphBuildingEvent,
-        GraphReadyEvent,
-        PhaseChangeEvent,
-        ReportReadyEvent,
-        ThreadStartedEvent,
-    )
-    from services.agent.graph.state import InvestigativeState, build_initial_investigative_state
-    from services.agent.graph.workflow import REQUIRED_STREAM_EVENTS
+    try:
+        from agent.graph.events import (
+            ClaimVerifiedEvent,
+            ContradictionDetectedEvent,
+            EvidenceAddedEvent,
+            GraphBuildingEvent,
+            GraphReadyEvent,
+            PhaseChangeEvent,
+            ReportReadyEvent,
+            ThreadStartedEvent,
+        )
+        from agent.graph.state import InvestigativeState, build_initial_investigative_state
+        from agent.graph.workflow import REQUIRED_STREAM_EVENTS
+    except ImportError:
+        from services.agent.graph.events import (
+            ClaimVerifiedEvent,
+            ContradictionDetectedEvent,
+            EvidenceAddedEvent,
+            GraphBuildingEvent,
+            GraphReadyEvent,
+            PhaseChangeEvent,
+            ReportReadyEvent,
+            ThreadStartedEvent,
+        )
+        from services.agent.graph.state import InvestigativeState, build_initial_investigative_state
+        from services.agent.graph.workflow import REQUIRED_STREAM_EVENTS
 except Exception:
     ClaimVerifiedEvent = None  # type: ignore
     ContradictionDetectedEvent = None  # type: ignore
@@ -579,7 +593,14 @@ async def delete_session(session_id: str) -> Dict[str, str]:
 
     # Merge entire session graph before closing
     try:
-        await asyncio.to_thread(merge_session_to_neo4j, session_id, sgm)
+        settings = _get_settings()
+        await asyncio.to_thread(
+            merge_session_to_neo4j,
+            session_id,
+            sgm,
+            export_html=settings.export_graph_html,
+            html_output_dir=settings.graph_html_output_dir,
+        )
     except Exception as exc:
         log.warning("Session merge failed for session %s: %s", session_id, exc)
 
@@ -651,7 +672,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
 
     inv_state: InvestigativeState = build_initial_investigative_state(
         session_id=session_id,
-        user_query=req.message,
+        topic=req.message,
     )
 
     async def persist_graph(sid: str, nodes: list[dict], edges: list[dict]) -> None:
@@ -799,6 +820,35 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
                 )
             )
 
+        # ── Run communicate_node with real Tavily docs from the ReAct agent ──
+        # Import here to avoid circular imports at module level
+        try:
+            from agent.langgraph_agent import _session_docs
+            from services.agent.graph.state import Chunk
+            from services.agent.graph.nodes.communicate import communicate_node
+            import uuid as _uuid
+
+            raw_docs = _session_docs.get(session_id, [])
+            if raw_docs:
+                chunks_for_brief = [
+                    Chunk(
+                        id=f"chunk-{_uuid.uuid4().hex[:8]}",
+                        doc_id=d.get("id", d.get("url", f"doc-{i}"))[:80],
+                        text=d.get("text", "") or d.get("content", ""),
+                        embedding=None,
+                        metadata={"source": d.get("source", "web"), "url": d.get("url", ""), "title": d.get("title", "")},
+                    )
+                    for i, d in enumerate(raw_docs)
+                ]
+                brief_state = dict(inv_state)
+                brief_state["chunks"] = chunks_for_brief
+                brief_state["topic"] = req.message
+                comm_result = await communicate_node(brief_state, retriever=None)
+                full_answer = comm_result.get("briefing", full_answer) or full_answer
+        except Exception as _comm_exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("communicate_node post-agent call failed: %s", _comm_exc)
+
         if full_answer:
             claim_id = f"claim_{session_id[:8]}_0"
             if claim_id not in claims_seen:
@@ -807,7 +857,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
                     ClaimVerifiedEvent(
                         session_id=session_id,
                         claim_id=claim_id,
-                        text=full_answer[:200],
+                        text=full_answer,
                         status="supported",
                         importance=5,
                     )
@@ -829,7 +879,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
             ReportReadyEvent(
                 session_id=session_id,
                 findings_count=max(1, evidence_count),
-                report_excerpt=full_answer[:300],
+                report_excerpt=full_answer,
             )
         )
 

@@ -33,5 +33,7 @@ class AgentSettings(BaseServiceSettings):
         default="postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",
         alias="PGVECTOR_DSN",
     )
-    memgraph_uri: str = Field(default="bolt://172.17.0.1:17687", alias="MEMGRAPH_URI")
+    memgraph_uri: str = Field(default="bolt://172.18.0.1:17687", alias="MEMGRAPH_URI")
+    export_graph_html: bool = Field(default=False, alias="EXPORT_GRAPH_HTML")
+    graph_html_output_dir: str = Field(default="/root/graphknows/output", alias="GRAPH_HTML_OUTPUT_DIR")
     httpx_timeout: float = Field(default=60.0, alias="HTTPX_TIMEOUT")
