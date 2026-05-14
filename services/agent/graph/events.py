@@ -165,3 +165,93 @@ def error_event(session_id: str, message: str) -> WSEvent:
         payload={"message": message},
         ts=_ts(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Pydantic SSE event models for the /investigate endpoint
+# ---------------------------------------------------------------------------
+from typing import Literal, Optional  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+
+
+class PhaseChangeEvent(BaseModel):
+    """Emitted when the investigation transitions between macro phases."""
+    event: Literal["phase_change"] = "phase_change"
+    session_id: str
+    phase: str
+    node: str
+
+
+class ThreadStartedEvent(BaseModel):
+    """Emitted when a new investigation thread starts."""
+    event: Literal["thread_started"] = "thread_started"
+    session_id: str
+    thread_id: str
+    title: str
+    sub_question_id: str
+
+
+class EvidenceAddedEvent(BaseModel):
+    """Emitted when a new evidence chunk is added."""
+    event: Literal["evidence_added"] = "evidence_added"
+    session_id: str
+    evidence_id: str
+    thread_id: str
+    summary: str
+    source_authority: int = 3
+    document_url: Optional[str] = None
+
+
+class GraphBuildingEvent(BaseModel):
+    """Emitted when graph construction starts."""
+    event: Literal["graph_building"] = "graph_building"
+    session_id: str
+    namespace: str
+
+
+class GraphReadyEvent(BaseModel):
+    """Emitted when the session graph is ready."""
+    event: Literal["graph_ready"] = "graph_ready"
+    session_id: str
+    namespace: str
+    node_count: int
+    edge_count: int
+
+
+class ClaimVerifiedEvent(BaseModel):
+    """Emitted when a claim is verified by the report."""
+    event: Literal["claim_verified"] = "claim_verified"
+    session_id: str
+    claim_id: str
+    text: str
+    status: str = "supported"
+    importance: int = 5
+
+
+class ContradictionDetectedEvent(BaseModel):
+    """Emitted when a contradiction is detected."""
+    event: Literal["contradiction_detected"] = "contradiction_detected"
+    session_id: str
+    contradiction_id: str
+    claim_id: str
+    summary: str
+    resolution_status: str = "open"
+
+
+class ReportReadyEvent(BaseModel):
+    """Emitted when the final report is ready."""
+    event: Literal["report_ready"] = "report_ready"
+    session_id: str
+    findings_count: int
+    report_excerpt: str
+
+
+def graph_export_event(session_id: str, path: str, n_nodes: int, n_edges: int) -> WSEvent:
+    """Emit after a session graph HTML visualisation is written to disk."""
+    return WSEvent(
+        session_id=session_id,
+        event_type="graph_export",
+        payload={"path": path, "n_nodes": n_nodes, "n_edges": n_edges},
+        ts=_ts(),
+    )
+

@@ -88,6 +88,7 @@ class InvestigativeState(TypedDict):
     briefing: str | None
     ws_events: list[WSEvent]
     node_features: dict
+    current_macro_phase: str
 
 
 def build_initial_investigative_state(session_id: str, topic: str) -> InvestigativeState:
@@ -115,4 +116,5 @@ def build_initial_investigative_state(session_id: str, topic: str) -> Investigat
         briefing=None,
         ws_events=[],
         node_features={},
+        current_macro_phase="scope",
     )
