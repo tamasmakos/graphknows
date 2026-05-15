@@ -4,6 +4,13 @@
 > Format: ## [YYYY-MM-DD] action | subject
 > Rotate when >500 entries.
 
+## [2026-05-15] update | live agent/frontend alignment
+- Updated wiki pages to match the live stack: static SPA frontend `apps/web/` on `:8080` proxying to `services/agent/` on `:8002`
+- Captured exact local startup commands for the agent and frontend in the wiki runbooks
+- Replaced stale frontend notes that still described a Next.js app with the current static HTML + FastAPI proxy implementation
+- Updated agent service documentation to reflect the 3-phase investigative workflow, `ws_event` envelope, `/ws/chat/{session_id}` compatibility stream, and direct `/chat` execution path
+- Added technical debt note for the remaining frontend gap: investigative workflow retrieval hits do not yet hydrate the Sources side panel
+
 ## [2026-05-12] restructure | wiki cleanup — flat concepts/ → typed folders
 - Deleted concepts/ folder entirely (was a catch-all with 33 files)
 - New structure: architecture/ adr/ product/ research/ ops/ entities/ raw/

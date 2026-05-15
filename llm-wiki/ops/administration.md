@@ -1,7 +1,8 @@
 ---
 title: Project Administration
+updated: 2026-05-15
 type: concept
-tags: [admin, pipeline, deployment]
+tags: [admin, deployment, local-dev]
 confidence: high
 ---
 
@@ -9,45 +10,116 @@ confidence: high
 
 ## Repository
 
-- GitHub: tamasmakos/graphgen
-- Local: ~/graphgen
-- Package: graphgen/ (Python package with pyproject.toml)
-- Tests: tests/ (gitignored - stage with: git add -f tests/)
+- root: `/root/graphknows`
+- frontend: `apps/web/`
+- agent: `services/agent/`
+- search: `services/search/`
+- wiki: `llm-wiki/`
 
-## Branch/PR Workflow
+## Current Local Ports
 
-- Use classic GitHub tokens (repo scope) - fine-grained PATs return 403
-- Token stored in ~/.git-credentials
-- PR workflow: feature branch -> push -> gh pr create -> CI -> merge
-- Always merge latest main before final merge
-
-## Config Management
-
-- config.yaml: application logic, schema, extraction settings
-- .env in ~/graphgen/: secrets (GROQ_API_KEY), infra overrides (NEO4J_HOST, NEO4J_PORT)
-- Never commit .env to git
-- config.full-improved.yaml and config.medium.yaml: alternative configs for different run sizes
-
-## Key Commands
-
-- graphgen: runs standard KnowledgePipeline
-- python run_with_config.py: alternative entry point
-- docker compose up: start Neo4j + pgvector containers
-- pytest tests/ (or git add -f tests/ first if gitignored)
-
-## Infrastructure
-
-- Neo4j: bolt://172.18.0.1:7687, user=neo4j, pass=testpassword123
-- pgvector: postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb
-- Use 172.18.0.1 (not localhost) inside the hermes container
-- docker-compose.yaml manages both services
+- frontend proxy: `8080`
+- agent: `8002`
+- search: `8000`
+- Neo4j: `7687`
+- pgvector: `5432`
+- Memgraph: `17687`
 
 ## Environment Setup
 
-- pip install -e . in ~/graphgen
-- GROQ_API_KEY in ~/graphgen/.env
-- EMBED_MODEL=BAAI/bge-small-en-v1.5 (constant in code)
+- `.env` lives at the repo root
+- do not commit `.env`
+- typical startup loads env with:
+
+```bash
+set -a && source .env && set +a
+```
+
+## Exact Local Startup
+
+### Start the agent backend
+
+```bash
+cd /root/graphknows
+set -a && source .env && set +a
+PYTHONPATH="$PWD/services/agent:$PWD/services:$PWD/services/graphgen:$PWD/services/scrapers" \
+python3 -B -m uvicorn services.agent.main:app --host 0.0.0.0 --port 8002 --log-level info
+```
+
+### Start the frontend
+
+```bash
+cd /root/graphknows
+AGENT_URL=http://localhost:8002 \
+uvicorn apps.web.server:app --host 0.0.0.0 --port 8080
+```
+
+### Optional helper
+
+```bash
+cd /root/graphknows
+./apps/web/start.sh
+```
+
+The helper also opens a tunnel. For plain local work, the direct `uvicorn` command is simpler.
+
+## Backend-Only Smoke Tests
+
+### Health check
+
+```bash
+curl -s http://127.0.0.1:8002/health
+```
+
+### Blocking chat check
+
+```bash
+curl -s \
+  -H 'content-type: application/json' \
+  -d '{"message":"health validation"}' \
+  http://127.0.0.1:8002/chat
+```
+
+### Websocket smoke test without the frontend
+
+```bash
+cd /root/graphknows
+python - <<'PY'
+import asyncio
+import json
+import websockets
+
+async def main():
+    uri = 'ws://127.0.0.1:8002/ws/chat/admin-smoke'
+    async with websockets.connect(uri, open_timeout=10, close_timeout=10) as ws:
+        await ws.send(json.dumps({
+            'message': 'Build a short investigation plan for the EU AI Act',
+            'session_id': 'admin-smoke',
+        }))
+        for _ in range(20):
+            msg = await asyncio.wait_for(ws.recv(), timeout=120)
+            data = json.loads(msg)
+            print(data.get('type'), (data.get('payload') or {}).get('event_type'))
+            if data.get('type') in {'done', 'answer', 'error'}:
+                break
+
+asyncio.run(main())
+PY
+```
+
+Expected sequence:
+
+- `status`
+- `ws_event plan_ready`
+- repeated search and graph events
+- `done`
+
+## Operational Notes
+
+- If the frontend looks broken, check `:8002` first; `apps/web` is a thin proxy
+- The browser currently uses the compatibility websocket route `/ws/chat/{session_id}`
+- Long investigative prompts can take minutes; an apparently idle UI is not necessarily a dead run
 
 ## Links
 
-[[graphgen-project]] [[project-roadmap]] [[technical-debt]]
+[[architecture/reference]] [[architecture/service-agent]] [[product/frontend-design]] [[ops/technical-debt]]

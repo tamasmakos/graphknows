@@ -62,6 +62,116 @@ Located in `services/graphrag`.
 
 ---
 
+## Current Local Agent + Frontend Workflow
+
+The active local chat stack in this repo is:
+- `services/agent` on port `8002`
+- `apps/web` on port `8080`
+
+The web app proxies both HTTP and websocket traffic to the agent via `AGENT_URL`, which defaults to `http://localhost:8002` in [apps/web/server.py](apps/web/server.py).
+
+If you only need the current chat workflow, use this section instead of the older GraphGen/GraphRAG Docker walkthrough further below.
+
+### 1. Start the Agent Backend
+
+From the repo root:
+
+```bash
+cd /root/graphknows
+set -a && source .env && set +a
+PYTHONPATH="$PWD/services/agent:$PWD/services:$PWD/services/graphgen:$PWD/services/scrapers" \
+python3 -B -m uvicorn services.agent.main:app --host 0.0.0.0 --port 8002 --log-level info
+```
+
+This is the backend the frontend talks to by default.
+
+### 2. Start the Frontend
+
+In a second terminal, from the repo root:
+
+```bash
+cd /root/graphknows
+AGENT_URL=http://localhost:8002 \
+uvicorn apps.web.server:app --host 0.0.0.0 --port 8080
+```
+
+Open:
+
+```text
+http://localhost:8080
+```
+
+Optional helper script:
+
+```bash
+cd /root/graphknows
+./apps/web/start.sh
+```
+
+That script also opens a tunnel; the plain `uvicorn` command above is the simplest local-only frontend start path.
+
+### 3. Try the Backend Without the Frontend
+
+Health check:
+
+```bash
+curl -s http://127.0.0.1:8002/health
+```
+
+Blocking HTTP request against `/chat`:
+
+```bash
+curl -s \
+  -H 'content-type: application/json' \
+  -d '{"message":"health validation"}' \
+  http://127.0.0.1:8002/chat
+```
+
+Direct websocket test against the agent, without the frontend proxy:
+
+```bash
+cd /root/graphknows
+python - <<'PY'
+import asyncio
+import json
+
+import websockets
+
+
+async def main():
+    uri = 'ws://127.0.0.1:8002/ws/chat/readme-smoke-test'
+    async with websockets.connect(uri, open_timeout=10, close_timeout=10) as ws:
+        await ws.send(json.dumps({
+            'message': 'Build a short investigation plan for the EU AI Act',
+            'session_id': 'readme-smoke-test',
+        }))
+
+        for _ in range(20):
+            msg = await asyncio.wait_for(ws.recv(), timeout=120)
+            data = json.loads(msg)
+            print(json.dumps({
+                'type': data.get('type'),
+                'event_type': (data.get('payload') or {}).get('event_type'),
+                'error': data.get('error'),
+                'briefing_len': len(data.get('briefing') or ''),
+            }, ensure_ascii=True))
+            if data.get('type') in {'done', 'answer', 'error'}:
+                break
+
+
+asyncio.run(main())
+PY
+```
+
+Expected behavior:
+- First message: `{"type":"status","status":"thinking"}`
+- Then a sequence of `ws_event` messages such as `plan_ready`, `search_start`, `docs_fetched`, `graph_update`, and `brief_done`
+- Final message: `done`
+
+For larger prompts, the investigative workflow can take a few minutes to finish.
+
+---
+
 ## Data Schema
 
 ```

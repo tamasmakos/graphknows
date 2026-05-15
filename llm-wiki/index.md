@@ -1,7 +1,7 @@
 # Wiki Index — Graphknows
 
 > Deep research agent for political intelligence.
-> Last updated: 2026-05-12 | Pages: 26
+> Last updated: 2026-05-15 | Pages: 26
 
 ---
 

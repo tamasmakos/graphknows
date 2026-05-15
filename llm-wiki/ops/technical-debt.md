@@ -37,15 +37,19 @@ Register of known technical debt items with severity (HIGH/MEDIUM/LOW), descript
 7. **LLM Extraction Quality Metrics [MEDIUM]**
    Silhouette score is the only structural quality metric. Need entity-level precision/recall against known entities.
 
+8. **Frontend Sources Panel Hydration [MEDIUM]**
+   The investigative workflow renders final answers and graph updates, but retrieval hits are not yet mapped into the frontend Sources side panel contract. Result: the answer can cite `[Doc-N]` while the side panel still shows `0`.
+   Fix: propagate retrieval/source payloads through the websocket and `/chat` answer path, then hydrate the side panel in `apps/web/index.html`.
+
 ## LOW Severity
 
-8. **Multi-language Support [LOW]**
+9. **Multi-language Support [LOW]**
    Pipeline only tested on English (EP debates provided pre-translated). German Bundestag debates will require multilingual GLiNER2.
 
-9. **KGE Weighting [LOW - DEPRECATED]**
+10. **KGE Weighting [LOW - DEPRECATED]**
    Knowledge Graph Embedding weighting was tried and deprecated in favor of Node2Vec. Code may still have dead paths.
 
-10. **Large Chunk Handling [LOW - FIXED]**
+11. **Large Chunk Handling [LOW - FIXED]**
     2048/128 chunking caused silent truncation. Now using 512/64. Old configs may still use large chunks.
 
 ## Links

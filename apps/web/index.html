@@ -1820,18 +1820,18 @@
 
     <div id="chat-area">
       <div id="chat-empty-state" class="visible">
-        <div class="chat-empty-title">Ask one focused question, then inspect the graph separately.</div>
-        <div class="chat-empty-copy">On mobile, the answer view stays concise and the graph gets its own tab. Start with a policy, institution, person, or legislative topic.</div>
+        <div class="chat-empty-title">Start an investigation and watch the agent plan, search, map entities, and brief in one flow.</div>
+        <div class="chat-empty-copy">Ask for a topic, institution, dossier, or person. The agent now streams its investigation plan, search passes, graph writes, and final brief directly into this panel.</div>
         <div class="chat-suggestion-row">
-          <button type="button" class="chat-suggestion-btn" data-suggestion="What does the knowledge graph show about European climate policy?">European climate policy</button>
-          <button type="button" class="chat-suggestion-btn" data-suggestion="Which organisations are most connected in this investigation?">Most connected organisations</button>
-          <button type="button" class="chat-suggestion-btn" data-suggestion="Show the key laws and doctrines mentioned in this investigation.">Key laws and doctrines</button>
+          <button type="button" class="chat-suggestion-btn" data-suggestion="Build an investigation plan for the EU AI Act and show the institutions, committees, and legal instruments involved.">EU AI Act investigation</button>
+          <button type="button" class="chat-suggestion-btn" data-suggestion="Investigate European climate policy and surface the main organisations, laws, and relationships in the graph.">European climate policy</button>
+          <button type="button" class="chat-suggestion-btn" data-suggestion="Trace the organisations, people, and committees shaping EU defence funding decisions.">EU defence funding network</button>
         </div>
       </div>
     </div>
 
     <div id="input-row">
-      <textarea id="msg-input" placeholder="Ask about politicians, organizations, laws…" rows="1"></textarea>
+      <textarea id="msg-input" placeholder="Ask the agent to investigate a topic, actor, law, or policy network..." rows="1"></textarea>
       <button id="ask-btn">Ask</button>
     </div>
 
@@ -2357,7 +2357,6 @@ mobileSourcesBtn.addEventListener('click', () => {
   bodyEl.classList.toggle('sources-open');
   if (bodyEl.classList.contains('sources-open')) bodyEl.classList.remove('legend-open', 'graph-tools-open');
 });
-syncResponsiveState();
 
 // ── Trace panel toggle ─────────────────────────────────────────────────────
 const traceHeader = document.getElementById('trace-header');
@@ -3047,6 +3046,7 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
     }
 
     const collectedSteps = [];
+    let finalBriefing = '';
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ message: text, session_id: sessionId }));
@@ -3059,16 +3059,297 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
     let allToolsDone = false;
     let liveAnswerCard = null;
     let liveAnswerBody = null;
+    let currentWorkflowIteration = null;
 
     const TOOL_ICONS = {
       search_eu: '🏛️',
       search_web: '🌐',
       graphgen: '🔬',
       graphrag: '🧠',
+      investigation_plan: '🧭',
+      investigation_search: '🛰️',
+      evidence_retrieval: '📚',
+      final_brief: '📝',
     };
 
     function getToolIcon(toolName) {
       return TOOL_ICONS[toolName] || toolIcon(toolName) || '🔧';
+    }
+
+    function pushTraceStep(toolName, thought, observationType, observation) {
+      const step = {
+        step: collectedSteps.length + 1,
+        tool_name: toolName,
+        thought: thought || '',
+        observation_type: observationType || 'unknown',
+        observation: observation ?? null,
+      };
+      collectedSteps.push(step);
+      return step;
+    }
+
+    function getStepThoughtEl(card) {
+      return card ? card.querySelector('.step-thought') : null;
+    }
+
+    function getStepResultEl(card) {
+      return card ? card.querySelector('.step-result') : null;
+    }
+
+    function setStepThought(card, textValue) {
+      const thoughtEl = getStepThoughtEl(card);
+      if (thoughtEl) thoughtEl.textContent = String(textValue || '');
+    }
+
+    function appendStepResult(card, line) {
+      if (!card || !line) return;
+      const resultEl = getStepResultEl(card);
+      if (!resultEl) return;
+      resultEl.textContent = resultEl.textContent ? `${resultEl.textContent}\n${line}` : line;
+      resultEl.style.display = '';
+    }
+
+    function finishStepCard(card) {
+      const spinnerEl = card && card.querySelector('.step-spinner');
+      if (spinnerEl) spinnerEl.remove();
+    }
+
+    function ensureLiveAnswerCard() {
+      if (!liveAnswerCard) {
+        liveAnswerCard = document.createElement('div');
+        liveAnswerCard.className = 'msg-agent';
+        const label = document.createElement('div');
+        label.className = 'answer-label';
+        label.textContent = 'Answer';
+        liveAnswerBody = document.createElement('div');
+        liveAnswerBody.className = 'answer-body';
+        liveAnswerCard.appendChild(label);
+        liveAnswerCard.appendChild(liveAnswerBody);
+        chatArea.appendChild(liveAnswerCard);
+      }
+      return liveAnswerBody;
+    }
+
+    function renderLiveAnswer(textValue) {
+      const body = ensureLiveAnswerCard();
+      const nextText = textValue || '';
+      if (window.marked) {
+        body.innerHTML = marked.parse(nextText);
+      } else {
+        body.textContent = nextText;
+      }
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function handleGraphUpdate(data) {
+      const isPartial = data.partial === true;
+      setKgUpdating(true);
+
+      if (!window.__graphTabSwitched) {
+        window.__graphTabSwitched = true;
+        const kgTab = document.querySelector('.graph-view-tab[data-graph-view="knowledge"]');
+        if (kgTab && !kgTab.classList.contains('active')) kgTab.click();
+        const rightPanel = document.getElementById('right');
+        if (rightPanel) rightPanel.classList.add('visible');
+      }
+
+      if (data.graph) {
+        const g = data.graph;
+        const lexNodes = (data.lexical && data.lexical.nodes) || [];
+        const lexEdges = (data.lexical && data.lexical.edges) || [];
+        graphViewsState.lexical = graphViewsState.lexical || { nodes: [], edges: [] };
+        const lexNodeMap = new Map(graphViewsState.lexical.nodes.map(n => [n.id, n]));
+        lexNodes.forEach(n => lexNodeMap.set(n.id, {
+          id: n.id, label: n.type || 'CONCEPT', type: n.type || 'CONCEPT',
+          name: n.name || n.id, properties: { name: n.name || n.id, label: n.type || 'CONCEPT' },
+        }));
+        graphViewsState.lexical.nodes = Array.from(lexNodeMap.values());
+        graphViewsState.lexical.edges = [...(graphViewsState.lexical.edges || []), ...lexEdges.map(e => ({
+          source: e.source || e.from, target: e.target || e.to, type: e.type || 'MENTIONS',
+        }))];
+        updateGraphWithNewData(g.nodes || [], g.edges || [], []);
+
+        const nodeCount = (g.nodes || []).length;
+        const edgeCount = (g.edges || []).length;
+        const kgUpdatingEl = document.getElementById('kg-updating');
+        if (kgUpdatingEl) {
+          if (isPartial) {
+            kgUpdatingEl.textContent = `⚡ ${nodeCount}n / ${edgeCount}e — extracting…`;
+            kgUpdatingEl.style.opacity = '1';
+            kgUpdatingEl.style.color = 'var(--accent, #7c6ff7)';
+          } else {
+            kgUpdatingEl.textContent = `✓ ${nodeCount} entities / ${edgeCount} relations`;
+            kgUpdatingEl.style.color = 'var(--success, #22c55e)';
+            setTimeout(() => { kgUpdatingEl.style.opacity = '0.5'; }, 3000);
+          }
+        }
+        return;
+      }
+
+      updateGraphWithNewData(data.nodes || [], data.edges || [], data.lexical_edges || []);
+      const kgUpdatingEl = document.getElementById('kg-updating');
+      if (kgUpdatingEl) {
+        const nodeCount = (data.nodes || []).length;
+        const edgeCount = (data.edges || []).length;
+        kgUpdatingEl.textContent = `✓ ${nodeCount} entities / ${edgeCount} relations`;
+        kgUpdatingEl.style.color = 'var(--success, #22c55e)';
+      }
+    }
+
+    function appendWorkflowSummaryCard(toolName, thought, resultText, observationType, observation) {
+      const card = createStepCard(toolName, '');
+      setStepThought(card, thought);
+      finishStepCard(card);
+      appendStepResult(card, resultText);
+      liveTrace.appendChild(card);
+      pushTraceStep(toolName, thought, observationType, observation);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function finalizeStream(answerText, sources) {
+      try { spinner.remove(); } catch(_) {}
+      if (liveAnswerCard) liveAnswerCard.remove();
+      liveAnswerCard = null;
+      liveAnswerBody = null;
+      if (liveTrace.parentNode) liveTrace.remove();
+      thoughtBuffer = '';
+
+      const finalSources = Array.isArray(sources) ? sources : [];
+      appendAgentMsg(answerText || '(no answer)', finalSources, collectedSteps);
+      if (collectedSteps.length) {
+        setTraceSteps(collectedSteps, text, finalSources);
+      }
+      autoNameSession(text);
+      saveSession({ ...getCurrentSessionData(), id: sessionId, nodeCount: allNodes.length, lastQuery: new Date().toISOString() });
+      renderSessionList();
+      ws.close();
+      resolve();
+    }
+
+    function handleWorkflowEvent(eventFrame) {
+      const eventType = eventFrame && eventFrame.event_type;
+      const payload = (eventFrame && eventFrame.payload) || {};
+
+      if (!eventType) return;
+
+      if (eventType === 'plan_ready') {
+        const plan = Array.isArray(payload.plan) ? payload.plan : [];
+        const planLines = plan.length
+          ? plan.map((item, index) => `${index + 1}. ${item.text || item.id || 'Untitled step'}`).join('\n')
+          : 'Plan ready';
+        appendWorkflowSummaryCard(
+          'investigation_plan',
+          'The agent scoped the investigation before searching.',
+          planLines,
+          'unknown',
+          { plan },
+        );
+        return;
+      }
+
+      if (eventType === 'search_start') {
+        allToolsDone = false;
+        thoughtBuffer = '';
+        currentWorkflowIteration = payload.iteration ?? null;
+        currentStepTool = 'investigation_search';
+        currentStepCard = createStepCard(currentStepTool, '');
+        liveTrace.appendChild(currentStepCard);
+
+        const queries = Array.isArray(payload.queries) ? payload.queries : [];
+        const thoughtText = queries.length
+          ? queries.join('\n')
+          : `Search iteration ${payload.iteration ?? '?'}`;
+        setStepThought(currentStepCard, thoughtText);
+        pushTraceStep(
+          'investigation_search',
+          `Search iteration ${payload.iteration ?? '?'} started.`,
+          'unknown',
+          { iteration: payload.iteration, queries },
+        );
+        chatArea.scrollTop = chatArea.scrollHeight;
+        return;
+      }
+
+      if (eventType === 'docs_fetched') {
+        appendStepResult(currentStepCard, `Fetched ${payload.count || 0} source documents.`);
+        return;
+      }
+
+      if (eventType === 'chunks_written') {
+        appendStepResult(currentStepCard, `Wrote ${payload.count || 0} evidence chunks to the working set.`);
+        return;
+      }
+
+      if (eventType === 'entities_written') {
+        appendStepResult(currentStepCard, `Mapped ${payload.entity_count || 0} entities and ${payload.relation_count || 0} relations into the graph.`);
+        return;
+      }
+
+      if (eventType === 'relations_extracted') {
+        appendStepResult(
+          currentStepCard,
+          `Ontology extraction added ${payload.count || 0} relations${payload.ontology_name ? ` using ${payload.ontology_name}` : ''}.`,
+        );
+        return;
+      }
+
+      if (eventType === 'novelty_check') {
+        const dupRatio = Number(payload.dup_ratio || 0);
+        appendStepResult(currentStepCard, `Novelty check: ${(dupRatio * 100).toFixed(0)}% duplicate evidence.`);
+        return;
+      }
+
+      if (eventType === 'search_done') {
+        appendStepResult(
+          currentStepCard,
+          `Search loop complete after ${payload.iterations || currentWorkflowIteration || '?'} iteration(s): ${payload.reason || 'done'}.`,
+        );
+        finishStepCard(currentStepCard);
+        currentStepCard = null;
+        currentStepTool = null;
+        currentWorkflowIteration = null;
+        allToolsDone = true;
+        thoughtBuffer = '';
+        return;
+      }
+
+      if (eventType === 'graph_update') {
+        handleGraphUpdate(payload);
+        return;
+      }
+
+      if (eventType === 'retrieval_done') {
+        appendWorkflowSummaryCard(
+          'evidence_retrieval',
+          'The agent selected the strongest evidence before writing the brief.',
+          `Retrieved ${payload.count || 0} supporting evidence chunk(s).`,
+          'unknown',
+          { count: payload.count || 0 },
+        );
+        return;
+      }
+
+      if (eventType === 'brief_chunk') {
+        finalBriefing += payload.token || '';
+        renderLiveAnswer(finalBriefing);
+        return;
+      }
+
+      if (eventType === 'brief_done') {
+        finalBriefing = payload.briefing || finalBriefing;
+        renderLiveAnswer(finalBriefing);
+        pushTraceStep(
+          'final_brief',
+          'The agent completed the investigative brief.',
+          'unknown',
+          { length: finalBriefing.length },
+        );
+        return;
+      }
+
+      if (eventType === 'error') {
+        reject(new Error(payload.message || 'Workflow error'));
+      }
     }
 
     function createStepCard(toolName, inputStr) {
@@ -3099,6 +3380,9 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
 
       if (data.type === 'status') {
         // thinking — spinner already shown
+
+      } else if (data.type === 'ws_event' && data.payload) {
+        handleWorkflowEvent(data.payload);
 
       } else if (data.type === 'tool_start') {
         // New tool invocation — create a step card
@@ -3131,12 +3415,7 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
             chatArea.appendChild(liveAnswerCard);
           }
           thoughtBuffer += token;
-          if (window.marked) {
-            liveAnswerBody.innerHTML = marked.parse(thoughtBuffer);
-          } else {
-            liveAnswerBody.textContent = thoughtBuffer;
-          }
-          chatArea.scrollTop = chatArea.scrollHeight;
+          renderLiveAnswer(thoughtBuffer);
         }
 
       } else if (data.type === 'tool_result') {
@@ -3180,79 +3459,28 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         currentStepTool = null;
 
       } else if (data.type === 'graph_update') {
-        const isPartial = data.partial === true;
-        setKgUpdating(true);
-
-        // Auto-switch to Knowledge Graph tab on first graph update
-        if (!window.__graphTabSwitched) {
-          window.__graphTabSwitched = true;
-          const kgTab = document.querySelector('.graph-view-tab[data-graph-view="knowledge"]');
-          if (kgTab && !kgTab.classList.contains('active')) kgTab.click();
-          // On mobile, reveal the right panel
-          const rightPanel = document.getElementById('right');
-          if (rightPanel) rightPanel.classList.add('visible');
-        }
-
-        // Handle new format: data.graph = KG, data.lexical = lexical graph
-        if (data.graph) {
-          const g = data.graph;
-          const lexNodes = (data.lexical && data.lexical.nodes) || [];
-          const lexEdges = (data.lexical && data.lexical.edges) || [];
-          // Map lexical nodes/edges into graphViewsState directly
-          graphViewsState.lexical = graphViewsState.lexical || { nodes: [], edges: [] };
-          const lexNodeMap = new Map(graphViewsState.lexical.nodes.map(n => [n.id, n]));
-          lexNodes.forEach(n => lexNodeMap.set(n.id, {
-            id: n.id, label: n.type || 'CONCEPT', type: n.type || 'CONCEPT',
-            name: n.name || n.id, properties: { name: n.name || n.id, label: n.type || 'CONCEPT' },
-          }));
-          graphViewsState.lexical.nodes = Array.from(lexNodeMap.values());
-          graphViewsState.lexical.edges = [...(graphViewsState.lexical.edges || []), ...lexEdges.map(e => ({
-            source: e.source || e.from, target: e.target || e.to, type: e.type || 'MENTIONS',
-          }))];
-          updateGraphWithNewData(g.nodes || [], g.edges || [], []);
-
-          // Update live node/edge count badge in KG updating indicator
-          const nodeCount = (g.nodes || []).length;
-          const edgeCount = (g.edges || []).length;
-          const kgUpdatingEl = document.getElementById('kg-updating');
-          if (kgUpdatingEl) {
-            if (isPartial) {
-              kgUpdatingEl.textContent = `⚡ ${nodeCount}n / ${edgeCount}e — extracting…`;
-              kgUpdatingEl.style.opacity = '1';
-              kgUpdatingEl.style.color = 'var(--accent, #7c6ff7)';
-            } else {
-              kgUpdatingEl.textContent = `✓ ${nodeCount} entities / ${edgeCount} relations`;
-              kgUpdatingEl.style.color = 'var(--success, #22c55e)';
-              setTimeout(() => { kgUpdatingEl.style.opacity = '0.5'; }, 3000);
-            }
-          }
-        } else {
-          const g = data;
-          updateGraphWithNewData(g.nodes || [], g.edges || [], g.lexical_edges || []);
-        }
+        handleGraphUpdate(data);
 
       } else if (data.type === 'answer') {
-        spinner.remove();
         if (data.session_id) {
           sessionId = data.session_id;
           displaySessionId(sessionId);
         }
-        // Remove live answer card — appendAgentMsg renders the final markdown version
-        if (liveAnswerCard) liveAnswerCard.remove();
-        liveAnswerCard = null;
-        thoughtBuffer = '';
-        // Remove live trace placeholder if empty
-        if (!liveTrace.children.length) liveTrace.remove();
-        appendAgentMsg(data.answer || '(no answer)', data.sources || [], []);
         updateDebugPanel(data.sources || []);
         hydrateGraphStateFromPayload(data);
-        autoNameSession(text);
-        saveSession({ ...getCurrentSessionData(), id: sessionId, nodeCount: allNodes.length, lastQuery: new Date().toISOString() });
-        renderSessionList();
-        ws.close();
-        resolve();
+        finalizeStream(data.answer || '(no answer)', data.sources || []);
+      } else if (data.type === 'done') {
+        if (data.session_id) {
+          sessionId = data.session_id;
+          displaySessionId(sessionId);
+        }
+        finalizeStream(data.briefing || finalBriefing || thoughtBuffer || '(no answer)', []);
       } else if (data.type === 'error') {
-        spinner.remove();
+        try { spinner.remove(); } catch(_) {}
+        if (liveTrace.parentNode) liveTrace.remove();
+        if (liveAnswerCard) liveAnswerCard.remove();
+        liveAnswerCard = null;
+        updateDebugPanel(data.sources || []);
         ws.close();
         reject(new Error(data.error));
       }
@@ -4353,6 +4581,7 @@ document.querySelectorAll('#legend .legend-item[data-type]').forEach(item => {
 
 // Initial focus
 updateGraphToolbar();
+syncResponsiveState();
 syncChatEmptyState();
 msgInput.focus();
 </script>
