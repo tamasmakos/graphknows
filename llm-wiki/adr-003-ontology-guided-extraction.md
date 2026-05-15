@@ -24,10 +24,10 @@ Research findings (Perplexity, 2026-05-13):
 
 ### Ontology Registry
 
-Pre-bundle a curated set of ontologies under `packages/ontologies/`:
+Pre-bundle a curated set of ontologies under `services/agent/ontology/assets/`:
 
 ```
-packages/ontologies/
+services/agent/ontology/assets/
   registry.json           # metadata + pre-computed embeddings for routing
   legal/
     lkif-core.ttl         # LKIF (legal framework, contracts, jurisdiction)
@@ -104,7 +104,7 @@ ON CREATE SET r.confidence = $confidence, r.session_id = $session_id
 ## Implementation Plan
 
 ### Phase 1 — Ontology registry + loader (t_b2627d7f renamed)
-- `packages/ontologies/` directory with `registry.json`
+- `services/agent/ontology/assets/` directory with `registry.json`
 - Download 5 base ontologies (LKIF, PROV-O, FIBO-entities, Schema.org, Wikidata-core)
 - `OntologyLoader`: parses Turtle with `rdflib`, extracts class labels and property labels
 - Unit tests: loader parses each bundled ontology, returns non-empty class list

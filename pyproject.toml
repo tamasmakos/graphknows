@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 members = [
     "services/graphgen",
     "services/graphrag",
-    "packages/shared-py",
+    "libs/python/graphknows-shared",
 ]
 
 # Dev-only tools (linting, testing) — installed in the devcontainer workspace

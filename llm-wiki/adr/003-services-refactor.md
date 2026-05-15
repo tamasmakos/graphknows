@@ -17,7 +17,7 @@ Branch: `refactor/phase-1-graphrag`. All 54 tests pass, 5 skipped (live Memgraph
 
 ## What Changed
 
-### Phase 0 — Shared Foundation (`packages/shared-py/`)
+### Phase 0 — Shared Foundation (`libs/python/graphknows-shared/`)
 - Installable editable package `graphknows-shared 0.1.0`
 - `constants.py`: EMBEDDING_MODEL, EntityLabel enum
 - `models/entity.py`, `session.py`, `pipeline.py`: shared Pydantic models

@@ -7,7 +7,7 @@ import pytest
 
 # Ensure repo root and shared package are importable.
 _REPO = os.path.join(os.path.dirname(__file__), "..")
-_SHARED = os.path.join(_REPO, "packages", "shared-py")
+_SHARED = os.path.join(_REPO, "libs", "python", "graphknows-shared")
 for _p in (_REPO, _SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)

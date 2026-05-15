@@ -16,15 +16,24 @@ from dotenv import dotenv_values
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
-_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 _MASKED_PGVECTOR_DSN = "postgresql://postgres:***@172.18.0.1:5432/vectordb"
+
+
+def _find_repo_env() -> Path | None:
+    """Locate the nearest repo-level .env file by walking upward from this module."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / ".env"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _load_repo_env() -> dict[str, str]:
     """Load repo-local .env values when present."""
-    if not _ENV_FILE.exists():
+    env_file = _find_repo_env()
+    if env_file is None:
         return {}
-    return {k: v for k, v in dotenv_values(str(_ENV_FILE)).items() if isinstance(v, str)}
+    return {k: v for k, v in dotenv_values(str(env_file)).items() if isinstance(v, str)}
 
 
 class BaseServiceSettings(BaseSettings):

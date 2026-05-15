@@ -59,11 +59,12 @@ Plan the exact new directory tree following this structure:
     ├── apps/
     │   └── web/                  # Next.js 15 frontend + Kibo UI
     ├── services/
+  │   ├── agent/                # Agent API + service-owned ontology assets
     │   ├── graphgen/             # Refactored ETL service
     │   └── graphrag/             # Refactored agentic RAG service
-    ├── packages/
-    │   ├── ui/                   # Shared shadcn/ui + Kibo UI components
-    │   └── types/                # Auto-generated TypeScript types from OpenAPI specs
+  ├── libs/
+  │   └── python/
+  │       └── graphknows-shared/  # Shared Python config, constants, and models
     ├── turbo.json
     ├── pnpm-workspace.yaml
     ├── docker-compose.yaml

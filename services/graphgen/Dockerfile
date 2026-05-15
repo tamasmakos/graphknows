@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy shared package first (layer cache)
-COPY packages/shared-py /app/packages/shared-py
-RUN pip install --no-cache-dir -e /app/packages/shared-py
+COPY libs/python/graphknows-shared /app/libs/python/graphknows-shared
+RUN pip install --no-cache-dir -e /app/libs/python/graphknows-shared
 
 # Copy graphgen service
 COPY services/graphgen /app/services/graphgen

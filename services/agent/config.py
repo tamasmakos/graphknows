@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import Field
 
-_SHARED_PKG_DIR = Path(__file__).resolve().parents[2] / "packages" / "shared-py"
+_SHARED_PKG_DIR = Path(__file__).resolve().parents[2] / "libs" / "python" / "graphknows-shared"
 if str(_SHARED_PKG_DIR) not in sys.path:
     sys.path.insert(0, str(_SHARED_PKG_DIR))
 
@@ -28,7 +28,7 @@ class AgentSettings(BaseServiceSettings):
     """
     graphrag_url: str = Field(default="http://localhost:8001", alias="GRAPHRAG_URL")
     graphgen_url: str = Field(default="http://localhost:8003", alias="GRAPHGEN_URL")
-    search_url: str = Field(default="http://localhost:8004", alias="SEARCH_URL")
+    search_url: str = Field(default="http://localhost:8000", alias="SEARCH_URL")
     pgvector_dsn: str = Field(
         default="postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",
         alias="PGVECTOR_DSN",

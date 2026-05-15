@@ -60,24 +60,26 @@ The immediate sequence:
 - **`apps/web`** — the sole frontend. `dashboard/` is deprecated and will be removed.
 - **`services/product-api`** — auth, subscriptions, billing. Add only after graph + retrieval is solid. Do not add to MVP.
 
-### Shared packages
+### Shared libraries
 
-- **`packages/schemas`** — shared request/response contracts, provenance, citation, stable IDs.
-- **`packages/retrieval`** — retrieval pipelines, RRF, deduplication, context assembly.
-- **`packages/db-adapters`** — Neo4j and pgvector adapters (no vendor assumptions in domain layer).
-- **`packages/evals`** — benchmark questions, golden answers, retrieval regression checks.
+- **`libs/contracts`** — shared request/response contracts, provenance, citation, stable IDs.
+- **`libs/retrieval`** — retrieval pipelines, RRF, deduplication, context assembly.
+- **`libs/db-adapters`** — Neo4j and pgvector adapters (no vendor assumptions in domain layer).
+- **`libs/evals`** — benchmark questions, golden answers, retrieval regression checks.
+- **`services/agent/ontology/assets`** — service-owned ontology bundle for routing and extraction context.
 
 ### Repo structure
 
 ```text
 graphknows/
   services/
+    agent/           # orchestration + ontology assets
     graphgen/        # ingestion, parsing, graph build, embeddings
     graphrag/        # query API, retrieval, RRF, answer assembly
   apps/
     web/             # React chatbot frontend (replaces dashboard/)
-  packages/
-    schemas/         # shared contracts and provenance models
+  libs/
+    contracts/       # shared contracts and provenance models
     retrieval/       # RRF, hybrid retrieval, context assembly
     db-adapters/     # Neo4j and pgvector adapters
     evals/           # benchmark datasets and regression harness
@@ -89,8 +91,8 @@ graphknows/
 
 - Frontend never calls databases directly.
 - `graphgen` writes to the graph. `graphrag` reads from the graph. Never mix.
-- No service encodes Neo4j- or pgvector-specific assumptions in its domain layer — all storage goes through `packages/db-adapters`.
-- Prompt templates, retrieval settings, and RRF parameters live in config or package modules — never in route files.
+- No service encodes Neo4j- or pgvector-specific assumptions in its domain layer — all storage goes through `libs/db-adapters`.
+- Prompt templates, retrieval settings, and RRF parameters live in config or shared library modules — never in route files.
 - Every user-visible answer must carry: source URL, document ID, retrieval path, and supporting chunk.
 - Upserts must be idempotent. Use `MERGE` in Cypher, not `CREATE`.
 - API payloads and citation structures are treated as stable contracts. Version them if they change.

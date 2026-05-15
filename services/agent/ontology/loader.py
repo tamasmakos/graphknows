@@ -9,8 +9,8 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# Root of the bundled ontology package
-_ONTOLOGY_ROOT = Path(__file__).parent.parent.parent.parent / "packages" / "ontologies"
+# Root of the bundled ontology asset bundle owned by the agent service.
+_ONTOLOGY_ROOT = Path(__file__).with_name("assets")
 _REGISTRY_PATH = _ONTOLOGY_ROOT / "registry.json"
 
 

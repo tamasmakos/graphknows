@@ -15,7 +15,7 @@ from ontology.loader import OntologyLoader
 from ontology.rel_extractor import OntologyRelExtractor
 from ontology.router import OntologyRouter
 
-REGISTRY_ROOT = Path(__file__).parent.parent / "packages" / "ontologies"
+REGISTRY_ROOT = Path(__file__).parent.parent / "services" / "agent" / "ontology" / "assets"
 
 
 # ---------------------------------------------------------------------------

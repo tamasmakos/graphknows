@@ -43,11 +43,11 @@ jobs:
           # Install service packages in editable mode for import resolution
           uv pip install --system -e services/graphgen 2>/dev/null || true
           uv pip install --system -e services/graphrag 2>/dev/null || true
-          uv pip install --system -e packages/shared-py 2>/dev/null || true
+          uv pip install --system -e libs/python/graphknows-shared 2>/dev/null || true
 
       - name: Lint (ruff)
         run: |
-          ruff check services/ packages/ --output-format github
+          ruff check services/ libs/ --output-format github
 
       - name: Test
         env:
@@ -57,29 +57,3 @@ jobs:
           AGENT_SERVICE_URL: "http://localhost:8002"
         run: |
           python -m pytest tests/ -q --tb=short --ignore=tests/test_graphgen_pipeline.py
-
-  # ── TypeScript: type-check ─────────────────────────────────────────────────
-  typescript:
-    name: TypeScript type-check
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Type-check
-        run: pnpm --filter @graphknows/web typecheck

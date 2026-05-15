@@ -21,7 +21,7 @@ from ontology.router import OntologyRouter
 # Helpers
 # ---------------------------------------------------------------------------
 
-REGISTRY_ROOT = Path(__file__).parent.parent / "packages" / "ontologies"
+REGISTRY_ROOT = Path(__file__).parent.parent / "services" / "agent" / "ontology" / "assets"
 
 
 # ---------------------------------------------------------------------------
