@@ -2,6 +2,9 @@
 
 Optionally exports a D3.js HTML visualisation of the session graph when
 ``EXPORT_GRAPH_HTML=true`` is set in the environment / AgentSettings.
+
+Also exports an intelligence brief HTML via ``export_brief_html`` which is
+available as a public helper for the communicate node and any external caller.
 """
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.session.manager import SessionGraphManager
+from services.agent.graph.html_report import export_brief_html  # noqa: F401 — re-exported
 
 
 log = logging.getLogger("agent.session_end")

@@ -4,6 +4,7 @@ Provides embedding, upsert, and session-aware retrieval for chunks.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 

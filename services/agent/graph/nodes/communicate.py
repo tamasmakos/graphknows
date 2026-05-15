@@ -148,6 +148,16 @@ Write a complete, academically rigorous EPRS Intelligence Analysis report follow
 
     ws_events.append(brief_done_event(session_id, briefing))
 
+    # Export intelligence brief HTML for observability
+    try:
+        from services.agent.graph.html_report import export_brief_html
+        export_state = dict(state)
+        export_state["briefing"] = briefing
+        export_state["ws_events"] = ws_events
+        export_brief_html(export_state)  # type: ignore[arg-type]
+    except Exception:
+        pass
+
     return {
         "briefing": briefing,
         "retrieval_hits": hits,
