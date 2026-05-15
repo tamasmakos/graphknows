@@ -20,6 +20,20 @@ STATIC_DIR.mkdir(exist_ok=True)
 _client: httpx.AsyncClient | None = None
 
 
+async def _request_upstream(method: str, url: str, request: Request | None = None) -> httpx.Response:
+    assert _client is not None
+    headers: dict[str, str] = {}
+    content: bytes | None = None
+    if request is not None:
+        content = await request.body()
+        headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key.lower() not in ("host", "content-length")
+        }
+    return await _client.request(method=method, url=url, headers=headers, content=content)
+
+
 @app.on_event("startup")
 async def startup():
     global _client
@@ -38,23 +52,51 @@ async def index():
     return HTMLResponse(content=html_path.read_text(), status_code=200)
 
 
+@app.get("/favicon.ico")
+async def favicon() -> Response:
+    return Response(status_code=204)
+
+
+@app.get("/api/session/{session_id}/graph")
+async def session_graph_compat(session_id: str, request: Request) -> Response:
+    query = f"?{request.url.query}" if request.url.query else ""
+    try:
+        resp = await _request_upstream("GET", f"/sessions/{session_id}/graph{query}")
+        if resp.status_code == 404:
+            return Response(
+                content='{"nodes":[],"edges":[]}',
+                status_code=200,
+                media_type="application/json",
+            )
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            headers=dict(resp.headers),
+        )
+    except httpx.ConnectError:
+        return Response(
+            content='{"nodes":[],"edges":[]}',
+            status_code=200,
+            media_type="application/json",
+        )
+
+
+@app.get("/api/session/{session_id}/relation-sources")
+async def relation_sources_compat(session_id: str) -> Response:
+    return Response(
+        content='{"sources":[]}',
+        status_code=200,
+        media_type="application/json",
+    )
+
+
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def proxy(path: str, request: Request):
-    body = await request.body()
-    headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in ("host", "content-length")
-    }
     url = f"/{path}"
     if request.url.query:
         url += f"?{request.url.query}"
     try:
-        resp = await _client.request(
-            method=request.method,
-            url=url,
-            headers=headers,
-            content=body,
-        )
+        resp = await _request_upstream(request.method, url, request)
         return Response(
             content=resp.content,
             status_code=resp.status_code,

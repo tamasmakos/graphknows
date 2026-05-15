@@ -148,10 +148,8 @@ class DualWriter:
             return
 
         if self.backend is not None:
-            await asyncio.gather(
-                self.backend.write_entities(self.session_id, entities),
-                self.backend.write_relations(self.session_id, relations),
-            )
+            await self.backend.write_entities(self.session_id, entities)
+            await self.backend.write_relations(self.session_id, relations)
             return
 
         if self.mg is not None:

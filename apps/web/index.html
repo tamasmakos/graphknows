@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Graphknows — Political Intelligence</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
-<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -22,6 +21,10 @@
     --accent: #58a6ff;
     --card: #1c2333;
     --radius: 10px;
+    --sidebar-width: 200px;
+    --left-panel-width: 40%;
+    --sources-panel-height: 220px;
+    --panel-bar-height: 63px;
   }
 
   html, body {
@@ -43,13 +46,18 @@
   }
 
   #sources-panel {
-    width: 280px;
-    min-width: 280px;
-    border-left: 1px solid var(--border);
+    width: auto;
+    min-width: 0;
+    flex: 0 0 var(--sources-panel-height);
+    margin: 0 8px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     background: var(--bg2);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    min-height: 0;
+    transition: flex-basis 0.22s ease, margin 0.22s ease, border-color 0.22s ease, opacity 0.22s ease;
   }
   #sources-panel-header {
     display: flex;
@@ -64,6 +72,11 @@
     letter-spacing: 0.6px;
     text-transform: uppercase;
     color: var(--text-muted);
+  }
+  .sources-panel-header-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   #sources-count {
     font-size: 11px;
@@ -159,14 +172,60 @@
 
   /* ── Left Panel ── */
   #left {
-    width: 40%;
+    width: var(--left-panel-width);
     min-width: 300px;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--border);
     background: var(--bg2);
     overflow: hidden;
     min-width: 0;
+    flex: 0 0 var(--left-panel-width);
+    transition: width 0.22s ease, flex 0.22s ease, border-color 0.22s ease;
+  }
+
+  .panel-resizer {
+    position: relative;
+    flex-shrink: 0;
+    background: transparent;
+    user-select: none;
+    touch-action: none;
+    z-index: 12;
+  }
+  .panel-resizer::before {
+    content: '';
+    position: absolute;
+    border-radius: 999px;
+    background: rgba(88, 166, 255, 0.16);
+    transition: background 0.18s ease, opacity 0.18s ease;
+    opacity: 0.55;
+  }
+  .panel-resizer:hover::before,
+  .panel-resizer.dragging::before {
+    background: rgba(88, 166, 255, 0.9);
+    opacity: 1;
+  }
+  .panel-resizer-vertical {
+    width: 10px;
+    cursor: col-resize;
+  }
+  .panel-resizer-vertical::before {
+    top: 0;
+    bottom: 0;
+    left: 4px;
+    width: 2px;
+  }
+  .panel-resizer-horizontal {
+    height: 10px;
+    cursor: row-resize;
+    margin: 0 8px;
+  }
+  .panel-resizer-horizontal::before {
+    left: 0;
+    right: 0;
+    top: 4px;
+    height: 2px;
   }
 
   #header {
@@ -179,56 +238,33 @@
     align-items: flex-start;
     gap: 14px;
   }
-  .header-brand {
-    flex: 1;
-    min-width: 0;
-  }
-  #header h1 {
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: -0.75px;
-    background: linear-gradient(135deg, #58a6ff, #a78bfa);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  #header .subtitle {
-    font-size: 11px;
-    color: var(--text-muted);
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    margin-top: 6px;
-  }
-  #session-row {
-    margin-top: 12px;
-    font-size: 11px;
-    color: var(--text-muted);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  #session-id {
-    font-family: monospace;
-    font-size: 10px;
-    color: var(--accent);
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #btn-mobile-sidebar {
-    width: 40px;
-    height: 40px;
-    border-radius: 12px;
+
+  .panel-toggle-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    border-radius: 10px;
     border: 1px solid var(--border);
     background: var(--bg3);
     color: var(--text);
-    font-size: 18px;
+    font-size: 16px;
     line-height: 1;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
+    padding: 0;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+  }
+  .panel-toggle-btn:hover {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+  }
+
+  #btn-mobile-sidebar {
+    margin-top: 2px;
   }
   #mobile-view-switcher {
     display: none;
@@ -259,67 +295,18 @@
   /* Chat area */
   #chat-area {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 12px;
     scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
-  #chat-area.is-empty {
-    justify-content: flex-end;
-  }
-  #chat-empty-state {
-    display: none;
-    align-self: stretch;
-    background: linear-gradient(180deg, rgba(28,35,51,0.92), rgba(15,17,23,0.92));
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 18px 16px;
-    color: var(--text);
-    gap: 12px;
-  }
-  #chat-empty-state.visible {
-    display: flex;
-    flex-direction: column;
-  }
-  .chat-empty-title {
-    font-size: 15px;
-    font-weight: 700;
-    line-height: 1.35;
-  }
-  .chat-empty-copy {
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-muted);
-  }
-  .chat-suggestion-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .chat-suggestion-btn {
-    border: 1px solid var(--border);
-    background: rgba(13, 17, 23, 0.9);
-    color: var(--text);
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-size: 12px;
-    line-height: 1.3;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s, color 0.2s;
-    position: relative;
-  }
-  .chat-suggestion-btn::after {
-    content: '↗';
-    margin-left: 8px;
-    color: var(--accent);
-    font-size: 11px;
-  }
-  .chat-suggestion-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: rgba(88,166,255,0.08);
+  #chat-area > * {
+    flex-shrink: 0;
   }
   #chat-area::-webkit-scrollbar { width: 4px; }
   #chat-area::-webkit-scrollbar-track { background: transparent; }
@@ -357,10 +344,91 @@
   line-height: 1.7;
   white-space: normal;
   word-break: break-word;
-  font-size: 15px;
+  font-size: 14px;
   border-left: 3px solid var(--accent);
   margin: 4px 0;
+  max-width: 68ch;
+  color: #d8e1ee;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  text-wrap: pretty;
 }
+  .msg-agent .answer-body > :first-child { margin-top: 0; }
+  .msg-agent .answer-body > :last-child { margin-bottom: 0; }
+  .msg-agent .answer-body h1,
+  .msg-agent .answer-body h2,
+  .msg-agent .answer-body h3,
+  .msg-agent .answer-body h4 {
+    color: #f4f8ff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 700;
+    line-height: 1.24;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .msg-agent .answer-body h1 {
+    font-size: clamp(1.28rem, 2vw, 1.55rem);
+    margin: 0 0 0.9rem;
+  }
+  .msg-agent .answer-body h2 {
+    font-size: clamp(1.02rem, 1.5vw, 1.14rem);
+    margin: 1.1rem 0 0.55rem;
+  }
+  .msg-agent .answer-body h3 {
+    font-size: 0.96rem;
+    margin: 1rem 0 0.45rem;
+  }
+  .msg-agent .answer-body p,
+  .msg-agent .answer-body ul,
+  .msg-agent .answer-body ol,
+  .msg-agent .answer-body blockquote,
+  .msg-agent .answer-body pre,
+  .msg-agent .answer-body table {
+    margin: 0 0 0.95rem;
+  }
+  .msg-agent .answer-body p {
+    font-size: 1rem;
+    line-height: 1.72;
+    color: #d6dee9;
+  }
+  .msg-agent .answer-body li {
+    margin: 0.32rem 0;
+  }
+  .msg-agent .answer-body ul,
+  .msg-agent .answer-body ol {
+    padding-left: 1.2rem;
+  }
+  .msg-agent .answer-body strong {
+    color: #f2f6fd;
+    font-weight: 700;
+  }
+  .msg-agent .answer-body a {
+    color: #8cc7ff;
+  }
+  .msg-agent .answer-body blockquote {
+    border-left: 2px solid rgba(140, 199, 255, 0.45);
+    padding-left: 0.9rem;
+    color: #b9c8da;
+  }
+  .msg-agent .answer-body code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    background: rgba(15, 17, 23, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 0.1rem 0.35rem;
+  }
+  .msg-agent .answer-body pre {
+    overflow-x: auto;
+    padding: 0.85rem 1rem;
+    border-radius: 10px;
+    background: rgba(10, 14, 24, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .msg-agent .answer-body hr {
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin: 1.2rem 0;
+  }
   .msg-agent .answer-footer {
     padding: 8px 12px;
     border-top: 1px solid var(--border);
@@ -437,6 +505,13 @@
     align-items: center;
     gap: 10px;
   }
+  .answer-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
   .source-section::after {
     content: '';
     position: absolute;
@@ -447,7 +522,8 @@
     background: linear-gradient(to left, var(--card), transparent);
     pointer-events: none;
   }
-  .btn-export-msg {
+  .btn-export-msg,
+  .btn-share-msg {
     align-self: flex-end;
     background: transparent;
     border: 1px solid var(--border);
@@ -458,7 +534,8 @@
     cursor: pointer;
     transition: all 0.2s;
   }
-  .btn-export-msg:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-export-msg:hover,
+  .btn-share-msg:hover { border-color: var(--accent); color: var(--accent); }
 
   /* Spinner */
   .spinner {
@@ -514,9 +591,10 @@
     font-size: 14px;
     outline: none;
     transition: border-color 0.2s;
-    resize: none;
+    resize: vertical;
+    overflow-y: auto;
     min-height: 44px;
-    max-height: 120px;
+    max-height: min(58vh, 420px);
   }
   #msg-input:focus { border-color: var(--accent); }
   #msg-input::placeholder { color: #8b949e; }
@@ -534,6 +612,12 @@
     min-height: 44px;
   }
   #ask-btn:hover { background: #58a6ff; }
+  #ask-btn.is-stop {
+    background: #f85149;
+  }
+  #ask-btn.is-stop:hover {
+    background: #ff6a64;
+  }
   #ask-btn:disabled { background: var(--border); cursor: not-allowed; }
 
   /* Reasoning trace — OLD panel (hidden; trace is now inline in chat bubbles) */
@@ -543,12 +627,11 @@
 
   /* ── Inline reasoning trace accordion ─────────────────────────────────── */
   .inline-trace {
-    margin: 0 12px 12px;
-    border: 1px solid #273248;
-    border-radius: 12px;
+    margin: 0 12px 10px;
+    border: 1px solid rgba(88, 166, 255, 0.16);
+    border-radius: 14px;
     overflow: hidden;
-    background: rgba(10, 14, 24, 0.72);
-    font-family: var(--font-mono, monospace);
+    background: linear-gradient(180deg, rgba(17, 22, 34, 0.94), rgba(15, 19, 30, 0.9));
   }
   .inline-trace-summary {
     list-style: none;
@@ -556,9 +639,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 11px 14px;
-    background: #141b29;
-    color: #9fb2d1;
+    padding: 12px 14px;
+    background: rgba(11, 16, 27, 0.96);
+    color: #b5c8e6;
     cursor: pointer;
     position: relative;
     padding-right: 42px;
@@ -578,37 +661,66 @@
   }
   .inline-trace-summary::-webkit-details-marker { display: none; }
   .inline-trace-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: #c4d4ee;
+    font-size: 13px;
+    font-weight: 700;
+    color: #d7e6ff;
+    letter-spacing: 0.01em;
   }
   .inline-trace-count {
     font-size: 11px;
-    color: var(--text-muted);
+    color: #89a3c6;
     white-space: nowrap;
   }
-  .inline-trace-steps { padding: 6px 0; max-height: 340px; overflow-y: auto; }
-  .inline-trace-steps::-webkit-scrollbar { width: 4px; }
-  .inline-trace-steps::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-  .inline-step { padding: 8px 14px; border-bottom: 1px solid #1e1e2e; }
-  .inline-step:last-child { border-bottom: none; }
+  .inline-trace-steps {
+    padding: 8px 10px 10px;
+    max-height: none;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .inline-step {
+    position: relative;
+    padding: 11px 12px 11px 16px;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 12px;
+    background: rgba(22, 27, 39, 0.92);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  }
+  .inline-step::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(88, 166, 255, 0.95), rgba(88, 166, 255, 0.2));
+  }
   .inline-step-header {
     display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: default;
   }
   .inline-step-icon { font-size: 14px; }
-  .inline-step-tool { font-weight: 600; color: #a0a8c0; }
+  .inline-step-icon:empty { display: none; }
+  .inline-step-tool { font-weight: 700; color: #d6e5fb; }
   .inline-step-input code {
-    font-size: 11px; color: #7a9fc0; background: #1a1f2e;
+    font-size: 11px; color: #91b9e8; background: #1a2234;
     padding: 1px 4px; border-radius: 3px;
   }
   .inline-step-thought {
-    font-style: normal; color: #97a8c4; font-size: 11.5px;
-    margin: 8px 0 6px; line-height: 1.55;
+    font-style: normal; color: #a1b4d0; font-size: 12px;
+    margin: 7px 0 0; line-height: 1.55;
   }
   .inline-step-body {
-    margin-top: 4px;
+    margin-top: 8px;
     font-size: 11px;
-    color: #778;
+    color: #9fb0c8;
+  }
+  .inline-step-body .obs-json {
+    background: rgba(8, 12, 20, 0.76);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 10px;
+    padding: 8px 10px;
   }
   .inline-step-body .trace-score,
   .inline-step-body .obs-chunk-id {
@@ -621,6 +733,166 @@
   .inline-step-body .trace-entity-table td,
   .inline-step-body .trace-entity-table th { font-size: 10px; }
   .inline-step-body .trace-chunk-list li { font-size: 10px; }
+  .trace-query-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+  }
+  .trace-query-item {
+    padding: 7px 10px;
+    border-radius: 10px;
+    background: rgba(11, 17, 29, 0.76);
+    color: #c2d1e3;
+    line-height: 1.45;
+  }
+  .trace-query-item strong {
+    color: #e4eefc;
+    margin-right: 6px;
+  }
+  .trace-route-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 8px;
+  }
+  .trace-route-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(88, 166, 255, 0.08);
+    border: 1px solid rgba(88, 166, 255, 0.18);
+    color: #cfe4ff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .trace-kv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+  }
+  .trace-kv {
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(11, 17, 29, 0.76);
+  }
+  .trace-kv-label {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #7f95b5;
+    margin-bottom: 3px;
+  }
+  .trace-kv-value {
+    display: block;
+    font-size: 12px;
+    color: #d7e3f3;
+  }
+  .trace-live-shell {
+    align-self: flex-start;
+    width: min(100%, 690px);
+    border: 1px solid rgba(88, 166, 255, 0.16);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(17, 22, 34, 0.9), rgba(13, 17, 27, 0.88));
+    overflow: hidden;
+  }
+  .trace-live-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    background: rgba(11, 16, 27, 0.96);
+  }
+  .trace-live-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #d7e6ff;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .trace-live-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #9bc4ff;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .trace-live-status::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: #58a6ff;
+    box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.55);
+    animation: tracePulse 1.6s infinite;
+  }
+  .trace-live-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+  }
+  .trace-live-step {
+    animation: traceStepIn 0.22s ease;
+  }
+  .trace-live-step.is-running {
+    border-color: rgba(88, 166, 255, 0.28);
+    background: rgba(18, 26, 40, 0.94);
+  }
+  .trace-live-step.is-complete {
+    border-color: rgba(125, 211, 252, 0.14);
+  }
+  .step-status {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8fb7e4;
+  }
+  .step-status.is-running::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 6px;
+    border-radius: 999px;
+    background: #58a6ff;
+    box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.55);
+    animation: tracePulse 1.6s infinite;
+    vertical-align: middle;
+  }
+  .step-result {
+    margin-top: 8px;
+    color: #c6d3e4;
+    font-size: 11.5px;
+    line-height: 1.5;
+    white-space: pre-line;
+  }
+  .step-result:empty {
+    display: none;
+  }
+  @keyframes tracePulse {
+    0% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.55); }
+    70% { box-shadow: 0 0 0 7px rgba(88, 166, 255, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0); }
+  }
+  @keyframes traceStepIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
   #trace-header {
     display: flex;
     justify-content: space-between;
@@ -696,6 +968,7 @@
     flex-shrink: 0;
   }
   .trace-tool-icon { font-size: 14px; }
+  .trace-tool-icon:empty { display: none; }
   .trace-tool-name {
     font-family: monospace;
     font-size: 11px;
@@ -861,7 +1134,16 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--bg2);
+    min-width: 0;
+    transition: width 0.22s ease, min-width 0.22s ease, flex-basis 0.22s ease, opacity 0.22s ease;
+  }
+
+  .graph-toolbar-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
     min-width: 0;
   }
 
@@ -869,8 +1151,10 @@
     display: flex;
     flex-direction: column;
     align-items: stretch;
+    justify-content: center;
     gap: 10px;
-    padding: 10px 16px;
+    min-height: var(--panel-bar-height);
+    padding: 0 16px;
     border-bottom: 1px solid var(--border);
     background: var(--bg2);
     flex-shrink: 0;
@@ -878,36 +1162,7 @@
   #graph-toolbar-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
-  }
-  #graph-view-tabs {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-    padding: 3px;
-    border-radius: 10px;
-    background: rgba(13,17,23,0.75);
-    border: 1px solid var(--border);
-  }
-  .graph-view-tab {
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 6px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.18s ease;
-    white-space: nowrap;
-  }
-  .graph-view-tab:hover {
-    color: var(--text);
-  }
-  .graph-view-tab.active {
-    background: rgba(88,166,255,0.16);
-    color: var(--accent);
   }
   #graph-toolbar-controls {
     display: flex;
@@ -915,10 +1170,46 @@
     gap: 8px;
     flex-wrap: wrap;
   }
+  #graph-toolbar-controls:empty {
+    display: none;
+  }
   #graph-toolbar-mobile-actions {
     display: none;
     gap: 8px;
     align-items: center;
+  }
+
+  #btn-graph-panel-toggle {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 45;
+  }
+
+  @media (min-width: 901px) {
+    body.graph-panel-collapsed #left {
+      flex: 1 1 auto;
+      width: auto;
+      border-right-color: transparent;
+    }
+
+    body.graph-panel-collapsed #right {
+      flex: 0 0 0;
+      width: 0;
+      min-width: 0;
+    }
+
+    body.graph-panel-collapsed #right > * {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body.graph-panel-collapsed #btn-graph-panel-toggle {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
   #graph-title {
     font-size: 12px;
@@ -948,9 +1239,9 @@
   .toolbar-btn:hover { border-color: var(--accent); color: var(--accent); }
   .toolbar-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,0.1); }
   .toolbar-filter-group {
-    display:flex;
-    align-items:center;
-    gap:4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
   #filter-select {
     background: var(--bg3);
@@ -963,29 +1254,6 @@
     outline: none;
   }
   #filter-select:focus { border-color: var(--accent); }
-
-  /* Layout mode pills */
-  #layout-group {
-    display: flex;
-    gap: 2px;
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 2px;
-  }
-  .layout-btn {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    font-size: 11px;
-    padding: 3px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-  .layout-btn:hover { color: var(--text); }
-  .layout-btn.active { background: var(--accent); color: #000; font-weight: 600; }
 
 #graph-canvas {
   flex: 1;
@@ -1084,7 +1352,6 @@
   pointer-events: none;
   gap: 8px;
 }
-#empty-state .icon { font-size: 52px; margin-bottom: 4px; opacity: 0.35; }
 #empty-state p { font-size: 13px; opacity: 0.6; font-weight: 500; }
 #empty-state .hint { font-size: 11px; opacity: 0.4; margin-top: 4px; }
 
@@ -1104,7 +1371,7 @@
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   #tooltip.visible { opacity: 1; }
-  #graph-hint { text-align: center; font-size: 10px; color: var(--text-muted); margin: 2px 0 0; opacity: 0.6; }
+  #graph-hint { text-align: center; font-size: 10px; color: var(--text-muted); margin: 0 0 6px; opacity: 0.6; }
   #tooltip .tt-name { font-weight: 700; color: var(--text); margin-bottom: 6px; font-size: 13px; }
   #tooltip .tt-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; font-size: 11px; }
   #tooltip .tt-key { color: var(--text-muted); min-width: 64px; flex-shrink: 0; }
@@ -1235,99 +1502,6 @@
   }
   #modal-close:hover { color: var(--text); }
 
-/* Legend */
-#legend {
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  background: rgba(22,27,34,0.97);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
-  font-size: 11px;
-  pointer-events: all;
-  user-select: none;
-  max-width: 200px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-  backdrop-filter: blur(8px);
-}
-.legend-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.legend-title {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
-  flex: 1;
-}
-.legend-close {
-  display: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(12, 17, 27, 0.95);
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.legend-close:hover { color: var(--text); border-color: var(--accent); }
-.legend-section-label {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-top: 8px;
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 5px;
-  cursor: pointer;
-  border-radius: 4px;
-  padding: 3px 6px;
-  transition: background 0.15s;
-  font-size: 11px;
-}
-.legend-item:hover { background: rgba(88,166,255,0.1); }
-.legend-item.filtered { background: rgba(88,166,255,0.15); }
-.legend-item:last-child { margin-bottom: 0; }
-.legend-dot {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.legend-dot.diamond {
-  border-radius: 2px;
-  transform: rotate(45deg);
-  width: 9px; height: 9px;
-}
-.legend-line {
-  width: 18px; height: 2px;
-  flex-shrink: 0;
-  border-radius: 1px;
-}
-.legend-line.dashed {
-  background: repeating-linear-gradient(to right, #888 0, #888 3px, transparent 3px, transparent 6px);
-  height: 1px;
-}
-.legend-line.curved {
-  background: #888;
-  height: 1px;
-  border-radius: 1px;
-}
-
   /* ── Sidebar ── */
   body {
     display: flex;
@@ -1335,8 +1509,8 @@
   }
 
   #sidebar {
-    width: 200px;
-    min-width: 200px;
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
     height: 100vh;
     background: var(--bg2);
     border-right: 1px solid var(--border);
@@ -1345,13 +1519,74 @@
     flex-shrink: 0;
     overflow: hidden;
     z-index: 10;
+    transition: width 0.22s ease, min-width 0.22s ease, border-color 0.22s ease;
+  }
+
+  @media (min-width: 901px) {
+    #header {
+      padding: 0;
+      border-bottom: none;
+    }
+
+    #header-topline {
+      gap: 0;
+      justify-content: flex-end;
+    }
+
+    body:not(.sidebar-collapsed) #btn-mobile-sidebar {
+      display: none;
+    }
+
+    body.is-resizing {
+      cursor: col-resize;
+    }
+
+    body.is-resizing-horizontal {
+      cursor: row-resize;
+    }
+
+    body.sidebar-collapsed #sidebar {
+      width: 0;
+      min-width: 0;
+      border-right-color: transparent;
+    }
+
+    body.sidebar-collapsed #sidebar > * {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body.sidebar-collapsed #btn-mobile-sidebar {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      z-index: 45;
+    }
+
+    body.sidebar-collapsed #header {
+      padding-left: 0;
+    }
+
+    body.sources-panel-collapsed #sources-panel {
+      flex-basis: 0;
+      margin-top: 0;
+      margin-bottom: 0;
+      border-color: transparent;
+      opacity: 0;
+    }
+
+    body.sources-panel-collapsed #sources-panel > * {
+      opacity: 0;
+      pointer-events: none;
+    }
   }
 
   #sidebar-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 12px 10px;
+    min-height: var(--panel-bar-height);
+    padding: 0 12px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     font-size: 11px;
@@ -1361,23 +1596,51 @@
     color: var(--text-muted);
   }
 
-  #btn-new-session {
+  .sidebar-primary-action {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: calc(100% - 24px);
+    margin: 10px 12px 8px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .sidebar-primary-action-icon {
     background: var(--bg3);
     border: 1px solid var(--border);
     color: var(--accent);
-    width: 22px;
-    height: 22px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 16px;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    font-size: 20px;
     line-height: 1;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     transition: all 0.2s;
   }
-  #btn-new-session:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+
+  .sidebar-primary-action-label {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .sidebar-primary-action:hover .sidebar-primary-action-icon {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+  }
 
   #session-list {
     list-style: none;
@@ -1387,6 +1650,71 @@
   }
   #session-list::-webkit-scrollbar { width: 3px; }
   #session-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  #sidebar-footer {
+    flex-shrink: 0;
+    padding: 12px;
+    border-top: 1px solid var(--border);
+    height: 69px;
+  }
+
+  .sidebar-account-button {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg3);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+
+  .sidebar-account-button:hover {
+    border-color: var(--accent);
+    background: rgba(88,166,255,0.08);
+  }
+
+  .sidebar-account-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .sidebar-account-copy {
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .sidebar-account-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-account-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
 
   .session-item {
     padding: 8px 10px;
@@ -1470,16 +1798,35 @@
   body.sidebar-open #sidebar {
     transform: translateX(0);
   }
-  #sidebar-header {
-    padding: 16px 14px 12px;
+  .panel-resizer {
+    display: none !important;
   }
-  #btn-new-session {
-    width: 30px;
-    height: 30px;
+  #sidebar-header {
+    min-height: var(--panel-bar-height);
+    padding: 0 14px;
+  }
+  .sidebar-primary-action {
+    margin: 10px 14px 8px;
+    width: calc(100% - 28px);
+  }
+  .sidebar-primary-action-icon {
+    width: 34px;
+    height: 34px;
     font-size: 20px;
+  }
+  #btn-sidebar-close,
+  .panel-toggle-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    font-size: 16px;
   }
   #session-list {
     padding: 8px 0 20px;
+  }
+  #sidebar-footer {
+    padding: 10px 14px 14px;
+    height: 69px;
   }
   .session-item {
     padding: 12px 14px;
@@ -1531,7 +1878,6 @@
   }
   body.mobile-graph-view #chat-area,
   body.mobile-graph-view #input-row,
-  body.mobile-graph-view #debug-panel,
   body.mobile-graph-view #trace-panel {
     display: none !important;
   }
@@ -1541,31 +1887,6 @@
   body.mobile-graph-view #header {
     padding: 10px 12px 8px;
     border-bottom: none;
-  }
-  #header h1 {
-    font-size: 22px;
-    line-height: 1.05;
-  }
-  body.mobile-graph-view #header h1 {
-    font-size: 18px;
-  }
-  #header .subtitle {
-    margin-top: 4px;
-    font-size: 10px;
-  }
-  body.mobile-graph-view #header .subtitle {
-    display: none;
-  }
-  #session-row {
-    margin-top: 8px;
-    font-size: 10px;
-  }
-  body.mobile-answer-view #session-row,
-  body.mobile-graph-view #session-row {
-    display: none;
-  }
-  #session-id {
-    max-width: 110px;
   }
   #mobile-view-switcher {
     display: flex;
@@ -1582,28 +1903,6 @@
   #chat-area {
     padding: 14px 12px 16px;
     gap: 10px;
-  }
-  #chat-empty-state {
-    margin-top: 4px;
-    padding: 16px 14px;
-  }
-  #chat-area.is-empty #chat-empty-state {
-    margin-top: auto;
-    margin-bottom: auto;
-  }
-  .chat-empty-title {
-    font-size: 14px;
-  }
-  .chat-empty-copy {
-    font-size: 12px;
-  }
-  .chat-suggestion-row {
-    flex-direction: column;
-  }
-  .chat-suggestion-btn {
-    width: 100%;
-    justify-content: flex-start;
-    text-align: left;
   }
   .msg-user,
   .msg-agent {
@@ -1639,6 +1938,9 @@
   .inline-step-body {
     font-size: 12px;
   }
+  .trace-live-shell {
+    width: 100%;
+  }
   .inline-step-body .trace-score,
   .inline-step-body .obs-chunk-id {
     display: none;
@@ -1668,20 +1970,25 @@
     font-size: 13px;
   }
   #graph-toolbar {
-    padding: 10px 12px 8px;
+    min-height: var(--panel-bar-height);
+    padding: 0 12px;
     gap: 8px;
   }
   #graph-toolbar-header {
     align-items: center;
   }
   body.mobile-graph-view #graph-toolbar {
-    padding: 6px 12px 4px;
+    min-height: var(--panel-bar-height);
+    padding: 0 12px;
     border-bottom: none;
     background: transparent;
   }
   body.mobile-graph-view #graph-toolbar-header {
     gap: 8px;
     align-items: center;
+  }
+  .graph-toolbar-header-actions {
+    gap: 6px;
   }
   body.mobile-graph-view #graph-title {
     font-size: 10px;
@@ -1698,12 +2005,6 @@
   body.graph-tools-open #graph-toolbar-controls {
     display: flex;
   }
-  #layout-group {
-    width: 100%;
-    overflow-x: auto;
-    padding: 4px;
-  }
-  .layout-btn,
   .toolbar-btn,
   #filter-select {
     min-height: 38px;
@@ -1764,53 +2065,42 @@
   #graph-hint {
     display: none;
   }
-  #legend {
-    display: none;
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-    max-width: none;
-    max-height: min(58vh, 420px);
-    overflow-y: auto;
-    z-index: 5;
-  }
-  body.legend-open #legend {
-    display: block;
-  }
-  .legend-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
 }
 </style>
   <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 </head>
 <body>
 <button id="sidebar-backdrop" aria-label="Close investigations"></button>
+<button id="btn-graph-panel-toggle" class="panel-toggle-btn desktop-only" type="button" aria-controls="right" aria-label="Show graph panel" title="Show graph panel"><</button>
 
 <aside id="sidebar">
   <div id="sidebar-header">
-    <span>Investigations</span>
-    <button id="btn-new-session" title="New investigation">+</button>
+    <span>Graph Knows</span>
+    <button id="btn-sidebar-close" class="panel-toggle-btn" type="button" aria-controls="sidebar" aria-label="Close investigations" title="Close investigations">&times;</button>
   </div>
+  <button id="btn-new-session" class="sidebar-primary-action" type="button" title="New investigation">
+    <span class="sidebar-primary-action-icon">+</span>
+    <span class="sidebar-primary-action-label">New investigation</span>
+  </button>
   <ul id="session-list"></ul>
+  <div id="sidebar-footer">
+    <button id="btn-account-settings" class="sidebar-account-button" type="button" title="Account settings placeholder">
+      <span class="sidebar-account-avatar" aria-hidden="true">A</span>
+      <span class="sidebar-account-copy">
+        <span class="sidebar-account-label">Account settings</span>
+        <span class="sidebar-account-meta">Placeholder</span>
+      </span>
+    </button>
+  </div>
 </aside>
+<div id="sidebar-resizer" class="panel-resizer panel-resizer-vertical desktop-only" role="separator" aria-orientation="vertical" aria-label="Resize investigations"></div>
 
 <div id="app">
   <!-- ── Left Panel ── -->
   <div id="left">
     <div id="header">
       <div id="header-topline">
-        <div class="header-brand">
-          <h1>Graphknows</h1>
-          <div class="subtitle">Political Intelligence</div>
-          <div id="session-row">
-            <span>Session:</span>
-            <span id="session-id">—</span>
-          </div>
-        </div>
-        <button id="btn-mobile-sidebar" class="mobile-only" aria-label="Open investigations">☰</button>
+        <button id="btn-mobile-sidebar" class="panel-toggle-btn" type="button" aria-controls="sidebar" aria-label="Hide investigations" aria-expanded="true" title="Hide investigations"><</button>
       </div>
       <div id="mobile-view-switcher" class="mobile-only" role="tablist" aria-label="Mobile view switcher">
         <button type="button" class="mobile-view-btn active" data-mobile-view="answer">Answer</button>
@@ -1819,25 +2109,16 @@
     </div>
 
     <div id="chat-area">
-      <div id="chat-empty-state" class="visible">
-        <div class="chat-empty-title">Start an investigation and watch the agent plan, search, map entities, and brief in one flow.</div>
-        <div class="chat-empty-copy">Ask for a topic, institution, dossier, or person. The agent now streams its investigation plan, search passes, graph writes, and final brief directly into this panel.</div>
-        <div class="chat-suggestion-row">
-          <button type="button" class="chat-suggestion-btn" data-suggestion="Build an investigation plan for the EU AI Act and show the institutions, committees, and legal instruments involved.">EU AI Act investigation</button>
-          <button type="button" class="chat-suggestion-btn" data-suggestion="Investigate European climate policy and surface the main organisations, laws, and relationships in the graph.">European climate policy</button>
-          <button type="button" class="chat-suggestion-btn" data-suggestion="Trace the organisations, people, and committees shaping EU defence funding decisions.">EU defence funding network</button>
-        </div>
-      </div>
     </div>
 
     <div id="input-row">
-      <textarea id="msg-input" placeholder="Ask the agent to investigate a topic, actor, law, or policy network..." rows="1"></textarea>
+      <textarea id="msg-input" placeholder="Enter a clear prompt" rows="1"></textarea>
       <button id="ask-btn">Ask</button>
     </div>
 
     <div id="trace-panel">
       <div id="trace-header">
-        <span>🔍 Reasoning Trace</span>
+          <span>Reasoning Trace</span>
         <span id="trace-chevron">▲</span>
       </div>
       <div id="trace-body">
@@ -1846,11 +2127,7 @@
     </div>
   </div>
 
-  <!-- ── Debug Panel ── -->
-  <div id="debug-panel" style="display:none;background:#0a0c14;font-family:monospace;font-size:11px;color:#9ab;padding:8px 12px;border-top:1px solid #2a2a3a;max-height:260px;overflow-y:auto;">
-    <div style="font-size:12px;color:#5af;margin-bottom:6px;">🔬 Retrieved Sources</div>
-    <div id="debug-panel-body" style="color:#778;">No sources yet.</div>
-  </div>
+  <div id="app-resizer" class="panel-resizer panel-resizer-vertical desktop-only" role="separator" aria-orientation="vertical" aria-label="Resize answer and graph panels"></div>
 
   <!-- ── Right Panel ── -->
   <div id="right">
@@ -1858,24 +2135,16 @@
   <div id="graph-toolbar-header">
     <span id="graph-title">Knowledge Graph</span>
     <span id="kg-updating">KG updating...</span>
-    <div id="graph-view-tabs" role="tablist" aria-label="Graph view selector">
-      <button class="graph-view-tab active" type="button" data-graph-view="knowledge">Knowledge Graph</button>
-      <button class="graph-view-tab" type="button" data-graph-view="sources" id="sources-graph-tab">📚 Sources</button>
+    <div class="graph-toolbar-header-actions">
+      <button class="panel-toggle-btn desktop-only" id="btn-graph-panel-close" type="button" aria-controls="right" aria-label="Close graph panel" title="Close graph panel">×</button>
     </div>
     <div id="graph-toolbar-mobile-actions" class="mobile-only">
-      <button class="toolbar-btn" id="btn-mobile-legend" type="button" aria-label="Toggle legend">🗂 Legend</button>
-      <button class="toolbar-btn" id="btn-mobile-graph-tools" type="button" aria-label="Toggle graph tools">⚙ Tools</button>
-      <button class="toolbar-btn" id="btn-mobile-sources" type="button" aria-label="Toggle sources">📚 Sources</button>
+      <button class="toolbar-btn" id="btn-mobile-graph-tools" type="button" aria-label="Toggle graph tools">Tools</button>
+      <button class="toolbar-btn" id="btn-mobile-sources" type="button" aria-label="Toggle sources">Sources</button>
     </div>
   </div>
   <div id="graph-toolbar-controls">
-    <div id="layout-group" role="group" aria-label="Graph layout mode">
-      <button class="layout-btn active" data-layout="force" title="Force-directed layout">⚡ Force</button>
-      <button class="layout-btn" data-layout="radial" title="Radial layout by node type">🎯 Radial</button>
-      <button class="layout-btn" data-layout="hierarchical" title="Hierarchical layout">📊 Hierarchy</button>
-      <button class="layout-btn" data-layout="circular" title="Circular layout">⭕ Circle</button>
-    </div>
-    <div class="toolbar-filter-group">
+    <div class="toolbar-filter-group" id="graph-toolbar-filter-group">
       <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Filter:</span>
       <select id="filter-select" aria-label="Filter by node type">
         <option value="">All Types</option>
@@ -1889,22 +2158,10 @@
         <option value="Chunk">Chunk</option>
       </select>
     </div>
-    <button class="toolbar-btn" id="btn-devmode" aria-label="Toggle dev debug panel">🔬 Dev</button>
-    <button class="toolbar-btn" id="btn-share" aria-label="Share link">🔗 Share Link</button>
-    <button class="toolbar-btn" id="btn-export-png" aria-label="Export PNG">📤 Export PNG</button>
-    <button class="toolbar-btn" id="btn-reset" aria-label="Reset graph">🔄 Reset</button>
   </div>
 </div>
 
 <div id="graph-canvas">
-  <div id="inline-sources-panel" style="display:none;height:100%;overflow-y:auto;padding:16px;box-sizing:border-box;">
-    <div id="inline-sources-header" style="font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted,#8899aa);margin-bottom:12px;">
-      📚 Sources from this session
-    </div>
-    <div id="inline-sources-list" style="display:flex;flex-direction:column;gap:10px;">
-      <p style="color:var(--text-muted,#8899aa);font-size:13px;">Sources will appear here after the agent searches.</p>
-    </div>
-  </div>
   <div id="graph-focus-chip" aria-live="polite">
     <div class="graph-focus-copy">
       <div class="graph-focus-eyebrow">Focused node</div>
@@ -1915,34 +2172,20 @@
     <button id="graph-focus-clear" type="button" aria-label="Clear graph focus">✕</button>
   </div>
   <div id="empty-state">
-    <div class="icon">🕸️</div>
     <p>Ask a question to build the knowledge graph</p>
     <span class="hint">Results will appear here as a graph</span>
   </div>
   <!-- svg inserted by D3 -->
-  <div id="legend">
-    <div class="legend-head">
-      <div class="legend-title">Legend</div>
-      <button class="legend-close mobile-only" id="btn-close-legend" type="button" aria-label="Close legend">✕</button>
-    </div>
-    <div class="legend-item" data-type="Chunk"><div class="legend-dot" style="background:#3a3a5c"></div> Chunk</div>
-    <div class="legend-item" data-type="Topic"><div class="legend-dot" style="background:crimson"></div> Topic</div>
-    <div class="legend-item" data-type="Document"><div class="legend-dot" style="background:#2a4a7f"></div> Document</div>
-    <div class="legend-item" data-type="PERSON"><div class="legend-dot" style="background:steelblue"></div> Person</div>
-    <div class="legend-item" data-type="ORGANIZATION"><div class="legend-dot" style="background:mediumpurple"></div> Organisation</div>
-    <div class="legend-item" data-type="GEO"><div class="legend-dot" style="background:seagreen"></div> Geography</div>
-    <div class="legend-item" data-type="LEGAL_DOCTRINE"><div class="legend-dot" style="background:darkorange"></div> Law / Doctrine</div>
-    <div class="legend-item" data-type="PLAN"><div class="legend-dot" style="background:#d4a017"></div> Plan / Policy</div>
-    <div class="legend-item" data-type="PROBLEM"><div class="legend-dot" style="background:#e05252"></div> Problem</div>
-    <div class="legend-item" data-type="CHANGE_EVENT"><div class="legend-dot" style="background:#20b2aa"></div> Event</div>
-    <div class="legend-item" data-type="CONCEPT"><div class="legend-dot" style="background:goldenrod"></div> Concept</div>
-  </div>
 </div>
     <p id="graph-hint">Drag to pin · Double-click to release · Scroll to zoom</p>
+  <div id="sources-resizer" class="panel-resizer panel-resizer-horizontal desktop-only" role="separator" aria-orientation="horizontal" aria-label="Resize sources panel"></div>
   <aside id="sources-panel">
     <div id="sources-panel-header">
       <h3>Sources</h3>
-      <span id="sources-count">0</span>
+      <div class="sources-panel-header-meta">
+        <span id="sources-count">0</span>
+        <button id="btn-sources-panel-close" class="panel-toggle-btn" type="button" aria-controls="sources-panel" aria-label="Close sources panel" title="Close sources panel">×</button>
+      </div>
     </div>
     <div id="sources-list">
       <div id="sources-empty">No sources yet. Run a search to populate evidence.</div>
@@ -2086,20 +2329,6 @@ let sessionId = params.get('session') || null;
 if (!sessionId) {
   sessionId = uuid();
 }
-function displaySessionId(id) {
-  const el = document.getElementById('session-id');
-  const row = document.getElementById('session-row');
-  if (isMobileViewport()) {
-    row.style.display = 'none';
-    el.textContent = id.substring(0,8) + '…';
-    el.title = id;
-    return;
-  }
-  row.style.display = '';
-  el.textContent = id.substring(0,8) + '…';
-  el.title = id;
-}
-displaySessionId(sessionId);
 
 let latestSearchDocuments = [];
 let sourceDocsByCitation = {};
@@ -2108,9 +2337,80 @@ let kgUpdateTimer = null;
 
 // Core chat element refs are declared early so all later handlers can safely use them.
 const chatArea = document.getElementById('chat-area');
-const chatEmptyState = document.getElementById('chat-empty-state');
 const msgInput = document.getElementById('msg-input');
 const askBtn = document.getElementById('ask-btn');
+const PROMPT_MAX_HEIGHT = 420;
+let promptManualHeight = null;
+let isApplyingPromptHeight = false;
+let chatAutoScroll = true;
+let activeRun = null;
+
+function isChatNearBottom(threshold = 40) {
+  if (!chatArea) return true;
+  return chatArea.scrollHeight - chatArea.clientHeight - chatArea.scrollTop <= threshold;
+}
+
+function scrollChatToBottom(force = false) {
+  if (!chatArea) return;
+  if (force) chatAutoScroll = true;
+  if (force || chatAutoScroll || isChatNearBottom()) {
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+}
+
+chatArea.addEventListener('scroll', () => {
+  chatAutoScroll = isChatNearBottom(48);
+}, { passive: true });
+
+function getPromptMinHeight() {
+  return isMobileViewport() ? 48 : 44;
+}
+
+function getPromptMaxHeight() {
+  return Math.min(Math.max(getPromptMinHeight(), Math.round(window.innerHeight * 0.58)), PROMPT_MAX_HEIGHT);
+}
+
+function autoResizePrompt({ resetManual = false } = {}) {
+  if (resetManual) promptManualHeight = null;
+  const minHeight = getPromptMinHeight();
+  const maxHeight = getPromptMaxHeight();
+  isApplyingPromptHeight = true;
+  msgInput.style.height = 'auto';
+  const autoHeight = clamp(msgInput.scrollHeight, minHeight, maxHeight);
+  const nextHeight = promptManualHeight == null
+    ? autoHeight
+    : clamp(Math.max(promptManualHeight, autoHeight), minHeight, maxHeight);
+  msgInput.style.height = `${nextHeight}px`;
+  requestAnimationFrame(() => {
+    isApplyingPromptHeight = false;
+  });
+}
+
+function setAskButtonMode(mode = 'ask') {
+  const isStop = mode === 'stop';
+  askBtn.textContent = isStop ? 'Stop' : 'Ask';
+  askBtn.classList.toggle('is-stop', isStop);
+  askBtn.setAttribute('aria-label', isStop ? 'Stop investigation' : 'Ask');
+  askBtn.title = isStop ? 'Stop investigation' : 'Ask';
+  askBtn.disabled = false;
+}
+
+function stopActiveRun() {
+  if (!activeRun || typeof activeRun.cancel !== 'function') return;
+  activeRun.cancelled = true;
+  activeRun.cancel();
+}
+
+const promptResizeObserver = new ResizeObserver(entries => {
+  if (isApplyingPromptHeight) return;
+  const minHeight = getPromptMinHeight();
+  const maxHeight = getPromptMaxHeight();
+  const autoHeight = clamp(msgInput.scrollHeight, minHeight, maxHeight);
+  const nextHeight = clamp(Math.round(entries[0].contentRect.height), minHeight, maxHeight);
+  promptManualHeight = nextHeight > autoHeight + 4 ? nextHeight : null;
+});
+
+promptResizeObserver.observe(msgInput);
 
 // ── Session Persistence ─────────────────────────────────────────────────────
 const SESSIONS_KEY = 'graphknows_sessions';
@@ -2196,7 +2496,6 @@ function loadSessions() {
 async function switchSession(id) {
   if (id === sessionId) return;
   sessionId = id;
-  displaySessionId(sessionId);
   resetAll();
   renderSessionList();
   closeSidebar();
@@ -2217,12 +2516,7 @@ async function switchSession(id) {
 }
 
 function newSession() {
-  window.__graphTabSwitched = false; // reset so graph tab auto-switches on next query
-  window.__sessionSources = []; // reset inline sources
-  const sourcesTab = document.getElementById('sources-graph-tab');
-  if (sourcesTab) sourcesTab.textContent = '📚 Sources';
   sessionId = uuid();
-  displaySessionId(sessionId);
   resetAll();
   saveSession({ id: sessionId, name: '', created: new Date().toISOString(), nodeCount: 0, lastQuery: new Date().toISOString() });
   renderSessionList();
@@ -2260,25 +2554,212 @@ function startEditing(sessId, nameDiv) {
 // Initialize
 
 const bodyEl = document.body;
+const rootStyle = document.documentElement.style;
 const graphTitleEl = document.getElementById('graph-title');
 const kgUpdatingEl = document.getElementById('kg-updating');
-const graphViewTabs = Array.from(document.querySelectorAll('.graph-view-tab'));
 const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+const sidebarEl = document.getElementById('sidebar');
+const appEl = document.getElementById('app');
+const leftPanelEl = document.getElementById('left');
+const rightPanelEl = document.getElementById('right');
+const sourcesPanelEl = document.getElementById('sources-panel');
 const mobileSidebarBtn = document.getElementById('btn-mobile-sidebar');
+const sidebarCloseBtn = document.getElementById('btn-sidebar-close');
+const graphPanelToggleBtn = document.getElementById('btn-graph-panel-toggle');
+const graphPanelCloseBtn = document.getElementById('btn-graph-panel-close');
+const sourcesPanelCloseBtn = document.getElementById('btn-sources-panel-close');
+const sidebarResizerEl = document.getElementById('sidebar-resizer');
+const appResizerEl = document.getElementById('app-resizer');
+const sourcesResizerEl = document.getElementById('sources-resizer');
+const graphToolbarHeaderActionsEl = document.querySelector('.graph-toolbar-header-actions');
+const graphToolbarControlsEl = document.getElementById('graph-toolbar-controls');
+const graphToolbarFilterGroupEl = document.getElementById('graph-toolbar-filter-group');
 const mobileViewButtons = Array.from(document.querySelectorAll('.mobile-view-btn'));
 const mobileGraphToolsBtn = document.getElementById('btn-mobile-graph-tools');
-const mobileLegendBtn = document.getElementById('btn-mobile-legend');
-const mobileLegendCloseBtn = document.getElementById('btn-close-legend');
 const mobileSourcesBtn = document.getElementById('btn-mobile-sources');
 const sourcesListEl = document.getElementById('sources-list');
 const sourcesCountEl = document.getElementById('sources-count');
+
+const DESKTOP_LAYOUT = {
+  sidebarDefault: 200,
+  sidebarMin: 168,
+  sidebarCloseThreshold: 116,
+  leftDefaultRatio: 0.4,
+  leftMin: 320,
+  rightMin: 320,
+  rightCloseThreshold: 180,
+  sourcesDefault: 220,
+  sourcesMin: 140,
+  sourcesCloseThreshold: 96,
+  graphCanvasMin: 180,
+};
+
+let layoutFrameId = 0;
 
 function isMobileViewport() {
   return window.matchMedia('(max-width: 900px)').matches;
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function setLayoutSize(variableName, value) {
+  rootStyle.setProperty(variableName, `${Math.round(value)}px`);
+}
+
+function syncLayoutSoon() {
+  if (layoutFrameId) return;
+  layoutFrameId = requestAnimationFrame(() => {
+    layoutFrameId = 0;
+    updateCenter();
+    renderGraph();
+  });
+}
+
+function ensureDesktopLayoutSizes() {
+  if (isMobileViewport()) return;
+
+  if (!rootStyle.getPropertyValue('--sidebar-width')) {
+    const width = Math.round(sidebarEl.getBoundingClientRect().width) || DESKTOP_LAYOUT.sidebarDefault;
+    setLayoutSize('--sidebar-width', width);
+  }
+
+  if (!rootStyle.getPropertyValue('--left-panel-width')) {
+    const appWidth = appEl.getBoundingClientRect().width;
+    const width = Math.round(leftPanelEl.getBoundingClientRect().width) || Math.round(appWidth * DESKTOP_LAYOUT.leftDefaultRatio);
+    setLayoutSize('--left-panel-width', width);
+  }
+
+  if (!rootStyle.getPropertyValue('--sources-panel-height')) {
+    const height = Math.round(sourcesPanelEl.getBoundingClientRect().height) || DESKTOP_LAYOUT.sourcesDefault;
+    setLayoutSize('--sources-panel-height', height);
+  }
+}
+
+function syncGraphToolbarLayout() {
+  if (!graphToolbarFilterGroupEl || !graphToolbarHeaderActionsEl || !graphToolbarControlsEl) return;
+  if (isMobileViewport()) {
+    if (graphToolbarFilterGroupEl.parentElement !== graphToolbarControlsEl) {
+      graphToolbarControlsEl.insertBefore(graphToolbarFilterGroupEl, graphToolbarControlsEl.firstChild);
+    }
+    return;
+  }
+
+  if (graphToolbarFilterGroupEl.parentElement !== graphToolbarHeaderActionsEl) {
+    graphToolbarHeaderActionsEl.insertBefore(graphToolbarFilterGroupEl, graphPanelCloseBtn);
+  }
+}
+
+function rememberSidebarWidth() {
+  if (isMobileViewport()) return;
+  const width = Math.round(sidebarEl.getBoundingClientRect().width);
+  if (width > DESKTOP_LAYOUT.sidebarCloseThreshold) {
+    setLayoutSize('--sidebar-width', width);
+  }
+}
+
+function rememberLeftPanelWidth() {
+  if (isMobileViewport() || bodyEl.classList.contains('graph-panel-collapsed')) return;
+  const width = Math.round(leftPanelEl.getBoundingClientRect().width);
+  if (width > DESKTOP_LAYOUT.leftMin) {
+    setLayoutSize('--left-panel-width', width);
+  }
+}
+
+function rememberSourcesPanelHeight() {
+  if (isMobileViewport() || bodyEl.classList.contains('sources-panel-collapsed')) return;
+  const height = Math.round(sourcesPanelEl.getBoundingClientRect().height);
+  if (height > DESKTOP_LAYOUT.sourcesCloseThreshold) {
+    setLayoutSize('--sources-panel-height', height);
+  }
+}
+
+function syncSidebarToggleButton() {
+  const expanded = isMobileViewport()
+    ? bodyEl.classList.contains('sidebar-open')
+    : !bodyEl.classList.contains('sidebar-collapsed');
+  mobileSidebarBtn.textContent = isMobileViewport() || !expanded ? '☰' : '<';
+  mobileSidebarBtn.setAttribute('aria-expanded', String(expanded));
+  mobileSidebarBtn.setAttribute('aria-label', expanded ? 'Hide investigations' : 'Show investigations');
+  mobileSidebarBtn.title = expanded ? 'Hide investigations' : 'Show investigations';
+}
+
 function closeSidebar() {
   bodyEl.classList.remove('sidebar-open');
+  syncSidebarToggleButton();
+}
+
+function closeSidebarPanel() {
+  if (isMobileViewport()) {
+    closeSidebar();
+    return;
+  }
+  rememberSidebarWidth();
+  bodyEl.classList.add('sidebar-collapsed');
+  updateCenter();
+  renderGraph();
+  syncSidebarToggleButton();
+}
+
+function closeGraphPanel() {
+  if (isMobileViewport()) {
+    setMobileView('answer');
+    return;
+  }
+  rememberLeftPanelWidth();
+  bodyEl.classList.add('graph-panel-collapsed');
+  updateCenter();
+  renderGraph();
+}
+
+function openGraphPanel() {
+  if (isMobileViewport()) {
+    setMobileView('graph');
+    return;
+  }
+  ensureDesktopLayoutSizes();
+  bodyEl.classList.remove('graph-panel-collapsed');
+  updateCenter();
+  renderGraph();
+}
+
+function closeSourcesPanel() {
+  if (isMobileViewport()) {
+    bodyEl.classList.remove('sources-open');
+    return;
+  }
+  rememberSourcesPanelHeight();
+  bodyEl.classList.add('sources-panel-collapsed');
+  updateCenter();
+  renderGraph();
+}
+
+function openSourcesPanel() {
+  if (isMobileViewport()) {
+    bodyEl.classList.add('sources-open');
+    return;
+  }
+  ensureDesktopLayoutSizes();
+  bodyEl.classList.remove('sources-panel-collapsed');
+  updateCenter();
+  renderGraph();
+}
+
+function toggleSidebar() {
+  if (isMobileViewport()) {
+    bodyEl.classList.toggle('sidebar-open');
+  } else {
+    if (!bodyEl.classList.contains('sidebar-collapsed')) {
+      rememberSidebarWidth();
+    } else {
+      ensureDesktopLayoutSizes();
+    }
+    bodyEl.classList.toggle('sidebar-collapsed');
+    updateCenter();
+    renderGraph();
+  }
+  syncSidebarToggleButton();
 }
 
 function setMobileView(view) {
@@ -2288,14 +2769,12 @@ function setMobileView(view) {
   bodyEl.classList.add(nextView === 'graph' ? 'mobile-graph-view' : 'mobile-answer-view');
   mobileViewButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.mobileView === nextView));
   if (nextView !== 'graph') {
-    bodyEl.classList.remove('graph-tools-open', 'legend-open', 'sources-open');
+    bodyEl.classList.remove('graph-tools-open', 'sources-open');
   }
   requestAnimationFrame(() => {
     updateCenter();
     renderGraph();
     if (nextView === 'graph') {
-      const defaultLayout = allNodes.length > 18 ? 'radial' : 'force';
-      if (currentLayout !== defaultLayout) applyLayout(defaultLayout);
       if (selectedNode) {
         zoomToNode(selectedNode);
       } else {
@@ -2307,7 +2786,10 @@ function setMobileView(view) {
 }
 
 function syncResponsiveState() {
+  syncGraphToolbarLayout();
   if (isMobileViewport()) {
+    bodyEl.classList.remove('graph-panel-collapsed');
+    bodyEl.classList.remove('sources-panel-collapsed');
     if (!bodyEl.classList.contains('mobile-answer-view') && !bodyEl.classList.contains('mobile-graph-view')) {
       setMobileView('answer');
       return;
@@ -2315,47 +2797,136 @@ function syncResponsiveState() {
     updateCenter();
     renderGraph();
   } else {
-    bodyEl.classList.remove('mobile-answer-view', 'mobile-graph-view', 'sidebar-open', 'graph-tools-open', 'legend-open', 'sources-open');
+    bodyEl.classList.remove('mobile-answer-view', 'mobile-graph-view', 'sidebar-open', 'graph-tools-open', 'sources-open');
+    ensureDesktopLayoutSizes();
     updateCenter();
     renderGraph();
   }
+  syncSidebarToggleButton();
 }
 
-mobileSidebarBtn.addEventListener('click', () => {
-  if (!isMobileViewport()) return;
-  bodyEl.classList.toggle('sidebar-open');
-});
+function attachDesktopResizer(handle, axis, onMove, onEnd) {
+  handle.addEventListener('pointerdown', event => {
+    if (isMobileViewport()) return;
+    event.preventDefault();
+    ensureDesktopLayoutSizes();
+    handle.classList.add('dragging');
+    bodyEl.classList.add(axis === 'y' ? 'is-resizing-horizontal' : 'is-resizing');
+
+    const move = moveEvent => {
+      onMove(moveEvent);
+    };
+
+    const stop = upEvent => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      handle.classList.remove('dragging');
+      bodyEl.classList.remove('is-resizing', 'is-resizing-horizontal');
+      onEnd(upEvent);
+      updateCenter();
+      renderGraph();
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  });
+}
+
+attachDesktopResizer(
+  sidebarResizerEl,
+  'x',
+  moveEvent => {
+    bodyEl.classList.remove('sidebar-collapsed');
+    const maxWidth = Math.max(DESKTOP_LAYOUT.sidebarMin, window.innerWidth - DESKTOP_LAYOUT.leftMin - DESKTOP_LAYOUT.rightMin);
+    const nextWidth = clamp(moveEvent.clientX, 0, maxWidth);
+    setLayoutSize('--sidebar-width', nextWidth);
+    syncLayoutSoon();
+  },
+  endEvent => {
+    const maxWidth = Math.max(DESKTOP_LAYOUT.sidebarMin, window.innerWidth - DESKTOP_LAYOUT.leftMin - DESKTOP_LAYOUT.rightMin);
+    const nextWidth = clamp(endEvent.clientX, 0, maxWidth);
+    if (nextWidth <= DESKTOP_LAYOUT.sidebarCloseThreshold) {
+      closeSidebarPanel();
+      return;
+    }
+    bodyEl.classList.remove('sidebar-collapsed');
+    setLayoutSize('--sidebar-width', clamp(nextWidth, DESKTOP_LAYOUT.sidebarMin, maxWidth));
+    syncSidebarToggleButton();
+  }
+);
+
+attachDesktopResizer(
+  appResizerEl,
+  'x',
+  moveEvent => {
+    bodyEl.classList.remove('graph-panel-collapsed');
+    const appRect = appEl.getBoundingClientRect();
+    const maxLeftWidth = Math.max(DESKTOP_LAYOUT.leftMin, appRect.width - DESKTOP_LAYOUT.rightMin);
+    const nextWidth = clamp(moveEvent.clientX - appRect.left, DESKTOP_LAYOUT.leftMin, maxLeftWidth);
+    setLayoutSize('--left-panel-width', nextWidth);
+    syncLayoutSoon();
+  },
+  endEvent => {
+    const appRect = appEl.getBoundingClientRect();
+    const nextRightWidth = appRect.right - endEvent.clientX;
+    if (nextRightWidth <= DESKTOP_LAYOUT.rightCloseThreshold) {
+      closeGraphPanel();
+      return;
+    }
+    const maxLeftWidth = Math.max(DESKTOP_LAYOUT.leftMin, appRect.width - DESKTOP_LAYOUT.rightMin);
+    const nextWidth = clamp(endEvent.clientX - appRect.left, DESKTOP_LAYOUT.leftMin, maxLeftWidth);
+    bodyEl.classList.remove('graph-panel-collapsed');
+    setLayoutSize('--left-panel-width', nextWidth);
+  }
+);
+
+attachDesktopResizer(
+  sourcesResizerEl,
+  'y',
+  moveEvent => {
+    bodyEl.classList.remove('sources-panel-collapsed');
+    const rightRect = rightPanelEl.getBoundingClientRect();
+    const maxHeight = Math.max(DESKTOP_LAYOUT.sourcesMin, rightRect.height - DESKTOP_LAYOUT.graphCanvasMin);
+    const nextHeight = clamp(rightRect.bottom - moveEvent.clientY, 0, maxHeight);
+    setLayoutSize('--sources-panel-height', nextHeight);
+    syncLayoutSoon();
+  },
+  endEvent => {
+    const rightRect = rightPanelEl.getBoundingClientRect();
+    const nextHeight = rightRect.bottom - endEvent.clientY;
+    if (nextHeight <= DESKTOP_LAYOUT.sourcesCloseThreshold) {
+      closeSourcesPanel();
+      return;
+    }
+    const maxHeight = Math.max(DESKTOP_LAYOUT.sourcesMin, rightRect.height - DESKTOP_LAYOUT.graphCanvasMin);
+    bodyEl.classList.remove('sources-panel-collapsed');
+    setLayoutSize('--sources-panel-height', clamp(nextHeight, DESKTOP_LAYOUT.sourcesMin, maxHeight));
+  }
+);
+
+mobileSidebarBtn.addEventListener('click', toggleSidebar);
+sidebarCloseBtn.addEventListener('click', closeSidebarPanel);
+graphPanelToggleBtn.addEventListener('click', openGraphPanel);
+graphPanelCloseBtn.addEventListener('click', closeGraphPanel);
+sourcesPanelCloseBtn.addEventListener('click', closeSourcesPanel);
 sidebarBackdrop.addEventListener('click', closeSidebar);
 mobileViewButtons.forEach(btn => {
   btn.addEventListener('click', () => setMobileView(btn.dataset.mobileView));
 });
-document.querySelectorAll('.chat-suggestion-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const text = btn.dataset.suggestion || btn.textContent.trim();
-    msgInput.value = text;
-    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
-    // Auto-submit immediately
-    sendMessage(text);
-  });
-});
 document.getElementById('graph-focus-clear')?.addEventListener('click', () => {
   resetGraphView();
-  if (isMobileViewport()) bodyEl.classList.remove('legend-open', 'graph-tools-open');
+  if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
 });
 mobileGraphToolsBtn.addEventListener('click', () => {
   if (!isMobileViewport()) return;
   bodyEl.classList.toggle('graph-tools-open');
 });
-mobileLegendBtn.addEventListener('click', () => {
-  if (!isMobileViewport()) return;
-  bodyEl.classList.toggle('legend-open');
-  if (bodyEl.classList.contains('legend-open')) bodyEl.classList.remove('sources-open');
-});
-mobileLegendCloseBtn.addEventListener('click', () => bodyEl.classList.remove('legend-open'));
 mobileSourcesBtn.addEventListener('click', () => {
   if (!isMobileViewport()) return;
   bodyEl.classList.toggle('sources-open');
-  if (bodyEl.classList.contains('sources-open')) bodyEl.classList.remove('legend-open', 'graph-tools-open');
+  if (bodyEl.classList.contains('sources-open')) bodyEl.classList.remove('graph-tools-open');
 });
 
 // ── Trace panel toggle ─────────────────────────────────────────────────────
@@ -2370,25 +2941,7 @@ traceHeader.addEventListener('click', () => {
 // ── Trace helpers ─────────────────────────────────────────────────────────
 
 function toolIcon(toolName) {
-  const icons = {
-    search_entities: '🔍',
-    search_chunks: '📄',
-    get_neighbours: '🕸️',
-    get_community: '🏘️',
-    fuse_and_rank: '⚖️',
-    get_chunks_for_entity: '🔗',
-    get_triplets: '🔗',
-    get_source_document: '📋',
-    get_topic_entities: '🗂️',
-    wikipedia_search: '📖',
-    web_search: '🌐',
-    // LangGraph tools
-    search_eu: '🏛️',
-    search_web: '🌐',
-    graphgen: '🔬',
-    graphrag: '🧠',
-  };
-  return icons[toolName] || '🔧';
+  return '';
 }
 
 function humanLabel(s) {
@@ -2396,9 +2949,89 @@ function humanLabel(s) {
   return String(s).replace(/_/g, ' ');
 }
 
+function formatToolName(toolName) {
+  const mapping = {
+    investigation_plan: 'Plan',
+    investigation_search: 'Search',
+    evidence_retrieval: 'Evidence',
+    final_brief: 'Brief',
+  };
+  return mapping[toolName] || humanLabel(toolName || 'step');
+}
+
+function formatRouteName(route) {
+  const mapping = {
+    eprs_briefings: 'EPRS',
+    ep_debates: 'EP Debates',
+    web: 'Web',
+    eurlex: 'EUR-Lex',
+    committee_docs: 'Committee Docs',
+  };
+  const key = String(route || '').trim();
+  return mapping[key] || humanLabel(key);
+}
+
+function collectRoutes(items) {
+  return Array.from(new Set((items || []).flatMap((item) => Array.isArray(item?.source_priorities) ? item.source_priorities : [])));
+}
+
+function truncateTraceText(value, max = 160) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length <= max ? text : `${text.slice(0, max - 1)}...`;
+}
+
+function renderTraceRoutePills(routes) {
+  if (!Array.isArray(routes) || routes.length === 0) return '';
+  return `<div class="trace-route-pills">${routes.map((route) => `
+    <span class="trace-route-pill">${escHtml(formatRouteName(route))}</span>
+  `).join('')}</div>`;
+}
+
+function renderTracePlanList(items) {
+  const routes = collectRoutes(items);
+  return `${renderTraceRoutePills(routes)}<ul class="trace-query-list">${items.map((item, index) => `
+    <li class="trace-query-item"><strong>Question ${index + 1}</strong>${escHtml(truncateTraceText(item.text || item.query || item))}</li>
+  `).join('')}</ul>`;
+}
+
+function renderTraceQueryList(items, labelPrefix) {
+  return `<ul class="trace-query-list">${items.map((item, index) => `
+    <li class="trace-query-item"><strong>${labelPrefix} ${index + 1}</strong>${escHtml(truncateTraceText(item.text || item.query || item))}</li>
+  `).join('')}</ul>`;
+}
+
+function formatObservationValue(value) {
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? '' : 's'}`;
+  if (value && typeof value === 'object') return `${Object.keys(value).length} field${Object.keys(value).length === 1 ? '' : 's'}`;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return truncateTraceText(value, 90);
+}
+
+function renderObservationSummary(obs) {
+  const entries = Object.entries(obs || {}).slice(0, 4);
+  if (!entries.length) return '<span class="obs-empty">No details</span>';
+  return `<div class="trace-kv-grid">${entries.map(([key, value]) => `
+    <div class="trace-kv">
+      <span class="trace-kv-label">${escHtml(humanLabel(key))}</span>
+      <span class="trace-kv-value">${escHtml(formatObservationValue(value))}</span>
+    </div>
+  `).join('')}</div>`;
+}
+
 function renderObservation(obsType, obs) {
   if (!obs || (Array.isArray(obs) && obs.length === 0)) {
     return '<span class="obs-empty">No results</span>';
+  }
+  if (obs && typeof obs === 'object' && Array.isArray(obs.plan)) {
+    return renderTracePlanList(obs.plan.slice(0, 4));
+  }
+  if (obs && typeof obs === 'object' && Array.isArray(obs.queries)) {
+    const metrics = {};
+    ['docs_fetched', 'chunks_written', 'entity_count', 'relation_count', 'dup_ratio', 'iterations'].forEach((key) => {
+      if (obs[key] != null) metrics[key] = key === 'dup_ratio' ? `${Math.round(Number(obs[key]) * 100)}%` : obs[key];
+    });
+    return `${renderTraceRoutePills(obs.routes || [])}${renderTraceQueryList(obs.queries.slice(0, 4), 'Query')}${Object.keys(metrics).length ? renderObservationSummary(metrics) : ''}`;
   }
   if (obsType === 'entities' || obsType === 'neighbours') {
     const items = Array.isArray(obs) ? obs : [obs];
@@ -2435,15 +3068,17 @@ function renderObservation(obsType, obs) {
     </div>`;
   }
   if (obsType === 'error' || (obs && obs.error)) {
-    return `<div class="trace-error-box">⚠️ ${escHtml((obs.error || JSON.stringify(obs)).slice(0, 200))}</div>`;
+    return `<div class="trace-error-box">${escHtml((obs.error || JSON.stringify(obs)).slice(0, 200))}</div>`;
   }
-  // Fallback: pretty JSON
-  return `<pre class="obs-json">${escHtml(JSON.stringify(obs, null, 2).slice(0, 400))}</pre>`;
+  if (obs && typeof obs === 'object') {
+    return renderObservationSummary(obs);
+  }
+  return `<pre class="obs-json">${escHtml(JSON.stringify(obs, null, 2).slice(0, 240))}</pre>`;
 }
 
 function buildTraceCard(s) {
   const isFinal = s.final;
-  const icon = isFinal ? '✅' : toolIcon(s.tool_name);
+  const icon = '';
   const toolLabel = escHtml(s.tool_name || 'Final Answer');
   const thoughtSnippet = s.thought ? escHtml(s.thought.slice(0, 80)) + (s.thought.length > 80 ? '…' : '') : '';
   const obsHtml = (!isFinal && s.observation != null) ? renderObservation(s.observation_type, s.observation) : '';
@@ -2542,14 +3177,6 @@ function setTraceSteps(steps, question, sources) {
 // ── Chat ───────────────────────────────────────────────────────────────────
 
 loadSessions();
-
-function syncChatEmptyState() {
-  if (!chatEmptyState) return;
-  const hasMessages = chatArea.querySelector('.msg-user, .msg-agent, .spinner');
-  const isEmpty = !hasMessages;
-  chatEmptyState.classList.toggle('visible', isEmpty);
-  chatArea.classList.toggle('is-empty', isEmpty);
-}
 
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -2798,8 +3425,7 @@ function appendUserMsg(text) {
   div.className = 'msg-user';
   div.textContent = text;
   chatArea.appendChild(div);
-  syncChatEmptyState();
-  chatArea.scrollTop = chatArea.scrollHeight;
+  scrollChatToBottom(true);
   return div;
 }
 
@@ -2808,15 +3434,14 @@ function appendSpinner() {
   div.className = 'spinner';
   div.innerHTML = '<span></span><span></span><span></span><em class="spinner-time">0s…</em>';
   chatArea.appendChild(div);
-  syncChatEmptyState();
-  chatArea.scrollTop = chatArea.scrollHeight;
+  scrollChatToBottom(true);
   const start = Date.now();
   div._timerInterval = setInterval(() => {
     const el = div.querySelector('.spinner-time');
     if (el) el.textContent = Math.floor((Date.now() - start) / 1000) + 's…';
   }, 1000);
   const origRemove = div.remove.bind(div);
-  div.remove = () => { clearInterval(div._timerInterval); origRemove(); syncChatEmptyState(); };
+  div.remove = () => { clearInterval(div._timerInterval); origRemove(); };
   return div;
 }
 
@@ -2828,7 +3453,7 @@ function buildInlineTrace(steps) {
   const summary = document.createElement('summary');
   summary.className = 'inline-trace-summary';
   summary.innerHTML = `
-    <span class="inline-trace-title">🔍 Reasoning trace</span>
+    <span class="inline-trace-title">Investigation path</span>
     <span class="inline-trace-count">${steps.length} step${steps.length !== 1 ? 's' : ''}</span>
   `;
   details.appendChild(summary);
@@ -2848,7 +3473,7 @@ function buildInlineTrace(steps) {
     header.className = 'inline-step-header';
     header.innerHTML = `
       <span class="inline-step-icon">${icon}</span>
-      <span class="inline-step-tool">${escHtml(s.tool_name || 'step')}</span>
+      <span class="inline-step-tool">${escHtml(formatToolName(s.tool_name || 'step'))}</span>
       ${argStr ? `<span class="inline-step-input"><code>${escHtml(argStr)}</code></span>` : ''}
     `;
 
@@ -2930,12 +3555,17 @@ function setCardSources(card, sources) {
   const section = buildSourceSection(sources);
   if (!section) return;
 
-  const exportBtn = footer.querySelector('.btn-export-msg');
   const row = document.createElement('div');
   row.className = 'source-footer-row';
   row.appendChild(section);
-  if (exportBtn) row.appendChild(exportBtn);
   footer.prepend(row);
+}
+
+function shareCurrentSessionLink() {
+  const url = window.location.origin + window.location.pathname + '?session=' + sessionId;
+  return navigator.clipboard.writeText(url).then(() => showToast('Link copied!')).catch(() => {
+    prompt('Copy this link:', url);
+  });
 }
 
 function appendAgentMsg(answer, sources, steps) {
@@ -2965,9 +3595,20 @@ function appendAgentMsg(answer, sources, steps) {
   const footer = document.createElement('div');
   footer.className = 'answer-footer';
 
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'answer-action-row';
+
+  const shareBtn = document.createElement('button');
+  shareBtn.className = 'btn-share-msg';
+  shareBtn.textContent = 'Share Link';
+  shareBtn.addEventListener('click', () => {
+    shareCurrentSessionLink();
+  });
+  actionsRow.appendChild(shareBtn);
+
   const expBtn = document.createElement('button');
   expBtn.className = 'btn-export-msg';
-  expBtn.textContent = '⬇ Export';
+  expBtn.textContent = 'Export';
   expBtn.addEventListener('click', () => {
     const blob = new Blob([answer], {type:'text/plain'});
     const a = document.createElement('a');
@@ -2975,13 +3616,13 @@ function appendAgentMsg(answer, sources, steps) {
     a.download = 'graphknows-answer.txt';
     a.click();
   });
-  footer.appendChild(expBtn);
+  actionsRow.appendChild(expBtn);
+  footer.appendChild(actionsRow);
   card.appendChild(footer);
   setCardSources(card, sources);
 
   chatArea.appendChild(card);
-  syncChatEmptyState();
-  chatArea.scrollTop = chatArea.scrollHeight;
+  scrollChatToBottom(true);
   return card;
 }
 
@@ -2990,11 +3631,10 @@ function appendOfflineMsg() {
   card.className = 'msg-agent';
   const body = document.createElement('div');
   body.className = 'answer-body';
-  body.innerHTML = `⚠️ <strong>Agent offline</strong> — start <code>services/agent/</code> to continue.`;
+  body.innerHTML = `<strong>Agent offline</strong> - start <code>services/agent/</code> to continue.`;
   card.appendChild(body);
   chatArea.appendChild(card);
-  syncChatEmptyState();
-  chatArea.scrollTop = chatArea.scrollHeight;
+  scrollChatToBottom(true);
 }
 
 function appendErrorMsg(msg) {
@@ -3007,15 +3647,28 @@ function appendErrorMsg(msg) {
   body.innerHTML = `🔴 <strong>Error</strong> — ${escHtml(msg)}`;
   card.appendChild(body);
   chatArea.appendChild(card);
-  syncChatEmptyState();
-  chatArea.scrollTop = chatArea.scrollHeight;
+  scrollChatToBottom(true);
+}
+
+function appendCancelledMsg(msg = 'Investigation stopped.') {
+  const card = document.createElement('div');
+  card.className = 'msg-agent';
+  const body = document.createElement('div');
+  body.className = 'answer-body';
+  body.style.color = 'var(--text-muted)';
+  body.textContent = msg;
+  card.appendChild(body);
+  chatArea.appendChild(card);
+  scrollChatToBottom(true);
 }
 
 async function sendMessage(text) {
   setMobileView('answer');
   appendUserMsg(text);
   const spinner = appendSpinner();
-  askBtn.disabled = true;
+  const runState = { cancelled: false, cancel: null };
+  activeRun = runState;
+  setAskButtonMode('stop');
   msgInput.disabled = true;
 
   // Try WebSocket first, fall back to HTTP
@@ -3023,22 +3676,29 @@ async function sendMessage(text) {
   const wsUrl = `${wsProto}//${location.host}/ws/chat/${sessionId}`;
 
   try {
-    await sendMessageViaWebSocket(wsUrl, text, spinner);
+    const wsResult = await sendMessageViaWebSocket(wsUrl, text, spinner, runState);
+    if (wsResult && wsResult.cancelled) return;
   } catch(e) {
+    if (runState.cancelled || e?.name === 'AbortError' || e?.message === 'Request cancelled') {
+      return;
+    }
     console.warn('WS failed, falling back to HTTP', e);
     try { spinner.remove(); } catch(_) {}
     const spinner2 = appendSpinner();
-    await sendMessageViaHTTP(text, spinner2);
+    const httpResult = await sendMessageViaHTTP(text, spinner2, runState);
+    if (httpResult && httpResult.cancelled) return;
   } finally {
-    askBtn.disabled = false;
+    if (activeRun === runState) activeRun = null;
+    setAskButtonMode('ask');
     msgInput.disabled = false;
     msgInput.focus();
   }
 }
 
-async function sendMessageViaWebSocket(wsUrl, text, spinner) {
+async function sendMessageViaWebSocket(wsUrl, text, spinner, runState) {
   return new Promise((resolve, reject) => {
     let ws;
+    let settled = false;
     try {
       ws = new WebSocket(wsUrl);
     } catch(e) {
@@ -3060,20 +3720,58 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
     let liveAnswerCard = null;
     let liveAnswerBody = null;
     let currentWorkflowIteration = null;
+    let currentTraceStep = null;
+    let latestPlan = [];
 
-    const TOOL_ICONS = {
-      search_eu: '🏛️',
-      search_web: '🌐',
-      graphgen: '🔬',
-      graphrag: '🧠',
-      investigation_plan: '🧭',
-      investigation_search: '🛰️',
-      evidence_retrieval: '📚',
-      final_brief: '📝',
-    };
+    function resolveOnce(value) {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    }
+
+    function rejectOnce(error) {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    }
+
+    function markLiveTraceStopped() {
+      try { spinner.remove(); } catch(_) {}
+      if (liveTrace.parentNode) {
+        liveTrace.classList.add('is-stopped');
+        const statusEl = liveTrace.querySelector('.trace-live-status');
+        if (statusEl) statusEl.textContent = 'Stopped';
+        liveTrace.querySelectorAll('.trace-live-step.is-running').forEach((card) => {
+          card.classList.remove('is-running');
+          card.classList.add('is-complete');
+          const stepStatus = card.querySelector('.step-status');
+          if (stepStatus) {
+            stepStatus.textContent = 'Stopped';
+            stepStatus.classList.remove('is-running');
+          }
+        });
+      }
+      if (currentStepCard) {
+        appendStepResult(currentStepCard, 'Investigation stopped by user.');
+      }
+      if (liveAnswerCard) {
+        const label = liveAnswerCard.querySelector('.answer-label');
+        if (label) label.textContent = 'Partial answer';
+      }
+      scrollChatToBottom(true);
+    }
+
+    if (runState) {
+      runState.cancel = () => {
+        if (runState.cancelled !== true) runState.cancelled = true;
+        markLiveTraceStopped();
+        try { ws.close(1000, 'client_cancelled'); } catch(_) {}
+        resolveOnce({ cancelled: true });
+      };
+    }
 
     function getToolIcon(toolName) {
-      return TOOL_ICONS[toolName] || toolIcon(toolName) || '🔧';
+      return '';
     }
 
     function pushTraceStep(toolName, thought, observationType, observation) {
@@ -3086,6 +3784,14 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       };
       collectedSteps.push(step);
       return step;
+    }
+
+    function mergeTraceObservation(patch) {
+      if (!currentTraceStep || !patch) return;
+      const currentObservation = currentTraceStep.observation && typeof currentTraceStep.observation === 'object'
+        ? currentTraceStep.observation
+        : {};
+      currentTraceStep.observation = { ...currentObservation, ...patch };
     }
 
     function getStepThoughtEl(card) {
@@ -3106,12 +3812,17 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       const resultEl = getStepResultEl(card);
       if (!resultEl) return;
       resultEl.textContent = resultEl.textContent ? `${resultEl.textContent}\n${line}` : line;
-      resultEl.style.display = '';
     }
 
     function finishStepCard(card) {
-      const spinnerEl = card && card.querySelector('.step-spinner');
-      if (spinnerEl) spinnerEl.remove();
+      if (!card) return;
+      const statusEl = card.querySelector('.step-status');
+      if (statusEl) {
+        statusEl.textContent = 'Done';
+        statusEl.classList.remove('is-running');
+      }
+      card.classList.remove('is-running');
+      card.classList.add('is-complete');
     }
 
     function ensureLiveAnswerCard() {
@@ -3138,20 +3849,12 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       } else {
         body.textContent = nextText;
       }
-      chatArea.scrollTop = chatArea.scrollHeight;
+      scrollChatToBottom();
     }
 
     function handleGraphUpdate(data) {
       const isPartial = data.partial === true;
       setKgUpdating(true);
-
-      if (!window.__graphTabSwitched) {
-        window.__graphTabSwitched = true;
-        const kgTab = document.querySelector('.graph-view-tab[data-graph-view="knowledge"]');
-        if (kgTab && !kgTab.classList.contains('active')) kgTab.click();
-        const rightPanel = document.getElementById('right');
-        if (rightPanel) rightPanel.classList.add('visible');
-      }
 
       if (data.graph) {
         const g = data.graph;
@@ -3201,12 +3904,16 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       setStepThought(card, thought);
       finishStepCard(card);
       appendStepResult(card, resultText);
-      liveTrace.appendChild(card);
+      liveTraceSteps.appendChild(card);
       pushTraceStep(toolName, thought, observationType, observation);
-      chatArea.scrollTop = chatArea.scrollHeight;
+      scrollChatToBottom();
     }
 
     function finalizeStream(answerText, sources) {
+      if (runState?.cancelled) {
+        resolveOnce({ cancelled: true });
+        return;
+      }
       try { spinner.remove(); } catch(_) {}
       if (liveAnswerCard) liveAnswerCard.remove();
       liveAnswerCard = null;
@@ -3223,7 +3930,7 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       saveSession({ ...getCurrentSessionData(), id: sessionId, nodeCount: allNodes.length, lastQuery: new Date().toISOString() });
       renderSessionList();
       ws.close();
-      resolve();
+      resolveOnce();
     }
 
     function handleWorkflowEvent(eventFrame) {
@@ -3234,13 +3941,12 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
 
       if (eventType === 'plan_ready') {
         const plan = Array.isArray(payload.plan) ? payload.plan : [];
-        const planLines = plan.length
-          ? plan.map((item, index) => `${index + 1}. ${item.text || item.id || 'Untitled step'}`).join('\n')
-          : 'Plan ready';
+        latestPlan = plan;
+        const routes = collectRoutes(plan);
         appendWorkflowSummaryCard(
           'investigation_plan',
-          'The agent scoped the investigation before searching.',
-          planLines,
+          `Scoped ${plan.length || 0} investigation question${plan.length === 1 ? '' : 's'} before searching${routes.length ? ` across ${routes.map(formatRouteName).join(', ')}` : ''}.`,
+          plan.length ? `Prepared ${plan.length} targeted question${plan.length === 1 ? '' : 's'}.` : 'Plan ready.',
           'unknown',
           { plan },
         );
@@ -3253,34 +3959,38 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         currentWorkflowIteration = payload.iteration ?? null;
         currentStepTool = 'investigation_search';
         currentStepCard = createStepCard(currentStepTool, '');
-        liveTrace.appendChild(currentStepCard);
+        liveTraceSteps.appendChild(currentStepCard);
 
         const queries = Array.isArray(payload.queries) ? payload.queries : [];
+        const routes = collectRoutes(latestPlan);
         const thoughtText = queries.length
-          ? queries.join('\n')
+          ? `Iteration ${payload.iteration ?? '?'} running ${queries.length} targeted quer${queries.length === 1 ? 'y' : 'ies'}${routes.length ? ` via ${routes.map(formatRouteName).join(', ')}` : ''}.`
           : `Search iteration ${payload.iteration ?? '?'}`;
         setStepThought(currentStepCard, thoughtText);
-        pushTraceStep(
+        currentTraceStep = pushTraceStep(
           'investigation_search',
-          `Search iteration ${payload.iteration ?? '?'} started.`,
+          `Search iteration ${payload.iteration ?? '?'} started${routes.length ? ` with routes ${routes.map(formatRouteName).join(', ')}` : ''}.`,
           'unknown',
-          { iteration: payload.iteration, queries },
+          { iteration: payload.iteration, queries, routes },
         );
-        chatArea.scrollTop = chatArea.scrollHeight;
+        scrollChatToBottom();
         return;
       }
 
       if (eventType === 'docs_fetched') {
+        mergeTraceObservation({ docs_fetched: payload.count || 0 });
         appendStepResult(currentStepCard, `Fetched ${payload.count || 0} source documents.`);
         return;
       }
 
       if (eventType === 'chunks_written') {
+        mergeTraceObservation({ chunks_written: payload.count || 0 });
         appendStepResult(currentStepCard, `Wrote ${payload.count || 0} evidence chunks to the working set.`);
         return;
       }
 
       if (eventType === 'entities_written') {
+        mergeTraceObservation({ entity_count: payload.entity_count || 0, relation_count: payload.relation_count || 0 });
         appendStepResult(currentStepCard, `Mapped ${payload.entity_count || 0} entities and ${payload.relation_count || 0} relations into the graph.`);
         return;
       }
@@ -3295,16 +4005,19 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
 
       if (eventType === 'novelty_check') {
         const dupRatio = Number(payload.dup_ratio || 0);
+        mergeTraceObservation({ dup_ratio: dupRatio });
         appendStepResult(currentStepCard, `Novelty check: ${(dupRatio * 100).toFixed(0)}% duplicate evidence.`);
         return;
       }
 
       if (eventType === 'search_done') {
+        mergeTraceObservation({ iterations: payload.iterations || currentWorkflowIteration || null, reason: payload.reason || 'done' });
         appendStepResult(
           currentStepCard,
           `Search loop complete after ${payload.iterations || currentWorkflowIteration || '?'} iteration(s): ${payload.reason || 'done'}.`,
         );
         finishStepCard(currentStepCard);
+        currentTraceStep = null;
         currentStepCard = null;
         currentStepTool = null;
         currentWorkflowIteration = null;
@@ -3354,27 +4067,34 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
 
     function createStepCard(toolName, inputStr) {
       const card = document.createElement('div');
-      card.className = 'inline-step';
-      card.style.cssText = 'margin:4px 0;padding:8px 10px;border-radius:8px;background:rgba(28,35,51,0.9);border:1px solid var(--border);';
+      card.className = 'inline-step trace-live-step is-running';
       card.innerHTML = `
-        <div class="inline-step-header" style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <div class="inline-step-header">
           <span class="inline-step-icon">${getToolIcon(toolName)}</span>
-          <span class="inline-step-tool" style="font-weight:600;">${escHtml(toolName)}</span>
-          <span class="step-spinner" style="display:inline-block;animation:spin 1s linear infinite;">⏳</span>
+          <span class="inline-step-tool">${escHtml(formatToolName(toolName))}</span>
+          <span class="step-status is-running">Live</span>
         </div>
-        <div class="step-thought" style="font-size:11px;color:var(--text-muted);margin-top:4px;font-family:monospace;white-space:pre-wrap;"></div>
-        <div class="step-result" style="font-size:11px;color:#7ec8a0;margin-top:4px;display:none;"></div>
+        <div class="step-thought inline-step-thought"></div>
+        <div class="step-result"></div>
       `;
       return card;
     }
 
     // Container for live steps (before final answer card)
     const liveTrace = document.createElement('div');
-    liveTrace.className = 'msg-agent';
-    liveTrace.style.cssText = 'background:transparent;border:none;padding:4px 0;';
+    liveTrace.className = 'trace-live-shell';
+    liveTrace.innerHTML = `
+      <div class="trace-live-header">
+        <span class="trace-live-title">Investigation path</span>
+        <span class="trace-live-status">Live</span>
+      </div>
+      <div class="trace-live-steps"></div>
+    `;
+    const liveTraceSteps = liveTrace.querySelector('.trace-live-steps');
     chatArea.appendChild(liveTrace);
 
     ws.onmessage = (e) => {
+      if (runState?.cancelled) return;
       let data;
       try { data = JSON.parse(e.data); } catch(_) { return; }
 
@@ -3390,8 +4110,8 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         thoughtBuffer = '';
         currentStepTool = data.tool || '';
         currentStepCard = createStepCard(currentStepTool, data.input || '');
-        liveTrace.appendChild(currentStepCard);
-        chatArea.scrollTop = chatArea.scrollHeight;
+        liveTraceSteps.appendChild(currentStepCard);
+        scrollChatToBottom();
 
       } else if (data.type === 'thought_token') {
         const token = data.token || '';
@@ -3421,13 +4141,11 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       } else if (data.type === 'tool_result') {
         // Mark step card as done
         if (currentStepCard) {
-          const spinnerEl = currentStepCard.querySelector('.step-spinner');
-          if (spinnerEl) spinnerEl.remove();
           const resultEl = currentStepCard.querySelector('.step-result');
           if (resultEl) {
             resultEl.textContent = data.summary || '';
-            resultEl.style.display = '';
           }
+          finishStepCard(currentStepCard);
         }
         // Parse source chips from search results
         const toolName = data.tool || '';
@@ -3445,12 +4163,6 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
           }
           if (sourceDocs.length > 0) {
             renderSourcesPanel(sourceDocs);
-            // Also accumulate into inline sources panel (persists across tool calls)
-            window.__sessionSources = (window.__sessionSources || []).concat(sourceDocs);
-            updateInlineSourcesPanel(window.__sessionSources);
-            // Badge the Sources tab
-            const sourcesTab = document.getElementById('sources-graph-tab');
-            if (sourcesTab) sourcesTab.textContent = `📚 Sources (${window.__sessionSources.length})`;
           }
         }
         allToolsDone = true;
@@ -3464,15 +4176,12 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
       } else if (data.type === 'answer') {
         if (data.session_id) {
           sessionId = data.session_id;
-          displaySessionId(sessionId);
         }
-        updateDebugPanel(data.sources || []);
         hydrateGraphStateFromPayload(data);
         finalizeStream(data.answer || '(no answer)', data.sources || []);
       } else if (data.type === 'done') {
         if (data.session_id) {
           sessionId = data.session_id;
-          displaySessionId(sessionId);
         }
         finalizeStream(data.briefing || finalBriefing || thoughtBuffer || '(no answer)', []);
       } else if (data.type === 'error') {
@@ -3480,32 +4189,51 @@ async function sendMessageViaWebSocket(wsUrl, text, spinner) {
         if (liveTrace.parentNode) liveTrace.remove();
         if (liveAnswerCard) liveAnswerCard.remove();
         liveAnswerCard = null;
-        updateDebugPanel(data.sources || []);
         ws.close();
-        reject(new Error(data.error));
+        rejectOnce(new Error(data.error));
       }
     };
 
     ws.onerror = (e) => {
-      reject(new Error('WebSocket error'));
+      if (runState?.cancelled) {
+        resolveOnce({ cancelled: true });
+        return;
+      }
+      rejectOnce(new Error('WebSocket error'));
     };
 
     ws.onclose = () => {
-      // resolve in case answer was already handled
+      if (runState?.cancelled) {
+        resolveOnce({ cancelled: true });
+      }
     };
   });
 }
 
-async function sendMessageViaHTTP(text, spinner) {
+async function sendMessageViaHTTP(text, spinner, runState) {
+  const controller = new AbortController();
+  if (runState) {
+    runState.cancel = () => {
+      if (runState.cancelled !== true) runState.cancelled = true;
+      controller.abort();
+      try { spinner.remove(); } catch(_) {}
+      appendCancelledMsg();
+    };
+  }
   try {
     const payload = { message: text, session_id: sessionId };
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
+      signal: controller.signal,
       body: JSON.stringify(payload),
     });
 
     spinner.remove();
+
+    if (runState?.cancelled) {
+      return { cancelled: true };
+    }
 
     if (!res.ok) {
       if (res.status === 503) {
@@ -3526,11 +4254,9 @@ async function sendMessageViaHTTP(text, spinner) {
 
     if (data.session_id) {
       sessionId = data.session_id;
-      displaySessionId(sessionId);
     }
 
     appendAgentMsg(data.answer || '(no answer)', data.sources || [], data.reasoning_steps || data.steps || []);
-    updateDebugPanel(data.sources || []);
 
     if (data.reasoning_steps || data.steps) {
       // steps are now rendered inline — no separate panel call needed
@@ -3548,16 +4274,23 @@ async function sendMessageViaHTTP(text, spinner) {
     renderSessionList();
 
   } catch(e) {
+    if (runState?.cancelled || e?.name === 'AbortError') {
+      return { cancelled: true };
+    }
     try { spinner.remove(); } catch(_) {}
     appendOfflineMsg();
   }
 }
 
 askBtn.addEventListener('click', () => {
+  if (activeRun) {
+    stopActiveRun();
+    return;
+  }
   const text = msgInput.value.trim();
   if (!text) return;
   msgInput.value = '';
-  msgInput.style.height = 'auto';
+  autoResizePrompt({ resetManual: true });
   sendMessage(text);
 });
 
@@ -3570,8 +4303,7 @@ msgInput.addEventListener('keydown', e => {
 
 // Auto-resize textarea
 msgInput.addEventListener('input', () => {
-  msgInput.style.height = 'auto';
-  msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+  autoResizePrompt();
 });
 
 // ── D3 Graph ───────────────────────────────────────────────────────────────
@@ -3707,71 +4439,6 @@ window.addEventListener('resize', () => {
   simulation.alpha(0.3).restart();
 });
 updateCenter();
-
-// ── Layout mode switcher ────────────────────────────────────────────
-let currentLayout = 'force';
-
-/**
- * A reference to the current graph data for layout functions.
- * Points to the allNodes/allEdges arrays.
- */
-const graphData = { get nodes() { return allNodes; }, get edges() { return allEdges; } };
-
-/**
- * Apply a graph layout mode by reconfiguring D3 forces or fixing node positions.
- * @param {'force'|'radial'|'hierarchical'|'circular'} mode
- */
-function applyLayout(mode) {
-  currentLayout = mode;
-  document.querySelectorAll('.layout-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.layout === mode)
-  );
-
-  const W = graphCanvas.clientWidth || 900;
-  const H = graphCanvas.clientHeight || 600;
-  const cx = W / 2, cy = H / 2;
-
-  // Remove all positional forces first
-  simulation.force('radial', null).force('x', null).force('y', null);
-
-  if (mode === 'force') {
-    graphData.nodes.forEach(d => { d.fx = null; d.fy = null; });
-    simulation
-      .force('charge', d3.forceManyBody().strength(-500))
-      .force('center', d3.forceCenter(cx, cy));
-  } else if (mode === 'radial') {
-    graphData.nodes.forEach(d => { d.fx = null; d.fy = null; });
-    const radius = d => d.type === 'Topic' ? 0 : d.type === 'Chunk' ? 280 : 150;
-    simulation
-      .force('radial', d3.forceRadial(radius, cx, cy).strength(0.8))
-      .force('center', null)
-      .force('charge', d3.forceManyBody().strength(-80));
-  } else if (mode === 'hierarchical') {
-    const yPos = d => d.type === 'Topic' ? cy - 200 : d.type === 'Chunk' ? cy + 200 : cy;
-    graphData.nodes.forEach(d => { d.fx = null; d.fy = yPos(d); });
-    simulation
-      .force('x', d3.forceX(cx).strength(0.05))
-      .force('charge', d3.forceManyBody().strength(-150))
-      .force('center', null);
-  } else if (mode === 'circular') {
-    const n = graphData.nodes.length;
-    graphData.nodes.forEach((d, i) => {
-      const angle = (2 * Math.PI * i) / n;
-      d.fx = cx + 250 * Math.cos(angle);
-      d.fy = cy + 250 * Math.sin(angle);
-    });
-    simulation.force('charge', null).force('center', null);
-  }
-
-  simulation.alpha(0.4).restart();
-}
-
-document.querySelectorAll('.layout-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    applyLayout(btn.dataset.layout);
-    if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
-  });
-});
 
 function getVisibleNodes() {
   const sourceNodes = graphViewsState[currentGraphView]?.nodes || allNodes;
@@ -4037,7 +4704,7 @@ function renderGraph() {
             zoomToNode(selectedNode);
           }
           if (isMobileViewport()) {
-            bodyEl.classList.remove('graph-tools-open', 'legend-open');
+            bodyEl.classList.remove('graph-tools-open');
           }
         });
 
@@ -4051,7 +4718,7 @@ function renderGraph() {
     selectedEdge = d;
     openRelationSources(d);
     if (isMobileViewport()) {
-      bodyEl.classList.remove('graph-tools-open', 'legend-open');
+      bodyEl.classList.remove('graph-tools-open');
     }
   });
 
@@ -4133,9 +4800,6 @@ function updateGraphToolbar() {
   if (graphTitleEl) {
     graphTitleEl.textContent = currentGraphView === 'lexical' ? 'Lexical Match Graph' : 'Knowledge Graph';
   }
-  graphViewTabs.forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.graphView === currentGraphView);
-  });
 }
 
 function setGraphViews(nextViews, activeView = currentGraphView) {
@@ -4157,71 +4821,6 @@ function setGraphViews(nextViews, activeView = currentGraphView) {
   updateGraphToolbar();
   renderGraph();
   updateGraphFocusChip();
-}
-
-function switchGraphView(nextView) {
-  const inlineSourcesPanel = document.getElementById('inline-sources-panel');
-  const graphFocusChip = document.getElementById('graph-focus-chip');
-  const emptyState = document.getElementById('empty-state');
-  const legend = document.getElementById('legend');
-  const graphSvg = document.querySelector('#graph-canvas svg');
-
-  if (nextView === 'sources') {
-    // Show inline sources, hide graph SVG elements
-    currentGraphView = 'sources';
-    if (inlineSourcesPanel) inlineSourcesPanel.style.display = 'block';
-    if (graphFocusChip) graphFocusChip.style.display = 'none';
-    if (emptyState) emptyState.style.display = 'none';
-    if (legend) legend.style.display = 'none';
-    if (graphSvg) graphSvg.style.display = 'none';
-    graphViewTabs.forEach(b => b.classList.toggle('active', b.dataset.graphView === 'sources'));
-    return;
-  }
-
-  // Restore graph elements when switching back from sources
-  if (inlineSourcesPanel) inlineSourcesPanel.style.display = 'none';
-  if (graphFocusChip) graphFocusChip.style.removeProperty('display');
-  if (legend) legend.style.removeProperty('display');
-  if (graphSvg) graphSvg.style.removeProperty('display');
-
-  const target = nextView === 'lexical' ? 'lexical' : 'knowledge';
-  if (target === currentGraphView) return;
-  currentGraphView = target;
-  allNodes = (graphViewsState[target]?.nodes || []).map(n => ({ ...n }));
-  allEdges = (graphViewsState[target]?.edges || []).map(e => ({ ...e }));
-  selectedNode = null;
-  selectedEdge = null;
-  activeFilter = '';
-  const filterSelect = document.getElementById('filter-select');
-  if (filterSelect) filterSelect.value = '';
-  updateGraphToolbar();
-  renderGraph();
-  updateGraphFocusChip();
-  if (isMobileViewport()) {
-    bodyEl.classList.remove('graph-tools-open');
-    setMobileView('graph');
-  }
-}
-
-// Populate inline sources panel from collected session docs
-function updateInlineSourcesPanel(docs) {
-  const list = document.getElementById('inline-sources-list');
-  if (!list || !docs || !docs.length) return;
-  list.innerHTML = docs.map((doc, i) => {
-    const icon = doc.source === 'web' ? '🌐' : '🏛️';
-    const title = doc.title || doc.url || `Source ${i+1}`;
-    const url = doc.url || '';
-    const date = doc.date ? `<span style="color:var(--text-muted,#8899aa);font-size:11px;margin-left:6px">${doc.date}</span>` : '';
-    const institution = doc.source && doc.source !== 'web' ? `<span style="font-size:11px;color:var(--accent,#7c6ff7);margin-bottom:2px;display:block">${doc.source.toUpperCase()}</span>` : '';
-    const snippet = (doc.text || '').substring(0, 200).trim();
-    return `<div style="background:var(--surface,#1c2333);border-radius:8px;padding:12px;border:1px solid var(--border,#2a3347);">
-      ${institution}
-      <div style="font-weight:600;font-size:13px;margin-bottom:4px;">
-        ${icon} ${url ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--text,#e2e8f0);text-decoration:none;">${escHtml(title)}</a>` : escHtml(title)}${date}
-      </div>
-      ${snippet ? `<div style="font-size:12px;color:var(--text-muted,#8899aa);line-height:1.5">${escHtml(snippet)}…</div>` : ''}
-    </div>`;
-  }).join('');
 }
 
 function hydrateGraphStateFromPayload(payload) {
@@ -4423,8 +5022,6 @@ function mergeGraph(newNodes, newEdges) {
 function resetAll() {
   // Clear chat history
   chatArea.innerHTML = '';
-  chatArea.appendChild(chatEmptyState);
-  syncChatEmptyState();
   // Reset trace
   traceBody.innerHTML = '<div class="trace-step" style="color:var(--text-muted);font-style:italic;font-size:12px;">No reasoning steps yet.</div>';
   // Clear graph
@@ -4474,76 +5071,6 @@ document.getElementById('filter-select').addEventListener('change', e => {
   if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
 });
 
-graphViewTabs.forEach(btn => {
-  btn.addEventListener('click', () => switchGraphView(btn.dataset.graphView));
-});
-
-// Toolbar buttons
-document.getElementById('btn-reset').addEventListener('click', () => {
-  resetAll();
-  bodyEl.classList.remove('legend-open', 'graph-tools-open');
-});
-
-// Dev mode toggle
-(function() {
-  const btn = document.getElementById('btn-devmode');
-  const panel = document.getElementById('debug-panel');
-  let devOn = false;
-  btn.addEventListener('click', () => {
-    devOn = !devOn;
-    panel.style.display = devOn ? 'block' : 'none';
-    btn.style.background = devOn ? '#1a2a1a' : '';
-    btn.style.color = devOn ? '#5f5' : '';
-  });
-})();
-
-function updateDebugPanel(sources) {
-  const body = document.getElementById('debug-panel-body');
-  const btn = document.getElementById('btn-devmode');
-  if (!sources || sources.length === 0) {
-    body.innerHTML = '<em>No sources returned.</em>';
-    btn.textContent = '🔬 Dev';
-    return;
-  }
-  btn.textContent = `🔬 Dev (${sources.length})`;
-  body.innerHTML = sources.map((s, i) => {
-    const excerpt = (s.text || '').slice(0, 200).replace(/</g,'&lt;');
-    const score = s.rrf_score != null ? s.rrf_score.toFixed(4) : (s.score != null ? s.score.toFixed(4) : '—');
-    return `<div style="border-bottom:1px solid #1a1a2e;padding:4px 0;">
-      <span style="color:#5af;">[${i+1}]</span>
-      <span style="color:#fa5;"> chunk:</span> <span style="color:#eee;">${s.id || '?'}</span>
-      <span style="color:#fa5;"> doc:</span> <span style="color:#eee;">${s.doc_id || '?'}</span>
-      <span style="color:#fa5;"> score:</span> <span style="color:#af5;">${score}</span>
-      <div style="color:#667;margin-top:2px;">${excerpt}</div>
-    </div>`;
-  }).join('');
-}
-
-document.getElementById('btn-share').addEventListener('click', () => {
-  const url = window.location.origin + window.location.pathname + '?session=' + sessionId;
-  if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
-  navigator.clipboard.writeText(url).then(() => showToast('Link copied!')).catch(() => {
-    prompt('Copy this link:', url);
-  });
-});
-
-document.getElementById('btn-export-png').addEventListener('click', async () => {
-  if (isMobileViewport()) bodyEl.classList.remove('graph-tools-open');
-  try {
-    const canvas = await html2canvas(graphCanvas, {
-      backgroundColor: '#0f1117',
-      useCORS: true,
-    });
-    const a = document.createElement('a');
-    a.href = canvas.toDataURL('image/png');
-    a.download = 'graphknows-graph.png';
-    a.click();
-    showToast('PNG exported!');
-  } catch(e) {
-    showToast('Export failed');
-  }
-});
-
 // ── Session restore ────────────────────────────────────────────────────────
 async function restoreSession(id) {
   try {
@@ -4563,26 +5090,9 @@ if (params.get('session')) {
 
 document.getElementById('btn-new-session').addEventListener('click', newSession);
 
-// ── Legend filter ────────────────────────────────────────────────────
-let filteredTypes = new Set();
-document.querySelectorAll('#legend .legend-item[data-type]').forEach(item => {
-  item.style.cursor = 'pointer';
-  item.addEventListener('click', () => {
-    const t = item.dataset.type;
-    item.classList.toggle('filtered');
-    if (filteredTypes.has(t)) filteredTypes.delete(t); else filteredTypes.add(t);
-    // Show/hide nodes by opacity
-    nodeG.selectAll('.node-g').style('opacity', d => {
-      const nodeType = (d.properties && d.properties.label) || d.type || d.label || '';
-      return filteredTypes.size === 0 || filteredTypes.has(nodeType) ? 1 : 0.1;
-    });
-  });
-});
-
 // Initial focus
 updateGraphToolbar();
 syncResponsiveState();
-syncChatEmptyState();
 msgInput.focus();
 </script>
 </body>

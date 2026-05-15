@@ -11,6 +11,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, model_validator
+from starlette.websockets import WebSocketState
 
 from agent.config import AgentSettings
 try:
@@ -77,11 +78,48 @@ _extractor: Any | None = None
 _ws_connections: dict[str, WebSocket] = {}
 
 
+def _websocket_is_open(ws: WebSocket) -> bool:
+    return (
+        ws.client_state != WebSocketState.DISCONNECTED
+        and ws.application_state != WebSocketState.DISCONNECTED
+    )
+
+
+async def _safe_ws_send_json(ws: WebSocket, payload: dict[str, Any]) -> bool:
+    if not _websocket_is_open(ws):
+        return False
+    try:
+        await ws.send_json(payload)
+        return True
+    except WebSocketDisconnect:
+        return False
+    except RuntimeError as exc:
+        if 'close message has been sent' in str(exc):
+            return False
+        raise
+
+
+async def _safe_ws_send_text(ws: WebSocket, payload: str) -> bool:
+    if not _websocket_is_open(ws):
+        return False
+    try:
+        await ws.send_text(payload)
+        return True
+    except WebSocketDisconnect:
+        return False
+    except RuntimeError as exc:
+        if 'close message has been sent' in str(exc):
+            return False
+        raise
+
+
 async def _broadcast_graph_update(session_id: str, payload: dict) -> None:
     ws = _ws_connections.get(session_id)
     if ws:
         try:
-            await ws.send_text(json.dumps({"type": "graph_update", **payload}))
+            sent = await _safe_ws_send_text(ws, json.dumps({"type": "graph_update", **payload}))
+            if not sent:
+                _ws_connections.pop(session_id, None)
         except Exception:
             pass
 
@@ -926,11 +964,12 @@ async def ws_stream(websocket: WebSocket, session_id: str):
     """Stream LangGraph agent reasoning over WebSocket."""
     await websocket.accept()
     _ws_connections[session_id] = websocket
+    disconnected = False
     try:
         data = await websocket.receive_json()
         query = data.get("query") or data.get("message", "")
         if not query:
-            await websocket.send_json({"type": "error", "message": "empty query"})
+            await _safe_ws_send_json(websocket, {"type": "error", "message": "empty query"})
             return
 
         sgm = _get_sgm()
@@ -945,7 +984,8 @@ async def ws_stream(websocket: WebSocket, session_id: str):
                 log.warning("WS: create_session failed (non-fatal, continuing): %s", sg_err)
             _active_sessions.add(session_id)
 
-        await websocket.send_json({"type": "status", "status": "thinking"})
+        if not await _safe_ws_send_json(websocket, {"type": "status", "status": "thinking"}):
+            return
 
         from agent.graph.state import build_initial_investigative_state
         from agent.graph.workflow import build_workflow
@@ -988,11 +1028,16 @@ async def ws_stream(websocket: WebSocket, session_id: str):
                         "type": "ws_event",
                         "payload": event,
                     }
-                    try:
-                        await websocket.send_json(normalized)
-                    except Exception:
+                    if not await _safe_ws_send_json(websocket, normalized):
+                        disconnected = True
                         break
-        await websocket.send_json({
+                if disconnected:
+                    break
+            if disconnected:
+                break
+        if disconnected:
+            return
+        await _safe_ws_send_json(websocket, {
             "type": "done",
             "briefing": best_briefing,
             "iteration_count": max_iter,
@@ -1006,13 +1051,14 @@ async def ws_stream(websocket: WebSocket, session_id: str):
     except Exception as exc:
         log.error("WS: Error for session %s: %s", session_id, exc)
         try:
-            await websocket.send_json({"type": "error", "error": str(exc)})
+            await _safe_ws_send_json(websocket, {"type": "error", "error": str(exc)})
         except Exception:
             pass
     finally:
         _ws_connections.pop(session_id, None)
         try:
-            await websocket.close()
+            if websocket.application_state != WebSocketState.DISCONNECTED:
+                await websocket.close()
         except Exception:
             pass
 
