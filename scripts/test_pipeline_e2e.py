@@ -381,7 +381,7 @@ def main() -> int:
     if _failures:
         print(f"FAILED — {len(_failures)} issue(s):")
         for msg in _failures:
-            print(f"  ✗ {msg}")
+            print(f"   {msg}")
         return 1
     else:
         print("ALL CHECKS PASSED")

@@ -862,7 +862,7 @@ def add_enhanced_community_attributes_to_graph(graph: nx.DiGraph, communities: D
     logger.info(f"Created {community_nodes_created} ParentCommunity nodes") 
     logger.info(f"Created {in_community_edges_created} entity→subcommunity IN_COMMUNITY relationships")
     logger.info(f"Created {parent_community_edges_created} subcommunity→parent PARENT_COMMUNITY relationships")
-    logger.info("✅ PROPER HIERARCHY: Entities→Subcommunities→Parent Communities")
+    logger.info(" PROPER HIERARCHY: Entities→Subcommunities→Parent Communities")
     
     return graph
 
@@ -1122,7 +1122,7 @@ def calculate_entity_relation_centrality_measures(graph: nx.DiGraph) -> Dict[str
                 sorted_nodes = sorted(measure_scores.items(), key=lambda x: x[1], reverse=True)
                 top_nodes[measure_name] = sorted_nodes[:10]  # Top 10 nodes
         
-        logger.info("✅ Centrality measures calculated successfully")
+        logger.info(" Centrality measures calculated successfully")
         logger.info(f"Processed {len(entity_relation_nodes)} entity-relation nodes")
         logger.info(f"Calculated {len(centrality_results)} centrality measures")
         
@@ -1261,7 +1261,7 @@ def save_and_plot_top_centrality_measures(centrality_results: Dict[str, Any], ou
             output_files[f'{measure_name}_plot'] = plot_file
             logger.info(f"Saved {measure_name} centrality plot: {plot_file}")
         
-        logger.info(f"✅ Saved {len(output_files)} centrality analysis files to {centrality_dir}")
+        logger.info(f" Saved {len(output_files)} centrality analysis files to {centrality_dir}")
         
     except ImportError as e:
         logger.warning(f"Matplotlib not available for plotting: {e}")
@@ -2854,7 +2854,7 @@ async def process_extraction_task(deps: AgentDependencies, task: ChunkExtraction
     """Process a single chunk extraction task with enhanced coreference resolution"""
     async with semaphore:
         chunk_short_id = task.chunk_id.split('_')[-2] + '_' + task.chunk_id.split('_')[-1]
-        logger.info(f"      🚀 Starting {chunk_short_id}")
+        logger.info(f"       Starting {chunk_short_id}")
         
         try:
             # Extract relations using LLM
@@ -2879,12 +2879,12 @@ async def process_extraction_task(deps: AgentDependencies, task: ChunkExtraction
             deps.graph.nodes[task.chunk_id]['extraction_successful'] = bool(raw_relations)
             rel_count = len(raw_relations)
             ent_count = len(set([x for tr in raw_relations for x in (tr[0], tr[2])])) if raw_relations else 0
-            logger.info(f"      ✅ Completed {chunk_short_id}: stored {ent_count} entities, {rel_count} relations (chunk-level only)")
+            logger.info(f"       Completed {chunk_short_id}: stored {ent_count} entities, {rel_count} relations (chunk-level only)")
             
             return {"success": True, "chunk_id": task.chunk_id}
             
         except Exception as e:
-            logger.error(f"      ❌ Failed {chunk_short_id}: {str(e)}", exc_info=True)
+            logger.error(f"       Failed {chunk_short_id}: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e), "chunk_id": task.chunk_id}
 
 async def enrich_graph_per_speech(deps: AgentDependencies) -> Dict[str, Any]:
@@ -5038,8 +5038,8 @@ async def build_semantic_kg_with_topics(
             }
         }
         
-        logger.info(f"✅ Integrated pipeline completed in {total_processing_time:.2f} seconds")
-        logger.info(f"📊 Final graph with topics saved to: {final_graph_file}")
+        logger.info(f" Integrated pipeline completed in {total_processing_time:.2f} seconds")
+        logger.info(f" Final graph with topics saved to: {final_graph_file}")
         
         return combined_results
         
@@ -5767,7 +5767,7 @@ def test_executive_summary_generation():
         
         # Verify file was created
         if os.path.exists(summary_file):
-            logger.info(f"✅ Executive summary test passed: {summary_file}")
+            logger.info(f" Executive summary test passed: {summary_file}")
             
             # Read and verify content
             with open(summary_file, 'r', encoding='utf-8') as f:
@@ -5788,7 +5788,7 @@ def test_executive_summary_generation():
             if missing_sections:
                 logger.warning(f"Missing sections in executive summary: {missing_sections}")
             else:
-                logger.info("✅ All required sections present in executive summary")
+                logger.info(" All required sections present in executive summary")
                 
             # Check for key metrics
             required_metrics = [
@@ -5805,15 +5805,15 @@ def test_executive_summary_generation():
             if missing_metrics:
                 logger.warning(f"Missing metrics in executive summary: {missing_metrics}")
             else:
-                logger.info("✅ All required metrics present in executive summary")
+                logger.info(" All required metrics present in executive summary")
                 
             return True
         else:
-            logger.error("❌ Executive summary file was not created")
+            logger.error(" Executive summary file was not created")
             return False
             
     except Exception as e:
-        logger.error(f"❌ Executive summary test failed: {e}")
+        logger.error(f" Executive summary test failed: {e}")
         return False
 
 async def main():

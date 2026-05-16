@@ -182,10 +182,10 @@ legend_html = "".join(
 )
 
 SOURCES = [
-    ("🏛️ EPRS Briefings", "European Parliamentary Research Service — PE 762.462, AI Act impact assessments", "12 docs"),
-    ("📋 EUR-Lex", "COM/2023/650 · A9-0275/2024 · ST 8706/2026/INIT — full legislative texts", "9 docs"),
-    ("🏛️ European Parliament Debates", "LIBE plenary transcripts, April 2026 amendments", "7 docs"),
-    ("🌐 Open Web (Tavily)", "Statewatch, Amnesty International, academic publications", "14 docs"),
+    ("️ EPRS Briefings", "European Parliamentary Research Service — PE 762.462, AI Act impact assessments", "12 docs"),
+    (" EUR-Lex", "COM/2023/650 · A9-0275/2024 · ST 8706/2026/INIT — full legislative texts", "9 docs"),
+    ("️ European Parliament Debates", "LIBE plenary transcripts, April 2026 amendments", "7 docs"),
+    (" Open Web (Tavily)", "Statewatch, Amnesty International, academic publications", "14 docs"),
 ]
 
 sources_html = ""
@@ -276,7 +276,7 @@ out = f"""<!DOCTYPE html>
   .callout {{ background: linear-gradient(135deg,#0d1f3c,#0f2a4a); border: 1px solid #1e4a7a; border-left: 4px solid var(--red); border-radius: 10px; padding: 20px 24px; margin: 24px 0; }}
   .callout-title {{ font-size: 12px; font-weight: 700; color: var(--red); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 10px; }}
   .callout li {{ list-style: none; padding-left: 0; margin-left: 0; font-size: 14px; color: var(--text); margin-bottom: 7px; }}
-  .callout li::before {{ content: "⚠ "; color: var(--amber); }}
+  .callout li::before {{ content: " "; color: var(--amber); }}
 
   /* ── Footer ── */
   .footer {{ text-align: center; padding: 28px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); margin-top: 8px; }}
@@ -336,7 +336,7 @@ out = f"""<!DOCTYPE html>
   </div>
 
   <div class="graph-section">
-    <h2>🔗 Knowledge Graph — Actor &amp; Legislative Network</h2>
+    <h2> Knowledge Graph — Actor &amp; Legislative Network</h2>
     <p class="graph-meta">Static force-directed layout (Fruchterman-Reingold, 250 iterations) · {len(NODES)} curated nodes · {len(EDGES)} relations · Session corpus: {N_ENTITIES} total entities extracted</p>
     <div class="graph-wrap">
       {svg}
@@ -347,7 +347,7 @@ out = f"""<!DOCTYPE html>
   </div>
 
   <div class="sources-panel">
-    <h2>📚 Archive Sources Queried</h2>
+    <h2> Archive Sources Queried</h2>
     {sources_html}
     <div style="margin-top:18px;font-size:12px;color:var(--muted);">
       <strong>Primary references:</strong> EUR-Lex COM/2023/650 · EPRS PE 762.462 · Statewatch "Automating Authority" (Apr 2025) · Amnesty International AI &amp; Border Tech Report · MIT Gender Shades study · A9-0275/2024 (EP Position)

@@ -324,9 +324,9 @@ def apply_alias_map(driver: Driver, alias_map: Dict[str, str]) -> Dict[str, int]
                 stats["edges_redirected"] += n_edges
                 delete_alias_node(session, alias)
                 stats["merged"] += 1
-                logger.info(f"    ✓ {n_edges} edge(s) redirected, alias node deleted")
+                logger.info(f"     {n_edges} edge(s) redirected, alias node deleted")
             except Neo4jError as exc:
-                logger.error(f"    ✗ Neo4j error merging '{alias}': {exc}")
+                logger.error(f"     Neo4j error merging '{alias}': {exc}")
 
     return stats
 
@@ -482,7 +482,7 @@ def main() -> None:
         verify_results(driver)
 
         logger.info("=" * 70)
-        logger.info("Entity resolution complete ✓")
+        logger.info("Entity resolution complete ")
         logger.info("=" * 70)
 
     finally:

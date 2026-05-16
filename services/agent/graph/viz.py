@@ -24,7 +24,7 @@ _COMMUNITY_PALETTE = [
     {"base": "#4fc8c9", "glow": "rgba(79,200,201,0.40)"},
 ]
 _TYPE_ICON = {
-    "Organization": "⬡",
+    "Organization": "",
     "Person":       "◎",
     "Legislation":  "▣",
     "Policy":       "◈",
@@ -270,7 +270,7 @@ def render_session_graph(
 <body>
 <header>
   <div class="logo">
-    <span class="logo-mark">🕸</span>
+    <span class="logo-mark"></span>
     <div>
       <div class="logo-text">Graphknows</div>
       <div class="logo-sub">Session · {session_id[:16]}…</div>

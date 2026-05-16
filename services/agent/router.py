@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -245,10 +246,69 @@ _active_sessions: set[str] = set()
 
 
 def _normalize_session_graph_token(value: str | None, fallback: str) -> str:
-    import re as _re
-
-    normalized = _re.sub(r"[^A-Za-z0-9]+", "_", str(value or "")).strip("_").upper()
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", str(value or "")).strip("_").upper()
     return normalized or fallback
+
+
+def _state_value(item: Any, key: str, default: Any = "") -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _build_sources_payload(raw_docs: list[Any] | None, retrieval_hits: list[Any] | None) -> list[dict[str, Any]]:
+    raw_doc_index: dict[str, dict[str, Any]] = {}
+    for raw_doc in raw_docs or []:
+        doc_id = str(_state_value(raw_doc, "id") or _state_value(raw_doc, "doc_id") or "").strip()
+        if not doc_id:
+            continue
+        raw_doc_index[doc_id] = {
+            "id": doc_id,
+            "title": str(_state_value(raw_doc, "title") or doc_id),
+            "url": str(_state_value(raw_doc, "url") or ""),
+            "source": str(_state_value(raw_doc, "source") or ""),
+            "date": str(_state_value(raw_doc, "date") or ""),
+            "text": str(_state_value(raw_doc, "text") or "")[:300],
+        }
+
+    sources: list[dict[str, Any]] = []
+    ordered_hits = list(retrieval_hits or [])
+
+    if ordered_hits:
+        for index, hit in enumerate(ordered_hits, 1):
+            doc_id = str(_state_value(hit, "doc_id") or _state_value(hit, "id") or "").strip()
+            metadata = _state_value(hit, "metadata", {}) or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            raw_doc = raw_doc_index.get(doc_id, {})
+            title = str(raw_doc.get("title") or metadata.get("title") or doc_id or f"Document {index}")
+            url = str(raw_doc.get("url") or metadata.get("url") or "")
+            source = str(raw_doc.get("source") or metadata.get("source") or "")
+            date = str(raw_doc.get("date") or metadata.get("date") or "")
+            snippet = str(_state_value(hit, "text") or raw_doc.get("text") or metadata.get("text") or "")[:300]
+            sources.append({
+                "citation_id": f"Doc-{index}",
+                "id": doc_id or f"doc-{index}",
+                "title": title,
+                "url": url,
+                "source": source,
+                "date": date,
+                "text": snippet,
+            })
+        return sources
+
+    for index, raw_doc in enumerate(raw_docs or [], 1):
+        doc_id = str(_state_value(raw_doc, "id") or _state_value(raw_doc, "doc_id") or f"doc-{index}")
+        sources.append({
+            "citation_id": f"Doc-{index}",
+            "id": doc_id,
+            "title": str(_state_value(raw_doc, "title") or doc_id),
+            "url": str(_state_value(raw_doc, "url") or ""),
+            "source": str(_state_value(raw_doc, "source") or ""),
+            "date": str(_state_value(raw_doc, "date") or ""),
+            "text": str(_state_value(raw_doc, "text") or "")[:300],
+        })
+    return sources
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +634,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
         extractor=_get_extractor(),
     )
     result = await workflow.ainvoke(initial_state)
+    sources_payload = _build_sources_payload(
+        result.get("raw_docs", []),
+        result.get("retrieval_hits", []),
+    )
 
     subgraph: dict = await asyncio.to_thread(sgm.get_session_graph, session_id)
 
@@ -585,7 +649,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
             edges=subgraph.get("edges", []),
         ),
         reasoning_steps=result.get("ws_events", []),
-        sources=[],
+        sources=sources_payload,
     )
 
 
@@ -1008,6 +1072,8 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         max_entities = 0
         max_relations = 0
         last_dup = 0.0
+        latest_raw_docs: list[Any] = []
+        latest_retrieval_hits: list[Any] = []
         async for chunk in workflow.astream(initial_state):
             # LangGraph astream yields {"node_name": state_update} per node
             # ws_events live inside the node's state update, not at the top level
@@ -1019,6 +1085,10 @@ async def ws_stream(websocket: WebSocket, session_id: str):
                 max_entities = max(max_entities, len(node_state.get("entities", [])))
                 max_relations = max(max_relations, len(node_state.get("relations", [])))
                 last_dup = node_state.get("dup_ratio", 0.0) or last_dup
+                if node_state.get("raw_docs"):
+                    latest_raw_docs = list(node_state.get("raw_docs", []))
+                if node_state.get("retrieval_hits"):
+                    latest_retrieval_hits = list(node_state.get("retrieval_hits", []))
                 for event in node_state.get("ws_events", []):
                     key = (event.get("event_type"), event.get("ts"))
                     if key in seen:
@@ -1037,6 +1107,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
                 break
         if disconnected:
             return
+        sources_payload = _build_sources_payload(latest_raw_docs, latest_retrieval_hits)
         await _safe_ws_send_json(websocket, {
             "type": "done",
             "briefing": best_briefing,
@@ -1044,6 +1115,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
             "entity_count": max_entities,
             "relation_count": max_relations,
             "dup_ratio": last_dup,
+            "sources": sources_payload,
         })
 
     except WebSocketDisconnect:

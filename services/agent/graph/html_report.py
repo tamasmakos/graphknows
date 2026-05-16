@@ -43,9 +43,9 @@ _EVENT_COLOR: dict[str, str] = {
 _DEFAULT_EVENT_COLOR = "#64748b"
 
 _SOURCE_EMOJI: dict[str, str] = {
-    "web":   "🌐", "tavily": "🌐",
-    "eu":    "🏛️", "eprs": "🏛️", "ep_": "🏛️",
-    "cellar": "📋",
+    "web":   "", "tavily": "",
+    "eu":    "️", "eprs": "️", "ep_": "️",
+    "cellar": "",
 }
 
 
@@ -64,7 +64,7 @@ def _source_emoji(source: str) -> str:
     for key, emoji in _SOURCE_EMOJI.items():
         if key in sl:
             return emoji
-    return "📄"
+    return ""
 
 
 def _md_to_html(text: str) -> str:
@@ -502,7 +502,7 @@ def render_brief_html(
 
   <!-- Knowledge Graph -->
   <div class="graph-section">
-    <h2>🔗 Knowledge Graph — {html.escape(topic[:50])} Entity Network</h2>
+    <h2> Knowledge Graph — {html.escape(topic[:50])} Entity Network</h2>
     <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Static force-directed layout (Fruchterman-Reingold, 200 iterations). {n_entities} nodes · {n_relations} edges.</p>
     <div class="graph-wrap">
       {svg}
@@ -512,13 +512,13 @@ def render_brief_html(
 
   <!-- Workflow Timeline (observability) -->
   <div class="timeline-section">
-    <h2>⚙️ Workflow Timeline</h2>
+    <h2>️ Workflow Timeline</h2>
     {timeline_html}
   </div>
 
   <!-- Sources Panel -->
   <div class="sources-panel">
-    <h2>📚 Archive Sources Queried</h2>
+    <h2> Archive Sources Queried</h2>
     {sources_rows}
   </div>
 

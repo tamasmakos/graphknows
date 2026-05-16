@@ -49,7 +49,7 @@
     width: auto;
     min-width: 0;
     flex: 0 0 var(--sources-panel-height);
-    margin: 0 8px 8px;
+    margin: 0 4px 4px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--bg2);
@@ -64,7 +64,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 8px 10px;
     border-bottom: 1px solid var(--border);
   }
   #sources-panel-header h3 {
@@ -83,21 +83,21 @@
     color: var(--accent);
   }
   #sources-list {
-    padding: 10px;
+    padding: 6px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
   }
   #sources-empty {
     color: var(--text-muted);
     font-size: 12px;
-    padding: 8px;
+    padding: 6px;
   }
   .source-item {
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 10px;
+    padding: 8px 10px;
     background: rgba(13,17,23,0.8);
     transition: border-color 0.2s, background 0.2s;
   }
@@ -110,7 +110,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }
   .inst-chip {
     display: inline-flex;
@@ -136,7 +136,7 @@
     color: var(--text);
     text-decoration: none;
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.32;
   }
   .source-title-link:hover {
     color: var(--accent);
@@ -2325,6 +2325,7 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
 // ── State ──────────────────────────────────────────────────────────────────
 const params = new URLSearchParams(window.location.search);
 let sessionId = params.get('session') || null;
+let sessionGraphRequestSeq = 0;
 
 if (!sessionId) {
   sessionId = uuid();
@@ -2493,8 +2494,14 @@ function loadSessions() {
   renderSessionList();
 }
 
+function invalidateSessionGraphLoads() {
+  sessionGraphRequestSeq += 1;
+}
+
 async function switchSession(id) {
   if (id === sessionId) return;
+  stopActiveRun();
+  invalidateSessionGraphLoads();
   sessionId = id;
   resetAll();
   renderSessionList();
@@ -2503,9 +2510,11 @@ async function switchSession(id) {
   try {
     const knowledgeRes = await fetch(`/api/session/${id}/graph?view=knowledge`);
     const lexicalRes = await fetch(`/api/session/${id}/graph?view=lexical`);
+    if (sessionId !== id) return;
     if (knowledgeRes.ok || lexicalRes.ok) {
       const knowledge = knowledgeRes.ok ? await knowledgeRes.json() : { nodes: [], edges: [] };
       const lexical = lexicalRes.ok ? await lexicalRes.json() : { nodes: [], edges: [] };
+      if (sessionId !== id) return;
       hydrateGraphStateFromPayload({ graph_views: { knowledge, lexical, active: 'knowledge' } });
     }
   } catch(_) {}
@@ -2516,6 +2525,8 @@ async function switchSession(id) {
 }
 
 function newSession() {
+  stopActiveRun();
+  invalidateSessionGraphLoads();
   sessionId = uuid();
   resetAll();
   saveSession({ id: sessionId, name: '', created: new Date().toISOString(), nodeCount: 0, lastQuery: new Date().toISOString() });
@@ -5073,12 +5084,15 @@ document.getElementById('filter-select').addEventListener('change', e => {
 
 // ── Session restore ────────────────────────────────────────────────────────
 async function restoreSession(id) {
+  const requestSeq = ++sessionGraphRequestSeq;
   try {
     const knowledgeRes = await fetch(`/api/session/${id}/graph?view=knowledge`);
     const lexicalRes = await fetch(`/api/session/${id}/graph?view=lexical`);
+    if (requestSeq !== sessionGraphRequestSeq || sessionId !== id) return;
     if (knowledgeRes.ok || lexicalRes.ok) {
       const knowledge = knowledgeRes.ok ? await knowledgeRes.json() : { nodes: [], edges: [] };
       const lexical = lexicalRes.ok ? await lexicalRes.json() : { nodes: [], edges: [] };
+      if (requestSeq !== sessionGraphRequestSeq || sessionId !== id) return;
       hydrateGraphStateFromPayload({ graph_views: { knowledge, lexical, active: 'knowledge' } });
     }
   } catch(e) { /* ignore */ }
