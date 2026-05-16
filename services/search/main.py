@@ -1,13 +1,19 @@
-"""Graphknows Search Service — FastAPI application entry point."""
+"""Graphknows Search Service — FastAPI application entry point.
+
+Set SEARCH_MODE=mcp to run as an MCP stdio server instead of HTTP.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .router import router, _ADAPTERS
+from .connector_registry import get_registry
+from .router import router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,24 +24,42 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: log registered adapters
+    registry = get_registry()
     logger.info(
-        "Graphknows Search Service starting — adapters: %s",
-        list(_ADAPTERS.keys()),
+        "Graphknows Search Service starting — connectors: %s",
+        registry.list_ids(),
     )
     yield
-    # Shutdown: nothing to clean up for in-memory adapters
     logger.info("Graphknows Search Service shutting down")
 
 
 app = FastAPI(
-    title="Graphknows Search Service",
+    title="Graphknows EU Search Service",
     description=(
-        "FastAPI service wrapping EP Debates, EUR-Lex, and UK Legislation scrapers. "
-        "Provides unified search and async scrape-job endpoints."
+        "Unified search across EU parliamentary and public data sources. "
+        "Supports EP debates, EUR-Lex, Council conclusions, ECB, EPRS, and more."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
 app.include_router(router, prefix="/api/v1")
+
+
+def main() -> None:
+    """Entry point: HTTP (default) or MCP stdio based on SEARCH_MODE env var."""
+    if os.getenv("SEARCH_MODE", "").lower() == "mcp":
+        from .mcp_server import mcp_main
+        asyncio.run(mcp_main())
+    else:
+        import uvicorn
+        uvicorn.run(
+            "services.search.main:app",
+            host="0.0.0.0",
+            port=int(os.getenv("PORT", "8000")),
+            log_level="info",
+        )
+
+
+if __name__ == "__main__":
+    main()

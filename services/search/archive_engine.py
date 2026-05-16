@@ -175,38 +175,23 @@ class ArchiveEngine:
     # ── Adapter fan-out ───────────────────────────────────────────────────────
 
     def _build_adapter_registry(self) -> dict[str, Any]:
-        """Dynamically import all known adapters. Gracefully skips broken ones."""
-        registry: dict[str, Any] = {}
-        candidates = [
-            ("search.adapters.ep_debates",          "EPDebatesAdapter",         "ep_debates"),
-            ("search.adapters.eurlex",               "EurLexAdapter",            "eurlex"),
-            ("search.adapters.ec_press",             "ECPressSource",            "ec_press"),
-            ("search.adapters.ep_resolutions",       "EPResolutionsSource",      "ep_resolutions"),
-            ("search.adapters.council_conclusions",  "CouncilConclusionsSource", "council_conclusions"),
-            ("search.adapters.ecb_publications",     "ECBPublicationsSource",    "ecb_publications"),
-            ("search.adapters.eprs_briefings",       "EPRSBriefingsSource",      "eprs_briefings"),
-            ("search.adapters.uk_legislation",       "UKLegislationAdapter",     "uk_legislation"),
-            ("search.adapters.wikipedia_eu",         "WikipediaEUAdapter",       "wikipedia_eu"),
-            ("search.adapters.cellar_sparql",        "CellarSPARQLAdapter",      "cellar_sparql"),
-        ]
-        for mod_name, cls_name, key in candidates:
-            try:
-                mod = __import__(mod_name, fromlist=[cls_name])
-                registry[key] = getattr(mod, cls_name)
-            except Exception:
-                pass
-        return registry
+        """Build connector registry from source_manifest.yaml via ConnectorRegistry."""
+        from search.connector_registry import ConnectorRegistry
+        try:
+            return ConnectorRegistry().build()
+        except Exception as exc:
+            log.error("ConnectorRegistry failed to build: %s", exc)
+            return {}
 
     async def _fetch_from_adapter(
         self,
         archive_id: str,
-        adapter_cls: Any,
+        connector: Any,
         aq: ArchiveQuery,
         cached_ids: set[str],
     ) -> list[dict]:
-        """Fetch docs from one adapter, skip docs already cached."""
+        """Fetch docs from one SourceConnector instance."""
         from search.models import SearchQuery
-        from search.adapters.base import SourceAdapter
 
         sq = SearchQuery(
             query=aq.query,
@@ -216,88 +201,42 @@ class ArchiveEngine:
         )
 
         try:
-            adapter = adapter_cls()
-
-            if isinstance(adapter, SourceAdapter):
-                results = await asyncio.wait_for(adapter.search(sq), timeout=15)
-                docs = []
-                for r in results[: aq.limit_per_archive]:
-                    if r.id in cached_ids:
-                        docs.append({
-                            "doc_id":  r.id,
-                            "title":   r.title,
-                            "excerpt": r.excerpt or "",
-                            "url":     r.url or "",
-                            "source":  archive_id,
-                            "date":    r.date or "",
-                            "text":    r.excerpt or "",
-                            "_cached": True,
-                        })
-                        continue
-                    try:
-                        doc = await asyncio.wait_for(adapter.fetch(r.id), timeout=10)
-                        docs.append({
-                            "doc_id":  r.id,
-                            "title":   doc.title,
-                            "excerpt": (doc.text or "")[:400],
-                            "url":     r.url or doc.metadata.get("url", ""),
-                            "source":  archive_id,
-                            "date":    r.date or doc.metadata.get("published", ""),
-                            "text":    (doc.text or "")[:2000],
-                            "_cached": False,
-                        })
-                    except Exception as exc:
-                        log.debug("fetch failed %s/%s: %s", archive_id, r.id, exc)
-                return docs
-
-            else:
-                # Legacy adapter (search_query / scrape interface)
-                async with adapter:
-                    # Prefer search_query (keyword-aware) over scrape (recency-only)
-                    search_fn = getattr(adapter, "search_query", None)
-                    scrape_fn = getattr(adapter, "scrape", None)
-                    if not callable(search_fn) and not callable(scrape_fn):
-                        return []
-                    if callable(search_fn):
-                        raw = await asyncio.wait_for(
-                            search_fn(aq.query, limit=aq.limit_per_archive), timeout=15
-                        )
-                    else:
-                        # Legacy adapters: scrape(limit) only — no query arg
-                        raw = await asyncio.wait_for(
-                            scrape_fn(aq.limit_per_archive), timeout=15
-                        )
-                        # Post-filter by query token overlap
-                        q_tokens = set(re.findall(r"\w+", aq.query.lower()))
-                        filtered = [
-                            d for d in raw
-                            if q_tokens & set(re.findall(r"\w+",
-                                ((getattr(d, "title", "") or "") + " " +
-                                 str(getattr(d, "raw_text", "") or getattr(d, "markdown", "") or "")).lower()
-                            ))
-                        ]
-                        raw = filtered or raw  # fall back to all if nothing matches
-                    docs = []
-                    for d in raw[: aq.limit_per_archive]:
-                        text = str(getattr(d, "raw_text", None) or getattr(d, "markdown", None) or "")
-                        doc_id = str(getattr(d, "doc_id", None) or getattr(d, "url", ""))
-                        docs.append({
-                            "doc_id":  doc_id,
-                            "title":   getattr(d, "title", "") or "",
-                            "excerpt": text[:400],
-                            "url":     getattr(d, "url", "") or "",
-                            "source":  archive_id,
-                            "date":    str(getattr(d, "date", "") or ""),
-                            "text":    text[:2000],
-                            "_cached": doc_id in cached_ids,
-                        })
-                    return docs
+            results = await asyncio.wait_for(connector.search(sq), timeout=15)
+            docs: list[dict] = []
+            for r in results[: aq.limit_per_archive]:
+                if r.id in cached_ids:
+                    docs.append({
+                        "doc_id":  r.id,
+                        "title":   r.title or "",
+                        "excerpt": r.excerpt or "",
+                        "url":     r.url or "",
+                        "source":  archive_id,
+                        "date":    r.date or "",
+                        "text":    r.excerpt or "",
+                        "_cached": True,
+                    })
+                    continue
+                try:
+                    doc = await asyncio.wait_for(connector.fetch(r.id), timeout=10)
+                    docs.append({
+                        "doc_id":  r.id,
+                        "title":   doc.title or "",
+                        "excerpt": (doc.text or "")[:400],
+                        "url":     r.url or doc.metadata.get("url", ""),
+                        "source":  archive_id,
+                        "date":    r.date or doc.metadata.get("date", ""),
+                        "text":    (doc.text or "")[:2000],
+                        "_cached": False,
+                    })
+                except Exception as exc:
+                    log.debug("fetch failed %s/%s: %s", archive_id, r.id, exc)
+            return docs
 
         except asyncio.TimeoutError:
-            log.warning("Adapter %s timed out", archive_id)
+            log.warning("Connector %s timed out", archive_id)
             return []
         except Exception as exc:
-            log.warning("Adapter %s error: %s", archive_id, exc)
+            log.warning("Connector %s error: %s", archive_id, exc)
             return []
 
     # ── Light reranker ────────────────────────────────────────────────────────

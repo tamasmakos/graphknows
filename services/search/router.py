@@ -9,17 +9,7 @@ import os
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from .adapters.ep_debates import EPDebatesAdapter
-from .adapters.eurlex import EurLexAdapter
-from .adapters.uk_legislation import UKLegislationAdapter
-from .adapters.base_source_adapter import wrap
-from .adapters.ep_resolutions import EPResolutionsSource
-from .adapters.council_conclusions import CouncilConclusionsSource
-from .adapters.ec_press import ECPressSource
-from .adapters.ecb_publications import ECBPublicationsSource
-from .adapters.eca_reports import ECAReportsSource
-from .adapters.eprs_briefings import EPRSBriefingsSource
-from .adapters.cellar_sparql import CellarSPARQLSource
+from .connector_registry import get_registry
 from .job_queue import enqueue, get_job, make_job, update_job
 from .models import (
     Document,
@@ -32,23 +22,8 @@ from .models import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Adapter registry — instantiated once at import time.
-# SourceAdapter subclasses are registered directly; BaseSource subclasses are
-# wrapped via BaseSourceAdapter so they expose the same search/fetch interface.
-_ADAPTERS = {
-    # ── Disk-cached scrapers (SourceAdapter) ──────────────────────────────
-    "ep_debates":     EPDebatesAdapter(),
-    "eurlex":         EurLexAdapter(),
-    "uk_legislation": UKLegislationAdapter(),
-    # ── Live-web scrapers (BaseSource → wrapped) ──────────────────────────
-    "ep_resolutions":     wrap(EPResolutionsSource()),
-    "council_conclusions": wrap(CouncilConclusionsSource()),
-    "ec_press":            wrap(ECPressSource()),
-    "ecb_publications":    wrap(ECBPublicationsSource()),
-    "eca_reports":         wrap(ECAReportsSource()),
-    "eprs_briefings":      wrap(EPRSBriefingsSource()),
-    "cellar_sparql":       wrap(CellarSPARQLSource()),
-}
+# Registry is loaded once at import time from source_manifest.yaml
+_registry = get_registry()
 
 
 # ------------------------------------------------------------------ #
@@ -62,12 +37,20 @@ async def health() -> dict:
 
 @router.get("/sources")
 async def list_sources() -> list[dict]:
+    entries = _registry.list_entries()
     return [
         {
-            "id": adapter.source_id,
-            "rate_limit": adapter.rate_limit,
+            "id": e.id,
+            "name": e.name,
+            "description": e.description.strip(),
+            "jurisdictions": e.jurisdictions,
+            "doc_types": e.doc_types,
+            "temporal_coverage": e.temporal_coverage,
+            "language": e.language,
+            "rate_limit_rps": e.rate_limit_rps,
+            "requires_auth": e.requires_auth,
         }
-        for adapter in _ADAPTERS.values()
+        for e in entries
     ]
 
 
@@ -77,30 +60,25 @@ async def list_sources() -> list[dict]:
 
 @router.post("/search", response_model=list[SearchResult])
 async def search(query: SearchQuery) -> list[SearchResult]:
-    """
-    Search across one or more sources.
-    Pass `sources` to restrict; omit for all.
-    """
-    sources = query.sources or list(_ADAPTERS.keys())
-    unknown = set(sources) - set(_ADAPTERS.keys())
+    """Search across one or more sources. Pass `sources` to restrict; omit for all."""
+    available = set(_registry.list_ids())
+    sources = query.sources or list(available)
+    unknown = set(sources) - available
     if unknown:
-        raise HTTPException(status_code=400, detail=f"Unknown sources: {unknown}")
+        raise HTTPException(status_code=400, detail=f"Unknown sources: {sorted(unknown)}")
 
-    tasks = [_ADAPTERS[src].search(query) for src in sources]
+    connectors = [_registry.get(src) for src in sources]
+    tasks = [c.search(query) for c in connectors if c is not None]
     results_per_source = await asyncio.gather(*tasks, return_exceptions=True)
 
     combined: list[SearchResult] = []
     for src, res in zip(sources, results_per_source):
         if isinstance(res, Exception):
-            logger.warning("Adapter %s search failed: %s", src, res)
+            logger.warning("Connector %s search failed: %s", src, res)
             continue
         combined.extend(res)
 
-    # Sort by date descending (None dates go last), then slice to limit
-    def _sort_key(r: SearchResult):
-        return r.date or ""
-
-    combined.sort(key=_sort_key, reverse=True)
+    combined.sort(key=lambda r: r.date or "", reverse=True)
     return combined[: query.limit]
 
 
@@ -110,44 +88,44 @@ async def search(query: SearchQuery) -> list[SearchResult]:
 
 async def _run_scrape_job(job_id: str, req: ScrapeRequest) -> None:
     """Background task: fetch each requested document and store result."""
-    adapter = _ADAPTERS.get(req.source)
-    if adapter is None:
-        update_job(job_id, status="failed", error=f"Unknown source: {req.source}")
+    connector = _registry.get(req.source)
+    if connector is None:
+        await update_job(job_id, status="failed", error=f"Unknown source: {req.source}")
         return
 
-    update_job(job_id, status="running")
+    await update_job(job_id, status="running")
     docs: list[dict] = []
     total = len(req.document_ids)
 
     for i, doc_id in enumerate(req.document_ids, start=1):
         try:
-            doc: Document = await adapter.fetch(doc_id)
+            doc: Document = await connector.fetch(doc_id)
             docs.append(doc.model_dump())
         except Exception as exc:
             logger.warning("Failed to fetch %s/%s: %s", req.source, doc_id, exc)
-        update_job(job_id, progress=round(i / total, 2))
+        await update_job(job_id, progress=round(i / total, 2))
 
-    update_job(
+    await update_job(
         job_id,
         status="complete",
         progress=1.0,
         result=docs,
     )
 
-    # Fire-and-forget: send each scraped document to graphgen for KG ingestion.
-    # Uses a fresh client per job — no blocking, errors are logged only.
     graphgen_url = os.environ.get("GRAPHGEN_URL", "http://graphgen:8003")
     async with httpx.AsyncClient(timeout=10.0) as client:
         for doc in docs:
             try:
                 await client.post(f"{graphgen_url}/ingest", json=doc)
             except Exception as exc:
-                logger.warning("graphgen ingest fire-and-forget failed for %s: %s", doc.get("id"), exc)
+                logger.warning(
+                    "graphgen ingest failed for %s: %s", doc.get("id"), exc
+                )
 
 
 @router.post("/scrape", response_model=ScrapeJob)
 async def scrape(req: ScrapeRequest, background_tasks: BackgroundTasks) -> ScrapeJob:
-    if req.source not in _ADAPTERS:
+    if _registry.get(req.source) is None:
         raise HTTPException(status_code=400, detail=f"Unknown source: {req.source!r}")
     if not req.document_ids:
         raise HTTPException(status_code=422, detail="document_ids must not be empty")
@@ -160,7 +138,8 @@ async def scrape(req: ScrapeRequest, background_tasks: BackgroundTasks) -> Scrap
 
 @router.get("/jobs/{job_id}", response_model=ScrapeJob)
 async def get_job_status(job_id: str) -> ScrapeJob:
-    data = get_job(job_id)
+    data = await get_job(job_id)
     if data is None:
         raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
     return ScrapeJob(**data)
+
