@@ -12,6 +12,14 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from .adapters.ep_debates import EPDebatesAdapter
 from .adapters.eurlex import EurLexAdapter
 from .adapters.uk_legislation import UKLegislationAdapter
+from .adapters.base_source_adapter import wrap
+from .adapters.ep_resolutions import EPResolutionsSource
+from .adapters.council_conclusions import CouncilConclusionsSource
+from .adapters.ec_press import ECPressSource
+from .adapters.ecb_publications import ECBPublicationsSource
+from .adapters.eca_reports import ECAReportsSource
+from .adapters.eprs_briefings import EPRSBriefingsSource
+from .adapters.cellar_sparql import CellarSPARQLSource
 from .job_queue import enqueue, get_job, make_job, update_job
 from .models import (
     Document,
@@ -24,11 +32,22 @@ from .models import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Adapter registry — instantiated once at import time
+# Adapter registry — instantiated once at import time.
+# SourceAdapter subclasses are registered directly; BaseSource subclasses are
+# wrapped via BaseSourceAdapter so they expose the same search/fetch interface.
 _ADAPTERS = {
-    "ep_debates": EPDebatesAdapter(),
-    "eurlex": EurLexAdapter(),
+    # ── Disk-cached scrapers (SourceAdapter) ──────────────────────────────
+    "ep_debates":     EPDebatesAdapter(),
+    "eurlex":         EurLexAdapter(),
     "uk_legislation": UKLegislationAdapter(),
+    # ── Live-web scrapers (BaseSource → wrapped) ──────────────────────────
+    "ep_resolutions":     wrap(EPResolutionsSource()),
+    "council_conclusions": wrap(CouncilConclusionsSource()),
+    "ec_press":            wrap(ECPressSource()),
+    "ecb_publications":    wrap(ECBPublicationsSource()),
+    "eca_reports":         wrap(ECAReportsSource()),
+    "eprs_briefings":      wrap(EPRSBriefingsSource()),
+    "cellar_sparql":       wrap(CellarSPARQLSource()),
 }
 
 

@@ -318,32 +318,6 @@ def _choose_search_web_snippet(
 
 
 _SEARCH_EU_SAFE_SOURCE_IDS = ("eprs_briefings", "ep_resolutions", "ep_debates")
-_SEARCH_EU_ADAPTER_TIMEOUT_SECONDS = 15
-_SEARCH_EU_QUERY_AWARE_TIMEOUT_SECONDS = 30
-_SEARCH_EU_QUERY_EXPANSIONS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(r"\beuropean defence industrial strategy\b", re.IGNORECASE),
-        "EDIS EDIP defence readiness 2024",
-    ),
-)
-
-_SEARCH_EU_TITLE_BOOST_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str], int], ...] = (
-    (
-        re.compile(r"\beuropean defence industrial strategy\b", re.IGNORECASE),
-        re.compile(r"\beuropean defence industrial strategy\b", re.IGNORECASE),
-        6,
-    ),
-    (
-        re.compile(r"\bedis\b", re.IGNORECASE),
-        re.compile(r"\beuropean defence industrial strategy\b|\bedis\b", re.IGNORECASE),
-        4,
-    ),
-    (
-        re.compile(r"\bedip\b", re.IGNORECASE),
-        re.compile(r"\beuropean defence industry programme\b|\beu defence industry programme and strategy\b|\bedip\b", re.IGNORECASE),
-        4,
-    ),
-)
 
 
 def _normalize_search_eu_sources(sources: str) -> list[str]:
@@ -363,52 +337,6 @@ def _normalize_search_eu_sources(sources: str) -> list[str]:
     if not normalized_source_ids:
         return list(_SEARCH_EU_SAFE_SOURCE_IDS)
     return normalized_source_ids
-
-
-def _search_eu_candidate_queries(source_id: str, query: str) -> list[str]:
-    normalized_query = re.sub(r"\s+", " ", (query or "")).strip()
-    if not normalized_query:
-        return []
-
-    candidates = [normalized_query]
-    if source_id != "eprs_briefings":
-        return candidates
-
-    query_terms = _query_terms(normalized_query)
-    for pattern, expansion in _SEARCH_EU_QUERY_EXPANSIONS:
-        if not pattern.search(normalized_query):
-            continue
-        if _query_terms(expansion).issubset(query_terms):
-            continue
-        expanded_query = f"{normalized_query} {expansion}".strip()
-        candidates.append(expanded_query)
-    return candidates
-
-
-def _score_search_eu_document(
-    query: str,
-    candidate_queries: list[str],
-    title: str,
-    text: str,
-) -> tuple[int, int]:
-    combined_terms = _query_terms(f"{title or ''} {text or ''}")
-    title_bonus = sum(
-        bonus
-        for query_pattern, title_pattern, bonus in _SEARCH_EU_TITLE_BOOST_RULES
-        if query_pattern.search(query or "") and title_pattern.search(title or "")
-    )
-    best_overlap = max(
-        (_score_query_overlap(candidate_query, title, text) for candidate_query in candidate_queries),
-        default=0,
-    )
-    expansion_bonus = max(
-        (
-            len((_query_terms(candidate_query) - _query_terms(query)) & combined_terms)
-            for candidate_query in candidate_queries
-        ),
-        default=0,
-    )
-    return best_overlap, expansion_bonus + title_bonus
 
 
 # ── Lexical graph builder (source-anchored) ───────────────────────────────────
@@ -757,153 +685,37 @@ def build_graph(
             sources: Comma-separated source IDs, normalized server-side to reliable briefing sources.
             max_docs: Maximum documents to return (default 8).
         """
-        _SERVICES_DIR = Path(__file__).resolve().parents[1]
-        if str(_SERVICES_DIR) not in sys.path:
-            sys.path.insert(0, str(_SERVICES_DIR))
-
-        from search.models import SearchQuery
-        from search.adapters.base import SourceAdapter
-
-        ADAPTER_REGISTRY: dict[str, Any] = {}
-        for mod_name, cls_name, key in [
-            ("search.adapters.ep_debates", "EPDebatesAdapter", "ep_debates"),
-            ("search.adapters.eurlex", "EurLexAdapter", "eurlex"),
-            ("search.adapters.ec_press", "ECPressSource", "ec_press"),
-            ("search.adapters.ep_resolutions", "EPResolutionsSource", "ep_resolutions"),
-            ("search.adapters.council_conclusions", "CouncilConclusionsSource", "council_conclusions"),
-            ("search.adapters.ecb_publications", "ECBPublicationsSource", "ecb_publications"),
-            ("search.adapters.eprs_briefings", "EPRSBriefingsSource", "eprs_briefings"),
-        ]:
-            try:
-                mod = __import__(mod_name, fromlist=[cls_name])
-                ADAPTER_REGISTRY[key] = getattr(mod, cls_name)
-            except Exception:
-                pass
+        # Delegate to the search service over HTTP — no direct adapter imports.
+        from agent.tools.search_client import SearchServiceClient
 
         source_ids = _normalize_search_eu_sources(sources)
         documents: list[dict] = []
-        minimum_overlap = 2
 
-        async def _search_one(sid: str) -> list[dict]:
-            cls = ADAPTER_REGISTRY.get(sid)
-            if not cls:
-                return []
-            adapter = cls()
-            try:
-                if isinstance(adapter, SourceAdapter):
-                    sq = SearchQuery(query=query, limit=max_docs)
-                    results = await asyncio.wait_for(adapter.search(sq), timeout=15)
-                    docs = []
-                    for r in results[:max_docs]:
-                        try:
-                            doc = await asyncio.wait_for(adapter.fetch(r.id), timeout=10)
-                            docs.append({
-                                "id": doc.id,
-                                "title": doc.title,
-                                "text": str(doc.text or "")[:4000],
-                                "url": getattr(r, "url", "") or doc.metadata.get("url", ""),
-                                "source": sid,
-                                "date": getattr(r, "date", "") or doc.metadata.get("published", ""),
-                            })
-                        except Exception:
-                            pass
-                    return docs
-                else:
-                    async with adapter:
-                        query_search = getattr(adapter, "search_query", None)
-                        if callable(query_search):
-                            candidate_queries = _search_eu_candidate_queries(sid, query)
-                            ranked_by_id: dict[str, tuple[int, int, str, dict]] = {}
-                            for candidate_query in candidate_queries:
-                                parsed = await asyncio.wait_for(
-                                    query_search(candidate_query, limit=max_docs),
-                                    timeout=_SEARCH_EU_QUERY_AWARE_TIMEOUT_SECONDS,
-                                )
-                                for d in parsed:
-                                    title = d.title or ""
-                                    text = str(d.raw_text or d.markdown or "")[:4000]
-                                    overlap_score, expansion_bonus = _score_search_eu_document(
-                                        query,
-                                        candidate_queries,
-                                        title,
-                                        text,
-                                    )
-                                    if overlap_score < minimum_overlap:
-                                        continue
-                                    doc = {
-                                        "id": getattr(d, "doc_id", d.url),
-                                        "title": title,
-                                        "text": text,
-                                        "url": d.url,
-                                        "source": sid,
-                                        "date": getattr(d, "date", ""),
-                                    }
-                                    doc_id = str(doc["id"])
-                                    rank_key = (
-                                        overlap_score,
-                                        expansion_bonus,
-                                        doc["date"],
-                                        doc,
-                                    )
-                                    existing = ranked_by_id.get(doc_id)
-                                    if existing is None or rank_key[:3] > existing[:3]:
-                                        ranked_by_id[doc_id] = rank_key
-                            ranked = sorted(
-                                ranked_by_id.values(),
-                                key=lambda item: item[:3],
-                                reverse=True,
-                            )
-                            return [doc for _, _, _, doc in ranked[:max_docs]]
-                        else:
-                            parsed = await asyncio.wait_for(
-                                adapter.scrape(limit=max_docs),
-                                timeout=_SEARCH_EU_ADAPTER_TIMEOUT_SECONDS,
-                            )
-                        ranked: list[tuple[int, str, dict]] = []
-                        for d in parsed:
-                            title = d.title or ""
-                            text = str(d.raw_text or d.markdown or "")[:4000]
-                            score = _score_query_overlap(query, title, text)
-                            if score < minimum_overlap:
-                                continue
-                            ranked.append((
-                                score,
-                                getattr(d, "date", "") or "",
-                                {
-                                    "id": getattr(d, "doc_id", d.url),
-                                    "title": title,
-                                    "text": text,
-                                    "url": d.url,
-                                    "source": sid,
-                                    "date": getattr(d, "date", ""),
-                                },
-                            ))
-                        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
-                        return [
-                            doc
-                            for _, _, doc in ranked[:max_docs]
-                        ]
-            except asyncio.TimeoutError:
-                timeout_seconds = (
-                    _SEARCH_EU_QUERY_AWARE_TIMEOUT_SECONDS
-                    if callable(getattr(adapter, "search_query", None))
-                    else _SEARCH_EU_ADAPTER_TIMEOUT_SECONDS
-                )
-                log.warning(
-                    "search_eu adapter %s timed out after %ss",
-                    sid,
-                    timeout_seconds,
-                )
-                return []
-            except Exception as exc:
-                log.warning("search_eu adapter %s failed: %s", sid, exc)
-                return []
-
-        tasks = [_search_one(sid) for sid in source_ids[:4]]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for r in results:
-            if isinstance(r, list):
-                documents.extend(r)
+        client = SearchServiceClient()
+        try:
+            raw_docs = await asyncio.wait_for(
+                client.fetch_documents(
+                    query=query,
+                    sources=source_ids[:4],
+                    limit=max_docs,
+                ),
+                timeout=30,
+            )
+            documents = [
+                {
+                    "id": doc.id,
+                    "title": doc.title,
+                    "text": str(doc.text or "")[:4000],
+                    "url": doc.url,
+                    "source": doc.source,
+                    "date": doc.date or "",
+                }
+                for doc in raw_docs
+            ]
+        except asyncio.TimeoutError:
+            log.warning("search_eu timed out for sources %s", source_ids)
+        except Exception as exc:
+            log.warning("search_eu failed: %s", exc)
 
         if not documents:
             return "No EU documents found for this query."

@@ -24,9 +24,13 @@ class SearchServiceClient:
         base_url: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base_url = (base_url or os.environ.get(
-            "SEARCH_SERVICE_URL", "http://localhost:8040"
-        )).rstrip("/") + "/api/v1"
+        self._base_url = (
+            base_url
+            # SEARCH_URL is the canonical env var used throughout the agent service.
+            # SEARCH_SERVICE_URL is kept for backwards-compatibility.
+            or os.environ.get("SEARCH_URL")
+            or os.environ.get("SEARCH_SERVICE_URL", "http://localhost:8040")
+        ).rstrip("/") + "/api/v1"
         self._client = http_client or httpx.AsyncClient(timeout=30.0)
 
     async def search(
