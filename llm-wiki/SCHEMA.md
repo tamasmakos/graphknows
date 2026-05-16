@@ -28,13 +28,13 @@ llm-wiki/
 
 | Folder | Contents | Mutable? |
 |---|---|---|
-| `architecture/` | Service design, data flows, API contracts, component interfaces | ✅ Update when system changes |
-| `adr/` | Decision records: numbered `NNN-slug.md`, record *why* not *what* | ❌ Immutable after merge |
-| `product/` | Roadmap, business plan, market, frontend/UX design | ✅ Update as priorities shift |
-| `research/` | EU sources, KG methodology, evaluation results, thesis findings | ✅ Update after experiments |
-| `ops/` | Infra setup, admin tasks, technical debt register | ✅ Update as work progresses |
-| `entities/` | Tools, models, external services — stable reference | ✅ Update when understanding deepens |
-| `raw/` | Downloaded papers, scraped content — never edit | ❌ Immutable |
+| `architecture/` | Service design, data flows, API contracts, component interfaces |  Update when system changes |
+| `adr/` | Decision records: numbered `NNN-slug.md`, record *why* not *what* |  Immutable after merge |
+| `product/` | Roadmap, business plan, market, frontend/UX design |  Update as priorities shift |
+| `research/` | EU sources, KG methodology, evaluation results, thesis findings |  Update after experiments |
+| `ops/` | Infra setup, admin tasks, technical debt register |  Update as work progresses |
+| `entities/` | Tools, models, external services — stable reference |  Update when understanding deepens |
+| `raw/` | Downloaded papers, scraped content — never edit |  Immutable |
 
 ---
 

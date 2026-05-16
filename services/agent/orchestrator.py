@@ -58,7 +58,7 @@ REPORT FORMAT — the `answer` text must be a full investigative report:
 ### Sources
 - [Doc-N]: [Full title] — [Institution/Domain] — [Date] — [URL]
 
-Distinguish: 🏛️ for official EU records, 🌐 for web sources.
+Distinguish: ️ for official EU records,  for web sources.
 Cite inline with [Doc-N] matching the Sources section.
 
 Respond ONLY with valid JSON:

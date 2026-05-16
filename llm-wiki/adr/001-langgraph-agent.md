@@ -82,7 +82,7 @@ All events go over the existing `/ws/{session_id}` endpoint.
 ## Knowledge Graph Insights (from graphrag tool)
 ## Key Actors (table)
 ## Key Legislation (table)
-## Sources ([🏛️ Doc-N] and [🌐 Doc-N])
+## Sources ([️ Doc-N] and [ Doc-N])
 ```
 
 ---
@@ -90,7 +90,7 @@ All events go over the existing `/ws/{session_id}` endpoint.
 ## Frontend Changes (v3)
 
 ### Reasoning trace panel
-- Replaces the current collapsed `🔧 step` accordion
+- Replaces the current collapsed ` step` accordion
 - Each step card: tool icon + name + streaming thought tokens + result chips
 - Steps stay expanded and scrollable during research
 

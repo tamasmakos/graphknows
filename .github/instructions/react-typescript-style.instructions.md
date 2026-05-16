@@ -157,14 +157,14 @@ profileData: Extract<GetProfileQueryInProfileQuery['node'], { __typename?: 'Prof
 - **No extra blank line** before the final `return`.
 
 ```ts
-// ✅
+// 
 const getUserDetails = (user: User | null) => {
   if (!user) return null
 
   return { id: user.id, name: user.name }
 }
 
-// ✅ — blank line before mid-function if
+//  — blank line before mid-function if
 const getProfileName = (profileData: ProfileData) => {
   const { firstName, lastName } = profileData ?? {}
 
@@ -187,11 +187,11 @@ export { getProfileAvatar, getProfileName }
 - **Only explain "why"**, never "what" the code obviously does.
 
 ```ts
-// ✅ — explains why the workaround exists
+//  — explains why the workaround exists
 // Safari requires a slight delay for smooth scrolling
 setTimeout(() => window.scrollTo(0, 0), 10)
 
-// ❌ — describes what the code does
+//  — describes what the code does
 // Scrolls to the top of the page
 window.scrollTo(0, 0)
 ```

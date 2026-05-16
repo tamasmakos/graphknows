@@ -232,7 +232,7 @@ docker-compose -f docker-compose.yaml -f docker-compose.dev.yaml up
 
 ---
 
-## 🏗️ System Architecture
+## ️ System Architecture
 
 The system follows a strict producer-consumer model, decoupled by the storage layer.
 
@@ -265,7 +265,7 @@ graph TD
 
 ---
 
-## 🛠️ Service Details
+## ️ Service Details
 
 ### 1. GraphGen (The Builder)
 Located in `services/graphgen`.
@@ -299,7 +299,7 @@ This service provides a `FastAPI` interface for querying the graph. Unlike simpl
 
 ---
 
-## 📊 Data Schema
+##  Data Schema
 
 The graph uses a specific schema to represent both time and knowledge:
 
@@ -310,7 +310,7 @@ The graph uses a specific schema to represent both time and knowledge:
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### 1. Prerequisites
 - **Docker** and **Docker Compose**.

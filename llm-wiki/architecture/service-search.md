@@ -117,14 +117,14 @@ class SourceAdapter(ABC):
 
 | Source | API / Portal | Status | Format | Notes |
 |---|---|---|---|---|
-| EU Parliament debates | EP Open Data Portal + EurLex | ✅ existing | JSON | `ep_debates.py` |
-| UK Legislation | legislation.gov.uk JSON API | ✅ existing | JSON | Acts + SIs |
-| EUR-Lex | REST API (CELEX search) | ✅ existing | JSON/XML | Full EU legislative corpus |
-| UK Hansard | hansard.parliament.uk | 🔲 planned (t_d3dc1591) | JSON | Commons + Lords debates |
-| Bundestag DIP | dip.bundestag.de | 🔲 planned (t_25a47951) | JSON | German parliamentary debates |
-| Assemblée Nationale | assemblee-nationale.fr | 🔲 backlog | XML | French |
-| UN Documents | undocs.org / ODS | 🔲 backlog | PDF/XML | Resolutions, reports |
-| European Commission | EUR-Lex COM docs | 🔲 backlog | PDF/HTML | Commission proposals |
+| EU Parliament debates | EP Open Data Portal + EurLex |  existing | JSON | `ep_debates.py` |
+| UK Legislation | legislation.gov.uk JSON API |  existing | JSON | Acts + SIs |
+| EUR-Lex | REST API (CELEX search) |  existing | JSON/XML | Full EU legislative corpus |
+| UK Hansard | hansard.parliament.uk |  planned (t_d3dc1591) | JSON | Commons + Lords debates |
+| Bundestag DIP | dip.bundestag.de |  planned (t_25a47951) | JSON | German parliamentary debates |
+| Assemblée Nationale | assemblee-nationale.fr |  backlog | XML | French |
+| UN Documents | undocs.org / ODS |  backlog | PDF/XML | Resolutions, reports |
+| European Commission | EUR-Lex COM docs |  backlog | PDF/HTML | Commission proposals |
 
 ---
 

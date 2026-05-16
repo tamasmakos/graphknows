@@ -20,10 +20,10 @@ Prefer direct tool calls over MCP integrations for agent-to-service communicatio
 MCP adds abstraction layers that cause agents to make ambiguous tool-selection decisions, misinterpret parameters, and produce non-deterministic failures.
 
 ```python
-# ✅ Direct tool call — deterministic, debuggable
+#  Direct tool call — deterministic, debuggable
 result = create_github_pr(branch=branch, title=title, body=body)
 
-# ❌ MCP integration — agent must parse protocol metadata, non-deterministic
+#  MCP integration — agent must parse protocol metadata, non-deterministic
 agent.run("Create a pull request for the generated content")  # via GitHub MCP
 ```
 
@@ -43,10 +43,10 @@ Operations that should always be pure function calls (never tool calls):
 - Sending notifications
 
 ```python
-# ✅ Pure function — deterministic, testable, zero token overhead
+#  Pure function — deterministic, testable, zero token overhead
 commit_files_to_repo(files=artifacts, branch=branch_name)
 
-# ❌ Tool call — LLM must reason about parameters, adds token cost + variability
+#  Tool call — LLM must reason about parameters, adds token cost + variability
 pr_agent.run(f"Commit these files: {artifacts}")
 ```
 
@@ -63,11 +63,11 @@ Never attach multiple tools to a single agent. When an agent has multiple tools,
 - Misformat parameters
 
 ```python
-# ✅ Two agents, each with one tool
+#  Two agents, each with one tool
 scrape_agent = Agent(tools=[scrape_markdown])
 publish_agent = Agent(tools=[publish_markdown])
 
-# ❌ One agent, two tools — causes missed calls and ordering failures
+#  One agent, two tools — causes missed calls and ordering failures
 combined_agent = Agent(tools=[scrape_markdown, publish_markdown])
 ```
 
@@ -78,7 +78,7 @@ combined_agent = Agent(tools=[scrape_markdown, publish_markdown])
 Each agent must do exactly **one conceptual task**. Don't mix planning, generation, validation, and side-effectful execution in the same agent.
 
 ```python
-# ✅ Separate agents — clear contracts, easy to test and debug
+#  Separate agents — clear contracts, easy to test and debug
 veo_json_builder = Agent(
     instructions=load_prompt("veo_json_builder"),
     # Only produces: valid Veo-3 JSON specification
@@ -87,7 +87,7 @@ veo_json_builder = Agent(
 # Then, deterministic execution — NOT an agent:
 video_path = script_to_video(veo_json)  # Pure function
 
-# ❌ Combined — blurs planning and execution, causes hallucinated paths/status
+#  Combined — blurs planning and execution, causes hallucinated paths/status
 veo_agent = Agent(
     instructions="Generate the Veo JSON AND generate the video",
 )
@@ -105,13 +105,13 @@ veo_agent = Agent(
 **Never hardcode system prompts inside source files.** Store them in a `prompts/` directory as `.md` or `.txt` files and load dynamically at runtime.
 
 ```python
-# ✅ Externalized — iterable without redeployment
+#  Externalized — iterable without redeployment
 def load_prompt(name: str) -> str:
     return (PROMPTS_DIR / f"{name}.md").read_text()
 
 agent = Agent(instructions=load_prompt("podcast_script_generator"))
 
-# ❌ Hardcoded — requires code change and redeployment to iterate
+#  Hardcoded — requires code change and redeployment to iterate
 agent = Agent(instructions="""You are a podcast script generator.
     Your job is to...""")
 ```
@@ -129,7 +129,7 @@ agent = Agent(instructions="""You are a podcast script generator.
 For high-stakes outputs, run multiple LLMs **in parallel** and use a dedicated **reasoning agent** to consolidate.
 
 ```python
-# ✅ Consortium + reasoning consolidation
+#  Consortium + reasoning consolidation
 drafts = await asyncio.gather(
     openai_agent.run(context),
     claude_agent.run(context),
@@ -137,7 +137,7 @@ drafts = await asyncio.gather(
 )
 final_output = reasoning_agent.run(consolidate_prompt(drafts))
 
-# ❌ Single model — subject to hallucination, bias, and model drift
+#  Single model — subject to hallucination, bias, and model drift
 final_output = openai_agent.run(context)
 ```
 
@@ -152,7 +152,7 @@ Use for: chat answers, document summaries, any output that drives business decis
 Keep orchestration logic in `lib/` (or equivalent). Route handlers and MCP servers are **thin adapters** — they forward requests, they don't contain logic.
 
 ```
-# ✅ Clean separation
+#  Clean separation
 app/
   api/v1/agent/route.ts    ← thin adapter: parse request → call lib → stream response
 lib/
@@ -161,7 +161,7 @@ lib/
 mcp/
   server.ts                ← forwards MCP tool calls to REST API, nothing else
 
-# ❌ Workflow logic inside the route handler or MCP server
+#  Workflow logic inside the route handler or MCP server
 ```
 
 This allows the workflow to be invoked from HTTP, MCP clients, CLI, or tests — without duplication.
@@ -203,7 +203,7 @@ Agentic workflows are not traditional enterprise software. Do not apply:
 **Flat, readable, function-driven orchestration** wins every time.
 
 ```python
-# ✅ Flat, readable pipeline — easy to trace, test, and extend
+#  Flat, readable pipeline — easy to trace, test, and extend
 async def run_pipeline(topic: str, urls: list[str]) -> Artifacts:
     articles = await search_agent.run(urls)
     filtered = await filter_agent.run(articles, topic)
@@ -214,7 +214,7 @@ async def run_pipeline(topic: str, urls: list[str]) -> Artifacts:
     commit_artifacts(script, audio)           # Pure function — no agent
     return create_github_pr(artifacts)        # Pure function — no agent
 
-# ❌ Over-engineered — abstract factory of agent builders with config resolvers
+#  Over-engineered — abstract factory of agent builders with config resolvers
 ```
 
 ---
@@ -224,7 +224,7 @@ async def run_pipeline(topic: str, urls: list[str]) -> Artifacts:
 ### Streaming — `AsyncIterable` for all SSE
 
 ```ts
-// ✅ Standard pattern across Anthropic, OpenAI, and Vercel SDKs
+//  Standard pattern across Anthropic, OpenAI, and Vercel SDKs
 async function* streamAgent(input: AgentInput): AsyncIterable<AgentEvent> {
   for await (const chunk of client.stream(input)) {
     yield parseEvent(chunk)
@@ -242,7 +242,7 @@ export function useAgentStream(input: AgentInput) {
 ### Discriminated Unions for Event Types — Never `any`
 
 ```ts
-// ✅ Type-safe stream events
+//  Type-safe stream events
 type AgentEvent =
   | { type: 'token';     data: string }
   | { type: 'reasoning'; data: string }
@@ -250,14 +250,14 @@ type AgentEvent =
   | { type: 'done';      data: AgentResult }
   | { type: 'error';     data: string }
 
-// ❌ Untyped
+//  Untyped
 const event: any = parseSSEChunk(raw)
 ```
 
 ### Zod as Single Source of Truth for LLM Schemas
 
 ```ts
-// ✅ Define once, use for LLM structured output + runtime validation
+//  Define once, use for LLM structured output + runtime validation
 import { z } from 'zod'
 
 const AgentOutputSchema = z.object({

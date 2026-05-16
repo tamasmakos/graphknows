@@ -221,7 +221,7 @@
   - `_session_entities` dict accumulates extracted names per session
 - **index.html** live graph UX:
   - Auto-switch to KG tab on first `graph_update` event
-  - Live badge: `⚡ 36n/108e — extracting…` → `✓ 60 entities / 180 relations`
+  - Live badge: ` 36n/108e — extracting…` → ` 60 entities / 180 relations`
   - `partial: true/false` field in graph_update distinguishes keyword vs GLiNER2 graph
 - **router.py** thought_token batching at 350ms → 17 total WS frames (was 500+, was killing Cloudflare tunnel)
 

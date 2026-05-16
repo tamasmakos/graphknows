@@ -94,7 +94,7 @@ No LLM API key (`OPENAI_API_KEY`, `GROQ_API_KEY`) was available. LLM-based RAGAS
 
 ## 3. RAGAS Scores Summary
 
-> ⚠️ **No LLM API key available.** RAGAS LLM-based metrics (faithfulness, answer_relevancy via NLI, context_precision, context_recall) could not be computed. Embedding cosine similarity metrics used as proxy.
+> ️ **No LLM API key available.** RAGAS LLM-based metrics (faithfulness, answer_relevancy via NLI, context_precision, context_recall) could not be computed. Embedding cosine similarity metrics used as proxy.
 
 ### Aggregate Scores (embedding-based)
 
@@ -123,7 +123,7 @@ No LLM API key (`OPENAI_API_KEY`, `GROQ_API_KEY`) was available. LLM-based RAGAS
 
 ## 4. Qualitative Analysis
 
-### Where the Agent Does Well ✅
+### Where the Agent Does Well 
 
 **1. Answer Relevancy is consistently good (avg 0.76)**
 Answers are semantically on-topic for 9/10 questions. The agent correctly identifies EU context, names entities (Ursula von der Leyen, UN Security Council), and stays in scope. Best performance: Q5 (peace negotiations, 0.87), Q3 (strategic autonomy, 0.83), Q7 (economic impacts, 0.82).
@@ -142,7 +142,7 @@ Green Deal + energy crisis question had the highest context relevancy (0.55) and
 
 ---
 
-### Where the Agent Falls Short ❌
+### Where the Agent Falls Short 
 
 **1. Context Retrieval is weak (avg ctx_rel: 0.26)**
 The most critical failure: retrieved contexts are often not semantically close to the question. Q4 (maritime security, ctx_rel=0.12) retrieved **zero citations** and relied on entity name lookups. Q10 (international law, ctx_rel=0.14) also had very weak context.
@@ -166,29 +166,29 @@ Q2 (energy transition) answer conflates Middle East crisis content with Ukraine 
 
 ## 5. Recommendations for Improvement
 
-### 1. 🗄️ Expand the Knowledge Base
+### 1. ️ Expand the Knowledge Base
 **Priority: Critical.** With only 8 chunks from one debate session, many questions cannot be answered. Ingest additional EP debate transcripts, committee reports, and policy documents. Target: ≥50 chunks across ≥5 sessions covering 2023–2024.
 
-### 2. ✂️ Improve Chunk Segmentation
+### 2. ️ Improve Chunk Segmentation
 Replace arbitrary-length chunking with semantic chunking (paragraph or speaker-turn boundaries). Mid-sentence splits degrade both retrieval quality and citation readability. Consider speaker-attributed chunks for better entity grounding.
 
-### 3. 🔍 Improve Context-Answer Faithfulness
+### 3.  Improve Context-Answer Faithfulness
 Low `ctx_ans` scores (avg 0.34) suggest the agent draws on general knowledge beyond the retrieved context. Implement a faithfulness constraint in the synthesis prompt: *"Only state claims that are directly supported by retrieved chunks."*
 
-### 4. 📊 Add LLM-Based RAGAS Metrics
+### 4.  Add LLM-Based RAGAS Metrics
 Configure an LLM API key (OpenAI or Groq) to enable:
 - **Faithfulness:** NLI-based claim verification against context
 - **Answer Relevancy:** LLM-based on-topic scoring
 - **Context Precision/Recall:** Precision of retrieved chunks
 This would give far more reliable evaluation than embedding cosine similarity alone.
 
-### 5. 🔗 Improve Entity-to-Chunk Linking
+### 5.  Improve Entity-to-Chunk Linking
 Q4 (maritime security) retrieved 0 chunks because maritime topics exist in entity nodes but lack direct chunk links. Improve entity extraction to always back-link to source chunks, ensuring every entity answer is grounded in text evidence.
 
-### 6. 📈 Add Query-Type Routing
+### 6.  Add Query-Type Routing
 Some questions are entity-lookup queries (Q4) while others require synthesising across multiple passages (Q7, Q8). A routing layer that detects query type and applies appropriate retrieval strategies (pure vector search vs. graph traversal vs. hybrid) would improve context relevancy.
 
-### 7. 🔄 Re-run RAGAS with LLM When Available
+### 7.  Re-run RAGAS with LLM When Available
 Once an API key is configured, re-run with:
 ```python
 from ragas.metrics.collections import faithfulness, answer_relevancy, context_precision, context_recall

@@ -13,7 +13,7 @@ See [[product-architecture-v2]] for the architecture this roadmap delivers. See 
 
 ---
 
-## ✅ Done — Shipped
+##  Done — Shipped
 
 - **services/search/** — Tavily + EU source adapters (EP, EUR-Lex, Council, EC, ECB, ECA, EPRS); job queue; idempotent ingestion
 - **services/graphgen/** — GLiNER2 NER + DSPy relation extraction pipeline; HTTP API; ontology injection
@@ -25,7 +25,7 @@ See [[product-architecture-v2]] for the architecture this roadmap delivers. See 
 
 ---
 
-## 🔥 Now — Active Sprint (7 Cards)
+##  Now — Active Sprint (7 Cards)
 
 These 7 kanban cards constitute the core pivot deliverables:
 
@@ -44,7 +44,7 @@ Write/retrieval implementation detail: [[dual-write-hybrid-retrieval]]
 
 ---
 
-## 📋 Next
+##  Next
 
 - **Session resume** — persist `InvestigativeState` to disk/Redis; allow users to reload a prior research session
 - **Frontend v2** — expose live KG growth in D3 during search_loop; per-node citation panel; entity timeline
@@ -53,7 +53,7 @@ Write/retrieval implementation detail: [[dual-write-hybrid-retrieval]]
 
 ---
 
-## 🔭 Horizon
+##  Horizon
 
 - **Multi-user auth** — JWT + per-user session namespace; RBAC for shared sessions within an organisation
 - **Federated KG** — merge entity nodes across sessions for returning users; cross-session entity resolution via Neo4j

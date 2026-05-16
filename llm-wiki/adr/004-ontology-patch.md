@@ -18,7 +18,7 @@ Investigation found two classes of issue. The ontology injection bug has a narro
 
 ## Findings from Investigation
 
-### ENTITY_CONCEPT nodes: 100% typed ✓
+### ENTITY_CONCEPT nodes: 100% typed 
 All 4,018 `ENTITY_CONCEPT` nodes have `ontology_class` set. The current extraction pipeline works.
 
 ### Real issues found:
