@@ -46,7 +46,10 @@ class BaseServiceSettings(BaseSettings):
         neo4j_database: Neo4j database name.
         pgvector_dsn: PostgreSQL DSN for the pgvector store.
         llm_model: LLM model name for synthesis.
-        groq_api_key: Groq API key (empty string disables LLM tools).
+        llm_provider: LLM provider name (openrouter or groq).
+        groq_api_key: Groq API key (kept for backward compat).
+        openrouter_api_key: OpenRouter API key.
+        extraction_model: Model used for relation extraction (defaults to llm_model).
         embed_model: HuggingFace sentence-transformer model name.
         graphknows_env: Environment tag; set to "production" for stricter checks.
     """
@@ -61,8 +64,11 @@ class BaseServiceSettings(BaseSettings):
     pgvector_db: str = Field(default="vectordb", alias="PGVECTOR_DB")
     pgvector_user: str = Field(default="postgres", alias="PGVECTOR_USER")
     pgvector_password: str = Field(default="", alias="PGVECTOR_PASSWORD")
-    llm_model: str = Field(default="llama-3.3-70b-versatile", alias="LLM_MODEL")
+    llm_model: str = Field(default="moonshotai/kimi-k2", alias="LLM_MODEL")
+    llm_provider: str = Field(default="openrouter", alias="LLM_PROVIDER")
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    extraction_model: str = Field(default="moonshotai/kimi-k2", alias="EXTRACTION_MODEL")
     embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="EMBED_MODEL")
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
 
@@ -83,6 +89,12 @@ class BaseServiceSettings(BaseSettings):
             db = env.get("PGVECTOR_DB", self.pgvector_db)
             user = env.get("PGVECTOR_USER", self.pgvector_user)
             self.pgvector_dsn = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+        if not self.openrouter_api_key:
+            self.openrouter_api_key = (
+                env.get("OPENROUTER_API_KEY")
+                or env.get("OPEN_ROUTER_API", "")
+            )
 
         return self
 
