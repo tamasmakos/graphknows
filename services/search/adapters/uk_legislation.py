@@ -23,7 +23,9 @@ import scrapers.uk_legislation as _ukleg
 from .base import SourceAdapter
 from ..models import Document, SearchQuery, SearchResult
 
-_OUT_DIR = Path(os.environ.get("UK_LEGISLATION_OUT_DIR", "/data/raw/uk_legislation"))
+# Resolved from RAW_DATA_DIR; source-specific override UK_LEGISLATION_OUT_DIR still honoured.
+_RAW_ROOT = Path(os.environ.get("RAW_DATA_DIR", "/data/raw"))
+_OUT_DIR = Path(os.environ.get("UK_LEGISLATION_OUT_DIR", str(_RAW_ROOT / "uk_legislation")))
 
 
 class UKLegislationAdapter(SourceAdapter):

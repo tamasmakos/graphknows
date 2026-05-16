@@ -34,11 +34,17 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+import os
+
 import requests
 
 logger = logging.getLogger(__name__)
 
-OUT_DIR = Path(__file__).parent.parent / "data" / "raw" / "ep_debates"
+# RAW_DATA_DIR lets Docker and host agree on one canonical path.
+# Docker: set RAW_DATA_DIR=/data/raw (bind-mounted to ./data/raw on host).
+# Host dev: defaults to <repo-root>/data/raw.
+_RAW_ROOT = Path(os.environ.get("RAW_DATA_DIR", str(Path(__file__).resolve().parents[2] / "data" / "raw")))
+OUT_DIR = _RAW_ROOT / "ep_debates"
 STATE_FILE = OUT_DIR / "state.json"
 REQUEST_TIMEOUT = 20
 

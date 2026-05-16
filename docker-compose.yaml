@@ -189,8 +189,13 @@ services:
     environment:
       GRAPHGEN_URL: "${GRAPHGEN_URL:-http://graphgen:8000}"
       GRAPHKNOWS_ENV: "${GRAPHKNOWS_ENV:-development}"
+      # Canonical raw-document store — bind-mounted from host so scrapers and
+      # the search service always read/write the same files.
+      RAW_DATA_DIR: "/data/raw"
     ports:
       - "8040:8000"
+    volumes:
+      - ./data/raw:/data/raw
     restart: unless-stopped
 
   # ── Observability (optional profile) ────────────────────────────────────────

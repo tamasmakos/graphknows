@@ -270,7 +270,7 @@ def run_demo(retriever: ArchiveRetriever) -> None:
     print("="*70)
 
     for query in DEMO_QUERIES:
-        print(f"\n🔍  Query: \"{query}\"")
+        print(f"\n  Query: \"{query}\"")
         print("-" * 60)
         results = retriever.retrieve(query, k=TOP_K)
         for rank, r in enumerate(results, 1):

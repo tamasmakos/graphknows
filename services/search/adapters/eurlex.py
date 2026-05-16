@@ -23,9 +23,10 @@ import scrapers.eurlex as _eurlex
 from .base import SourceAdapter
 from ..models import Document, SearchQuery, SearchResult
 
-# Default output dir — co-located with repo; override via EURLEX_OUT_DIR env var
-_REPO_DEFAULT = Path(__file__).resolve().parents[3] / "data" / "raw" / "eurlex"
-_OUT_DIR = Path(os.environ.get("EURLEX_OUT_DIR", str(_REPO_DEFAULT)))
+# Resolved from RAW_DATA_DIR (set to /data/raw in Docker, bound to ./data/raw on host).
+# Source-specific override EURLEX_OUT_DIR is still honoured for backwards-compat.
+_RAW_ROOT = Path(os.environ.get("RAW_DATA_DIR", "/data/raw"))
+_OUT_DIR = Path(os.environ.get("EURLEX_OUT_DIR", str(_RAW_ROOT / "eurlex")))
 
 
 class EurLexAdapter(SourceAdapter):

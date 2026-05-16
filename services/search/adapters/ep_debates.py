@@ -24,9 +24,10 @@ import scrapers.ep_debates as _ep
 from .base import SourceAdapter
 from ..models import Document, SearchQuery, SearchResult
 
-# Default output dir — co-located with repo; override via EP_DEBATES_OUT_DIR env var
-_REPO_DEFAULT = Path(__file__).resolve().parents[3] / "data" / "raw" / "ep_debates"
-_OUT_DIR = Path(os.environ.get("EP_DEBATES_OUT_DIR", str(_REPO_DEFAULT)))
+# Resolved from RAW_DATA_DIR (set to /data/raw in Docker, bound to ./data/raw on host).
+# Source-specific override EP_DEBATES_OUT_DIR is still honoured for backwards-compat.
+_RAW_ROOT = Path(os.environ.get("RAW_DATA_DIR", "/data/raw"))
+_OUT_DIR = Path(os.environ.get("EP_DEBATES_OUT_DIR", str(_RAW_ROOT / "ep_debates")))
 
 
 class EPDebatesAdapter(SourceAdapter):

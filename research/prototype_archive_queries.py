@@ -45,11 +45,11 @@ async def main():
         elapsed = time.time() - t0
 
         if not results:
-            print("  ⚠ No results returned.")
+            print("   No results returned.")
             continue
 
         for r in results:
-            cache = "💾" if r.from_cache else "🌐"
+            cache = "" if r.from_cache else ""
             print(f"  {cache} [{r.score:.3f}] [{r.source}] {r.title[:70]}")
             print(f"     {r.date or 'n/d'} | {r.url[:70] if r.url else 'no url'}")
             print(f"     {r.excerpt[:120].strip()}…")

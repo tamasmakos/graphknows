@@ -31,14 +31,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ingest_pipeline")
 
+import os
+
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "services"))
 
+# RAW_DATA_DIR is the single canonical source store.
+# In Docker, this is /data/raw (bind-mounted to ./data/raw on the host).
+# On the host, falls back to <repo-root>/data/raw so the pipeline works
+# without Docker as well.
+_RAW_ROOT = Path(os.environ.get("RAW_DATA_DIR", str(ROOT / "data" / "raw")))
+
 INGESTED_REGISTRY = ROOT / "data" / "ingested.json"
 LOG_DIR = ROOT / "logs"
+# All registered source directories — add new connectors here.
 RAW_DIRS = [
-    ROOT / "data" / "raw" / "ep_debates",
-    ROOT / "data" / "raw" / "eurlex",
+    _RAW_ROOT / "ep_debates",
+    _RAW_ROOT / "eurlex",
+    _RAW_ROOT / "uk_legislation",
 ]
 
 
@@ -123,7 +133,7 @@ def _write_report(results: List[Dict[str, Any]]) -> None:
 
 
 def run_scrapers() -> None:
-    """Run both scrapers to pull new data."""
+    """Run all registered scrapers to pull new data."""
     logger.info("Running EP debates scraper...")
     try:
         from scrapers.ep_debates import run_incremental as ep_run
@@ -139,6 +149,14 @@ def run_scrapers() -> None:
         logger.info("EUR-Lex: %d new acts", len(eur_items))
     except Exception as e:
         logger.error("EUR-Lex scraper failed: %s", e)
+
+    logger.info("Running UK Legislation scraper...")
+    try:
+        from scrapers.uk_legislation import run_incremental as ukleg_run
+        ukleg_items = ukleg_run(days=1)
+        logger.info("UK Legislation: %d new items", len(ukleg_items))
+    except Exception as e:
+        logger.error("UK Legislation scraper failed: %s", e)
 
 
 def main() -> None:
