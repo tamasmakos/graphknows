@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LLM-based relation extraction over existing Chunks → RELATION edges in Neo4j.
 
-Reads all chunks from pgvector, calls the Groq LLM (llama-3.3-70b-versatile) to
+Reads all chunks from pgvector, calls the OpenRouter LLM (moonshotai/kimi-k2) to
 extract (subject, predicate, object) triplets, then stores them as:
 
     (Entity {name: subject})-[:RELATION {predicate, chunk_id, source}]->(Entity {name: object})
@@ -43,8 +43,12 @@ PG_DSN = dict(
     dbname=_ENV.get("PGVECTOR_DB", "vectordb"),
 )
 
-GROQ_API_KEY = _ENV.get("GROQ_API_KEY") or _ENV.get("LLM_GROQ_API_KEY", "")
-LLM_MODEL = _ENV.get("LLM_MODEL", "llama-3.3-70b-versatile")
+OPENROUTER_API_KEY = (
+    _ENV.get("OPENROUTER_API_KEY")
+    or _ENV.get("OPEN_ROUTER_API", "")
+    or os.environ.get("OPENROUTER_API_KEY", "")
+)
+EXTRACTION_MODEL = _ENV.get("EXTRACTION_MODEL", "moonshotai/kimi-k2")
 
 EXTRACT_PROMPT = """\
 You are a political-text information-extraction engine.
@@ -65,10 +69,14 @@ Text:
 
 
 def _make_llm_client() -> OpenAI:
-    """Instantiate an OpenAI-compatible client pointed at Groq."""
+    """Instantiate an OpenAI-compatible client pointed at OpenRouter."""
     return OpenAI(
-        api_key=GROQ_API_KEY or os.environ.get("GROQ_API_KEY", "no-key"),
-        base_url="https://api.groq.com/openai/v1",
+        api_key=OPENROUTER_API_KEY or "no-key",
+        base_url="https://openrouter.ai/api/v1",
+        default_headers={
+            "HTTP-Referer": "https://graphknows.io",
+            "X-Title": "GraphKnows",
+        },
     )
 
 
@@ -86,7 +94,7 @@ def extract_triplets(client: OpenAI, chunk_id: str, text: str) -> list[dict]:
     prompt = EXTRACT_PROMPT.format(text=text[:2000])
     try:
         response = client.chat.completions.create(
-            model=LLM_MODEL,
+            model=EXTRACTION_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=1024,
