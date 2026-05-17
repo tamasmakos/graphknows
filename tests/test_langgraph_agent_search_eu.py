@@ -117,7 +117,14 @@ def _build_search_eu_tool(agent_module):
     agent_module.ChatGroq = _FakeChatGroq
     agent_module.StateGraph = _FakeStateGraph
     agent_module.END = object()
-    with unittest.mock.patch.object(agent_module, "ToolNode", _FakeToolNode):
+    # Also patch the canonical module since the shim delegates to agent.graph.agent
+    import agent.graph.agent as _canonical_agent
+    with (
+        unittest.mock.patch.object(agent_module, "ToolNode", _FakeToolNode),
+        unittest.mock.patch.object(_canonical_agent, "ChatGroq", _FakeChatGroq),
+        unittest.mock.patch.object(_canonical_agent, "StateGraph", _FakeStateGraph),
+        unittest.mock.patch.object(_canonical_agent, "ToolNode", _FakeToolNode),
+    ):
         agent_module.build_graph(None, "session-test", "fake-key")
     return next(tool for tool in _FakeToolNode.last_tools if tool.__name__ == "search_eu")
 
@@ -127,7 +134,7 @@ def _patch_search_client(
     docs: list[SimpleNamespace] | None = None,
     error: Exception | None = None,
 ):
-    import agent.tools.search_client as search_client_module
+    import agent.tools.search.client as search_client_module
 
     _FakeSearchServiceClient.fetch_calls = []
     _FakeSearchServiceClient.response_docs = list(docs or [])

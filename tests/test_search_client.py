@@ -8,7 +8,7 @@ import pytest
 
 pytestmark = pytest.mark.asyncio
 
-from services.agent.tools.search_client import SearchServiceClient
+from services.agent.tools.search.client import SearchServiceClient
 from services.search.models import ScrapeJob, SearchResult
 
 

@@ -1,181 +1,198 @@
-"""Unit tests for HybridRetriever -- RRF fusion and full retrieval pipeline."""
+"""Unit tests for GraphRAGClient — the unified HTTP client for graphrag service."""
 from __future__ import annotations
 
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.agent.graph.state import Chunk
-from services.agent.retrieval.hybrid_retriever import HybridRetriever, _extract_entity_ids
+from services.agent.tools.graph.client import GraphRAGClient
 
 
-# ------------------------------------------------------------------
-# _extract_entity_ids
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _mock_response(json_data, status_code=200):
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_data
+    resp.raise_for_status = MagicMock()
+    return resp
 
 
-class TestExtractEntityIds:
-    """Tests for the simple regex-based entity extraction helper."""
-
-    def test_extracts_capitalised_phrases(self):
-        texts = ["The European Commission proposed a new regulation."]
-        result = _extract_entity_ids(texts)
-        assert "European Commission" in result[0]
-
-    def test_deduplicates(self):
-        texts = [
-            "European Commission proposal.",
-            "European Commission response.",
-        ]
-        result = _extract_entity_ids(texts)
-        assert result == ["European Commission"]
-
-    def test_ignores_single_words(self):
-        texts = ["Commission said something important today."]
-        assert _extract_entity_ids(texts) == []
-
-    def test_handles_empty_input(self):
-        assert _extract_entity_ids([]) == []
+# ---------------------------------------------------------------------------
+# retrieve()
+# ---------------------------------------------------------------------------
 
 
-# ------------------------------------------------------------------
-# RRF fusion
-# ------------------------------------------------------------------
-
-
-class TestRRF:
-    """Tests for the Reciprocal Rank Fusion static method."""
-
-    def test_rrf_fuses_dense_and_graph(self):
-        dense = [
-            Chunk(id="a", doc_id="d1", text="alpha"),
-            Chunk(id="b", doc_id="d2", text="beta"),
-        ]
-        graph = [
-            Chunk(id="c", doc_id="d3", text="gamma"),
-            Chunk(id="a", doc_id="d1", text="alpha"),  # overlap
-        ]
-        result = HybridRetriever._rrf(dense, graph, k_final=3, k=60)
-        assert len(result) <= 3
-        # 'a' appears in both lists so it should rank highest
-        assert result[0].id == "a"
-
-    def test_rrf_respects_k_final(self):
-        dense = [Chunk(id=str(i), doc_id=f"d{i}", text=str(i)) for i in range(5)]
-        graph = [Chunk(id=str(i), doc_id=f"d{i}", text=str(i)) for i in range(5, 10)]
-        result = HybridRetriever._rrf(dense, graph, k_final=3, k=60)
-        assert len(result) == 3
-
-    def test_rrf_with_empty_graph(self):
-        dense = [
-            Chunk(id="a", doc_id="d1", text="alpha"),
-            Chunk(id="b", doc_id="d2", text="beta"),
-        ]
-        result = HybridRetriever._rrf(dense, [], k_final=2, k=60)
-        assert result == dense
-
-    def test_rrf_with_empty_dense(self):
-        graph = [
-            Chunk(id="a", doc_id="d1", text="alpha"),
-            Chunk(id="b", doc_id="d2", text="beta"),
-        ]
-        result = HybridRetriever._rrf([], graph, k_final=2, k=60)
-        assert result == graph
-
-    def test_rrf_uses_k_60_constant(self):
-        """Verify default k=60 is used when not overridden."""
-        dense = [Chunk(id="x", doc_id="dx", text="x")]
-        graph = [Chunk(id="y", doc_id="dy", text="y")]
-        result = HybridRetriever._rrf(dense, graph, k_final=2)
-        assert len(result) == 2
-
-
-# ------------------------------------------------------------------
-# Full retrieve pipeline
-# ------------------------------------------------------------------
-
-
-class TestHybridRetrieverRetrieve:
-    """Tests for the async retrieve method with mocked dependencies."""
-
-    @pytest.fixture
-    def mock_pg(self):
-        client = AsyncMock()
-        client.search_chunks = AsyncMock(
-            return_value=[
-                {"id": "c1", "doc_id": "d1", "text": "European Commission regulation", "score": 0.95},
-                {"id": "c2", "doc_id": "d2", "text": "EU Parliament debate", "score": 0.90},
-            ]
-        )
-        client.get_chunks_by_doc_ids = AsyncMock(
-            return_value=[
-                {"id": "c3", "doc_id": "d3", "text": "Graph hit chunk"},
-            ]
-        )
-        return client
-
-    @pytest.fixture
-    def mock_mg(self):
-        driver = MagicMock()
-        session = MagicMock()
-        result = MagicMock()
-        result.data.return_value = [
-            {"id": "EntityX", "doc_ids": ["d3"]},
-        ]
-        session.run.return_value = result
-        driver.session.return_value.__enter__.return_value = session
-        return driver
-
-    @pytest.fixture
-    def retriever(self, mock_pg, mock_mg):
-        return HybridRetriever(session_id="test-sid", pg_client=mock_pg, mg_driver=mock_mg)
+class TestGraphRAGClientRetrieve:
+    """Tests for the retrieve() method."""
 
     @pytest.mark.asyncio
-    async def test_retrieve_returns_chunks(self, retriever):
-        result = await retriever.retrieve("test query", k_dense=20, k_final=8)
-        assert isinstance(result, list)
-        assert all(isinstance(c, Chunk) for c in result)
+    async def test_retrieve_posts_to_retrieve_endpoint(self):
+        expected = {"chunks": [{"id": "c1", "text": "hello"}], "entities": [], "scores": []}
+        with patch("services.agent.tools.graph.client.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+            mock_client.post.return_value = _mock_response(expected)
+
+            client = GraphRAGClient("http://graphrag:8010")
+            result = await client.retrieve("EU regulation", "session-1", top_k=5)
+
+            mock_client.post.assert_awaited_once_with(
+                "/retrieve",
+                json={"query": "EU regulation", "session_id": "session-1", "top_k": 5},
+            )
+            assert result == expected
 
     @pytest.mark.asyncio
-    async def test_retrieve_respects_k_final(self, retriever):
-        result = await retriever.retrieve("test query", k_dense=20, k_final=2)
-        assert len(result) <= 2
+    async def test_retrieve_default_top_k(self):
+        expected = {"chunks": [], "entities": [], "scores": []}
+        with patch("services.agent.tools.graph.client.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+            mock_client.post.return_value = _mock_response(expected)
+
+            client = GraphRAGClient("http://graphrag:8010")
+            await client.retrieve("query", "sid")
+
+            call_json = mock_client.post.call_args[1]["json"]
+            assert call_json["top_k"] == 10  # default
+
+
+# ---------------------------------------------------------------------------
+# get_path()
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRAGClientGetPath:
+    """Tests for the get_path() method."""
 
     @pytest.mark.asyncio
-    async def test_session_id_passed_to_pgvector(self, retriever, mock_pg):
-        await retriever.retrieve("test query")
-        mock_pg.search_chunks.assert_awaited_once_with(
-            "test-sid", "test query", k=20
-        )
+    async def test_get_path_posts_correct_payload(self):
+        expected = {"path": ["EntityA", "EntityB"], "length": 1}
+        with patch("services.agent.tools.graph.client.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+            mock_client.post.return_value = _mock_response(expected)
+
+            client = GraphRAGClient("http://graphrag:8010")
+            result = await client.get_path("EntityA", "EntityB", max_hops=2)
+
+            mock_client.post.assert_awaited_once_with(
+                "/path",
+                json={"entity_a": "EntityA", "entity_b": "EntityB", "max_hops": 2},
+            )
+            assert result["path"] == ["EntityA", "EntityB"]
+
+
+# ---------------------------------------------------------------------------
+# get_chunks()
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRAGClientGetChunks:
+    """Tests for the get_chunks() method."""
 
     @pytest.mark.asyncio
-    async def test_session_id_passed_to_memgraph(self, retriever, mock_mg):
-        await retriever.retrieve("test query")
-        call_kwargs = mock_mg.session.return_value.__enter__.return_value.run.call_args[1]
-        assert call_kwargs["sid"] == "test-sid"
+    async def test_get_chunks_posts_correct_payload(self):
+        expected = {"chunks": ["text about entity"]}
+        with patch("services.agent.tools.graph.client.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+            mock_client.post.return_value = _mock_response(expected)
+
+            client = GraphRAGClient("http://graphrag:8010")
+            result = await client.get_chunks("EuropeanParliament", "sid-42", top_k=3)
+
+            mock_client.post.assert_awaited_once_with(
+                "/chunks",
+                json={"entity": "EuropeanParliament", "session_id": "sid-42", "top_k": 3},
+            )
+            assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# get_community()
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRAGClientGetCommunity:
+    """Tests for the get_community() method."""
 
     @pytest.mark.asyncio
-    async def test_retrieve_with_no_entities(self, mock_pg):
-        """When no entities are extracted, graph walk is skipped."""
-        mock_pg.search_chunks = AsyncMock(
-            return_value=[
-                {"id": "c1", "doc_id": "d1", "text": "some lower case text", "score": 0.5},
-            ]
-        )
-        retriever = HybridRetriever(
-            session_id="test-sid", pg_client=mock_pg, mg_driver=MagicMock()
-        )
-        result = await retriever.retrieve("test", k_dense=20, k_final=5)
-        # Should still return dense-only results
-        assert len(result) == 1
-        assert result[0].id == "c1"
+    async def test_get_community_posts_correct_payload(self):
+        expected = {"nodes": [{"id": "EntityA"}], "edges": []}
+        with patch("services.agent.tools.graph.client.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+            mock_client.post.return_value = _mock_response(expected)
+
+            client = GraphRAGClient("http://graphrag:8010")
+            result = await client.get_community("EntityA", depth=2)
+
+            mock_client.post.assert_awaited_once_with(
+                "/community",
+                json={"entity": "EntityA", "depth": 2},
+            )
+            assert result["nodes"] == [{"id": "EntityA"}]
+
+
+# ---------------------------------------------------------------------------
+# ingest_chunks()
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRAGClientIngestChunks:
+    """Tests for the ingest_chunks() method."""
 
     @pytest.mark.asyncio
-    async def test_retrieve_empty_dense_hits(self, mock_pg):
-        mock_pg.search_chunks = AsyncMock(return_value=[])
-        retriever = HybridRetriever(
-            session_id="test-sid", pg_client=mock_pg, mg_driver=MagicMock()
-        )
-        result = await retriever.retrieve("test query", k_dense=20, k_final=5)
-        assert result == []
+    async def test_ingest_posts_chunks(self):
+        chunks = [{"id": "c1", "text": "hello world"}]
+        expected = {"ingested": 1}
+        with patch("services.agent.tools.graph.client.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_cls.return_value.__aenter__.return_value = mock_client
+            mock_cls.return_value.__aexit__.return_value = False
+            mock_client.post.return_value = _mock_response(expected)
+
+            client = GraphRAGClient("http://graphrag:8010")
+            result = await client.ingest_chunks(chunks, "session-xyz")
+
+            mock_client.post.assert_awaited_once_with(
+                "/ingest",
+                json={"chunks": chunks, "session_id": "session-xyz"},
+            )
+            assert result["ingested"] == 1
+
+
+# ---------------------------------------------------------------------------
+# context manager
+# ---------------------------------------------------------------------------
+
+
+class TestGraphRAGClientContextManager:
+    """Tests for async context manager behaviour."""
+
+    @pytest.mark.asyncio
+    async def test_context_manager_creates_client(self):
+        with patch("services.agent.tools.graph.client.httpx.AsyncClient") as mock_cls:
+            mock_instance = MagicMock()
+            mock_instance.aclose = AsyncMock()
+            mock_cls.return_value = mock_instance
+
+            grc = GraphRAGClient("http://graphrag:8010")
+            async with grc:
+                assert grc._client is mock_instance
+
+            mock_instance.aclose.assert_awaited_once()
+            assert grc._client is None
+
+    def test_base_url_trailing_slash_stripped(self):
+        grc = GraphRAGClient("http://graphrag:8010/")
+        assert grc._base_url == "http://graphrag:8010"

@@ -102,7 +102,14 @@ def _build_search_web_tool(agent_module):
     agent_module.ChatGroq = _FakeChatGroq
     agent_module.StateGraph = _FakeStateGraph
     agent_module.END = object()
-    with unittest.mock.patch.object(agent_module, "ToolNode", _FakeToolNode):
+    # Also patch the canonical module since the shim delegates to agent.graph.agent
+    import agent.graph.agent as _canonical_agent
+    with (
+        unittest.mock.patch.object(agent_module, "ToolNode", _FakeToolNode),
+        unittest.mock.patch.object(_canonical_agent, "ChatGroq", _FakeChatGroq),
+        unittest.mock.patch.object(_canonical_agent, "StateGraph", _FakeStateGraph),
+        unittest.mock.patch.object(_canonical_agent, "ToolNode", _FakeToolNode),
+    ):
         agent_module.build_graph(None, "session-search-web", "fake-key")
     return next(tool for tool in _FakeToolNode.last_tools if tool.__name__ == "search_web")
 
