@@ -27,7 +27,7 @@ agent_watchdog() {
 hybridrag_watchdog() {
   while true; do
     echo "[watchdog] Starting hybridrag on :8020..."
-    PYTHONPATH="/root/graphknows/services/hybridrag:/root/graphknows/services" \
+    PYTHONPATH="/root/graphknows/services:/root/graphknows/libs/python/graphknows-shared" \
       python -m hybridrag.run \
       >> /tmp/hybridrag.log 2>&1 || true
     echo "[watchdog] HybridRAG exited — restarting in 5s..."
