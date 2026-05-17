@@ -150,6 +150,15 @@ async def lifespan(app: FastAPI):
 
     cfg = _build_cfg()
     _retriever = HybridRetriever(cfg)
+
+    # Wire the retriever into the MCP server so tools can use it
+    try:
+        from graphrag.mcp.server import set_retriever as _set_mcp_retriever
+        _set_mcp_retriever(_retriever)
+        log.info("MCP retriever wired.")
+    except Exception as exc:
+        log.warning("Could not wire MCP retriever: %s", exc)
+
     log.info("HybridRetriever ready.")
     yield
     # Shutdown
@@ -159,7 +168,7 @@ async def lifespan(app: FastAPI):
 
 
 # ---------------------------------------------------------------------------
-# FastAPI app
+# FastAPI app + MCP mount
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
@@ -168,6 +177,14 @@ app = FastAPI(
     description="REST API for the GraphRAG ReAct agent — political intelligence over EU Parliament debates.",
     lifespan=lifespan,
 )
+
+# Mount the FastMCP server at /mcp/ (streamable HTTP transport)
+try:
+    from graphrag.mcp.server import build_mcp_app
+    app.mount("/mcp", build_mcp_app())
+    log.info("FastMCP server mounted at /mcp/")
+except Exception as _mcp_exc:
+    log.warning("Could not mount MCP server (non-fatal): %s", _mcp_exc)
 
 
 # ---------------------------------------------------------------------------
