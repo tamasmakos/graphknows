@@ -125,13 +125,19 @@ services:
       # Embedding
       EMBED_MODEL: "${EMBED_MODEL:-BAAI/bge-small-en-v1.5}"
     ports:
-      - "8020:8020"
+      - "${HYBRIDRAG_PORT:-8010}:8020"  # host 8010 → container 8020 (avoids conflict with graphgen on 8020)
     depends_on:
       neo4j:
         condition: service_healthy
       pgvector:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   agent:
     build:
@@ -178,10 +184,36 @@ services:
       # the search service always read/write the same files.
       RAW_DATA_DIR: "/data/raw"
     ports:
-      - "8040:8000"
+      - "${SEARCH_PORT:-8040}:8000"
     volumes:
       - ./data/raw:/data/raw
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: apps/web
+      dockerfile: Dockerfile
+    environment:
+      AGENT_URL: "${AGENT_URL:-http://agent:8000}"
+      PORT: "8080"
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    depends_on:
+      agent:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
 
   # ── Observability (optional profile) ────────────────────────────────────────
 
@@ -224,3 +256,8 @@ volumes:
   graphgen_input:
   graphgen_output:
   langfuse_data:
+
+# Port map (host → service):
+#  7474 neo4j HTTP   7687 neo4j Bolt   7688 memgraph Bolt   5432 pgvector
+#  8010 hybridrag    8020 graphgen     8030 agent            8040 search
+#  8080 frontend     3000 langfuse (observability profile)
