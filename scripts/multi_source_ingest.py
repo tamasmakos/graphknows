@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Multi-source EU document ingest using all 9 BaseSource adapters.
+"""Multi-source EU document ingest using all search service connectors.
 
-Fetches 2 documents from each adapter, runs them through:
+Fetches documents from each connector, runs them through:
   1. markdown_to_chunks()  → chunk dicts
   2. Embedding via BGE-small-en-v1.5 → pgvector chunks table
   3. Document node upsert in Neo4j with FROM edges to Chunks
-  4. CO_OCCURS materialisation for new entities (optional, no GLiNER2 needed)
 
 Usage::
 
     PYTHONPATH=/root/graphknows python3 scripts/multi_source_ingest.py [--limit 2] [--dry-run]
 
 Notes:
-  - Adapters that inherit BaseSource expose ``scrape(limit=N)`` and ``fetch_one(url)``.
+  - All connectors live in services/search/connectors/sources/.
   - Network failures are logged and skipped; the script never hard-crashes on a single
-    adapter failure.
+    connector failure.
   - Embedding requires sentence-transformers + BAAI/bge-small-en-v1.5 (already cached
     from the original ingest run).
 """
@@ -36,6 +35,7 @@ from neo4j import GraphDatabase
 _REPO = Path(__file__).parent.parent
 sys.path.insert(0, str(_REPO / "services"))
 
+from services.search.models import SearchQuery
 from services.search.parsed_document import ParsedDocument, markdown_to_chunks
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s – %(message)s")
@@ -57,177 +57,54 @@ _PG_DSN = (
 
 EMBED_MODEL = _ENV.get("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 
-# ── Adapter registry ─────────────────────────────────────────────────────────
-# Only BaseSource-derived adapters (they have scrape()); SourceAdapter-based ones
-# (ep_debates, eurlex, uk_legislation) need their scrapers and are handled separately.
+# ── Connector registry ────────────────────────────────────────────────────────
 
-def _build_base_source_adapters() -> list:
-    """Instantiate all BaseSource adapters (rate-limited HTTP scrapers)."""
-    from services.search.adapters.council_conclusions import CouncilConclusionsSource
-    from services.search.adapters.ec_press import ECPressSource
-    from services.search.adapters.eca_reports import ECAReportsSource
-    from services.search.adapters.ecb_publications import ECBPublicationsSource
-    from services.search.adapters.ep_resolutions import EPResolutionsSource
-    from services.search.adapters.eprs_briefings import EPRSBriefingsSource
-    from services.search.adapters.wikipedia_eu import WikipediaEUSource
-    from services.search.adapters.cellar_sparql import CellarSPARQLSource
+def _build_connectors() -> list:
+    """Instantiate all search service connectors."""
+    from services.search.connectors.sources.council_conclusions import CouncilConclusionsConnector
+    from services.search.connectors.sources.ec_press import ECPressConnector
+    from services.search.connectors.sources.eca_reports import ECAReportsConnector
+    from services.search.connectors.sources.ecb_publications import ECBPublicationsConnector
+    from services.search.connectors.sources.ep_debates import EPDebatesConnector
+    from services.search.connectors.sources.ep_resolutions import EPResolutionsConnector
+    from services.search.connectors.sources.eprs_briefings import EPRSBriefingsConnector
+    from services.search.connectors.sources.eurlex import EurLexConnector
+    from services.search.connectors.sources.uk_legislation import UKLegislationConnector
+    from services.search.connectors.sources.wikipedia_eu import WikipediaEUConnector
+    from services.search.connectors.sources.cellar_sparql import CellarSPARQLConnector
 
     return [
-        CouncilConclusionsSource(rate_limit_rps=0.5, timeout=60),
-        ECPressSource(rate_limit_rps=1.0, timeout=45),
-        ECAReportsSource(rate_limit_rps=0.5, timeout=60),
-        ECBPublicationsSource(rate_limit_rps=0.5, timeout=60),
-        EPResolutionsSource(rate_limit_rps=0.5, timeout=45),
-        EPRSBriefingsSource(rate_limit_rps=0.5, timeout=45),
-        WikipediaEUSource(rate_limit_rps=1.0, timeout=30),
-        CellarSPARQLSource(doc_type="press_release", rate_limit_rps=0.5, timeout=30),
-        CellarSPARQLSource(doc_type="regulation", rate_limit_rps=0.5, timeout=30),
+        CouncilConclusionsConnector(rate_limit_rps=0.5, timeout=60),
+        ECPressConnector(rate_limit_rps=1.0, timeout=45),
+        ECAReportsConnector(rate_limit_rps=0.5, timeout=60),
+        ECBPublicationsConnector(rate_limit_rps=0.5, timeout=60),
+        EPDebatesConnector(),
+        EPResolutionsConnector(rate_limit_rps=0.5, timeout=45),
+        EPRSBriefingsConnector(rate_limit_rps=0.5, timeout=45),
+        EurLexConnector(),
+        UKLegislationConnector(),
+        WikipediaEUConnector(rate_limit_rps=1.0, timeout=30),
+        CellarSPARQLConnector(doc_type="press_release", rate_limit_rps=0.5, timeout=30),
+        CellarSPARQLConnector(doc_type="regulation", rate_limit_rps=0.5, timeout=30),
     ]
 
 
-def _run_scraper_fn(fn, *args, timeout: int = 60, **kwargs) -> list:
-    """Run a possibly-async scraper function with a timeout.
-
-    Args:
-        fn: Function to call (sync or async).
-        *args: Positional arguments forwarded to ``fn``.
-        timeout: Max seconds to wait (default 60).
-        **kwargs: Keyword arguments forwarded to ``fn``.
-
-    Returns:
-        Return value of ``fn``, or empty list on error/timeout.
-    """
-    import inspect
-
-    if inspect.iscoroutinefunction(fn):
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(
-                asyncio.wait_for(fn(*args, **kwargs), timeout=timeout)
-            )
-        except (asyncio.TimeoutError, Exception) as exc:
-            log.warning("Async scraper timed out or failed: %s", exc)
-            return []
-        finally:
-            loop.close()
-    else:
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:
-            log.warning("Sync scraper failed: %s", exc)
-            return []
-
-
-def _scrape_eurlex(limit: int) -> list[ParsedDocument]:
-    """Fetch EUR-Lex docs via its scraper module directly."""
-    try:
-        import scrapers.eurlex as _eurlex  # type: ignore[import]
-
-        if not hasattr(_eurlex, "run_incremental"):
-            log.warning("[eurlex] run_incremental not found")
-            return []
-
-        raw_docs = _run_scraper_fn(_eurlex.run_incremental, days=3, timeout=45)
-        raw_docs = raw_docs[:limit]
-    except Exception as exc:
-        log.warning("[eurlex] scraper failed: %s", exc)
-        return []
-
-    docs = []
-    for d in raw_docs:
-        try:
-            doc = ParsedDocument(
-                source_id="eurlex",
-                source_type="EU_LEGISLATION",
-                url=d.get("url", d.get("source_url", "")),
-                title=d.get("title", "EUR-Lex Document"),
-                date=d.get("published", d.get("date", "2024-01-01"))[:10],
-                institution="EUR-Lex",
-                language="EN",
-                raw_text=d.get("text", "")[:50_000],
-                markdown=f"# {d.get('title', 'EUR-Lex Document')}\n\n{d.get('text', '')}",
-                doc_id=d.get("celex", ""),
-            )
-            docs.append(doc)
-        except Exception as exc:
-            log.warning("[eurlex] doc parse error: %s", exc)
-    return docs
-
-
-def _scrape_ep_debates(limit: int) -> list[ParsedDocument]:
-    """Fetch EP Debates via the underlying scraper module."""
-    try:
-        import scrapers.ep_debates as _ep  # type: ignore[import]
-
-        if not hasattr(_ep, "run_incremental"):
-            log.warning("[ep_debates] run_incremental not found")
-            return []
-
-        raw_docs = _run_scraper_fn(_ep.run_incremental, max_speeches=50, timeout=45)
-        raw_docs = raw_docs[:limit]
-    except Exception as exc:
-        log.warning("[ep_debates] scraper failed: %s", exc)
-        return []
-
-    docs = []
-    for d in raw_docs:
-        try:
-            text = d.get("text", d.get("content", ""))
-            title = d.get("title", d.get("itm_title", "EP Debate"))
-            doc = ParsedDocument(
-                source_id="ep_debates",
-                source_type="EP_DEBATE",
-                url=d.get("url", "https://europarl.europa.eu/plenary/en/debates.html"),
-                title=title,
-                date=d.get("date", d.get("session_date", "2024-01-01"))[:10],
-                institution="European Parliament",
-                language="EN",
-                raw_text=text[:50_000],
-                markdown=f"# {title}\n\n{text}",
-                doc_id=d.get("itm_id", d.get("id", "")),
-            )
-            docs.append(doc)
-        except Exception as exc:
-            log.warning("[ep_debates] doc parse error: %s", exc)
-    return docs
-
-
-def _scrape_uk_legislation(limit: int) -> list[ParsedDocument]:
-    """Fetch UK legislation via its scraper module."""
-    try:
-        import scrapers.uk_legislation as _ukleg  # type: ignore[import]
-
-        if not hasattr(_ukleg, "run_incremental"):
-            log.warning("[uk_legislation] run_incremental not found")
-            return []
-
-        raw_docs = _run_scraper_fn(_ukleg.run_incremental, days=3, timeout=45)
-        raw_docs = raw_docs[:limit]
-    except Exception as exc:
-        log.warning("[uk_legislation] scraper failed: %s", exc)
-        return []
-
-    docs = []
-    for d in raw_docs:
-        try:
-            text = d.get("text", d.get("content", ""))
-            title = d.get("title", "UK Legislation")
-            doc = ParsedDocument(
-                source_id="uk_legislation",
-                source_type="UK_LEGISLATION",
-                url=d.get("url", ""),
-                title=title,
-                date=d.get("date", "2024-01-01")[:10],
-                institution="UK Parliament",
-                language="EN",
-                raw_text=text[:50_000],
-                markdown=f"# {title}\n\n{text}",
-                doc_id=d.get("id", ""),
-            )
-            docs.append(doc)
-        except Exception as exc:
-            log.warning("[uk_legislation] doc parse error: %s", exc)
-    return docs
+def _to_parsed(result, doc) -> ParsedDocument:
+    """Convert a (SearchResult, Document) pair to a ParsedDocument for ingestion."""
+    text = doc.text if doc else ""
+    title = result.title or "Untitled"
+    return ParsedDocument(
+        source_id=result.source,
+        source_type=result.source.upper().replace("-", "_"),
+        url=result.url or "",
+        title=title,
+        date=(result.date or "")[:10],
+        institution=doc.metadata.get("institution", "") if doc else "",
+        language=doc.metadata.get("language", "EN") if doc else "EN",
+        raw_text=text[:50_000],
+        markdown=f"# {title}\n\n{text}",
+        doc_id=result.id,
+    )
 
 
 # ── Embedding ────────────────────────────────────────────────────────────────
@@ -341,26 +218,38 @@ def store_document_neo4j(session, doc: ParsedDocument, chunks: list[dict]) -> No
 
 # ── Ingest orchestration ─────────────────────────────────────────────────────
 
-async def ingest_base_source_adapter(adapter, limit: int, dry_run: bool) -> list[ParsedDocument]:
-    """Run scrape() on a BaseSource adapter and return ParsedDocuments.
+async def _ingest_connector(connector, limit: int, dry_run: bool) -> list[ParsedDocument]:
+    """Search a connector for recent documents and return ParsedDocuments.
 
     Args:
-        adapter: A BaseSource instance.
+        connector: A SourceConnector instance.
         limit: Max documents to fetch.
         dry_run: Passed through for logging.
 
     Returns:
         List of successfully parsed documents.
     """
-    sid = adapter.source_id
-    log.info("[%s] Starting scrape (limit=%d) …", sid, limit)
-    async with adapter:
+    sid = connector.source_id
+    log.info("[%s] Starting fetch (limit=%d) …", sid, limit)
+    q = SearchQuery(query="", limit=limit)
+    try:
+        results = await connector.search(q)
+    except Exception as exc:
+        log.warning("[%s] search() raised: %s", sid, exc)
+        return []
+
+    docs: list[ParsedDocument] = []
+    for result in results[:limit]:
         try:
-            docs = await adapter.scrape(limit=limit)
+            full_doc = await connector.fetch(result.id)
+            if full_doc is None:
+                log.warning("[%s] fetch() returned None for id=%s", sid, result.id)
+                continue
+            docs.append(_to_parsed(result, full_doc))
         except Exception as exc:
-            log.warning("[%s] scrape() raised: %s", sid, exc)
-            docs = []
-    log.info("[%s] Scraped %d documents", sid, len(docs))
+            log.warning("[%s] fetch() raised for id=%s: %s", sid, result.id, exc)
+
+    log.info("[%s] Fetched %d documents", sid, len(docs))
     return docs
 
 
@@ -432,16 +321,16 @@ def process_documents(
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-async def _run_async(limit: int, dry_run: bool) -> None:
-    """Async main: scrape BaseSource adapters concurrently, then process."""
-    adapters = _build_base_source_adapters()
-    tasks = [ingest_base_source_adapter(a, limit, dry_run) for a in adapters]
+async def _run_async(limit: int, dry_run: bool) -> list[ParsedDocument]:
+    """Async main: fetch all connectors concurrently, then return docs."""
+    connectors = _build_connectors()
+    tasks = [_ingest_connector(c, limit, dry_run) for c in connectors]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_docs: list[ParsedDocument] = []
-    for adapter, result in zip(adapters, results):
+    for connector, result in zip(connectors, results):
         if isinstance(result, Exception):
-            log.warning("[%s] adapter error: %s", adapter.source_id, result)
+            log.warning("[%s] connector error: %s", connector.source_id, result)
         else:
             all_docs.extend(result)
 
@@ -449,55 +338,33 @@ async def _run_async(limit: int, dry_run: bool) -> None:
 
 
 def run(limit: int = 2, dry_run: bool = False) -> None:
-    """Full ingest: all 9 adapters → pgvector + Neo4j.
+    """Full ingest: all connectors → pgvector + Neo4j.
 
     Args:
-        limit: Max documents to fetch per adapter.
+        limit: Max documents to fetch per connector.
         dry_run: If True, extract and log but do not write to DBs.
     """
     driver = GraphDatabase.driver(NEO4J_URI, auth=NEO4J_AUTH)
-    grand_total: dict = {"docs": 0, "chunks": 0, "adapters": 0}
+    grand_total: dict = {"docs": 0, "chunks": 0, "connectors": 0}
 
     try:
-        # ── BaseSource adapters (async HTTP scrapers) ──────────────────────
+        # ── All connectors (async HTTP) ────────────────────────────────────
         loop = asyncio.new_event_loop()
-        base_docs = loop.run_until_complete(_run_async(limit, dry_run))
+        all_docs = loop.run_until_complete(_run_async(limit, dry_run))
         loop.close()
 
-        if base_docs:
-            summary = process_documents(base_docs, driver, dry_run)
+        if all_docs:
+            summary = process_documents(all_docs, driver, dry_run)
             grand_total["docs"] += summary["docs"]
             grand_total["chunks"] += summary["chunks"]
-            grand_total["adapters"] += 1
-
-        # ── Scraper-module adapters (eurlex, ep_debates, uk_legislation) ──
-        scraper_fns = [
-            ("eurlex", _scrape_eurlex),
-            ("ep_debates", _scrape_ep_debates),
-            ("uk_legislation", _scrape_uk_legislation),
-        ]
-        for name, fn in scraper_fns:
-            log.info("[%s] Fetching via scraper module …", name)
-            try:
-                docs = fn(limit)
-            except Exception as exc:
-                log.warning("[%s] scraper module failed: %s", name, exc)
-                docs = []
-
-            if docs:
-                summary = process_documents(docs, driver, dry_run)
-                grand_total["docs"] += summary["docs"]
-                grand_total["chunks"] += summary["chunks"]
-                grand_total["adapters"] += 1
-            else:
-                log.info("[%s] No documents retrieved", name)
+            grand_total["connectors"] += 1
 
     finally:
         driver.close()
 
     log.info(
-        "═══ Ingest complete. adapters_with_data=%d | docs=%d | chunks=%d%s ═══",
-        grand_total["adapters"],
+        "═══ Ingest complete. connectors_with_data=%d | docs=%d | chunks=%d%s ═══",
+        grand_total["connectors"],
         grand_total["docs"],
         grand_total["chunks"],
         " (dry-run)" if dry_run else "",
