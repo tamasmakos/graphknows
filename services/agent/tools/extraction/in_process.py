@@ -69,7 +69,7 @@ class InProcessExtractor:
         import contextlib
 
         from graphgen.pipeline.entity_relation.extraction import get_gliner2_model
-        from graphgen.prototype_gliner2_ontology import (
+        from graphgen.pipeline.entity_relation.ontology import (
             build_gliner2_schema,
             build_top_level_label_space,
             refine_entities_with_ontology,
@@ -121,7 +121,7 @@ class InProcessExtractor:
             dict with keys: nodes, edges, lexical_edges, entities, relations
             (same schema as graphgen_worker.py).
         """
-        from graphgen.prototype_gliner2_ontology import (
+        from graphgen.pipeline.entity_relation.ontology import (
             refine_entities_with_ontology,
             select_candidate_labels,
         )

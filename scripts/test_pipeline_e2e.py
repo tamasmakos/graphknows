@@ -53,7 +53,7 @@ def _ok(msg: str) -> None:
 
 def test_select_candidate_labels() -> None:
     print("=== Step 1: select_candidate_labels ===")
-    from graphgen.prototype_gliner2_ontology import (
+    from graphgen.pipeline.entity_relation.ontology import (
         build_top_level_label_space,
         select_candidate_labels,
     )

@@ -19,7 +19,7 @@ if str(_SERVICES_DIR) not in sys.path:
     sys.path.append(str(_SERVICES_DIR))
 
 from graphgen.pipeline.entity_relation.extraction import get_gliner2_model
-from graphgen.prototype_gliner2_ontology import (
+from graphgen.pipeline.entity_relation.ontology import (
     build_gliner2_schema,
     build_top_level_label_space,
     refine_entities_with_ontology,

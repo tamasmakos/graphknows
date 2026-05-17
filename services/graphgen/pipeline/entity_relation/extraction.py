@@ -13,7 +13,7 @@ from graphgen.pipeline.entity_relation.extractors import BaseExtractor, get_extr
 from graphgen.evaluation import summarize_entity_resolution_effects
 from graphgen.pipeline.graph_cleaning.canonicalization import classify_surface_form
 from graphgen.pipeline.graph_cleaning.canonicalization import normalize_surface_form
-from graphgen.prototype_gliner2_ontology import (
+from graphgen.pipeline.entity_relation.ontology import (
     build_top_level_label_space,
     build_gliner2_schema,
     refine_entities_with_ontology,

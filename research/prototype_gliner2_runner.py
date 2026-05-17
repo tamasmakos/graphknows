@@ -3,7 +3,7 @@ from typing import Dict, List, Any
 
 from gliner2 import GLiNER2
 
-from graphgen.prototype_gliner2_ontology import (
+from graphgen.pipeline.entity_relation.ontology import (
     build_top_level_label_space,
     select_candidate_labels,
     refine_entities_with_ontology,
