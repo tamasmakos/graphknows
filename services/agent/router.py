@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, model_validator
 from starlette.websockets import WebSocketState
 
+from agent.api.schemas import ChatRequest, ChatResponse, GraphResponse, QueryRequest  # noqa: F401
 from agent.config import AgentSettings
 try:
     try:
@@ -170,9 +171,9 @@ def _get_ontology_components() -> tuple[Any | None, Any | None]:
     global _ontology_router, _rel_extractor
     if _ontology_router is None:
         try:
-            from agent.ontology.loader import OntologyLoader
-            from agent.ontology.router import OntologyRouter
-            from agent.ontology.rel_extractor import OntologyRelExtractor
+            from graphknows.shared.ontology.loader import OntologyLoader
+            from graphknows.shared.ontology.router import OntologyRouter
+            from graphknows.shared.ontology.rel_extractor import OntologyRelExtractor
             _ontology_router = OntologyRouter(OntologyLoader())
             _rel_extractor = OntologyRelExtractor()
             log.info("Ontology components initialised")
@@ -198,44 +199,8 @@ def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client:
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
-
-
-class ChatRequest(BaseModel):
-    """Request body for POST /chat endpoint."""
-    message: str
-    session_id: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _check_message(self) -> "ChatRequest":
-        if not self.message.strip():
-            raise ValueError("message must not be empty")
-        return self
-
-
-class GraphResponse(BaseModel):
-    """Response model for graph endpoints."""
-    nodes: List[Dict[str, Any]]
-    edges: List[Dict[str, Any]]
-
-
-class ChatResponse(BaseModel):
-    """Response model for POST /chat endpoint."""
-    answer: str
-    session_id: str
-    graph: GraphResponse
-    reasoning_steps: list = []
-    sources: list = []
-
-
-class QueryRequest(BaseModel):
-    """Request body for POST /sessions/{id}/query endpoint."""
-    message: str
-
-    @model_validator(mode="after")
-    def _check_message(self) -> "QueryRequest":
-        if not self.message.strip():
-            raise ValueError("message must not be empty")
-        return self
+# Pydantic schemas are in agent.api.schemas — re-exported here for compat
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +731,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
     if session_id not in _active_sessions:
         raise HTTPException(status_code=404, detail=f"Session {session_id!r} not found")
 
-    from agent.langgraph_agent import build_graph
+    from agent.graph.agent import build_graph
     from langchain_core.messages import HumanMessage
 
     settings = _get_settings()
@@ -925,7 +890,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
         # ── Run communicate_node with real Tavily docs from the ReAct agent ──
         # Import here to avoid circular imports at module level
         try:
-            from agent.langgraph_agent import _session_docs
+            from agent.graph.agent import _session_docs
             from services.agent.graph.state import Chunk
             from services.agent.graph.nodes.communicate import communicate_node
             import uuid as _uuid

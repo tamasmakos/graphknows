@@ -16,9 +16,9 @@ from agent.router import _init_router, router
 from services.agent.config import SESSION_GRAPH_BACKEND
 from services.agent.graph.backends.memgraph import MemgraphBackend
 from services.agent.graph.backends.neo4j_gds import Neo4jGDSBackend
-from services.agent.tools.search_client import SearchServiceClient
-from services.agent.tools.tavily_tool import TavilySearchTool
-from services.agent.tools.cellar_tool import CellarSPARQLTool
+from services.agent.tools.search.client import SearchServiceClient
+from services.agent.tools.search.web import TavilySearchTool
+from services.agent.tools.search.cellar import CellarSPARQLTool
 
 
 def _configure_logging() -> None:
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
     search_client = SearchServiceClient(base_url=_settings.search_url)
     tavily = TavilySearchTool() if os.environ.get("TAVILY_API") or os.environ.get("TAVILY_API_KEY") else None
     cellar = CellarSPARQLTool()
-    from services.agent.tools.extractor import load_extractor
+    from services.agent.tools.extraction.in_process import InProcessExtractor as load_extractor
     extractor = load_extractor()
     _init_router(_settings, _sgm, _http_client, pg_client, search_client, _graph_backend, tavily=tavily, cellar=cellar, extractor=extractor)
     app.state.settings = _settings
