@@ -23,7 +23,6 @@ from services.agent.graph.events import (
 from services.agent.graph.state import Chunk, Entity, InvestigativeState, RawDoc, Relation, SubQuestion
 
 if TYPE_CHECKING:
-    from services.agent.infra.pgvector_client import PgVectorClient
     from services.agent.tools.search.client import SearchServiceClient
     from services.agent.tools.search.web import TavilySearchTool
     from services.agent.tools.search.cellar import CellarSPARQLTool
@@ -76,11 +75,10 @@ def _pick_sources(plan: list[SubQuestion]) -> list[str]:
 
 
 class DualWriter:
-    """Persists chunks to pgvector and entities/relations to the session graph backend.
+    """Persists entities/relations to the session graph backend.
 
     Attributes:
         session_id: Active session namespace.
-        pg: PgVectorClient instance for chunk persistence.
         backend: Optional GraphBackend for graph persistence.
         mg: Legacy Memgraph driver (for backward compatibility).
     """
@@ -88,7 +86,6 @@ class DualWriter:
     def __init__(
         self,
         session_id: str,
-        pg_client: PgVectorClient,
         mg_driver: Any = None,
         backend: Any = None,
     ) -> None:
@@ -96,44 +93,27 @@ class DualWriter:
 
         Args:
             session_id: Session namespace for all writes.
-            pg_client: Initialised PgVectorClient.
             mg_driver: Optional legacy Neo4j driver connected to Memgraph.
             backend: Optional GraphBackend instance.
         """
         self.session_id = session_id
-        self.pg = pg_client
         self.mg = mg_driver
         self.backend = backend
 
     async def write(
         self,
-        chunks: list[Chunk],
         entities: list[Entity],
         relations: list[Relation],
     ) -> None:
-        """Persist chunks to pgvector and entities/relations to graph concurrently.
+        """Persist entities/relations to graph concurrently.
 
         Args:
-            chunks: Chunks to write to the vector store.
             entities: Entities to write to the graph store.
             relations: Relations to write to the graph store.
         """
-        if not chunks and not entities and not relations:
+        if not entities and not relations:
             return
-        ops = [self._write_chunks(chunks)]
-        if entities or relations:
-            ops.append(self._write_graph(entities, relations))
-        await asyncio.gather(*ops)
-
-    async def _write_chunks(self, chunks: list[Chunk]) -> None:
-        """Write chunks to pgvector.
-
-        Args:
-            chunks: Chunks to embed and persist.
-        """
-        if not chunks:
-            return
-        await self.pg.upsert_chunks(self.session_id, chunks)
+        await self._write_graph(entities, relations)
 
     async def _write_graph(self, entities: list[Entity], relations: list[Relation]) -> None:
         """Write entities and relations via GraphBackend or legacy mg_driver.
@@ -363,7 +343,6 @@ async def _fetch_multi_source(
 
 
 def make_investigate_node(
-    pg_client: "PgVectorClient | None" = None,
     mg_driver: Any = None,
     search_client: "SearchServiceClient | None" = None,
     backend: Any = None,
@@ -376,7 +355,6 @@ def make_investigate_node(
     """Factory for investigate_node with injected dependencies.
 
     Args:
-        pg_client: Optional PgVectorClient for chunk persistence.
         mg_driver: Optional Memgraph driver for graph persistence (legacy).
         search_client: Optional SearchServiceClient for real document fetching.
             If None, falls back to stub documents.
@@ -391,9 +369,7 @@ def make_investigate_node(
     Returns:
         Async function matching the LangGraph node signature.
     """
-    embedder: SentenceTransformer | None = None
-    if pg_client is not None:
-        embedder = pg_client.embedder
+    embedder: SentenceTransformer = SentenceTransformer(EMBED_MODEL)
 
     async def investigate_node(state: InvestigativeState) -> dict[str, Any]:
         """Execute a single pass of the investigate loop.
@@ -513,34 +489,31 @@ def make_investigate_node(
                 ),
             ]
 
-        has_graph_writer = (pg_client is not None and mg_driver is not None) or (
-            pg_client is not None and backend is not None
-        )
+        has_graph_writer = mg_driver is not None or backend is not None
         if has_graph_writer:
-            writer = DualWriter(session_id, pg_client, mg_driver, backend)
-            await writer.write(new_chunks, new_entities, new_relations)
+            writer = DualWriter(session_id, mg_driver, backend)
+            await writer.write(new_entities, new_relations)
             logger.debug(
-                "DualWriter persisted %d chunks, %d entities, %d relations for session %s iter %d",
-                len(new_chunks),
+                "DualWriter persisted %d entities, %d relations for session %s iter %d",
                 len(new_entities),
                 len(new_relations),
                 session_id,
                 iteration,
             )
 
-            if backend is not None:
-                try:
-                    nf = await backend.compute_node_features(session_id)
-                    node_features = {
-                        eid: {
-                            "pagerank": ef.pagerank,
-                            "betweenness": ef.betweenness,
-                            "community": ef.community,
-                        }
-                        for eid, ef in nf.by_entity_id.items()
+        if has_graph_writer and backend is not None:
+            try:
+                nf = await backend.compute_node_features(session_id)
+                node_features = {
+                    eid: {
+                        "pagerank": ef.pagerank,
+                        "betweenness": ef.betweenness,
+                        "community": ef.community,
                     }
-                except Exception as exc:
-                    logger.warning("GDS feature computation failed (non-fatal): %s", exc)
+                    for eid, ef in nf.by_entity_id.items()
+                }
+            except Exception as exc:
+                logger.warning("GDS feature computation failed (non-fatal): %s", exc)
 
         ws_events.append(chunks_written_event(session_id, iteration, len(new_chunks)))
         ws_events.append(

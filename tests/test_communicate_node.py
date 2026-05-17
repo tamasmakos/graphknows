@@ -21,7 +21,6 @@ def _make_state(chunks: list | None = None) -> dict:
 
 
 def _mock_chatgroq():
-    """Return a mock ChatGroq instance with async ainvoke."""
     mock_llm = MagicMock()
     mock_response = MagicMock()
     mock_response.content = "# Mock Briefing\n\n**EPRS Intelligence Brief**"
@@ -29,103 +28,102 @@ def _mock_chatgroq():
     return mock_llm
 
 
+_SAMPLE_XML = (
+    '<retrieval_context session_id="test-sid" query="EU AI regulation" total_chunks="2">'
+    '<graph_matches count="0"></graph_matches>'
+    '<fused_results count="2">'
+    '<chunk id="c1" doc_id="d1" rrf_score="0.016" sources="semantic" rank="1">'
+    '<text>Retrieved chunk 1</text></chunk>'
+    '<chunk id="c2" doc_id="d2" rrf_score="0.016" sources="semantic" rank="2">'
+    '<text>Retrieved chunk 2</text></chunk>'
+    '</fused_results>'
+    '</retrieval_context>'
+)
+
+
 @pytest.fixture(autouse=True)
 def _patch_chatgroq():
-    """Auto-patch ChatGroq so tests don't need GROQ_API_KEY."""
     with patch("services.agent.graph.nodes.communicate.ChatGroq") as mock_cls:
         mock_cls.return_value = _mock_chatgroq()
         yield
 
 
-class TestCommunicateNodeNoRetriever:
-    """Tests for communicate_node without a retriever (fallback path)."""
+class TestCommunicateNodeHybridRAG:
+    """Tests for communicate_node calling hybridrag HTTP service."""
 
     @pytest.mark.asyncio
-    async def test_fallback_returns_first_8_chunks(self):
-        chunks = [Chunk(id=f"c{i}", doc_id=f"d{i}", text=f"text{i}") for i in range(12)]
-        state = _make_state(chunks)
-        result = await communicate_node(state, retriever=None)
-        assert len(result["retrieval_hits"]) == 8
-        assert result["retrieval_hits"] == chunks[:8]
-
-    @pytest.mark.asyncio
-    async def test_fallback_with_less_than_8_chunks(self):
-        chunks = [Chunk(id=f"c{i}", doc_id=f"d{i}", text=f"text{i}") for i in range(3)]
-        state = _make_state(chunks)
-        result = await communicate_node(state, retriever=None)
-        assert len(result["retrieval_hits"]) == 3
-
-    @pytest.mark.asyncio
-    async def test_fallback_with_no_chunks(self):
+    async def test_calls_hybridrag_and_returns_briefing(self):
         state = _make_state([])
-        result = await communicate_node(state, retriever=None)
-        assert result["retrieval_hits"] == []
+        with patch("services.agent.tools.graph.client.HybridRAGClient") as mock_cls:
+            mock_instance = AsyncMock()
+            mock_instance.retrieve = AsyncMock(return_value=_SAMPLE_XML)
+            mock_cls.return_value = mock_instance
+            result = await communicate_node(state)
+        assert "briefing" in result
+        assert result["briefing"]
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_state_chunks_on_error(self):
+        chunks = [Chunk(id=f"c{i}", doc_id=f"d{i}", text=f"text{i}") for i in range(4)]
+        state = _make_state(chunks)
+        with patch(
+            "services.agent.tools.graph.client.HybridRAGClient",
+            side_effect=Exception("service down"),
+        ):
+            result = await communicate_node(state)
+        assert "briefing" in result
 
     @pytest.mark.asyncio
     async def test_ws_events_contain_retrieval_done(self):
-        state = _make_state([Chunk(id="c1", doc_id="d1", text="hello")])
-        result = await communicate_node(state, retriever=None)
+        state = _make_state([])
+        with patch("services.agent.tools.graph.client.HybridRAGClient") as mock_cls:
+            mock_instance = AsyncMock()
+            mock_instance.retrieve = AsyncMock(return_value=_SAMPLE_XML)
+            mock_cls.return_value = mock_instance
+            result = await communicate_node(state)
         types = [e["event_type"] for e in result["ws_events"]]
         assert "retrieval_done" in types
 
     @pytest.mark.asyncio
     async def test_ws_events_contain_brief_done(self):
-        state = _make_state([Chunk(id="c1", doc_id="d1", text="hello")])
-        result = await communicate_node(state, retriever=None)
+        state = _make_state([])
+        with patch("services.agent.tools.graph.client.HybridRAGClient") as mock_cls:
+            mock_instance = AsyncMock()
+            mock_instance.retrieve = AsyncMock(return_value=_SAMPLE_XML)
+            mock_cls.return_value = mock_instance
+            result = await communicate_node(state)
         types = [e["event_type"] for e in result["ws_events"]]
         assert "brief_done" in types
 
-
-class TestCommunicateNodeWithRetriever:
-    """Tests for communicate_node with a mock retriever."""
-
-    @pytest.fixture
-    def mock_retriever(self):
-        retriever = AsyncMock()
-        retriever.retrieve = AsyncMock(
-            return_value=[
-                Chunk(id="r1", doc_id="rd1", text="retrieved text 1"),
-                Chunk(id="r2", doc_id="rd2", text="retrieved text 2"),
-            ]
-        )
-        return retriever
-
     @pytest.mark.asyncio
-    async def test_uses_retriever_when_provided(self, mock_retriever):
+    async def test_preserves_existing_ws_events(self):
         state = _make_state([])
-        result = await communicate_node(state, retriever=mock_retriever)
-        mock_retriever.retrieve.assert_awaited_once()
-        assert len(result["retrieval_hits"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_retriever_called_with_topic(self, mock_retriever):
-        state = _make_state([])
-        await communicate_node(state, retriever=mock_retriever)
-        mock_retriever.retrieve.assert_awaited_once_with(
-            "EU AI regulation", k_dense=20, k_final=8
-        )
-
-    @pytest.mark.asyncio
-    async def test_preserves_existing_ws_events(self, mock_retriever):
-        state = _make_state([])
-        state["ws_events"] = [{"event_type": "plan_ready", "session_id": "test-sid", "payload": {}, "ts": 0.0}]
-        result = await communicate_node(state, retriever=mock_retriever)
+        state["ws_events"] = [
+            {"event_type": "plan_ready", "session_id": "test-sid", "payload": {}, "ts": 0.0}
+        ]
+        with patch("services.agent.tools.graph.client.HybridRAGClient") as mock_cls:
+            mock_instance = AsyncMock()
+            mock_instance.retrieve = AsyncMock(return_value=_SAMPLE_XML)
+            mock_cls.return_value = mock_instance
+            result = await communicate_node(state)
         assert len(result["ws_events"]) == 3  # plan_ready + retrieval_done + brief_done
 
 
 class TestMakeCommunicateNode:
-    """Tests for the factory function make_communicate_node."""
+    """Tests for the make_communicate_node factory."""
 
     @pytest.mark.asyncio
     async def test_factory_returns_callable(self):
-        node = make_communicate_node(retriever=None)
+        node = make_communicate_node()
         assert callable(node)
 
     @pytest.mark.asyncio
-    async def test_factory_binds_retriever(self):
-        retriever = AsyncMock()
-        retriever.retrieve = AsyncMock(return_value=[])
-        node = make_communicate_node(retriever=retriever)
+    async def test_factory_node_runs(self):
+        node = make_communicate_node()
         state = _make_state([])
-        await node(state)
-        retriever.retrieve.assert_awaited_once()
+        with patch("services.agent.tools.graph.client.HybridRAGClient") as mock_cls:
+            mock_instance = AsyncMock()
+            mock_instance.retrieve = AsyncMock(return_value=_SAMPLE_XML)
+            mock_cls.return_value = mock_instance
+            result = await node(state)
+        assert "briefing" in result

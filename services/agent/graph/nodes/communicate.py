@@ -83,17 +83,15 @@ def _format_node_features(nf: dict, top_n: int = 12) -> str:
 
 async def communicate_node(
     state: InvestigativeState,
-    retriever: Any | None = None,
 ) -> dict[str, Any]:
     """Generate an EPRS-style briefing from gathered evidence.
 
-    In production this runs hybrid retrieval (pgvector + Memgraph 2-hop + RRF)
-    via the graphrag service, followed by an LLM call to render a briefing.
+    Performs hybrid retrieval via the hybridrag service, then passes the
+    resulting XML context block to the LLM as a <retrieved_context> element.
+    Falls back to in-state chunks when the service is unavailable.
 
     Args:
         state: Current investigative state with all gathered evidence.
-        retriever: Optional GraphRAGClient (or legacy HybridRetriever) instance.
-            When None falls back to the first 25 chunks from state.
 
     Returns:
         Partial state update with ``briefing``, ``retrieval_hits``, and
@@ -102,44 +100,49 @@ async def communicate_node(
     ws_events = list(state.get("ws_events", []))
     session_id = state["session_id"]
 
-    # 1. Hybrid retrieval — prefer GraphRAGClient, fall back to in-state chunks
-    if retriever is not None and hasattr(retriever, "retrieve"):
-        try:
-            result = await retriever.retrieve(
-                state["topic"],
-                k_dense=20,
-                k_final=8,
-            )
-            # result may be a list of Chunk objects or a dict with 'chunks' key
-            if isinstance(result, list):
-                hits: list[Any] = result
-            else:
-                raw_chunks = result.get("chunks", [])
-                # Normalise dict-based chunks to simple objects with .doc_id and .text
-                hits = [
-                    type("_Chunk", (), {  # type: ignore[call-overload]
-                        "doc_id": c.get("doc_id", c.get("id", "")),
-                        "text": c.get("text", ""),
-                    })()
-                    for c in raw_chunks
-                ]
-        except Exception:
-            hits = state.get("chunks", [])[:8]
-    else:
-        hits = state.get("chunks", [])[:8]
+    # 1. Hybrid retrieval via HybridRAGClient → XML context string
+    import os as _os
+    hybridrag_url = _os.environ.get("HYBRIDRAG_URL", "http://localhost:8020")
+    retrieved_xml: str = ""
+    hits: list[Any] = []
+
+    try:
+        from services.agent.tools.graph.client import HybridRAGClient
+        client = HybridRAGClient(hybridrag_url, timeout=30.0)
+        retrieved_xml = await client.retrieve(
+            state["topic"],
+            session_id=session_id,
+            k_entity=10,
+            k_semantic=20,
+            k_final=10,
+        )
+        # Count chunks from XML for event emission
+        import re as _re
+        hit_count = len(_re.findall(r"<chunk ", retrieved_xml))
+        hits = [None] * hit_count  # placeholder list for retrieval_hits count
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "HybridRAG retrieval failed, falling back to state chunks: %s", exc
+        )
+        state_chunks = state.get("chunks", [])[:10]
+        hits = state_chunks
+        # Build minimal XML fallback from state chunks
+        fallback_lines = ["<retrieved_context source='state_fallback'>"]
+        for i, chunk in enumerate(state_chunks, 1):
+            text = getattr(chunk, "text", str(chunk))[:1200]
+            doc_id = getattr(chunk, "doc_id", f"chunk-{i}")
+            fallback_lines.append(f"  <chunk rank='{i}' doc_id='{doc_id}'><text>{text}</text></chunk>")
+        fallback_lines.append("</retrieved_context>")
+        retrieved_xml = "\n".join(fallback_lines)
+
     ws_events.append(retrieval_done_event(session_id, len(hits)))
 
-    # 2. Build evidence context string from hits
-    evidence_lines = []
-    for i, hit in enumerate(hits, 1):
-        evidence_lines.append(f"[Doc-{i}] {hit.doc_id}: {hit.text[:1200]}")
-    evidence_text = "\n\n".join(evidence_lines)
-
-    # 2b. Graph feature analysis section (if available)
+    # 2. Graph feature analysis section (if available)
     node_features = state.get("node_features", {})
     graph_features_section = _format_node_features(node_features)
 
-    # 3. LLM synthesis
+    # 3. LLM synthesis — pass XML as <retrieved_context> block
     llm = ChatGroq(
         api_key=os.environ.get("GROQ_API_KEY"),
         model="llama-3.3-70b-versatile",
@@ -156,10 +159,11 @@ async def communicate_node(
         HumanMessage(
             content=f"""Topic of Investigation: {state['topic']}
 
-Evidence Corpus ({len(hits)} documents):
-{evidence_text}
+<retrieved_context>
+{retrieved_xml}
+</retrieved_context>
 
-Write a complete, academically rigorous EPRS Intelligence Analysis report following all structural requirements in your system instructions. Minimum 1800 words. All sections mandatory. Cite all claims with [Doc-N] references."""
+Write a complete, academically rigorous EPRS Intelligence Analysis report following all structural requirements in your system instructions. Minimum 1800 words. All sections mandatory. Cite claims with [Doc-N] referencing chunk doc_id values from the retrieved context."""
         ),
     ]
     response = await llm.ainvoke(messages)
@@ -184,30 +188,17 @@ Write a complete, academically rigorous EPRS Intelligence Analysis report follow
     }
 
 
-def make_communicate_node(
-    retriever: Any | None = None,
-    graphrag_client: Any | None = None,
-    pg_client: Any = None,
-    mg_driver: Any = None,
-):
-    """Factory: return a communicate_node closure with bound dependencies.
+def make_communicate_node():
+    """Factory: return a communicate_node closure.
 
-    Prefers ``graphrag_client`` (GraphRAGClient) for retrieval. Falls back to
-    ``pg_client`` + ``mg_driver`` for legacy compatibility. If none are given,
-    falls back to in-state chunks.
-
-    Args:
-        retriever: Pre-built retriever (GraphRAGClient or legacy HybridRetriever).
-        graphrag_client: GraphRAGClient for the graphrag service.
-        pg_client: Legacy PgVectorClient (ignored when graphrag_client is set).
-        mg_driver: Legacy Memgraph driver (ignored when graphrag_client is set).
+    All retrieval is performed via the hybridrag HTTP service (HYBRIDRAG_URL env var).
+    No dependency injection required.
 
     Returns:
         Async callable compatible with LangGraph node signature.
     """
-    active_retriever = retriever or graphrag_client
 
     async def _communicate_node(state: InvestigativeState) -> dict[str, Any]:
-        return await communicate_node(state, retriever=active_retriever)
+        return await communicate_node(state)
 
     return _communicate_node

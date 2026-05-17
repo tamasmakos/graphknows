@@ -1,7 +1,7 @@
 """LangGraph-based EU investigator agent for Graphknows.
 
 Architecture (wiki: concepts/langgraph-agent-architecture-2026-05-08.md):
-- 4 LLM tools: search_web, search_eu, graphgen, graphrag
+- 4 LLM tools: search_web, search_eu, graphgen, hybridrag
 - GLiNER2 + DSPy entity-relation extraction (InProcessExtractor)
 - Streaming partial graphs: keyword graph fires immediately after each search;
   GLiNER2/DSPy full graph fires when graphgen tool is called
@@ -832,63 +832,42 @@ def build_graph(
         )
         return header + formatted
 
-    # ── Tool 4: graphrag ─────────────────────────────────────────────────────
+    # ── Tool 4: hybridrag ────────────────────────────────────────────────────
     @tool
-    async def graphrag(query: str, session_id_arg: str, k: int = 5) -> str:
-        """Query the accumulated knowledge graph for entity relationships and patterns.
+    async def hybridrag(query: str, session_id_arg: str, k: int = 10) -> str:
+        """Query the hybrid knowledge graph for entity relationships, evidence, and patterns.
 
-        Uses the session's extracted entities to answer graph-structure questions.
-        Also queries the persistent Neo4j KG for cross-session knowledge.
+        Performs entity-first graph retrieval (Neo4j MENTIONS traversal) fused with
+        pgvector semantic search via RRF. Returns an XML <retrieval_context> document
+        with graph-matched entities, semantic chunks, and ranked fused results.
 
         Args:
-            query: The graph query (e.g. 'who is most connected to Von der Leyen?').
-            session_id_arg: Session ID for context.
-            k: Number of results to retrieve.
+            query: The research query (e.g. 'who funds Russian disinformation campaigns?').
+            session_id_arg: Session ID for scoped chunk retrieval.
+            k: Number of fused results to return (default 10).
         """
-        # First try in-session entity index
         sid = session_id_arg or session_id
-        entities = _session_entities.get(sid, [])
-        if entities and any(e.lower() in query.lower() for e in entities[:20]):
-            matched = [e for e in entities if e.lower() in query.lower()]
-            docs = _session_docs.get(sid, [])
-            related = [
-                d.get("title", "") for d in docs
-                if any(m.lower() in (d.get("text", "") + d.get("title", "")).lower()
-                       for m in matched[:3])
-            ][:5]
-            if related:
-                return (
-                    f"Session graph entities related to '{query}':\n"
-                    f"Matched: {', '.join(matched[:5])}\n"
-                    f"Supporting documents: {'; '.join(related)}"
-                )
-
-        # Fall back to Neo4j GraphRAG service
-        import httpx
+        import os as _os
+        hybridrag_url = _os.environ.get("HYBRIDRAG_URL", "http://localhost:8020")
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(
-                    "http://localhost:8001/retrieve",
-                    json={"query": query, "session_id": sid, "max_steps": k},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                answer = data.get("answer", "")
-                entity_list = data.get("entities_mentioned", [])
-                if entity_list:
-                    entity_str = ", ".join(
-                        str(e) if not isinstance(e, dict) else e.get("name", "")
-                        for e in entity_list[:10]
-                    )
-                    return f"Entities: {entity_str}\n\nAnswer: {answer}"
-                return answer or "No results from GraphRAG."
+            from services.agent.tools.graph.client import HybridRAGClient
+            client = HybridRAGClient(hybridrag_url, timeout=25.0)
+            xml_result = await client.retrieve(
+                query,
+                session_id=sid,
+                k_entity=k,
+                k_semantic=k * 2,
+                k_final=k,
+            )
+            return xml_result
         except Exception as exc:
+            entities = _session_entities.get(sid, [])
             if entities:
                 return (
-                    f"GraphRAG service unavailable. Session entities so far: "
+                    f"HybridRAG service unavailable. Session entities so far: "
                     f"{', '.join(entities[:20])}"
                 )
-            return f"GraphRAG unavailable: {exc}"
+            return f"HybridRAG unavailable: {exc}"
 
     # ── System prompt ────────────────────────────────────────────────────────
     from datetime import date as _date
@@ -918,7 +897,7 @@ STEP 2 (next LLM response): Call graphgen(session_id_arg="{session_id}")
   → The result includes the key entities found — use them in your report.
   → CRITICAL: Call graphgen in a SEPARATE response AFTER receiving search results.
 
-STEP 3 (optional): Call graphrag if the user needs entity connectivity analysis.
+STEP 3 (optional): Call hybridrag if the user needs entity connectivity analysis or knowledge graph evidence.
 
 STEP 4: Write your final EPRS-style investigative report.
 
@@ -958,7 +937,7 @@ REPORT FORMAT:
 """
 
     # ── Build graph ──────────────────────────────────────────────────────────
-    tools_list = [search_web, search_eu, search_archives, graphgen, graphrag]
+    tools_list = [search_web, search_eu, search_archives, graphgen, hybridrag]
 
     llm_base = ChatGroq(
         api_key=groq_api_key,

@@ -55,7 +55,6 @@ except Exception:
     InvestigativeState = None  # type: ignore
     build_initial_investigative_state = None  # type: ignore
     REQUIRED_STREAM_EVENTS = ()  # type: ignore
-from agent.infra.pgvector_client import PgVectorClient
 from agent.session.manager import SessionGraphManager
 from agent.session_end import merge_session_to_neo4j
 try:
@@ -71,7 +70,6 @@ router = APIRouter()
 _settings: AgentSettings | None = None
 _sgm: SessionGraphManager | None = None
 _http_client: httpx.AsyncClient | None = None
-_pg_client: PgVectorClient | None = None
 _search_client: Any | None = None
 _graph_backend = None
 _tavily: Any | None = None
@@ -144,12 +142,6 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-def _get_pg_client() -> PgVectorClient:
-    if _pg_client is None:
-        raise HTTPException(status_code=500, detail="PgVectorClient not initialized")
-    return _pg_client
-
-
 def _get_search_client() -> Any | None:
     return _search_client
 
@@ -182,13 +174,12 @@ def _get_ontology_components() -> tuple[Any | None, Any | None]:
     return _ontology_router, _rel_extractor
 
 
-def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, pg_client: PgVectorClient | None = None, search_client: Any | None = None, graph_backend=None, tavily: Any | None = None, cellar: Any | None = None, extractor: Any | None = None) -> None:
+def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, search_client: Any | None = None, graph_backend=None, tavily: Any | None = None, cellar: Any | None = None, extractor: Any | None = None) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client, _pg_client, _search_client, _graph_backend, _tavily, _cellar, _extractor
+    global _settings, _sgm, _http_client, _search_client, _graph_backend, _tavily, _cellar, _extractor
     _settings = settings
     _sgm = sgm
     _http_client = http_client
-    _pg_client = pg_client
     _search_client = search_client
     _graph_backend = graph_backend
     _tavily = tavily
@@ -277,41 +268,43 @@ def _build_sources_payload(raw_docs: list[Any] | None, retrieval_hits: list[Any]
 
 
 # ---------------------------------------------------------------------------
-# Helper: call graphrag /retrieve (for /chat backward compatibility)
+# Helper: call hybridrag /retrieve (for /chat backward compatibility)
 # ---------------------------------------------------------------------------
 
 
 async def _call_graphrag(message: str, session_id: str) -> dict:
-    """POST to graphrag service and return the parsed JSON body.
+    """POST to hybridrag service and return the parsed JSON body.
 
     Args:
-        message: The user query to send to graphrag.
+        message: The user query to send to hybridrag.
         session_id: Session identifier for context tracking.
 
     Returns:
-        Parsed JSON response from graphrag.
+        Parsed JSON response from hybridrag.
 
     Raises:
-        HTTPException: If graphrag returns an error or is unreachable.
+        HTTPException: If hybridrag returns an error or is unreachable.
     """
     client = _get_http_client()
     payload = {
         "query": message,
         "session_id": session_id,
-        "max_steps": 8,
+        "k_entity": 10,
+        "k_semantic": 20,
+        "k_final": 10,
     }
     try:
-        resp = await client.post(f"{_get_settings().graphrag_url}/retrieve", json=payload)
+        resp = await client.post(f"{_get_settings().hybridrag_url}/retrieve", json=payload)
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        log.error("graphrag returned HTTP %s: %s", exc.response.status_code, exc.response.text)
+        log.error("hybridrag returned HTTP %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=502,
-            detail=f"graphrag error {exc.response.status_code}: {exc.response.text}",
+            detail=f"hybridrag error {exc.response.status_code}: {exc.response.text}",
         ) from exc
     except httpx.RequestError as exc:
-        log.error("graphrag connection error: %s", exc)
-        raise HTTPException(status_code=502, detail=f"graphrag unreachable: {exc}") from exc
+        log.error("hybridrag connection error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"hybridrag unreachable: {exc}") from exc
 
     return resp.json()
 
@@ -420,11 +413,11 @@ def _fetch_cooccurs(entity_names: list[str], limit: int = 50) -> list[tuple[str,
 
 def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
     """Extract entities, RELATES_TO edges, Topic nodes, and Chunk nodes from the
-    full graphrag agent trace and upsert them into the Memgraph session graph.
+    full hybridrag agent trace and upsert them into the Memgraph session graph.
 
     Args:
         session_id: The active Memgraph session identifier.
-        graphrag_response: The full JSON response from the graphrag /retrieve endpoint.
+        graphrag_response: The full JSON response from the hybridrag /retrieve endpoint.
     """
     import re as _re
 
@@ -578,7 +571,6 @@ async def chat(req: ChatRequest) -> ChatResponse:
     from services.agent.graph.workflow import build_workflow
 
     sgm = _get_sgm()
-    pg = _get_pg_client()
 
     session_id: str = req.session_id or str(uuid.uuid4())
     is_new = session_id not in _active_sessions
@@ -590,7 +582,6 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     initial_state = build_initial_investigative_state(session_id, req.message)
     workflow = build_workflow(
-        pg_client=pg,
         mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None,
         search_client=_get_search_client(),
         backend=_get_graph_backend(),
@@ -700,11 +691,10 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
     from services.agent.graph.workflow import build_workflow
 
     sgm = _get_sgm()
-    pg = _get_pg_client()
 
     async def _event_generator():
         initial_state = build_initial_investigative_state(session_id, req.message)
-        workflow = build_workflow(pg_client=pg, mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client(), tavily=_tavily, cellar=_cellar, extractor=_get_extractor())
+        workflow = build_workflow(mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client(), tavily=_tavily, cellar=_cellar, extractor=_get_extractor())
         result = await workflow.ainvoke(initial_state)
         briefing = result.get("briefing") or ""
         yield f"event: briefing\ndata: {json.dumps({'briefing': briefing})}\n\n"
@@ -1022,7 +1012,6 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         initial_state = build_initial_investigative_state(session_id, topic=query)
         ont_router, ont_extractor = _get_ontology_components()
         workflow = build_workflow(
-            pg_client=_get_pg_client(),
             mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None,
             search_client=_get_search_client(),
             ontology_router=ont_router,

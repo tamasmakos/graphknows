@@ -29,8 +29,8 @@ def _get_embedding(text: str) -> list:
 
 
 def test_embed_model_constant_consistent():
-    """EMBED_MODEL in graph_store must equal the model used in hybrid_agent."""
-    from graph_store import EMBED_MODEL
+    """EMBED_MODEL in hybridrag embedder must equal the expected model name."""
+    from services.hybridrag.stores.embedder import EMBED_MODEL
     assert EMBED_MODEL == "BAAI/bge-small-en-v1.5", (
         f"Expected BAAI/bge-small-en-v1.5, got {EMBED_MODEL}"
     )

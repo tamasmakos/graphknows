@@ -30,10 +30,10 @@ def mock_sentence_transformer():
 
 
 class TestBuildWorkflowWithoutDeps:
-    """build_workflow with no external dependencies (pg_client=None, mg_driver=None)."""
+    """build_workflow with no external dependencies (mg_driver=None)."""
 
     def test_returns_compiled_graph(self) -> None:
-        workflow = build_workflow(pg_client=None, mg_driver=None)
+        workflow = build_workflow(mg_driver=None)
         assert workflow is not None
         assert hasattr(workflow, "ainvoke")
 
@@ -48,7 +48,7 @@ async def test_invoke_returns_briefing(mock_chat: MagicMock) -> None:
     session_id = "test-session-001"
     topic = "EU AI Act regulatory framework"
     initial_state = build_initial_investigative_state(session_id, topic)
-    workflow = build_workflow(pg_client=None, mg_driver=None)
+    workflow = build_workflow(mg_driver=None)
     result = await workflow.ainvoke(initial_state)
     assert isinstance(result, dict)
     assert "briefing" in result
@@ -77,27 +77,7 @@ async def test_invoke_state_shape(mock_chat: MagicMock) -> None:
 
 
 class TestBuildWorkflowWithMocks:
-    """build_workflow with mock pg_client and mg_driver."""
-
-    @pytest.fixture
-    def mock_pg(self) -> MagicMock:
-        pg = MagicMock()
-        mock_embedder = MagicMock()
-
-        def fake_encode(texts, show_progress_bar=False):
-            dim = 384
-            n = len(texts) if isinstance(texts, list) else 1
-            arr = np.random.rand(n, dim).astype(np.float32)
-            norms = np.linalg.norm(arr, axis=1, keepdims=True)
-            norms[norms == 0] = 1
-            return arr / norms
-
-        mock_embedder.encode = fake_encode
-        pg.embedder = mock_embedder
-        pg.upsert_chunks = AsyncMock(return_value=1)
-        pg.search_chunks = AsyncMock(return_value=[])
-        pg.get_chunks_by_doc_ids = AsyncMock(return_value=[])
-        return pg
+    """build_workflow with mock mg_driver."""
 
     @pytest.fixture
     def mock_mg(self) -> MagicMock:
@@ -113,20 +93,20 @@ class TestBuildWorkflowWithMocks:
         ])
         return sc
 
-    def test_returns_compiled_graph_with_deps(self, mock_pg: MagicMock, mock_mg: MagicMock) -> None:
-        workflow = build_workflow(pg_client=mock_pg, mg_driver=mock_mg)
+    def test_returns_compiled_graph_with_deps(self, mock_mg: MagicMock) -> None:
+        workflow = build_workflow(mg_driver=mock_mg)
         assert workflow is not None
         assert hasattr(workflow, "ainvoke")
 
     @pytest.mark.asyncio
     @patch("services.agent.graph.nodes.communicate.ChatGroq")
-    async def test_invoke_with_mock_deps(self, mock_chat: MagicMock, mock_pg: MagicMock, mock_mg: MagicMock, mock_search_client: MagicMock) -> None:
+    async def test_invoke_with_mock_deps(self, mock_chat: MagicMock, mock_mg: MagicMock, mock_search_client: MagicMock) -> None:
         mock_instance = mock_chat.return_value
         mock_instance.ainvoke = AsyncMock(return_value=MagicMock(content="Mock briefing."))
 
         session_id = "test-session-003"
         initial_state = build_initial_investigative_state(session_id, "EU digital policy")
-        workflow = build_workflow(pg_client=mock_pg, mg_driver=mock_mg, search_client=mock_search_client)
+        workflow = build_workflow(mg_driver=mock_mg, search_client=mock_search_client)
         result = await workflow.ainvoke(initial_state)
         assert result["briefing"] is not None
         assert len(result.get("ws_events", [])) > 0
