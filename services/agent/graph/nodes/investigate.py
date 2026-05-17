@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import sys
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,9 +24,9 @@ from services.agent.graph.state import Chunk, Entity, InvestigativeState, RawDoc
 
 if TYPE_CHECKING:
     from services.agent.infra.pgvector_client import PgVectorClient
-    from services.agent.tools.search_client import SearchServiceClient
-    from services.agent.tools.tavily_tool import TavilySearchTool
-    from services.agent.tools.cellar_tool import CellarSPARQLTool
+    from services.agent.tools.search.client import SearchServiceClient
+    from services.agent.tools.search.web import TavilySearchTool
+    from services.agent.tools.search.cellar import CellarSPARQLTool
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +255,12 @@ def _novelty_check(
     return _compute_duplication_ratio(new_chunks, existing, embedder)
 
 
-WORKER_PATH = Path(__file__).resolve().parents[2] / "tools" / "graphgen_worker.py"
+def _lazy_extractor() -> Any:
+    """Return a module-level InProcessExtractor singleton (loaded on first call)."""
+    if not hasattr(_lazy_extractor, "_instance"):
+        from services.agent.tools.extraction.in_process import InProcessExtractor
+        _lazy_extractor._instance = InProcessExtractor()  # type: ignore[attr-defined]
+    return _lazy_extractor._instance  # type: ignore[attr-defined]
 
 
 async def _fetch_multi_source(
@@ -359,25 +362,6 @@ async def _fetch_multi_source(
     return combined
 
 
-async def _run_extraction(raw_docs: list[RawDoc]) -> dict:
-    payload = json.dumps(
-        {"documents": [
-            {"id": d.id, "title": d.title, "text": d.text, "source": d.source}
-            for d in raw_docs
-        ]}
-    ).encode()
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, str(WORKER_PATH),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(input=payload), timeout=120)
-    if proc.returncode != 0:
-        raise RuntimeError(f"graphgen_worker failed: {stderr.decode()[:400]}")
-    return json.loads(stdout)
-
-
 def make_investigate_node(
     pg_client: "PgVectorClient | None" = None,
     mg_driver: Any = None,
@@ -469,15 +453,17 @@ def make_investigate_node(
         new_entities: list[Entity] = []
         new_relations: list[Relation] = []
         if raw_docs:
+            docs_for_extractor = [
+                {"id": d.id, "title": d.title, "text": d.text, "source": d.source}
+                for d in raw_docs
+            ]
             try:
                 if extractor is not None:
-                    docs_for_extractor = [
-                        {"id": d.id, "title": d.title, "text": d.text, "source": d.source}
-                        for d in raw_docs
-                    ]
                     result = await asyncio.to_thread(extractor.extract, docs_for_extractor, session_id)
                 else:
-                    result = await _run_extraction(raw_docs)
+                    # Fallback: lazy-load InProcessExtractor on first use
+                    _ext = _lazy_extractor()
+                    result = await asyncio.to_thread(_ext.extract, docs_for_extractor, session_id)
                 raw_entities = result.get("entities", []) or []
                 raw_relations = result.get("relations", []) or []
             except Exception:

@@ -9,7 +9,6 @@ from langchain_groq import ChatGroq
 
 from services.agent.graph.events import brief_done_event, retrieval_done_event
 from services.agent.graph.state import InvestigativeState
-from services.agent.retrieval.hybrid_retriever import HybridRetriever
 
 EPRS_SYSTEM_PROMPT = """You are a senior analyst at the European Parliamentary Research Service (EPRS), specialising in hybrid threats, information warfare, and democratic resilience. You produce long-form, academically rigorous intelligence reports for Members of the European Parliament.
 
@@ -84,17 +83,17 @@ def _format_node_features(nf: dict, top_n: int = 12) -> str:
 
 async def communicate_node(
     state: InvestigativeState,
-    retriever: HybridRetriever | None = None,
+    retriever: Any | None = None,
 ) -> dict[str, Any]:
     """Generate an EPRS-style briefing from gathered evidence.
 
     In production this runs hybrid retrieval (pgvector + Memgraph 2-hop + RRF)
-    followed by an LLM call to render an EPRS-style briefing.
+    via the graphrag service, followed by an LLM call to render a briefing.
 
     Args:
         state: Current investigative state with all gathered evidence.
-        retriever: Optional HybridRetriever instance. When None falls back to
-            the first 25 chunks from state.
+        retriever: Optional GraphRAGClient (or legacy HybridRetriever) instance.
+            When None falls back to the first 25 chunks from state.
 
     Returns:
         Partial state update with ``briefing``, ``retrieval_hits``, and
@@ -103,11 +102,31 @@ async def communicate_node(
     ws_events = list(state.get("ws_events", []))
     session_id = state["session_id"]
 
-    # 1. Hybrid retrieval
-    if retriever is not None:
-        hits = await retriever.retrieve(state["topic"], k_dense=20, k_final=25)
+    # 1. Hybrid retrieval — prefer GraphRAGClient, fall back to in-state chunks
+    if retriever is not None and hasattr(retriever, "retrieve"):
+        try:
+            result = await retriever.retrieve(
+                state["topic"],
+                k_dense=20,
+                k_final=8,
+            )
+            # result may be a list of Chunk objects or a dict with 'chunks' key
+            if isinstance(result, list):
+                hits: list[Any] = result
+            else:
+                raw_chunks = result.get("chunks", [])
+                # Normalise dict-based chunks to simple objects with .doc_id and .text
+                hits = [
+                    type("_Chunk", (), {  # type: ignore[call-overload]
+                        "doc_id": c.get("doc_id", c.get("id", "")),
+                        "text": c.get("text", ""),
+                    })()
+                    for c in raw_chunks
+                ]
+        except Exception:
+            hits = state.get("chunks", [])[:8]
     else:
-        hits = state.get("chunks", [])[:25]
+        hits = state.get("chunks", [])[:8]
     ws_events.append(retrieval_done_event(session_id, len(hits)))
 
     # 2. Build evidence context string from hits
@@ -166,29 +185,29 @@ Write a complete, academically rigorous EPRS Intelligence Analysis report follow
 
 
 def make_communicate_node(
-    retriever: HybridRetriever | None = None,
+    retriever: Any | None = None,
+    graphrag_client: Any | None = None,
     pg_client: Any = None,
     mg_driver: Any = None,
 ):
     """Factory: return a communicate_node closure with bound dependencies.
 
-    If ``retriever`` is None but ``pg_client`` and ``mg_driver`` are provided,
-    a HybridRetriever is lazily constructed at invocation time (when the
-    session_id is available from state).
+    Prefers ``graphrag_client`` (GraphRAGClient) for retrieval. Falls back to
+    ``pg_client`` + ``mg_driver`` for legacy compatibility. If none are given,
+    falls back to in-state chunks.
 
     Args:
-        retriever: Optional pre-built HybridRetriever instance.
-        pg_client: Optional PgVectorClient for lazy retriever construction.
-        mg_driver: Optional Memgraph driver for lazy retriever construction.
+        retriever: Pre-built retriever (GraphRAGClient or legacy HybridRetriever).
+        graphrag_client: GraphRAGClient for the graphrag service.
+        pg_client: Legacy PgVectorClient (ignored when graphrag_client is set).
+        mg_driver: Legacy Memgraph driver (ignored when graphrag_client is set).
 
     Returns:
         Async callable compatible with LangGraph node signature.
     """
+    active_retriever = retriever or graphrag_client
 
     async def _communicate_node(state: InvestigativeState) -> dict[str, Any]:
-        actual_retriever = retriever
-        if actual_retriever is None and pg_client is not None and mg_driver is not None:
-            actual_retriever = HybridRetriever(state["session_id"], pg_client, mg_driver)
-        return await communicate_node(state, retriever=actual_retriever)
+        return await communicate_node(state, retriever=active_retriever)
 
     return _communicate_node
