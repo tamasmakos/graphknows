@@ -51,7 +51,7 @@ jobs:
 
       - name: Test
         env:
-          PYTHONPATH: ".:services:services/agent:services/scrapers"
+          PYTHONPATH: ".:services:services/agent"
           GROQ_API_KEY: "ci-placeholder"
           SEARCH_SERVICE_URL: "http://localhost:8040"
           AGENT_SERVICE_URL: "http://localhost:8002"

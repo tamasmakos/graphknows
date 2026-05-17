@@ -107,11 +107,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  graphrag:
+  hybridrag:
     build:
       context: .
-      dockerfile: services/graphrag/Dockerfile
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+      dockerfile: services/hybridrag/Dockerfile
+    command: python -m hybridrag.run
     environment:
       # Neo4j
       NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
@@ -119,28 +119,13 @@ services:
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
       NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
       # pgvector
-      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
-      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
-      PGVECTOR_DB: "${PGVECTOR_DB:-vectordb}"
-      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
-      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
+      PGVECTOR_DSN: "${PGVECTOR_DSN:-postgresql://postgres:changeme@pgvector:5432/vectordb}"
       # LLM
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
-      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
-      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
-      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
-      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      # Observability
-      LANGFUSE_HOST: "${LANGFUSE_HOST:-http://langfuse:3000}"
-      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
-      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
-      # Service models
-      GRAPHRAG_KEYWORDS_MODEL: "${GRAPHRAG_KEYWORDS_MODEL:-llama-3.1-8b-instant}"
-      GRAPHRAG_CHAT_MODEL: "${GRAPHRAG_CHAT_MODEL:-llama-3.3-70b-versatile}"
-      GRAPHRAG_EMBEDDING_MODEL: "${GRAPHRAG_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}"
-      PYTHONPATH: /app/src
+      # Embedding
+      EMBED_MODEL: "${EMBED_MODEL:-BAAI/bge-small-en-v1.5}"
     ports:
-      - "8010:8000"
+      - "8020:8020"
     depends_on:
       neo4j:
         condition: service_healthy
@@ -162,7 +147,7 @@ services:
       PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
       PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
       MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
-      GRAPHRAG_URL: "${GRAPHRAG_URL:-http://graphrag:8000}"
+      HYBRIDRAG_URL: "${HYBRIDRAG_URL:-http://hybridrag:8020}"
       GRAPHGEN_URL: "${GRAPHGEN_URL:-http://graphgen:8000}"
       SEARCH_URL: "${SEARCH_URL:-http://search:8000}"
       LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
