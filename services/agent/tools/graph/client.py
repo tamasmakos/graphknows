@@ -1,8 +1,6 @@
-"""HybridRAGClient — HTTP client for the hybridrag retrieval service.
+"""GraphKnowsClient — HTTP client for the graphknows unified memory service.
 
-Single interface for retrieve (-> XML string), community lookup, and health check.
-Ingest is handled by graphgen, not hybridrag.
-Replaces the old GraphRAGClient.
+Single interface for retrieve (-> XML string), community lookup, ingest, and health check.
 """
 from __future__ import annotations
 
@@ -16,11 +14,11 @@ log = logging.getLogger("agent.tools.graph.client")
 _DEFAULT_TIMEOUT = 30.0
 
 
-class HybridRAGClient:
-    """Async HTTP client for the hybridrag service.
+class GraphKnowsClient:
+    """Async HTTP client for the graphknows service.
 
     Args:
-        base_url: Base URL of the hybridrag service, e.g. http://hybridrag:8020.
+        base_url: Base URL of the graphknows service, e.g. http://graphknows:8025.
         timeout: Request timeout in seconds.
     """
 
@@ -55,14 +53,31 @@ class HybridRAGClient:
         )
         return result if isinstance(result, str) else str(result)
 
-    async def community(self, entity_id: str) -> dict[str, Any]:
+    async def community(self, entity_name: str) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
-            resp = await client.get(f"/community/{entity_id}")
+            resp = await client.get(f"/community/{entity_name}")
             resp.raise_for_status()
             return resp.json()
+
+    async def ingest(
+        self,
+        documents: list[dict[str, Any]],
+        config_override: dict | None = None,
+    ) -> dict[str, Any]:
+        """Enqueue an ingestion run. Returns {run_id, status, queued_at}."""
+        payload: dict[str, Any] = {"documents": documents}
+        if config_override:
+            payload["config_override"] = config_override
+        return await self._post("/ingest", payload)
 
     async def health(self) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=5.0) as client:
             resp = await client.get("/health")
             resp.raise_for_status()
             return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility alias (old code may reference HybridRAGClient)
+# ---------------------------------------------------------------------------
+HybridRAGClient = GraphKnowsClient

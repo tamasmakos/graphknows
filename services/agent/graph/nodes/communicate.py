@@ -100,15 +100,15 @@ async def communicate_node(
     ws_events = list(state.get("ws_events", []))
     session_id = state["session_id"]
 
-    # 1. Hybrid retrieval via HybridRAGClient → XML context string
+    # 1. Hybrid retrieval via GraphKnowsClient → XML context string
     import os as _os
-    hybridrag_url = _os.environ.get("HYBRIDRAG_URL", "http://localhost:8020")
+    graphknows_url = _os.environ.get("GRAPHKNOWS_URL", "http://localhost:8025")
     retrieved_xml: str = ""
     hits: list[Any] = []
 
     try:
-        from services.agent.tools.graph.client import HybridRAGClient
-        client = HybridRAGClient(hybridrag_url, timeout=30.0)
+        from services.agent.tools.graph.client import GraphKnowsClient
+        client = GraphKnowsClient(graphknows_url, timeout=30.0)
         retrieved_xml = await client.retrieve(
             state["topic"],
             session_id=session_id,
@@ -123,7 +123,7 @@ async def communicate_node(
     except Exception as exc:
         import logging as _logging
         _logging.getLogger(__name__).warning(
-            "HybridRAG retrieval failed, falling back to state chunks: %s", exc
+            "graphknows retrieval failed, falling back to state chunks: %s", exc
         )
         state_chunks = state.get("chunks", [])[:10]
         hits = state_chunks

@@ -268,22 +268,22 @@ def _build_sources_payload(raw_docs: list[Any] | None, retrieval_hits: list[Any]
 
 
 # ---------------------------------------------------------------------------
-# Helper: call hybridrag /retrieve (for /chat backward compatibility)
+# Helper: call graphknows /retrieve (for /chat backward compatibility)
 # ---------------------------------------------------------------------------
 
 
 async def _call_graphrag(message: str, session_id: str) -> dict:
-    """POST to hybridrag service and return the parsed JSON body.
+    """POST to graphknows service and return the parsed JSON body.
 
     Args:
-        message: The user query to send to hybridrag.
+        message: The user query to send to graphknows.
         session_id: Session identifier for context tracking.
 
     Returns:
-        Parsed JSON response from hybridrag.
+        Parsed JSON response from graphknows.
 
     Raises:
-        HTTPException: If hybridrag returns an error or is unreachable.
+        HTTPException: If graphknows returns an error or is unreachable.
     """
     client = _get_http_client()
     payload = {
@@ -294,17 +294,17 @@ async def _call_graphrag(message: str, session_id: str) -> dict:
         "k_final": 10,
     }
     try:
-        resp = await client.post(f"{_get_settings().hybridrag_url}/retrieve", json=payload)
+        resp = await client.post(f"{_get_settings().graphknows_url}/retrieve", json=payload)
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        log.error("hybridrag returned HTTP %s: %s", exc.response.status_code, exc.response.text)
+        log.error("graphknows returned HTTP %s: %s", exc.response.status_code, exc.response.text)
         raise HTTPException(
             status_code=502,
-            detail=f"hybridrag error {exc.response.status_code}: {exc.response.text}",
+            detail=f"graphknows error {exc.response.status_code}: {exc.response.text}",
         ) from exc
     except httpx.RequestError as exc:
-        log.error("hybridrag connection error: %s", exc)
-        raise HTTPException(status_code=502, detail=f"hybridrag unreachable: {exc}") from exc
+        log.error("graphknows connection error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"graphknows unreachable: {exc}") from exc
 
     return resp.json()
 

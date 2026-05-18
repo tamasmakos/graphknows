@@ -20,14 +20,12 @@ class AgentSettings(BaseServiceSettings):
     """Settings for the Graphknows agent service.
 
     Attributes:
-        hybridrag_url: Base URL of the hybridrag retrieval service.
-        graphgen_url: Base URL of the graphgen pipeline service.
+        graphknows_url: Base URL of the graphknows unified memory service.
         search_url: Base URL of the search service.
         memgraph_uri: Bolt URI for the ephemeral Memgraph session store.
         httpx_timeout: Timeout in seconds for downstream HTTP calls.
     """
-    hybridrag_url: str = Field(default="http://localhost:8020", alias="HYBRIDRAG_URL")
-    graphgen_url: str = Field(default="http://localhost:8003", alias="GRAPHGEN_URL")
+    graphknows_url: str = Field(default="http://localhost:8025", alias="GRAPHKNOWS_URL")
     search_url: str = Field(default="http://localhost:8000", alias="SEARCH_URL")
     pgvector_dsn: str = Field(
         default="postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",
