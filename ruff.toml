@@ -13,6 +13,4 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"services/graphgen/api.py" = ["F821"]
-"services/graphgen/analytics/analyzer.py" = ["E722"]
 "tests/*" = ["F401", "F811"]

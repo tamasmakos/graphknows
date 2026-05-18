@@ -37,12 +37,11 @@ jobs:
             ruff pytest pytest-asyncio \
             httpx fastapi pydantic \
             numpy sentence-transformers \
-            langchain-core langgraph langchain-groq \
+            langchain-core langgraph langchain-openai langchain-experimental \
             psycopg2-binary pgvector \
             neo4j pymgclient || true
           # Install service packages in editable mode for import resolution
-          uv pip install --system -e services/graphgen 2>/dev/null || true
-          uv pip install --system -e services/graphrag 2>/dev/null || true
+          uv pip install --system -e services/graphknows 2>/dev/null || true
           uv pip install --system -e libs/python/graphknows-shared 2>/dev/null || true
 
       - name: Lint (ruff)
@@ -52,7 +51,7 @@ jobs:
       - name: Test
         env:
           PYTHONPATH: ".:services:services/agent"
-          GROQ_API_KEY: "ci-placeholder"
+          OPENROUTER_API_KEY: "ci-placeholder"
           SEARCH_SERVICE_URL: "http://localhost:8040"
           AGENT_SERVICE_URL: "http://localhost:8002"
         run: |

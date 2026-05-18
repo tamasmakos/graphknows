@@ -10,8 +10,8 @@ COMPOSE        := docker compose
 COMPOSE_DEV    := docker compose -f docker-compose.yaml -f docker-compose.dev.yaml
 SVC            ?=   # optional: set to limit logs/restart/shell to one service
 
-.PHONY: up down dev restart build rebuild ps status logs logs-agent logs-hybridrag \
-        logs-graphgen logs-search logs-frontend shell clean prune help
+.PHONY: up down dev restart build rebuild ps status logs logs-agent \
+        logs-graphknows logs-search logs-frontend shell clean prune help
 
 # ── Lifecycle ──────────────────────────────────────────────────────
 up: ## Start all services (production images)
@@ -53,11 +53,8 @@ logs: ## Tail logs — all services or specific one  →  make logs SVC=agent
 logs-agent: ## Tail agent logs
 	$(COMPOSE) logs -f --tail=100 agent
 
-logs-hybridrag: ## Tail hybridrag logs
-	$(COMPOSE) logs -f --tail=100 hybridrag
-
-logs-graphgen: ## Tail graphgen logs
-	$(COMPOSE) logs -f --tail=100 graphgen
+logs-graphknows: ## Tail graphknows logs
+	$(COMPOSE) logs -f --tail=100 graphknows
 
 logs-search: ## Tail search logs
 	$(COMPOSE) logs -f --tail=100 search

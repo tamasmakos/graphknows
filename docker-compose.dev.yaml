@@ -1,18 +1,6 @@
 # docker-compose.dev.yaml — development overrides (hot-reload, source mounts)
 # Usage: docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
 services:
-  graphgen:
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./services/graphgen/src:/app/src:cached
-      - ./input:/data/input:cached
-      - ./output:/data/output
-
-  hybridrag:
-    command: python -m hybridrag.run
-    volumes:
-      - ./services/hybridrag:/app/hybridrag:cached
-
   agent:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:

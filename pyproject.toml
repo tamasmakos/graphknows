@@ -8,8 +8,7 @@ requires-python = ">=3.11"
 # UV workspace: each service manages its own dependencies
 [tool.uv.workspace]
 members = [
-    "services/graphgen",
-    "services/hybridrag",
+    "services/graphknows",
     "libs/python/graphknows-shared",
 ]
 
