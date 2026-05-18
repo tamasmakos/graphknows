@@ -178,11 +178,38 @@ class KnowledgePipeline:
         config: Dict[str, Any],
         schema: Any = None,
     ) -> None:
+        import hashlib
         input_dir = self.settings.infra.input_dir
         logger.info(f"Step 1: Building Lexical Graph from {input_dir}")
-        
-        results = await build_lexical_graph(ctx, input_dir, config, schema=schema)
-        
+
+        # Build reproducible provenance for the temporal SEGMENT node (E6)
+        try:
+            config_dict = config if isinstance(config, dict) else {}
+            config_hash = hashlib.sha256(
+                json.dumps(config_dict, sort_keys=True, default=str).encode()
+            ).hexdigest()[:16]
+        except Exception:
+            config_hash = "unknown"
+
+        taxonomy_name: str = "default"
+        try:
+            tax = self.settings.get_taxonomy()
+            taxonomy_name = f"{tax.name}:{tax.version}"
+        except Exception:
+            pass
+
+        provenance = {
+            "config_hash": config_hash,
+            "input_dir": input_dir,
+            "taxonomy_name": taxonomy_name,
+            "pipeline_version": "0.1.0",
+        }
+
+        results = await build_lexical_graph(
+            ctx, input_dir, config, schema=schema,
+            run_id=self.run_id, provenance=provenance,
+        )
+
         ctx.stats['lexical'] = results
         logger.info(f"Lexical Graph Built: {results.get('documents_processed')} docs, {results.get('total_segments')} segments")
 

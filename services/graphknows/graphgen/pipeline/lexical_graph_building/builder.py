@@ -1,8 +1,9 @@
 import os
 import asyncio
 import logging
-from datetime import datetime, date
-from typing import Dict, Any, List
+import uuid
+from datetime import datetime, date, timezone
+from typing import Dict, Any, List, Optional
 import networkx as nx
 
 from graphgen.data_types import PipelineContext, ChunkExtractionTask, SegmentData
@@ -33,29 +34,29 @@ async def process_single_segment(
     async with semaphore:
         chunk_count = 0
         
-        # Node Labels
-        segment_label = schema.nodes.get("Segment", {}).label if schema else "SEGMENT"
+        # Node Labels — use schema; PASSAGE is the text-subdivision label (E6 rename)
+        passage_label = schema.nodes.get("Passage", {}).label if schema else "PASSAGE"
         chunk_label = schema.nodes.get("Chunk", {}).label if schema else "CHUNK"
         
-        # 1. Add Segment Node
-        # ID: DOC_ID + _S + Index
-        segment_node_id = f"{doc_id}_S{segment_index}"
+        # 1. Add Passage Node (formerly Segment)
+        # ID: DOC_ID + _P + Index
+        segment_node_id = f"{doc_id}_P{segment_index}"
         
-        segment_name = segment.content[:20].strip() if segment.content else f"Segment {segment_index}"
+        segment_name = segment.content[:20].strip() if segment.content else f"Passage {segment_index}"
         if len(segment.content) > 20:
             segment_name += "..."
 
         deps.graph.add_node(segment_node_id,
-                          node_type=segment_label,
-                          ontology_class="STRUCTURAL_SEGMENT",
+                          node_type=passage_label,
+                          ontology_class="STRUCTURAL_PASSAGE",
                           graph_type="lexical_graph",
                           content=segment.content,
                           line_number=segment.line_number,
                           name=segment_name,
                           **segment.metadata)
         
-        # 2. Connect Doc -> Segment
-        deps.graph.add_edge(doc_id, segment_node_id, label="HAS_SEGMENT", graph_type="lexical_graph")
+        # 2. Connect Doc -> Passage
+        deps.graph.add_edge(doc_id, segment_node_id, label="HAS_PASSAGE", graph_type="lexical_graph")
         
         # 3. Chunking (Lexical Splitting)
         try:
@@ -232,10 +233,78 @@ async def process_single_document_lexical(deps: PipelineContext, filename: str, 
         logger.error(f"Error processing {filename}: {str(e)}", exc_info=True)
         return {"error": f"Error processing {filename}: {str(e)}", "segments_added": 0, "chunks_added": 0}
 
-async def build_lexical_graph(deps: PipelineContext, input_dir: str, config: Dict[str, Any] = None, schema: GraphSchema = None) -> Dict[str, Any]:
-    """Phase 1: Build the complete lexical graph structure sequentially"""
+def create_temporal_segment_node(
+    graph: nx.DiGraph,
+    run_id: str,
+    ingested_at: str,
+    schema: Optional[GraphSchema] = None,
+    **provenance: Any,
+) -> str:
+    """Add a SEGMENT node (temporal pipeline-run container) to *graph*.
+
+    Args:
+        graph: NetworkX graph to mutate.
+        run_id: Unique identifier for this pipeline run.
+        ingested_at: ISO 8601 timestamp of ingestion.
+        schema: Optional graph schema (resolves the SEGMENT label).
+        **provenance: Extra provenance fields (git_revision, config_hash, etc.).
+
+    Returns:
+        Node ID of the newly created SEGMENT node.
+    """
+    seg_label = "SEGMENT"
+    if schema:
+        seg_schema = schema.nodes.get("Segment")
+        if seg_schema:
+            seg_label = seg_schema.label
+
+    node_id = f"SEG_{run_id}"
+    graph.add_node(
+        node_id,
+        node_type=seg_label,
+        ontology_class="STRUCTURAL_SEGMENT",
+        graph_type="lexical_graph",
+        segment_id=run_id,
+        run_id=run_id,
+        ingested_at=ingested_at,
+        name=f"segment:{run_id}",
+        **provenance,
+    )
+    return node_id
+
+
+async def build_lexical_graph(
+    deps: PipelineContext,
+    input_dir: str,
+    config: Dict[str, Any] = None,
+    schema: GraphSchema = None,
+    run_id: Optional[str] = None,
+    provenance: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Phase 1: Build the complete lexical graph structure.
+
+    When *run_id* is supplied a temporal SEGMENT node is created at the top of
+    the graph hierarchy and CONTAINS_DOC edges are added from it to every DOC
+    node produced in this run (E6).
+    """
     config = config or {}
     results = {"documents_processed": 0, "total_segments": 0, "total_chunks": 0, "errors": []}
+
+    # Create temporal SEGMENT node if run_id is provided (E6)
+    ingested_at = datetime.now(timezone.utc).isoformat()
+    seg_node_id: Optional[str] = None
+    if run_id:
+        seg_node_id = create_temporal_segment_node(
+            deps.graph,
+            run_id=run_id,
+            ingested_at=ingested_at,
+            schema=schema,
+            **(provenance or {}),
+        )
+        logger.info("Created temporal SEGMENT node %s", seg_node_id)
+
+    # Track doc nodes added in this run to link CONTAINS_DOC edges
+    doc_ids_before: set[str] = set(deps.graph.nodes())
 
     try:
         if not os.path.exists(input_dir):
@@ -326,6 +395,22 @@ async def build_lexical_graph(deps: PipelineContext, input_dir: str, config: Dic
 
             if doc_result.get("errors"):
                 results["errors"].extend(doc_result["errors"])
+
+        # Wire CONTAINS_DOC edges from temporal SEGMENT to all DOC nodes (E6)
+        if seg_node_id:
+            new_doc_ids = [
+                n for n in deps.graph.nodes()
+                if n not in doc_ids_before
+                and deps.graph.nodes[n].get("node_type") == "DOC"
+            ]
+            for doc_id in new_doc_ids:
+                deps.graph.add_edge(
+                    seg_node_id, doc_id,
+                    label="CONTAINS_DOC",
+                    graph_type="lexical_graph",
+                )
+            results["segment_node_id"] = seg_node_id
+            results["doc_count"] = len(new_doc_ids)
 
         return results
 
