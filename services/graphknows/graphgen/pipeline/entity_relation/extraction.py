@@ -201,7 +201,7 @@ async def _extract_entities_for_chunk(
     if hasattr(extraction_config, 'model_dump'):
         extraction_config = extraction_config.model_dump()
         
-    extraction_backend = extraction_config.get('ner_backend') or extraction_config.get('backend', 'gliner')
+    extraction_backend = extraction_config.get('ner_backend') or extraction_config.get('backend', 'gliner2')
     diagnostics: Dict[str, Any] = {
         'backend': extraction_backend,
         'label_count': len(labels),
@@ -292,8 +292,7 @@ async def _extract_entities_for_chunk(
         except Exception as e:
             logger.error(f"GLiNER2 extraction failed for chunk: {e}")
             return []
-    else:
-        # GLiNER Default
+    elif extraction_backend == 'gliner':
         try:
             model = get_gliner_model(config)
             if not model:
@@ -342,11 +341,45 @@ async def _extract_entities_for_chunk(
         except Exception as e:
             logger.error(f"GLiNER extraction failed for chunk: {e}")
             return []
+    else:
+        # Unknown backend — default to gliner2
+        logger.warning(
+            "Unknown ner_backend %r; falling back to 'gliner2'. "
+            "Set ner_backend to one of: gliner2, gliner, spacy.",
+            extraction_backend,
+        )
+        # Recursive call with gliner2 — avoids duplicating the gliner2 branch
+        return await _extract_entities_for_chunk(
+            text, {**config, 'extraction': {**extraction_config, 'ner_backend': 'gliner2'}},
+            labels, return_diagnostics=return_diagnostics,
+        )
 
     return []
 
 
-def _build_relation_eligible_entities(gliner_entities: List[Dict[str, Any]]) -> List[str]:
+def _build_relation_eligible_entities(
+    gliner_entities: List[Dict[str, Any]],
+    taxonomy: Any = None,
+) -> List[str]:
+    """Filter and rank NER entities for relation-extraction eligibility.
+
+    Applies per-label minimum confidence thresholds from *taxonomy* when
+    provided; otherwise uses the built-in thresholds.  The PERSON
+    underscore-check (requiring a multi-token name) is a NLP heuristic kept
+    in code regardless of taxonomy.
+    """
+    # Determine the set of known entity labels for the short-name heuristic
+    if taxonomy is not None:
+        known_labels = set(taxonomy.entity_groups.keys())
+    else:
+        known_labels = {'PERSON', 'ORGANIZATION', 'LOCATION', 'EVENT', 'POLICY'}
+
+    def _min_conf(label: str) -> float:
+        if taxonomy is not None:
+            return taxonomy.get_min_ner_confidence(label)
+        # built-in thresholds
+        return {'EVENT': 0.5, 'ORGANIZATION': 0.6, 'LOCATION': 0.6}.get(label, 0.0)
+
     eligible = []
     fallback = []
 
@@ -360,15 +393,14 @@ def _build_relation_eligible_entities(gliner_entities: List[Dict[str, Any]]) -> 
 
         fallback.append(text)
 
-        if len(text) <= 3 and '_' not in text and ontology_label in {'PERSON', 'ORGANIZATION', 'LOCATION'}:
+        # Heuristic: skip very short single-token names for entity-type labels
+        if len(text) <= 3 and '_' not in text and ontology_label in known_labels:
             continue
+        # Heuristic: PERSON must be multi-token (e.g. URSULA_VON_DER_LEYEN, not just LEYEN)
         if ontology_label == 'PERSON' and '_' not in text:
             continue
-        if ontology_label == 'EVENT' and confidence < 0.5:
-            continue
-        if ontology_label == 'ORGANIZATION' and confidence < 0.6:
-            continue
-        if ontology_label == 'LOCATION' and confidence < 0.6:
+        # Taxonomy-driven confidence gate
+        if confidence < _min_conf(ontology_label):
             continue
 
         eligible.append(text)
@@ -441,11 +473,26 @@ async def process_extraction_task(
                  node_labels = ontology_labels
                  logger.debug(f"Chunk {task.chunk_id}: No labels found by NER, using full ontology set as fallback")
             
+            # Load active taxonomy for confidence-gate and label-set (lazy, cached per-task)
+            _taxonomy = None
+            try:
+                from graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
+                extraction_config_inner = config.get('extraction', {})
+                if hasattr(extraction_config_inner, 'model_dump'):
+                    extraction_config_inner = extraction_config_inner.model_dump()
+                _taxonomy_file = extraction_config_inner.get('taxonomy_file')
+                _taxonomy = load_taxonomy(_taxonomy_file) if _taxonomy_file else get_default_taxonomy()
+            except Exception:
+                pass  # non-fatal; taxonomy is optional
+
             # THE DISCOVERED ENTITIES are guidance/hints for extraction
             discovered_entities = []
             if task.entities:
                 discovered_entities.extend(task.entities)
-            relation_eligible_entities = _build_relation_eligible_entities(gliner_entities) if gliner_entities else []
+            relation_eligible_entities = (
+                _build_relation_eligible_entities(gliner_entities, taxonomy=_taxonomy)
+                if gliner_entities else []
+            )
             if gliner_entities:
                 discovered_entities.extend(relation_eligible_entities)
             
@@ -746,9 +793,11 @@ async def add_triplets_to_graph_for_segment(
 async def enrich_graph_per_segment(deps: PipelineContext) -> Dict[str, Any]:
     """Aggregate chunk-level extractions per segment, run coref, and enrich graph."""
     graph = deps.graph
-    segment_nodes = [n for n, d in graph.nodes(data=True) if d.get('node_type') == 'SEGMENT']
-    
-    # Fallback to Document nodes if no SEGMENT nodes found (e.g. simplified schema)
+    # Text-subdivision nodes are typed 'PASSAGE' after E6 rename (was 'SEGMENT').
+    # Temporal pipeline-run containers are typed 'SEGMENT' and must not be processed here.
+    segment_nodes = [n for n, d in graph.nodes(data=True) if d.get('node_type') == 'PASSAGE']
+
+    # Fallback to Document nodes if no PASSAGE nodes found (e.g. simplified schema)
     if not segment_nodes:
         segment_nodes = [n for n, d in graph.nodes(data=True) if d.get('node_type') in ['Document', 'DAY', 'Doc', 'DOC']]
         if segment_nodes:

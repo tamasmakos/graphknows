@@ -157,12 +157,7 @@ class LangChainExtractor(BaseExtractor):
     def __init__(self, config: Dict[str, Any]):
         """Initialize with config."""
         self.config = config
-        # Initialize GLiNER for entity extraction
-        # gliner_model = config.get('gliner_model', 'urchade/gliner_medium-v2.1')
-        # self.gliner = GLiNER.from_pretrained(gliner_model)
-        # self.entity_labels = config.get('entity_labels', ["person", "organization", "location", "event", "concept", "product", "date", "time"])
-        # logger.info(f"Initialized LangChain extractor with GLiNER ({gliner_model})")
-    
+
     async def extract_relations(
         self,
         text: str,

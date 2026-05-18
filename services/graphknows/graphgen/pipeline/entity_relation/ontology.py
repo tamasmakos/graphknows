@@ -17,6 +17,11 @@ import networkx as nx
 
 from graphgen.utils.utils import standardize_label
 
+# TYPE_CHECKING guard avoids circular import at runtime
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from graphgen.config.taxonomy import TaxonomyConfig
+
 # ---------------------------------------------------------------------------
 # Label taxonomy
 # ---------------------------------------------------------------------------
@@ -72,15 +77,27 @@ POLITICAL_TYPE_OVERRIDES: dict[str, str] = {
 
 def build_top_level_label_space(
     ontology_labels: list[str],
+    taxonomy: "TaxonomyConfig | None" = None,
 ) -> dict[str, dict[str, Any]]:
     """Build a hierarchical label-space dict from a flat list of entity labels.
+
+    When *taxonomy* is provided all group rules and aliases are read from it;
+    otherwise the module-level ``DEFAULT_GROUP_RULES`` / ``TOP_LEVEL_ALIASES``
+    constants are used as a fallback.
 
     Returns a mapping of ``{TOP_LABEL: {aliases, children, child_aliases}}``.
     """
     normalized = [standardize_label(label) for label in ontology_labels]
     label_space: dict[str, dict[str, Any]] = {}
 
-    for top_label, child_rules in DEFAULT_GROUP_RULES.items():
+    if taxonomy is not None:
+        group_rules = {k: v.children for k, v in taxonomy.entity_groups.items()}
+        group_aliases = {k: v.aliases for k, v in taxonomy.entity_groups.items()}
+    else:
+        group_rules = DEFAULT_GROUP_RULES
+        group_aliases = TOP_LEVEL_ALIASES
+
+    for top_label, child_rules in group_rules.items():
         children = [
             label for label in normalized
             if label in child_rules or any(rule in label for rule in child_rules)
@@ -89,7 +106,7 @@ def build_top_level_label_space(
             children.insert(0, top_label)
         if children:
             label_space[top_label] = {
-                "aliases": TOP_LEVEL_ALIASES.get(top_label, [top_label.lower()]),
+                "aliases": group_aliases.get(top_label, [top_label.lower()]),
                 "children": sorted(set(children)),
                 "child_aliases": {
                     child: _default_aliases_for_label(child)
@@ -103,12 +120,18 @@ def build_top_level_label_space(
 def build_gliner2_schema(
     candidate_labels: list[str],
     label_descriptions: dict[str, str] | None = None,
+    taxonomy: "TaxonomyConfig | None" = None,
 ) -> dict[str, dict[str, str]]:
     """Build the entity-schema dict consumed by GLiNER2.
 
+    When *taxonomy* is provided per-group descriptions are read from it;
+    ``label_descriptions`` overrides take precedence over taxonomy descriptions,
+    which take precedence over the module-level defaults.
+
     Args:
         candidate_labels: Labels to include (typically the top-level taxonomy keys).
-        label_descriptions: Optional overrides for per-label descriptions.
+        label_descriptions: Optional caller-supplied per-label description overrides.
+        taxonomy: Optional domain taxonomy; provides per-group descriptions.
 
     Returns:
         ``{"entities": {label_lower: description, ...}}``
@@ -120,7 +143,15 @@ def build_gliner2_schema(
         "POLICY": "A named policy, directive, regulation, treaty, or governance framework.",
         "EVENT": "A summit, election, crisis, war, debate, or named political event.",
     }
-    descriptions = {**_defaults, **(label_descriptions or {})}
+    if taxonomy is not None:
+        taxonomy_descs = {
+            k: v.description.strip()
+            for k, v in taxonomy.entity_groups.items()
+            if v.description.strip()
+        }
+        descriptions = {**_defaults, **taxonomy_descs, **(label_descriptions or {})}
+    else:
+        descriptions = {**_defaults, **(label_descriptions or {})}
     return {
         "entities": {
             label.lower(): descriptions.get(label, label.lower())
@@ -133,20 +164,30 @@ def select_candidate_labels(
     text: str,
     label_space: dict[str, dict[str, Any]],
     top_k: int = 5,
+    taxonomy: "TaxonomyConfig | None" = None,
 ) -> list[str]:
     """Rank top-level labels by how well they match *text* and return the best *top_k*.
 
     Uses alias overlap and domain-specific hint words for scoring.
+    When *taxonomy* is provided, alias-based hints are derived from it;
+    otherwise the module-level political-hint constants are used.
     Always returns at least *top_k* labels even when none score > 0.
     """
     lowered = text.lower()
-    _political_hints: dict[str, list[str]] = {
-        "PERSON": ["prime minister", "president", "speaker", "leader"],
-        "ORGANIZATION": ["kremlin", "army", "military", "parliament", "commission", "bank", "union"],
-        "LOCATION": ["ukraine", "italy", "mediterranean", "europe", "eurozone"],
-        "POLICY": ["sanctions", "aid", "migration", "climate", "health", "security", "energy", "policy"],
-        "EVENT": ["invasion", "conference", "debate", "crisis", "war"],
-    }
+
+    # Build per-label hint lists from taxonomy or use hardcoded political hints
+    if taxonomy is not None:
+        _hints: dict[str, list[str]] = {
+            k: v.aliases for k, v in taxonomy.entity_groups.items()
+        }
+    else:
+        _hints = {
+            "PERSON": ["prime minister", "president", "speaker", "leader"],
+            "ORGANIZATION": ["kremlin", "army", "military", "parliament", "commission", "bank", "union"],
+            "LOCATION": ["ukraine", "italy", "mediterranean", "europe", "eurozone"],
+            "POLICY": ["sanctions", "aid", "migration", "climate", "health", "security", "energy", "policy"],
+            "EVENT": ["invasion", "conference", "debate", "crisis", "war"],
+        }
 
     scores: list[tuple[str, int]] = []
     for top_label, spec in label_space.items():
@@ -158,7 +199,7 @@ def select_candidate_labels(
             for token in child.lower().replace("_", " ").split():
                 if len(token) > 3 and token in lowered:
                     score += 1
-        for hint in _political_hints.get(top_label, []):
+        for hint in _hints.get(top_label, []):
             if hint in lowered:
                 score += 4
         scores.append((top_label, score))
@@ -173,12 +214,16 @@ def select_candidate_labels(
 def refine_entities_with_ontology(
     entities: list[dict[str, Any]],
     label_space: dict[str, dict[str, Any]],
+    taxonomy: "TaxonomyConfig | None" = None,
 ) -> list[dict[str, Any]]:
     """Map raw GLiNER2 entity labels to canonical ontology labels.
 
     Sets ``entity["ontology_label"]`` on every item in *entities* and returns
-    the refined list.
+    the refined list.  When *taxonomy* is provided its ``overrides`` dict is
+    used in place of the module-level ``POLITICAL_TYPE_OVERRIDES``.
     """
+    active_overrides = taxonomy.overrides if taxonomy is not None else POLITICAL_TYPE_OVERRIDES
+
     refined: list[dict[str, Any]] = []
     for entity in entities:
         item = dict(entity)
@@ -187,10 +232,10 @@ def refine_entities_with_ontology(
         text_norm = standardize_label(text)
         text_lower = text.lower()
 
-        ontology_label = POLITICAL_TYPE_OVERRIDES.get(text_norm, top_label)
+        ontology_label = active_overrides.get(text_norm, top_label)
 
         spec = label_space.get(top_label)
-        if spec and text_norm not in POLITICAL_TYPE_OVERRIDES:
+        if spec and text_norm not in active_overrides:
             best_child = top_label
             best_score = -1
             for child in spec.get("children", []):
