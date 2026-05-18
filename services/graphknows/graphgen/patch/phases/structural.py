@@ -8,7 +8,12 @@ from neo4j import Driver
 
 STRUCTURAL_MAPPINGS = {
     "CHUNK": "STRUCTURAL_CHUNK",
-    "SEGMENT": "STRUCTURAL_SEGMENT",
+    # SEGMENT is now the temporal pipeline-run container (E6); old text-subdivision
+    # nodes that were written as SEGMENT before the PASSAGE rename are back-compat mapped
+    # to STRUCTURAL_PASSAGE so the patch can normalise legacy data.
+    "SEGMENT": "STRUCTURAL_PASSAGE",
+    # New label for text subdivisions (formerly SEGMENT)
+    "PASSAGE": "STRUCTURAL_PASSAGE",
     "DOC": "STRUCTURAL_DOCUMENT",
     "TOPIC": "TOPIC",
     "SUBTOPIC": "SUBTOPIC",

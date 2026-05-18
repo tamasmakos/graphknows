@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from graphgen.config.taxonomy import TaxonomyConfig
 
 PERSON_TOKENS = {
     "MR",
@@ -123,20 +126,42 @@ def _is_date_like(name: str) -> bool:
     return False
 
 
-def classify_name(name: str, default_to_concept: bool = True) -> Optional[str]:
+def classify_name(
+    name: str,
+    taxonomy: "Optional[TaxonomyConfig]" = None,
+    default_to_concept: bool = True,
+) -> Optional[str]:
     """Classify node name into ontology class.
+
+    When *taxonomy* is provided its ``entity_groups`` classification rules are
+    used (tokens and patterns); the module-level constants are used as a
+    fallback when *taxonomy* is ``None``.
 
     Args:
         name: Node name to classify.
+        taxonomy: Optional domain taxonomy; drives schemaless classification.
+        default_to_concept: Return ``"CONCEPT"`` instead of ``None`` when
+            no rule matches.
 
     Returns:
-        Ontology class string.
+        Ontology class string or ``None``.
     """
     if not name:
         return "CONCEPT" if default_to_concept else None
 
     normalized = _normalize(name)
 
+    if taxonomy is not None:
+        # Taxonomy-driven classification — iterate groups in definition order
+        for group_name, group in taxonomy.entity_groups.items():
+            if group.matches_name(normalized):
+                return group_name
+        # Date-like heuristic is structural, not domain-specific — keep it
+        if _is_date_like(normalized):
+            return "EVENT"
+        return "CONCEPT" if default_to_concept else None
+
+    # --- Fallback: module-level hardcoded rules (backward compat) ---
     for token in PERSON_TOKENS:
         if re.search(rf"(^|_){re.escape(token)}($|_)", normalized):
             return "PERSON"
@@ -163,6 +188,10 @@ def classify_name(name: str, default_to_concept: bool = True) -> Optional[str]:
     return None
 
 
-def classify_by_name(name: str, default_to_concept: bool = True) -> Optional[str]:
+def classify_by_name(
+    name: str,
+    taxonomy: "Optional[TaxonomyConfig]" = None,
+    default_to_concept: bool = True,
+) -> Optional[str]:
     """Backward-compatible alias for classify_name."""
-    return classify_name(name, default_to_concept=default_to_concept)
+    return classify_name(name, taxonomy=taxonomy, default_to_concept=default_to_concept)

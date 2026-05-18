@@ -7,10 +7,10 @@ from typing import Callable, Dict, Iterable, List
 
 from neo4j import GraphDatabase
 
-from .phases import run_legacy_phase, run_structural_phase, run_unknown_phase
+from .phases import run_legacy_phase, run_structural_phase, run_unknown_phase, run_gliner2_fallback_phase
 from .report import format_patch_report
 
-DEFAULT_PHASE_ORDER = ["structural", "legacy", "unknown"]
+DEFAULT_PHASE_ORDER = ["structural", "legacy", "unknown", "gliner2_fallback"]
 
 PhaseRunner = Callable[[object, bool, int], Dict[str, object]]
 
@@ -18,6 +18,7 @@ PHASE_RUNNERS: Dict[str, PhaseRunner] = {
     "structural": run_structural_phase,
     "legacy": run_legacy_phase,
     "unknown": run_unknown_phase,
+    "gliner2_fallback": run_gliner2_fallback_phase,
 }
 
 
@@ -59,8 +60,20 @@ def run_patch(
     phases: list[str] | None = None,
     dry_run: bool = False,
     batch_size: int = 500,
+    taxonomy=None,
 ) -> dict:
-    """Run selected ontology patch phases in deterministic order."""
+    """Run selected ontology patch phases in deterministic order.
+
+    Args:
+        neo4j_uri: Bolt URI for Neo4j.
+        neo4j_user: Neo4j username.
+        neo4j_password: Neo4j password.
+        phases: Subset of phase names to run (all phases if None).
+        dry_run: Preview changes without writing to Neo4j.
+        batch_size: Max nodes processed per batch per phase.
+        taxonomy: Optional ``TaxonomyConfig`` passed to phases that support it
+            (currently: ``legacy``, ``gliner2_fallback``).
+    """
     selected_phases = _normalize_phases(phases)
     summary: Dict[str, object] = {
         "dry_run": dry_run,
@@ -71,7 +84,14 @@ def run_patch(
 
     with GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password)) as driver:
         for phase_name in selected_phases:
-            phase_result = PHASE_RUNNERS[phase_name](driver, dry_run=dry_run, batch_size=batch_size)
+            runner = PHASE_RUNNERS[phase_name]
+            # Pass taxonomy to phases that accept it
+            import inspect
+            sig = inspect.signature(runner)
+            if "taxonomy" in sig.parameters:
+                phase_result = runner(driver, dry_run=dry_run, batch_size=batch_size, taxonomy=taxonomy)
+            else:
+                phase_result = runner(driver, dry_run=dry_run, batch_size=batch_size)
             phase_result["ontology_class_distribution"] = _distribution_from_result(phase_result)
             summary["phases"].append(phase_result)
             summary["totals"]["before"] += int(phase_result.get("before", 0) or 0)
