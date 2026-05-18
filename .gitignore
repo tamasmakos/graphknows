@@ -47,8 +47,9 @@ demo_ingest.py
 *.DS_Store
 Thumbs.db
 
-# ─── Legacy / removed ─────────────────────────────────────────────────────────
+# ─── Legacy / removed / external clones ──────────────────────────────────────
 langfuse/
+cognee/
 .gemini
 .gemini*.log
 .geminiignore
