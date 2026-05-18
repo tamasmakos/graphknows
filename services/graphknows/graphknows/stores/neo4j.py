@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -266,7 +267,12 @@ class Neo4jStore:
         nodes: list[dict[str, Any]],
         edges: list[dict[str, Any]],
     ) -> tuple[int, int]:
-        """Promote session nodes and edges into the persistent corpus graph."""
+        """Promote session nodes and edges into the persistent corpus graph.
+
+        Records temporal provenance on each merged Entity node:
+        ``ingested_at``, ``contributing_session_id``, ``merged_session_count``.
+        """
+        ingested_at = datetime.now(timezone.utc).isoformat()
 
         def _sync() -> tuple[int, int]:
             merged_nodes = 0
@@ -278,10 +284,16 @@ class Neo4jStore:
                 eid = entity_node_id(name)
                 self._run(
                     """MERGE (e:Entity {id:$id})
-                       SET e.name=$name, e.label=$label""",
+                       SET e.name=$name, e.label=$label,
+                           e.ingested_at=$ingested_at,
+                           e.contributing_session_id=$session_id,
+                           e.merged_session_count =
+                               coalesce(e.merged_session_count, 0) + 1""",
                     id=eid,
                     name=name,
                     label=n.get("type", "Entity"),
+                    ingested_at=ingested_at,
+                    session_id=session_id,
                 )
                 merged_nodes += 1
             for e in edges:
@@ -303,6 +315,45 @@ class Neo4jStore:
             return merged_nodes, merged_edges
 
         return await asyncio.to_thread(_sync)
+
+    async def preview_session_merge(
+        self,
+        session_id: str,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Return a preview of what ``merge_session_entities_to_corpus`` would do.
+
+        Does NOT write anything.  Checks how many session nodes already exist
+        in the corpus so callers can gauge the merge impact.
+
+        Args:
+            session_id: Session namespace identifier.
+            nodes: Memgraph entity nodes for this session.
+            edges: Memgraph relation edges for this session.
+
+        Returns:
+            Dict with node_count, edge_count, existing_overlap_count, sample_nodes.
+        """
+        names = [n.get("name", "").strip().upper() for n in nodes if n.get("name")]
+
+        def _count_existing(name_list: list[str]) -> int:
+            if not name_list:
+                return 0
+            rows = self._run(
+                "UNWIND $names AS n MATCH (e:Entity {name:n}) RETURN count(e) AS c",
+                names=name_list,
+            )
+            return int(rows[0]["c"]) if rows else 0
+
+        existing = await asyncio.to_thread(_count_existing, names)
+        return {
+            "session_id": session_id,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "existing_overlap_count": existing,
+            "sample_nodes": [n.get("name") for n in nodes[:10]],
+        }
 
     # ------------------------------------------------------------------
     # Corpus reads (retrieval path)
@@ -355,3 +406,46 @@ class Neo4jStore:
             "topics": topic_count,
             "session_entities": session_count,
         }
+
+    # ------------------------------------------------------------------
+    # Temporal SEGMENT reads (E6)
+    # ------------------------------------------------------------------
+
+    async def get_segment_info(self, segment_id: str) -> dict[str, Any] | None:
+        """Return provenance + statistics for a SEGMENT node by *segment_id*."""
+        rows = await self._arun(
+            """MATCH (s:SEGMENT {segment_id:$sid})
+               OPTIONAL MATCH (s)-[:CONTAINS_DOC]->(d:DOC)
+               RETURN s.segment_id AS segment_id,
+                      s.ingested_at AS ingested_at,
+                      s.run_id AS run_id,
+                      s.git_revision AS git_revision,
+                      s.config_hash AS config_hash,
+                      s.pipeline_version AS pipeline_version,
+                      s.source_count AS source_count,
+                      s.input_dir AS input_dir,
+                      s.taxonomy_name AS taxonomy_name,
+                      count(d) AS doc_count""",
+            sid=segment_id,
+        )
+        if not rows:
+            return None
+        row = dict(rows[0])
+        row["doc_count"] = int(row.get("doc_count") or 0)
+        return row
+
+    async def list_segments(self, limit: int = 20) -> list[dict[str, Any]]:
+        """List SEGMENT nodes ordered by ingestion time descending."""
+        rows = await self._arun(
+            """MATCH (s:SEGMENT)
+               RETURN s.segment_id AS segment_id,
+                      s.ingested_at AS ingested_at,
+                      s.run_id AS run_id,
+                      s.taxonomy_name AS taxonomy_name,
+                      s.source_count AS source_count
+               ORDER BY s.ingested_at DESC
+               LIMIT $limit""",
+            limit=limit,
+        )
+        return [dict(r) for r in rows]
+

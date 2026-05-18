@@ -120,3 +120,16 @@ class MemgraphStore:
             return [{"from": r["from"], "to": r["to"], "rel_type": r["rel_type"]} for r in rows]
 
         return await asyncio.to_thread(_sync)
+
+    async def get_session_node_count(self, session_id: str) -> int:
+        """Return the number of Entity nodes stored for *session_id*."""
+
+        def _sync() -> int:
+            with self._driver.session() as s:
+                rows = list(s.run(
+                    "MATCH (n:Entity {session_id:$sid}) RETURN count(n) AS c",
+                    sid=session_id,
+                ))
+            return int(rows[0]["c"]) if rows else 0
+
+        return await asyncio.to_thread(_sync)
