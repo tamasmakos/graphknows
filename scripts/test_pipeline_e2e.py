@@ -12,7 +12,7 @@ Verifies all six bug fixes:
 Usage::
 
     cd /root/graphknows && \
-    PYTHONPATH=services/graphgen:services python3 scripts/test_pipeline_e2e.py
+    PYTHONPATH=services/graphknows:services python3 scripts/test_pipeline_e2e.py
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def _run_gliner2_subprocess() -> tuple[int, str]:
 
     helper = textwrap.dedent("""\
         import asyncio, sys, json
-        sys.path.insert(0, "services/graphgen")
+        sys.path.insert(0, "services/graphknows")
         sys.path.insert(0, "services")
 
         from graphgen.pipeline.entity_relation.extraction import (

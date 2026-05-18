@@ -21,8 +21,8 @@ from neo4j.exceptions import Neo4jError
 
 # Import existing resolution machinery
 sys.path.insert(0, "/root/graphknows/services")
-sys.path.insert(0, "/root/graphknows/services/graphgen")
-from pipeline.graph_cleaning.resolution import BlockingResolver, EntityRecord
+sys.path.insert(0, "/root/graphknows/services/graphknows")
+from graphgen.pipeline.graph_cleaning.resolution import BlockingResolver, EntityRecord
 
 # ---------------------------------------------------------------------------
 # Configuration

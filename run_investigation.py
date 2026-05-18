@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, '/root/graphknows/services')
 sys.path.insert(0, '/root/graphknows/services/agent')
-sys.path.insert(0, '/root/graphknows/services/graphgen')
+sys.path.insert(0, '/root/graphknows/services/graphknows')
 
 from dotenv import load_dotenv
 load_dotenv('/root/graphknows/.env')
