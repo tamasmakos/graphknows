@@ -50,10 +50,9 @@ Thumbs.db
 # ─── Legacy / removed / external clones ──────────────────────────────────────
 langfuse/
 cognee/
-.gemini
-.gemini*.log
-.geminiignore
 lib/
+research
+
 
 
 mcp.json
