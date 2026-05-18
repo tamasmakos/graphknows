@@ -57,9 +57,8 @@ def _load_langgraph_agent_module():
                 "langchain_core.messages"):
         sys.modules.pop(key, None)
     _install_langgraph_agent_import_stubs()
-    sys.modules.pop("services.agent.langgraph_agent", None)
-    sys.modules.pop("agent.langgraph_agent", None)
-    return importlib.import_module("services.agent.langgraph_agent")
+    sys.modules.pop("agent.graph.agent", None)
+    return importlib.import_module("agent.graph.agent")
 
 
 class _FakeChatGroq:

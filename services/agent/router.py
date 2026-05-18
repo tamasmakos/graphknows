@@ -56,7 +56,7 @@ except Exception:
     build_initial_investigative_state = None  # type: ignore
     REQUIRED_STREAM_EVENTS = ()  # type: ignore
 from agent.session.manager import SessionGraphManager
-from agent.session_end import merge_session_to_neo4j
+from agent.session.end import merge_session_to_neo4j
 try:
     from graphknows.shared.models.session import StreamEvent
 except Exception:

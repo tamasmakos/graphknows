@@ -13,7 +13,7 @@ sys.path.insert(0, '/root/graphknows/services/graphknows')
 from dotenv import load_dotenv
 load_dotenv('/root/graphknows/.env')
 
-from agent.langgraph_agent import build_graph
+from agent.graph.agent import build_graph
 from langchain_core.messages import HumanMessage
 
 QUERY = (
