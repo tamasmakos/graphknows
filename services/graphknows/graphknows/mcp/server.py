@@ -1,9 +1,11 @@
-"""graphknows FastMCP server — retrieve and community_summary tools.
+"""graphknows FastMCP server — retrieve, community_summary, and segment tools.
 
 Tools
 -----
 retrieve          — entity-first hybrid retrieval → XML string
 community_summary — Leiden community summary for a named entity
+list_segments     — list temporal SEGMENT provenance nodes
+segment_info      — provenance + stats for one SEGMENT node
 """
 from __future__ import annotations
 
@@ -115,3 +117,64 @@ async def community_summary(entity_name: str) -> str:
     if topic is None:
         return f"No community found for entity: {entity_name}"
     return f"{topic['label']}\n\n{topic['summary']}"
+
+
+# ---------------------------------------------------------------------------
+# Tool: list_segments (E6)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_segments(limit: int = 20) -> str:
+    """List temporal SEGMENT nodes (pipeline-run provenance containers).
+
+    Returns a text summary of the most recent *limit* SEGMENT nodes ordered
+    by ingestion timestamp descending.
+
+    Args:
+        limit: Maximum number of segments to return (default 20).
+
+    Returns:
+        Human-readable text listing segment_id, ingested_at, and taxonomy.
+    """
+    if _neo is None:
+        raise RuntimeError("Neo4j store not yet initialised")
+    segments = await _neo.list_segments(limit=limit)
+    if not segments:
+        return "No SEGMENT nodes found in the corpus."
+    lines = ["SEGMENT nodes (newest first):", ""]
+    for seg in segments:
+        lines.append(
+            f"  {seg.get('segment_id', 'unknown')}  |  {seg.get('ingested_at', 'N/A')}"
+            f"  |  taxonomy={seg.get('taxonomy_name', 'N/A')}"
+            f"  |  docs={seg.get('source_count', '?')}"
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Tool: segment_info (E6)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def segment_info(segment_id: str) -> str:
+    """Return provenance and statistics for a single SEGMENT pipeline-run node.
+
+    Args:
+        segment_id: The segment_id attribute of the SEGMENT node.
+
+    Returns:
+        Human-readable provenance string, or a not-found message.
+    """
+    if _neo is None:
+        raise RuntimeError("Neo4j store not yet initialised")
+    info = await _neo.get_segment_info(segment_id)
+    if info is None:
+        return f"Segment {segment_id!r} not found."
+    lines = [f"SEGMENT: {segment_id}", ""]
+    for key, val in info.items():
+        if val is not None:
+            lines.append(f"  {key}: {val}")
+    return "\n".join(lines)
+

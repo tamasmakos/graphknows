@@ -2,14 +2,19 @@
 
 Endpoints
 ---------
-GET  /health                 — liveness probe
-POST /ingest                 — enqueue graphgen KnowledgePipeline (background task)
-GET  /jobs/{run_id}          — poll ingest job status
-POST /retrieve               — hybrid entity-graph + semantic retrieval → XML
-POST /session                — create or re-seed a session namespace
-DELETE /session/{session_id} — merge Memgraph session → Neo4j corpus and purge
-GET  /stats                  — combined Neo4j + pgvector row counts
-MCP  /mcp/                   — FastMCP tool endpoint (retrieve, community_summary)
+GET  /health                         — liveness probe
+POST /ingest                         — enqueue graphgen KnowledgePipeline (background task)
+GET  /jobs/{run_id}                  — poll ingest job status
+POST /retrieve                       — hybrid entity-graph + semantic retrieval → XML
+POST /session                        — create or re-seed a session namespace
+DELETE /session/{session_id}         — merge Memgraph session → Neo4j corpus and purge
+GET  /session/{session_id}/preview-merge — preview a session merge without writing
+GET  /stats                          — combined Neo4j + pgvector row counts
+POST /admin/patch                    — run ontology patch phases on Neo4j corpus
+GET  /admin/patch/preview            — dry-run patch, returns preview
+GET  /segments                       — list SEGMENT provenance nodes
+GET  /segments/{segment_id}          — provenance + stats for one SEGMENT node
+MCP  /mcp/                           — FastMCP tool endpoint (retrieve, community_summary)
 """
 from __future__ import annotations
 
@@ -17,7 +22,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -68,12 +73,50 @@ class GraphKnowsSettings(BaseSettings):
     # Embedding model
     embed_model: str = "BAAI/bge-small-en-v1.5"
 
+    # Session TTL (minutes of inactivity before auto-merge)
+    session_ttl_minutes: int = Field(default=60, alias="SESSION_TTL_MINUTES")
+
 
 # ---------------------------------------------------------------------------
 # In-memory job store
 # ---------------------------------------------------------------------------
 
 _jobs: dict[str, dict[str, Any]] = {}
+
+# ---------------------------------------------------------------------------
+# Session TTL tracking (E5)
+# ---------------------------------------------------------------------------
+
+# Maps session_id → last activity timestamp
+_session_last_active: dict[str, datetime] = {}
+
+_ttl_task: asyncio.Task | None = None
+
+
+async def _session_ttl_loop() -> None:
+    """Background loop: auto-merge sessions idle longer than SESSION_TTL_MINUTES."""
+    global _session_last_active
+    while True:
+        await asyncio.sleep(60)  # check every minute
+        if _settings is None or _neo is None or _memgraph is None or _pg is None:
+            continue
+        ttl = timedelta(minutes=_settings.session_ttl_minutes)
+        now = datetime.now(timezone.utc)
+        expired = [sid for sid, ts in list(_session_last_active.items()) if now - ts > ttl]
+        for session_id in expired:
+            logger.info("Auto-merging idle session %s (TTL exceeded)", session_id)
+            try:
+                nodes = await _memgraph.get_session_nodes(session_id)
+                edges = await _memgraph.get_session_edges(session_id)
+                await _neo.merge_session_entities_to_corpus(session_id, nodes, edges)
+                await asyncio.gather(
+                    _memgraph.delete_session(session_id),
+                    _pg.delete_session(session_id),
+                )
+                _session_last_active.pop(session_id, None)
+                logger.info("Auto-merge of session %s complete", session_id)
+            except Exception as exc:
+                logger.error("Auto-merge failed for session %s: %s", session_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +137,7 @@ _settings: GraphKnowsSettings | None = None
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    global _pg, _neo, _memgraph, _retriever, _settings
+    global _pg, _neo, _memgraph, _retriever, _settings, _ttl_task
 
     _settings = GraphKnowsSettings()
     logger.info("graphknows starting", extra={"env": _settings.graphknows_env})
@@ -124,9 +167,14 @@ async def _lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logger.warning("graphknows started in degraded mode: %s", exc)
 
+    # Start session TTL loop (E5)
+    _ttl_task = asyncio.create_task(_session_ttl_loop())
+
     yield
 
     logger.info("graphknows shutting down")
+    if _ttl_task is not None:
+        _ttl_task.cancel()
     try:
         await _pg.close()
     except Exception:
@@ -210,6 +258,21 @@ class SessionDeleteResponse(BaseModel):
     merged_nodes: int
     merged_edges: int
     purged_chunks: int
+
+
+class PatchRequest(BaseModel):
+    """Request body for POST /admin/patch."""
+
+    phases: list[str] | None = Field(
+        default=None,
+        description="Phases to run; omit to run all default phases",
+    )
+    dry_run: bool = Field(default=False, description="Preview changes without writing")
+    batch_size: int = Field(default=500, ge=1, le=10_000)
+    taxonomy_file: str | None = Field(
+        default=None,
+        description="Path to taxonomy YAML; uses bundled eu-politics.yaml if omitted",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -362,3 +425,93 @@ async def stats() -> dict[str, Any]:
         "neo4j": neo_counts,
         "pgvector": pg_counts,
     }
+
+
+# ── Session preview-merge (E5) ─────────────────────────────────────────────
+
+
+@app.get("/session/{session_id}/preview-merge")
+async def preview_session_merge(session_id: str) -> dict[str, Any]:
+    """Preview what merging *session_id* into the corpus would do — no writes."""
+    if _memgraph is None or _neo is None:
+        raise HTTPException(status_code=503, detail="Stores not initialised")
+    try:
+        nodes = await _memgraph.get_session_nodes(session_id)
+        edges = await _memgraph.get_session_edges(session_id)
+        node_count = await _memgraph.get_session_node_count(session_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Memgraph unavailable: {exc}") from exc
+    preview = await _neo.preview_session_merge(session_id, nodes, edges)
+    preview["memgraph_node_count"] = node_count
+    return preview
+
+
+# ── Admin: Ontology Patch (E4) ─────────────────────────────────────────────
+
+
+def _load_patch_taxonomy(taxonomy_file: str | None):
+    """Load taxonomy for a patch request; returns None on failure."""
+    try:
+        from graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
+        return load_taxonomy(taxonomy_file) if taxonomy_file else get_default_taxonomy()
+    except Exception as exc:
+        logger.warning("Could not load patch taxonomy: %s", exc)
+        return None
+
+
+@app.post("/admin/patch")
+async def run_patch(req: PatchRequest) -> dict[str, Any]:
+    """Run ontology patch phases on the Neo4j corpus."""
+    if _settings is None:
+        raise HTTPException(status_code=503, detail="Settings not initialised")
+    taxonomy = _load_patch_taxonomy(req.taxonomy_file)
+    try:
+        from graphgen.patch.runner import run_patch as _run_patch
+        result = await asyncio.to_thread(
+            _run_patch,
+            neo4j_uri=_settings.neo4j_uri,
+            neo4j_user=_settings.neo4j_user,
+            neo4j_password=_settings.neo4j_password,
+            phases=req.phases,
+            dry_run=req.dry_run,
+            batch_size=req.batch_size,
+            taxonomy=taxonomy,
+        )
+        return result
+    except Exception as exc:
+        logger.error("Patch failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/admin/patch/preview")
+async def preview_patch(
+    phases: str | None = None,
+    taxonomy_file: str | None = None,
+) -> dict[str, Any]:
+    """Dry-run all (or selected) patch phases and return the preview report."""
+    phase_list = phases.split(",") if phases else None
+    req = PatchRequest(phases=phase_list, dry_run=True, taxonomy_file=taxonomy_file)
+    return await run_patch(req)
+
+
+# ── Temporal SEGMENT endpoints (E6) ───────────────────────────────────────
+
+
+@app.get("/segments")
+async def list_segments(limit: int = 20) -> list[dict[str, Any]]:
+    """List SEGMENT provenance nodes ordered by ingestion time (newest first)."""
+    if _neo is None:
+        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+    return await _neo.list_segments(limit=limit)
+
+
+@app.get("/segments/{segment_id}")
+async def get_segment(segment_id: str) -> dict[str, Any]:
+    """Provenance + doc-count statistics for a single SEGMENT node."""
+    if _neo is None:
+        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+    info = await _neo.get_segment_info(segment_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Segment {segment_id!r} not found")
+    return info
+
