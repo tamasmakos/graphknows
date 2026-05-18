@@ -140,8 +140,11 @@ class ExtractionSettings(BaseSettings):
     chunk_overlap: int = 100
 
     # Backend selection
-    ner_backend: str = "llm"  # options: "gliner", "gliner2", "spacy", "llm", "dspy"
+    ner_backend: str = "gliner2"  # options: "gliner", "gliner2", "spacy", "llm", "dspy"
     relation_backend: Optional[str] = None  # options: "dspy", "langchain"
+
+    # Taxonomy — path to a domain YAML file; None loads the bundled eu-politics taxonomy
+    taxonomy_file: Optional[str] = Field(None, alias="GRAPHGEN_TAXONOMY_FILE")
 
     # Legacy alias retained for backward compatibility with existing YAML/configs.
     @property
@@ -165,7 +168,7 @@ class ExtractionSettings(BaseSettings):
         if isinstance(values, dict):
             if values.get("ner_backend") is None and values.get("backend") is not None:
                 values["ner_backend"] = values["backend"]
-            ner_backend = values.get("ner_backend", "llm")
+            ner_backend = values.get("ner_backend", "gliner2")
             if values.get("relation_backend") is None:
                 values["relation_backend"] = "langchain" if ner_backend == "llm" else "dspy"
         return values
@@ -362,6 +365,18 @@ class PipelineSettings(BaseSettings):
         env_file=".env",
         extra="ignore"
     )
+
+    def get_taxonomy(self):
+        """Return the active ``TaxonomyConfig`` for this pipeline run.
+
+        Loads from ``taxonomy_file`` if set; otherwise returns the bundled
+        ``eu-politics`` taxonomy.  Import is deferred to avoid circular imports.
+        """
+        from graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
+
+        if self.extraction.taxonomy_file:
+            return load_taxonomy(self.extraction.taxonomy_file)
+        return get_default_taxonomy()
 
     @classmethod
     def load(cls, config_path: str = "config.yaml", env_file: str = ".env") -> "PipelineSettings":
