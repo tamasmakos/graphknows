@@ -3,6 +3,7 @@
 Upgraded from the original adapter to support dynamic date_from/date_to
 parameters. The SPARQL endpoint URL is hardcoded (SSRF prevention).
 """
+
 from __future__ import annotations
 
 import logging
@@ -152,6 +153,7 @@ def _build_date_filter(date_from: str | None, date_to: str | None) -> str:
     if not parts:
         # Default: last 2 years
         from datetime import date, timedelta
+
         cutoff = (date.today() - timedelta(days=730)).isoformat()
         parts.append(f'FILTER(?date >= "{cutoff}"^^{xsd})')
     return "\n          ".join(parts)

@@ -1,4 +1,5 @@
 """Wikipedia EU connector — key EU policy topics from Wikipedia."""
+
 from __future__ import annotations
 
 import logging
@@ -54,6 +55,7 @@ class WikipediaEUConnector(ScrapingConnector):
 
     async def _fetch_wiki(self, client, title: str) -> ParsedDocument | None:
         import httpx
+
         params = {
             "action": "query",
             "titles": title.replace("_", " "),

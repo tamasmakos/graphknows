@@ -1,4 +1,5 @@
 """ECA Reports connector — European Court of Auditors special reports."""
+
 from __future__ import annotations
 
 import re
@@ -48,6 +49,7 @@ class ECAReportsConnector(ScrapingConnector):
                     docs.append(doc)
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "[eca_reports] fetch_one failed %s: %s", url, exc
                 )

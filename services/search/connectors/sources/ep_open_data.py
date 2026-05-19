@@ -2,6 +2,7 @@
 
 API docs: https://data.europarl.europa.eu/api/v2
 """
+
 from __future__ import annotations
 
 import logging

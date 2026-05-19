@@ -1,4 +1,5 @@
 """EPRS Briefings connector — EP Research Service Think Tank."""
+
 from __future__ import annotations
 
 import re
@@ -8,10 +9,7 @@ from ..base import ConnectorType, ScrapingConnector
 from ...parsed_document import ParsedDocument
 
 _BASE = "https://www.europarl.europa.eu"
-_LISTING = (
-    f"{_BASE}/thinktank/en/research/advanced-search"
-    "?category=briefing&documentType=BRIE"
-)
+_LISTING = f"{_BASE}/thinktank/en/research/advanced-search?category=briefing&documentType=BRIE"
 
 
 class EPRSBriefingsConnector(ScrapingConnector):
@@ -39,9 +37,7 @@ class EPRSBriefingsConnector(ScrapingConnector):
                 break
 
         if not seen:
-            fallback = re.compile(
-                r'href=["\']([^"\']*?/thinktank/[^"\']+)["\']', re.IGNORECASE
-            )
+            fallback = re.compile(r'href=["\']([^"\']*?/thinktank/[^"\']+)["\']', re.IGNORECASE)
             for m in fallback.findall(html):
                 if "search.html" in m or "category" in m:
                     continue
@@ -58,6 +54,7 @@ class EPRSBriefingsConnector(ScrapingConnector):
                     docs.append(doc)
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "[eprs_briefings] fetch_one failed %s: %s", url, exc
                 )

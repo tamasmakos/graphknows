@@ -91,4 +91,3 @@ def make_job() -> ScrapeJob:
         status="queued",
         created_at=datetime.now(tz=timezone.utc).isoformat(),
     )
-

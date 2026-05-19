@@ -25,6 +25,7 @@ Run via
     # or directly:
     python -m services.search.mcp_server
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -194,6 +195,7 @@ async def _dispatch(name: str, args: dict) -> str:
 
 # ── Tool implementations ──────────────────────────────────────────────────────
 
+
 async def _tool_search(args: dict) -> str:
     query = str(args["query"])
     registry = get_registry()
@@ -260,8 +262,7 @@ async def _tool_query_sparql(args: dict) -> str:
     endpoint_url = _SPARQL_ENDPOINTS.get(endpoint_id)
     if endpoint_url is None:
         raise ValueError(
-            f"Unknown endpoint '{endpoint_id}'. "
-            f"Allowed: {list(_SPARQL_ENDPOINTS.keys())}"
+            f"Unknown endpoint '{endpoint_id}'. Allowed: {list(_SPARQL_ENDPOINTS.keys())}"
         )
 
     # Only allow SELECT queries — reject mutations (SPARQL injection prevention)
@@ -272,6 +273,7 @@ async def _tool_query_sparql(args: dict) -> str:
         raise ValueError("Write operations are not permitted.")
 
     import httpx
+
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.post(
             endpoint_url,
@@ -290,15 +292,13 @@ async def _tool_query_sparql(args: dict) -> str:
         vars_ = list(bindings[0].keys())
         header = " | ".join(vars_)
         sep = " | ".join(["---"] * len(vars_))
-        rows = [
-            " | ".join(b.get(v, {}).get("value", "") for v in vars_)
-            for b in bindings
-        ]
+        rows = [" | ".join(b.get(v, {}).get("value", "") for v in vars_) for b in bindings]
         return "\n".join([header, sep] + rows)
     return "No results."
 
 
 # ── Resources ─────────────────────────────────────────────────────────────────
+
 
 @server.list_resources()
 async def list_resources() -> list[types.Resource]:
@@ -318,7 +318,7 @@ async def list_resources() -> list[types.Resource]:
 async def read_resource(uri: str) -> str:
     if not uri.startswith("source://"):
         raise ValueError(f"Unknown resource URI: {uri}")
-    source_id = uri[len("source://"):]
+    source_id = uri[len("source://") :]
     registry = get_registry()
     entries = {e.id: e for e in registry.list_entries()}
     entry = entries.get(source_id)
@@ -339,6 +339,7 @@ async def read_resource(uri: str) -> str:
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
+
 
 @server.list_prompts()
 async def list_prompts() -> list[types.Prompt]:
@@ -390,6 +391,7 @@ async def get_prompt(name: str, arguments: dict | None) -> types.GetPromptResult
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+
 
 async def mcp_main() -> None:
     async with stdio_server() as streams:

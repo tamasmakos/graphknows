@@ -30,6 +30,7 @@ _registry = get_registry()
 # Health / meta                                                         #
 # ------------------------------------------------------------------ #
 
+
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "graphknows-search"}
@@ -58,6 +59,7 @@ async def list_sources() -> list[dict]:
 # Search                                                                #
 # ------------------------------------------------------------------ #
 
+
 @router.post("/search", response_model=list[SearchResult])
 async def search(query: SearchQuery) -> list[SearchResult]:
     """Search across one or more sources. Pass `sources` to restrict; omit for all."""
@@ -85,6 +87,7 @@ async def search(query: SearchQuery) -> list[SearchResult]:
 # ------------------------------------------------------------------ #
 # Scrape (async job)                                                    #
 # ------------------------------------------------------------------ #
+
 
 async def _run_scrape_job(job_id: str, req: ScrapeRequest) -> None:
     """Background task: fetch each requested document and store result."""
@@ -118,9 +121,7 @@ async def _run_scrape_job(job_id: str, req: ScrapeRequest) -> None:
             try:
                 await client.post(f"{graphgen_url}/ingest", json=doc)
             except Exception as exc:
-                logger.warning(
-                    "graphgen ingest failed for %s: %s", doc.get("id"), exc
-                )
+                logger.warning("graphgen ingest failed for %s: %s", doc.get("id"), exc)
 
 
 @router.post("/scrape", response_model=ScrapeJob)
@@ -142,4 +143,3 @@ async def get_job_status(job_id: str) -> ScrapeJob:
     if data is None:
         raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
     return ScrapeJob(**data)
-

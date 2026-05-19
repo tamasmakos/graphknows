@@ -9,7 +9,7 @@ from pydantic import BaseModel
 class SearchQuery(BaseModel):
     query: str
     sources: Optional[list[str]] = None  # None = all sources
-    date_from: Optional[str] = None      # ISO date YYYY-MM-DD
+    date_from: Optional[str] = None  # ISO date YYYY-MM-DD
     date_to: Optional[str] = None
     limit: int = 20
 

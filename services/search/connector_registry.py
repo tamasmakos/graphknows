@@ -9,6 +9,7 @@ Usage
     summary   = registry.summary()          # agent-readable string
     entries   = registry.list_entries()     # raw manifest dicts
 """
+
 from __future__ import annotations
 
 import importlib
@@ -156,9 +157,7 @@ class ConnectorRegistry:
         try:
             module = importlib.import_module(module_path)
         except ImportError as exc:
-            log.warning(
-                "Connector %s unavailable — missing dependency: %s", entry.id, exc
-            )
+            log.warning("Connector %s unavailable — missing dependency: %s", entry.id, exc)
             return None
         cls = getattr(module, class_name)
         return cls()

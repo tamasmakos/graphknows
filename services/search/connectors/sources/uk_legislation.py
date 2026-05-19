@@ -1,4 +1,5 @@
 """UK Legislation connector — live queries to legislation.gov.uk Atom feeds."""
+
 from __future__ import annotations
 
 import logging

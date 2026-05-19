@@ -1,4 +1,5 @@
 """EP Debates connector — live queries to EP Open Data API /speeches endpoint."""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,6 @@ from ...models import Document, SearchQuery, SearchResult
 log = logging.getLogger(__name__)
 
 _EP_API = "https://data.europarl.europa.eu/api/v2"
-
 
 
 class EPDebatesConnector(SourceConnector, HttpMixin):
@@ -39,7 +39,9 @@ class EPDebatesConnector(SourceConnector, HttpMixin):
         results: list[SearchResult] = []
         for item in items:
             activity_id = item.get("activity_id", "")
-            title = " ".join(activity_id.replace("-", " ").split()) if activity_id else "EP Activity"
+            title = (
+                " ".join(activity_id.replace("-", " ").split()) if activity_id else "EP Activity"
+            )
             date = item.get("activity_date", "")[:10]
             item_uri = item.get("id", "")
             url = f"https://data.europarl.europa.eu/{item_uri}" if item_uri else None

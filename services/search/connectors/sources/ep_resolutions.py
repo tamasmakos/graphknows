@@ -1,4 +1,5 @@
 """EP Resolutions connector — live scraper for plenary texts adopted."""
+
 from __future__ import annotations
 
 import re
@@ -44,6 +45,7 @@ class EPResolutionsConnector(ScrapingConnector):
                     docs.append(doc)
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "[ep_resolutions] fetch_one failed for %s: %s", url, exc
                 )
@@ -55,9 +57,7 @@ class EPResolutionsConnector(ScrapingConnector):
         except Exception:
             return None
 
-        title_m = re.search(
-            r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL
-        )
+        title_m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
         title = (
             re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", title_m.group(1))).strip()
             if title_m

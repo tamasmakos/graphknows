@@ -50,9 +50,11 @@ def main() -> None:
     """Entry point: HTTP (default) or MCP stdio based on SEARCH_MODE env var."""
     if os.getenv("SEARCH_MODE", "").lower() == "mcp":
         from .mcp_server import mcp_main
+
         asyncio.run(mcp_main())
     else:
         import uvicorn
+
         uvicorn.run(
             "services.search.main:app",
             host="0.0.0.0",

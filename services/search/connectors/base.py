@@ -18,6 +18,7 @@ Live scrapers (EP Resolutions, Council, Commission, ECB, ECA, EPRS,
 Cellar SPARQL, Wikipedia, EP Open Data, data.europa.eu) inherit
 ScrapingConnector and implement _scrape() (+ optionally _fetch_one()).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,14 +38,13 @@ from ..parsed_document import ParsedDocument
 
 log = logging.getLogger(__name__)
 
-_USER_AGENT = (
-    "Mozilla/5.0 (compatible; GraphKnows/1.0; +https://graphknows.eu)"
-)
+_USER_AGENT = "Mozilla/5.0 (compatible; GraphKnows/1.0; +https://graphknows.eu)"
 _DEFAULT_RETRIES = 3
 _RETRY_BACKOFF = (1.0, 2.0, 4.0)
 
 
 # ── Connector type taxonomy ───────────────────────────────────────────────────
+
 
 class ConnectorType(str, enum.Enum):
     SPARQL = "sparql"
@@ -55,6 +55,7 @@ class ConnectorType(str, enum.Enum):
 
 
 # ── Shared HTTP layer ─────────────────────────────────────────────────────────
+
 
 class HttpMixin:
     """Rate-limited, retry-aware HTTP helpers shared by scraping connectors.
@@ -117,6 +118,7 @@ class HttpMixin:
     def _html_to_markdown(self, html: str) -> str:
         try:
             import markdownify
+
             return markdownify.markdownify(html, heading_style="ATX", strip=["script", "style"])
         except ImportError:
             text = re.sub(r"<[^>]+>", " ", html)
@@ -125,6 +127,7 @@ class HttpMixin:
     def _pdf_to_markdown(self, pdf_bytes: bytes) -> str:
         try:
             import fitz  # PyMuPDF
+
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             pages = [page.get_text() for page in doc]
             return "\n\n".join(pages)
@@ -135,6 +138,7 @@ class HttpMixin:
     def _detect_language(self, text: str) -> str:
         try:
             from langdetect import detect
+
             return detect(text[:2000])
         except Exception:
             return "en"
@@ -166,6 +170,7 @@ class HttpMixin:
 
 # ── Unified abstract base ─────────────────────────────────────────────────────
 
+
 class SourceConnector(ABC):
     """Every EU data connector implements this interface."""
 
@@ -189,6 +194,7 @@ class SourceConnector(ABC):
 
 
 # ── Scraping base (live HTTP connectors) ──────────────────────────────────────
+
 
 class ScrapingConnector(SourceConnector, HttpMixin):
     """

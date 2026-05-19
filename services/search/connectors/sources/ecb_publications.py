@@ -1,4 +1,5 @@
 """ECB Publications connector — ECB Economic Bulletins."""
+
 from __future__ import annotations
 
 import re
@@ -45,6 +46,7 @@ class ECBPublicationsConnector(ScrapingConnector):
                     docs.append(doc)
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "[ecb_publications] fetch_one failed %s: %s", url, exc
                 )

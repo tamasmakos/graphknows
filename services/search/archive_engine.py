@@ -33,6 +33,7 @@ log = logging.getLogger("search.archive_engine")
 
 # ── Query DSL ─────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class ArchiveQuery:
     """Structured archive query emitted by the agent's archive_selector.
@@ -48,6 +49,7 @@ class ArchiveQuery:
         limit_per_archive: Max docs to fetch from each archive (default 5).
         top_k: Final number of results to return after reranking (default 8).
     """
+
     query: str
     archives: list[str]
     date_from: Optional[str] = None
@@ -70,6 +72,7 @@ class ArchiveResult:
         score: Cosine similarity score against the query (0–1).
         from_cache: True if the doc was already in Memgraph (not re-fetched).
     """
+
     doc_id: str
     title: str
     excerpt: str
@@ -81,6 +84,7 @@ class ArchiveResult:
 
 
 # ── Engine ────────────────────────────────────────────────────────────────────
+
 
 class ArchiveEngine:
     """On-demand archive fetcher with light cosine reranking and Memgraph caching.
@@ -111,6 +115,7 @@ class ArchiveEngine:
     def _get_model(self) -> Any:
         if ArchiveEngine._embed_model is None:
             from sentence_transformers import SentenceTransformer
+
             ArchiveEngine._embed_model = SentenceTransformer(self._embed_model_name)
             log.info("Loaded embedding model: %s", self._embed_model_name)
         return ArchiveEngine._embed_model
@@ -118,6 +123,7 @@ class ArchiveEngine:
     def _get_driver(self) -> Any:
         if self._driver is None:
             from neo4j import GraphDatabase
+
             self._driver = GraphDatabase.driver(self._memgraph_uri, auth=None)
         return self._driver
 
@@ -159,11 +165,11 @@ class ArchiveEngine:
                     docs=[
                         {
                             "doc_id": d["doc_id"],
-                            "title":  d["title"][:300],
+                            "title": d["title"][:300],
                             "excerpt": d["excerpt"][:500],
-                            "url":    d["url"],
+                            "url": d["url"],
                             "source": d["source"],
-                            "date":   d["date"],
+                            "date": d["date"],
                         }
                         for d in docs
                     ],
@@ -177,6 +183,7 @@ class ArchiveEngine:
     def _build_adapter_registry(self) -> dict[str, Any]:
         """Build connector registry from source_manifest.yaml via ConnectorRegistry."""
         from search.connector_registry import ConnectorRegistry
+
         try:
             return ConnectorRegistry().build()
         except Exception as exc:
@@ -205,29 +212,33 @@ class ArchiveEngine:
             docs: list[dict] = []
             for r in results[: aq.limit_per_archive]:
                 if r.id in cached_ids:
-                    docs.append({
-                        "doc_id":  r.id,
-                        "title":   r.title or "",
-                        "excerpt": r.excerpt or "",
-                        "url":     r.url or "",
-                        "source":  archive_id,
-                        "date":    r.date or "",
-                        "text":    r.excerpt or "",
-                        "_cached": True,
-                    })
+                    docs.append(
+                        {
+                            "doc_id": r.id,
+                            "title": r.title or "",
+                            "excerpt": r.excerpt or "",
+                            "url": r.url or "",
+                            "source": archive_id,
+                            "date": r.date or "",
+                            "text": r.excerpt or "",
+                            "_cached": True,
+                        }
+                    )
                     continue
                 try:
                     doc = await asyncio.wait_for(connector.fetch(r.id), timeout=10)
-                    docs.append({
-                        "doc_id":  r.id,
-                        "title":   doc.title or "",
-                        "excerpt": (doc.text or "")[:400],
-                        "url":     r.url or doc.metadata.get("url", ""),
-                        "source":  archive_id,
-                        "date":    r.date or doc.metadata.get("date", ""),
-                        "text":    (doc.text or "")[:2000],
-                        "_cached": False,
-                    })
+                    docs.append(
+                        {
+                            "doc_id": r.id,
+                            "title": doc.title or "",
+                            "excerpt": (doc.text or "")[:400],
+                            "url": r.url or doc.metadata.get("url", ""),
+                            "source": archive_id,
+                            "date": r.date or doc.metadata.get("date", ""),
+                            "text": (doc.text or "")[:2000],
+                            "_cached": False,
+                        }
+                    )
                 except Exception as exc:
                     log.debug("fetch failed %s/%s: %s", archive_id, r.id, exc)
             return docs
@@ -249,7 +260,7 @@ class ArchiveEngine:
         texts = [f"{d['title']} {d['text']}" for d in docs]
         all_texts = [query] + texts
         embs = model.encode(all_texts, batch_size=32, normalize_embeddings=True)
-        q_emb  = embs[0]
+        q_emb = embs[0]
         d_embs = embs[1:]
         scores = d_embs @ q_emb  # cosine (normalized)
         ranked = sorted(zip(docs, scores.tolist()), key=lambda x: -x[1])
@@ -278,10 +289,7 @@ class ArchiveEngine:
 
         # Parallel fan-out
         # First collect all possible doc IDs to do a single cache lookup
-        tasks = [
-            self._fetch_from_adapter(aid, registry[aid], aq, set())
-            for aid in valid
-        ]
+        tasks = [self._fetch_from_adapter(aid, registry[aid], aq, set()) for aid in valid]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         all_docs: list[dict] = []
@@ -305,21 +313,19 @@ class ArchiveEngine:
         new_docs = [d for d, _ in ranked if not d.get("_cached")]
         if new_docs:
             asyncio.get_event_loop().call_soon(
-                lambda: asyncio.ensure_future(
-                    asyncio.to_thread(self._cache_store, new_docs)
-                )
+                lambda: asyncio.ensure_future(asyncio.to_thread(self._cache_store, new_docs))
             )
 
         return [
             ArchiveResult(
-                doc_id     = d["doc_id"],
-                title      = d["title"],
-                excerpt    = d["excerpt"],
-                url        = d["url"],
-                source     = d["source"],
-                date       = d["date"],
-                score      = round(float(score), 4),
-                from_cache = d.get("_cached", False),
+                doc_id=d["doc_id"],
+                title=d["title"],
+                excerpt=d["excerpt"],
+                url=d["url"],
+                source=d["source"],
+                date=d["date"],
+                score=round(float(score), 4),
+                from_cache=d.get("_cached", False),
             )
             for d, score in ranked
         ]

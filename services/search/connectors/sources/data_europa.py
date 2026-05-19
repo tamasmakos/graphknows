@@ -3,6 +3,7 @@
 API: https://data.europa.eu/api/hub/search/search
 Covers datasets, distributions, and catalogues from EU open data hub.
 """
+
 from __future__ import annotations
 
 import logging

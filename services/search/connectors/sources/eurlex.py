@@ -1,4 +1,5 @@
 """EUR-Lex connector — live queries to EUR-Lex OJ L-series Atom feed."""
+
 from __future__ import annotations
 
 import logging
@@ -12,14 +13,8 @@ from ...models import Document, SearchQuery, SearchResult
 
 log = logging.getLogger(__name__)
 
-_OJ_HTML = (
-    "https://eur-lex.europa.eu/oj/direct-access.html"
-    "?ojType=L&ojDate={date}"
-)
-_EURLEX_HTML = (
-    "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/"
-    "?uri=CELEX:{celex}&from=EN"
-)
+_OJ_HTML = "https://eur-lex.europa.eu/oj/direct-access.html?ojType=L&ojDate={date}"
+_EURLEX_HTML = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:{celex}&from=EN"
 _NS = {"atom": "http://www.w3.org/2005/Atom"}
 _TARGET_TYPES = {"R", "L", "D"}  # Regulation, Directive, Decision
 _CELEX_RE = re.compile(r"uri=(?:CELEX|celex)(?:%3A|:)([0-9A-Za-z]+)", re.IGNORECASE)
@@ -85,6 +80,7 @@ class EurLexConnector(SourceConnector, HttpMixin):
             raise FileNotFoundError(f"[eurlex] CELEX not found: {document_id}") from exc
         text = _strip_html(html)
         import datetime as _dt
+
         return Document(
             id=document_id,
             source=self.source_id,

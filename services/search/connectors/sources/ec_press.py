@@ -1,4 +1,5 @@
 """EC Press connector — European Commission press corner."""
+
 from __future__ import annotations
 
 import json
@@ -11,8 +12,7 @@ from ...parsed_document import ParsedDocument
 
 _BASE = "https://ec.europa.eu"
 _API_URL = (
-    f"{_BASE}/commission/presscorner/api/items"
-    "?keywords=&dateTo=&dateFrom=&lang=EN&limit=20&topic="
+    f"{_BASE}/commission/presscorner/api/items?keywords=&dateTo=&dateFrom=&lang=EN&limit=20&topic="
 )
 _HTML_LISTING = f"{_BASE}/commission/presscorner/home/en"
 
@@ -33,9 +33,7 @@ class ECPressConnector(ScrapingConnector):
             text = await self._get(_API_URL)
             data = json.loads(text)
             items = (
-                data.get("items")
-                or data.get("results")
-                or (data if isinstance(data, list) else [])
+                data.get("items") or data.get("results") or (data if isinstance(data, list) else [])
             )
             docs: list[ParsedDocument] = []
             for item in items[:limit]:
@@ -57,9 +55,7 @@ class ECPressConnector(ScrapingConnector):
         except Exception:
             return []
 
-        pattern = re.compile(
-            r'href=["\']([^"\']*?/presscorner/detail/[^"\']+)["\']', re.IGNORECASE
-        )
+        pattern = re.compile(r'href=["\']([^"\']*?/presscorner/detail/[^"\']+)["\']', re.IGNORECASE)
         seen: dict[str, bool] = {}
         for m in pattern.findall(html):
             url = m if m.startswith("http") else urljoin(_BASE, m)

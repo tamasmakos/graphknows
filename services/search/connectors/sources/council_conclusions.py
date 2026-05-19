@@ -1,4 +1,5 @@
 """Council Conclusions connector — European Council meeting PDFs."""
+
 from __future__ import annotations
 
 import re
@@ -26,9 +27,7 @@ class CouncilConclusionsConnector(ScrapingConnector):
     async def _scrape(self, limit: int = 5) -> list[ParsedDocument]:
         html = await self._get(_LISTING)
 
-        pattern = re.compile(
-            r'href=["\']([^"\']*?/media/[^"\']*?\.pdf)["\']', re.IGNORECASE
-        )
+        pattern = re.compile(r'href=["\']([^"\']*?/media/[^"\']*?\.pdf)["\']', re.IGNORECASE)
         seen: dict[str, bool] = {}
         for m in pattern.findall(html):
             url = m if m.startswith("http") else urljoin(_BASE, m)
@@ -44,6 +43,7 @@ class CouncilConclusionsConnector(ScrapingConnector):
                     docs.append(doc)
             except Exception as exc:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "[council_conclusions] fetch_one failed %s: %s", url, exc
                 )
@@ -57,9 +57,8 @@ class CouncilConclusionsConnector(ScrapingConnector):
             pdf_bytes = resp.content
         except Exception as exc:
             import logging
-            logging.getLogger(__name__).warning(
-                "[council_conclusions] HTTP error %s: %s", url, exc
-            )
+
+            logging.getLogger(__name__).warning("[council_conclusions] HTTP error %s: %s", url, exc)
             return None
 
         markdown_body = self._pdf_to_markdown(pdf_bytes)
@@ -86,10 +85,7 @@ class CouncilConclusionsConnector(ScrapingConnector):
 
     def _title_from_url(self, url: str) -> str:
         filename = (
-            url.rstrip("/").split("/")[-1]
-            .replace(".pdf", "")
-            .replace("-", " ")
-            .replace("_", " ")
+            url.rstrip("/").split("/")[-1].replace(".pdf", "").replace("-", " ").replace("_", " ")
         )
         return filename.title() or "European Council Conclusions"
 
