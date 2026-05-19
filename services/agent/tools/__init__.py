@@ -5,6 +5,7 @@ Sub-packages:
     graph/       — GraphRAGClient, GraphExtractTool, KwGraphTool
     extraction/  — InProcessExtractor
 """
+
 from __future__ import annotations
 
 from agent.tools.base import BaseTool, ToolRegistry, registry

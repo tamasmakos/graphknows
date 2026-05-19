@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class Neo4jGDSBackend:
     def __init__(self, uri: str, user: str, password: str) -> None:
         import warnings as _w
+
         _w.filterwarnings("ignore", category=DeprecationWarning)
         self._driver = GraphDatabase.driver(uri, auth=(user, password))
 

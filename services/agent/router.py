@@ -1,4 +1,5 @@
 """Router — all HTTP + WS route handlers for the agent service."""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +17,7 @@ from starlette.websockets import WebSocketState
 
 from agent.api.schemas import ChatRequest, ChatResponse, GraphResponse, QueryRequest  # noqa: F401
 from agent.config import AgentSettings
+
 try:
     try:
         from agent.graph.events import (
@@ -57,6 +59,7 @@ except Exception:
     REQUIRED_STREAM_EVENTS = ()  # type: ignore
 from agent.session.manager import SessionGraphManager
 from agent.session.end import merge_session_to_neo4j
+
 try:
     from graphknows.shared.models.session import StreamEvent
 except Exception:
@@ -95,7 +98,7 @@ async def _safe_ws_send_json(ws: WebSocket, payload: dict[str, Any]) -> bool:
     except WebSocketDisconnect:
         return False
     except RuntimeError as exc:
-        if 'close message has been sent' in str(exc):
+        if "close message has been sent" in str(exc):
             return False
         raise
 
@@ -109,7 +112,7 @@ async def _safe_ws_send_text(ws: WebSocket, payload: str) -> bool:
     except WebSocketDisconnect:
         return False
     except RuntimeError as exc:
-        if 'close message has been sent' in str(exc):
+        if "close message has been sent" in str(exc):
             return False
         raise
 
@@ -150,6 +153,7 @@ def _get_search_client() -> Any | None:
 def _get_graph_backend():
     return _graph_backend
 
+
 def _get_extractor():
     return _extractor
 
@@ -167,6 +171,7 @@ def _get_ontology_components() -> tuple[Any | None, Any | None]:
             from graphknows.shared.ontology.loader import OntologyLoader
             from graphknows.shared.ontology.router import OntologyRouter
             from graphknows.shared.ontology.rel_extractor import OntologyRelExtractor
+
             _ontology_router = OntologyRouter(OntologyLoader())
             _rel_extractor = OntologyRelExtractor()
             log.info("Ontology components initialised")
@@ -175,9 +180,28 @@ def _get_ontology_components() -> tuple[Any | None, Any | None]:
     return _ontology_router, _rel_extractor
 
 
-def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, search_client: Any | None = None, graph_backend=None, tavily: Any | None = None, cellar: Any | None = None, extractor: Any | None = None, graphknows_client: Any | None = None) -> None:
+def _init_router(
+    settings: AgentSettings,
+    sgm: SessionGraphManager,
+    http_client: httpx.AsyncClient,
+    search_client: Any | None = None,
+    graph_backend=None,
+    tavily: Any | None = None,
+    cellar: Any | None = None,
+    extractor: Any | None = None,
+    graphknows_client: Any | None = None,
+) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client, _search_client, _graph_backend, _tavily, _cellar, _extractor, _graphknows_client
+    global \
+        _settings, \
+        _sgm, \
+        _http_client, \
+        _search_client, \
+        _graph_backend, \
+        _tavily, \
+        _cellar, \
+        _extractor, \
+        _graphknows_client
     _settings = settings
     _sgm = sgm
     _http_client = http_client
@@ -214,7 +238,9 @@ def _state_value(item: Any, key: str, default: Any = "") -> Any:
     return getattr(item, key, default)
 
 
-def _build_sources_payload(raw_docs: list[Any] | None, retrieval_hits: list[Any] | None) -> list[dict[str, Any]]:
+def _build_sources_payload(
+    raw_docs: list[Any] | None, retrieval_hits: list[Any] | None
+) -> list[dict[str, Any]]:
     raw_doc_index: dict[str, dict[str, Any]] = {}
     for raw_doc in raw_docs or []:
         doc_id = str(_state_value(raw_doc, "id") or _state_value(raw_doc, "doc_id") or "").strip()
@@ -239,33 +265,43 @@ def _build_sources_payload(raw_docs: list[Any] | None, retrieval_hits: list[Any]
             if not isinstance(metadata, dict):
                 metadata = {}
             raw_doc = raw_doc_index.get(doc_id, {})
-            title = str(raw_doc.get("title") or metadata.get("title") or doc_id or f"Document {index}")
+            title = str(
+                raw_doc.get("title") or metadata.get("title") or doc_id or f"Document {index}"
+            )
             url = str(raw_doc.get("url") or metadata.get("url") or "")
             source = str(raw_doc.get("source") or metadata.get("source") or "")
             date = str(raw_doc.get("date") or metadata.get("date") or "")
-            snippet = str(_state_value(hit, "text") or raw_doc.get("text") or metadata.get("text") or "")[:300]
-            sources.append({
-                "citation_id": f"Doc-{index}",
-                "id": doc_id or f"doc-{index}",
-                "title": title,
-                "url": url,
-                "source": source,
-                "date": date,
-                "text": snippet,
-            })
+            snippet = str(
+                _state_value(hit, "text") or raw_doc.get("text") or metadata.get("text") or ""
+            )[:300]
+            sources.append(
+                {
+                    "citation_id": f"Doc-{index}",
+                    "id": doc_id or f"doc-{index}",
+                    "title": title,
+                    "url": url,
+                    "source": source,
+                    "date": date,
+                    "text": snippet,
+                }
+            )
         return sources
 
     for index, raw_doc in enumerate(raw_docs or [], 1):
-        doc_id = str(_state_value(raw_doc, "id") or _state_value(raw_doc, "doc_id") or f"doc-{index}")
-        sources.append({
-            "citation_id": f"Doc-{index}",
-            "id": doc_id,
-            "title": str(_state_value(raw_doc, "title") or doc_id),
-            "url": str(_state_value(raw_doc, "url") or ""),
-            "source": str(_state_value(raw_doc, "source") or ""),
-            "date": str(_state_value(raw_doc, "date") or ""),
-            "text": str(_state_value(raw_doc, "text") or "")[:300],
-        })
+        doc_id = str(
+            _state_value(raw_doc, "id") or _state_value(raw_doc, "doc_id") or f"doc-{index}"
+        )
+        sources.append(
+            {
+                "citation_id": f"Doc-{index}",
+                "id": doc_id,
+                "title": str(_state_value(raw_doc, "title") or doc_id),
+                "url": str(_state_value(raw_doc, "url") or ""),
+                "source": str(_state_value(raw_doc, "source") or ""),
+                "date": str(_state_value(raw_doc, "date") or ""),
+                "text": str(_state_value(raw_doc, "text") or "")[:300],
+            }
+        )
     return sources
 
 
@@ -326,6 +362,7 @@ def _infer_doc_metadata(doc_id: str) -> dict[str, str]:
         Dict with keys 'date', 'institution', 'url'.
     """
     import re as _re
+
     date = ""
     institution = ""
     url = ""
@@ -348,6 +385,7 @@ def _extract_tool_name(action: str | None) -> str:
         The tool name, or empty string if not parseable.
     """
     import re as _re
+
     if not action:
         return ""
     m = _re.match(r"(\w+)\(", action.strip())
@@ -388,6 +426,7 @@ def _fetch_cooccurs(entity_names: list[str], limit: int = 50) -> list[tuple[str,
         return []
     try:
         from neo4j import GraphDatabase as _GraphDatabase
+
         settings = _get_settings()
         driver = _GraphDatabase.driver(
             settings.neo4j_uri,
@@ -443,12 +482,14 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
             doc_id = citation.get("doc_id", "")
             if cid:
                 meta = _infer_doc_metadata(doc_id)
-                chunk_nodes.append({
-                    "chunk_id": cid,
-                    "doc_id": doc_id,
-                    "excerpt": citation.get("excerpt", "")[:300],
-                    **meta,
-                })
+                chunk_nodes.append(
+                    {
+                        "chunk_id": cid,
+                        "doc_id": doc_id,
+                        "excerpt": citation.get("excerpt", "")[:300],
+                        **meta,
+                    }
+                )
 
     # ── Parse ALL trace steps ────────────────────────────────────────────
     last_entity_list: list[str] = []
@@ -476,7 +517,7 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
                 last_entity_list = step_entities
             elif tool == "get_neighbours":
                 for i, ea in enumerate(step_entities[:6]):
-                    for eb in step_entities[i + 1:6]:
+                    for eb in step_entities[i + 1 : 6]:
                         relates_to.append((ea, eb))
 
         elif tool == "get_community":
@@ -487,23 +528,27 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
                 if isinstance(item, dict) and (item.get("id") or item.get("community_id")):
                     topic_nodes.append({**item, "entity_name": entity_name})
 
-        elif tool in ("search_chunks", "fuse_and_rank", "get_chunks_for_entity") and isinstance(obs, list):
+        elif tool in ("search_chunks", "fuse_and_rank", "get_chunks_for_entity") and isinstance(
+            obs, list
+        ):
             for item in obs:
                 if isinstance(item, dict):
                     cid = item.get("chunk_id", "")
                     if cid:
                         doc_id = item.get("doc_id", "")
                         meta = _infer_doc_metadata(doc_id)
-                        chunk_nodes.append({
-                            "chunk_id": cid,
-                            "doc_id": doc_id,
-                            "excerpt": item.get("text", "")[:300],
-                            **meta,
-                        })
+                        chunk_nodes.append(
+                            {
+                                "chunk_id": cid,
+                                "doc_id": doc_id,
+                                "excerpt": item.get("text", "")[:300],
+                                **meta,
+                            }
+                        )
 
     # ── Mine [BRACKETED] names from final answer text ────────────────────
     answer_text = graphrag_response.get("answer", "")
-    for match in _re.findall(r'\[([A-Z][A-Z0-9_\s]+)\]', answer_text):
+    for match in _re.findall(r"\[([A-Z][A-Z0-9_\s]+)\]", answer_text):
         clean = match.strip()
         if 2 < len(clean) < 60 and not clean.startswith("chunk"):
             entity_names.append(clean)
@@ -524,7 +569,9 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
     cooccurs_edges: list[tuple[str, str, int]] = _fetch_cooccurs(unique_entities)
     log.info(
         "Session %s CO_OCCURS from Neo4j: %d edges for %d entities",
-        session_id, len(cooccurs_edges), len(unique_entities),
+        session_id,
+        len(cooccurs_edges),
+        len(unique_entities),
     )
 
     # De-duplicate chunk_nodes by chunk_id (last write wins)
@@ -535,7 +582,11 @@ def _upsert_entities(session_id: str, graphrag_response: dict) -> None:
 
     log.info(
         "Session %s enrichment: %d entities, %d relates_to, %d topics, %d chunks",
-        session_id, len(unique_entities), len(relates_to), len(topic_nodes), len(chunk_by_id),
+        session_id,
+        len(unique_entities),
+        len(relates_to),
+        len(topic_nodes),
+        len(chunk_by_id),
     )
 
     # Seed entities from Neo4j
@@ -584,7 +635,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     initial_state = build_initial_investigative_state(session_id, req.message)
     workflow = build_workflow(
-        mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None,
+        mg_driver=sgm.mg_driver if getattr(sgm, "_memgraph_ok", False) else None,
         search_client=_get_search_client(),
         backend=_get_graph_backend(),
         tavily=_tavily,
@@ -696,7 +747,13 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
 
     async def _event_generator():
         initial_state = build_initial_investigative_state(session_id, req.message)
-        workflow = build_workflow(mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None, search_client=_get_search_client(), tavily=_tavily, cellar=_cellar, extractor=_get_extractor())
+        workflow = build_workflow(
+            mg_driver=sgm.mg_driver if getattr(sgm, "_memgraph_ok", False) else None,
+            search_client=_get_search_client(),
+            tavily=_tavily,
+            cellar=_cellar,
+            extractor=_get_extractor(),
+        )
         result = await workflow.ainvoke(initial_state)
         briefing = result.get("briefing") or ""
         yield f"event: briefing\ndata: {json.dumps({'briefing': briefing})}\n\n"
@@ -704,7 +761,9 @@ async def query_session(session_id: str, req: QueryRequest) -> StreamingResponse
     return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
 
-@router.post("/sessions/{session_id}/investigate", summary="Run investigative workflow with typed SSE events")
+@router.post(
+    "/sessions/{session_id}/investigate", summary="Run investigative workflow with typed SSE events"
+)
 async def investigate_session(session_id: str, req: QueryRequest) -> StreamingResponse:
     """Run the evidence-led investigative workflow and stream typed events via SSE.
 
@@ -825,7 +884,10 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
                             )
                         )
 
-                    if not graph_building_emitted and tool_name in ("search_entities", "get_neighbours"):
+                    if not graph_building_emitted and tool_name in (
+                        "search_entities",
+                        "get_neighbours",
+                    ):
                         graph_building_emitted = True
                         yield _sse(
                             GraphBuildingEvent(
@@ -895,7 +957,11 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
                         doc_id=d.get("id", d.get("url", f"doc-{i}"))[:80],
                         text=d.get("text", "") or d.get("content", ""),
                         embedding=None,
-                        metadata={"source": d.get("source", "web"), "url": d.get("url", ""), "title": d.get("title", "")},
+                        metadata={
+                            "source": d.get("source", "web"),
+                            "url": d.get("url", ""),
+                            "title": d.get("title", ""),
+                        },
                     )
                     for i, d in enumerate(raw_docs)
                 ]
@@ -906,7 +972,10 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
                 full_answer = comm_result.get("briefing", full_answer) or full_answer
         except Exception as _comm_exc:
             import logging as _logging
-            _logging.getLogger(__name__).warning("communicate_node post-agent call failed: %s", _comm_exc)
+
+            _logging.getLogger(__name__).warning(
+                "communicate_node post-agent call failed: %s", _comm_exc
+            )
 
         if full_answer:
             claim_id = f"claim_{session_id[:8]}_0"
@@ -1014,7 +1083,7 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         initial_state = build_initial_investigative_state(session_id, topic=query)
         ont_router, ont_extractor = _get_ontology_components()
         workflow = build_workflow(
-            mg_driver=sgm.mg_driver if getattr(sgm, '_memgraph_ok', False) else None,
+            mg_driver=sgm.mg_driver if getattr(sgm, "_memgraph_ok", False) else None,
             search_client=_get_search_client(),
             ontology_router=ont_router,
             rel_extractor=ont_extractor,
@@ -1064,15 +1133,18 @@ async def ws_stream(websocket: WebSocket, session_id: str):
         if disconnected:
             return
         sources_payload = _build_sources_payload(latest_raw_docs, latest_retrieval_hits)
-        await _safe_ws_send_json(websocket, {
-            "type": "done",
-            "briefing": best_briefing,
-            "iteration_count": max_iter,
-            "entity_count": max_entities,
-            "relation_count": max_relations,
-            "dup_ratio": last_dup,
-            "sources": sources_payload,
-        })
+        await _safe_ws_send_json(
+            websocket,
+            {
+                "type": "done",
+                "briefing": best_briefing,
+                "iteration_count": max_iter,
+                "entity_count": max_entities,
+                "relation_count": max_relations,
+                "dup_ratio": last_dup,
+                "sources": sources_payload,
+            },
+        )
 
     except WebSocketDisconnect:
         log.info("WS: Client disconnected for session %s", session_id)

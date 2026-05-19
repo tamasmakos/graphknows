@@ -3,6 +3,7 @@
 Kept as a separate module for backward compatibility with existing
 import paths. All factories are defined in ``events.py``.
 """
+
 from services.agent.graph.events import (
     brief_chunk_event,
     brief_done_event,

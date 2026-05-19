@@ -9,6 +9,7 @@ Two implementations share ``GraphKnowsProtocol``:
 
 Select via ``GRAPHKNOWS_MODE`` env var: ``http`` (default) or ``inprocess``.
 """
+
 from __future__ import annotations
 
 import logging

@@ -1,4 +1,5 @@
 """ADR-002 3-phase macro graph package."""
+
 from services.agent.graph.state import (
     Chunk,
     Entity,

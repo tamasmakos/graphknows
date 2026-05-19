@@ -8,6 +8,7 @@ Architecture (wiki: concepts/langgraph-agent-architecture-2026-05-08.md):
 - Session doc store (_session_docs) accumulates all retrieved documents
 - AgentState carries extracted_entities so LLM reasons from the graph
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,9 +29,11 @@ from langchain_core.tools import tool
 
 log = logging.getLogger("agent.langgraph_agent")
 
+
 # ── AgentState — module-level so Python 3.13 get_type_hints can resolve it ──
 class AgentState(TypedDict):
     """Shared state passed through the LangGraph agent graph."""
+
     messages: Annotated[list, add_messages]
 
 
@@ -137,7 +140,9 @@ def _normalize_session_graph_payload(
     for node in nodes:
         node_id = node.get("id", "")
         raw_name = node.get("name") or node_id
-        canonical_name = _canonicalize_session_graph_name(raw_name) or _canonicalize_session_graph_name(node_id)
+        canonical_name = _canonicalize_session_graph_name(
+            raw_name
+        ) or _canonicalize_session_graph_name(node_id)
         canonical_label = _canonicalize_session_graph_label(
             node.get("type") or node.get("label") or "ENTITY"
         )
@@ -158,7 +163,9 @@ def _normalize_session_graph_payload(
             }
             continue
 
-        if _session_graph_label_rank(canonical_label) > _session_graph_label_rank(existing["label"]):
+        if _session_graph_label_rank(canonical_label) > _session_graph_label_rank(
+            existing["label"]
+        ):
             existing["label"] = canonical_label
 
     normalized_nodes.extend(canonical_nodes.values())
@@ -166,26 +173,32 @@ def _normalize_session_graph_payload(
     for edge in edges:
         raw_source = edge.get("source", "")
         raw_target = edge.get("target", "")
-        source = alias_to_canonical.get(str(raw_source)) or alias_to_canonical.get(
-            _canonicalize_session_graph_name(raw_source)
-        ) or _canonicalize_session_graph_name(raw_source)
-        target = alias_to_canonical.get(str(raw_target)) or alias_to_canonical.get(
-            _canonicalize_session_graph_name(raw_target)
-        ) or _canonicalize_session_graph_name(raw_target)
+        source = (
+            alias_to_canonical.get(str(raw_source))
+            or alias_to_canonical.get(_canonicalize_session_graph_name(raw_source))
+            or _canonicalize_session_graph_name(raw_source)
+        )
+        target = (
+            alias_to_canonical.get(str(raw_target))
+            or alias_to_canonical.get(_canonicalize_session_graph_name(raw_target))
+            or _canonicalize_session_graph_name(raw_target)
+        )
         if not source or not target:
             continue
 
         properties = {
-            key: value
-            for key, value in edge.items()
-            if key not in {"source", "target", "type"}
+            key: value for key, value in edge.items() if key not in {"source", "target", "type"}
         }
-        normalized_edges.append({
-            "source": source,
-            "target": target,
-            "type": _normalize_session_graph_token(edge.get("type", "RELATED_TO"), "RELATED_TO"),
-            "properties": properties,
-        })
+        normalized_edges.append(
+            {
+                "source": source,
+                "target": target,
+                "type": _normalize_session_graph_token(
+                    edge.get("type", "RELATED_TO"), "RELATED_TO"
+                ),
+                "properties": properties,
+            }
+        )
 
     deduped_edges: list[dict] = []
     seen_edges: set[tuple[str, str, str, str]] = set()
@@ -205,14 +218,63 @@ def _normalize_session_graph_payload(
 
 
 # ── Stopwords ────────────────────────────────────────────────────────────────
-_STOPWORDS = frozenset({
-    "the", "a", "an", "of", "in", "to", "and", "or", "for", "is", "are",
-    "was", "were", "on", "at", "by", "with", "this", "that", "as", "be",
-    "has", "have", "its", "it", "from", "not", "but", "their", "they",
-    "which", "who", "will", "been", "more", "about", "also", "after",
-    "before", "than", "into", "through", "during", "between", "against",
-    "each", "other", "those", "these", "such", "when", "where", "would",
-})
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "of",
+        "in",
+        "to",
+        "and",
+        "or",
+        "for",
+        "is",
+        "are",
+        "was",
+        "were",
+        "on",
+        "at",
+        "by",
+        "with",
+        "this",
+        "that",
+        "as",
+        "be",
+        "has",
+        "have",
+        "its",
+        "it",
+        "from",
+        "not",
+        "but",
+        "their",
+        "they",
+        "which",
+        "who",
+        "will",
+        "been",
+        "more",
+        "about",
+        "also",
+        "after",
+        "before",
+        "than",
+        "into",
+        "through",
+        "during",
+        "between",
+        "against",
+        "each",
+        "other",
+        "those",
+        "these",
+        "such",
+        "when",
+        "where",
+        "would",
+    }
+)
 
 
 def _query_terms(text: str) -> set[str]:
@@ -231,21 +293,23 @@ def _score_query_overlap(query: str, title: str, text: str) -> int:
     return len(query_terms & document_terms)
 
 
-_SEARCH_WEB_NAV_PHRASES = frozenset({
-    "about us",
-    "boards",
-    "contact us",
-    "email us",
-    "experts",
-    "home",
-    "library",
-    "members login",
-    "newsletter",
-    "privacy policy",
-    "staff",
-    "subscribe",
-    "the institute",
-})
+_SEARCH_WEB_NAV_PHRASES = frozenset(
+    {
+        "about us",
+        "boards",
+        "contact us",
+        "email us",
+        "experts",
+        "home",
+        "library",
+        "members login",
+        "newsletter",
+        "privacy policy",
+        "staff",
+        "subscribe",
+        "the institute",
+    }
+)
 
 _SEARCH_WEB_MENU_PREFIX_RE = re.compile(
     r"^(?:(?:[A-Za-z][A-Za-z&'\- ]{1,30})\s*(?:/|\||•|·)\s*){3,}"
@@ -264,9 +328,7 @@ def _search_web_noise_penalty(text: str) -> int:
     penalty = sum(1 for phrase in _SEARCH_WEB_NAV_PHRASES if phrase in lowered)
 
     separator_parts = [
-        part.strip()
-        for part in re.split(r"\s*(?:\||/|•|·|»)\s*", text or "")
-        if part.strip()
+        part.strip() for part in re.split(r"\s*(?:\||/|•|·|»)\s*", text or "") if part.strip()
     ]
     short_parts = sum(1 for part in separator_parts if len(part.split()) <= 3)
     if len(separator_parts) >= 4 and short_parts >= len(separator_parts) - 1:
@@ -334,15 +396,15 @@ _SEARCH_EU_SAFE_SOURCE_IDS = ("eprs_briefings", "ep_resolutions", "ep_debates")
 
 def _normalize_search_eu_sources(sources: str) -> list[str]:
     requested_source_ids = [
-        source_id.strip()
-        for source_id in (sources or "").split(",")
-        if source_id.strip()
+        source_id.strip() for source_id in (sources or "").split(",") if source_id.strip()
     ]
-    normalized_source_ids = list(dict.fromkeys(
-        source_id
-        for source_id in requested_source_ids
-        if source_id in _SEARCH_EU_SAFE_SOURCE_IDS
-    ))
+    normalized_source_ids = list(
+        dict.fromkeys(
+            source_id
+            for source_id in requested_source_ids
+            if source_id in _SEARCH_EU_SAFE_SOURCE_IDS
+        )
+    )
 
     # Replace empty or noisy mixes with the validated briefing path.
     # Accept any recognized source; fill with defaults only if empty
@@ -363,19 +425,21 @@ def _build_lexical_graph(documents: list[dict]) -> dict:
         doc_title = doc.get("title", "") or doc_id
         text = f"{doc_title} {doc.get('text', '')}".strip()[:2000]
 
-        raw_terms = re.findall(r'\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*\b', text)
+        raw_terms = re.findall(r"\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*\b", text)
         terms = [t for t in raw_terms if t.lower() not in _STOPWORDS and len(t) > 3]
         unique_terms = list(dict.fromkeys(terms))[:15]
 
         doc_node_id = f"DOC::{doc_id}"
         if doc_node_id not in seen_terms:
-            nodes.append({
-                "id": doc_node_id,
-                "type": "Document",
-                "name": doc_title[:60],
-                "doc_id": doc_id,
-                "url": doc.get("url", ""),
-            })
+            nodes.append(
+                {
+                    "id": doc_node_id,
+                    "type": "Document",
+                    "name": doc_title[:60],
+                    "doc_id": doc_id,
+                    "url": doc.get("url", ""),
+                }
+            )
             seen_terms.add(doc_node_id)
 
         for term in unique_terms:
@@ -401,13 +465,13 @@ async def _emit_keyword_graph(
 
     for doc in documents[:12]:
         text = str(doc.get("text", "") or doc.get("title", ""))[:2000]
-        title_terms = re.findall(r'\b[A-Z][a-zA-Z]+\b', doc.get("title", ""))
-        proper_terms = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
-        acronyms = re.findall(r'\b[A-Z]{2,6}\b', text)
+        title_terms = re.findall(r"\b[A-Z][a-zA-Z]+\b", doc.get("title", ""))
+        proper_terms = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", text)
+        acronyms = re.findall(r"\b[A-Z]{2,6}\b", text)
         all_terms = title_terms + proper_terms + acronyms
-        unique = list(dict.fromkeys(
-            t for t in all_terms if t.lower() not in _STOPWORDS and len(t) > 2
-        ))[:15]
+        unique = list(
+            dict.fromkeys(t for t in all_terms if t.lower() not in _STOPWORDS and len(t) > 2)
+        )[:15]
 
         for term in unique:
             if term not in seen:
@@ -415,17 +479,20 @@ async def _emit_keyword_graph(
                 seen.add(term)
                 entity_names.append(term)
         for i, a in enumerate(unique):
-            for b in unique[i + 1: i + 4]:
+            for b in unique[i + 1 : i + 4]:
                 edges.append({"source": a, "target": b, "type": "CO_OCCURS"})
 
     lexical = _build_lexical_graph(documents)
     try:
-        await broadcaster(session_id, {
-            "type": "graph_update",
-            "graph": {"nodes": nodes, "edges": edges},
-            "lexical": lexical,
-            "partial": True,  # signal: GLiNER2 graph is still running
-        })
+        await broadcaster(
+            session_id,
+            {
+                "type": "graph_update",
+                "graph": {"nodes": nodes, "edges": edges},
+                "lexical": lexical,
+                "partial": True,  # signal: GLiNER2 graph is still running
+            },
+        )
     except Exception:
         pass
 
@@ -457,8 +524,10 @@ async def _run_graphgen(
             # Give this thread a fresh event loop so DSPy's internal
             # run_until_complete() doesn't collide with the running asyncio loop.
             import asyncio as _asyncio
+
             _asyncio.set_event_loop(_asyncio.new_event_loop())
             from services.agent.tools.extraction.in_process import InProcessExtractor
+
             _extractor = InProcessExtractor()
             return _extractor.extract(docs_input, session_id)
 
@@ -475,10 +544,11 @@ async def _run_graphgen(
     normalized_nodes, normalized_edges = _normalize_session_graph_payload(nodes, edges)
 
     # Store canonical entity names for LLM reasoning
-    entity_names = list(dict.fromkeys(
-        node.get("properties", {}).get("name", node.get("id", ""))
-        for node in normalized_nodes
-    ))[:50]
+    entity_names = list(
+        dict.fromkeys(
+            node.get("properties", {}).get("name", node.get("id", "")) for node in normalized_nodes
+        )
+    )[:50]
     _session_entities.setdefault(session_id, [])
     existing = set(_session_entities[session_id])
     _session_entities[session_id].extend(e for e in entity_names if e not in existing)
@@ -491,12 +561,15 @@ async def _run_graphgen(
             raise
 
     try:
-        await broadcaster(session_id, {
-            "type": "graph_update",
-            "graph": {"nodes": nodes, "edges": edges},
-            "lexical": lexical,
-            "partial": False,
-        })
+        await broadcaster(
+            session_id,
+            {
+                "type": "graph_update",
+                "graph": {"nodes": nodes, "edges": edges},
+                "lexical": lexical,
+                "partial": False,
+            },
+        )
     except Exception:
         pass
 
@@ -528,6 +601,7 @@ def build_graph(
         """
         try:
             from tavily import AsyncTavilyClient
+
             api_key = os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API", "")
             if not api_key:
                 return "Error: TAVILY_API_KEY not configured"
@@ -558,14 +632,16 @@ def build_graph(
                 date = r.get("published_date", "")
                 log.debug("  [%d] url=%r  snippet_len=%d", i, url[:80], len(snippet))
                 lines.append(f"{i}. {title}\n   URL: {url}\n   Date: {date}\n   {snippet}")
-                docs_to_store.append({
-                    "id": url[:80],
-                    "title": title,
-                    "url": url,
-                    "text": snippet,
-                    "date": date,
-                    "source": "web",
-                })
+                docs_to_store.append(
+                    {
+                        "id": url[:80],
+                        "title": title,
+                        "url": url,
+                        "text": snippet,
+                        "date": date,
+                        "source": "web",
+                    }
+                )
 
             _session_docs.setdefault(session_id, []).extend(docs_to_store)
             log.info("search_web  stored %d docs  session=%s", len(docs_to_store), session_id)
@@ -699,7 +775,9 @@ def build_graph(
         if not docs:
             return "No documents collected yet — run search_eu or search_web first."
 
-        log.debug("graphgen  session=%s  docs_accumulated=%d", session_id_arg or session_id, len(docs))
+        log.debug(
+            "graphgen  session=%s  docs_accumulated=%d", session_id_arg or session_id, len(docs)
+        )
         try:
             nodes, edges, summary = await _run_graphgen(
                 docs,
@@ -708,7 +786,11 @@ def build_graph(
                 persist_graph,
             )
         except Exception:
-            log.error("graphgen extraction failed for session=%s", session_id_arg or session_id, exc_info=True)
+            log.error(
+                "graphgen extraction failed for session=%s",
+                session_id_arg or session_id,
+                exc_info=True,
+            )
             raise
 
         # Return entity list so LLM can reason from it
@@ -769,7 +851,9 @@ def build_graph(
 
         log.debug(
             "search_archives  query=%r  archives=%s  limit_per_archive=%d",
-            query, archive_ids, limit_per_archive,
+            query,
+            archive_ids,
+            limit_per_archive,
         )
         aq = ArchiveQuery(
             query=query,
@@ -787,12 +871,12 @@ def build_graph(
         # Accumulate docs into session store for graphgen
         docs_for_session = [
             {
-                "id":     r.doc_id,
-                "title":  r.title,
-                "text":   r.excerpt,
-                "url":    r.url,
+                "id": r.doc_id,
+                "title": r.title,
+                "text": r.excerpt,
+                "url": r.url,
                 "source": r.source,
-                "date":   r.date,
+                "date": r.date,
             }
             for r in results
         ]
@@ -811,11 +895,19 @@ def build_graph(
         cached_count = sum(1 for r in results if r.from_cache)
         log.info(
             "search_archives  %d results (%d cached)  archives=%s  session=%s",
-            len(results), cached_count, archive_ids, session_id,
+            len(results),
+            cached_count,
+            archive_ids,
+            session_id,
         )
         for _r in results:
-            log.debug("  result  source=%s  doc_id=%r  score=%.3f  cached=%s",
-                      _r.source, _r.doc_id[:60], getattr(_r, 'score', 0.0), _r.from_cache)
+            log.debug(
+                "  result  source=%s  doc_id=%r  score=%.3f  cached=%s",
+                _r.source,
+                _r.doc_id[:60],
+                getattr(_r, "score", 0.0),
+                _r.from_cache,
+            )
         header = (
             f"[search_archives] {len(results)} results from {archive_ids} "
             f"({cached_count} from cache)\n\n"
@@ -838,10 +930,14 @@ def build_graph(
         """
         sid = session_id_arg or session_id
         import os as _os
+
         hybridrag_url = _os.environ.get("HYBRIDRAG_URL", "http://localhost:8020")
-        log.debug("hybridrag  query=%r  session=%s  k=%d  url=%s", query[:80], sid, k, hybridrag_url)
+        log.debug(
+            "hybridrag  query=%r  session=%s  k=%d  url=%s", query[:80], sid, k, hybridrag_url
+        )
         try:
             from services.agent.tools.graph.client import HybridRAGClient
+
             client = HybridRAGClient(hybridrag_url, timeout=25.0)
             xml_result = await client.retrieve(
                 query,
@@ -863,6 +959,7 @@ def build_graph(
 
     # ── System prompt ────────────────────────────────────────────────────────
     from datetime import date as _date
+
     today = _date.today().isoformat()
 
     SYSTEM_PROMPT = f"""You are an EU public records investigator for the European Parliamentary Research Service.
@@ -954,9 +1051,7 @@ REPORT FORMAT:
             first_human = next(
                 (m.content for m in messages if getattr(m, "type", None) == "human"), ""
             )
-            await _emit_investigative_event(
-                broadcaster, session_id, "phase_change", phase="scope"
-            )
+            await _emit_investigative_event(broadcaster, session_id, "phase_change", phase="scope")
             await _emit_investigative_event(
                 broadcaster,
                 session_id,

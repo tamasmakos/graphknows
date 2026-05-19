@@ -1,4 +1,5 @@
 """Dict-based WSEvent factories for the ADR-002 investigative workflow."""
+
 from __future__ import annotations
 
 import time
@@ -15,7 +16,12 @@ def plan_ready_event(session_id: str, plan: list[SubQuestion]) -> WSEvent:
     return WSEvent(
         session_id=session_id,
         event_type="plan_ready",
-        payload={"plan": [{"id": sq.id, "text": sq.text, "source_priorities": sq.source_priorities} for sq in plan]},
+        payload={
+            "plan": [
+                {"id": sq.id, "text": sq.text, "source_priorities": sq.source_priorities}
+                for sq in plan
+            ]
+        },
         ts=_ts(),
     )
 
@@ -50,12 +56,18 @@ def chunks_written_event(session_id: str, iteration: int, count: int) -> WSEvent
     )
 
 
-def entities_written_event(session_id: str, iteration: int, entity_count: int, relation_count: int) -> WSEvent:
+def entities_written_event(
+    session_id: str, iteration: int, entity_count: int, relation_count: int
+) -> WSEvent:
     """Emit after entities and relations are written to the graph store."""
     return WSEvent(
         session_id=session_id,
         event_type="entities_written",
-        payload={"iteration": iteration, "entity_count": entity_count, "relation_count": relation_count},
+        payload={
+            "iteration": iteration,
+            "entity_count": entity_count,
+            "relation_count": relation_count,
+        },
         ts=_ts(),
     )
 
@@ -176,6 +188,7 @@ from pydantic import BaseModel  # noqa: E402
 
 class PhaseChangeEvent(BaseModel):
     """Emitted when the investigation transitions between macro phases."""
+
     event: Literal["phase_change"] = "phase_change"
     session_id: str
     phase: str
@@ -184,6 +197,7 @@ class PhaseChangeEvent(BaseModel):
 
 class ThreadStartedEvent(BaseModel):
     """Emitted when a new investigation thread starts."""
+
     event: Literal["thread_started"] = "thread_started"
     session_id: str
     thread_id: str
@@ -193,6 +207,7 @@ class ThreadStartedEvent(BaseModel):
 
 class EvidenceAddedEvent(BaseModel):
     """Emitted when a new evidence chunk is added."""
+
     event: Literal["evidence_added"] = "evidence_added"
     session_id: str
     evidence_id: str
@@ -204,6 +219,7 @@ class EvidenceAddedEvent(BaseModel):
 
 class GraphBuildingEvent(BaseModel):
     """Emitted when graph construction starts."""
+
     event: Literal["graph_building"] = "graph_building"
     session_id: str
     namespace: str
@@ -211,6 +227,7 @@ class GraphBuildingEvent(BaseModel):
 
 class GraphReadyEvent(BaseModel):
     """Emitted when the session graph is ready."""
+
     event: Literal["graph_ready"] = "graph_ready"
     session_id: str
     namespace: str
@@ -220,6 +237,7 @@ class GraphReadyEvent(BaseModel):
 
 class ClaimVerifiedEvent(BaseModel):
     """Emitted when a claim is verified by the report."""
+
     event: Literal["claim_verified"] = "claim_verified"
     session_id: str
     claim_id: str
@@ -230,6 +248,7 @@ class ClaimVerifiedEvent(BaseModel):
 
 class ContradictionDetectedEvent(BaseModel):
     """Emitted when a contradiction is detected."""
+
     event: Literal["contradiction_detected"] = "contradiction_detected"
     session_id: str
     contradiction_id: str
@@ -240,6 +259,7 @@ class ContradictionDetectedEvent(BaseModel):
 
 class ReportReadyEvent(BaseModel):
     """Emitted when the final report is ready."""
+
     event: Literal["report_ready"] = "report_ready"
     session_id: str
     findings_count: int
@@ -254,4 +274,3 @@ def graph_export_event(session_id: str, path: str, n_nodes: int, n_edges: int) -
         payload={"path": path, "n_nodes": n_nodes, "n_edges": n_edges},
         ts=_ts(),
     )
-

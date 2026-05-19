@@ -1,4 +1,5 @@
 """Compatibility shim — use ``graphknows.shared.ontology`` instead."""
+
 from graphknows.shared.ontology import (  # noqa: F401
     OntologyLoader,
     OntologyManifest,

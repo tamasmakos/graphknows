@@ -1,4 +1,5 @@
 """LangGraph StateGraph for the ADR-002 3-phase macro graph."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -54,7 +55,9 @@ def build_workflow(
         A compiled StateGraph with scope -> investigate -> communicate flow.
     """
     inv_node = make_investigate_node(
-        mg_driver, search_client, backend,
+        mg_driver,
+        search_client,
+        backend,
         ontology_router=ontology_router,
         rel_extractor=rel_extractor,
         tavily=tavily,
@@ -76,6 +79,7 @@ def build_workflow(
     )
     workflow.add_edge("communicate", END)
     return workflow.compile()
+
 
 # Events to stream from the LangGraph agent
 REQUIRED_STREAM_EVENTS = ("on_chat_model_stream", "on_tool_start", "on_tool_end", "on_chain_end")

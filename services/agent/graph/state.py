@@ -1,4 +1,5 @@
 """Typed state contracts for the ADR-002 3-phase macro graph."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -11,7 +12,9 @@ class SubQuestion:
 
     id: str
     text: str
-    source_priorities: list[str] = field(default_factory=lambda: ["eprs_briefings", "ep_debates", "web"])
+    source_priorities: list[str] = field(
+        default_factory=lambda: ["eprs_briefings", "ep_debates", "web"]
+    )
 
 
 @dataclass
@@ -63,9 +66,17 @@ class WSEvent(TypedDict):
 
     session_id: str
     event_type: Literal[
-        "plan_ready", "search_start", "docs_fetched", "chunks_written",
-        "entities_written", "novelty_check", "search_done", "retrieval_done",
-        "brief_chunk", "brief_done", "error",
+        "plan_ready",
+        "search_start",
+        "docs_fetched",
+        "chunks_written",
+        "entities_written",
+        "novelty_check",
+        "search_done",
+        "retrieval_done",
+        "brief_chunk",
+        "brief_done",
+        "error",
     ]
     payload: dict
     ts: float

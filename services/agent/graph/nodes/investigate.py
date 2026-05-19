@@ -1,4 +1,5 @@
 """Investigate node: single-pass search iteration with dual-write and novelty check."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,7 +21,14 @@ from services.agent.graph.events import (
     search_done_event,
     search_start_event,
 )
-from services.agent.graph.state import Chunk, Entity, InvestigativeState, RawDoc, Relation, SubQuestion
+from services.agent.graph.state import (
+    Chunk,
+    Entity,
+    InvestigativeState,
+    RawDoc,
+    Relation,
+    SubQuestion,
+)
 
 if TYPE_CHECKING:
     from services.agent.tools.search.client import SearchServiceClient
@@ -131,6 +139,7 @@ class DualWriter:
             return
 
         if self.mg is not None:
+
             def _sync() -> None:
                 with self.mg.session() as s:
                     for e in entities:
@@ -239,6 +248,7 @@ def _lazy_extractor() -> Any:
     """Return a module-level InProcessExtractor singleton (loaded on first call)."""
     if not hasattr(_lazy_extractor, "_instance"):
         from services.agent.tools.extraction.in_process import InProcessExtractor
+
         _lazy_extractor._instance = InProcessExtractor()  # type: ignore[attr-defined]
     return _lazy_extractor._instance  # type: ignore[attr-defined]
 
@@ -282,14 +292,16 @@ async def _fetch_multi_source(
                 if url and url in seen_urls:
                     continue
                 seen_urls.add(url)
-                tavily_docs.append(RawDoc(
-                    id=d.get("id", f"tavily:{url}"),
-                    title=d.get("title", url),
-                    text=d.get("text", ""),
-                    url=url,
-                    source="tavily",
-                    date=d.get("date"),
-                ))
+                tavily_docs.append(
+                    RawDoc(
+                        id=d.get("id", f"tavily:{url}"),
+                        title=d.get("title", url),
+                        text=d.get("text", ""),
+                        url=url,
+                        source="tavily",
+                        date=d.get("date"),
+                    )
+                )
         except Exception:
             logger.warning("Tavily fetch failed (non-fatal)", exc_info=True)
 
@@ -305,14 +317,16 @@ async def _fetch_multi_source(
                 if url and url in seen_urls:
                     continue
                 seen_urls.add(url)
-                cellar_docs.append(RawDoc(
-                    id=d.get("id", f"cellar:{url}"),
-                    title=d.get("title", url),
-                    text=d.get("text", ""),
-                    url=url,
-                    source="cellar",
-                    date=d.get("date"),
-                ))
+                cellar_docs.append(
+                    RawDoc(
+                        id=d.get("id", f"cellar:{url}"),
+                        title=d.get("title", url),
+                        text=d.get("text", ""),
+                        url=url,
+                        source="cellar",
+                        date=d.get("date"),
+                    )
+                )
         except Exception:
             logger.warning("CELLAR SPARQL fetch failed (non-fatal)", exc_info=True)
 
@@ -334,7 +348,9 @@ async def _fetch_multi_source(
 
     logger.info(
         "Sources: tavily=%d cellar=%d eurlex=%d",
-        len(tavily_docs), len(cellar_docs), len(eurlex_docs),
+        len(tavily_docs),
+        len(cellar_docs),
+        len(eurlex_docs),
     )
 
     # Combine with priority ordering, capped at limit
@@ -430,12 +446,13 @@ def make_investigate_node(
         new_relations: list[Relation] = []
         if raw_docs:
             docs_for_extractor = [
-                {"id": d.id, "title": d.title, "text": d.text, "source": d.source}
-                for d in raw_docs
+                {"id": d.id, "title": d.title, "text": d.text, "source": d.source} for d in raw_docs
             ]
             try:
                 if extractor is not None:
-                    result = await asyncio.to_thread(extractor.extract, docs_for_extractor, session_id)
+                    result = await asyncio.to_thread(
+                        extractor.extract, docs_for_extractor, session_id
+                    )
                 else:
                     # Fallback: lazy-load InProcessExtractor on first use
                     _ext = _lazy_extractor()
@@ -454,7 +471,9 @@ def make_investigate_node(
                         name=ent.get("name", ""),
                         label=ent.get("type", "CONCEPT"),
                         confidence=0.5,
-                        doc_ids=[ent["doc_id"]] if ent.get("doc_id") else [doc.id for doc in raw_docs],
+                        doc_ids=[ent["doc_id"]]
+                        if ent.get("doc_id")
+                        else [doc.id for doc in raw_docs],
                     )
                     name_to_entity[ent["name"]] = e
                     new_entities.append(e)
@@ -463,12 +482,14 @@ def make_investigate_node(
                     src_ent = name_to_entity.get(rel.get("source", ""))
                     tgt_ent = name_to_entity.get(rel.get("target", ""))
                     if src_ent is not None and tgt_ent is not None:
-                        new_relations.append(Relation(
-                            source=src_ent.id,
-                            target=tgt_ent.id,
-                            type=rel.get("type", "RELATED_TO"),
-                            confidence=rel.get("confidence", 0.5),
-                        ))
+                        new_relations.append(
+                            Relation(
+                                source=src_ent.id,
+                                target=tgt_ent.id,
+                                type=rel.get("type", "RELATED_TO"),
+                                confidence=rel.get("confidence", 0.5),
+                            )
+                        )
 
         if not new_entities:
             new_entities = [
@@ -524,7 +545,9 @@ def make_investigate_node(
                 session_id=session_id,
                 iteration=iteration,
                 entities=[{"id": e.id, "name": e.name, "label": e.label} for e in new_entities],
-                relations=[{"source": r.source, "target": r.target, "type": r.type} for r in new_relations],
+                relations=[
+                    {"source": r.source, "target": r.target, "type": r.type} for r in new_relations
+                ],
             )
         )
 
@@ -541,7 +564,11 @@ def make_investigate_node(
                     ontology.summary_jsonld,
                     ontology.id,
                 )
-                if onto_triples and backend is not None and hasattr(backend, "write_ontology_relations"):
+                if (
+                    onto_triples
+                    and backend is not None
+                    and hasattr(backend, "write_ontology_relations")
+                ):
                     await backend.write_ontology_relations(session_id, onto_triples, ontology.id)
                 ws_events.append(
                     relations_extracted_event(
@@ -554,7 +581,10 @@ def make_investigate_node(
                 )
                 logger.debug(
                     "Ontology extraction [%s]: %d triples for session %s iter %d",
-                    ontology.id, len(onto_triples), session_id, iteration,
+                    ontology.id,
+                    len(onto_triples),
+                    session_id,
+                    iteration,
                 )
             except Exception as exc:
                 logger.warning("Ontology-guided extraction failed (non-fatal): %s", exc)

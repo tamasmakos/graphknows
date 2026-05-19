@@ -1,4 +1,5 @@
 """Search tool — queries EU public archives + Tavily web search, merges and ranks results."""
+
 from __future__ import annotations
 
 import asyncio
@@ -58,7 +59,11 @@ class SearchTool(BaseTool):
                 source_ids = route_sources(query)
 
             # Split: Tavily handled separately, EU adapters handled by existing path
-            use_tavily = "tavily" in source_ids or os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API")
+            use_tavily = (
+                "tavily" in source_ids
+                or os.environ.get("TAVILY_API_KEY")
+                or os.environ.get("TAVILY_API")
+            )
             eu_source_ids = [s for s in source_ids if s != "tavily"][:3]
 
             # Build tasks — EU adapters (up to 3) + Tavily in parallel
@@ -76,10 +81,13 @@ class SearchTool(BaseTool):
 
             if use_tavily:
                 from agent.tools.search.web import TavilySearchTool
+
                 tavily = TavilySearchTool()
                 all_tasks.append(
                     asyncio.wait_for(
-                        tavily.run({"query": query, "max_results": max_docs, "time_range": time_range}),
+                        tavily.run(
+                            {"query": query, "max_results": max_docs, "time_range": time_range}
+                        ),
                         timeout=20,
                     )
                 )
@@ -124,7 +132,9 @@ class SearchTool(BaseTool):
             log.exception("search tool failed")
             return {"error": str(exc), "documents": [], "count": 0}
 
-    async def _search_single_source(self, source_id: str, query: str, max_docs: int) -> list[dict[str, Any]]:
+    async def _search_single_source(
+        self, source_id: str, query: str, max_docs: int
+    ) -> list[dict[str, Any]]:
         """Fetch documents for one source via the search service HTTP API.
 
         All source adapter logic lives in the search service.  The agent never
@@ -186,17 +196,26 @@ async def _run_graphgen_inprocess(
     """Run GLiNER2 extraction in-process and persist results to session graph."""
     try:
         from services.agent.tools.extraction.in_process import InProcessExtractor
+
         extractor = InProcessExtractor()
         docs_input = [
-            {"id": d.get("id", ""), "title": d.get("title", ""),
-             "text": d.get("text", ""), "source": d.get("source", "")}
+            {
+                "id": d.get("id", ""),
+                "title": d.get("title", ""),
+                "text": d.get("text", ""),
+                "source": d.get("source", ""),
+            }
             for d in documents[:5]  # cap to limit RAM pressure
         ]
         result = await asyncio.to_thread(extractor.extract, docs_input, session_id)
         nodes_data = result.get("entities", [])
         edges_data = result.get("relations", [])
-        log.info("Graphgen in-process: %d nodes, %d edges for session %s",
-                 len(nodes_data), len(edges_data), session_id)
+        log.info(
+            "Graphgen in-process: %d nodes, %d edges for session %s",
+            len(nodes_data),
+            len(edges_data),
+            session_id,
+        )
     except Exception as exc:
         log.warning("In-process extraction failed, using keyword fallback: %s", exc)
         return await _run_keyword_graph(documents, session_id, sgm, ws_broadcaster)
@@ -204,21 +223,29 @@ async def _run_graphgen_inprocess(
     if nodes_data and sgm:
         try:
             for node in nodes_data:
-                await sgm.add_entity(session_id, node.get("id", ""), node.get("type", "CONCEPT"), {})
+                await sgm.add_entity(
+                    session_id, node.get("id", ""), node.get("type", "CONCEPT"), {}
+                )
             for edge in edges_data:
                 await sgm.add_relation(
                     session_id,
-                    edge.get("source", ""), edge.get("target", ""), edge.get("type", "RELATED_TO"), {}
+                    edge.get("source", ""),
+                    edge.get("target", ""),
+                    edge.get("type", "RELATED_TO"),
+                    {},
                 )
         except Exception as exc:
             log.warning("Failed to persist graph to session manager: %s", exc)
 
     if ws_broadcaster:
         try:
-            await ws_broadcaster(session_id, {
-                "type": "graph_update",
-                "graph": {"nodes": nodes_data[:200], "edges": edges_data[:500]},
-            })
+            await ws_broadcaster(
+                session_id,
+                {
+                    "type": "graph_update",
+                    "graph": {"nodes": nodes_data[:200], "edges": edges_data[:500]},
+                },
+            )
         except Exception:
             pass
 
@@ -234,12 +261,38 @@ async def _run_keyword_graph(
     """Lightweight fallback: build a co-occurrence graph from noun phrases without ML models."""
     import re as _re
 
-    _STOPWORDS = frozenset({"the", "a", "an", "of", "in", "to", "and", "or", "for",
-                            "is", "are", "was", "were", "on", "at", "by", "with",
-                            "this", "that", "as", "be", "has", "have", "its", "it"})
+    _STOPWORDS = frozenset(
+        {
+            "the",
+            "a",
+            "an",
+            "of",
+            "in",
+            "to",
+            "and",
+            "or",
+            "for",
+            "is",
+            "are",
+            "was",
+            "were",
+            "on",
+            "at",
+            "by",
+            "with",
+            "this",
+            "that",
+            "as",
+            "be",
+            "has",
+            "have",
+            "its",
+            "it",
+        }
+    )
 
     def _extract_terms(text: str) -> list[str]:
-        words = _re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        words = _re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", text)
         return [w for w in words if w.lower() not in _STOPWORDS and len(w) > 3]
 
     nodes: list[dict] = []
@@ -253,15 +306,27 @@ async def _run_keyword_graph(
         unique = list(dict.fromkeys(terms))[:15]
         for term in unique:
             if term not in seen_nodes:
-                nodes.append({"id": term, "type": "CONCEPT", "doc_id": doc.get("id", ""), "name": term})
+                nodes.append(
+                    {"id": term, "type": "CONCEPT", "doc_id": doc.get("id", ""), "name": term}
+                )
                 seen_nodes.add(term)
         for i, a in enumerate(unique):
-            for b in unique[i + 1: i + 4]:
-                edges.append({"source": a, "target": b, "type": "CO_OCCURS",
-                               "properties": {"relation_type": "co-occurs"}})
+            for b in unique[i + 1 : i + 4]:
+                edges.append(
+                    {
+                        "source": a,
+                        "target": b,
+                        "type": "CO_OCCURS",
+                        "properties": {"relation_type": "co-occurs"},
+                    }
+                )
 
-    log.info("Keyword fallback graph: %d nodes, %d edges for session %s",
-             len(nodes), len(edges), session_id)
+    log.info(
+        "Keyword fallback graph: %d nodes, %d edges for session %s",
+        len(nodes),
+        len(edges),
+        session_id,
+    )
 
     if nodes and sgm:
         try:
@@ -274,10 +339,13 @@ async def _run_keyword_graph(
 
     if ws_broadcaster:
         try:
-            await ws_broadcaster(session_id, {
-                "type": "graph_update",
-                "graph": {"nodes": nodes, "edges": edges},
-            })
+            await ws_broadcaster(
+                session_id,
+                {
+                    "type": "graph_update",
+                    "graph": {"nodes": nodes, "edges": edges},
+                },
+            )
         except Exception:
             pass
 

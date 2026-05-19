@@ -3,6 +3,7 @@
 Eliminates subprocess overhead by loading GLiNER2 once and reusing it
 across extraction calls within the same agent process.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,27 +29,89 @@ def _chunk_text(text: str) -> list[str]:
             break
     return chunks[:10]
 
+
 _TRAILING_DIGIT_RE = __import__("re").compile(r"\d+$")
 
 # Short words that indicate a truncated span when they appear at the end
-_NOISE_LAST_WORDS = frozenset({
-    "pub", "publ", "impl", "spec", "dept",              # truncations
-    "the", "a", "an", "of", "in", "on", "at", "to",    # prepositions / articles
-    "and", "or", "but", "for",
-})
+_NOISE_LAST_WORDS = frozenset(
+    {
+        "pub",
+        "publ",
+        "impl",
+        "spec",
+        "dept",  # truncations
+        "the",
+        "a",
+        "an",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",  # prepositions / articles
+        "and",
+        "or",
+        "but",
+        "for",
+    }
+)
 
 # Single title-cased words that are semantically too generic to be named entities
-_GENERIC_SINGLE_WORDS = frozenset({
-    "digital", "central", "bank", "currency", "monetary", "financial",
-    "economic", "political", "legal", "national", "european", "global",
-    "federal", "regional", "official", "public", "private", "social",
-    "report", "document", "proposal", "reform", "review", "article",
-    "section", "chapter", "point", "paragraph", "clause",
-    "january", "february", "march", "april", "may", "june",
-    "july", "august", "september", "october", "november", "december",
-    "monday", "tuesday", "wednesday", "thursday", "friday",
-    "wikipedia", "source", "reference", "note", "see", "ibid",
-})
+_GENERIC_SINGLE_WORDS = frozenset(
+    {
+        "digital",
+        "central",
+        "bank",
+        "currency",
+        "monetary",
+        "financial",
+        "economic",
+        "political",
+        "legal",
+        "national",
+        "european",
+        "global",
+        "federal",
+        "regional",
+        "official",
+        "public",
+        "private",
+        "social",
+        "report",
+        "document",
+        "proposal",
+        "reform",
+        "review",
+        "article",
+        "section",
+        "chapter",
+        "point",
+        "paragraph",
+        "clause",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "wikipedia",
+        "source",
+        "reference",
+        "note",
+        "see",
+        "ibid",
+    }
+)
 
 
 def _is_quality_span(name: str) -> bool:
@@ -74,9 +137,9 @@ def _is_quality_span(name: str) -> bool:
         return False
     words = name.split()
     if len(words) == 1:
-        if name.isupper():          # acronym
+        if name.isupper():  # acronym
             return True
-        if name[0].islower():       # bare lowercase word — not a proper entity
+        if name[0].islower():  # bare lowercase word — not a proper entity
             return False
         # Single title-cased or mixed-case word: reject if it is a generic term
         if name.lower() in _GENERIC_SINGLE_WORDS:
@@ -125,8 +188,7 @@ class InProcessExtractor:
 
         # Add taxonomy relation types to the schema for joint extraction
         rel_descs: dict[str, str] = {
-            rt: rt.replace("_", " ").lower()
-            for rt in self._taxonomy.relation_types
+            rt: rt.replace("_", " ").lower() for rt in self._taxonomy.relation_types
         }
         if rel_descs:
             self._gliner_schema.relations(rel_descs)
@@ -153,6 +215,7 @@ class InProcessExtractor:
             )
         import dspy
         from graphgen.pipeline.entity_relation.dspy_module import GraphExtractorModule
+
         lm = dspy.LM(
             "openrouter/google/gemini-2.0-flash-001",
             api_key=openrouter_key,
@@ -181,7 +244,9 @@ class InProcessExtractor:
 
         log.info(
             "extraction START  session=%s  docs=%d  dspy_ok=%s",
-            session_id, len(documents), self._dspy_ok,
+            session_id,
+            len(documents),
+            self._dspy_ok,
         )
         for doc_idx, doc in enumerate(documents[:15]):
             doc_id = doc.get("id", "") or doc.get("url", "")[:60]
@@ -191,7 +256,10 @@ class InProcessExtractor:
 
             log.debug(
                 "  doc[%d/%d]  id=%r  chars=%d",
-                doc_idx + 1, min(len(documents), 15), doc_id[:60], len(raw_text),
+                doc_idx + 1,
+                min(len(documents), 15),
+                doc_id[:60],
+                len(raw_text),
             )
             doc_entities: list[str] = []
 
@@ -215,12 +283,14 @@ class InProcessExtractor:
                             conf = float(span.get("confidence", 0.0))
                             if conf < eff_threshold:
                                 continue
-                            flat_ents.append({
-                                "text": span.get("text", "").strip(),
-                                "label": canonical,
-                                "ontology_label": canonical,
-                                "confidence": conf,
-                            })
+                            flat_ents.append(
+                                {
+                                    "text": span.get("text", "").strip(),
+                                    "label": canonical,
+                                    "ontology_label": canonical,
+                                    "confidence": conf,
+                                }
+                            )
 
                     # GLiNER2 joint relation extraction candidates
                     gliner_rels: list[dict] = []
@@ -236,16 +306,20 @@ class InProcessExtractor:
                                 float(head.get("confidence", 0.0)),
                                 float(tail.get("confidence", 0.0)),
                             )
-                            gliner_rels.append({
-                                "source": src,
-                                "relation": rel_type.upper(),
-                                "target": tgt,
-                                "confidence": rel_conf,
-                            })
+                            gliner_rels.append(
+                                {
+                                    "source": src,
+                                    "relation": rel_type.upper(),
+                                    "target": tgt,
+                                    "confidence": rel_conf,
+                                }
+                            )
 
                     log.debug(
                         "    chunk[%d]  GLiNER2: %d spans (after conf gate)  %d relations",
-                        chunk_idx + 1, len(flat_ents), len(gliner_rels),
+                        chunk_idx + 1,
+                        len(flat_ents),
+                        len(gliner_rels),
                     )
 
                     # \u2500\u2500 Build chunk entity list with per-entity confidence tracking \u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -291,11 +365,13 @@ class InProcessExtractor:
                     # \u2500\u2500 DSPy relation extraction per chunk \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
                     if self._dspy_ok and self._dspy_module and len(chunk_ent_names) >= 2:
                         try:
-                            ontology_classes = list({
-                                ent.get("label", "ENTITY")
-                                for ent in flat_ents
-                                if ent.get("text", "").strip()
-                            }) or list(self._taxonomy.entity_groups.keys())
+                            ontology_classes = list(
+                                {
+                                    ent.get("label", "ENTITY")
+                                    for ent in flat_ents
+                                    if ent.get("text", "").strip()
+                                }
+                            ) or list(self._taxonomy.entity_groups.keys())
                             # Seed DSPy with GLiNER2 joint-extraction candidates +
                             # a small windowed CO_OCCURS hint from high-confidence entities
                             candidate_relations = gliner_rels[:20] + [
@@ -328,33 +404,42 @@ class InProcessExtractor:
                                         relation,
                                     )
                                     relation = "RELATED_TO"
-                                edge_list.append({
-                                    "source": triplet.source,
-                                    "target": triplet.target,
-                                    "type": relation,
-                                    "evidence": (triplet.evidence or "")[:200],
-                                    "confidence": round(triplet.confidence, 3),
-                                })
+                                edge_list.append(
+                                    {
+                                        "source": triplet.source,
+                                        "target": triplet.target,
+                                        "type": relation,
+                                        "evidence": (triplet.evidence or "")[:200],
+                                        "confidence": round(triplet.confidence, 3),
+                                    }
+                                )
                                 accepted += 1
                             log.debug(
                                 "    chunk[%d]  DSPy: %d/%d triplets accepted",
-                                chunk_idx + 1, accepted, len(triplets),
+                                chunk_idx + 1,
+                                accepted,
+                                len(triplets),
                             )
                         except Exception:
                             raise
                     else:
                         log.debug(
                             "    chunk[%d]  too few entities (%d) — skipping DSPy",
-                            chunk_idx + 1, len(chunk_ent_names),
+                            chunk_idx + 1,
+                            len(chunk_ent_names),
                         )
 
                 except Exception:
                     raise
 
         entity_nodes = [
-            {"id": v["id"], "type": v["type"], "name": v["name"],
-             "doc_id": v["doc_ids"][0] if v["doc_ids"] else "",
-             "count": v["count"]}
+            {
+                "id": v["id"],
+                "type": v["type"],
+                "name": v["name"],
+                "doc_id": v["doc_ids"][0] if v["doc_ids"] else "",
+                "count": v["count"],
+            }
             for v in node_map.values()
         ]
 
@@ -369,13 +454,15 @@ class InProcessExtractor:
                     continue
                 if not _is_quality_span(name):
                     continue
-                entity_nodes.append({
-                    "id": name,
-                    "type": "Entity",
-                    "name": name,
-                    "doc_id": "",
-                    "count": 0,
-                })
+                entity_nodes.append(
+                    {
+                        "id": name,
+                        "type": "Entity",
+                        "name": name,
+                        "doc_id": "",
+                        "count": 0,
+                    }
+                )
                 known_names_lower.add(name.lower())
                 dspy_stubs += 1
         if dspy_stubs:
@@ -390,10 +477,12 @@ class InProcessExtractor:
                 deduped_edges.append(e)
 
         log.info(
-            "extraction DONE  session=%s  docs=%d  entities=%d"
-            "  raw_edges=%d  deduped_edges=%d",
-            session_id, len(documents), len(entity_nodes),
-            len(edge_list), len(deduped_edges),
+            "extraction DONE  session=%s  docs=%d  entities=%d  raw_edges=%d  deduped_edges=%d",
+            session_id,
+            len(documents),
+            len(entity_nodes),
+            len(edge_list),
+            len(deduped_edges),
         )
         return {
             "nodes": len(entity_nodes),

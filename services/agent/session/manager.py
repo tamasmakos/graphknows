@@ -4,6 +4,7 @@ overlaying the persistent Neo4j knowledge graph.
 
 Falls back gracefully to an in-memory store when Memgraph is unavailable.
 """
+
 from __future__ import annotations
 import logging
 import time
@@ -40,19 +41,17 @@ class SessionGraphManager:
             neo4j_password: Neo4j password.
         """
         # Short connection timeout so probe fails fast when Memgraph is down
-        self._mg_driver = GraphDatabase.driver(
-            memgraph_uri, auth=None, connection_timeout=2
-        )
-        self._n4j_driver = GraphDatabase.driver(
-            neo4j_uri, auth=(neo4j_user, neo4j_password)
-        )
+        self._mg_driver = GraphDatabase.driver(memgraph_uri, auth=None, connection_timeout=2)
+        self._n4j_driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         # In-memory fallback when Memgraph is unavailable
         self._memgraph_ok: bool = self._probe_memgraph()
         # Fallback in-memory session store: session_id → {nodes: dict, edges: list}
         self._mem_sessions: dict[str, dict] = {}
         logger.info(
             "SessionGraphManager initialised (mg=%s ok=%s, n4j=%s)",
-            memgraph_uri, self._memgraph_ok, neo4j_uri,
+            memgraph_uri,
+            self._memgraph_ok,
+            neo4j_uri,
         )
 
     @property
@@ -220,7 +219,11 @@ class SessionGraphManager:
                             "label": elabel,
                             "type": elabel,
                             "name": ename,
-                            "properties": {"name": ename, "label": elabel, "session_id": session_id},
+                            "properties": {
+                                "name": ename,
+                                "label": elabel,
+                                "session_id": session_id,
+                            },
                         }
                         count += 1
                         if row.get("cid"):
@@ -231,20 +234,26 @@ class SessionGraphManager:
                                 "label": "Chunk",
                                 "type": "Chunk",
                                 "name": cid,
-                                "properties": {"id": cid, "text": row.get("ctext", ""), "session_id": session_id},
+                                "properties": {
+                                    "id": cid,
+                                    "text": row.get("ctext", ""),
+                                    "session_id": session_id,
+                                },
                             }
                             edge_key = f"{chunk_node_id}-MENTIONS-{node_id}"
                             existing_keys = {
                                 f"{e['source']}-{e['type']}-{e['target']}" for e in mem["edges"]
                             }
                             if edge_key not in existing_keys:
-                                mem["edges"].append({
-                                    "id": edge_key,
-                                    "source": chunk_node_id,
-                                    "target": node_id,
-                                    "type": "MENTIONS",
-                                    "properties": {},
-                                })
+                                mem["edges"].append(
+                                    {
+                                        "id": edge_key,
+                                        "source": chunk_node_id,
+                                        "target": node_id,
+                                        "type": "MENTIONS",
+                                        "properties": {},
+                                    }
+                                )
                             count += 1
 
         except Exception as exc:
@@ -296,16 +305,20 @@ class SessionGraphManager:
                 }
             edge_id = f"{rs_node_id}-RETRIEVED-{chunk_node_id}"
             if not any(e.get("id") == edge_id for e in mem["edges"]):
-                mem["edges"].append({
-                    "id": edge_id,
-                    "source": rs_node_id,
-                    "target": chunk_node_id,
-                    "type": "RETRIEVED",
-                    "properties": {},
-                })
+                mem["edges"].append(
+                    {
+                        "id": edge_id,
+                        "source": rs_node_id,
+                        "target": chunk_node_id,
+                        "type": "RETRIEVED",
+                        "properties": {},
+                    }
+                )
 
         if not self._memgraph_ok:
-            logger.debug("Stored reasoning step %d for session %s (in-memory only)", step_num, session_id)
+            logger.debug(
+                "Stored reasoning step %d for session %s (in-memory only)", step_num, session_id
+            )
             return
         try:
             with self._mg_driver.session() as mg:
@@ -404,13 +417,15 @@ class SessionGraphManager:
                                 "properties": props,
                             }
                         edge_id = f"{src_id}-{r.type}-{tgt_id}"
-                        edges.append({
-                            "id": edge_id,
-                            "source": src_id,
-                            "target": tgt_id,
-                            "type": r.type,
-                            "properties": dict(r.items()),
-                        })
+                        edges.append(
+                            {
+                                "id": edge_id,
+                                "source": src_id,
+                                "target": tgt_id,
+                                "type": r.type,
+                                "properties": dict(r.items()),
+                            }
+                        )
 
                 return {"nodes": list(nodes.values()), "edges": edges}
             except Exception as exc:
@@ -465,17 +480,22 @@ class SessionGraphManager:
             for nid, name in ((nid_a, entity_a), (nid_b, entity_b)):
                 if nid not in mem["nodes"]:
                     mem["nodes"][nid] = {
-                        "id": nid, "label": "Entity", "type": "Entity", "name": name,
+                        "id": nid,
+                        "label": "Entity",
+                        "type": "Entity",
+                        "name": name,
                         "properties": {"name": name, "label": "Entity", "session_id": session_id},
                     }
             if not _edge_exists(nid_a, nid_b, "RELATES_TO"):
-                mem["edges"].append({
-                    "id": f"{nid_a}-RELATES_TO-{nid_b}",
-                    "source": nid_a,
-                    "target": nid_b,
-                    "type": "RELATES_TO",
-                    "properties": {},
-                })
+                mem["edges"].append(
+                    {
+                        "id": f"{nid_a}-RELATES_TO-{nid_b}",
+                        "source": nid_a,
+                        "target": nid_b,
+                        "type": "RELATES_TO",
+                        "properties": {},
+                    }
+                )
             logger.debug("RELATES_TO edge: %s → %s (session %s)", entity_a, entity_b, session_id)
 
             # Mirror in Memgraph if available
@@ -485,13 +505,16 @@ class SessionGraphManager:
                         for name in (entity_a, entity_b):
                             mg.run(
                                 "MERGE (e:Entity {name: $name, session_id: $sid})",
-                                name=name, sid=session_id,
+                                name=name,
+                                sid=session_id,
                             )
                         mg.run(
                             "MATCH (a:Entity {name: $a, session_id: $sid}) "
                             "MATCH (b:Entity {name: $b, session_id: $sid}) "
                             "MERGE (a)-[:RELATES_TO]->(b)",
-                            a=entity_a, b=entity_b, sid=session_id,
+                            a=entity_a,
+                            b=entity_b,
+                            sid=session_id,
                         )
                 except Exception as exc:
                     logger.warning("Memgraph RELATES_TO upsert failed: %s", exc)
@@ -522,18 +545,22 @@ class SessionGraphManager:
                 entity_nid = f"entity-{entity_name}-{session_id}"
                 if entity_nid not in mem["nodes"]:
                     mem["nodes"][entity_nid] = {
-                        "id": entity_nid, "label": "Entity", "type": "Entity",
+                        "id": entity_nid,
+                        "label": "Entity",
+                        "type": "Entity",
                         "name": entity_name,
                         "properties": {"name": entity_name, "session_id": session_id},
                     }
                 if not _edge_exists(entity_nid, topic_node_id, "IN_COMMUNITY"):
-                    mem["edges"].append({
-                        "id": f"{entity_nid}-IN_COMMUNITY-{topic_node_id}",
-                        "source": entity_nid,
-                        "target": topic_node_id,
-                        "type": "IN_COMMUNITY",
-                        "properties": {},
-                    })
+                    mem["edges"].append(
+                        {
+                            "id": f"{entity_nid}-IN_COMMUNITY-{topic_node_id}",
+                            "source": entity_nid,
+                            "target": topic_node_id,
+                            "type": "IN_COMMUNITY",
+                            "properties": {},
+                        }
+                    )
             # Memgraph
             if self._memgraph_ok:
                 try:
@@ -541,20 +568,24 @@ class SessionGraphManager:
                         mg.run(
                             "MERGE (t:Topic {community_id: $cid, session_id: $sid}) "
                             "ON CREATE SET t.summary = $summary, t.label = $lbl",
-                            cid=str(tid), sid=session_id,
+                            cid=str(tid),
+                            sid=session_id,
                             summary=topic.get("summary", ""),
                             lbl=topic.get("label", "Topic"),
                         )
                         if entity_name:
                             mg.run(
                                 "MERGE (e:Entity {name: $name, session_id: $sid})",
-                                name=entity_name, sid=session_id,
+                                name=entity_name,
+                                sid=session_id,
                             )
                             mg.run(
                                 "MATCH (e:Entity {name: $ename, session_id: $sid}) "
                                 "MATCH (t:Topic {community_id: $cid, session_id: $sid}) "
                                 "MERGE (e)-[:IN_COMMUNITY]->(t)",
-                                ename=entity_name, cid=str(tid), sid=session_id,
+                                ename=entity_name,
+                                cid=str(tid),
+                                sid=session_id,
                             )
                 except Exception as exc:
                     logger.warning("Memgraph Topic upsert failed: %s", exc)
@@ -582,7 +613,9 @@ class SessionGraphManager:
                 "name": cid,
                 "properties": props,
             }
-            logger.debug("Chunk node enriched: %s doc_id=%s (session %s)", cid, props["doc_id"], session_id)
+            logger.debug(
+                "Chunk node enriched: %s doc_id=%s (session %s)", cid, props["doc_id"], session_id
+            )
             # Memgraph
             if self._memgraph_ok:
                 try:
@@ -591,9 +624,12 @@ class SessionGraphManager:
                             "MERGE (c:Chunk {id: $cid, session_id: $sid}) "
                             "ON CREATE SET c.doc_id=$doc_id, c.excerpt=$excerpt, "
                             "c.date=$date, c.institution=$inst, c.url=$url",
-                            cid=cid, sid=session_id,
-                            doc_id=props["doc_id"], excerpt=props["excerpt"],
-                            date=props["date"], inst=props["institution"],
+                            cid=cid,
+                            sid=session_id,
+                            doc_id=props["doc_id"],
+                            excerpt=props["excerpt"],
+                            date=props["date"],
+                            inst=props["institution"],
                             url=props["url"],
                         )
                 except Exception as exc:
@@ -628,20 +664,28 @@ class SessionGraphManager:
             for nid, name in ((nid_a, subj), (nid_b, obj)):
                 if nid not in mem["nodes"]:
                     mem["nodes"][nid] = {
-                        "id": nid, "label": "Entity", "type": "Entity", "name": name,
+                        "id": nid,
+                        "label": "Entity",
+                        "type": "Entity",
+                        "name": name,
                         "properties": {"name": name, "label": "Entity", "session_id": session_id},
                     }
             if not _edge_exists(nid_a, nid_b, "CO_OCCURS"):
-                mem["edges"].append({
-                    "id": f"{subj}-CO_OCCURS-{obj}",
-                    "source": nid_a,
-                    "target": nid_b,
-                    "type": "CO_OCCURS",
-                    "properties": {"weight": weight},
-                })
+                mem["edges"].append(
+                    {
+                        "id": f"{subj}-CO_OCCURS-{obj}",
+                        "source": nid_a,
+                        "target": nid_b,
+                        "type": "CO_OCCURS",
+                        "properties": {"weight": weight},
+                    }
+                )
                 logger.debug(
                     "CO_OCCURS edge: %s → %s weight=%d (session %s)",
-                    subj, obj, weight, session_id,
+                    subj,
+                    obj,
+                    weight,
+                    session_id,
                 )
             # Mirror in Memgraph if available
             if self._memgraph_ok:
@@ -650,7 +694,8 @@ class SessionGraphManager:
                         for name in (subj, obj):
                             mg.run(
                                 "MERGE (e:Entity {name: $name, session_id: $sid})",
-                                name=name, sid=session_id,
+                                name=name,
+                                sid=session_id,
                             )
                         mg.run(
                             "MATCH (a:Entity {name: $a, session_id: $sid}) "
@@ -658,13 +703,18 @@ class SessionGraphManager:
                             "MERGE (a)-[r:CO_OCCURS]->(b) "
                             "ON CREATE SET r.weight = $weight "
                             "ON MATCH SET r.weight = $weight",
-                            a=subj, b=obj, sid=session_id, weight=weight,
+                            a=subj,
+                            b=obj,
+                            sid=session_id,
+                            weight=weight,
                         )
                 except Exception as exc:
                     logger.warning("Memgraph CO_OCCURS upsert failed: %s", exc)
                     self._memgraph_ok = False
 
-    def add_node(self, session_id: str, node_id: str, label: str, properties: dict[str, Any]) -> None:
+    def add_node(
+        self, session_id: str, node_id: str, label: str, properties: dict[str, Any]
+    ) -> None:
         """Upsert a single node into the session graph."""
         if session_id not in self._mem_sessions:
             self._mem_sessions[session_id] = {"nodes": {}, "edges": []}
@@ -685,8 +735,7 @@ class SessionGraphManager:
             try:
                 with self._mg_driver.session() as mg:
                     mg.run(
-                        f"MERGE (n:{label} {{name: $name, session_id: $sid}}) "
-                        "SET n += $props",
+                        f"MERGE (n:{label} {{name: $name, session_id: $sid}}) SET n += $props",
                         name=node_name,
                         sid=session_id,
                         props=merged_props,
@@ -768,9 +817,7 @@ class SessionGraphManager:
     # Write-back to Neo4j
     # ------------------------------------------------------------------
 
-    def write_back_to_neo4j(
-        self, session_id: str, confidence_threshold: float = 0.7
-    ) -> int:
+    def write_back_to_neo4j(self, session_id: str, confidence_threshold: float = 0.7) -> int:
         """Write high-confidence ReasoningStep-derived edges back to Neo4j.
 
         Args:
@@ -781,7 +828,9 @@ class SessionGraphManager:
             Count of edges written to Neo4j.
         """
         if not self._memgraph_ok:
-            logger.debug("Memgraph unavailable — skipping write_back_to_neo4j for session %s", session_id)
+            logger.debug(
+                "Memgraph unavailable — skipping write_back_to_neo4j for session %s", session_id
+            )
             return 0
         written = 0
         try:

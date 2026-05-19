@@ -1,4 +1,5 @@
 """GraphGen tool — runs NER/KG pipeline on fetched documents, writes to session graph."""
+
 from __future__ import annotations
 
 import asyncio
@@ -30,10 +31,26 @@ from graphgen.pipeline.entity_relation.ontology import (
 log = logging.getLogger("agent.tools.graph.extract")
 
 _DEFAULT_LABELS = [
-    "Person", "Organization", "Location", "Country", "Institution",
-    "Legislative Body", "Policy", "Law", "Regulation", "Directive",
-    "Treaty", "Agreement", "Decision", "Action", "Event",
-    "Date", "Concept", "Topic", "Product", "Technology",
+    "Person",
+    "Organization",
+    "Location",
+    "Country",
+    "Institution",
+    "Legislative Body",
+    "Policy",
+    "Law",
+    "Regulation",
+    "Directive",
+    "Treaty",
+    "Agreement",
+    "Decision",
+    "Action",
+    "Event",
+    "Date",
+    "Concept",
+    "Topic",
+    "Product",
+    "Technology",
 ]
 
 
@@ -55,9 +72,21 @@ class GraphGenTool(BaseTool):
             session_id = str(params.get("session_id", "")).strip()
             documents = params.get("documents") or []
             if not session_id:
-                return {"error": "session_id is required", "nodes": 0, "edges": 0, "lexical_edges": 0, "entities": []}
+                return {
+                    "error": "session_id is required",
+                    "nodes": 0,
+                    "edges": 0,
+                    "lexical_edges": 0,
+                    "entities": [],
+                }
             if not isinstance(documents, list) or not documents:
-                return {"error": "documents must be a non-empty list", "nodes": 0, "edges": 0, "lexical_edges": 0, "entities": []}
+                return {
+                    "error": "documents must be a non-empty list",
+                    "nodes": 0,
+                    "edges": 0,
+                    "lexical_edges": 0,
+                    "entities": [],
+                }
 
             domain = params.get("ontology_domain") or self._detect_domain(documents)
             docs_entities = await asyncio.gather(
@@ -81,10 +110,7 @@ class GraphGenTool(BaseTool):
 
             capped_entities = self._cap_entities(all_entities, max_nodes=500)
 
-            kept_keys = {
-                (e["doc_id"], e["name"], e["label"])
-                for e in capped_entities
-            }
+            kept_keys = {(e["doc_id"], e["name"], e["label"]) for e in capped_entities}
             by_doc: dict[str, list[dict[str, Any]]] = {}
             for e in capped_entities:
                 by_doc.setdefault(e["doc_id"], []).append(e)
@@ -106,7 +132,13 @@ class GraphGenTool(BaseTool):
                             continue
                         relation_type = "CO_OCCURS"
                         weight = (left["confidence"] + right["confidence"]) / 2.0
-                        graph.add_edge(left["name"], right["name"], type=relation_type, weight=weight, source_doc=doc_id)
+                        graph.add_edge(
+                            left["name"],
+                            right["name"],
+                            type=relation_type,
+                            weight=weight,
+                            source_doc=doc_id,
+                        )
                         rel_edges += 1
 
             lexical_edges = 0
@@ -120,8 +152,12 @@ class GraphGenTool(BaseTool):
                     if len(shared) >= 2:
                         src = f"DOC::{doc_a}"
                         tgt = f"DOC::{doc_b}"
-                        graph.add_node(src, id=src, label="Document", source_doc=doc_a, session_id=session_id)
-                        graph.add_node(tgt, id=tgt, label="Document", source_doc=doc_b, session_id=session_id)
+                        graph.add_node(
+                            src, id=src, label="Document", source_doc=doc_a, session_id=session_id
+                        )
+                        graph.add_node(
+                            tgt, id=tgt, label="Document", source_doc=doc_b, session_id=session_id
+                        )
                         graph.add_edge(src, tgt, type="DOC_SIMILAR", weight=float(len(shared)))
                         lexical_edge_list.append(
                             {
@@ -160,7 +196,9 @@ class GraphGenTool(BaseTool):
                 )
                 edge_count += 1
 
-            top_entities = [name for name, _ in Counter([e["name"] for e in capped_entities]).most_common(20)]
+            top_entities = [
+                name for name, _ in Counter([e["name"] for e in capped_entities]).most_common(20)
+            ]
             node_list = [
                 {
                     "id": data.get("id") or "",
@@ -202,7 +240,9 @@ class GraphGenTool(BaseTool):
             log.exception("graphgen tool failed")
             return {"error": str(exc), "nodes": 0, "edges": 0, "lexical_edges": 0, "entities": []}
 
-    async def _extract_document_entities(self, document: dict[str, Any], domain: str) -> list[dict[str, Any]]:
+    async def _extract_document_entities(
+        self, document: dict[str, Any], domain: str
+    ) -> list[dict[str, Any]]:
         text = str(document.get("text", "") or "")
         if not text.strip():
             return []
@@ -210,7 +250,9 @@ class GraphGenTool(BaseTool):
         label_space = build_top_level_label_space(_DEFAULT_LABELS)
         candidate_labels = self._domain_labels(domain, label_space, text)
         _ = build_gliner2_schema(candidate_labels)
-        model = get_gliner2_model({"extraction": {"ner_backend": "gliner2", "gliner_threshold": 0.45}})
+        model = get_gliner2_model(
+            {"extraction": {"ner_backend": "gliner2", "gliner_threshold": 0.45}}
+        )
 
         result = await asyncio.to_thread(
             model.extract_entities,
@@ -261,7 +303,9 @@ class GraphGenTool(BaseTool):
             return "finance"
         return "general"
 
-    def _domain_labels(self, domain: str, label_space: dict[str, dict[str, Any]], text: str) -> list[str]:
+    def _domain_labels(
+        self, domain: str, label_space: dict[str, dict[str, Any]], text: str
+    ) -> list[str]:
         base = select_candidate_labels(text, label_space, top_k=40)
         if domain == "legislation":
             bias = ["Directive", "Regulation", "Treaty", "Legal Document", "Decision"]
@@ -278,5 +322,7 @@ class GraphGenTool(BaseTool):
         return merged[:40]
 
     def _cap_entities(self, entities: list[dict[str, Any]], max_nodes: int) -> list[dict[str, Any]]:
-        sorted_entities = sorted(entities, key=lambda e: float(e.get("confidence", 0.0)), reverse=True)
+        sorted_entities = sorted(
+            entities, key=lambda e: float(e.get("confidence", 0.0)), reverse=True
+        )
         return sorted_entities[:max_nodes]

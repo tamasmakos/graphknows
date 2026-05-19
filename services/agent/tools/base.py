@@ -1,4 +1,5 @@
 """BaseTool ABC and ToolRegistry for all agent tools."""
+
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
@@ -12,6 +13,7 @@ class BaseTool(ABC):
         description: Human-readable description passed to the LLM for tool selection.
         category: Domain grouping (e.g. "search", "graph", "extraction").
     """
+
     name: str
     description: str
     category: str = "general"
@@ -100,7 +102,8 @@ class ToolRegistry:
     def list_tools(self, category: str | None = None) -> list[str]:
         """Return tool names, optionally filtered by category."""
         return [
-            name for name, cls in self._tools.items()
+            name
+            for name, cls in self._tools.items()
             if category is None or cls.category == category
         ]
 

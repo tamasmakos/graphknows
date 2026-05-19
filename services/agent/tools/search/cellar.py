@@ -3,6 +3,7 @@
 Stage 1: Query EU Publications Office SPARQL endpoint for CELEX IDs + Cellar URIs.
 Stage 2: Content-negotiate XHTML from each Cellar URI and strip to plain text.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,9 +30,35 @@ _FETCH_HEADERS = {
     "Accept-Language": "en",
 }
 _STOPWORDS = {
-    "the", "and", "for", "with", "that", "this", "are", "from", "has", "have",
-    "been", "its", "not", "but", "was", "you", "they", "their", "will", "more",
-    "about", "also", "can", "all", "any", "into", "than", "such", "when",
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "are",
+    "from",
+    "has",
+    "have",
+    "been",
+    "its",
+    "not",
+    "but",
+    "was",
+    "you",
+    "they",
+    "their",
+    "will",
+    "more",
+    "about",
+    "also",
+    "can",
+    "all",
+    "any",
+    "into",
+    "than",
+    "such",
+    "when",
 }
 
 
@@ -79,9 +106,7 @@ class CellarSPARQLTool(BaseTool):
             return {"documents": [], "count": 0, "error": "No usable keywords extracted from query"}
 
         # Build OR filter for all keywords
-        kw_filters = " || ".join(
-            f"CONTAINS(LCASE(?title), '{kw}')" for kw in keywords
-        )
+        kw_filters = " || ".join(f"CONTAINS(LCASE(?title), '{kw}')" for kw in keywords)
 
         sparql = f"""PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
 SELECT DISTINCT ?work ?celex ?title ?date WHERE {{
@@ -117,15 +142,17 @@ SELECT DISTINCT ?work ?celex ?title ?date WHERE {{
                 full_text = title  # fallback
 
             eur_lex_url = f"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:{celex}"
-            documents.append({
-                "id": f"cellar:{celex}",
-                "title": title,
-                "text": full_text,
-                "url": eur_lex_url,
-                "source": "cellar",
-                "date": date,
-                "score": 0.8,
-            })
+            documents.append(
+                {
+                    "id": f"cellar:{celex}",
+                    "title": title,
+                    "text": full_text,
+                    "url": eur_lex_url,
+                    "source": "cellar",
+                    "date": date,
+                    "score": 0.8,
+                }
+            )
 
         log.info("CellarSPARQLTool: %d documents fetched for %r", len(documents), query)
         return {"documents": documents, "count": len(documents)}

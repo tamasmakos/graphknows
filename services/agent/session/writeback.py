@@ -1,4 +1,5 @@
 """WriteBackService — export confirmed session entities back to Neo4j."""
+
 from __future__ import annotations
 
 import logging
@@ -29,7 +30,9 @@ class WriteBackService:
         """
         self._driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
 
-    async def write_back(self, session_id: str, entities: list[dict], min_confidence: float = 0.7) -> dict:
+    async def write_back(
+        self, session_id: str, entities: list[dict], min_confidence: float = 0.7
+    ) -> dict:
         """Write high-confidence entities from a session back to Neo4j.
 
         Args:

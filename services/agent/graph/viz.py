@@ -3,6 +3,7 @@
 Reads entities, relations, and GDS scores from Memgraph and renders a
 self-contained D3.js HTML file. Activated via EXPORT_GRAPH_HTML=true.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,12 +26,12 @@ _COMMUNITY_PALETTE = [
 ]
 _TYPE_ICON = {
     "Organization": "",
-    "Person":       "◎",
-    "Legislation":  "▣",
-    "Policy":       "◈",
-    "Location":     "◉",
-    "Concept":      "◇",
-    "Entity":       "○",
+    "Person": "◎",
+    "Legislation": "▣",
+    "Policy": "◈",
+    "Location": "◉",
+    "Concept": "◇",
+    "Entity": "○",
 }
 
 
@@ -82,11 +83,13 @@ def render_session_graph(
             if not name or name in seen:
                 continue
             seen[name] = len(entities)
-            entities.append({
-                "name":  name,
-                "type":  str(row.get("otype") or row.get("label") or "Entity"),
-                "conf":  float(row.get("conf") or 0.0),
-            })
+            entities.append(
+                {
+                    "name": name,
+                    "type": str(row.get("otype") or row.get("label") or "Entity"),
+                    "conf": float(row.get("conf") or 0.0),
+                }
+            )
 
         if not entities:
             raise RuntimeError(f"Session {session_id!r} has no named nodes")
@@ -102,8 +105,11 @@ def render_session_graph(
         ).data()
 
         links: list[dict] = [
-            {"source": seen[r["src"]], "target": seen[r["dst"]],
-             "label": r["rel"].replace("_", " ")}
+            {
+                "source": seen[r["src"]],
+                "target": seen[r["dst"]],
+                "label": r["rel"].replace("_", " "),
+            }
             for r in edges_raw
             if r.get("src") in seen and r.get("dst") in seen
         ]
@@ -111,11 +117,14 @@ def render_session_graph(
         # ── GDS: PageRank ────────────────────────────────────────────────────
         pr: dict[str, float] = {}
         try:
-            for row in s.run("""
+            for row in s.run(
+                """
                 CALL pagerank.get() YIELD node, rank
                 WITH node, rank WHERE node.session_id = $sid
                 RETURN coalesce(node.name, node.id) AS name, rank
-            """, sid=session_id).data():
+            """,
+                sid=session_id,
+            ).data():
                 if row.get("name"):
                     pr[row["name"]] = float(row["rank"])
         except Exception as exc:
@@ -124,12 +133,15 @@ def render_session_graph(
         # ── GDS: Betweenness ────────────────────────────────────────────────
         bc: dict[str, float] = {}
         try:
-            for row in s.run("""
+            for row in s.run(
+                """
                 CALL betweenness_centrality.get() YIELD node, betweenness_centrality
                 WITH node, betweenness_centrality WHERE node.session_id = $sid
                 RETURN coalesce(node.name, node.id) AS name,
                        betweenness_centrality AS bc
-            """, sid=session_id).data():
+            """,
+                sid=session_id,
+            ).data():
                 if row.get("name"):
                     bc[row["name"]] = float(row["bc"])
         except Exception as exc:
@@ -138,11 +150,14 @@ def render_session_graph(
         # ── GDS: Community ──────────────────────────────────────────────────
         cd: dict[str, int] = {}
         try:
-            for row in s.run("""
+            for row in s.run(
+                """
                 CALL community_detection.get() YIELD node, community_id
                 WITH node, community_id WHERE node.session_id = $sid
                 RETURN coalesce(node.name, node.id) AS name, community_id
-            """, sid=session_id).data():
+            """,
+                sid=session_id,
+            ).data():
                 if row.get("name"):
                     cd[row["name"]] = int(row["community_id"])
         except Exception as exc:
@@ -153,29 +168,30 @@ def render_session_graph(
     pr_mn, pr_mx = min(pr_vals), max(pr_vals)
 
     comm_ids = sorted(set(cd.values()))
-    comm_pal = {c: _COMMUNITY_PALETTE[i % len(_COMMUNITY_PALETTE)]
-                for i, c in enumerate(comm_ids)}
+    comm_pal = {c: _COMMUNITY_PALETTE[i % len(_COMMUNITY_PALETTE)] for i, c in enumerate(comm_ids)}
     default_pal = _COMMUNITY_PALETTE[0]
 
     nodes_js: list[dict] = []
     for e in entities:
         name = e["name"]
         comm = cd.get(name)
-        pal  = comm_pal.get(comm, default_pal) if comm is not None else default_pal
-        nodes_js.append({
-            "id":        seen[name],
-            "name":      name,
-            "label":     name.replace("_", " "),
-            "type":      e["type"],
-            "icon":      _TYPE_ICON.get(e["type"], "○"),
-            "community": comm,
-            "color":     pal["base"],
-            "glow":      pal["glow"],
-            "r":         round(_scale(pr.get(name, pr_mn), pr_mn, pr_mx), 1),
-            "pr":        round(pr.get(name, 0.0), 5),
-            "bc":        round(bc.get(name, 0.0), 5),
-            "conf":      round(e["conf"], 3),
-        })
+        pal = comm_pal.get(comm, default_pal) if comm is not None else default_pal
+        nodes_js.append(
+            {
+                "id": seen[name],
+                "name": name,
+                "label": name.replace("_", " "),
+                "type": e["type"],
+                "icon": _TYPE_ICON.get(e["type"], "○"),
+                "community": comm,
+                "color": pal["base"],
+                "glow": pal["glow"],
+                "r": round(_scale(pr.get(name, pr_mn), pr_mn, pr_mx), 1),
+                "pr": round(pr.get(name, 0.0), 5),
+                "bc": round(bc.get(name, 0.0), 5),
+                "conf": round(e["conf"], 3),
+            }
+        )
 
     # ── sidebar HTML fragments ───────────────────────────────────────────────
     legend_html = ""
@@ -191,7 +207,11 @@ def render_session_graph(
 
     table_html = ""
     for n in sorted(nodes_js, key=lambda x: -x["pr"]):
-        col = comm_pal.get(n["community"], default_pal)["base"] if n["community"] is not None else "#888"
+        col = (
+            comm_pal.get(n["community"], default_pal)["base"]
+            if n["community"] is not None
+            else "#888"
+        )
         table_html += (
             f"<tr>"
             f"<td><span class='ttype'>{n['icon']}</span> {n['label']}</td>"

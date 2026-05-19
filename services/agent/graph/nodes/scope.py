@@ -1,4 +1,5 @@
 """Scope node: decompose topic into sub-questions and build the research plan."""
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,12 @@ def scope_node(state: InvestigativeState) -> dict[str, Any]:
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:
         try:
-            llm = ChatOpenAI(api_key=openrouter_key, base_url="https://openrouter.ai/api/v1", model="moonshotai/kimi-k2", temperature=0.2)
+            llm = ChatOpenAI(
+                api_key=openrouter_key,
+                base_url="https://openrouter.ai/api/v1",
+                model="moonshotai/kimi-k2",
+                temperature=0.2,
+            )
             prompt = (
                 f"Given the research topic '{state['topic']}', decompose it into "
                 "3-5 sub-questions for investigation. Return as JSON list of strings."

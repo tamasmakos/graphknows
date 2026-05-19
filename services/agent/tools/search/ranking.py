@@ -1,4 +1,5 @@
 """Chunk ranking - BM25 + cosine hybrid for search result ranking."""
+
 from __future__ import annotations
 
 import math
@@ -40,7 +41,9 @@ def bm25_score(
     return score
 
 
-def rank_documents(query: str, documents: list[dict[str, Any]], top_k: int = 8) -> list[dict[str, Any]]:
+def rank_documents(
+    query: str, documents: list[dict[str, Any]], top_k: int = 8
+) -> list[dict[str, Any]]:
     """Rank documents by BM25 relevance and return top-k with citation IDs."""
     if not documents:
         return []

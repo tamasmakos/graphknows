@@ -1,4 +1,5 @@
 """Async HTTP client for the Graphknows Search Service."""
+
 from __future__ import annotations
 
 import asyncio
@@ -78,8 +79,7 @@ class SearchServiceClient:
                 return job
             if asyncio.get_event_loop().time() >= deadline:
                 raise TimeoutError(
-                    f"Job {job_id} did not complete within {timeout}s "
-                    f"(last status: {job.status})",
+                    f"Job {job_id} did not complete within {timeout}s (last status: {job.status})",
                 )
             await asyncio.sleep(interval)
 
@@ -108,14 +108,16 @@ class SearchServiceClient:
                 continue
             if job.status == "complete" and job.result:
                 for doc_dict in job.result:
-                    raw_docs.append(RawDoc(
-                        id=doc_dict.get("id", ""),
-                        title=doc_dict.get("title", ""),
-                        text=doc_dict.get("text", ""),
-                        url=doc_dict.get("metadata", {}).get("url", ""),
-                        source=doc_dict.get("source", source),
-                        date=doc_dict.get("ingested_at", None),
-                    ))
+                    raw_docs.append(
+                        RawDoc(
+                            id=doc_dict.get("id", ""),
+                            title=doc_dict.get("title", ""),
+                            text=doc_dict.get("text", ""),
+                            url=doc_dict.get("metadata", {}).get("url", ""),
+                            source=doc_dict.get("source", source),
+                            date=doc_dict.get("ingested_at", None),
+                        )
+                    )
 
         if not raw_docs:
             logger.warning(
@@ -123,13 +125,15 @@ class SearchServiceClient:
             )
             for r in results:
                 if r.excerpt:
-                    raw_docs.append(RawDoc(
-                        id=r.id,
-                        title=r.title,
-                        text=r.excerpt,
-                        url=r.url,
-                        source=r.source,
-                        date=r.date,
-                    ))
+                    raw_docs.append(
+                        RawDoc(
+                            id=r.id,
+                            title=r.title,
+                            text=r.excerpt,
+                            url=r.url,
+                            source=r.source,
+                            date=r.date,
+                        )
+                    )
 
         return raw_docs

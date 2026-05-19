@@ -24,6 +24,7 @@ class OntologyRelExtractor:
     def __init__(self, lm: Any | None = None) -> None:
         try:
             import dspy  # type: ignore
+
             self._dspy = dspy
             self._extractor = dspy.ChainOfThought(
                 "text, entities_json, ontology_schema -> relations_json"
@@ -32,6 +33,7 @@ class OntologyRelExtractor:
                 dspy.settings.configure(lm=lm)
             elif os.environ.get("OPENROUTER_API_KEY"):
                 import dspy as _dspy
+
                 _lm = _dspy.LM(
                     model="openrouter/moonshotai/kimi-k2",
                     api_key=os.environ["OPENROUTER_API_KEY"],
@@ -71,10 +73,12 @@ class OntologyRelExtractor:
             schema_data = json.loads(ontology_schema)
             properties = schema_data.get("properties", [])[:30]
             relations_hint = schema_data.get("typical_relations", [])[:5]
-            schema_compact = json.dumps({
-                "relation_types": properties,
-                "examples": relations_hint,
-            })
+            schema_compact = json.dumps(
+                {
+                    "relation_types": properties,
+                    "examples": relations_hint,
+                }
+            )
         except (json.JSONDecodeError, Exception):
             schema_compact = ontology_schema[:800]
 
@@ -101,15 +105,19 @@ class OntologyRelExtractor:
                     and r.get("predicate")
                     and r.get("object")
                 ):
-                    validated.append({
-                        "subject": str(r["subject"]),
-                        "predicate": str(r["predicate"]),
-                        "object": str(r["object"]),
-                        "confidence": float(r.get("confidence", 0.5)),
-                    })
+                    validated.append(
+                        {
+                            "subject": str(r["subject"]),
+                            "predicate": str(r["predicate"]),
+                            "object": str(r["object"]),
+                            "confidence": float(r.get("confidence", 0.5)),
+                        }
+                    )
             log.debug(
                 "OntologyRelExtractor [%s]: %d relations from %d entities",
-                ontology_id, len(validated), len(entities),
+                ontology_id,
+                len(validated),
+                len(entities),
             )
             return validated
         except Exception as exc:

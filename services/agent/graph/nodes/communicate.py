@@ -1,4 +1,5 @@
 """Communicate node: hybrid retrieval and EPRS-style brief generation."""
+
 from __future__ import annotations
 
 import os
@@ -64,20 +65,33 @@ def _format_node_features(nf: dict, top_n: int = 12) -> str:
     connectors = top[3:7]
     peripheral = top[7:]
 
-    lines = ["## Structural Network Intelligence (for analytical use — translate into prose, do not quote)", ""]
-    lines.append("TIER 1 — CENTRAL HUBS (highest network centrality, key to dismantling the network):")
+    lines = [
+        "## Structural Network Intelligence (for analytical use — translate into prose, do not quote)",
+        "",
+    ]
+    lines.append(
+        "TIER 1 — CENTRAL HUBS (highest network centrality, key to dismantling the network):"
+    )
     for eid, feat in central:
-        lines.append(f"  {eid}: centrality_score={feat['pagerank']:.4f}, bridge_coefficient={feat['betweenness']:.4f}, cluster={feat['community']}")
+        lines.append(
+            f"  {eid}: centrality_score={feat['pagerank']:.4f}, bridge_coefficient={feat['betweenness']:.4f}, cluster={feat['community']}"
+        )
     lines.append("")
     lines.append("TIER 2 — CONNECTOR NODES (bridge between clusters):")
     for eid, feat in connectors:
-        lines.append(f"  {eid}: centrality_score={feat['pagerank']:.4f}, bridge_coefficient={feat['betweenness']:.4f}, cluster={feat['community']}")
+        lines.append(
+            f"  {eid}: centrality_score={feat['pagerank']:.4f}, bridge_coefficient={feat['betweenness']:.4f}, cluster={feat['community']}"
+        )
     lines.append("")
     lines.append("TIER 3 — PERIPHERAL AMPLIFIERS:")
     for eid, feat in peripheral:
-        lines.append(f"  {eid}: centrality_score={feat['pagerank']:.4f}, cluster={feat['community']}")
+        lines.append(
+            f"  {eid}: centrality_score={feat['pagerank']:.4f}, cluster={feat['community']}"
+        )
     lines.append("")
-    lines.append("INSTRUCTION: Use this structural data to write analytically rich prose about the network architecture. Do NOT copy these numbers into the report. Instead interpret them: high pagerank = central/influential actor; high betweenness = bridge between communities; same cluster = operationally linked.")
+    lines.append(
+        "INSTRUCTION: Use this structural data to write analytically rich prose about the network architecture. Do NOT copy these numbers into the report. Instead interpret them: high pagerank = central/influential actor; high betweenness = bridge between communities; same cluster = operationally linked."
+    )
     return "\n".join(lines)
 
 
@@ -102,12 +116,14 @@ async def communicate_node(
 
     # 1. Hybrid retrieval via GraphKnowsClient → XML context string
     import os as _os
+
     graphknows_url = _os.environ.get("GRAPHKNOWS_URL", "http://localhost:8025")
     retrieved_xml: str = ""
     hits: list[Any] = []
 
     try:
         from services.agent.tools.graph.client import GraphKnowsClient
+
         client = GraphKnowsClient(graphknows_url, timeout=30.0)
         retrieved_xml = await client.retrieve(
             state["topic"],
@@ -118,10 +134,12 @@ async def communicate_node(
         )
         # Count chunks from XML for event emission
         import re as _re
+
         hit_count = len(_re.findall(r"<chunk ", retrieved_xml))
         hits = [None] * hit_count  # placeholder list for retrieval_hits count
     except Exception as exc:
         import logging as _logging
+
         _logging.getLogger(__name__).warning(
             "graphknows retrieval failed, falling back to state chunks: %s", exc
         )
@@ -132,7 +150,9 @@ async def communicate_node(
         for i, chunk in enumerate(state_chunks, 1):
             text = getattr(chunk, "text", str(chunk))[:1200]
             doc_id = getattr(chunk, "doc_id", f"chunk-{i}")
-            fallback_lines.append(f"  <chunk rank='{i}' doc_id='{doc_id}'><text>{text}</text></chunk>")
+            fallback_lines.append(
+                f"  <chunk rank='{i}' doc_id='{doc_id}'><text>{text}</text></chunk>"
+            )
         fallback_lines.append("</retrieved_context>")
         retrieved_xml = "\n".join(fallback_lines)
 
@@ -158,7 +178,7 @@ async def communicate_node(
     messages = [
         SystemMessage(content=system_prompt_content),
         HumanMessage(
-            content=f"""Topic of Investigation: {state['topic']}
+            content=f"""Topic of Investigation: {state["topic"]}
 
 <retrieved_context>
 {retrieved_xml}
@@ -175,6 +195,7 @@ Write a complete, academically rigorous EPRS Intelligence Analysis report follow
     # Export intelligence brief HTML for observability
     try:
         from services.agent.graph.html_report import export_brief_html
+
         export_state = dict(state)
         export_state["briefing"] = briefing
         export_state["ws_events"] = ws_events

@@ -4,6 +4,7 @@ Produces the same visual design as the reference ECB brief but fully populated
 from a live ``InvestigativeState`` — query, entities, relations, sources, and
 the complete workflow timeline for observability.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -20,36 +21,40 @@ from services.agent.graph.state import InvestigativeState
 
 # ── colour constants ───────────────────────────────────────────────────────────
 _TYPE_COLOR: dict[str, str] = {
-    "PERSON":       "#4a9eff",
+    "PERSON": "#4a9eff",
     "ORGANIZATION": "#22c55e",
-    "POLICY":       "#f59e0b",
-    "LOCATION":     "#e879f9",
+    "POLICY": "#f59e0b",
+    "LOCATION": "#e879f9",
 }
 _DEFAULT_NODE_COLOR = "#94a3b8"
 
 _EVENT_COLOR: dict[str, str] = {
-    "plan_ready":        "#22c55e",
-    "search_start":      "#4a9eff",
-    "search_done":       "#4a9eff",
-    "docs_fetched":      "#f59e0b",
-    "chunks_written":    "#f59e0b",
-    "entities_written":  "#f59e0b",
-    "novelty_check":     "#f59e0b",
-    "retrieval_done":    "#4a9eff",
-    "brief_chunk":       "#e879f9",
-    "brief_done":        "#e879f9",
-    "error":             "#ef4444",
+    "plan_ready": "#22c55e",
+    "search_start": "#4a9eff",
+    "search_done": "#4a9eff",
+    "docs_fetched": "#f59e0b",
+    "chunks_written": "#f59e0b",
+    "entities_written": "#f59e0b",
+    "novelty_check": "#f59e0b",
+    "retrieval_done": "#4a9eff",
+    "brief_chunk": "#e879f9",
+    "brief_done": "#e879f9",
+    "error": "#ef4444",
 }
 _DEFAULT_EVENT_COLOR = "#64748b"
 
 _SOURCE_EMOJI: dict[str, str] = {
-    "web":   "", "tavily": "",
-    "eu":    "️", "eprs": "️", "ep_": "️",
+    "web": "",
+    "tavily": "",
+    "eu": "️",
+    "eprs": "️",
+    "ep_": "️",
     "cellar": "",
 }
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
 
 def _logo_text(topic: str) -> str:
     """Derive a 2–4 char logo from the topic string."""
@@ -70,11 +75,11 @@ def _source_emoji(source: str) -> str:
 def _md_to_html(text: str) -> str:
     """Lightweight markdown → HTML conversion (headers, bold, lists, links, paras)."""
     text = re.sub(r"^### (.+)$", r"<h3>\1</h3>", text, flags=re.MULTILINE)
-    text = re.sub(r"^## (.+)$",  r"<h2>\1</h2>", text, flags=re.MULTILINE)
-    text = re.sub(r"^# (.+)$",   r"<h2>\1</h2>", text, flags=re.MULTILINE)
+    text = re.sub(r"^## (.+)$", r"<h2>\1</h2>", text, flags=re.MULTILINE)
+    text = re.sub(r"^# (.+)$", r"<h2>\1</h2>", text, flags=re.MULTILINE)
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"^\d+\. (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
-    text = re.sub(r"^[-*] (.+)$",  r"<li>\1</li>", text, flags=re.MULTILINE)
+    text = re.sub(r"^[-*] (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2" target="_blank">\1</a>', text)
     parts = text.split("\n\n")
     result: list[str] = []
@@ -102,7 +107,9 @@ def _force_layout(
     if not nodes:
         return {}
     random.seed(seed)
-    pos = {n["id"]: [random.uniform(60, width - 60), random.uniform(60, height - 60)] for n in nodes}
+    pos = {
+        n["id"]: [random.uniform(60, width - 60), random.uniform(60, height - 60)] for n in nodes
+    }
     k = math.sqrt(width * height / max(len(nodes), 1)) * 0.7
     valid_ids = {n["id"] for n in nodes}
     valid_edges = [e for e in edges if e["source"] in valid_ids and e["target"] in valid_ids]
@@ -111,7 +118,7 @@ def _force_layout(
         disp: dict[str, list[float]] = {nid: [0.0, 0.0] for nid in pos}
         nlist = list(pos.items())
         for i, (a, pa) in enumerate(nlist):
-            for b, pb in nlist[i + 1:]:
+            for b, pb in nlist[i + 1 :]:
                 dx, dy = pa[0] - pb[0], pa[1] - pb[1]
                 dist = max(math.sqrt(dx * dx + dy * dy), 1.0)
                 f = k * k / dist
@@ -150,7 +157,7 @@ def _build_svg(
         return (
             f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
             f'style="background:#0a1628;border-radius:12px;width:100%;max-width:{width}px">'
-            f'<text x="{width//2}" y="{height//2}" fill="#64748b" font-size="16" '
+            f'<text x="{width // 2}" y="{height // 2}" fill="#64748b" font-size="16" '
             f'text-anchor="middle" dominant-baseline="middle">No graph data available</text>'
             f"</svg>"
         )
@@ -367,6 +374,7 @@ _CSS = """
 
 # ── main renderer ──────────────────────────────────────────────────────────────
 
+
 def render_brief_html(
     state: InvestigativeState,
     *,
@@ -408,7 +416,9 @@ def render_brief_html(
     if briefing:
         report_body = _md_to_html(briefing)
     else:
-        report_body = '<p style="color:var(--muted);font-style:italic;">Brief generation in progress…</p>'
+        report_body = (
+            '<p style="color:var(--muted);font-style:italic;">Brief generation in progress…</p>'
+        )
 
     # ── research plan section ──────────────────────────────────────────────────
     if plan:
@@ -428,9 +438,9 @@ def render_brief_html(
             emoji = _source_emoji(src)
             sources_rows += (
                 f'<div class="source-row">'
-                f'  <div>'
+                f"  <div>"
                 f'    <div class="source-name">{emoji} {html.escape(src)}</div>'
-                f'  </div>'
+                f"  </div>"
                 f'  <span class="source-badge">{cnt} docs</span>'
                 f"</div>\n"
             )
@@ -447,7 +457,8 @@ def render_brief_html(
     # ── phase badge ───────────────────────────────────────────────────────────
     phase_badge = (
         f'<span class="phase-badge">phase: {html.escape(current_phase)}</span>'
-        if current_phase else ""
+        if current_phase
+        else ""
     )
 
     # ── title for header ──────────────────────────────────────────────────────
@@ -536,6 +547,7 @@ def render_brief_html(
 
 # ── standalone export helper ───────────────────────────────────────────────────
 
+
 def export_brief_html(
     state: InvestigativeState,
     output_dir: str | Path = "/root/graphknows/output",
@@ -571,8 +583,22 @@ if __name__ == "__main__":
         ],
         "queries": ["Russian disinfo EP elections 2024"],
         "raw_docs": [
-            RawDoc(id="d1", title="EU DisinfoLab Report", text="...", url="https://example.com", source="eprs_briefings", date="2024-03-01"),
-            RawDoc(id="d2", title="Tavily search result", text="...", url="https://example.com/2", source="tavily", date=None),
+            RawDoc(
+                id="d1",
+                title="EU DisinfoLab Report",
+                text="...",
+                url="https://example.com",
+                source="eprs_briefings",
+                date="2024-03-01",
+            ),
+            RawDoc(
+                id="d2",
+                title="Tavily search result",
+                text="...",
+                url="https://example.com/2",
+                source="tavily",
+                date=None,
+            ),
         ],
         "chunks": [],
         "entities": [
@@ -586,7 +612,12 @@ if __name__ == "__main__":
         "relations": [
             Relation(source="Kremlin", target="RT (Russia Today)", type="CONTROLS", confidence=0.9),
             Relation(source="Vladimir Putin", target="Kremlin", type="LEADS", confidence=0.95),
-            Relation(source="RT (Russia Today)", target="European Parliament", type="TARGETS", confidence=0.8),
+            Relation(
+                source="RT (Russia Today)",
+                target="European Parliament",
+                type="TARGETS",
+                confidence=0.8,
+            ),
             Relation(source="DSA", target="RT (Russia Today)", type="REGULATES", confidence=0.85),
         ],
         "iteration_count": 3,
@@ -594,11 +625,36 @@ if __name__ == "__main__":
         "retrieval_hits": [],
         "briefing": "## Executive Summary\n\nAvailable evidence indicates that **Russian state-aligned** actors conducted coordinated influence operations targeting the 2024 EP elections.\n\n## 1. Background\n\nThe campaigns exploited social media fragmentation and low digital literacy in key target member states.",
         "ws_events": [
-            WSEvent(session_id="test-smoke-001", event_type="plan_ready", payload={"n_subquestions": 3}, ts=time.time() - 120),
-            WSEvent(session_id="test-smoke-001", event_type="search_start", payload={"query": "Russian disinfo EP elections 2024", "source": "eprs_briefings"}, ts=time.time() - 110),
-            WSEvent(session_id="test-smoke-001", event_type="docs_fetched", payload={"count": 2}, ts=time.time() - 100),
-            WSEvent(session_id="test-smoke-001", event_type="entities_written", payload={"n_entities": 6}, ts=time.time() - 90),
-            WSEvent(session_id="test-smoke-001", event_type="brief_done", payload={}, ts=time.time() - 10),
+            WSEvent(
+                session_id="test-smoke-001",
+                event_type="plan_ready",
+                payload={"n_subquestions": 3},
+                ts=time.time() - 120,
+            ),
+            WSEvent(
+                session_id="test-smoke-001",
+                event_type="search_start",
+                payload={"query": "Russian disinfo EP elections 2024", "source": "eprs_briefings"},
+                ts=time.time() - 110,
+            ),
+            WSEvent(
+                session_id="test-smoke-001",
+                event_type="docs_fetched",
+                payload={"count": 2},
+                ts=time.time() - 100,
+            ),
+            WSEvent(
+                session_id="test-smoke-001",
+                event_type="entities_written",
+                payload={"n_entities": 6},
+                ts=time.time() - 90,
+            ),
+            WSEvent(
+                session_id="test-smoke-001",
+                event_type="brief_done",
+                payload={},
+                ts=time.time() - 10,
+            ),
         ],
         "node_features": {},
         "current_macro_phase": "communicate",

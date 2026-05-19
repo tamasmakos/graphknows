@@ -1,4 +1,5 @@
 """Graphknows Agent Service entry point."""
+
 from __future__ import annotations
 
 import logging
@@ -24,9 +25,7 @@ from services.agent.tools.search.cellar import CellarSPARQLTool
 def _configure_logging() -> None:
     """Configure root logger for structured JSON output."""
     handler = logging.StreamHandler()
-    handler.setFormatter(
-        jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
-    )
+    handler.setFormatter(jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
     logging.root.handlers = [handler]
     logging.root.setLevel(logging.INFO)
 
@@ -68,6 +67,7 @@ async def lifespan(app: FastAPI):
     if _settings.graphknows_mode == "inprocess":
         from graphknows import GraphKnows
         from graphknows.config import GraphKnowsSettings
+
         gk_cfg = GraphKnowsSettings(
             neo4j_uri=_settings.neo4j_uri,
             neo4j_user=_settings.neo4j_user,
@@ -84,11 +84,26 @@ async def lifespan(app: FastAPI):
 
     app.state.graph_backend = _graph_backend
     search_client = SearchServiceClient(base_url=_settings.search_url)
-    tavily = TavilySearchTool() if os.environ.get("TAVILY_API") or os.environ.get("TAVILY_API_KEY") else None
+    tavily = (
+        TavilySearchTool()
+        if os.environ.get("TAVILY_API") or os.environ.get("TAVILY_API_KEY")
+        else None
+    )
     cellar = CellarSPARQLTool()
     from services.agent.tools.extraction.in_process import InProcessExtractor as load_extractor
+
     extractor = load_extractor()
-    _init_router(_settings, _sgm, _http_client, search_client, _graph_backend, tavily=tavily, cellar=cellar, extractor=extractor, graphknows_client=graphknows_client)
+    _init_router(
+        _settings,
+        _sgm,
+        _http_client,
+        search_client,
+        _graph_backend,
+        tavily=tavily,
+        cellar=cellar,
+        extractor=extractor,
+        graphknows_client=graphknows_client,
+    )
     app.state.settings = _settings
     app.state.sgm = _sgm
     app.state.http_client = _http_client

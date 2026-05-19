@@ -43,7 +43,8 @@ def route_sources(query: str, max_sources: int = 3) -> list[str]:
     scores: list[tuple[int, str]] = []
     for entry in REGISTRY:
         score = sum(
-            1 for phrase in entry.query_strengths
+            1
+            for phrase in entry.query_strengths
             if any(tok in q_lower for tok in phrase.lower().split())
         )
         if score > 0:

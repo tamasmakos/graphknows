@@ -1,4 +1,5 @@
 """Build tool — calls graphknows POST /ingest."""
+
 from __future__ import annotations
 import httpx
 from agent.tools.base import BaseTool
@@ -11,6 +12,7 @@ class BuildTool(BaseTool):
         name: Tool name "build".
         description: Tool description for LLM.
     """
+
     name = "build"
     description = "Trigger a knowledge graph ingestion pipeline for given documents."
 

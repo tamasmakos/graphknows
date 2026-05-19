@@ -1,4 +1,5 @@
 """Agent service settings."""
+
 from __future__ import annotations
 
 import os
@@ -25,6 +26,7 @@ class AgentSettings(BaseServiceSettings):
         memgraph_uri: Bolt URI for the ephemeral Memgraph session store.
         httpx_timeout: Timeout in seconds for downstream HTTP calls.
     """
+
     graphknows_url: str = Field(default="http://localhost:8025", alias="GRAPHKNOWS_URL")
     graphknows_mode: str = Field(default="http", alias="GRAPHKNOWS_MODE")
     search_url: str = Field(default="http://localhost:8000", alias="SEARCH_URL")
@@ -34,5 +36,7 @@ class AgentSettings(BaseServiceSettings):
     )
     memgraph_uri: str = Field(default="bolt://172.18.0.1:17687", alias="MEMGRAPH_URI")
     export_graph_html: bool = Field(default=False, alias="EXPORT_GRAPH_HTML")
-    graph_html_output_dir: str = Field(default="/root/graphknows/output", alias="GRAPH_HTML_OUTPUT_DIR")
+    graph_html_output_dir: str = Field(
+        default="/root/graphknows/output", alias="GRAPH_HTML_OUTPUT_DIR"
+    )
     httpx_timeout: float = Field(default=60.0, alias="HTTPX_TIMEOUT")

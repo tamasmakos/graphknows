@@ -7,6 +7,7 @@ EU-specific domains are boosted via ``include_domains`` when the query contains
 EU keywords; for purely general queries we use Tavily's news topic to get
 recent coverage as well.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,9 +34,22 @@ EU_DOMAINS: list[str] = [
 ]
 
 _EU_KEYWORDS = {
-    "eu", "european", "parliament", "commission", "council", "regulation",
-    "directive", "treaty", "cellar", "celex", "eur-lex", "eurozone",
-    "schengen", "ecb", "euro", "brussels",
+    "eu",
+    "european",
+    "parliament",
+    "commission",
+    "council",
+    "regulation",
+    "directive",
+    "treaty",
+    "cellar",
+    "celex",
+    "eur-lex",
+    "eurozone",
+    "schengen",
+    "ecb",
+    "euro",
+    "brussels",
 }
 
 
@@ -60,9 +74,7 @@ class TavilySearchTool(BaseTool):
 
     def __init__(self, api_key: str | None = None) -> None:
         self._api_key = (
-            api_key
-            or os.environ.get("TAVILY_API_KEY")
-            or os.environ.get("TAVILY_API", "")
+            api_key or os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API", "")
         )
 
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -123,18 +135,24 @@ class TavilySearchTool(BaseTool):
                         continue
                     seen_urls.add(url)
                     text = r.get("raw_content") or r.get("content") or ""
-                    documents.append({
-                        "id": f"tavily:{url}",
-                        "title": r.get("title", url),
-                        "text": text[:8000],  # cap per-doc
-                        "url": url,
-                        "source": "tavily",
-                        "date": r.get("published_date", ""),
-                        "score": float(r.get("score", 0.0)),
-                    })
+                    documents.append(
+                        {
+                            "id": f"tavily:{url}",
+                            "title": r.get("title", url),
+                            "text": text[:8000],  # cap per-doc
+                            "url": url,
+                            "source": "tavily",
+                            "date": r.get("published_date", ""),
+                            "score": float(r.get("score", 0.0)),
+                        }
+                    )
 
             log.info("Tavily: %d documents fetched for %r", len(documents), query)
-            return {"documents": documents, "count": len(documents), "total_fetched": len(documents)}
+            return {
+                "documents": documents,
+                "count": len(documents),
+                "total_fetched": len(documents),
+            }
 
         except Exception as exc:
             log.exception("TavilySearchTool.run failed")
