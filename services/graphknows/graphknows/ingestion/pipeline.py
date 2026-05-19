@@ -7,6 +7,7 @@ Exposes a single coroutine, run_ingestion(), that:
 
 Graphgen's pipeline handles all NLP / embedding / Neo4j upload steps.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -59,9 +60,7 @@ async def run_ingestion(
                 logger.warning("run_ingestion called with empty document list")
                 return {"status": "skipped", "reason": "no documents"}
 
-            logger.info(
-                "Starting graphgen pipeline for %d document(s)", len(input_files)
-            )
+            logger.info("Starting graphgen pipeline for %d document(s)", len(input_files))
             # Force clean_start=False so graphknows never wipes the shared Neo4j
             # database.  Individual callers may still request a clean start by
             # passing {"infra": {"clean_start": True}} in config_override, but

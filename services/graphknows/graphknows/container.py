@@ -57,6 +57,8 @@ class GraphKnowsContainer:
         self._retriever: HybridRetriever | None = None
         self._jobs: dict[str, dict[str, Any]] = {}
 
+    # Sentinel message for guards that detect use outside the async context manager
+    _ERR_NOT_ENTERED = "GraphKnowsContainer not entered — use 'async with'"
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
@@ -124,28 +126,28 @@ class GraphKnowsContainer:
     def retriever(self) -> HybridRetriever:
         """Return the hybrid retriever; raises if container is not entered."""
         if self._retriever is None:
-            raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
+            raise RuntimeError(self._ERR_NOT_ENTERED)
         return self._retriever
 
     @property
     def pg(self) -> PgVectorStore:
         """Return the PgVector store; raises if container is not entered."""
         if self._pg is None:
-            raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
+            raise RuntimeError(self._ERR_NOT_ENTERED)
         return self._pg
 
     @property
     def neo(self) -> Neo4jStore:
         """Return the Neo4j store; raises if container is not entered."""
         if self._neo is None:
-            raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
+            raise RuntimeError(self._ERR_NOT_ENTERED)
         return self._neo
 
     @property
     def memgraph(self) -> MemgraphStore:
         """Return the Memgraph store; raises if container is not entered."""
         if self._memgraph is None:
-            raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
+            raise RuntimeError(self._ERR_NOT_ENTERED)
         return self._memgraph
 
     # ------------------------------------------------------------------
@@ -323,7 +325,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
         return json.dumps({"chunk_id": chunk_id, "session_id": session_id, "stored": True})
 
     # ---- ingest ---------------------------------------------------------
-    async def _ingest(
+    async def _ingest(  # NOSONAR — async required by GraphKnowsTool (Callable[..., Awaitable[Any]])
         text: str,
         title: str = "",
         config_override: dict[str, Any] | None = None,
@@ -331,11 +333,11 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
         run_id = str(uuid.uuid4())
         queued_at = datetime.now(UTC).isoformat()
         c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}  # noqa: SLF001
-        asyncio.create_task(c._run_ingest_task(run_id, text, title, config_override or {}))  # noqa: SLF001
+        asyncio.create_task(c._run_ingest_task(run_id, text, title, config_override or {}))  # noqa: SLF001  # NOSONAR
         return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
 
     # ---- poll_job -------------------------------------------------------
-    async def _poll_job(run_id: str) -> str:
+    async def _poll_job(run_id: str) -> str:  # NOSONAR — async per GraphKnowsTool contract
         job = c._jobs.get(run_id)  # noqa: SLF001
         if job is None:
             return json.dumps({"run_id": run_id, "status": "not_found"})

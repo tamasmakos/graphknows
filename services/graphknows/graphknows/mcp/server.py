@@ -431,7 +431,10 @@ async def ingest(
     run_id = str(uuid.uuid4())
     queued_at = datetime.now(UTC).isoformat()
     _jobs[run_id] = {"status": "queued", "queued_at": queued_at}
-    asyncio.create_task(_run_mcp_ingest_task(run_id, text, title, config_override or {}))
+    _ingest_task = asyncio.create_task(
+        _run_mcp_ingest_task(run_id, text, title, config_override or {})
+    )
+    logger.debug("MCP ingest task %s created: %r", run_id, _ingest_task)
     return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
 
 

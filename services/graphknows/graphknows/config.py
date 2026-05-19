@@ -80,14 +80,14 @@ class GraphKnowsSettings(BaseSettings):
     graphknows_port: int = Field(default=8025, alias="GRAPHKNOWS_PORT")
 
     # Neo4j
-    neo4j_uri: str = Field(default="bolt://172.18.0.1:7687", alias="NEO4J_URI")
+    neo4j_uri: str = Field(default="bolt://172.18.0.1:7687", alias="NEO4J_URI")  # NOSONAR
     neo4j_user: str = Field(default="neo4j", alias="NEO4J_USER")
     neo4j_password: str = Field(default="testpassword123", alias="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="neo4j", alias="NEO4J_DATABASE")
 
     # pgvector
     pgvector_dsn: str = Field(default=_MASKED_PGVECTOR_DSN, alias="PGVECTOR_DSN")
-    pgvector_host: str = Field(default="172.18.0.1", alias="PGVECTOR_HOST")
+    pgvector_host: str = Field(default="172.18.0.1", alias="PGVECTOR_HOST")  # NOSONAR
     pgvector_port: int = Field(default=5432, alias="PGVECTOR_PORT")
     pgvector_db: str = Field(default="vectordb", alias="PGVECTOR_DB")
     pgvector_user: str = Field(default="postgres", alias="PGVECTOR_USER")

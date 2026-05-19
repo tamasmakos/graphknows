@@ -79,7 +79,7 @@ class OntologyRelExtractor:
                     "examples": relations_hint,
                 }
             )
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             schema_compact = ontology_schema[:800]
 
         entity_names = [e.get("name", "") for e in entities if e.get("name")]

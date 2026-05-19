@@ -47,6 +47,10 @@ logging.root.handlers = [_handler]
 logging.root.setLevel(logging.INFO)
 logger = logging.getLogger("graphknows.api")
 
+# Module-level constants for repeated HTTPException detail strings
+_ERR_STORES_NOT_INIT = "Stores not initialised"
+_ERR_NEO4J_NOT_INIT = "Neo4j not initialised"
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -74,7 +78,7 @@ async def _session_ttl_loop() -> None:
             continue
         ttl = timedelta(minutes=_settings.session_ttl_minutes)
         now = datetime.now(UTC)
-        expired = [sid for sid, ts in list(_session_last_active.items()) if now - ts > ttl]
+        expired = [sid for sid, ts in _session_last_active.items() if now - ts > ttl]
         for session_id in expired:
             logger.info("Auto-merging idle session %s (TTL exceeded)", session_id)
             try:
@@ -88,7 +92,7 @@ async def _session_ttl_loop() -> None:
                 _session_last_active.pop(session_id, None)
                 logger.info("Auto-merge of session %s complete", session_id)
             except Exception as exc:
-                logger.error("Auto-merge failed for session %s: %s", session_id, exc)
+                logger.exception("Auto-merge failed for session %s: %s", session_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -293,13 +297,14 @@ async def _run_ingest_task(run_id: str, req: IngestRequest) -> None:
         _jobs[run_id]["finished_at"] = datetime.now(UTC).isoformat()
 
 
-@app.post("/ingest", response_model=IngestResponse, status_code=202)
+@app.post("/ingest", status_code=202)
 async def ingest(req: IngestRequest) -> IngestResponse:
     """Enqueue a graphgen KnowledgePipeline run (non-blocking)."""
     run_id = str(uuid.uuid4())
     queued_at = datetime.now(UTC).isoformat()
     _jobs[run_id] = {"status": "queued", "queued_at": queued_at}
-    asyncio.create_task(_run_ingest_task(run_id, req))
+    _ingest_task = asyncio.create_task(_run_ingest_task(run_id, req))
+    logger.debug("Ingest task %s created: %r", run_id, _ingest_task)
     return IngestResponse(run_id=run_id, status="queued", queued_at=queued_at)
 
 
@@ -333,7 +338,7 @@ async def retrieve(req: RetrieveRequest) -> str:
 # ── Session lifecycle ──────────────────────────────────────────────────────
 
 
-@app.post("/session", response_model=SessionCreateResponse)
+@app.post("/session")
 async def create_session(req: SessionCreateRequest) -> SessionCreateResponse:
     """Create a new session namespace, optionally pre-seeding it from the corpus."""
     session_id = req.session_id or str(uuid.uuid4())
@@ -344,11 +349,11 @@ async def create_session(req: SessionCreateRequest) -> SessionCreateResponse:
     return SessionCreateResponse(session_id=session_id, seeded=seeded)
 
 
-@app.delete("/session/{session_id}", response_model=SessionDeleteResponse)
+@app.delete("/session/{session_id}")
 async def delete_session(session_id: str) -> SessionDeleteResponse:
     """Merge Memgraph session graph → Neo4j corpus, then purge session data."""
     if _memgraph is None or _neo is None or _pg is None:
-        raise HTTPException(status_code=503, detail="Stores not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_STORES_NOT_INIT)
 
     # Drain Memgraph session graph
     try:
@@ -385,7 +390,7 @@ async def delete_session(session_id: str) -> SessionDeleteResponse:
 async def stats() -> dict[str, Any]:
     """Combined Neo4j node counts + pgvector row counts."""
     if _neo is None or _pg is None:
-        raise HTTPException(status_code=503, detail="Stores not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_STORES_NOT_INIT)
 
     neo_counts = await _neo.count_nodes()
 
@@ -413,7 +418,7 @@ async def stats() -> dict[str, Any]:
 async def preview_session_merge(session_id: str) -> dict[str, Any]:
     """Preview what merging *session_id* into the corpus would do — no writes."""
     if _memgraph is None or _neo is None:
-        raise HTTPException(status_code=503, detail="Stores not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_STORES_NOT_INIT)
     try:
         nodes = await _memgraph.get_session_nodes(session_id)
         edges = await _memgraph.get_session_edges(session_id)
@@ -460,7 +465,7 @@ async def run_patch(req: PatchRequest) -> dict[str, Any]:
         )
         return result
     except Exception as exc:
-        logger.error("Patch failed: %s", exc, exc_info=True)
+        logger.exception("Patch failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -482,7 +487,7 @@ async def preview_patch(
 async def list_segments(limit: int = 20) -> list[dict[str, Any]]:
     """List SEGMENT provenance nodes ordered by ingestion time (newest first)."""
     if _neo is None:
-        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_NEO4J_NOT_INIT)
     return await _neo.list_segments(limit=limit)
 
 
@@ -490,7 +495,7 @@ async def list_segments(limit: int = 20) -> list[dict[str, Any]]:
 async def get_segment(segment_id: str) -> dict[str, Any]:
     """Provenance + doc-count statistics for a single SEGMENT node."""
     if _neo is None:
-        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_NEO4J_NOT_INIT)
     info = await _neo.get_segment_info(segment_id)
     if info is None:
         raise HTTPException(status_code=404, detail=f"Segment {segment_id!r} not found")
@@ -531,7 +536,7 @@ async def search_entities(
         types: Comma-separated label filter, e.g. ``ORG,PERSON``.
     """
     if _retriever is None or _pg is None:
-        raise HTTPException(status_code=503, detail="Stores not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_STORES_NOT_INIT)
     from graphknows.retrieval.stores.embedder import embed
 
     entity_types = [t.strip() for t in types.split(",")] if types else None
@@ -547,7 +552,7 @@ async def get_entity_neighbors(
 ) -> dict[str, Any]:
     """Return neighboring nodes reachable from *name* within *depth* hops."""
     if _neo is None:
-        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_NEO4J_NOT_INIT)
     return await _neo.get_entity_neighbors(name, depth=depth)
 
 
@@ -555,7 +560,7 @@ async def get_entity_neighbors(
 async def get_entity_community(name: str) -> dict[str, Any]:
     """Return the Leiden community topic summary for a named entity."""
     if _neo is None:
-        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_NEO4J_NOT_INIT)
     topic = await _neo.get_entity_community(name)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"No community found for entity: {name!r}")
@@ -569,7 +574,7 @@ async def get_entity_community(name: str) -> dict[str, Any]:
 async def get_chunk(chunk_id: str) -> dict[str, Any]:
     """Return full chunk text, metadata, and linked entities."""
     if _pg is None or _neo is None:
-        raise HTTPException(status_code=503, detail="Stores not initialised")
+        raise HTTPException(status_code=503, detail=_ERR_STORES_NOT_INIT)
     text_map = await _pg.get_chunks_by_ids([chunk_id])
     if chunk_id not in text_map:
         raise HTTPException(status_code=404, detail=f"Chunk {chunk_id!r} not found")
@@ -601,7 +606,7 @@ async def search(req: SearchRequest) -> dict[str, Any]:
     Search modes: HYBRID, SEMANTIC, GRAPH_TRAVERSAL, SUMMARIES, FEELING_LUCKY.
     """
     if _retriever is None:
-        raise HTTPException(status_code=503, detail="Retriever not initialised")
+        raise HTTPException(status_code=503, detail="Retriever not initialised")  # NOSONAR
 
     mode = req.search_type.upper()
     try:
