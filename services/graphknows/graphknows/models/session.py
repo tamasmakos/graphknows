@@ -1,12 +1,19 @@
-"""Session and streaming event models for the agent service."""
+"""Session and streaming event models for the agent ReAct loop.
+
+Example:
+    from graphknows.models.session import ReasoningStep, GraphDelta, StreamEvent
+"""
+
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from graphknows.models.base import GraphKnowsBaseModel, ImmutableModel
 
 
-class ReasoningStep(BaseModel):
+class ReasoningStep(ImmutableModel):
     """A single step in the agent ReAct loop.
 
     Attributes:
@@ -21,10 +28,10 @@ class ReasoningStep(BaseModel):
     tool: str
     input: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] = Field(default_factory=dict)
-    elapsed_ms: Optional[float] = None
+    elapsed_ms: float | None = None
 
 
-class GraphDelta(BaseModel):
+class GraphDelta(ImmutableModel):
     """Incremental graph update pushed to the frontend after each tool step.
 
     Attributes:
@@ -38,8 +45,8 @@ class GraphDelta(BaseModel):
     removed_node_ids: list[str] = Field(default_factory=list)
 
 
-class GraphSnapshot(BaseModel):
-    """Full graph snapshot for GET /sessions/{id}/graph endpoint.
+class GraphSnapshot(ImmutableModel):
+    """Full graph snapshot for a session graph endpoint.
 
     Attributes:
         nodes: All entity/topic nodes in D3.js format.
@@ -52,12 +59,12 @@ class GraphSnapshot(BaseModel):
     session_id: str
 
 
-class StreamEvent(BaseModel):
-    """Server-sent event frame from the IterativeOrchestrator.
+class StreamEvent(GraphKnowsBaseModel):
+    """Server-sent event frame from the agent orchestrator.
 
     Attributes:
         event: Event type discriminator.
-        data: Event payload.
+        data: Event payload dict.
     """
 
     event: Literal["step_start", "step_result", "answer", "error"]

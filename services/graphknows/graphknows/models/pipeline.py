@@ -1,19 +1,26 @@
-"""Pipeline-level request/response models shared between search, graphgen, and agent."""
+"""Pipeline-level request and response models.
+
+Example:
+    from graphknows.models.pipeline import Document, BuildRequest, BuildJob
+"""
+
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from graphknows.models.base import GraphKnowsBaseModel, ImmutableModel
 
 
-class Document(BaseModel):
+class Document(ImmutableModel):
     """A source document to be ingested by the graphgen pipeline.
 
     Attributes:
         id: Unique document identifier (URL or hash).
         title: Document title.
         text: Full document text.
-        source: Source adapter name (e.g. "ep_debates", "eurlex").
+        source: Source adapter name (e.g. ``"ep_debates"``, ``"eurlex"``).
         metadata: Additional source-specific metadata.
     """
 
@@ -24,11 +31,11 @@ class Document(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class BuildRequest(BaseModel):
-    """Request body for POST /build on the graphgen service.
+class BuildRequest(ImmutableModel):
+    """Request body for triggering a graphgen pipeline run.
 
     Attributes:
-        documents: List of documents to process through the KG pipeline.
+        documents: List of documents to process.
         run_node2vec: Whether to run Node2Vec after graph construction.
         run_leiden: Whether to run Leiden community detection.
     """
@@ -38,31 +45,33 @@ class BuildRequest(BaseModel):
     run_leiden: bool = True
 
 
-class BuildJob(BaseModel):
-    """Job status response for a graphgen build job.
+class BuildJob(GraphKnowsBaseModel):
+    """Mutable job status for a graphgen build run.
+
+    Status transitions: queued → running → complete | failed.
 
     Attributes:
         job_id: Unique job identifier.
         status: Current job status.
         documents_total: Total documents queued.
         documents_done: Documents processed so far.
-        error: Error message if status is "failed".
+        error: Error message when status is ``"failed"``.
     """
 
     job_id: str
     status: Literal["queued", "running", "complete", "failed"]
     documents_total: int = 0
     documents_done: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
-class SearchQuery(BaseModel):
-    """Query body for POST /search on the search service.
+class SearchQuery(ImmutableModel):
+    """Query body for a hybrid search request.
 
     Attributes:
-        q: The raw query string.
+        q: Raw query string.
         sources: Adapter names to query (empty means all).
-        limit: Max results per source.
+        limit: Maximum results per source.
     """
 
     q: str
@@ -70,8 +79,8 @@ class SearchQuery(BaseModel):
     limit: int = 10
 
 
-class SearchResult(BaseModel):
-    """A single search result from the search service.
+class SearchResult(ImmutableModel):
+    """A single search result from the retrieval layer.
 
     Attributes:
         doc_id: Source document identifier.

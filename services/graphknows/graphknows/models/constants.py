@@ -1,10 +1,11 @@
-"""Shared constants for all Graphknows services.
+"""Shared constants for all graphknows components.
 
-These values MUST NOT be redefined in individual services.
+These values must not be redefined in individual modules.
 
 Example:
-    from graphknows.shared.constants import EMBEDDING_MODEL, EntityLabel
+    from graphknows.models.constants import EMBEDDING_MODEL, EntityLabel
 """
+
 from __future__ import annotations
 
 from enum import Enum

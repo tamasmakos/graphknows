@@ -1,14 +1,20 @@
-"""Pydantic models for KG entities shared across graphrag and graphgen services."""
+"""Pydantic models for knowledge graph entities.
+
+Example:
+    from graphknows.models.entity import Entity, Chunk, Edge, Topic
+"""
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from graphknows.shared.constants import EntityLabel
+from graphknows.models.base import ImmutableModel
+from graphknows.models.constants import EntityLabel
 
 
-class Entity(BaseModel):
+class Entity(ImmutableModel):
     """A named entity node in the knowledge graph.
 
     Attributes:
@@ -22,11 +28,11 @@ class Entity(BaseModel):
     id: str
     name: str
     label: EntityLabel
-    community_id: Optional[int] = None
+    community_id: int | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
-class Chunk(BaseModel):
+class Chunk(ImmutableModel):
     """A text chunk from an ingested document.
 
     Attributes:
@@ -42,7 +48,7 @@ class Chunk(BaseModel):
     entity_count: int = 0
 
 
-class Edge(BaseModel):
+class Edge(ImmutableModel):
     """A directed relation between two entities.
 
     Attributes:
@@ -60,7 +66,7 @@ class Edge(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
-class Topic(BaseModel):
+class Topic(ImmutableModel):
     """A Leiden community / topic node.
 
     Attributes:
