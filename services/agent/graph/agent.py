@@ -575,6 +575,7 @@ def build_graph(
                 timeout=25,
             )
             results = resp.get("results", [])
+            log.debug("search_web  query=%r  raw_results=%d", query, len(results))
             docs_to_store = []
             lines = []
             for i, r in enumerate(results, 1):
@@ -587,6 +588,7 @@ def build_graph(
                     content=r.get("content") or "",
                 )
                 date = r.get("published_date", "")
+                log.debug("  [%d] url=%r  snippet_len=%d", i, url[:80], len(snippet))
                 lines.append(f"{i}. {title}\n   URL: {url}\n   Date: {date}\n   {snippet}")
                 docs_to_store.append({
                     "id": url[:80],
@@ -598,6 +600,7 @@ def build_graph(
                 })
 
             _session_docs.setdefault(session_id, []).extend(docs_to_store)
+            log.info("search_web  stored %d docs  session=%s", len(docs_to_store), session_id)
 
             # Emit evidence_added event for each new document
             for doc in docs_to_store:
@@ -649,6 +652,7 @@ def build_graph(
         from agent.tools.search.client import SearchServiceClient
 
         source_ids = _normalize_search_eu_sources(sources)
+        log.debug("search_eu  query=%r  sources=%s  max_docs=%d", query, source_ids, max_docs)
         documents: list[dict] = []
 
         client = SearchServiceClient()
@@ -677,10 +681,12 @@ def build_graph(
         except Exception as exc:
             log.warning("search_eu failed: %s", exc)
 
+        log.debug("search_eu  fetched %d raw docs from sources=%s", len(documents), source_ids)
         if not documents:
             return "No EU documents found for this query."
 
         _session_docs.setdefault(session_id, []).extend(documents[:max_docs])
+        log.info("search_eu  stored %d docs  session=%s", len(documents[:max_docs]), session_id)
 
         # Fire partial keyword graph immediately — non-blocking
         if documents:
@@ -725,6 +731,7 @@ def build_graph(
         if not docs:
             return "No documents collected yet — run search_eu or search_web first."
 
+        log.debug("graphgen  session=%s  docs_accumulated=%d", session_id_arg or session_id, len(docs))
         nodes, edges, summary = await _run_graphgen(
             docs,
             session_id_arg or session_id,
@@ -788,6 +795,10 @@ def build_graph(
         if not archive_ids:
             return "No archives specified. Provide comma-separated archive IDs."
 
+        log.debug(
+            "search_archives  query=%r  archives=%s  limit_per_archive=%d",
+            query, archive_ids, limit_per_archive,
+        )
         aq = ArchiveQuery(
             query=query,
             archives=archive_ids,
@@ -826,6 +837,13 @@ def build_graph(
             )
 
         cached_count = sum(1 for r in results if r.from_cache)
+        log.info(
+            "search_archives  %d results (%d cached)  archives=%s  session=%s",
+            len(results), cached_count, archive_ids, session_id,
+        )
+        for _r in results:
+            log.debug("  result  source=%s  doc_id=%r  score=%.3f  cached=%s",
+                      _r.source, _r.doc_id[:60], getattr(_r, 'score', 0.0), _r.from_cache)
         header = (
             f"[search_archives] {len(results)} results from {archive_ids} "
             f"({cached_count} from cache)\n\n"
@@ -849,6 +867,7 @@ def build_graph(
         sid = session_id_arg or session_id
         import os as _os
         hybridrag_url = _os.environ.get("HYBRIDRAG_URL", "http://localhost:8020")
+        log.debug("hybridrag  query=%r  session=%s  k=%d  url=%s", query[:80], sid, k, hybridrag_url)
         try:
             from services.agent.tools.graph.client import HybridRAGClient
             client = HybridRAGClient(hybridrag_url, timeout=25.0)
@@ -859,6 +878,7 @@ def build_graph(
                 k_semantic=k * 2,
                 k_final=k,
             )
+            log.info("hybridrag  result_len=%d chars  session=%s", len(xml_result), sid)
             return xml_result
         except Exception as exc:
             entities = _session_entities.get(sid, [])
@@ -897,13 +917,17 @@ STEP 2 (next LLM response): Call graphgen(session_id_arg="{session_id}")
   → The result includes the key entities found — use them in your report.
   → CRITICAL: Call graphgen in a SEPARATE response AFTER receiving search results.
 
-STEP 3 (optional): Call hybridrag if the user needs entity connectivity analysis or knowledge graph evidence.
+STEP 3 (required): After graphgen returns, call hybridrag to retrieve evidence from the knowledge graph and pgvector store.
+  → hybridrag(query=<your research question>, session_id_arg="{session_id}", k=10)
+  → This is MANDATORY — it retrieves entity connectivity and semantic evidence accumulated during the session.
+  → Do NOT skip this step even if graphgen returned few entities.
 
 STEP 4: Write your final EPRS-style investigative report.
 
 RULES:
 - ALWAYS call search_eu with sources="eprs_briefings,ep_resolutions,ep_debates" — never omit this
 - Do NOT call graphgen in the same response as search tools (they run in parallel, docs won't be ready)
+- ALWAYS call hybridrag after graphgen and before the final report — never skip it
 - Do NOT loop or re-search without a clear reason
 - The report MUST include a 'Key Graph Entities' section listing the entities from graphgen
 - Cite EU sources inline with [🏛️ Source] and web sources with [🌐 Source]
