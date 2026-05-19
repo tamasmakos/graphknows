@@ -2,15 +2,27 @@ line-length = 100
 target-version = "py311"
 
 [lint]
-select = ["F", "E"]
+select = ["E", "F", "I", "D", "C90", "N", "UP"]
 ignore = [
-    "E501",
-    "E402",
-    "F401",
-    "F841",
-    "E701",
-    "E741",
+    "E501",   # line too long — formatter handles this
+    "D100",   # missing docstring in public module — enforced per-file
+    "D104",   # missing docstring in public package
+    "D107",   # missing docstring in __init__
+    "D203",   # one-blank-line-before-class — conflicts with D211
+    "D213",   # multi-line-summary-second-line — conflicts with D212
 ]
 
 [lint.per-file-ignores]
-"tests/*" = ["F401", "F811"]
+"tests/*" = ["D", "S101"]
+"**/graphgen/**" = ["D", "N"]  # graphgen progressively adopts style
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.mccabe]
+max-complexity = 10
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
