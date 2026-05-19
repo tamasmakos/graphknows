@@ -9,28 +9,7 @@ import logging
 import os
 import sys
 import time
-from pathlib import Path
 
-# ── Path setup — CRITICAL: package is at services/, not services/graphgen/ ─────
-_SERVICES = Path(__file__).resolve().parents[2]
-for _p in [str(_SERVICES), str(_SERVICES / "graphgen"), str(_SERVICES / "agent")]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-# ── Load .env for GROQ_API_KEY ────────────────────────────────────────────────
-_ENV = Path(__file__).resolve().parents[3] / ".env"
-if _ENV.exists():
-    for _line in _ENV.read_text().splitlines():
-        _line = _line.strip()
-        if "=" in _line and not _line.startswith("#"):
-            _k, _v = _line.split("=", 1)
-            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
-
-logging.basicConfig(
-    level=logging.WARNING,
-    stream=sys.stderr,
-    format="%(levelname)s %(name)s: %(message)s",
-)
 log = logging.getLogger("extractor")
 
 # ── Chunking helper ───────────────────────────────────────────────────────────
@@ -129,15 +108,23 @@ class InProcessExtractor:
         node_map: dict[str, dict] = {}
         edge_list: list[dict] = []
 
-        for doc in documents[:15]:
+        log.info(
+            "extraction START  session=%s  docs=%d  dspy_ok=%s",
+            session_id, len(documents), self._dspy_ok,
+        )
+        for doc_idx, doc in enumerate(documents[:15]):
             doc_id = doc.get("id", "") or doc.get("url", "")[:60]
             raw_text = str(doc.get("text", "") or doc.get("title", ""))
             if not raw_text.strip():
                 continue
 
+            log.debug(
+                "  doc[%d/%d]  id=%r  chars=%d",
+                doc_idx + 1, min(len(documents), 15), doc_id[:60], len(raw_text),
+            )
             doc_entities: list[str] = []
 
-            for chunk in _chunk_text(raw_text):
+            for chunk_idx, chunk in enumerate(_chunk_text(raw_text)):
                 if not chunk.strip():
                     continue
                 try:
@@ -154,6 +141,10 @@ class InProcessExtractor:
                     ]
                     refined = refine_entities_with_ontology(flat_ents, self._schema)
 
+                    log.debug(
+                        "    chunk[%d]  GLiNER2: %d raw → %d refined entities",
+                        chunk_idx + 1, len(flat_ents), len(refined),
+                    )
                     chunk_ent_names: list[str] = []
                     for ent in refined:
                         label = ent.get("label", "CONCEPT")
@@ -190,6 +181,7 @@ class InProcessExtractor:
                                 entity_hints=chunk_ent_names[:20],
                             )
                             triplets = getattr(result, "triplets", []) or []
+                            accepted = 0
                             for triplet in triplets:
                                 if not (triplet.source and triplet.target):
                                     continue
@@ -202,21 +194,38 @@ class InProcessExtractor:
                                     "evidence": (triplet.evidence or "")[:200],
                                     "confidence": round(triplet.confidence, 3),
                                 })
+                                accepted += 1
+                            log.debug(
+                                "    chunk[%d]  DSPy: %d/%d triplets accepted",
+                                chunk_idx + 1, accepted, len(triplets),
+                            )
                         except Exception as dspy_exc:
                             log.warning("DSPy extraction failed for chunk: %s", dspy_exc)
+                            _pairs = 0
                             for i, a in enumerate(chunk_ent_names):
                                 for b in chunk_ent_names[i + 1:i + 4]:
                                     edge_list.append({
                                         "source": a, "target": b,
                                         "type": "CO_OCCURS", "evidence": "", "confidence": 0.5,
                                     })
+                                    _pairs += 1
+                            log.debug(
+                                "    chunk[%d]  cooccurrence fallback (DSPy error): %d pairs",
+                                chunk_idx + 1, _pairs,
+                            )
                     elif len(chunk_ent_names) >= 2:
+                        _pairs = 0
                         for i, a in enumerate(chunk_ent_names):
                             for b in chunk_ent_names[i + 1:i + 4]:
                                 edge_list.append({
                                     "source": a, "target": b,
                                     "type": "CO_OCCURS", "evidence": "", "confidence": 0.5,
                                 })
+                                _pairs += 1
+                        log.debug(
+                            "    chunk[%d]  cooccurrence (no DSPy): %d pairs",
+                            chunk_idx + 1, _pairs,
+                        )
 
                 except Exception as chunk_exc:
                     log.warning("Chunk extraction failed: %s", chunk_exc)
@@ -236,6 +245,12 @@ class InProcessExtractor:
                 seen_edges.add(key)
                 deduped_edges.append(e)
 
+        log.info(
+            "extraction DONE  session=%s  docs=%d  entities=%d"
+            "  raw_edges=%d  deduped_edges=%d",
+            session_id, len(documents), len(entity_nodes),
+            len(edge_list), len(deduped_edges),
+        )
         return {
             "nodes": len(entity_nodes),
             "edges": len(deduped_edges),
