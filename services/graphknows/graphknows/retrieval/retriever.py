@@ -23,9 +23,9 @@ import logging
 from collections import defaultdict
 
 from graphknows.retrieval.context import ChunkMatch, EntityMatch, RetrievalContext
-from graphknows.stores.embedder import embed
-from graphknows.stores.neo4j import Neo4jStore
-from graphknows.stores.pgvector import PgVectorStore
+from graphknows.retrieval.stores.embedder import embed
+from graphknows.retrieval.stores.neo4j import Neo4jStore
+from graphknows.retrieval.stores.pgvector import PgVectorStore
 
 logger = logging.getLogger(__name__)
 
