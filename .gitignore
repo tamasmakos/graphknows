@@ -48,8 +48,6 @@ demo_ingest.py
 Thumbs.db
 
 # ─── Legacy / removed / external clones ──────────────────────────────────────
-langfuse/
-cognee/
 lib/
 research
 

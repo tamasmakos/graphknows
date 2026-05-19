@@ -23,7 +23,6 @@ dependencies = [
     "scipy>=1.13.0",
     "pyyaml>=6.0",
     # NLP / graph extraction (vendored graphgen)
-    "spacy>=3.7.0",
     "gliner>=0.2.0",
     "langchain-core>=0.3.0",
     "langchain-text-splitters>=0.3.0",
@@ -34,6 +33,9 @@ dependencies = [
     # Shared config
     "graphknows-shared",
 ]
+
+[tool.uv.sources]
+graphknows-shared = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

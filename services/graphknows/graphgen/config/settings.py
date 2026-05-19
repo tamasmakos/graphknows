@@ -140,8 +140,7 @@ class ExtractionSettings(BaseSettings):
     chunk_overlap: int = 100
 
     # Backend selection
-    ner_backend: str = "gliner2"  # options: "gliner", "gliner2", "spacy", "llm", "dspy"
-    relation_backend: Optional[str] = None  # options: "dspy", "langchain"
+    ner_backend: str = "gliner2"
 
     # Taxonomy — path to a domain YAML file; None loads the bundled eu-politics taxonomy
     taxonomy_file: Optional[str] = Field(None, alias="GRAPHGEN_TAXONOMY_FILE")
@@ -168,9 +167,6 @@ class ExtractionSettings(BaseSettings):
         if isinstance(values, dict):
             if values.get("ner_backend") is None and values.get("backend") is not None:
                 values["ner_backend"] = values["backend"]
-            ner_backend = values.get("ner_backend", "gliner2")
-            if values.get("relation_backend") is None:
-                values["relation_backend"] = "langchain" if ner_backend == "llm" else "dspy"
         return values
 
     @field_validator("entity_labels", mode="before")
@@ -184,9 +180,6 @@ class ExtractionSettings(BaseSettings):
 
     # Ontology-based label extraction
     ontology: OntologySettings = Field(default_factory=OntologySettings)
-
-    # Spacy Configuration
-    spacy_model: str = "en_core_web_lg"
 
     # Performance
     max_concurrent_chunks: int = 8

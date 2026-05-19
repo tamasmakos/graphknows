@@ -1,6 +1,7 @@
 import dspy
-from typing import List, Tuple
+from typing import Any, Dict, List
 from pydantic import BaseModel, Field
+
 
 class Triplet(BaseModel):
     source: str = Field(description="The source entity")
@@ -11,23 +12,60 @@ class Triplet(BaseModel):
     confidence: float = Field(description="Confidence score (0.0-1.0) of this extraction")
     evidence: str = Field(description="Verbatim text snippet that supports this relation")
 
+
 class EntityRelation(dspy.Signature):
+    """Extract knowledge graph triplets (source, relation, target) from text.
+
+    Rules:
+    - Only extract relations EXPLICITLY stated in the text.
+    - The *relation* field MUST be chosen from allowed_relation_types.
+      Do NOT invent new relation labels.
+    - Use entity_hints as the preferred surface forms for source/target.
+    - Use candidate_relations as a starting point; verify them and add new ones.
+    - Skip trivial or very uncertain relations.
     """
-    Extract knowledge graph triplets (source, relation, target) from text.
-    Use the provided ontology classes to filter allowed entity types if applicable, but primarily focus on the text.
-    Use the provided entity hints as a guide for what entities might be present.
-    ONLY extract relations that are explicitly stated in the text and have high confidence.
-    Avoid "fluff" or trivial relations. Focus on significant interactions, facts, and properties.
-    """
-    text: str = dspy.InputField(desc="The input text to extract relations from.")
-    ontology_classes: List[str] = dspy.InputField(desc="List of allowed ontology classes/types for entities.")
-    entity_hints: List[str] = dspy.InputField(desc="List of pre-identified entities to guide extraction.")
-    triplets: List[Triplet] = dspy.OutputField(desc="List of extracted triplets.")
+
+    text: str = dspy.InputField(desc="Input text to analyse.")
+    ontology_classes: List[str] = dspy.InputField(
+        desc="Allowed entity type labels for source/target classification."
+    )
+    entity_hints: List[str] = dspy.InputField(
+        desc="Pre-identified entities (canonical surface forms) to guide extraction."
+    )
+    allowed_relation_types: List[str] = dspy.InputField(
+        desc=(
+            "Exhaustive list of permitted relation labels. "
+            "The relation field in every output triplet MUST be one of these."
+        )
+    )
+    candidate_relations: List[Dict[str, Any]] = dspy.InputField(
+        desc=(
+            "Candidate (source, relation, target) triplets produced by the fast "
+            "GLiNER2 pass.  Verify these and include confirmed ones in the output."
+        )
+    )
+    triplets: List[Triplet] = dspy.OutputField(
+        desc="Verified and enriched list of triplets. relation must be from allowed_relation_types."
+    )
+
 
 class GraphExtractorModule(dspy.Module):
     def __init__(self):
         super().__init__()
         self.extract = dspy.ChainOfThought(EntityRelation)
 
-    def forward(self, text: str, ontology_classes: List[str], entity_hints: List[str]):
-        return self.extract(text=text, ontology_classes=ontology_classes, entity_hints=entity_hints)
+    def forward(
+        self,
+        text: str,
+        ontology_classes: List[str],
+        entity_hints: List[str],
+        allowed_relation_types: List[str] | None = None,
+        candidate_relations: List[Dict[str, Any]] | None = None,
+    ):
+        return self.extract(
+            text=text,
+            ontology_classes=ontology_classes,
+            entity_hints=entity_hints,
+            allowed_relation_types=allowed_relation_types or [],
+            candidate_relations=candidate_relations or [],
+        )
