@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -52,12 +53,12 @@ _ERR_STORES_NOT_INIT = "Stores not initialised"
 _ERR_NEO4J_NOT_INIT = "Neo4j not initialised"
 
 # Reusable responses dicts for FastAPI OpenAPI schema documentation
-_DESC_503 = "Service unavailable"
-_R503 = {503: {"description": _DESC_503}}
-_R503_404 = {503: {"description": _DESC_503}, 404: {"description": "Not found"}}
-_R503_500 = {503: {"description": _DESC_503}, 500: {"description": "Internal error"}}
-_R503_422 = {503: {"description": _DESC_503}, 422: {"description": "Invalid input"}}
-_R404 = {404: {"description": "Not found"}}
+_DESC_503: str = "Service unavailable"
+_R503: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}}
+_R503_404: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}, 404: {"description": "Not found"}}
+_R503_500: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}, 500: {"description": "Internal error"}}
+_R503_422: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}, 422: {"description": "Invalid input"}}
+_R404: dict[int | str, dict[str, Any]] = {404: {"description": "Not found"}}
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -74,7 +75,7 @@ _R404 = {404: {"description": "Not found"}}
 # Maps session_id → last activity timestamp
 _session_last_active: dict[str, datetime] = {}
 
-_ttl_task: asyncio.Task | None = None
+_ttl_task: asyncio.Task[None] | None = None
 
 
 async def _session_ttl_loop() -> None:
@@ -120,7 +121,7 @@ _settings: GraphKnowsSettings | None = None
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI):
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _pg, _neo, _memgraph, _retriever, _settings, _ttl_task
 
     _settings = GraphKnowsSettings()
@@ -441,7 +442,7 @@ async def preview_session_merge(session_id: str) -> dict[str, Any]:
 # ── Admin: Ontology Patch (E4) ─────────────────────────────────────────────
 
 
-def _load_patch_taxonomy(taxonomy_file: str | None):
+def _load_patch_taxonomy(taxonomy_file: str | None) -> dict[str, Any] | None:
     """Load taxonomy for a patch request; returns None on failure."""
     try:
         from graphknows.graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
