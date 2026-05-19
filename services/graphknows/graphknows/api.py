@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from graphknows.mcp.server import mcp, set_dependencies
+from graphknows.mcp.server import _jobs, mcp, set_dependencies
 from graphknows.retrieval.retriever import HybridRetriever
 from graphknows.stores.memgraph import MemgraphStore
 from graphknows.stores.neo4j import Neo4jStore
@@ -77,11 +77,8 @@ class GraphKnowsSettings(BaseSettings):
     session_ttl_minutes: int = Field(default=60, alias="SESSION_TTL_MINUTES")
 
 
-# ---------------------------------------------------------------------------
-# In-memory job store
-# ---------------------------------------------------------------------------
-
-_jobs: dict[str, dict[str, Any]] = {}
+# In-memory job store now lives in mcp/server.py (_jobs) and is imported above.
+# This keeps MCP ingest tool and REST ingest endpoint on the same shared store.
 
 # ---------------------------------------------------------------------------
 # Session TTL tracking (E5)
@@ -162,7 +159,7 @@ async def _lifespan(app: FastAPI):
             neo=_neo,
             embed_model=_settings.embed_model,
         )
-        set_dependencies(_retriever, _pg, _neo, {"embed_model": _settings.embed_model})
+        set_dependencies(_retriever, _pg, _neo, _memgraph, {"embed_model": _settings.embed_model})
         logger.info("graphknows ready")
     except Exception as exc:  # noqa: BLE001
         logger.warning("graphknows started in degraded mode: %s", exc)
@@ -514,4 +511,148 @@ async def get_segment(segment_id: str) -> dict[str, Any]:
     if info is None:
         raise HTTPException(status_code=404, detail=f"Segment {segment_id!r} not found")
     return info
+
+
+# ── Config ────────────────────────────────────────────────────────────────
+
+
+@app.get("/config")
+async def get_config() -> dict[str, Any]:
+    """Expose runtime configuration so agents can adapt to the deployment."""
+    cfg = _settings or GraphKnowsSettings()
+    return {
+        "embed_model": cfg.embed_model,
+        "vector_dims": 384,
+        "rrf_k": 60,
+        "session_ttl_minutes": cfg.session_ttl_minutes,
+        "env": cfg.graphknows_env,
+        "mcp_transport": "http",
+    }
+
+
+# ── Entity discovery & graph traversal ────────────────────────────────────
+
+
+@app.get("/entities/search")
+async def search_entities(
+    q: str,
+    k: int = 10,
+    types: str | None = None,
+) -> list[dict[str, Any]]:
+    """Discover corpus entities by semantic similarity.
+
+    Args:
+        q: Natural-language query or entity name.
+        k: Maximum results (default 10).
+        types: Comma-separated label filter, e.g. ``ORG,PERSON``.
+    """
+    if _retriever is None or _pg is None:
+        raise HTTPException(status_code=503, detail="Stores not initialised")
+    from graphknows.stores.embedder import embed
+
+    entity_types = [t.strip() for t in types.split(",")] if types else None
+    emb_array = await asyncio.to_thread(embed, [q], _settings.embed_model)
+    emb = emb_array[0].tolist()
+    return await _pg.search_entities(emb, k=k, entity_types=entity_types)
+
+
+@app.get("/entities/{name}/neighbors")
+async def get_entity_neighbors(
+    name: str,
+    depth: int = 1,
+) -> dict[str, Any]:
+    """Return neighboring nodes reachable from *name* within *depth* hops."""
+    if _neo is None:
+        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+    return await _neo.get_entity_neighbors(name, depth=depth)
+
+
+@app.get("/entities/{name}/community")
+async def get_entity_community(name: str) -> dict[str, Any]:
+    """Return the Leiden community topic summary for a named entity."""
+    if _neo is None:
+        raise HTTPException(status_code=503, detail="Neo4j not initialised")
+    topic = await _neo.get_entity_community(name)
+    if topic is None:
+        raise HTTPException(status_code=404, detail=f"No community found for entity: {name!r}")
+    return topic
+
+
+# ── Chunk detail ───────────────────────────────────────────────────────────
+
+
+@app.get("/chunks/{chunk_id}")
+async def get_chunk(chunk_id: str) -> dict[str, Any]:
+    """Return full chunk text, metadata, and linked entities."""
+    if _pg is None or _neo is None:
+        raise HTTPException(status_code=503, detail="Stores not initialised")
+    text_map = await _pg.get_chunks_by_ids([chunk_id])
+    if chunk_id not in text_map:
+        raise HTTPException(status_code=404, detail=f"Chunk {chunk_id!r} not found")
+    entities = await _neo.get_chunk_entities(chunk_id)
+    return {**text_map[chunk_id], "chunk_id": chunk_id, "entities": entities}
+
+
+# ── Unified search (JSON) ─────────────────────────────────────────────────
+
+
+class SearchRequest(BaseModel):
+    """Request body for POST /search."""
+
+    query: str = Field(..., min_length=1)
+    search_type: str = Field(default="HYBRID")
+    session_id: str = Field(default="default")
+    k_entity: int = Field(default=10, ge=1, le=100)
+    k_semantic: int = Field(default=20, ge=1, le=200)
+    k_final: int = Field(default=10, ge=1, le=100)
+
+
+@app.post("/search")
+async def search(req: SearchRequest) -> dict[str, Any]:
+    """Unified multi-mode search endpoint returning JSON.
+
+    Equivalent to the MCP ``retrieve`` tool but returns a plain dict
+    instead of XML, suitable for direct REST consumption.
+
+    Search modes: HYBRID, SEMANTIC, GRAPH_TRAVERSAL, SUMMARIES, FEELING_LUCKY.
+    """
+    if _retriever is None:
+        raise HTTPException(status_code=503, detail="Retriever not initialised")
+
+    mode = req.search_type.upper()
+    try:
+        if mode == "SEMANTIC":
+            ctx = await _retriever.retrieve_semantic(
+                req.query, req.session_id, k=req.k_semantic
+            )
+        elif mode == "GRAPH_TRAVERSAL":
+            ctx = await _retriever.retrieve_graph_traversal(
+                req.query, req.session_id,
+                k_entity=req.k_entity, depth=2, k_final=req.k_final,
+            )
+        elif mode == "SUMMARIES":
+            ctx = await _retriever.retrieve_summaries(
+                req.query, req.session_id, k_entity=req.k_entity
+            )
+        elif mode == "FEELING_LUCKY":
+            ctx = await _retriever.retrieve_feeling_lucky(
+                req.query, req.session_id,
+                k_entity=req.k_entity, k_semantic=req.k_semantic, k_final=req.k_final,
+            )
+        elif mode == "HYBRID":
+            ctx = await _retriever.retrieve(
+                req.query, req.session_id,
+                k_entity=req.k_entity, k_semantic=req.k_semantic, k_final=req.k_final,
+            )
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown search_type {req.search_type!r}. "
+                "Valid: HYBRID, SEMANTIC, GRAPH_TRAVERSAL, SUMMARIES, FEELING_LUCKY.",
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return ctx.to_dict()
+
 

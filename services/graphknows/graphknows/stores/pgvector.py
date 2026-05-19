@@ -220,25 +220,47 @@ class PgVectorStore:
         self,
         query_emb: list[float],
         k: int = 10,
+        entity_types: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """ANN search on entity embeddings (corpus-level, no session filter).
 
-        Returns list of dicts: name, label, score.
+        Args:
+            query_emb: Query embedding vector.
+            k: Number of results to return.
+            entity_types: Optional list of label strings to filter by (e.g. ["ORG", "PERSON"]).
+
+        Returns:
+            List of dicts: name, label, score.
         """
         pool = self._pool_or_raise()
         emb_str = json.dumps(query_emb)
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT name, label,
-                       1 - (embedding <=> $1::vector) AS score
-                FROM entities
-                ORDER BY embedding <=> $1::vector
-                LIMIT $2
-                """,
-                emb_str,
-                k,
-            )
+            if entity_types:
+                rows = await conn.fetch(
+                    """
+                    SELECT name, label,
+                           1 - (embedding <=> $1::vector) AS score
+                    FROM entities
+                    WHERE label = ANY($2::text[])
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $3
+                    """,
+                    emb_str,
+                    entity_types,
+                    k,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT name, label,
+                           1 - (embedding <=> $1::vector) AS score
+                    FROM entities
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $2
+                    """,
+                    emb_str,
+                    k,
+                )
         return [
             {"name": r["name"], "label": r["label"] or "Entity", "score": float(r["score"])}
             for r in rows

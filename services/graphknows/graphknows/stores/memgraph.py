@@ -121,6 +121,27 @@ class MemgraphStore:
 
         return await asyncio.to_thread(_sync)
 
+    async def get_session_graph(self, session_id: str) -> dict[str, Any]:
+        """Return nodes and edges for *session_id* as a graph dict.
+
+        Args:
+            session_id: Session namespace to query.
+
+        Returns:
+            Dict with session_id, node_count, edge_count, nodes, and edges.
+        """
+        nodes, edges = await asyncio.gather(
+            self.get_session_nodes(session_id),
+            self.get_session_edges(session_id),
+        )
+        return {
+            "session_id": session_id,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "nodes": nodes,
+            "edges": edges,
+        }
+
     async def get_session_node_count(self, session_id: str) -> int:
         """Return the number of Entity nodes stored for *session_id*."""
 

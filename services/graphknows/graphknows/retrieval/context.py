@@ -83,6 +83,7 @@ class RetrievalContext:
         graph_matches: Entities found via cosine search, each with linked chunks.
         semantic_matches: Chunks found via direct cosine search.
         fused_results: RRF-fused deduped chunks, sorted by rrf_score descending.
+        search_type: Strategy used to produce this result (HYBRID, SEMANTIC, etc.).
     """
 
     query: str
@@ -90,9 +91,50 @@ class RetrievalContext:
     graph_matches: list[EntityMatch] = field(default_factory=list)
     semantic_matches: list[ChunkMatch] = field(default_factory=list)
     fused_results: list[dict] = field(default_factory=list)
+    search_type: str = "HYBRID"
 
     # ------------------------------------------------------------------
-    # XML serialisation (single wire format)
+    # Dict serialisation (JSON wire format for REST /search)
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Serialise this context to a plain dict suitable for JSON responses."""
+        return {
+            "query": self.query,
+            "session_id": self.session_id,
+            "search_type": self.search_type,
+            "graph_matches": [
+                {
+                    "name": em.name,
+                    "label": em.label,
+                    "similarity": round(em.similarity, 4),
+                    "chunks": [
+                        {
+                            "chunk_id": cm.chunk_id,
+                            "doc_id": cm.doc_id,
+                            "text": cm.text,
+                            "metadata": cm.metadata,
+                            "entities": cm.entities,
+                        }
+                        for cm in em.chunks
+                    ],
+                }
+                for em in self.graph_matches
+            ],
+            "semantic_matches": [
+                {
+                    "chunk_id": cm.chunk_id,
+                    "doc_id": cm.doc_id,
+                    "text": cm.text,
+                    "metadata": cm.metadata,
+                }
+                for cm in self.semantic_matches
+            ],
+            "fused_results": self.fused_results,
+        }
+
+    # ------------------------------------------------------------------
+    # XML serialisation (single wire format for MCP retrieve tool)
     # ------------------------------------------------------------------
 
     def to_xml(self) -> str:

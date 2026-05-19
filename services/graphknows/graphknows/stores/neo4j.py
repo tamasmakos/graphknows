@@ -359,6 +359,84 @@ class Neo4jStore:
     # Corpus reads (retrieval path)
     # ------------------------------------------------------------------
 
+    async def get_chunk_entities(self, chunk_id: str) -> list[dict[str, Any]]:
+        """Return Entity nodes linked to a Chunk via MENTIONS edges.
+
+        Args:
+            chunk_id: The Chunk node id to look up.
+
+        Returns:
+            List of dicts with name and label.
+        """
+        rows = await self._arun(
+            """MATCH (ch:Chunk {id: $cid})-[:MENTIONS]->(e:Entity)
+               RETURN e.name AS name, e.label AS label
+               LIMIT 20""",
+            cid=chunk_id,
+        )
+        return [{"name": r["name"], "label": r["label"] or "Entity"} for r in rows]
+
+    async def get_entity_neighbors(
+        self,
+        entity_name: str,
+        depth: int = 1,
+        relationship_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return neighboring Entity/Topic nodes reachable from *entity_name*.
+
+        Args:
+            entity_name: Starting entity (case-insensitive — normalised to UPPER).
+            depth: Number of hops to traverse (capped 1–3).
+            relationship_types: Optional allowlist of relationship type names.
+                Only alphanumeric + underscore names accepted (injection prevention).
+
+        Returns:
+            Dict with entity, depth, neighbor_count, and neighbors list.
+        """
+        name_upper = entity_name.strip().upper()
+        depth = max(1, min(depth, 3))  # cap at 3 hops to prevent runaway queries
+
+        # Validate relationship type names — alphanumeric + underscore only
+        safe_types: list[str] = []
+        if relationship_types:
+            safe_types = [
+                t for t in relationship_types
+                if t and all(c.isalnum() or c == "_" for c in t)
+            ]
+
+        # Build the relationship pattern (safe: types validated above)
+        if safe_types:
+            type_list = "|".join(safe_types)
+            rel_pattern = f"[r:{type_list}*1..{depth}]"
+        else:
+            rel_pattern = f"[r*1..{depth}]"
+
+        rows = await self._arun(
+            f"""MATCH (start:Entity {{name: $name}})-{rel_pattern}-(neighbor)
+               WHERE neighbor:Entity OR neighbor:Topic
+               RETURN
+                   neighbor.name AS name,
+                   labels(neighbor)[0] AS node_label,
+                   [rel IN r | type(rel)] AS rel_path
+               LIMIT 100""",
+            name=name_upper,
+        )
+
+        nodes: list[dict] = []
+        seen: set[str] = set()
+        for row in rows:
+            n_name = row["name"] or ""
+            if n_name and n_name not in seen:
+                seen.add(n_name)
+                nodes.append({"name": n_name, "label": row["node_label"] or "Entity"})
+
+        return {
+            "entity": entity_name,
+            "depth": depth,
+            "neighbor_count": len(nodes),
+            "neighbors": nodes,
+        }
+
     async def get_chunks_for_entity(
         self, entity_name: str, top_k: int = 5
     ) -> list[dict[str, Any]]:
