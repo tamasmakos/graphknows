@@ -13,6 +13,12 @@ sys.path.insert(0, '/root/graphknows/services/graphknows')
 from dotenv import load_dotenv
 load_dotenv('/root/graphknows/.env')
 
+from rich import box
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
 from agent.graph.agent import build_graph
 from langchain_core.messages import HumanMessage
 
@@ -25,7 +31,25 @@ SESSION_ID = 'ecb-cbdc-001'
 TRACE_PATH = '/root/graphknows/output/investigation_trace.json'
 ANSWER_PATH = '/root/graphknows/output/agent_answer.txt'
 
-# ── Broadcaster state ──────────────────────────────────────────────────────────
+console = Console(highlight=False)
+
+# ── Tool display metadata ─────────────────────────────────────────────────────
+_TOOL_META: dict[str, tuple[str, str, str]] = {
+    'search_web':      ('🌐', 'blue',    'Web Search'),
+    'search_eu':       ('🇪🇺', 'yellow', 'EU Sources'),
+    'search_archives': ('📚', 'magenta', 'Archives'),
+    'graphgen':        ('🧠', 'green',   'Graph Build'),
+    'hybridrag':       ('🔍', 'cyan',    'RAG Retrieve'),
+}
+
+_PHASE_META: dict[str, tuple[str, str]] = {
+    'scope':       ('bold yellow', 'SCOPE        Planning investigation strategy'),
+    'investigate': ('bold blue',   'INVESTIGATE  Executing research plan'),
+    'communicate': ('bold green',  'COMMUNICATE  Composing final brief'),
+}
+
+
+# ── Broadcaster state ─────────────────────────────────────────────────────────
 _graph_nodes: list[dict] = []
 _graph_edges: list[dict] = []
 _lexical_nodes: list[dict] = []
@@ -52,11 +76,17 @@ async def broadcaster(session_id: str, payload: dict) -> None:
             _lexical_edges.clear()
             _lexical_edges.extend(ldata.get('edges', []))
         elif not _graph_nodes:
-            # Accept the first partial so we always have something
             _graph_nodes.extend(gdata.get('nodes', []))
             _graph_edges.extend(gdata.get('edges', []))
+
     elif ev_type == 'phase_change':
-        _phase_events.append({'ts': ts, 'phase': payload.get('phase', '')})
+        phase = payload.get('phase', '')
+        _phase_events.append({'ts': ts, 'phase': phase})
+        style, label = _PHASE_META.get(phase, ('bold white', phase.upper()))
+        console.print()
+        console.rule(f'[{style}]◉  {label}[/{style}]', style=style)
+        console.print()
+
     elif ev_type == 'evidence_added':
         _evidence_events.append({
             'ts': ts,
@@ -66,7 +96,34 @@ async def broadcaster(session_id: str, payload: dict) -> None:
         })
 
 
+def _tool_input_preview(inp: object) -> str:
+    """Return a short human-readable summary of a tool's input."""
+    if not isinstance(inp, dict):
+        return str(inp)[:80]
+    for key in ('query', 'session_id_arg', 'run_id'):
+        if key in inp:
+            return f'{key}={str(inp[key])[:80]}'
+    return str(inp)[:80]
+
+
+def _tool_output_preview(output_str: str, max_lines: int = 5) -> str:
+    """Return the first few meaningful lines of a tool's output."""
+    lines = [ln.strip() for ln in output_str.splitlines() if ln.strip()][:max_lines]
+    return '\n'.join(lines)
+
+
 async def main() -> None:
+    # ── Header ────────────────────────────────────────────────────────────────
+    console.print()
+    console.print(Panel(
+        Text(QUERY, style='bold'),
+        title='[bold cyan]GraphKnows Investigator[/bold cyan]',
+        subtitle=f'[dim]session={SESSION_ID}[/dim]',
+        border_style='cyan',
+        padding=(1, 2),
+    ))
+    console.print()
+
     graph = build_graph(
         session_id=SESSION_ID,
         groq_api_key=os.environ['GROQ_API_KEY'],
@@ -76,20 +133,17 @@ async def main() -> None:
     started_at = datetime.now(timezone.utc).isoformat()
     t_start = time.monotonic()
 
-    # Per-agent-invocation token buffers
+    # Per-agent-invocation tracking
     agent_invocations: list[dict] = []
     current_tokens: list[str] = []
     current_has_tool_calls: bool = False
+    agent_turn: int = 0
 
     # Tool call tracking
     tool_calls: list[dict] = []
     active_starts: dict[str, dict] = {}  # run_id → {name, inputs, mono, ts}
 
-    # LangGraph workflow nodes in visitation order
     workflow_nodes: list[str] = []
-
-    print(f'Starting investigation: {QUERY[:80]}...')
-    print()
 
     async for event in graph.astream_events(
         {'messages': [HumanMessage(content=QUERY)]},
@@ -103,15 +157,19 @@ async def main() -> None:
         lg_node: str = ev_meta.get('langgraph_node', '')
         ts_now = datetime.now(timezone.utc).isoformat()
 
-        # Track LangGraph workflow node order
         if lg_node and lg_node not in workflow_nodes and lg_node not in ('__start__', '__end__'):
             workflow_nodes.append(lg_node)
 
-        # ── Agent node boundaries ─────────────────────────────────────────
+        # ── Agent turn start ──────────────────────────────────────────────
         if ev_type == 'on_chain_start' and ev_name == 'agent':
+            agent_turn += 1
             current_tokens = []
             current_has_tool_calls = False
+            console.print(
+                f'[dim]┌─ LLM turn {agent_turn} ───────────────────────────────────────────[/dim]'
+            )
 
+        # ── Agent turn end ────────────────────────────────────────────────
         elif ev_type == 'on_chain_end' and ev_name == 'agent':
             msgs = (ev_data.get('output') or {}).get('messages', [])
             if msgs:
@@ -121,37 +179,53 @@ async def main() -> None:
                 'tokens': current_tokens[:],
                 'has_tool_calls': current_has_tool_calls,
             })
+            if current_tokens:
+                console.print()  # newline after inline token stream
+            if current_has_tool_calls and msgs:
+                tc_names = [tc.get('name', '?') for tc in (msgs[-1].tool_calls or [])]
+                console.print(f'[dim]└─ dispatching: {", ".join(tc_names)}[/dim]')
+            else:
+                console.print(f'[dim]└─ turn {agent_turn} complete[/dim]')
+            console.print()
 
         # ── LLM token streaming ───────────────────────────────────────────
         elif ev_type == 'on_chat_model_stream' and lg_node == 'agent':
             chunk = ev_data.get('chunk')
             if chunk and hasattr(chunk, 'content') and chunk.content:
                 current_tokens.append(chunk.content)
+                # markup=False prevents rich from misinterpreting [ in LLM output
+                console.print(chunk.content, end='', markup=False, highlight=False)
 
-        # ── Tool lifecycle ────────────────────────────────────────────────
+        # ── Tool start ────────────────────────────────────────────────────
         elif ev_type == 'on_tool_start':
+            icon, color, label = _TOOL_META.get(ev_name, ('🔧', 'white', ev_name))
             active_starts[run_id] = {
                 'name': ev_name,
                 'inputs': ev_data.get('input', {}),
                 'started_at': ts_now,
                 'mono': time.monotonic(),
             }
-            inp_preview = str(ev_data.get('input', {}))[:120]
-            print(f'  [TOOL START] {ev_name}  inputs={inp_preview}')
+            preview = _tool_input_preview(ev_data.get('input', {}))
+            console.print(
+                f'  [{color}]{icon} {label}[/{color}]'
+                f'  [dim italic]{preview}[/dim italic]',
+            )
 
+        # ── Tool end ──────────────────────────────────────────────────────
         elif ev_type == 'on_tool_end':
             start_info = active_starts.pop(run_id, {})
             elapsed = time.monotonic() - start_info.get('mono', time.monotonic())
             duration_ms = int(elapsed * 1000)
 
             raw_output = ev_data.get('output', '')
-            if hasattr(raw_output, 'content'):
-                output_str = str(raw_output.content)
-            else:
-                output_str = str(raw_output)
+            output_str = (
+                str(raw_output.content) if hasattr(raw_output, 'content') else str(raw_output)
+            )
 
-            # Count result documents (heuristic: numbered lines like "1. Title")
-            doc_count = len([ln for ln in output_str.splitlines() if ln and ln[0].isdigit() and '. ' in ln])
+            doc_count = len([
+                ln for ln in output_str.splitlines()
+                if ln and ln[0].isdigit() and '. ' in ln
+            ])
 
             tool_calls.append({
                 'step': len(tool_calls) + 1,
@@ -163,14 +237,29 @@ async def main() -> None:
                 'finished_at': ts_now,
                 'duration_ms': duration_ms,
             })
-            print(f'  [TOOL END]   {ev_name}  ({duration_ms}ms)  docs≈{doc_count}  '
-                  f'output={output_str[:80].strip()!r}…')
+
+            icon, color, label = _TOOL_META.get(ev_name, ('🔧', 'white', ev_name))
+            preview = _tool_output_preview(output_str)
+            subtitle_parts = [f'{duration_ms} ms']
+            if doc_count:
+                subtitle_parts.append(f'{doc_count} docs')
+
+            console.print(Panel(
+                Text(preview[:500] if preview else output_str[:300], overflow='fold'),
+                title=(
+                    f'[{color}]{icon} {label}[/{color}]'
+                    f'  [dim]{" · ".join(subtitle_parts)}[/dim]'
+                ),
+                border_style=color,
+                padding=(0, 1),
+            ))
+            console.print()
 
     t_end = time.monotonic()
     finished_at = datetime.now(timezone.utc).isoformat()
     total_seconds = round(t_end - t_start, 2)
 
-    # Derive final answer: tokens from the last non-tool-call agent invocation
+    # ── Derive final answer ───────────────────────────────────────────────────
     answer_tokens: list[str] = []
     for inv in reversed(agent_invocations):
         if not inv['has_tool_calls']:
@@ -178,7 +267,7 @@ async def main() -> None:
             break
     answer = ''.join(answer_tokens)
 
-    # ── Persist outputs ────────────────────────────────────────────────────
+    # ── Persist outputs ───────────────────────────────────────────────────────
     with open(ANSWER_PATH, 'w') as fh:
         fh.write(answer)
 
@@ -196,19 +285,63 @@ async def main() -> None:
         'evidence_added': _evidence_events,
         'phase_events': _phase_events,
     }
-
     with open(TRACE_PATH, 'w') as fh:
         json.dump(trace, fh, default=str, indent=2)
 
-    print()
-    print(f'=== DONE in {total_seconds}s ===')
-    print(f'Tool calls: {len(tool_calls)}')
-    print(f'Answer length: {len(answer)} chars')
-    print(f'Graph: {len(_graph_nodes)} nodes, {len(_graph_edges)} edges')
-    print(f'Trace saved → {TRACE_PATH}')
-    print()
-    print('=== ANSWER (first 600 chars) ===')
-    print(answer[:600])
+    # ── Summary ───────────────────────────────────────────────────────────────
+    console.print()
+    console.rule('[bold green]Investigation complete[/bold green]', style='green')
+    console.print()
+
+    stats = Table(box=box.ROUNDED, show_header=False, padding=(0, 2))
+    stats.add_column('metric', style='dim', no_wrap=True)
+    stats.add_column('value', style='bold')
+    stats.add_row('Duration',       f'{total_seconds} s')
+    stats.add_row('Tool calls',     str(len(tool_calls)))
+    stats.add_row('LLM turns',      str(agent_turn))
+    stats.add_row('Evidence items', str(len(_evidence_events)))
+    stats.add_row('Graph nodes',    str(len(_graph_nodes)))
+    stats.add_row('Graph edges',    str(len(_graph_edges)))
+    stats.add_row('Answer length',  f'{len(answer):,} chars')
+    phases_str = ' → '.join(p['phase'] for p in _phase_events) or '—'
+    stats.add_row('Phases',         phases_str)
+    console.print(stats)
+
+    # Tool breakdown table
+    if tool_calls:
+        console.print()
+        breakdown = Table(box=box.SIMPLE, show_header=True, header_style='bold dim')
+        breakdown.add_column('#',    width=3,  style='dim')
+        breakdown.add_column('Tool', width=16)
+        breakdown.add_column('ms',   width=6,  justify='right')
+        breakdown.add_column('Docs', width=5,  justify='right')
+        breakdown.add_column('Input preview', style='dim')
+        for tc in tool_calls:
+            icon, color, label = _TOOL_META.get(tc['tool'], ('🔧', 'white', tc['tool']))
+            inp_preview = _tool_input_preview(tc['inputs'])[:55]
+            breakdown.add_row(
+                str(tc['step']),
+                f'[{color}]{icon} {label}[/{color}]',
+                str(tc['duration_ms']),
+                str(tc['doc_count']) if tc['doc_count'] else '—',
+                inp_preview,
+            )
+        console.print(breakdown)
+
+    # Full answer panel
+    if answer:
+        console.print()
+        console.print(Panel(
+            Text(answer),
+            title='[bold green]Intelligence Brief[/bold green]',
+            subtitle=f'[dim]{len(answer):,} chars · saved → {ANSWER_PATH}[/dim]',
+            border_style='green',
+            padding=(1, 2),
+        ))
+
+    console.print()
+    console.print(f'[dim]Trace → {TRACE_PATH}[/dim]')
+    console.print()
 
 
 asyncio.run(main())
