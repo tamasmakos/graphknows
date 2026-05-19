@@ -1,6 +1,7 @@
 """Run a single investigation and emit a rich trace JSON for the HTML builder."""
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -9,6 +10,25 @@ from datetime import datetime, timezone
 sys.path.insert(0, '/root/graphknows/services')
 sys.path.insert(0, '/root/graphknows/services/agent')
 sys.path.insert(0, '/root/graphknows/services/graphknows')
+
+# ── Logging — must be configured before service imports touch their loggers ───
+logging.basicConfig(
+    stream=sys.stdout,
+    level=logging.WARNING,
+    format='%(asctime)s.%(msecs)03d  %(name)-44s  %(levelname)-8s  %(message)s',
+    datefmt='%H:%M:%S',
+    force=True,
+)
+for _ns in ('graphknows', 'graphgen', 'agent', 'search', 'extractor'):
+    logging.getLogger(_ns).setLevel(logging.DEBUG)
+# Silence noisy third-party namespaces
+for _ns in (
+    'httpx', 'httpcore', 'urllib3', 'asyncio',
+    'torch', 'transformers', 'sentence_transformers',
+    'PIL', 'neo4j', 'filelock', 'datasets', 'tokenizers',
+    'accelerate', 'hf_transfer', 'huggingface_hub',
+):
+    logging.getLogger(_ns).setLevel(logging.ERROR)
 
 from dotenv import load_dotenv
 load_dotenv('/root/graphknows/.env')

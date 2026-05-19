@@ -75,9 +75,15 @@ class HybridRetriever:
         Returns:
             RetrievalContext with all retrieval views serialisable to XML.
         """
+        logger.debug(
+            "retrieve START  query=%r  session=%s  k_entity=%d  k_semantic=%d  k_final=%d",
+            query, session_id, k_entity, k_semantic, k_final,
+        )
+
         # ── Step 1: embed query ────────────────────────────────────────────
         emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
         emb = emb_array[0].tolist()
+        logger.debug("query embedded  dim=%d  model=%s", len(emb), self.embed_model)
 
         # ── Step 2 & 3: run entity + semantic search concurrently ──────────
         entity_rows_task = asyncio.create_task(
@@ -87,6 +93,15 @@ class HybridRetriever:
             self.pg.search_chunks(emb, session_id=session_id, k=k_semantic)
         )
         entity_rows, sem_rows = await asyncio.gather(entity_rows_task, sem_rows_task)
+        logger.debug(
+            "ANN results  entities=%d  semantic_chunks=%d",
+            len(entity_rows), len(sem_rows),
+        )
+        for _i, _e in enumerate(entity_rows):
+            logger.debug(
+                "  entity[%d]  name=%r  label=%s  score=%.4f",
+                _i, _e["name"], _e.get("label", "?"), _e["score"],
+            )
 
         # ── Step 4: entity → chunks via Neo4j MENTIONS traversal ──────────
         graph_chunk_info: dict[str, dict] = {}
@@ -102,6 +117,11 @@ class HybridRetriever:
             if isinstance(neo_chunks, Exception):
                 logger.warning("Neo4j lookup failed for %r: %s", ent["name"], neo_chunks)
                 neo_chunks = []
+            else:
+                logger.debug(
+                    "  neo4j[%r]  %d chunks retrieved",
+                    ent["name"], len(neo_chunks),
+                )
 
             entity_similarity = ent["score"]
             chunk_matches: list[ChunkMatch] = []
@@ -162,6 +182,12 @@ class HybridRetriever:
             sem_ids.add(cid)
 
         ranked = sorted(rrf_scores.items(), key=lambda x: -x[1])[:k_final]
+        logger.debug(
+            "RRF fusion  graph_chunks=%d  semantic_chunks=%d  unique_scored=%d  returning=%d",
+            len(graph_chunk_info), len(sem_ids), len(rrf_scores), len(ranked),
+        )
+        for _rank, (_cid, _score) in enumerate(ranked):
+            logger.debug("  fused[%d]  chunk_id=%s  rrf=%.6f", _rank, _cid[:16], _score)
 
         # ── Step 7: fetch full text + metadata for fused chunks ────────────
         all_ids = [cid for cid, _ in ranked]
@@ -194,6 +220,10 @@ class HybridRetriever:
                 }
             )
 
+        logger.debug(
+            "retrieve DONE  fused=%d  graph_matches=%d  semantic_matches=%d",
+            len(fused), len(entity_matches), len(semantic_matches),
+        )
         return RetrievalContext(
             query=query,
             session_id=session_id,
