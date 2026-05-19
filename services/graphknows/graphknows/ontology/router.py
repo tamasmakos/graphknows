@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -48,9 +47,12 @@ class OntologyRouter:
             return
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore
+
             self._embed_model = SentenceTransformer(self._model_name)
             descriptions = [m.description for m in self._manifests]
-            self._desc_embeddings = self._embed_model.encode(descriptions, normalize_embeddings=True)
+            self._desc_embeddings = self._embed_model.encode(
+                descriptions, normalize_embeddings=True
+            )
             log.info("OntologyRouter ready with %d ontologies", len(self._manifests))
         except Exception as exc:
             log.warning("OntologyRouter: embedding model unavailable (%s) — keyword-only mode", exc)
@@ -99,15 +101,15 @@ class OntologyRouter:
         kw_scores = self._keyword_scores(snippet)
         emb_scores = self._embedding_scores(snippet)
 
-        combined = [
-            alpha * kw + (1 - alpha) * emb
-            for kw, emb in zip(kw_scores, emb_scores)
-        ]
+        combined = [alpha * kw + (1 - alpha) * emb for kw, emb in zip(kw_scores, emb_scores)]
         best_idx = int(np.argmax(combined))
         best = self._manifests[best_idx]
         log.debug(
             "OntologyRouter selected '%s' (kw=%.3f emb=%.3f combined=%.3f)",
-            best.id, kw_scores[best_idx], emb_scores[best_idx], combined[best_idx],
+            best.id,
+            kw_scores[best_idx],
+            emb_scores[best_idx],
+            combined[best_idx],
         )
         return best
 
@@ -129,9 +131,6 @@ class OntologyRouter:
         snippet = text[:2000]
         kw_scores = self._keyword_scores(snippet)
         emb_scores = self._embedding_scores(snippet)
-        combined = [
-            alpha * kw + (1 - alpha) * emb
-            for kw, emb in zip(kw_scores, emb_scores)
-        ]
+        combined = [alpha * kw + (1 - alpha) * emb for kw, emb in zip(kw_scores, emb_scores)]
         indices = sorted(range(len(combined)), key=lambda i: combined[i], reverse=True)[:top_k]
         return [self._manifests[i] for i in indices]

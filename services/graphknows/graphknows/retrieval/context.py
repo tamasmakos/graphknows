@@ -31,6 +31,7 @@ Schema example::
       </fused_results>
     </retrieval_context>
 """
+
 from __future__ import annotations
 
 import html
@@ -183,21 +184,21 @@ class RetrievalContext:
         lines.append(f'  <fused_results count="{len(self.fused_results)}">')
         for fc in self.fused_results:
             lines.append(
-                f'    <chunk id="{_esc(fc.get("chunk_id",""))}"'
-                f' doc_id="{_esc(fc.get("doc_id",""))}"'
+                f'    <chunk id="{_esc(fc.get("chunk_id", ""))}"'
+                f' doc_id="{_esc(fc.get("doc_id", ""))}"'
                 f' rrf_score="{fc.get("rrf_score", 0.0):.6f}"'
-                f' sources="{_esc(fc.get("sources",""))}"'
+                f' sources="{_esc(fc.get("sources", ""))}"'
                 f' rank="{fc.get("rank", 0)}">'
             )
-            lines.append(f'      <text>{_esc(fc.get("text",""))}</text>')
+            lines.append(f"      <text>{_esc(fc.get('text', ''))}</text>")
             lines.append(_metadata_tag(fc.get("metadata", {}), indent=6))
             ents = fc.get("entities", [])
             if ents:
                 lines.append("      <entities>")
                 for e in ents:
                     lines.append(
-                        f'        <entity name="{_esc(e.get("name",""))}"'
-                        f' label="{_esc(e.get("label",""))}"/>'
+                        f'        <entity name="{_esc(e.get("name", ""))}"'
+                        f' label="{_esc(e.get("label", ""))}"/>'
                     )
                 lines.append("      </entities>")
             lines.append("    </chunk>")
@@ -210,6 +211,7 @@ class RetrievalContext:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _esc(value: object) -> str:
     """HTML-escape a value for safe XML attribute/text embedding."""
