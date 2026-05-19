@@ -134,7 +134,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install workspace + dev group
-        run: uv sync --group dev --python ${{ matrix.python-version }}
+        run: uv sync --all-packages --group dev --python ${{ matrix.python-version }}
 
       - name: Build wheel (catches packaging bugs early)
         run: uv build --package graphknows --out-dir dist/
