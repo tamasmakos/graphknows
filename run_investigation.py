@@ -144,10 +144,37 @@ async def main() -> None:
     ))
     console.print()
 
+    # ── Session graph manager — created *before* build_graph so the
+    # persist_graph callback can write GLiNER2 results into _mem_sessions ──────
+    from agent.session.manager import SessionGraphManager
+    from agent.session.end import merge_session_to_neo4j as _merge
+
+    _sgm = SessionGraphManager(
+        memgraph_uri=os.environ.get('MEMGRAPH_URI', 'bolt://172.18.0.1:17687'),
+        neo4j_uri=os.environ.get('NEO4J_URI', 'bolt://172.18.0.1:7687'),
+        neo4j_user=os.environ.get('NEO4J_USER', 'neo4j'),
+        neo4j_password=os.environ['NEO4J_PASSWORD'],
+    )
+    _persist_log = logging.getLogger('agent.session.persist')
+
+    async def _persist_graph_to_sgm(sid: str, nodes: list, edges: list) -> None:
+        """Persist GLiNER2/DSPy graph data into _sgm._mem_sessions for later merge."""
+        if sid not in _sgm._mem_sessions:
+            _sgm._mem_sessions[sid] = {'nodes': {}, 'edges': []}
+        sess = _sgm._mem_sessions[sid]
+        for n in nodes:
+            sess['nodes'][n['id']] = n
+        sess['edges'].extend(edges)
+        _persist_log.info(
+            'persist_graph  session=%s  +%d nodes +%d edges  total=%d nodes %d edges',
+            sid, len(nodes), len(edges), len(sess['nodes']), len(sess['edges']),
+        )
+
     graph = build_graph(
         session_id=SESSION_ID,
         groq_api_key=os.environ['GROQ_API_KEY'],
         ws_broadcaster=broadcaster,
+        persist_graph=_persist_graph_to_sgm,
     )
 
     started_at = datetime.now(timezone.utc).isoformat()
@@ -185,6 +212,9 @@ async def main() -> None:
             agent_turn += 1
             current_tokens = []
             current_has_tool_calls = False
+            if agent_turn == 2:
+                # First turn with tool results available → investigate phase
+                await broadcaster(SESSION_ID, {'type': 'phase_change', 'phase': 'investigate'})
             console.print(
                 f'[dim]┌─ LLM turn {agent_turn} ───────────────────────────────────────────[/dim]'
             )
@@ -205,6 +235,8 @@ async def main() -> None:
                 tc_names = [tc.get('name', '?') for tc in (msgs[-1].tool_calls or [])]
                 console.print(f'[dim]└─ dispatching: {", ".join(tc_names)}[/dim]')
             else:
+                # No tool calls → this is the final report (communicate phase)
+                await broadcaster(SESSION_ID, {'type': 'phase_change', 'phase': 'communicate'})
                 console.print(f'[dim]└─ turn {agent_turn} complete[/dim]')
             console.print()
 
@@ -279,6 +311,31 @@ async def main() -> None:
     finished_at = datetime.now(timezone.utc).isoformat()
     total_seconds = round(t_end - t_start, 2)
 
+    # ── Session merge: Memgraph → Neo4j ──────────────────────────────────────
+    console.print()
+    console.rule('[bold magenta]◎  SESSION MERGE  Memgraph → Neo4j[/bold magenta]', style='magenta')
+    console.print()
+    merge_result: dict = {}
+    try:
+        merge_result = _merge(
+            session_id=SESSION_ID,
+            sgm=_sgm,
+            export_html=os.environ.get('EXPORT_GRAPH_HTML', '').lower() == 'true',
+        )
+        merged_nodes = merge_result.get('merged_nodes', 0)
+        merged_edges = merge_result.get('merged_edges', 0)
+        console.print(
+            f'[bold magenta]✓  merged {merged_nodes} nodes, {merged_edges} edges → Neo4j[/bold magenta]'
+        )
+        if 'graph_html_path' in merge_result:
+            console.print(f'[dim]   Graph HTML → {merge_result["graph_html_path"]}[/dim]')
+        if 'error' in merge_result:
+            console.print(f'[red]   Merge error: {merge_result["error"]}[/red]')
+    except Exception as _merge_exc:
+        console.print(f'[red]Session merge failed: {_merge_exc}[/red]')
+        merge_result = {'error': str(_merge_exc)}
+    console.print()
+
     # ── Derive final answer ───────────────────────────────────────────────────
     answer_tokens: list[str] = []
     for inv in reversed(agent_invocations):
@@ -304,6 +361,7 @@ async def main() -> None:
         'answer': answer,
         'evidence_added': _evidence_events,
         'phase_events': _phase_events,
+        'session_merge': merge_result,
     }
     with open(TRACE_PATH, 'w') as fh:
         json.dump(trace, fh, default=str, indent=2)
@@ -322,6 +380,7 @@ async def main() -> None:
     stats.add_row('Evidence items', str(len(_evidence_events)))
     stats.add_row('Graph nodes',    str(len(_graph_nodes)))
     stats.add_row('Graph edges',    str(len(_graph_edges)))
+    stats.add_row('Neo4j merged',   f'{merge_result.get("merged_nodes", "—")} nodes  {merge_result.get("merged_edges", "—")} edges')
     stats.add_row('Answer length',  f'{len(answer):,} chars')
     phases_str = ' → '.join(p['phase'] for p in _phase_events) or '—'
     stats.add_row('Phases',         phases_str)
