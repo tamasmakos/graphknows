@@ -43,13 +43,59 @@ def merge_session_to_neo4j(
         edges: list[dict[str, Any]] = []
 
         memgraph_ok = getattr(sgm, "_memgraph_ok", False)
+
+        # ── Determine data source ────────────────────────────────────────────
+        # Prefer _mem_sessions (fresh extraction output from the current process)
+        # over Memgraph which may hold stale data from previous runs or the
+        # web server.  Only read Memgraph when _mem_sessions has no nodes for
+        # this session (i.e. the web-server path where DualWriter writes to
+        # Memgraph but no in-process extraction was run).
+        mem_current = getattr(sgm, "_mem_sessions", {}).get(session_id)
+        use_mem_sessions = bool(mem_current and mem_current.get("nodes"))
+
         log.info(
             "merge_session_to_neo4j START  session=%s  backend=%s",
             session_id,
-            "memgraph" if memgraph_ok else "in-memory",
+            "in-memory" if use_mem_sessions else ("memgraph" if memgraph_ok else "in-memory"),
         )
 
-        if memgraph_ok:
+        def _load_from_mem_sessions(mem: dict) -> None:
+            node_by_id = mem.get("nodes", {})
+            for node in node_by_id.values():
+                props = node.get("properties", {})
+                name = str(
+                    props.get("name") or node.get("name") or props.get("id") or ""
+                )
+                if not name:
+                    continue
+                nodes.append({
+                    "name": name,
+                    "type": str(
+                        props.get("ontology_class") or node.get("label") or "Entity"
+                    ),
+                })
+            for edge in mem.get("edges", []):
+                src = node_by_id.get(edge.get("source", ""), {})
+                tgt = node_by_id.get(edge.get("target", ""), {})
+                src_name = str(src.get("properties", {}).get("name") or src.get("name") or "")
+                tgt_name = str(tgt.get("properties", {}).get("name") or tgt.get("name") or "")
+                if not src_name or not tgt_name:
+                    continue
+                edges.append({
+                    "from":     src_name,
+                    "to":       tgt_name,
+                    "rel_type": str(edge.get("type", "RELATION")),
+                    "weight":   float(edge.get("properties", {}).get("weight", 0.5) or 0.5),
+                })
+
+        if use_mem_sessions:
+            # Fresh extraction data — use directly
+            _load_from_mem_sessions(mem_current)
+            log.debug(
+                "  in-memory read: %d nodes, %d edges for session=%s",
+                len(nodes), len(edges), session_id,
+            )
+        elif memgraph_ok:
             with sgm._mg_driver.session() as mg:
                 node_rows = mg.run(
                     "MATCH (n {session_id: $sid}) RETURN n",
@@ -94,81 +140,14 @@ def merge_session_to_neo4j(
                 "  Memgraph read complete: %d nodes, %d edges for session=%s",
                 len(nodes), len(edges), session_id,
             )
-            # If Memgraph is empty (e.g. standalone run without DualWriter),
-            # fall back to the in-memory session store written by persist_graph.
             if not nodes:
-                log.debug(
-                    "  Memgraph empty — checking in-memory fallback for session=%s",
-                    session_id,
-                )
-                mem = getattr(sgm, "_mem_sessions", {}).get(
-                    session_id, {"nodes": {}, "edges": []}
-                )
-                node_by_id = mem.get("nodes", {})
-                for node in node_by_id.values():
-                    props = node.get("properties", {})
-                    name = str(
-                        props.get("name") or node.get("name") or props.get("id") or ""
-                    )
-                    if not name:
-                        continue
-                    nodes.append({
-                        "name": name,
-                        "type": str(
-                            props.get("ontology_class") or node.get("label") or "Entity"
-                        ),
-                    })
-                for edge in mem.get("edges", []):
-                    src = node_by_id.get(edge.get("source", ""), {})
-                    tgt = node_by_id.get(edge.get("target", ""), {})
-                    src_name = str(src.get("properties", {}).get("name") or src.get("name") or "")
-                    tgt_name = str(tgt.get("properties", {}).get("name") or tgt.get("name") or "")
-                    if not src_name or not tgt_name:
-                        continue
-                    edges.append({
-                        "from":     src_name,
-                        "to":       tgt_name,
-                        "rel_type": str(edge.get("type", "RELATION")),
-                        "weight":   float(edge.get("properties", {}).get("weight", 0.5) or 0.5),
-                    })
-                log.debug(
-                    "  in-memory fallback read: %d nodes, %d edges for session=%s",
-                    len(nodes), len(edges), session_id,
+                raise RuntimeError(
+                    f"Memgraph returned no data for session={session_id!r} — cannot merge"
                 )
         else:
-            mem = getattr(sgm, "_mem_sessions", {}).get(
-                session_id, {"nodes": {}, "edges": []}
-            )
-            node_by_id = mem.get("nodes", {})
-            for node in node_by_id.values():
-                props = node.get("properties", {})
-                name = str(
-                    props.get("name") or node.get("name") or props.get("id") or ""
-                )
-                if not name:
-                    continue
-                nodes.append({
-                    "name": name,
-                    "type": str(
-                        props.get("ontology_class") or node.get("label") or "Entity"
-                    ),
-                })
-            for edge in mem.get("edges", []):
-                src = node_by_id.get(edge.get("source", ""), {})
-                tgt = node_by_id.get(edge.get("target", ""), {})
-                src_name = str(src.get("properties", {}).get("name") or src.get("name") or "")
-                tgt_name = str(tgt.get("properties", {}).get("name") or tgt.get("name") or "")
-                if not src_name or not tgt_name:
-                    continue
-                edges.append({
-                    "from":     src_name,
-                    "to":       tgt_name,
-                    "rel_type": str(edge.get("type", "RELATION")),
-                    "weight":   float(edge.get("properties", {}).get("weight", 0.5) or 0.5),
-                })
-            log.debug(
-                "  in-memory read: %d nodes, %d edges for session=%s",
-                len(nodes), len(edges), session_id,
+            raise RuntimeError(
+                f"No extraction data in _mem_sessions and Memgraph is unavailable"
+                f" for session={session_id!r}"
             )
 
         # ── write back to Neo4j ──────────────────────────────────────────────
@@ -179,6 +158,28 @@ def merge_session_to_neo4j(
         merged_nodes = 0
         merged_edges = 0
         with sgm._n4j_driver.session() as n4j:
+            # Remove stale edges from previous runs of this session before
+            # re-merging so that deleted or corrected edges do not persist.
+            log.debug("  purging stale Neo4j edges for session=%s", session_id)
+            n4j.run(
+                """
+                MATCH ()-[r:RELATION]->()
+                WHERE $sid IN coalesce(r.sessions, [])
+                WITH r, [s IN r.sessions WHERE s <> $sid] AS remaining
+                CALL {
+                    WITH r, remaining
+                    FOREACH (_ IN CASE WHEN size(remaining) = 0 THEN [1] ELSE [] END |
+                        DELETE r
+                    )
+                    FOREACH (_ IN CASE WHEN size(remaining) > 0 THEN [1] ELSE [] END |
+                        SET r.sessions = remaining
+                    )
+                }
+                """,
+                sid=session_id,
+            )
+            log.debug("  purge complete for session=%s", session_id)
+
             for node in nodes:
                 log.debug("  MERGE node  name=%r  type=%s", node["name"], node["type"])
                 n4j.run(
@@ -304,12 +305,9 @@ def merge_session_to_neo4j(
                     betweenness: dict[str, float] = nx.betweenness_centrality(
                         G, normalized=True
                     )
-                    try:
-                        communities = list(
-                            nx.community.greedy_modularity_communities(G.to_undirected())
-                        )
-                    except Exception:
-                        communities = [{n} for n in G.nodes()]
+                    communities = list(
+                        nx.community.greedy_modularity_communities(G.to_undirected())
+                    )
                     node_community: dict[str, int] = {
                         node: i
                         for i, comm in enumerate(communities)
@@ -355,11 +353,8 @@ def merge_session_to_neo4j(
                         G.number_of_nodes(), session_id,
                     )
 
-            except Exception as _analytics_exc:
-                log.warning(
-                    "Post-merge graph analytics failed (non-fatal)  session=%s: %s",
-                    session_id, _analytics_exc, exc_info=True,
-                )
+            except Exception:
+                raise
 
         result: dict[str, Any] = {
             "merged_nodes": merged_nodes,
@@ -370,32 +365,18 @@ def merge_session_to_neo4j(
 
         # ── optional HTML export ─────────────────────────────────────────────
         if export_html and getattr(sgm, "_memgraph_ok", False):
-            try:
-                from services.agent.graph.viz import render_session_graph
-                html_path = render_session_graph(
-                    session_id=session_id,
-                    mg_driver=sgm._mg_driver,
-                    output_dir=html_output_dir,
-                )
-                result["graph_html_path"] = str(html_path)
-                log.info("Session graph exported: %s", html_path)
-            except Exception as viz_exc:
-                log.warning("Graph HTML export failed for %s: %s", session_id, viz_exc)
+            from services.agent.graph.viz import render_session_graph
+            html_path = render_session_graph(
+                session_id=session_id,
+                mg_driver=sgm._mg_driver,
+                output_dir=html_output_dir,
+            )
+            result["graph_html_path"] = str(html_path)
+            log.info("Session graph exported: %s", html_path)
 
         return result
 
-    except Exception as exc:
-        log.exception("Failed to merge session %s to Neo4j", session_id)
-        return {
-            "error":         str(exc),
-            "merged_nodes":  0,
-            "merged_edges":  0,
-            "session_id":    session_id,
-        }
     finally:
         # Release in-process session accumulators to prevent memory leaks
-        try:
-            from agent.graph.agent import clear_session_state
-            clear_session_state(session_id)
-        except Exception:
-            pass
+        from agent.graph.agent import clear_session_state
+        clear_session_state(session_id)

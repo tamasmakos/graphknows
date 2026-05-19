@@ -6,7 +6,7 @@ import os
 import uuid
 from typing import Any
 
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 
 from services.agent.graph.events import plan_ready_event
 from services.agent.graph.state import InvestigativeState, SubQuestion
@@ -15,7 +15,7 @@ from services.agent.graph.state import InvestigativeState, SubQuestion
 def scope_node(state: InvestigativeState) -> dict[str, Any]:
     """Decompose the research topic into sub-questions for investigation.
 
-    Uses ChatGroq to generate 3-5 sub-questions. Falls back to a simple
+    Uses OpenRouter to generate 3-5 sub-questions. Falls back to a simple
     heuristic (single sub-question = topic) when the LLM is unavailable.
 
     Args:
@@ -25,10 +25,10 @@ def scope_node(state: InvestigativeState) -> dict[str, Any]:
         Partial state update with ``plan``, ``queries``, and ``ws_events``.
     """
     plan: list[SubQuestion] = []
-    groq_key = os.environ.get("GROQ_API_KEY")
-    if groq_key:
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if openrouter_key:
         try:
-            llm = ChatGroq(api_key=groq_key, model="llama-3.3-70b-versatile", temperature=0.2)
+            llm = ChatOpenAI(api_key=openrouter_key, base_url="https://openrouter.ai/api/v1", model="moonshotai/kimi-k2", temperature=0.2)
             prompt = (
                 f"Given the research topic '{state['topic']}', decompose it into "
                 "3-5 sub-questions for investigation. Return as JSON list of strings."

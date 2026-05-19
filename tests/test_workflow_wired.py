@@ -39,7 +39,7 @@ class TestBuildWorkflowWithoutDeps:
 
 
 @pytest.mark.asyncio
-@patch("services.agent.graph.nodes.communicate.ChatGroq")
+@patch("services.agent.graph.nodes.communicate.ChatOpenAI")
 async def test_invoke_returns_briefing(mock_chat: MagicMock) -> None:
     """Invoking the graph with a simple topic returns a state with briefing set."""
     mock_instance = mock_chat.return_value
@@ -57,7 +57,7 @@ async def test_invoke_returns_briefing(mock_chat: MagicMock) -> None:
 
 
 @pytest.mark.asyncio
-@patch("services.agent.graph.nodes.communicate.ChatGroq")
+@patch("services.agent.graph.nodes.communicate.ChatOpenAI")
 async def test_invoke_state_shape(mock_chat: MagicMock) -> None:
     """Invoking the graph returns full InvestigativeState keys."""
     mock_instance = mock_chat.return_value
@@ -99,7 +99,7 @@ class TestBuildWorkflowWithMocks:
         assert hasattr(workflow, "ainvoke")
 
     @pytest.mark.asyncio
-    @patch("services.agent.graph.nodes.communicate.ChatGroq")
+    @patch("services.agent.graph.nodes.communicate.ChatOpenAI")
     async def test_invoke_with_mock_deps(self, mock_chat: MagicMock, mock_mg: MagicMock, mock_search_client: MagicMock) -> None:
         mock_instance = mock_chat.return_value
         mock_instance.ainvoke = AsyncMock(return_value=MagicMock(content="Mock briefing."))

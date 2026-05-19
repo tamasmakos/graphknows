@@ -23,14 +23,13 @@ agent_watchdog() {
   done
 }
 
-# ── HybridRAG watchdog ──────────────────────────────────────────────────────
-hybridrag_watchdog() {
+# ── GraphKnows (HybridRAG) watchdog ─────────────────────────────────────────
+graphknows_watchdog() {
   while true; do
-    echo "[watchdog] Starting hybridrag on :8020..."
-    PYTHONPATH="/root/graphknows/services:/root/graphknows/libs/python/graphknows-shared" \
-      python -m hybridrag.run \
-      >> /tmp/hybridrag.log 2>&1 || true
-    echo "[watchdog] HybridRAG exited — restarting in 5s..."
+    echo "[watchdog] Starting graphknows on :8025..."
+    python -m graphknows.run --transport http --port 8025 \
+      >> /tmp/graphknows.log 2>&1 || true
+    echo "[watchdog] GraphKnows exited — restarting in 5s..."
     sleep 5
   done
 }
@@ -61,7 +60,7 @@ search_watchdog() {
 }
 
 # Kill anything on our ports first
-fuser -k 8020/tcp 2>/dev/null || true
+fuser -k 8025/tcp 2>/dev/null || true
 fuser -k 8002/tcp 2>/dev/null || true
 fuser -k 8040/tcp 2>/dev/null || true
 # Don't kill 8080 — old frontend may still be the right one
@@ -69,8 +68,8 @@ fuser -k 8040/tcp 2>/dev/null || true
 agent_watchdog &
 AGENT_PID=$!
 
-hybridrag_watchdog &
-HYBRIDRAG_PID=$!
+graphknows_watchdog &
+GRAPHKNOWS_PID=$!
 
 search_watchdog &
 SEARCH_PID=$!
@@ -78,7 +77,7 @@ SEARCH_PID=$!
 frontend_watchdog &
 FRONTEND_PID=$!
 
-echo "Watchdogs started: agent=$AGENT_PID hybridrag=$HYBRIDRAG_PID search=$SEARCH_PID frontend=$FRONTEND_PID"
+echo "Watchdogs started: agent=$AGENT_PID graphknows=$GRAPHKNOWS_PID search=$SEARCH_PID frontend=$FRONTEND_PID"
 
 # ── Cloudflare tunnel ───────────────────────────────────────────────────────
 if [[ "${1:-}" != "--no-tunnel" ]]; then

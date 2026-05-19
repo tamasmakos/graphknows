@@ -11,12 +11,23 @@ sys.path.insert(0, '/root/graphknows/services')
 sys.path.insert(0, '/root/graphknows/services/agent')
 sys.path.insert(0, '/root/graphknows/services/graphknows')
 
+# Console must exist before logging so RichHandler can reference it.
+from rich.console import Console  # noqa: E402
+from rich.logging import RichHandler  # noqa: E402
+
+console = Console(highlight=False)
+
 # ── Logging — must be configured before service imports touch their loggers ───
 logging.basicConfig(
-    stream=sys.stdout,
     level=logging.WARNING,
-    format='%(asctime)s.%(msecs)03d  %(name)-44s  %(levelname)-8s  %(message)s',
-    datefmt='%H:%M:%S',
+    format='%(name)s  %(message)s',
+    datefmt='[%H:%M:%S]',
+    handlers=[RichHandler(
+        console=console,
+        show_path=False,
+        rich_tracebacks=False,
+        markup=False,
+    )],
     force=True,
 )
 for _ns in ('graphknows', 'graphgen', 'agent', 'search', 'extractor'):
@@ -34,7 +45,6 @@ from dotenv import load_dotenv
 load_dotenv('/root/graphknows/.env')
 
 from rich import box
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -50,8 +60,6 @@ QUERY = (
 SESSION_ID = 'ecb-cbdc-001'
 TRACE_PATH = '/root/graphknows/output/investigation_trace.json'
 ANSWER_PATH = '/root/graphknows/output/agent_answer.txt'
-
-console = Console(highlight=False)
 
 # ── Tool display metadata ─────────────────────────────────────────────────────
 _TOOL_META: dict[str, tuple[str, str, str]] = {
@@ -155,24 +163,42 @@ async def main() -> None:
         neo4j_user=os.environ.get('NEO4J_USER', 'neo4j'),
         neo4j_password=os.environ['NEO4J_PASSWORD'],
     )
+    # Purge any stale Memgraph data from previous runs for this session so the
+    # merge never falls back to stale edges (including CO_OCCURS).
+    _sgm.close_session(SESSION_ID)
     _persist_log = logging.getLogger('agent.session.persist')
 
     async def _persist_graph_to_sgm(sid: str, nodes: list, edges: list) -> None:
-        """Persist GLiNER2/DSPy graph data into _sgm._mem_sessions for later merge."""
-        if sid not in _sgm._mem_sessions:
-            _sgm._mem_sessions[sid] = {'nodes': {}, 'edges': []}
-        sess = _sgm._mem_sessions[sid]
-        for n in nodes:
-            sess['nodes'][n['id']] = n
-        sess['edges'].extend(edges)
+        """Persist graph data into sgm via the proper add_node/add_edge API."""
+        def _sync_persist() -> None:
+            for node in nodes:
+                props = dict(node.get('properties') or {})
+                node_name = props.get('name') or node.get('id', '')
+                _sgm.add_node(
+                    sid,
+                    node_name,
+                    node.get('label') or node.get('type') or 'Entity',
+                    {'name': node_name, **props},
+                )
+            for edge in edges:
+                _sgm.add_edge(
+                    sid,
+                    str(edge.get('source', '')),
+                    str(edge.get('target', '')),
+                    edge.get('type', 'RELATED_TO'),
+                    dict(edge.get('properties') or {}),
+                )
+        await asyncio.to_thread(_sync_persist)
+        mem = _sgm._mem_sessions.get(sid, {})
         _persist_log.info(
             'persist_graph  session=%s  +%d nodes +%d edges  total=%d nodes %d edges',
-            sid, len(nodes), len(edges), len(sess['nodes']), len(sess['edges']),
+            sid, len(nodes), len(edges),
+            len(mem.get('nodes', {})), len(mem.get('edges', [])),
         )
 
     graph = build_graph(
         session_id=SESSION_ID,
-        groq_api_key=os.environ['GROQ_API_KEY'],
+        openrouter_api_key=os.environ.get('OPENROUTER_API_KEY', ''),
         ws_broadcaster=broadcaster,
         persist_graph=_persist_graph_to_sgm,
     )

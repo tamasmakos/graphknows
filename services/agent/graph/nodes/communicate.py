@@ -5,7 +5,7 @@ import os
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 
 from services.agent.graph.events import brief_done_event, retrieval_done_event
 from services.agent.graph.state import InvestigativeState
@@ -143,9 +143,10 @@ async def communicate_node(
     graph_features_section = _format_node_features(node_features)
 
     # 3. LLM synthesis — pass XML as <retrieved_context> block
-    llm = ChatGroq(
-        api_key=os.environ.get("GROQ_API_KEY"),
-        model="llama-3.3-70b-versatile",
+    llm = ChatOpenAI(
+        api_key=os.environ.get("OPENROUTER_API_KEY"),
+        base_url="https://openrouter.ai/api/v1",
+        model="moonshotai/kimi-k2",
         temperature=0.15,
         max_tokens=8192,
     )

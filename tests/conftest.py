@@ -22,7 +22,7 @@ import pytest
 _STUB_KEYS = (
     "langgraph.prebuilt",
     "langchain_core.tools",
-    "langchain_groq",
+    "langchain_openai",
     "langchain_core.messages",
     "services.agent.langgraph_agent",
     "agent.langgraph_agent",

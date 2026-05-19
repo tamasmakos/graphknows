@@ -28,66 +28,142 @@ def _chunk_text(text: str) -> list[str]:
             break
     return chunks[:10]
 
+_TRAILING_DIGIT_RE = __import__("re").compile(r"\d+$")
 
-_DEFAULT_LABELS = [
-    "Person", "Organization", "Location", "Country", "Institution",
-    "Legislative Body", "Policy", "Law", "Regulation", "Directive",
-    "Treaty", "Agreement", "Decision", "Action", "Event",
-    "Date", "Concept", "Topic", "Product", "Technology",
-]
+# Short words that indicate a truncated span when they appear at the end
+_NOISE_LAST_WORDS = frozenset({
+    "pub", "publ", "impl", "spec", "dept",              # truncations
+    "the", "a", "an", "of", "in", "on", "at", "to",    # prepositions / articles
+    "and", "or", "but", "for",
+})
+
+# Single title-cased words that are semantically too generic to be named entities
+_GENERIC_SINGLE_WORDS = frozenset({
+    "digital", "central", "bank", "currency", "monetary", "financial",
+    "economic", "political", "legal", "national", "european", "global",
+    "federal", "regional", "official", "public", "private", "social",
+    "report", "document", "proposal", "reform", "review", "article",
+    "section", "chapter", "point", "paragraph", "clause",
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday",
+    "wikipedia", "source", "reference", "note", "see", "ibid",
+})
+
+
+def _is_quality_span(name: str) -> bool:
+    """Return True if the entity span is likely a real named entity.
+
+    Rejects:
+    - Spans ending with bare digits  (e.g. "report1", "section2")
+    - Single lowercase words         (e.g. "ward", "moderniz")
+    - Single generic English words   (e.g. "Digital", "Central", "Wikipedia")
+    Accepts:
+    - All-caps acronyms of 2+ chars  (e.g. "ECB", "CBDC", "EU")
+    - Any multi-word phrase          (e.g. "digital euro", "central bank")
+    - Single words starting uppercase that are not generic (e.g. "Eurozone", "Bundestag")
+    """
+    if not name or len(name) < 2:
+        return False
+    # All-caps acronym of 2+ chars (EU, UK, ECB, CBDC …)
+    if name.isupper() and len(name) >= 2:
+        return True
+    if len(name) < 3:
+        return False
+    if _TRAILING_DIGIT_RE.search(name):
+        return False
+    words = name.split()
+    if len(words) == 1:
+        if name.isupper():          # acronym
+            return True
+        if name[0].islower():       # bare lowercase word — not a proper entity
+            return False
+        # Single title-cased or mixed-case word: reject if it is a generic term
+        if name.lower() in _GENERIC_SINGLE_WORDS:
+            return False
+    else:
+        # Reject spans ending with a known noise/truncation word
+        if words[-1].lower() in _NOISE_LAST_WORDS:
+            return False
+    return True
 
 
 class InProcessExtractor:
     """In-process GLiNER2 entity + DSPy relation extractor.
 
     Loads GLiNER2 once at construction and reuses it across all extract() calls.
+    All entity types, descriptions, confidence thresholds, and relation types
+    are read from the domain taxonomy (taxonomy.eu-politics.yaml); no labels or
+    type names are hardcoded in this module.
     """
 
     def __init__(self) -> None:
         t0 = time.time()
         import contextlib
 
+        from graphgen.config.taxonomy import get_default_taxonomy
         from graphgen.pipeline.entity_relation.extraction import get_gliner2_model
-        from graphgen.pipeline.entity_relation.ontology import (
-            build_gliner2_schema,
-            build_top_level_label_space,
-            refine_entities_with_ontology,
-            select_candidate_labels,
-        )
 
         with contextlib.redirect_stdout(sys.stderr):
             self._gliner = get_gliner2_model()
 
-        top_labels = build_top_level_label_space(_DEFAULT_LABELS)
-        _children = list(top_labels.get("ontology", {}).get("children", []))
-        if not _children:
-            _children = _DEFAULT_LABELS
-        self._schema = build_gliner2_schema(_children)
-        self._top_labels = top_labels
+        # ── Load taxonomy — single source of truth for all labels ──────────
+        self._taxonomy = get_default_taxonomy()
 
-        # DSPy setup
-        self._dspy_ok = False
-        self._dspy_module = None
-        groq_key = os.environ.get("GROQ_API_KEY", "")
-        if groq_key:
-            try:
-                import dspy
-                from graphgen.pipeline.entity_relation.dspy_module import GraphExtractorModule
-                lm = dspy.LM(
-                    "groq/llama-3.3-70b-versatile",
-                    api_key=groq_key,
-                    max_tokens=1024,
-                )
-                dspy.configure(lm=lm)
-                self._dspy_module = GraphExtractorModule()
-                self._dspy_ok = True
-                log.warning("DSPy configured with Groq LM")
-            except Exception as exc:
-                log.warning("DSPy setup failed, will use co-occurrence fallback: %s", exc)
-        else:
-            log.warning("No GROQ_API_KEY — DSPy relation extraction disabled")
+        # Build the GLiNER2Schema object from taxonomy descriptions + thresholds
+        _base_threshold = 0.35
+        entity_spec: dict[str, dict] = {
+            label.lower(): {
+                "description": grp.description.strip() or label.lower().replace("_", " "),
+                "threshold": max(grp.min_ner_confidence, _base_threshold),
+            }
+            for label, grp in self._taxonomy.entity_groups.items()
+            if grp.description.strip()
+        }
+        self._gliner_schema = self._gliner.create_schema()
+        self._gliner_schema.entities(entity_spec)
 
-        log.warning("GLiNER2 loaded in %.1fs", time.time() - t0)
+        # Add taxonomy relation types to the schema for joint extraction
+        rel_descs: dict[str, str] = {
+            rt: rt.replace("_", " ").lower()
+            for rt in self._taxonomy.relation_types
+        }
+        if rel_descs:
+            self._gliner_schema.relations(rel_descs)
+
+        # child label → canonical top-level group name mapping
+        self._child_to_group: dict[str, str] = {}
+        for group_label, grp in self._taxonomy.entity_groups.items():
+            self._child_to_group[group_label.lower()] = group_label
+            for child in grp.children:
+                self._child_to_group[child.lower()] = group_label
+
+        # Allowed relation type set (for DSPy relation normalisation)
+        self._allowed_relation_set: frozenset[str] = frozenset(
+            rt.upper() for rt in self._taxonomy.relation_types
+        )
+        # List form used as DSPy input hint
+        self._allowed_relation_types: list[str] = list(self._taxonomy.relation_types)
+
+        # ── DSPy setup ─────────────────────────────────────────────────────
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not openrouter_key:
+            raise RuntimeError(
+                "OPENROUTER_API_KEY is not set — DSPy relation extraction requires it"
+            )
+        import dspy
+        from graphgen.pipeline.entity_relation.dspy_module import GraphExtractorModule
+        lm = dspy.LM(
+            "openrouter/google/gemini-2.0-flash-001",
+            api_key=openrouter_key,
+            max_tokens=1024,
+        )
+        dspy.configure(lm=lm)
+        self._dspy_module = GraphExtractorModule()
+        self._dspy_ok = True
+        log.info("DSPy configured with OpenRouter LM")
+
+        log.info("GLiNER2 loaded in %.1fs (taxonomy=%s)", time.time() - t0, self._taxonomy.name)
 
     def extract(self, documents: list[dict], session_id: str = "") -> dict:
         """Run GLiNER2 entity + DSPy relation extraction.
@@ -100,11 +176,6 @@ class InProcessExtractor:
             dict with keys: nodes, edges, lexical_edges, entities, relations
             (same schema as graphgen_worker.py).
         """
-        from graphgen.pipeline.entity_relation.ontology import (
-            refine_entities_with_ontology,
-            select_candidate_labels,
-        )
-
         node_map: dict[str, dict] = {}
         edge_list: list[dict] = []
 
@@ -128,28 +199,65 @@ class InProcessExtractor:
                 if not chunk.strip():
                     continue
                 try:
-                    candidate_labels = select_candidate_labels(chunk, self._top_labels, top_k=40)
-                    raw_result = self._gliner.extract_entities(
-                        chunk, candidate_labels, threshold=0.35
+                    # \u2500\u2500 Schema-guided extraction (taxonomy descriptions + thresholds) \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+                    _base_threshold = 0.35
+                    raw = self._gliner.extract(
+                        chunk, self._gliner_schema, _base_threshold, True, True, True
                     )
-                    raw_dict = raw_result.get("entities", {}) if isinstance(raw_result, dict) else {}
-                    flat_ents = [
-                        {"text": name, "label": label}
-                        for label, names in raw_dict.items()
-                        for name in (names if isinstance(names, list) else [])
-                        if name and name.strip()
-                    ]
-                    refined = refine_entities_with_ontology(flat_ents, self._schema)
+
+                    # Map raw labels \u2192 canonical group names; apply per-group confidence gate
+                    flat_ents: list[dict] = []
+                    for raw_label, spans in (raw.get("entities") or {}).items():
+                        canonical = self._child_to_group.get(raw_label.lower(), raw_label.upper())
+                        min_conf = self._taxonomy.get_min_ner_confidence(canonical)
+                        eff_threshold = max(min_conf, _base_threshold)
+                        for span in spans or []:
+                            conf = float(span.get("confidence", 0.0))
+                            if conf < eff_threshold:
+                                continue
+                            flat_ents.append({
+                                "text": span.get("text", "").strip(),
+                                "label": canonical,
+                                "ontology_label": canonical,
+                                "confidence": conf,
+                            })
+
+                    # GLiNER2 joint relation extraction candidates
+                    gliner_rels: list[dict] = []
+                    for rel_type, triplets in (raw.get("relation_extraction") or {}).items():
+                        for triplet in triplets or []:
+                            head = triplet.get("head") or {}
+                            tail = triplet.get("tail") or {}
+                            src = (head.get("text") or "").strip()
+                            tgt = (tail.get("text") or "").strip()
+                            if not src or not tgt or src == tgt:
+                                continue
+                            rel_conf = min(
+                                float(head.get("confidence", 0.0)),
+                                float(tail.get("confidence", 0.0)),
+                            )
+                            gliner_rels.append({
+                                "source": src,
+                                "relation": rel_type.upper(),
+                                "target": tgt,
+                                "confidence": rel_conf,
+                            })
 
                     log.debug(
-                        "    chunk[%d]  GLiNER2: %d raw → %d refined entities",
-                        chunk_idx + 1, len(flat_ents), len(refined),
+                        "    chunk[%d]  GLiNER2: %d spans (after conf gate)  %d relations",
+                        chunk_idx + 1, len(flat_ents), len(gliner_rels),
                     )
+
+                    # \u2500\u2500 Build chunk entity list with per-entity confidence tracking \u2500\u2500\u2500\u2500\u2500\u2500\u2500
                     chunk_ent_names: list[str] = []
-                    for ent in refined:
-                        label = ent.get("label", "CONCEPT")
+                    chunk_ent_conf: dict[str, float] = {}  # name \u2192 max confidence
+                    for ent in flat_ents:
+                        label = ent.get("label", "ENTITY")
                         name = ent.get("text", "").strip()
+                        conf = ent.get("confidence", 0.0)
                         if not name or len(name) < 3:
+                            continue
+                        if not _is_quality_span(name):
                             continue
                         node_key = f"{label}::{name.lower()}"
                         if node_key not in node_map:
@@ -159,26 +267,52 @@ class InProcessExtractor:
                                 "name": name,
                                 "doc_ids": [],
                                 "count": 0,
+                                "confidence": conf,
                             }
                         node_map[node_key]["count"] += 1
+                        node_map[node_key]["confidence"] = max(
+                            node_map[node_key]["confidence"], conf
+                        )
                         if doc_id and doc_id not in node_map[node_key]["doc_ids"]:
                             node_map[node_key]["doc_ids"].append(doc_id)
-                        chunk_ent_names.append(name)
+                        if name not in chunk_ent_conf or conf > chunk_ent_conf[name]:
+                            chunk_ent_conf[name] = conf
+                        if name not in chunk_ent_names:
+                            chunk_ent_names.append(name)
                         if name not in doc_entities:
                             doc_entities.append(name)
 
-                    # DSPy relation extraction per chunk
+                    # High-confidence entities only: used for CO_OCCURS fallback
+                    # (min 0.5 to avoid pairing low-quality partial spans)
+                    high_conf_ents = [
+                        n for n in chunk_ent_names if chunk_ent_conf.get(n, 0.0) >= 0.5
+                    ]
+
+                    # \u2500\u2500 DSPy relation extraction per chunk \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
                     if self._dspy_ok and self._dspy_module and len(chunk_ent_names) >= 2:
                         try:
                             ontology_classes = list({
-                                ent.get("label", "CONCEPT")
-                                for ent in refined
+                                ent.get("label", "ENTITY")
+                                for ent in flat_ents
                                 if ent.get("text", "").strip()
-                            }) or ["PERSON", "ORGANIZATION", "POLICY", "LOCATION", "EVENT", "CONCEPT"]
+                            }) or list(self._taxonomy.entity_groups.keys())
+                            # Seed DSPy with GLiNER2 joint-extraction candidates +
+                            # a small windowed CO_OCCURS hint from high-confidence entities
+                            candidate_relations = gliner_rels[:20] + [
+                                {
+                                    "source": high_conf_ents[i],
+                                    "relation": "CO_OCCURS",
+                                    "target": high_conf_ents[j],
+                                }
+                                for i in range(len(high_conf_ents))
+                                for j in range(i + 1, min(i + 4, len(high_conf_ents)))
+                            ]
                             result = self._dspy_module(
                                 text=chunk[:1500],
-                                ontology_classes=ontology_classes or ["PERSON", "ORGANIZATION", "POLICY", "CONCEPT"],
+                                ontology_classes=ontology_classes,
                                 entity_hints=chunk_ent_names[:20],
+                                allowed_relation_types=self._allowed_relation_types,
+                                candidate_relations=candidate_relations[:30],
                             )
                             triplets = getattr(result, "triplets", []) or []
                             accepted = 0
@@ -187,10 +321,17 @@ class InProcessExtractor:
                                     continue
                                 if triplet.confidence < 0.4:
                                     continue
+                                relation = (triplet.relation or "RELATED_TO").upper()
+                                if relation not in self._allowed_relation_set:
+                                    log.debug(
+                                        "    normalising unknown relation %r \u2192 RELATED_TO",
+                                        relation,
+                                    )
+                                    relation = "RELATED_TO"
                                 edge_list.append({
                                     "source": triplet.source,
                                     "target": triplet.target,
-                                    "type": triplet.relation or "RELATED_TO",
+                                    "type": relation,
                                     "evidence": (triplet.evidence or "")[:200],
                                     "confidence": round(triplet.confidence, 3),
                                 })
@@ -199,36 +340,16 @@ class InProcessExtractor:
                                 "    chunk[%d]  DSPy: %d/%d triplets accepted",
                                 chunk_idx + 1, accepted, len(triplets),
                             )
-                        except Exception as dspy_exc:
-                            log.warning("DSPy extraction failed for chunk: %s", dspy_exc)
-                            _pairs = 0
-                            for i, a in enumerate(chunk_ent_names):
-                                for b in chunk_ent_names[i + 1:i + 4]:
-                                    edge_list.append({
-                                        "source": a, "target": b,
-                                        "type": "CO_OCCURS", "evidence": "", "confidence": 0.5,
-                                    })
-                                    _pairs += 1
-                            log.debug(
-                                "    chunk[%d]  cooccurrence fallback (DSPy error): %d pairs",
-                                chunk_idx + 1, _pairs,
-                            )
-                    elif len(chunk_ent_names) >= 2:
-                        _pairs = 0
-                        for i, a in enumerate(chunk_ent_names):
-                            for b in chunk_ent_names[i + 1:i + 4]:
-                                edge_list.append({
-                                    "source": a, "target": b,
-                                    "type": "CO_OCCURS", "evidence": "", "confidence": 0.5,
-                                })
-                                _pairs += 1
+                        except Exception:
+                            raise
+                    else:
                         log.debug(
-                            "    chunk[%d]  cooccurrence (no DSPy): %d pairs",
-                            chunk_idx + 1, _pairs,
+                            "    chunk[%d]  too few entities (%d) — skipping DSPy",
+                            chunk_idx + 1, len(chunk_ent_names),
                         )
 
-                except Exception as chunk_exc:
-                    log.warning("Chunk extraction failed: %s", chunk_exc)
+                except Exception:
+                    raise
 
         entity_nodes = [
             {"id": v["id"], "type": v["type"], "name": v["name"],
@@ -236,6 +357,29 @@ class InProcessExtractor:
              "count": v["count"]}
             for v in node_map.values()
         ]
+
+        # Back-fill stub nodes for DSPy-enhanced entities not extracted by GLiNER2.
+        # DSPy may legitimately surface entity names that GLiNER2 missed — keep them.
+        known_names_lower: set[str] = {v["id"].lower() for v in entity_nodes}
+        dspy_stubs = 0
+        for e in edge_list:
+            for name in (e.get("source", ""), e.get("target", "")):
+                name = name.strip()
+                if not name or name.lower() in known_names_lower:
+                    continue
+                if not _is_quality_span(name):
+                    continue
+                entity_nodes.append({
+                    "id": name,
+                    "type": "Entity",
+                    "name": name,
+                    "doc_id": "",
+                    "count": 0,
+                })
+                known_names_lower.add(name.lower())
+                dspy_stubs += 1
+        if dspy_stubs:
+            log.debug("  DSPy back-fill: +%d stub nodes from relation endpoints", dspy_stubs)
 
         seen_edges: set[str] = set()
         deduped_edges: list[dict] = []
@@ -260,10 +404,6 @@ class InProcessExtractor:
         }
 
 
-def load_extractor() -> InProcessExtractor | None:
-    """Load and return an InProcessExtractor, or None on failure."""
-    try:
-        return InProcessExtractor()
-    except Exception as exc:
-        log.warning("GLiNER2 load failed (agent will use subprocess fallback): %s", exc)
-        return None
+def load_extractor() -> InProcessExtractor:
+    """Load and return an InProcessExtractor. Raises on failure."""
+    return InProcessExtractor()

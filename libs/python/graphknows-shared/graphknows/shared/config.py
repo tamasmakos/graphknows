@@ -46,8 +46,7 @@ class BaseServiceSettings(BaseSettings):
         neo4j_database: Neo4j database name.
         pgvector_dsn: PostgreSQL DSN for the pgvector store.
         llm_model: LLM model name for synthesis.
-        llm_provider: LLM provider name (openrouter or groq).
-        groq_api_key: Groq API key (kept for backward compat).
+        llm_provider: LLM provider name (openrouter).
         openrouter_api_key: OpenRouter API key.
         extraction_model: Model used for relation extraction (defaults to llm_model).
         embed_model: HuggingFace sentence-transformer model name.
@@ -66,7 +65,6 @@ class BaseServiceSettings(BaseSettings):
     pgvector_password: str = Field(default="", alias="PGVECTOR_PASSWORD")
     llm_model: str = Field(default="moonshotai/kimi-k2", alias="LLM_MODEL")
     llm_provider: str = Field(default="openrouter", alias="LLM_PROVIDER")
-    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     extraction_model: str = Field(default="moonshotai/kimi-k2", alias="EXTRACTION_MODEL")
     embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="EMBED_MODEL")

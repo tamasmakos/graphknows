@@ -20,7 +20,7 @@ def _make_state(chunks: list | None = None) -> dict:
     return state
 
 
-def _mock_chatgroq():
+def _mock_chatopenai():
     mock_llm = MagicMock()
     mock_response = MagicMock()
     mock_response.content = "# Mock Briefing\n\n**EPRS Intelligence Brief**"
@@ -42,9 +42,9 @@ _SAMPLE_XML = (
 
 
 @pytest.fixture(autouse=True)
-def _patch_chatgroq():
-    with patch("services.agent.graph.nodes.communicate.ChatGroq") as mock_cls:
-        mock_cls.return_value = _mock_chatgroq()
+def _patch_chatopenai():
+    with patch("services.agent.graph.nodes.communicate.ChatOpenAI") as mock_cls:
+        mock_cls.return_value = _mock_chatopenai()
         yield
 
 

@@ -49,6 +49,11 @@ def get_gliner2_model(config: Optional[Dict[str, Any]] = None):
 # --- Helper Functions ---
 
 def get_max_concurrent(config: Dict[str, Any], default: int = 8) -> int:
+    """Get max_concurrent_extractions from config with fallback to default."""
+    extraction_cfg = config.get('extraction', {})
+    if hasattr(extraction_cfg, 'model_dump'):
+        extraction_cfg = extraction_cfg.model_dump()
+    return extraction_cfg.get('max_concurrent_chunks', default)
 
 async def extract_relations_with_llm_async(
     text: str,

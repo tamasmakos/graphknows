@@ -34,10 +34,10 @@ def _install_langgraph_agent_import_stubs() -> None:
     prebuilt_module.ToolNode = type("ToolNode", (), {})
     sys.modules["langgraph.prebuilt"] = prebuilt_module
 
-    if "langchain_groq" not in sys.modules:
-        groq_module = types.ModuleType("langchain_groq")
-        groq_module.ChatGroq = type("ChatGroq", (), {})
-        sys.modules["langchain_groq"] = groq_module
+    if "langchain_openai" not in sys.modules:
+        openai_module = types.ModuleType("langchain_openai")
+        openai_module.ChatOpenAI = type("ChatOpenAI", (), {})
+        sys.modules["langchain_openai"] = openai_module
 
     if "langchain_core.messages" not in sys.modules:
         messages_module = types.ModuleType("langchain_core.messages")
@@ -55,7 +55,7 @@ def _load_langgraph_agent_module():
     for key in (
         "langgraph.prebuilt",
         "langchain_core.tools",
-        "langchain_groq",
+        "langchain_openai",
         "langchain_core.messages",
     ):
         sys.modules.pop(key, None)
@@ -65,7 +65,7 @@ def _load_langgraph_agent_module():
     return importlib.import_module("services.agent.langgraph_agent")
 
 
-class _FakeChatGroq:
+class _FakeChatOpenAI:
     def __init__(self, *args, **kwargs):
         pass
 
@@ -114,7 +114,7 @@ class _FakeSearchServiceClient:
 
 def _build_search_eu_tool(agent_module):
     _FakeToolNode.last_tools = []
-    agent_module.ChatGroq = _FakeChatGroq
+    agent_module.ChatOpenAI = _FakeChatOpenAI
     agent_module.StateGraph = _FakeStateGraph
     agent_module.END = object()
     with unittest.mock.patch.object(agent_module, "ToolNode", _FakeToolNode):

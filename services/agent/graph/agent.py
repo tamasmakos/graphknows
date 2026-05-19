@@ -22,7 +22,7 @@ from typing import Annotated, Any, Callable, Awaitable, TypedDict
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage  # noqa: F401
 from langchain_core.tools import tool
 
@@ -443,8 +443,6 @@ async def _run_graphgen(
     lexical = _build_lexical_graph(documents)
 
     try:
-        from services.agent.tools.extraction.in_process import InProcessExtractor
-        extractor = InProcessExtractor()
         docs_input = [
             {
                 "id": d.get("id", d.get("url", "")[:60]),
@@ -454,10 +452,20 @@ async def _run_graphgen(
             }
             for d in documents[:10]
         ]
-        result = await asyncio.to_thread(extractor.extract, docs_input, session_id)
+
+        def _extract_in_thread() -> dict:
+            # Give this thread a fresh event loop so DSPy's internal
+            # run_until_complete() doesn't collide with the running asyncio loop.
+            import asyncio as _asyncio
+            _asyncio.set_event_loop(_asyncio.new_event_loop())
+            from services.agent.tools.extraction.in_process import InProcessExtractor
+            _extractor = InProcessExtractor()
+            return _extractor.extract(docs_input, session_id)
+
+        result = await asyncio.to_thread(_extract_in_thread)
     except Exception as exc:
-        log.warning("In-process extraction failed, using keyword fallback: %s", exc)
-        return await _keyword_fallback_graphgen(documents, session_id, broadcaster, lexical)
+        log.error("In-process extraction failed for session=%s: %s", session_id, exc)
+        raise
 
     nodes = result.get("entities", [])[:300]
     edges = result.get("relations", [])[:600]
@@ -480,6 +488,7 @@ async def _run_graphgen(
             await persist_graph(session_id, normalized_nodes, normalized_edges)
         except Exception:
             log.exception("Graph persistence callback failed for %s", session_id)
+            raise
 
     try:
         await broadcaster(session_id, {
@@ -495,52 +504,11 @@ async def _run_graphgen(
     return nodes, edges, summary
 
 
-async def _keyword_fallback_graphgen(
-    documents: list[dict],
-    session_id: str,
-    broadcaster: Callable[[str, dict], Awaitable[None]],
-    lexical: dict,
-) -> tuple[list[dict], list[dict], str]:
-    """Co-occurrence keyword graph as final fallback when GLiNER2 fails."""
-    nodes: list[dict] = []
-    edges: list[dict] = []
-    seen: set[str] = set()
-
-    for doc in documents[:12]:
-        text = str(doc.get("text", "") or doc.get("title", ""))[:2000]
-        title_terms = re.findall(r'\b[A-Z][a-zA-Z]+\b', doc.get("title", ""))
-        proper_terms = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
-        acronyms = re.findall(r'\b[A-Z]{2,6}\b', text)
-        unique = list(dict.fromkeys(
-            t for t in (title_terms + proper_terms + acronyms)
-            if t.lower() not in _STOPWORDS and len(t) > 2
-        ))[:15]
-        for term in unique:
-            if term not in seen:
-                nodes.append({"id": term, "type": "CONCEPT", "name": term})
-                seen.add(term)
-        for i, a in enumerate(unique):
-            for b in unique[i + 1: i + 4]:
-                edges.append({"source": a, "target": b, "type": "CO_OCCURS"})
-
-    try:
-        await broadcaster(session_id, {
-            "type": "graph_update",
-            "graph": {"nodes": nodes, "edges": edges},
-            "lexical": lexical,
-            "partial": False,
-        })
-    except Exception:
-        pass
-
-    return nodes, edges, f"Graph built: {len(nodes)} nodes, {len(edges)} edges (keyword fallback)"
-
-
 # ── LangGraph agent factory ──────────────────────────────────────────────────
 def build_graph(
     ws_broadcaster: Callable[[str, dict], Awaitable[None]] | None,
     session_id: str,
-    groq_api_key: str,
+    openrouter_api_key: str,
     persist_graph: Callable[[str, list[dict], list[dict]], Awaitable[None]] | None = None,
 ):
     """Build and return a compiled LangGraph agent graph."""
@@ -732,12 +700,16 @@ def build_graph(
             return "No documents collected yet — run search_eu or search_web first."
 
         log.debug("graphgen  session=%s  docs_accumulated=%d", session_id_arg or session_id, len(docs))
-        nodes, edges, summary = await _run_graphgen(
-            docs,
-            session_id_arg or session_id,
-            broadcaster,
-            persist_graph,
-        )
+        try:
+            nodes, edges, summary = await _run_graphgen(
+                docs,
+                session_id_arg or session_id,
+                broadcaster,
+                persist_graph,
+            )
+        except Exception:
+            log.error("graphgen extraction failed for session=%s", session_id_arg or session_id, exc_info=True)
+            raise
 
         # Return entity list so LLM can reason from it
         entities = _session_entities.get(session_id_arg or session_id, [])
@@ -963,9 +935,10 @@ REPORT FORMAT:
     # ── Build graph ──────────────────────────────────────────────────────────
     tools_list = [search_web, search_eu, search_archives, graphgen, hybridrag]
 
-    llm_base = ChatGroq(
-        api_key=groq_api_key,
-        model="llama-3.3-70b-versatile",
+    llm_base = ChatOpenAI(
+        api_key=openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-chat",
         temperature=0.1,
         streaming=True,
     )
@@ -994,19 +967,57 @@ REPORT FORMAT:
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
         tool_msgs = [m for m in messages if getattr(m, "type", None) == "tool"]
-        force = len(tool_msgs) == 0
+        called_tool_names = {getattr(m, "name", None) for m in tool_msgs}
+        # Force tool calls until the mandatory pipeline (graphgen → hybridrag) is complete.
+        # Safety cap at 12 tool rounds to prevent infinite loops.
+        required_done = called_tool_names >= {"graphgen", "hybridrag"}
+        force = not required_done and len(tool_msgs) < 12
+
+        # If the LLM just produced text without tool calls but required steps
+        # aren't done yet, inject a protocol reminder before the next call so
+        # the model knows exactly which tool to call.
+        last_msg = messages[-1] if messages else None
+        last_is_ai_no_tools = (
+            last_msg is not None
+            and getattr(last_msg, "type", None) == "ai"
+            and not getattr(last_msg, "tool_calls", None)
+        )
+        if force and last_is_ai_no_tools and tool_msgs:
+            missing = sorted({"graphgen", "hybridrag"} - called_tool_names)
+            messages = list(messages) + [
+                HumanMessage(
+                    content=(
+                        f"PROTOCOL REMINDER: Required steps not yet completed. "
+                        f"You MUST call the following tool(s) now before writing the report: "
+                        f"{', '.join(missing)}. Do NOT write the report yet."
+                    )
+                )
+            ]
+
         active_llm = llm_force_tools if force else llm_with_tools
         response = await active_llm.ainvoke(messages)
         return {"messages": [response]}
 
     def should_continue(state):  # no type hints — Python 3.13 get_type_hints compat
         last = state["messages"][-1]
-        return "tools" if (hasattr(last, "tool_calls") and last.tool_calls) else END
+        if hasattr(last, "tool_calls") and last.tool_calls:
+            return "tools"
+        # Required pipeline (graphgen → hybridrag) not yet complete → loop back
+        # to agent so the injected reminder + force-tools can take effect.
+        all_msgs = state["messages"]
+        tool_msgs_s = [m for m in all_msgs if getattr(m, "type", None) == "tool"]
+        if len(tool_msgs_s) < 12:
+            called = {getattr(m, "name", None) for m in tool_msgs_s}
+            if not (called >= {"graphgen", "hybridrag"}):
+                return "agent"
+        return END
 
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tool_node)
     graph.set_entry_point("agent")
-    graph.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
+    graph.add_conditional_edges(
+        "agent", should_continue, {"tools": "tools", "agent": "agent", END: END}
+    )
     graph.add_edge("tools", "agent")
     return graph.compile()

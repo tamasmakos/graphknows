@@ -30,11 +30,11 @@ class OntologyRelExtractor:
             )
             if lm is not None:
                 dspy.settings.configure(lm=lm)
-            elif os.environ.get("GROQ_API_KEY"):
+            elif os.environ.get("OPENROUTER_API_KEY"):
                 import dspy as _dspy
                 _lm = _dspy.LM(
-                    model="groq/llama-3.1-8b-instant",
-                    api_key=os.environ["GROQ_API_KEY"],
+                    model="openrouter/moonshotai/kimi-k2",
+                    api_key=os.environ["OPENROUTER_API_KEY"],
                     temperature=0.1,
                     max_tokens=1024,
                 )

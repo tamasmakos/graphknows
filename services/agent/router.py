@@ -770,7 +770,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
         graph = build_graph(
             ws_broadcaster=None,
             session_id=session_id,
-            groq_api_key=settings.groq_api_key,
+            openrouter_api_key=settings.openrouter_api_key,
             persist_graph=persist_graph,
         )
 
