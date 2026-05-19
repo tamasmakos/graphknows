@@ -154,3 +154,27 @@ jobs:
           # (services.agent.*, services.graphgen.*, graphknows.shared.*) that
           # require a full multi-service environment not available in CI.
           # Track in: https://github.com/tamasmakos/graphknows/issues (TODO)
+
+  # ── 5. SonarQube Cloud — quality gate (blocks merge on violations) ─────────
+  sonar:
+    name: SonarQube analysis
+    needs: [lint, test]        # only analyse code that already passes lint + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ !cancelled() && needs.lint.result == 'success' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # full history required for blame / new-code detection
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarQube Quality Gate check
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
