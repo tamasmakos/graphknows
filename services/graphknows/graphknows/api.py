@@ -26,13 +26,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from graphknows.config import GraphKnowsSettings
 from graphknows.mcp.server import _jobs, mcp, set_dependencies
 from graphknows.retrieval.retriever import HybridRetriever
 from graphknows.stores.memgraph import MemgraphStore
 from graphknows.stores.neo4j import Neo4jStore
 from graphknows.stores.pgvector import PgVectorStore
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pythonjsonlogger import jsonlogger
 
 # ---------------------------------------------------------------------------
@@ -50,32 +50,7 @@ logger = logging.getLogger("graphknows.api")
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-
-
-class GraphKnowsSettings(BaseSettings):
-    """Runtime configuration for the graphknows service."""
-
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    graphknows_env: str = "development"
-    graphknows_port: int = 8025
-
-    # Databases
-    neo4j_uri: str = "bolt://neo4j:7687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: str = "neo4jpassword"
-    neo4j_database: str = "neo4j"
-
-    pgvector_dsn: str = "postgresql://graphuser:graphpass@pgvector:5432/graphdb"
-
-    memgraph_uri: str = "bolt://memgraph:7687"
-
-    # Embedding model
-    embed_model: str = "BAAI/bge-small-en-v1.5"
-
-    # Session TTL (minutes of inactivity before auto-merge)
-    session_ttl_minutes: int = Field(default=60, alias="SESSION_TTL_MINUTES")
-
+# GraphKnowsSettings is now in graphknows/config.py — imported above.
 
 # In-memory job store now lives in mcp/server.py (_jobs) and is imported above.
 # This keeps MCP ingest tool and REST ingest endpoint on the same shared store.
