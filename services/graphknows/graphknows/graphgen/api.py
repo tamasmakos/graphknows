@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 # python-dotenv override=False means process env always wins over .env values.
 try:
     from dotenv import load_dotenv
+
     _env_path = Path(__file__).parents[2] / ".env"  # services/graphknows/../../.env
     if not _env_path.exists():
         _env_path = Path("/root/graphknows/.env")
@@ -52,11 +53,10 @@ log = logging.getLogger(__name__)
 def _configure_logging() -> None:
     """Configure root logger for structured JSON output."""
     handler = logging.StreamHandler()
-    handler.setFormatter(
-        jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
-    )
+    handler.setFormatter(jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
     logging.root.handlers = [handler]
     logging.root.setLevel(logging.INFO)
+
 
 try:
     from graphknows.graphgen.orchestrator import run_pipeline

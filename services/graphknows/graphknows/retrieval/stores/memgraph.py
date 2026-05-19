@@ -3,6 +3,7 @@
 Used as an alternative to Neo4j for live session entity storage.
 Memgraph uses the Bolt protocol with no authentication.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +26,7 @@ class MemgraphStore:
         self._driver = GraphDatabase.driver(uri, auth=None)
 
     def close(self) -> None:
+        """Close the Bolt driver connection."""
         self._driver.close()
 
     async def ensure_indexes(self) -> None:
@@ -99,10 +101,12 @@ class MemgraphStore:
 
         def _sync() -> list[dict[str, Any]]:
             with self._driver.session() as s:
-                rows = list(s.run(
-                    "MATCH (n:Entity {session_id: $sid}) RETURN properties(n) AS props",
-                    sid=session_id,
-                ))
+                rows = list(
+                    s.run(
+                        "MATCH (n:Entity {session_id: $sid}) RETURN properties(n) AS props",
+                        sid=session_id,
+                    )
+                )
             return [dict(r["props"]) for r in rows]
 
         return await asyncio.to_thread(_sync)
@@ -112,11 +116,13 @@ class MemgraphStore:
 
         def _sync() -> list[dict[str, Any]]:
             with self._driver.session() as s:
-                rows = list(s.run(
-                    """MATCH (a:Entity {session_id:$sid})-[r:RELATES]->(b:Entity {session_id:$sid})
+                rows = list(
+                    s.run(
+                        """MATCH (a:Entity {session_id:$sid})-[r:RELATES]->(b:Entity {session_id:$sid})
                        RETURN a.name AS from, b.name AS to, r.type AS rel_type""",
-                    sid=session_id,
-                ))
+                        sid=session_id,
+                    )
+                )
             return [{"from": r["from"], "to": r["to"], "rel_type": r["rel_type"]} for r in rows]
 
         return await asyncio.to_thread(_sync)
@@ -147,10 +153,12 @@ class MemgraphStore:
 
         def _sync() -> int:
             with self._driver.session() as s:
-                rows = list(s.run(
-                    "MATCH (n:Entity {session_id:$sid}) RETURN count(n) AS c",
-                    sid=session_id,
-                ))
+                rows = list(
+                    s.run(
+                        "MATCH (n:Entity {session_id:$sid}) RETURN count(n) AS c",
+                        sid=session_id,
+                    )
+                )
             return int(rows[0]["c"]) if rows else 0
 
         return await asyncio.to_thread(_sync)

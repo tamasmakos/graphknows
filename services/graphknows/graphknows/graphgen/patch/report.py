@@ -29,12 +29,8 @@ def format_patch_report(summary: dict) -> str:
         if not isinstance(distribution, dict):
             distribution = {}
 
-        lines.append(
-            f"- {phase_name}: {action_label}={updated}, before={before}, after={after}"
-        )
-        lines.append(
-            f"  ontology_class distribution: {_format_distribution(distribution)}"
-        )
+        lines.append(f"- {phase_name}: {action_label}={updated}, before={before}, after={after}")
+        lines.append(f"  ontology_class distribution: {_format_distribution(distribution)}")
 
     totals = summary.get("totals", {})
     lines.append(

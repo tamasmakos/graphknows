@@ -8,13 +8,13 @@ Example:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIM: int = 384
 
 
-class EntityLabel(str, Enum):
+class EntityLabel(StrEnum):
     """LKIF-derived entity labels used across all pipeline stages."""
 
     PERSON = "Person"

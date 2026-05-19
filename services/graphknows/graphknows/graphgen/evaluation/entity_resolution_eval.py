@@ -29,14 +29,12 @@ def _top_degree_nodes(graph: nx.DiGraph, limit: int = 5) -> List[Dict[str, Any]]
     ]
 
 
-
 def summarize_entity_resolution_effects(before: nx.DiGraph, after: nx.DiGraph) -> Dict[str, Any]:
     before_nodes = _entity_nodes(before)
     after_nodes = _entity_nodes(after)
 
     class_counts = Counter(
-        classify_surface_form(after.nodes[node_id].get("name", node_id))
-        for node_id in after_nodes
+        classify_surface_form(after.nodes[node_id].get("name", node_id)) for node_id in after_nodes
     )
 
     return {

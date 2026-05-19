@@ -12,6 +12,6 @@ from .rag import (
 )
 
 __all__ = [
-    'generate_rag_embeddings',
-    'get_embedding_dimension',
+    "generate_rag_embeddings",
+    "get_embedding_dimension",
 ]

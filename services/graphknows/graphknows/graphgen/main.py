@@ -46,27 +46,33 @@ load_dotenv(ENV_FILE)
 async def run_pipeline() -> None:
     configure_logging()
     try:
-        settings = PipelineSettings.load(env_file=ENV_FILE) # loads from config.yaml and resolved .env
+        settings = PipelineSettings.load(
+            env_file=ENV_FILE
+        )  # loads from config.yaml and resolved .env
         configure_logging(debug=settings.debug)
 
         logger.info("Initializing GraphGen Pipeline...")
-        
-        logger.info(f"Configuration loaded. Input: {settings.infra.input_dir}, Output: {settings.infra.output_dir}")
-        
+
+        logger.info(
+            f"Configuration loaded. Input: {settings.infra.input_dir}, Output: {settings.infra.output_dir}"
+        )
+
         from graphknows.graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
+
         logger.info("Initializing Neo4j Backend...")
         uploader = Neo4jGraphUploader(
             host=settings.infra.neo4j_host,
             port=settings.infra.neo4j_port,
             username=settings.infra.neo4j_user,
             password=settings.infra.neo4j_password,
-            database="neo4j"
+            database="neo4j",
         )
-            
+
         # Initialize Extractor
         from graphknows.graphgen.pipeline.entity_relation.extractors import get_extractor
+
         extractor = get_extractor(settings.model_dump())
-        
+
         # Active runtime always uses the single-run knowledge pipeline.
         # Iterative experimentation, if retained in the repo for historical or
         # auxiliary use, is no longer part of the main execution path.
@@ -74,14 +80,16 @@ async def run_pipeline() -> None:
 
         # Run
         await pipeline.run()
-        
+
     except Exception as e:
         logger.critical(f"Pipeline failed: {e}", exc_info=True)
         sys.exit(1)
 
+
 def main() -> None:
     """Entry point for the console script."""
     asyncio.run(run_pipeline())
+
 
 if __name__ == "__main__":
     main()

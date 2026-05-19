@@ -19,34 +19,36 @@ SILHOUETTE_MAX_CLUSTERS_RATIO: float = 0.5  # k <= n * ratio
 
 try:
     from sklearn.metrics import silhouette_score, silhouette_samples
+
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
     logger.warning("scikit-learn not available. Silhouette analysis will be skipped.")
 
+
 def compute_global_separation(embeddings: Dict[str, np.ndarray]) -> Tuple[float, float]:
     """
     Compute average pairwise cosine distance and similarity between all embeddings.
-    
+
     Returns:
         Tuple[float, float]: (average_distance, average_similarity)
     """
     if len(embeddings) < 2:
         return 0.0, 0.0
-    
+
     try:
         X = np.array(list(embeddings.values()))
         # Normalize
         norms = np.linalg.norm(X, axis=1, keepdims=True)
         norms[norms == 0] = 1
         X_norm = X / norms
-        
+
         # Cosine Similarity Matrix
         sim_matrix = np.dot(X_norm, X_norm.T)
-        
+
         # Cosine Distance = 1 - Similarity
         dist_matrix = 1.0 - sim_matrix
-        
+
         # Average of upper triangle (excluding diagonal)
         n = X.shape[0]
         tri_indices = np.triu_indices(n, k=1)
@@ -59,13 +61,13 @@ def compute_global_separation(embeddings: Dict[str, np.ndarray]) -> Tuple[float,
         logger.error(f"Global separation calculation failed: {e}")
         return 0.0, 0.0
 
+
 def run_silhouette_analysis(
-    embeddings: Dict[str, np.ndarray],
-    labels: Dict[str, int]
+    embeddings: Dict[str, np.ndarray], labels: Dict[str, int]
 ) -> Tuple[Optional[float], Optional[Dict[int, float]]]:
     """
     Run silhouette analysis on embeddings.
-    
+
     Silhouette score measures how similar an object is to its own cluster
     compared to other clusters. Score ranges from -1 to 1.
     """
@@ -96,27 +98,25 @@ def run_silhouette_analysis(
         return None, None
 
     if n_samples < SILHOUETTE_MIN_SAMPLES or n_clusters >= n_samples:
-        logger.warning(
-            "Silhouette undefined: n_samples=%d, n_clusters=%d",
-            n_samples, n_clusters
-        )
+        logger.warning("Silhouette undefined: n_samples=%d, n_clusters=%d", n_samples, n_clusters)
         return None, None
-        
+
     # Interpretability guardrail
     max_allowed_clusters = max(1, int(n_samples * SILHOUETTE_MAX_CLUSTERS_RATIO))
     if n_clusters > max_allowed_clusters:
         logger.warning(
             "Silhouette likely meaningless: too many clusters (%d) relative to samples (%d)",
-            n_clusters, n_samples
+            n_clusters,
+            n_samples,
         )
         return None, None
 
     try:
         # Use cosine metric
-        overall = silhouette_score(X, y, metric='cosine')
+        overall = silhouette_score(X, y, metric="cosine")
 
         # Per-sample scores for per-cluster analysis
-        sample_scores = silhouette_samples(X, y, metric='cosine')
+        sample_scores = silhouette_samples(X, y, metric="cosine")
 
         per_cluster = {}
         for label in unique_labels:

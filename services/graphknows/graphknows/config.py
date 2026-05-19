@@ -109,7 +109,7 @@ class GraphKnowsSettings(BaseSettings):
     extraction_model: str = Field(default="moonshotai/kimi-k2", alias="EXTRACTION_MODEL")
 
     @model_validator(mode="after")
-    def _populate_from_repo_env(self) -> "GraphKnowsSettings":
+    def _populate_from_repo_env(self) -> GraphKnowsSettings:
         """Back-fill credentials from the repo-level .env when defaults are in use."""
         env = _load_repo_env()
 
@@ -128,8 +128,8 @@ class GraphKnowsSettings(BaseSettings):
             self.pgvector_dsn = f"postgresql://{user}:{password}@{host}:{port}/{db}"
 
         if not self.openrouter_api_key:
-            self.openrouter_api_key = (
-                env.get("OPENROUTER_API_KEY") or env.get("OPEN_ROUTER_API", "")
+            self.openrouter_api_key = env.get("OPENROUTER_API_KEY") or env.get(
+                "OPEN_ROUTER_API", ""
             )
 
         return self

@@ -3,12 +3,13 @@
 All sync Neo4j calls are wrapped in asyncio.to_thread for non-blocking operation.
 Idempotent upserts use UUID5 deterministic IDs keyed on (doc_id, chunk_hash).
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class Neo4jStore:
         return await asyncio.to_thread(self._run, cypher, **params)
 
     def close(self) -> None:
+        """Close the Neo4j Bolt driver connection."""
         self._driver.close()
 
     # ------------------------------------------------------------------
@@ -99,8 +101,7 @@ class Neo4jStore:
         def _sync() -> None:
             for c in chunks:
                 self._run(
-                    "MERGE (ch:Chunk {id:$id}) "
-                    "SET ch.doc_id=$doc_id, ch.text=$text",
+                    "MERGE (ch:Chunk {id:$id}) SET ch.doc_id=$doc_id, ch.text=$text",
                     id=c["id"],
                     doc_id=c.get("doc_id", ""),
                     text=(c.get("text") or "")[:3000],
@@ -128,8 +129,7 @@ class Neo4jStore:
                     )
                     eid = entity_node_id(name)
                     self._run(
-                        "MERGE (e:Entity {id:$eid}) "
-                        "SET e.name=$name, e.label=$label",
+                        "MERGE (e:Entity {id:$eid}) SET e.name=$name, e.label=$label",
                         eid=eid,
                         name=name,
                         label=label,
@@ -231,9 +231,7 @@ class Neo4jStore:
 
         await asyncio.to_thread(_sync)
 
-    async def seed_session_from_corpus(
-        self, session_id: str, entity_names: list[str]
-    ) -> int:
+    async def seed_session_from_corpus(self, session_id: str, entity_names: list[str]) -> int:
         """Copy named Entity nodes from corpus into session namespace."""
 
         def _sync() -> int:
@@ -272,7 +270,7 @@ class Neo4jStore:
         Records temporal provenance on each merged Entity node:
         ``ingested_at``, ``contributing_session_id``, ``merged_session_count``.
         """
-        ingested_at = datetime.now(timezone.utc).isoformat()
+        ingested_at = datetime.now(UTC).isoformat()
 
         def _sync() -> tuple[int, int]:
             merged_nodes = 0
@@ -400,8 +398,7 @@ class Neo4jStore:
         safe_types: list[str] = []
         if relationship_types:
             safe_types = [
-                t for t in relationship_types
-                if t and all(c.isalnum() or c == "_" for c in t)
+                t for t in relationship_types if t and all(c.isalnum() or c == "_" for c in t)
             ]
 
         # Build the relationship pattern (safe: types validated above)
@@ -437,9 +434,7 @@ class Neo4jStore:
             "neighbors": nodes,
         }
 
-    async def get_chunks_for_entity(
-        self, entity_name: str, top_k: int = 5
-    ) -> list[dict[str, Any]]:
+    async def get_chunks_for_entity(self, entity_name: str, top_k: int = 5) -> list[dict[str, Any]]:
         """Return Chunk nodes linked to *entity_name* via MENTIONS edges."""
         name_upper = entity_name.strip().upper()
         rows = await self._arun(
@@ -451,9 +446,7 @@ class Neo4jStore:
         )
         return [dict(r) for r in rows]
 
-    async def get_entity_community(
-        self, entity_name: str
-    ) -> dict[str, Any] | None:
+    async def get_entity_community(self, entity_name: str) -> dict[str, Any] | None:
         """Return the Topic node linked to *entity_name* via IN_COMMUNITY edge."""
         name_upper = entity_name.strip().upper()
         eid = entity_node_id(name_upper)
@@ -526,4 +519,3 @@ class Neo4jStore:
             limit=limit,
         )
         return [dict(r) for r in rows]
-

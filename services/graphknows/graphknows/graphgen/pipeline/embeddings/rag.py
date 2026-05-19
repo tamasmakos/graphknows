@@ -1,4 +1,3 @@
-
 import logging
 
 import networkx as nx
@@ -30,19 +29,14 @@ def generate_rag_embeddings(graph: nx.DiGraph) -> None:
 
     target_types = {"CHUNK", "TextChunk", "Document", "TOPIC"}
     nodes_to_embed: list[tuple[str, dict]] = [
-        (nid, data)
-        for nid, data in graph.nodes(data=True)
-        if data.get("node_type") in target_types
+        (nid, data) for nid, data in graph.nodes(data=True) if data.get("node_type") in target_types
     ]
 
     if not nodes_to_embed:
         logger.info("No embeddable nodes found.")
         return
 
-    texts = [
-        data.get("text") or data.get("label") or str(nid)
-        for nid, data in nodes_to_embed
-    ]
+    texts = [data.get("text") or data.get("label") or str(nid) for nid, data in nodes_to_embed]
 
     embeddings = embed(texts)
 

@@ -16,33 +16,33 @@ GET  /segments                       — list SEGMENT provenance nodes
 GET  /segments/{segment_id}          — provenance + stats for one SEGMENT node
 MCP  /mcp/                           — FastMCP tool endpoint (retrieve, community_summary)
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from pythonjsonlogger import jsonlogger
+
 from graphknows.config import GraphKnowsSettings
 from graphknows.mcp.server import _jobs, mcp, set_dependencies
 from graphknows.retrieval.retriever import HybridRetriever
 from graphknows.retrieval.stores.memgraph import MemgraphStore
 from graphknows.retrieval.stores.neo4j import Neo4jStore
 from graphknows.retrieval.stores.pgvector import PgVectorStore
-from pydantic import BaseModel, Field
-from pythonjsonlogger import jsonlogger
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
 _handler = logging.StreamHandler()
-_handler.setFormatter(
-    jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
-)
+_handler.setFormatter(jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
 logging.root.handlers = [_handler]
 logging.root.setLevel(logging.INFO)
 logger = logging.getLogger("graphknows.api")
@@ -73,7 +73,7 @@ async def _session_ttl_loop() -> None:
         if _settings is None or _neo is None or _memgraph is None or _pg is None:
             continue
         ttl = timedelta(minutes=_settings.session_ttl_minutes)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired = [sid for sid, ts in list(_session_last_active.items()) if now - ts > ttl]
         for session_id in expired:
             logger.info("Auto-merging idle session %s (TTL exceeded)", session_id)
@@ -180,7 +180,9 @@ app.mount("/mcp", mcp.streamable_http_app())
 class DocumentIn(BaseModel):
     """A document to ingest."""
 
-    id: str | None = Field(default=None, description="Optional document ID (auto-generated if omitted)")
+    id: str | None = Field(
+        default=None, description="Optional document ID (auto-generated if omitted)"
+    )
     text: str = Field(..., description="Document body text")
     title: str | None = Field(default=None, description="Optional document title")
     source: str | None = Field(default=None, description="Optional source URL or label")
@@ -195,6 +197,8 @@ class IngestRequest(BaseModel):
 
 
 class IngestResponse(BaseModel):
+    """Response returned when an ingestion job is queued."""
+
     run_id: str
     status: str
     queued_at: str
@@ -221,11 +225,15 @@ class SessionCreateRequest(BaseModel):
 
 
 class SessionCreateResponse(BaseModel):
+    """Response returned when a session is created."""
+
     session_id: str
     seeded: int
 
 
 class SessionDeleteResponse(BaseModel):
+    """Response returned when a session is deleted and its graph merged."""
+
     session_id: str
     merged_nodes: int
     merged_edges: int
@@ -254,6 +262,7 @@ class PatchRequest(BaseModel):
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    """Return service health status."""
     return {"status": "ok", "service": "graphknows"}
 
 
@@ -263,7 +272,7 @@ async def health() -> dict[str, str]:
 async def _run_ingest_task(run_id: str, req: IngestRequest) -> None:
     """Background task: run graphgen pipeline and update job store."""
     _jobs[run_id]["status"] = "running"
-    _jobs[run_id]["started_at"] = datetime.now(timezone.utc).isoformat()
+    _jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
     try:
         from graphknows.graphgen import run_ingestion
 
@@ -275,20 +284,20 @@ async def _run_ingest_task(run_id: str, req: IngestRequest) -> None:
         )
         _jobs[run_id]["status"] = "completed"
         _jobs[run_id]["stats"] = stats
-        _jobs[run_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _jobs[run_id]["finished_at"] = datetime.now(UTC).isoformat()
         logger.info("Ingest job %s completed", run_id)
     except Exception as exc:
         logger.exception("Ingest job %s failed: %s", run_id, exc)
         _jobs[run_id]["status"] = "failed"
         _jobs[run_id]["error"] = str(exc)
-        _jobs[run_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _jobs[run_id]["finished_at"] = datetime.now(UTC).isoformat()
 
 
 @app.post("/ingest", response_model=IngestResponse, status_code=202)
 async def ingest(req: IngestRequest) -> IngestResponse:
     """Enqueue a graphgen KnowledgePipeline run (non-blocking)."""
     run_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
     _jobs[run_id] = {"status": "queued", "queued_at": queued_at}
     asyncio.create_task(_run_ingest_task(run_id, req))
     return IngestResponse(run_id=run_id, status="queued", queued_at=queued_at)
@@ -360,9 +369,7 @@ async def delete_session(session_id: str) -> SessionDeleteResponse:
         _pg.delete_session(session_id),
     )
 
-    logger.info(
-        "Session %s merged: nodes=%d edges=%d", session_id, merged_nodes, merged_edges
-    )
+    logger.info("Session %s merged: nodes=%d edges=%d", session_id, merged_nodes, merged_edges)
     return SessionDeleteResponse(
         session_id=session_id,
         merged_nodes=merged_nodes,
@@ -425,6 +432,7 @@ def _load_patch_taxonomy(taxonomy_file: str | None):
     """Load taxonomy for a patch request; returns None on failure."""
     try:
         from graphknows.graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
+
         return load_taxonomy(taxonomy_file) if taxonomy_file else get_default_taxonomy()
     except Exception as exc:
         logger.warning("Could not load patch taxonomy: %s", exc)
@@ -439,6 +447,7 @@ async def run_patch(req: PatchRequest) -> dict[str, Any]:
     taxonomy = _load_patch_taxonomy(req.taxonomy_file)
     try:
         from graphknows.graphgen.patch.runner import run_patch as _run_patch
+
         result = await asyncio.to_thread(
             _run_patch,
             neo4j_uri=_settings.neo4j_uri,
@@ -597,13 +606,14 @@ async def search(req: SearchRequest) -> dict[str, Any]:
     mode = req.search_type.upper()
     try:
         if mode == "SEMANTIC":
-            ctx = await _retriever.retrieve_semantic(
-                req.query, req.session_id, k=req.k_semantic
-            )
+            ctx = await _retriever.retrieve_semantic(req.query, req.session_id, k=req.k_semantic)
         elif mode == "GRAPH_TRAVERSAL":
             ctx = await _retriever.retrieve_graph_traversal(
-                req.query, req.session_id,
-                k_entity=req.k_entity, depth=2, k_final=req.k_final,
+                req.query,
+                req.session_id,
+                k_entity=req.k_entity,
+                depth=2,
+                k_final=req.k_final,
             )
         elif mode == "SUMMARIES":
             ctx = await _retriever.retrieve_summaries(
@@ -611,13 +621,19 @@ async def search(req: SearchRequest) -> dict[str, Any]:
             )
         elif mode == "FEELING_LUCKY":
             ctx = await _retriever.retrieve_feeling_lucky(
-                req.query, req.session_id,
-                k_entity=req.k_entity, k_semantic=req.k_semantic, k_final=req.k_final,
+                req.query,
+                req.session_id,
+                k_entity=req.k_entity,
+                k_semantic=req.k_semantic,
+                k_final=req.k_final,
             )
         elif mode == "HYBRID":
             ctx = await _retriever.retrieve(
-                req.query, req.session_id,
-                k_entity=req.k_entity, k_semantic=req.k_semantic, k_final=req.k_final,
+                req.query,
+                req.session_id,
+                k_entity=req.k_entity,
+                k_semantic=req.k_semantic,
+                k_final=req.k_final,
             )
         else:
             raise HTTPException(
@@ -629,5 +645,3 @@ async def search(req: SearchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return ctx.to_dict()
-
-

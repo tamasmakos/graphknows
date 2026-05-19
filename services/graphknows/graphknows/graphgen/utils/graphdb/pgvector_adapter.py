@@ -61,6 +61,7 @@ class PgVectorAdapter:
 
     def connect(self) -> bool:
         import psycopg2
+
         try:
             self._conn = psycopg2.connect(self.dsn)
             return True
@@ -106,6 +107,7 @@ class PgVectorAdapter:
           id, doc_id, text, embedding (list[float] len 384), entities (list[{text, label}])
         """
         import psycopg2.extras
+
         cur = self._conn.cursor()
         inserted = 0
         for chunk in chunks:
@@ -125,7 +127,7 @@ class PgVectorAdapter:
                     chunk["id"],
                     chunk.get("doc_id", ""),
                     chunk["text"],
-                    str(emb),          # psycopg2 passes as string; pgvector parses it
+                    str(emb),  # psycopg2 passes as string; pgvector parses it
                     len(chunk.get("entities", [])),
                 ),
             )
@@ -160,8 +162,13 @@ class PgVectorAdapter:
         rows = cur.fetchall()
         cur.close()
         return [
-            {"chunk_id": r[0], "doc_id": r[1], "text": r[2],
-             "entity_count": r[3], "score": round(float(r[4]), 4)}
+            {
+                "chunk_id": r[0],
+                "doc_id": r[1],
+                "text": r[2],
+                "entity_count": r[3],
+                "score": round(float(r[4]), 4),
+            }
             for r in rows
         ]
 

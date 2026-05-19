@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger("graphknows.ontology.loader")
@@ -46,11 +46,13 @@ def _load_jsonld_manifest(summary_path: Path, meta: dict) -> OntologyManifest:
     )
 
 
-def _load_owl_manifest(file_paths: list[Path], meta: dict, summary_path: Path | None) -> OntologyManifest:
+def _load_owl_manifest(  # noqa: C901
+    file_paths: list[Path], meta: dict, summary_path: Path | None
+) -> OntologyManifest:
     """Build manifest from OWL/Turtle files using rdflib."""
     try:
         import rdflib  # type: ignore
-        from rdflib import RDF, RDFS, OWL  # type: ignore
+        from rdflib import OWL, RDF, RDFS  # type: ignore
 
         g = rdflib.Dataset()
         for p in file_paths:
@@ -96,11 +98,13 @@ def _load_owl_manifest(file_paths: list[Path], meta: dict, summary_path: Path | 
     if summary_path and summary_path.exists():
         summary_jsonld = summary_path.read_text(encoding="utf-8")
     else:
-        summary_jsonld = json.dumps({
-            "id": meta["id"],
-            "classes": classes[:100],
-            "properties": properties[:50],
-        })
+        summary_jsonld = json.dumps(
+            {
+                "id": meta["id"],
+                "classes": classes[:100],
+                "properties": properties[:50],
+            }
+        )
 
     return OntologyManifest(
         id=meta["id"],

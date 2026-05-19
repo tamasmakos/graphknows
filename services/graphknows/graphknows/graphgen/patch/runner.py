@@ -7,7 +7,12 @@ from typing import Callable, Dict, Iterable, List
 
 from neo4j import GraphDatabase
 
-from .phases import run_legacy_phase, run_structural_phase, run_unknown_phase, run_gliner2_fallback_phase
+from .phases import (
+    run_legacy_phase,
+    run_structural_phase,
+    run_unknown_phase,
+    run_gliner2_fallback_phase,
+)
 from .report import format_patch_report
 
 DEFAULT_PHASE_ORDER = ["structural", "legacy", "unknown", "gliner2_fallback"]
@@ -87,9 +92,12 @@ def run_patch(
             runner = PHASE_RUNNERS[phase_name]
             # Pass taxonomy to phases that accept it
             import inspect
+
             sig = inspect.signature(runner)
             if "taxonomy" in sig.parameters:
-                phase_result = runner(driver, dry_run=dry_run, batch_size=batch_size, taxonomy=taxonomy)
+                phase_result = runner(
+                    driver, dry_run=dry_run, batch_size=batch_size, taxonomy=taxonomy
+                )
             else:
                 phase_result = runner(driver, dry_run=dry_run, batch_size=batch_size)
             phase_result["ontology_class_distribution"] = _distribution_from_result(phase_result)

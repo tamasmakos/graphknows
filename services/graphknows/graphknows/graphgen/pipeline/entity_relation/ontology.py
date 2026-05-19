@@ -7,6 +7,7 @@ entity types.
 
 Replaces the old ``graphgen.prototype_gliner2_ontology`` research prototype.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,6 +20,7 @@ from graphknows.graphgen.utils.utils import standardize_label
 
 # TYPE_CHECKING guard avoids circular import at runtime
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from graphknows.graphgen.config.taxonomy import TaxonomyConfig
 
@@ -29,8 +31,14 @@ if TYPE_CHECKING:
 DEFAULT_GROUP_RULES: dict[str, list[str]] = {
     "PERSON": ["PERSON", "POLITICIAN", "COMMISSIONER", "PRESIDENT", "CHAIRPERSON"],
     "ORGANIZATION": [
-        "ORGANIZATION", "POLITICAL_PARTY", "INSTITUTION", "AGENCY",
-        "COMMISSION", "PARLIAMENT", "COUNCIL", "BANK",
+        "ORGANIZATION",
+        "POLITICAL_PARTY",
+        "INSTITUTION",
+        "AGENCY",
+        "COMMISSION",
+        "PARLIAMENT",
+        "COUNCIL",
+        "BANK",
     ],
     "LOCATION": ["LOCATION", "COUNTRY", "CITY", "REGION", "PLACE", "CAPITAL"],
     "POLICY": ["POLICY", "REGULATION", "LAW", "DIRECTIVE", "TREATY", "FRAMEWORK"],
@@ -40,17 +48,45 @@ DEFAULT_GROUP_RULES: dict[str, list[str]] = {
 TOP_LEVEL_ALIASES: dict[str, list[str]] = {
     "PERSON": ["person", "president", "commissioner", "leader", "prime minister", "speaker"],
     "ORGANIZATION": [
-        "organization", "commission", "parliament", "council", "party",
-        "agency", "bank", "kremlin", "army", "military", "union",
+        "organization",
+        "commission",
+        "parliament",
+        "council",
+        "party",
+        "agency",
+        "bank",
+        "kremlin",
+        "army",
+        "military",
+        "union",
     ],
     "LOCATION": [
-        "location", "country", "city", "region",
-        "brussels", "france", "germany", "ukraine", "mediterranean", "europe",
+        "location",
+        "country",
+        "city",
+        "region",
+        "brussels",
+        "france",
+        "germany",
+        "ukraine",
+        "mediterranean",
+        "europe",
     ],
     "POLICY": [
-        "policy", "regulation", "law", "directive", "framework",
-        "migration", "climate", "sanctions", "aid", "health",
-        "security", "energy", "defence", "defense",
+        "policy",
+        "regulation",
+        "law",
+        "directive",
+        "framework",
+        "migration",
+        "climate",
+        "sanctions",
+        "aid",
+        "health",
+        "security",
+        "energy",
+        "defence",
+        "defense",
     ],
     "EVENT": ["event", "summit", "meeting", "election", "crisis", "war", "debate", "conference"],
 }
@@ -99,7 +135,8 @@ def build_top_level_label_space(
 
     for top_label, child_rules in group_rules.items():
         children = [
-            label for label in normalized
+            label
+            for label in normalized
             if label in child_rules or any(rule in label for rule in child_rules)
         ]
         if top_label in normalized and top_label not in children:
@@ -109,8 +146,7 @@ def build_top_level_label_space(
                 "aliases": group_aliases.get(top_label, [top_label.lower()]),
                 "children": sorted(set(children)),
                 "child_aliases": {
-                    child: _default_aliases_for_label(child)
-                    for child in sorted(set(children))
+                    child: _default_aliases_for_label(child) for child in sorted(set(children))
                 },
             }
 
@@ -154,8 +190,7 @@ def build_gliner2_schema(
         descriptions = {**_defaults, **(label_descriptions or {})}
     return {
         "entities": {
-            label.lower(): descriptions.get(label, label.lower())
-            for label in candidate_labels
+            label.lower(): descriptions.get(label, label.lower()) for label in candidate_labels
         }
     }
 
@@ -177,15 +212,30 @@ def select_candidate_labels(
 
     # Build per-label hint lists from taxonomy or use hardcoded political hints
     if taxonomy is not None:
-        _hints: dict[str, list[str]] = {
-            k: v.aliases for k, v in taxonomy.entity_groups.items()
-        }
+        _hints: dict[str, list[str]] = {k: v.aliases for k, v in taxonomy.entity_groups.items()}
     else:
         _hints = {
             "PERSON": ["prime minister", "president", "speaker", "leader"],
-            "ORGANIZATION": ["kremlin", "army", "military", "parliament", "commission", "bank", "union"],
+            "ORGANIZATION": [
+                "kremlin",
+                "army",
+                "military",
+                "parliament",
+                "commission",
+                "bank",
+                "union",
+            ],
             "LOCATION": ["ukraine", "italy", "mediterranean", "europe", "eurozone"],
-            "POLICY": ["sanctions", "aid", "migration", "climate", "health", "security", "energy", "policy"],
+            "POLICY": [
+                "sanctions",
+                "aid",
+                "migration",
+                "climate",
+                "health",
+                "security",
+                "energy",
+                "policy",
+            ],
             "EVENT": ["invasion", "conference", "debate", "crisis", "war"],
         }
 
@@ -259,7 +309,7 @@ def build_relations_from_entities(
     """Build pairwise co-occurrence relations from a list of refined entities."""
     relations: list[dict[str, str]] = []
     for idx, source in enumerate(entities):
-        for target in entities[idx + 1:]:
+        for target in entities[idx + 1 :]:
             relations.append(
                 {
                     "source": source["text"],

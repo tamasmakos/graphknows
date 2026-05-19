@@ -5,6 +5,7 @@ Schema
 chunks   — session-scoped text chunks with JSONB metadata (VECTOR 384)
 entities — corpus-level entity embeddings (VECTOR 384), no session_id
 """
+
 from __future__ import annotations
 
 import json
@@ -299,9 +300,7 @@ class PgVectorStore:
         """Delete all chunks for *session_id*. Returns deleted row count."""
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM chunks WHERE session_id = $1", session_id
-            )
+            result = await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
         deleted = int(result.split()[-1])
         logger.info("Deleted %d chunks for session %s", deleted, session_id)
         return deleted

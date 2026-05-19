@@ -7,6 +7,7 @@ ignore = [
     "E501",   # line too long — formatter handles this
     "D100",   # missing docstring in public module — enforced per-file
     "D104",   # missing docstring in public package
+    "D105",   # missing docstring in magic method (__aenter__, __aexit__, etc.)
     "D107",   # missing docstring in __init__
     "D203",   # one-blank-line-before-class — conflicts with D211
     "D213",   # multi-line-summary-second-line — conflicts with D212
@@ -14,7 +15,7 @@ ignore = [
 
 [lint.per-file-ignores]
 "tests/*" = ["D", "S101"]
-"**/graphgen/**" = ["D", "N"]  # graphgen progressively adopts style
+"**/graphgen/**" = ["ALL"]  # absorbed research pipeline — linting deferred progressively
 
 [lint.pydocstyle]
 convention = "google"

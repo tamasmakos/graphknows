@@ -1,11 +1,14 @@
 """graphknows service entrypoint — supports HTTP (default), stdio, and SSE transports."""
+
 from __future__ import annotations
 
 import argparse
+
 import uvicorn
 
 
 def main() -> None:
+    """Parse CLI args and start the graphknows service."""
     parser = argparse.ArgumentParser(description="graphknows service")
     parser.add_argument(
         "--transport",
@@ -56,7 +59,6 @@ def _run_stdio() -> None:
     from graphknows.api import GraphKnowsSettings
     from graphknows.mcp.server import mcp, set_dependencies
     from graphknows.retrieval.retriever import HybridRetriever
-    from graphknows.retrieval.stores.embedder import embed  # warm up model cache
     from graphknows.retrieval.stores.memgraph import MemgraphStore
     from graphknows.retrieval.stores.neo4j import Neo4jStore
     from graphknows.retrieval.stores.pgvector import PgVectorStore

@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+
 def load_yaml_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     """
     Load configuration from a YAML file.
@@ -15,9 +16,9 @@ def load_yaml_config(config_path: str = "config.yaml") -> Dict[str, Any]:
         return {}
 
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config_dict = yaml.safe_load(f)
-            
+
         logger.info(f"Loaded configuration from {config_path}")
         return config_dict or {}
     except Exception as e:

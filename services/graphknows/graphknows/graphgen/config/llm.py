@@ -40,53 +40,48 @@ def _extract_secret(container: Any, key: str) -> str | None:
 def _get_openrouter_api_key(config: Dict[str, Any] | None = None) -> str:
     """Resolve OpenRouter API key from config or environment."""
     if config:
-        infra = config.get('infra', {})
-        llm = config.get('llm', {})
-        if hasattr(llm, 'model_dump'):
+        infra = config.get("infra", {})
+        llm = config.get("llm", {})
+        if hasattr(llm, "model_dump"):
             llm = llm.model_dump()
-        key = (
-            _extract_secret(infra, 'openrouter_api_key')
-            or _extract_secret(llm, 'openrouter_api_key')
+        key = _extract_secret(infra, "openrouter_api_key") or _extract_secret(
+            llm, "openrouter_api_key"
         )
         if key:
             return key
 
     # Support both env-var spellings present in .env
-    return (
-        os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("OPEN_ROUTER_API")
-        or ""
-    )
+    return os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPEN_ROUTER_API") or ""
 
 
 def get_model_name(config: Dict[str, Any], purpose: str = None) -> str:
     """Get configured model name from config dictionary."""
-    if not config or 'llm' not in config:
+    if not config or "llm" not in config:
         raise ValueError("Configuration missing 'llm' section")
 
-    llm_cfg = config['llm']
-    if hasattr(llm_cfg, 'model_dump'):
+    llm_cfg = config["llm"]
+    if hasattr(llm_cfg, "model_dump"):
         llm_cfg = llm_cfg.model_dump()
 
-    if purpose == 'extraction':
-        return llm_cfg.get('extraction_model') or llm_cfg.get('base_model') or _DEFAULT_MODEL
-    elif purpose == 'summarization':
-        return llm_cfg.get('summarization_model') or llm_cfg.get('base_model') or _DEFAULT_MODEL
-    elif purpose == 'synthetic':
-        return llm_cfg.get('base_model') or _DEFAULT_MODEL
+    if purpose == "extraction":
+        return llm_cfg.get("extraction_model") or llm_cfg.get("base_model") or _DEFAULT_MODEL
+    elif purpose == "summarization":
+        return llm_cfg.get("summarization_model") or llm_cfg.get("base_model") or _DEFAULT_MODEL
+    elif purpose == "synthetic":
+        return llm_cfg.get("base_model") or _DEFAULT_MODEL
 
-    return llm_cfg.get('base_model') or _DEFAULT_MODEL
+    return llm_cfg.get("base_model") or _DEFAULT_MODEL
 
 
 def get_temperature(config: Dict[str, Any]) -> float:
     """Get LLM temperature setting."""
-    if not config or 'llm' not in config:
+    if not config or "llm" not in config:
         return 0.0
 
-    llm_cfg = config['llm']
-    if hasattr(llm_cfg, 'model_dump'):
+    llm_cfg = config["llm"]
+    if hasattr(llm_cfg, "model_dump"):
         llm_cfg = llm_cfg.model_dump()
-    return float(llm_cfg.get('temperature', 0.0))
+    return float(llm_cfg.get("temperature", 0.0))
 
 
 def normalize_openrouter_model(model: str | None) -> str:
@@ -100,7 +95,7 @@ def normalize_openrouter_model(model: str | None) -> str:
 
     clean = str(model)
     if clean.startswith("openrouter/"):
-        clean = clean[len("openrouter/"):]
+        clean = clean[len("openrouter/") :]
     return f"openrouter/{clean}"
 
 
@@ -115,9 +110,7 @@ def get_langchain_llm(config: Dict[str, Any], purpose: str = None) -> ChatOpenAI
     api_key = _get_openrouter_api_key(config)
 
     if not api_key:
-        raise ValueError(
-            "OpenRouter API key not found. Set OPENROUTER_API_KEY or OPEN_ROUTER_API."
-        )
+        raise ValueError("OpenRouter API key not found. Set OPENROUTER_API_KEY or OPEN_ROUTER_API.")
 
     return ChatOpenAI(
         model=model,
@@ -125,5 +118,3 @@ def get_langchain_llm(config: Dict[str, Any], purpose: str = None) -> ChatOpenAI
         api_key=api_key,
         base_url=_OPENROUTER_BASE_URL,
     )
-
-

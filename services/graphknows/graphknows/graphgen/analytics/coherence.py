@@ -17,11 +17,12 @@ from typing import List, Dict, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+
 class TopicCoherence:
     """
     Calculates topic coherence metrics.
     """
-    
+
     def __init__(self, texts: List[List[str]] = None):
         """
         Args:
@@ -34,7 +35,7 @@ class TopicCoherence:
         self.total_docs = 0
         if texts:
             self._build_vocab(texts)
-            
+
     def _build_vocab(self, texts: List[List[str]]):
         self.total_docs = len(texts)
         for doc in texts:
@@ -42,7 +43,7 @@ class TopicCoherence:
             # Word counts
             for w in unique_words:
                 self.word_counts[w] = self.word_counts.get(w, 0) + 1
-            
+
             # Co-occurrences (simple window=entire document for now)
             # Ideally use sliding window for larger docs
             sorted_words = sorted(list(unique_words))
@@ -64,29 +65,29 @@ class TopicCoherence:
         """
         if not self.texts:
             return 0.0
-            
+
         score = 0.0
         # Usually calculate on top N words
-        top_words = topic_words[:20] 
-        
+        top_words = topic_words[:20]
+
         for i in range(1, len(top_words)):
             w_i = top_words[i]
             for j in range(0, i):
                 w_j = top_words[j]
-                
+
                 # UMass uses conditional probability P(wi|wj) empirically
                 # count(wi, wj) is co-occurrence
                 # count(wj) is doc frequency of wj
-                
+
                 count_wi_wj = self.get_co_occurrence(w_i, w_j)
                 count_wj = self.word_counts.get(w_j, 0)
-                
+
                 if count_wj == 0:
                     continue
-                    
-                val = math.log( (count_wi_wj + 1.0) / count_wj )
+
+                val = math.log((count_wi_wj + 1.0) / count_wj)
                 score += val
-                
+
         return score
 
     def calculate_npmi(self, topic_words: List[str]) -> float:
@@ -96,38 +97,38 @@ class TopicCoherence:
         """
         if not self.texts or self.total_docs == 0:
             return 0.0
-            
+
         score = 0.0
         top_words = topic_words[:10]
         n = 0
-        
+
         for i in range(len(top_words)):
             for j in range(i + 1, len(top_words)):
                 w_i = top_words[i]
                 w_j = top_words[j]
-                
+
                 count_wi = self.word_counts.get(w_i, 0)
                 count_wj = self.word_counts.get(w_j, 0)
                 count_wi_wj = self.get_co_occurrence(w_i, w_j)
-                
+
                 if count_wi_wj == 0:
                     continue
-                
+
                 p_wi = count_wi / self.total_docs
                 p_wj = count_wj / self.total_docs
                 p_wi_wj = count_wi_wj / self.total_docs
-                
-                pmi = math.log( p_wi_wj / (p_wi * p_wj) )
+
+                pmi = math.log(p_wi_wj / (p_wi * p_wj))
                 npmi = pmi / (-math.log(p_wi_wj))
-                
+
                 score += npmi
                 n += 1
-                
+
         return score / n if n > 0 else 0.0
 
     def calculate_cv(self, topic_words: List[str]) -> float:
         """
-        Placeholder for Cv coherence. 
+        Placeholder for Cv coherence.
         Full Cv requires sliding windows and Boolean vectors, which is heavy to implement processing raw text.
         Often better to use gensim.models.CoherenceModel if available.
         """

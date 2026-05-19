@@ -16,6 +16,7 @@ Algorithm
 5. Fetch full text + metadata for fused chunk IDs from pgvector.
 6. Return a RetrievalContext with all three views: graph_matches, semantic_matches, fused_results.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,7 +56,7 @@ class HybridRetriever:
         self.neo = neo
         self.embed_model = embed_model
 
-    async def retrieve(
+    async def retrieve(  # noqa: C901
         self,
         query: str,
         session_id: str,
@@ -77,7 +78,11 @@ class HybridRetriever:
         """
         logger.debug(
             "retrieve START  query=%r  session=%s  k_entity=%d  k_semantic=%d  k_final=%d",
-            query, session_id, k_entity, k_semantic, k_final,
+            query,
+            session_id,
+            k_entity,
+            k_semantic,
+            k_final,
         )
 
         # ── Step 1: embed query ────────────────────────────────────────────
@@ -86,21 +91,23 @@ class HybridRetriever:
         logger.debug("query embedded  dim=%d  model=%s", len(emb), self.embed_model)
 
         # ── Step 2 & 3: run entity + semantic search concurrently ──────────
-        entity_rows_task = asyncio.create_task(
-            self.pg.search_entities(emb, k=k_entity)
-        )
+        entity_rows_task = asyncio.create_task(self.pg.search_entities(emb, k=k_entity))
         sem_rows_task = asyncio.create_task(
             self.pg.search_chunks(emb, session_id=session_id, k=k_semantic)
         )
         entity_rows, sem_rows = await asyncio.gather(entity_rows_task, sem_rows_task)
         logger.debug(
             "ANN results  entities=%d  semantic_chunks=%d",
-            len(entity_rows), len(sem_rows),
+            len(entity_rows),
+            len(sem_rows),
         )
         for _i, _e in enumerate(entity_rows):
             logger.debug(
                 "  entity[%d]  name=%r  label=%s  score=%.4f",
-                _i, _e["name"], _e.get("label", "?"), _e["score"],
+                _i,
+                _e["name"],
+                _e.get("label", "?"),
+                _e["score"],
             )
 
         # ── Step 4: entity → chunks via Neo4j MENTIONS traversal ──────────
@@ -120,7 +127,8 @@ class HybridRetriever:
             else:
                 logger.debug(
                     "  neo4j[%r]  %d chunks retrieved",
-                    ent["name"], len(neo_chunks),
+                    ent["name"],
+                    len(neo_chunks),
                 )
 
             entity_similarity = ent["score"]
@@ -130,7 +138,10 @@ class HybridRetriever:
                 mention_weight = entity_similarity * (1.0 / (j + 1))
                 cid = nc["chunk_id"]
 
-                if cid not in graph_chunk_info or mention_weight > graph_chunk_info[cid]["mention_weight"]:
+                if (
+                    cid not in graph_chunk_info
+                    or mention_weight > graph_chunk_info[cid]["mention_weight"]
+                ):
                     graph_chunk_info[cid] = {
                         "entity_rank": i,
                         "mention_weight": mention_weight,
@@ -184,7 +195,10 @@ class HybridRetriever:
         ranked = sorted(rrf_scores.items(), key=lambda x: -x[1])[:k_final]
         logger.debug(
             "RRF fusion  graph_chunks=%d  semantic_chunks=%d  unique_scored=%d  returning=%d",
-            len(graph_chunk_info), len(sem_ids), len(rrf_scores), len(ranked),
+            len(graph_chunk_info),
+            len(sem_ids),
+            len(rrf_scores),
+            len(ranked),
         )
         for _rank, (_cid, _score) in enumerate(ranked):
             logger.debug("  fused[%d]  chunk_id=%s  rrf=%.6f", _rank, _cid[:16], _score)
@@ -222,7 +236,9 @@ class HybridRetriever:
 
         logger.debug(
             "retrieve DONE  fused=%d  graph_matches=%d  semantic_matches=%d",
-            len(fused), len(entity_matches), len(semantic_matches),
+            len(fused),
+            len(entity_matches),
+            len(semantic_matches),
         )
         return RetrievalContext(
             query=query,
@@ -292,7 +308,7 @@ class HybridRetriever:
     # GRAPH_TRAVERSAL mode — entity match → multi-hop neighborhood → chunks
     # ------------------------------------------------------------------
 
-    async def retrieve_graph_traversal(
+    async def retrieve_graph_traversal(  # noqa: C901
         self,
         query: str,
         session_id: str,
@@ -425,9 +441,7 @@ class HybridRetriever:
 
         entity_rows = await self.pg.search_entities(emb, k=k_entity)
 
-        community_tasks = [
-            self.neo.get_entity_community(ent["name"]) for ent in entity_rows
-        ]
+        community_tasks = [self.neo.get_entity_community(ent["name"]) for ent in entity_rows]
         community_results = await asyncio.gather(*community_tasks, return_exceptions=True)
 
         fused: list[dict] = []
@@ -482,15 +496,14 @@ class HybridRetriever:
         """
         # Guard: reject f-string style interpolation markers
         import re
+
         if re.search(r"\{[^}]+\}", cypher_template):
             raise ValueError(
                 "Cypher template must not contain {var} interpolation — "
                 "use $param placeholders and pass values via the params dict"
             )
         # Guard: reject write operations
-        forbidden = re.compile(
-            r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.IGNORECASE
-        )
+        forbidden = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.IGNORECASE)
         if forbidden.search(cypher_template):
             raise ValueError(
                 "Only read-only Cypher is permitted. "
@@ -522,15 +535,16 @@ class HybridRetriever:
         Args:
             query: Natural-language query.
             session_id: Session namespace.
+            k_entity: Max entity candidates to retrieve per mode.
+            k_semantic: Max semantic chunk candidates to retrieve.
+            k_final: Max results to return after fusion/reranking.
 
         Returns:
             RetrievalContext from the selected mode, with search_type set.
         """
         import re
 
-        cypher_pat = re.compile(
-            r"\b(MATCH|RETURN|WHERE|WITH|UNWIND)\b", re.IGNORECASE
-        )
+        cypher_pat = re.compile(r"\b(MATCH|RETURN|WHERE|WITH|UNWIND)\b", re.IGNORECASE)
         if cypher_pat.search(query):
             raise ValueError(
                 "Query looks like Cypher syntax — use search_type='CYPHER' explicitly "
@@ -541,8 +555,14 @@ class HybridRetriever:
         query_lower = query.lower()
 
         summary_triggers = {
-            "summarize", "summary", "overview", "what is", "describe",
-            "explain", "tell me about", "who is",
+            "summarize",
+            "summary",
+            "overview",
+            "what is",
+            "describe",
+            "explain",
+            "tell me about",
+            "who is",
         }
 
         if len(tokens) < 5:
@@ -558,9 +578,11 @@ class HybridRetriever:
             return ctx
 
         ctx = await self.retrieve(
-            query, session_id,
-            k_entity=k_entity, k_semantic=k_semantic, k_final=k_final,
+            query,
+            session_id,
+            k_entity=k_entity,
+            k_semantic=k_semantic,
+            k_final=k_final,
         )
         ctx.search_type = "FEELING_LUCKY→HYBRID"
         return ctx
-

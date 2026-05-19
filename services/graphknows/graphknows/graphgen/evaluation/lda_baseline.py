@@ -93,10 +93,12 @@ class CoherenceScorer:
         return score / pairs if pairs else -1.0
 
 
-def extract_topic_words(model: LatentDirichletAllocation, feature_names: Sequence[str], top_words: int = 15) -> List[List[str]]:
+def extract_topic_words(
+    model: LatentDirichletAllocation, feature_names: Sequence[str], top_words: int = 15
+) -> List[List[str]]:
     topics: List[List[str]] = []
     for topic in model.components_:
-        indices = topic.argsort()[:-top_words - 1:-1]
+        indices = topic.argsort()[: -top_words - 1 : -1]
         topics.append([feature_names[i] for i in indices])
     return topics
 
@@ -136,7 +138,9 @@ def evaluate_single_lda_model(
     }
     lda_options.update(lda_kwargs or {})
 
-    train_docs, test_docs = train_test_split(list(documents), test_size=test_size, random_state=random_state)
+    train_docs, test_docs = train_test_split(
+        list(documents), test_size=test_size, random_state=random_state
+    )
     vectorizer = CountVectorizer(**vectorizer_options)
     train_matrix = vectorizer.fit_transform(train_docs)
     test_matrix = vectorizer.transform(test_docs)
@@ -233,4 +237,6 @@ def evaluate_lda_baseline(
 
 
 def save_lda_results(payload: Dict[str, Any], output_path: str | Path) -> None:
-    Path(output_path).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    Path(output_path).write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )

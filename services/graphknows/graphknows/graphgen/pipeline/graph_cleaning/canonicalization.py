@@ -95,13 +95,14 @@ def _likely_country_demonym_conflict(token_a: str, token_b: str) -> bool:
     return False
 
 
-def _likely_region_adjectival_conflict(tokens_a: tuple[str, ...], tokens_b: tuple[str, ...]) -> bool:
+def _likely_region_adjectival_conflict(
+    tokens_a: tuple[str, ...], tokens_b: tuple[str, ...]
+) -> bool:
     if len(tokens_a) != len(tokens_b) or len(tokens_a) < 2:
         return False
     if tokens_a[:-1] != tokens_b[:-1]:
         return False
     return _likely_country_demonym_conflict(tokens_a[-1], tokens_b[-1])
-
 
 
 def surface_forms_conflict(a: str, b: str) -> bool:
@@ -116,10 +117,16 @@ def surface_forms_conflict(a: str, b: str) -> bool:
     token_set_b = set(tokens_b)
 
     for left, right in OPPOSING_TERM_PAIRS:
-        if (left in token_set_a and right in token_set_b) or (right in token_set_a and left in token_set_b):
+        if (left in token_set_a and right in token_set_b) or (
+            right in token_set_a and left in token_set_b
+        ):
             return True
 
-    if len(tokens_a) == 1 and len(tokens_b) == 1 and _likely_country_demonym_conflict(tokens_a[0], tokens_b[0]):
+    if (
+        len(tokens_a) == 1
+        and len(tokens_b) == 1
+        and _likely_country_demonym_conflict(tokens_a[0], tokens_b[0])
+    ):
         return True
 
     if _likely_region_adjectival_conflict(tokens_a, tokens_b):

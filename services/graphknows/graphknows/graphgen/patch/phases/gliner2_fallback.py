@@ -8,6 +8,7 @@ field.  The top-scoring label is written back together with metadata
 This phase is intentionally last in the default phase order so that earlier,
 cheaper classifiers get first pass.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -72,6 +73,7 @@ def run_gliner2_fallback_phase(
     if taxonomy is None:
         try:
             from graphknows.graphgen.config.taxonomy import get_default_taxonomy
+
             taxonomy = get_default_taxonomy()
         except Exception as exc:
             logger.warning("Could not load default taxonomy: %s. Using fallback labels.", exc)
@@ -81,9 +83,7 @@ def run_gliner2_fallback_phase(
     else:
         entity_labels = ["PERSON", "ORGANIZATION", "LOCATION", "POLICY", "EVENT"]
 
-    logger.info(
-        "gliner2_fallback: label set = %s (dry_run=%s)", entity_labels, dry_run
-    )
+    logger.info("gliner2_fallback: label set = %s (dry_run=%s)", entity_labels, dry_run)
 
     # --- Pre-flight count ---
     with driver.session() as s:
@@ -103,6 +103,7 @@ def run_gliner2_fallback_phase(
     # --- Load GLiNER2 model ---
     try:
         from graphknows.graphgen.pipeline.entity_relation.extraction import get_gliner2_model
+
         model = get_gliner2_model()
     except Exception as exc:
         logger.error("gliner2_fallback: could not load GLiNER2 model: %s", exc)
@@ -139,7 +140,7 @@ def run_gliner2_fallback_phase(
                 result = model.extract_entities(
                     name,
                     entity_labels,
-                    0.3,   # lower threshold for short strings
+                    0.3,  # lower threshold for short strings
                     True,  # format_results
                     True,  # include_confidence
                     True,  # include_spans
@@ -154,7 +155,9 @@ def run_gliner2_fallback_phase(
                             best_conf = conf
                             best_label = label.upper()
                 if best_label:
-                    updates.append({"eid": eid, "ontology_class": best_label, "confidence": best_conf})
+                    updates.append(
+                        {"eid": eid, "ontology_class": best_label, "confidence": best_conf}
+                    )
             except Exception as exc:
                 logger.debug("GLiNER2 inference failed for %r: %s", name, exc)
 

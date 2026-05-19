@@ -3,6 +3,7 @@
 Single source of truth for both ingestion (graphknows/ingestion) and
 retrieval (graphknows/retrieval) so both use the same embedding space.
 """
+
 from __future__ import annotations
 
 import logging

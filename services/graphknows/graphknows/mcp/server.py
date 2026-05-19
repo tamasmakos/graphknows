@@ -16,13 +16,14 @@ list_segments        — list SEGMENT provenance nodes → text
 segment_info         — provenance detail for one SEGMENT node → text
 cypher_query         — parameterized read-only Cypher → JSON
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -40,9 +41,9 @@ _jobs: dict[str, dict[str, Any]] = {}
 # ---------------------------------------------------------------------------
 
 _retriever: Any = None  # HybridRetriever
-_pg: Any = None         # PgVectorStore
-_neo: Any = None        # Neo4jStore
-_memgraph: Any = None   # MemgraphStore
+_pg: Any = None  # PgVectorStore
+_neo: Any = None  # Neo4jStore
+_memgraph: Any = None  # MemgraphStore
 _cfg: dict = {}
 
 # ---------------------------------------------------------------------------
@@ -383,12 +384,10 @@ async def session_memory(
 # ---------------------------------------------------------------------------
 
 
-async def _run_mcp_ingest_task(
-    run_id: str, text: str, title: str, config_override: dict
-) -> None:
+async def _run_mcp_ingest_task(run_id: str, text: str, title: str, config_override: dict) -> None:
     """Background ingestion task — updates shared _jobs dict."""
     _jobs[run_id]["status"] = "running"
-    _jobs[run_id]["started_at"] = datetime.now(timezone.utc).isoformat()
+    _jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
     try:
         from graphknows.graphgen import run_ingestion
 
@@ -398,13 +397,13 @@ async def _run_mcp_ingest_task(
         )
         _jobs[run_id]["status"] = "completed"
         _jobs[run_id]["stats"] = stats
-        _jobs[run_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _jobs[run_id]["finished_at"] = datetime.now(UTC).isoformat()
         logger.info("MCP ingest job %s completed", run_id)
     except Exception as exc:
         logger.exception("MCP ingest job %s failed: %s", run_id, exc)
         _jobs[run_id]["status"] = "failed"
         _jobs[run_id]["error"] = str(exc)
-        _jobs[run_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _jobs[run_id]["finished_at"] = datetime.now(UTC).isoformat()
 
 
 @mcp.tool()
@@ -430,11 +429,9 @@ async def ingest(
         JSON dict with run_id and status="queued".
     """
     run_id = str(uuid.uuid4())
-    queued_at = datetime.now(timezone.utc).isoformat()
+    queued_at = datetime.now(UTC).isoformat()
     _jobs[run_id] = {"status": "queued", "queued_at": queued_at}
-    asyncio.create_task(
-        _run_mcp_ingest_task(run_id, text, title, config_override or {})
-    )
+    asyncio.create_task(_run_mcp_ingest_task(run_id, text, title, config_override or {}))
     return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
 
 
@@ -620,9 +617,8 @@ def _cypher_enabled() -> bool:
     global _CYPHER_ENABLED
     if _CYPHER_ENABLED is None:
         import os
-        _CYPHER_ENABLED = os.getenv("ENABLE_CYPHER_TOOL", "false").lower() in (
-            "1", "true", "yes"
-        )
+
+        _CYPHER_ENABLED = os.getenv("ENABLE_CYPHER_TOOL", "false").lower() in ("1", "true", "yes")
     return _CYPHER_ENABLED
 
 

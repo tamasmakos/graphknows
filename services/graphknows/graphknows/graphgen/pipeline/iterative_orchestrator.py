@@ -17,16 +17,22 @@ from graphknows.graphgen.pipeline.iterative_loader import IterativeLoader
 from graphknows.graphgen.pipeline.lexical_graph_building.builder import add_segments_to_graph
 from graphknows.graphgen.pipeline.entity_relation.extraction import extract_all_entities_relations
 from graphknows.graphgen.pipeline.community.detection import CommunityDetector
-from graphknows.graphgen.pipeline.community.subcommunities import add_enhanced_community_attributes_to_graph
+from graphknows.graphgen.pipeline.community.subcommunities import (
+    add_enhanced_community_attributes_to_graph,
+)
 from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_entities_semantically
 from graphknows.graphgen.pipeline.summarization.core import generate_community_summaries
 from graphknows.graphgen.analytics.reporting import generate_topic_separation_report
 from graphknows.graphgen.analytics.metrics import calculate_node2vec_significance
-from graphknows.graphgen.analytics.visualizer import plot_node2vec_impact, plot_community_centrality, plot_global_centrality
+from graphknows.graphgen.analytics.visualizer import (
+    plot_node2vec_impact,
+    plot_community_centrality,
+    plot_global_centrality,
+)
 from graphknows.graphgen.analytics.centrality import (
     calculate_centrality_measures,
     get_top_entities_global,
-    get_top_entities_per_community
+    get_top_entities_per_community,
 )
 from graphknows.graphgen.utils.vector_embedder.rag import generate_rag_embeddings
 from graphknows.graphgen.config.llm import get_langchain_llm
@@ -59,7 +65,9 @@ class IterativeOrchestrator:
     CENTRALITY_COMMUNITY_TOP_K: int = 10
     ENTITY_CONCEPT_NODE_TYPE: str = "ENTITY_CONCEPT"
     TOPIC_NODE_TYPES: List[str] = ["TOPIC", "SUBTOPIC"]
-    TOPIC_SNAPSHOT_NODE_TYPES: frozenset = frozenset({"COMMUNITY", "SUBCOMMUNITY", "TOPIC", "SUBTOPIC"})
+    TOPIC_SNAPSHOT_NODE_TYPES: frozenset = frozenset(
+        {"COMMUNITY", "SUBCOMMUNITY", "TOPIC", "SUBTOPIC"}
+    )
     DOCUMENT_NODE_TYPE: str = "Document"
     ENTITY_RELATION_GRAPH_TYPE: str = "entity_relation"
     BASELINE_EDGE_WEIGHT: float = 1.0
@@ -98,7 +106,7 @@ class IterativeOrchestrator:
         detector = CommunityDetector(self.settings.community)
 
         for i in range(self.settings.iterative.iterations):
-            logger.info(f"=== Iteration {i+1}/{self.settings.iterative.iterations} ===")
+            logger.info(f"=== Iteration {i + 1}/{self.settings.iterative.iterations} ===")
 
             segments = self._stage_load_batch(i, thesis_output_dir)
             if not segments:
@@ -108,11 +116,15 @@ class IterativeOrchestrator:
             await self._stage_build_graph(ctx, segments, i, config_dict, schema)
             await self._stage_extract(ctx, config_dict)
             structural_embeddings = self._stage_resolve_entities(ctx, i)
-            comm_results, modularity, modularity_baseline = self._stage_detect_communities(ctx, detector, i, structural_embeddings)
+            comm_results, modularity, modularity_baseline = self._stage_detect_communities(
+                ctx, detector, i, structural_embeddings
+            )
             await self._stage_summarize(ctx, comm_results, config_dict)
             stats_report = self._stage_export(ctx, i, comm_results, thesis_output_dir)
 
-            result = self._collect_iteration_result(i, ctx, comm_results, modularity, modularity_baseline, stats_report)
+            result = self._collect_iteration_result(
+                i, ctx, comm_results, modularity, modularity_baseline, stats_report
+            )
             self.results.append(result)
 
         self._finalize_run(ctx, thesis_output_dir)
@@ -162,7 +174,9 @@ class IterativeOrchestrator:
 
         return segments
 
-    def _save_sample_manifest(self, iteration: int, segments: List[Any], thesis_output_dir: str) -> None:
+    def _save_sample_manifest(
+        self, iteration: int, segments: List[Any], thesis_output_dir: str
+    ) -> None:
         """Persist a JSON manifest describing which segments were sampled."""
         samples_dir = os.path.join(thesis_output_dir, self.SAMPLES_SUBDIR)
         create_output_directory(samples_dir)
@@ -180,7 +194,7 @@ class IterativeOrchestrator:
                 for seg in segments
             ],
         }
-        manifest_path = os.path.join(samples_dir, f"iteration_{iteration+1}_sample_manifest.json")
+        manifest_path = os.path.join(samples_dir, f"iteration_{iteration + 1}_sample_manifest.json")
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(sample_manifest, f, indent=2, ensure_ascii=False)
 
@@ -225,7 +239,7 @@ class IterativeOrchestrator:
         )
         er_report_path = os.path.join(
             self.settings.infra.output_dir,
-            f"iteration_{iteration+1}_entity_resolution.json",
+            f"iteration_{iteration + 1}_entity_resolution.json",
         )
         with open(er_report_path, "w", encoding="utf-8") as f:
             json.dump(resolution_stats, f, indent=2, ensure_ascii=False)
@@ -237,6 +251,7 @@ class IterativeOrchestrator:
         if not self.settings.community.node2vec_enabled:
             return None
         from graphknows.graphgen.pipeline.embeddings.node2vec_wrapper import compute_node_embeddings
+
         logger.debug("Computing Node2Vec embeddings for resolution...")
         return compute_node_embeddings(
             ctx.graph,
@@ -282,7 +297,10 @@ class IterativeOrchestrator:
         self, ctx: PipelineContext, detector: CommunityDetector, iteration: int
     ) -> None:
         """Compute Node2Vec edge weights and apply them to the graph."""
-        from graphknows.graphgen.pipeline.embeddings.node2vec_wrapper import compute_node2vec_weights
+        from graphknows.graphgen.pipeline.embeddings.node2vec_wrapper import (
+            compute_node2vec_weights,
+        )
+
         logger.debug("Computing Node2Vec weights...")
         entity_relation_graph = detector._get_entity_graph(ctx.graph).copy()
         weights = compute_node2vec_weights(
@@ -325,7 +343,7 @@ class IterativeOrchestrator:
         """Run analytics, save checkpoints, and return the stats report."""
         stats_report = generate_topic_separation_report(
             ctx.graph,
-            f"{self.settings.infra.output_dir}/iteration_{iteration+1}_report.json",
+            f"{self.settings.infra.output_dir}/iteration_{iteration + 1}_report.json",
             self.settings.analytics,
         )
 
@@ -342,6 +360,7 @@ class IterativeOrchestrator:
     ) -> None:
         """Run GraphAnalyzer heatmap/KGE analysis and centrality analytics."""
         from graphknows.graphgen.analytics.analyzer import GraphAnalyzer
+
         analyzer = GraphAnalyzer(
             config=self.settings.analytics.model_dump(),
             output_base_dir=self.settings.infra.output_dir,
@@ -363,17 +382,29 @@ class IterativeOrchestrator:
             if not centrality_scores:
                 return
 
-            global_top = get_top_entities_global(centrality_scores, ctx.graph, top_k=self.CENTRALITY_GLOBAL_TOP_K)
-            with open(f"{self.settings.infra.output_dir}/iteration_{iteration+1}_global_centrality.json", "w") as f:
+            global_top = get_top_entities_global(
+                centrality_scores, ctx.graph, top_k=self.CENTRALITY_GLOBAL_TOP_K
+            )
+            with open(
+                f"{self.settings.infra.output_dir}/iteration_{iteration + 1}_global_centrality.json",
+                "w",
+            ) as f:
                 json.dump(global_top, f, indent=2)
 
-            comm_top = get_top_entities_per_community(centrality_scores, communities_map, ctx.graph, top_k=self.CENTRALITY_COMMUNITY_TOP_K)
-            with open(f"{self.settings.infra.output_dir}/iteration_{iteration+1}_community_centrality.json", "w") as f:
+            comm_top = get_top_entities_per_community(
+                centrality_scores, communities_map, ctx.graph, top_k=self.CENTRALITY_COMMUNITY_TOP_K
+            )
+            with open(
+                f"{self.settings.infra.output_dir}/iteration_{iteration + 1}_community_centrality.json",
+                "w",
+            ) as f:
                 json.dump(comm_top, f, indent=2)
 
-            is_final = (iteration == self.settings.iterative.iterations - 1)
+            is_final = iteration == self.settings.iterative.iterations - 1
             if is_final:
-                plots_dir = os.path.join(self.settings.infra.output_dir, self.CENTRALITY_PLOTS_SUBDIR)
+                plots_dir = os.path.join(
+                    self.settings.infra.output_dir, self.CENTRALITY_PLOTS_SUBDIR
+                )
                 plot_global_centrality(global_top, plots_dir)
                 plot_community_centrality(comm_top, plots_dir)
                 logger.info("Final centrality plots saved to %s", plots_dir)
@@ -382,17 +413,22 @@ class IterativeOrchestrator:
         except Exception as e:
             logger.error(f"Centrality analysis failed: {e}", exc_info=True)
 
-    def _save_checkpoint(self, ctx: PipelineContext, iteration: int, thesis_output_dir: str) -> None:
+    def _save_checkpoint(
+        self, ctx: PipelineContext, iteration: int, thesis_output_dir: str
+    ) -> None:
         """Persist a GraphML snapshot and a compact topic JSON for this iteration."""
         checkpoints_dir = os.path.join(thesis_output_dir, self.CHECKPOINTS_SUBDIR)
         create_output_directory(checkpoints_dir)
         self._save_graphml_checkpoint(ctx, iteration, checkpoints_dir)
         self._save_topic_snapshot(ctx, iteration, checkpoints_dir)
 
-    def _save_graphml_checkpoint(self, ctx: PipelineContext, iteration: int, checkpoints_dir: str) -> None:
+    def _save_graphml_checkpoint(
+        self, ctx: PipelineContext, iteration: int, checkpoints_dir: str
+    ) -> None:
         """Write a GraphML file, serialising dicts/lists/dates to strings."""
         from datetime import date as _date, datetime as _dt
-        graph_path = os.path.join(checkpoints_dir, f"iteration_{iteration+1}_graph.graphml")
+
+        graph_path = os.path.join(checkpoints_dir, f"iteration_{iteration + 1}_graph.graphml")
         clean_graph = ctx.graph.copy()
         for _, d in clean_graph.nodes(data=True):
             for k, v in list(d.items()):
@@ -412,7 +448,9 @@ class IterativeOrchestrator:
                     d[k] = v.isoformat()
         nx.write_graphml(clean_graph, graph_path)
 
-    def _save_topic_snapshot(self, ctx: PipelineContext, iteration: int, checkpoints_dir: str) -> None:
+    def _save_topic_snapshot(
+        self, ctx: PipelineContext, iteration: int, checkpoints_dir: str
+    ) -> None:
         """Persist a compact JSON snapshot of all community/topic nodes."""
         topics_snapshot = []
         for node_id, data in ctx.graph.nodes(data=True):
@@ -422,18 +460,25 @@ class IterativeOrchestrator:
             embedding = data.get("embedding")
             if hasattr(embedding, "tolist"):
                 embedding = embedding.tolist()
-            topics_snapshot.append({
-                "node_id": node_id,
-                "node_type": node_type,
-                "title": data.get("title") or data.get("name"),
-                "summary": data.get("summary"),
-                "community_id": data.get("community_id"),
-                "subcommunity_id": data.get("subcommunity_id"),
-                "embedding": embedding,
-            })
-        snapshot_path = os.path.join(checkpoints_dir, f"iteration_{iteration+1}_topics.json")
+            topics_snapshot.append(
+                {
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "title": data.get("title") or data.get("name"),
+                    "summary": data.get("summary"),
+                    "community_id": data.get("community_id"),
+                    "subcommunity_id": data.get("subcommunity_id"),
+                    "embedding": embedding,
+                }
+            )
+        snapshot_path = os.path.join(checkpoints_dir, f"iteration_{iteration + 1}_topics.json")
         with open(snapshot_path, "w", encoding="utf-8") as f:
-            json.dump({"iteration": iteration + 1, "topics": topics_snapshot}, f, indent=2, ensure_ascii=False)
+            json.dump(
+                {"iteration": iteration + 1, "topics": topics_snapshot},
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
 
     def _collect_iteration_result(
         self,
@@ -452,7 +497,9 @@ class IterativeOrchestrator:
             community_sil = stats_report["community_level"].get("silhouette_score", 0.0) or 0.0
         subcommunity_sil = 0.0
         if stats_report.get("subcommunity_level"):
-            subcommunity_sil = stats_report["subcommunity_level"].get("silhouette_score", 0.0) or 0.0
+            subcommunity_sil = (
+                stats_report["subcommunity_level"].get("silhouette_score", 0.0) or 0.0
+            )
 
         result: IterationResult = {
             "iteration": iteration + 1,
@@ -468,7 +515,7 @@ class IterativeOrchestrator:
             "communities": comm_results.get("community_count", 0),
         }
         logger.info(
-            f"Iteration {iteration+1} Stats: Modularity={modularity:.4f}, "
+            f"Iteration {iteration + 1} Stats: Modularity={modularity:.4f}, "
             f"Separation={global_separation:.4f}, "
             f"Silhouette(Com/Sub)={community_sil:.3f}/{subcommunity_sil:.3f}"
         )
@@ -504,14 +551,19 @@ class IterativeOrchestrator:
                 stats_path = f"{self.settings.infra.output_dir}/node2vec_stats.json"
                 with open(stats_path, "w") as f:
                     json.dump(n2v_stats, f, indent=2)
-            plot_node2vec_impact(self.results, f"{self.settings.infra.output_dir}/node2vec_impact.png")
+            plot_node2vec_impact(
+                self.results, f"{self.settings.infra.output_dir}/node2vec_impact.png"
+            )
         except Exception as e:
             logger.error(f"Node2Vec analysis failed: {e}")
 
     def _generate_thesis_plots(self) -> None:
         """Generate thesis-quality summary plots from accumulated experiment data."""
         try:
-            from graphknows.graphgen.pipeline.visualization.thesis_plots import generate_all_thesis_plots
+            from graphknows.graphgen.pipeline.visualization.thesis_plots import (
+                generate_all_thesis_plots,
+            )
+
             thesis_results = generate_all_thesis_plots(self.settings.infra.output_dir)
             generated = len([v for v in thesis_results.values() if v])
             logger.info(f"Generated {generated} thesis plots.")
@@ -555,4 +607,6 @@ class IterativeOrchestrator:
                     "Continuing without DB upload (output graphs saved locally)."
                 )
         except Exception as e:
-            logger.warning(f"Upload failed: {e}. Continuing without DB upload (output graphs saved locally).")
+            logger.warning(
+                f"Upload failed: {e}. Continuing without DB upload (output graphs saved locally)."
+            )

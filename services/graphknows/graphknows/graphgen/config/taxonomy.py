@@ -11,6 +11,7 @@ Usage::
     taxonomy = get_default_taxonomy()          # bundled eu-politics.yaml
     taxonomy = load_taxonomy("/path/my.yaml")  # custom domain
 """
+
 from __future__ import annotations
 
 import re

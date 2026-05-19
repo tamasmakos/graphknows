@@ -46,7 +46,9 @@ def _fetch_unknown_names_page(driver: Driver, batch_size: int, offset: int) -> L
     LIMIT $batch_size
     """
     with driver.session() as session:
-        return [str(row["name"]) for row in session.run(query, offset=offset, batch_size=batch_size)]
+        return [
+            str(row["name"]) for row in session.run(query, offset=offset, batch_size=batch_size)
+        ]
 
 
 def _apply_unknown_updates(driver: Driver, rows: List[Dict[str, object]]) -> int:

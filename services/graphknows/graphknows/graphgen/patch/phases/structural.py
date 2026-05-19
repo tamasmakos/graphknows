@@ -28,7 +28,9 @@ def _collect_count(driver: Driver, node_type: str, ontology_class: str) -> int:
     RETURN count(n) AS c
     """
     with driver.session() as session:
-        return int(session.run(query, node_type=node_type, ontology_class=ontology_class).single()["c"])
+        return int(
+            session.run(query, node_type=node_type, ontology_class=ontology_class).single()["c"]
+        )
 
 
 def _update_batch(driver: Driver, node_type: str, ontology_class: str, batch_size: int) -> int:

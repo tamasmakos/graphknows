@@ -21,24 +21,23 @@ Typical usage in any agentic project::
 No agent framework is imported here.  Callers wrap ``GraphKnowsTool.fn`` for
 their stack in a single line — see ``graphknows/tools.py`` for examples.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from graphknows.config import GraphKnowsSettings
+from graphknows.models.tools import GraphKnowsTool
 from graphknows.retrieval.retriever import HybridRetriever
 from graphknows.retrieval.stores.embedder import embed
 from graphknows.retrieval.stores.memgraph import MemgraphStore
 from graphknows.retrieval.stores.neo4j import Neo4jStore
 from graphknows.retrieval.stores.pgvector import PgVectorStore
-from graphknows.models.tools import GraphKnowsTool
 
 logger = logging.getLogger("graphknows.container")
 
@@ -63,12 +62,12 @@ class GraphKnowsContainer:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_env(cls) -> "GraphKnowsContainer":
+    def from_env(cls) -> GraphKnowsContainer:
         """Build a container from environment variables / .env file."""
         return cls(GraphKnowsSettings())
 
     @classmethod
-    def from_settings(cls, settings: GraphKnowsSettings) -> "GraphKnowsContainer":
+    def from_settings(cls, settings: GraphKnowsSettings) -> GraphKnowsContainer:
         """Build a container from a pre-constructed settings object."""
         return cls(settings)
 
@@ -76,7 +75,7 @@ class GraphKnowsContainer:
     # Async context manager
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> "GraphKnowsContainer":
+    async def __aenter__(self) -> GraphKnowsContainer:
         cfg = self.settings
         self._neo = Neo4jStore(
             uri=cfg.neo4j_uri,
@@ -123,24 +122,28 @@ class GraphKnowsContainer:
 
     @property
     def retriever(self) -> HybridRetriever:
+        """Return the hybrid retriever; raises if container is not entered."""
         if self._retriever is None:
             raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
         return self._retriever
 
     @property
     def pg(self) -> PgVectorStore:
+        """Return the PgVector store; raises if container is not entered."""
         if self._pg is None:
             raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
         return self._pg
 
     @property
     def neo(self) -> Neo4jStore:
+        """Return the Neo4j store; raises if container is not entered."""
         if self._neo is None:
             raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
         return self._neo
 
     @property
     def memgraph(self) -> MemgraphStore:
+        """Return the Memgraph store; raises if container is not entered."""
         if self._memgraph is None:
             raise RuntimeError("GraphKnowsContainer not entered — use 'async with'")
         return self._memgraph
@@ -196,7 +199,7 @@ class GraphKnowsContainer:
         config_override: dict[str, Any],
     ) -> None:
         self._jobs[run_id]["status"] = "running"
-        self._jobs[run_id]["started_at"] = datetime.now(timezone.utc).isoformat()
+        self._jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
         try:
             from graphknows.graphgen import run_ingestion
 
@@ -207,20 +210,21 @@ class GraphKnowsContainer:
             self._jobs[run_id].update(
                 status="completed",
                 stats=stats,
-                finished_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(UTC).isoformat(),
             )
         except Exception as exc:
             logger.exception("Ingest job %s failed: %s", run_id, exc)
             self._jobs[run_id].update(
                 status="failed",
                 error=str(exc),
-                finished_at=datetime.now(timezone.utc).isoformat(),
+                finished_at=datetime.now(UTC).isoformat(),
             )
 
 
 # ---------------------------------------------------------------------------
 # Tool builder — constructs the list[GraphKnowsTool] bound to a container
 # ---------------------------------------------------------------------------
+
 
 def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
     """Instantiate all 13 graphknows tools bound to container ``c``."""
@@ -306,13 +310,15 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
         emb = emb_array[0].tolist()
         await c.pg.upsert_chunks(
             session_id=session_id,
-            chunks=[{
-                "id": chunk_id,
-                "doc_id": f"memo:{session_id}",
-                "text": full_text,
-                "embedding": emb,
-                "metadata": {"title": title, "source": "session_memory"},
-            }],
+            chunks=[
+                {
+                    "id": chunk_id,
+                    "doc_id": f"memo:{session_id}",
+                    "text": full_text,
+                    "embedding": emb,
+                    "metadata": {"title": title, "source": "session_memory"},
+                }
+            ],
         )
         return json.dumps({"chunk_id": chunk_id, "session_id": session_id, "stored": True})
 
@@ -323,7 +329,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
         config_override: dict[str, Any] | None = None,
     ) -> str:
         run_id = str(uuid.uuid4())
-        queued_at = datetime.now(timezone.utc).isoformat()
+        queued_at = datetime.now(UTC).isoformat()
         c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}  # noqa: SLF001
         asyncio.create_task(c._run_ingest_task(run_id, text, title, config_override or {}))  # noqa: SLF001
         return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
@@ -413,11 +419,20 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Natural-language research question."},
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language research question.",
+                    },
                     "session_id": {"type": "string", "default": "default"},
                     "search_type": {
                         "type": "string",
-                        "enum": ["HYBRID", "SEMANTIC", "GRAPH_TRAVERSAL", "SUMMARIES", "FEELING_LUCKY"],
+                        "enum": [
+                            "HYBRID",
+                            "SEMANTIC",
+                            "GRAPH_TRAVERSAL",
+                            "SUMMARIES",
+                            "FEELING_LUCKY",
+                        ],
                         "default": "HYBRID",
                     },
                     "k_entity": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
@@ -437,7 +452,11 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
                 "properties": {
                     "query": {"type": "string"},
                     "k": {"type": "integer", "default": 10},
-                    "entity_types": {"type": "array", "items": {"type": "string"}, "description": "Optional label filter, e.g. [\"ORG\", \"PERSON\"]."},
+                    "entity_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": 'Optional label filter, e.g. ["ORG", "PERSON"].',
+                    },
                 },
                 "required": ["query"],
             },
@@ -584,7 +603,10 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
             parameters={
                 "type": "object",
                 "properties": {
-                    "template": {"type": "string", "description": "Parameterized Cypher template using $param syntax."},
+                    "template": {
+                        "type": "string",
+                        "description": "Parameterized Cypher template using $param syntax.",
+                    },
                     "params": {"type": "object", "description": "Query parameters dict."},
                 },
                 "required": ["template"],

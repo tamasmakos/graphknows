@@ -12,11 +12,13 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
 def plot_evolution_metrics(csv_path: str, output_path: str) -> None:
     """
     Visualize the evolution of Modularity vs Topic Overlap.
     """
     from graphknows.graphgen.analytics.plot_style import apply_thesis_style
+
     apply_thesis_style()
 
     if not os.path.exists(csv_path):
@@ -31,11 +33,11 @@ def plot_evolution_metrics(csv_path: str, output_path: str) -> None:
         return
 
     # Check if 'topic_overlap' exists, if not calculate it from separation
-    if 'topic_overlap' not in df.columns:
+    if "topic_overlap" not in df.columns:
         logger.info("Column 'topic_overlap' missing. Calculating from 'topic_separation'.")
         # Assuming topic_separation is Cosine Distance (0 to 1)
-        if 'topic_separation' in df.columns:
-            df['topic_overlap'] = 1.0 - df['topic_separation']
+        if "topic_separation" in df.columns:
+            df["topic_overlap"] = 1.0 - df["topic_separation"]
         else:
             logger.error("Neither 'topic_overlap' nor 'topic_separation' columns found.")
             return
@@ -43,24 +45,31 @@ def plot_evolution_metrics(csv_path: str, output_path: str) -> None:
     # Create a dual-axis plot
     fig, ax1 = plt.subplots(figsize=(9, 5.5))
 
-    color = 'tab:blue'
-    ax1.set_xlabel('Iteration')
-    ax1.set_ylabel('Modularity (Structure)', color=color)
-    ax1.plot(df['iteration'], df['modularity'], color=color, marker='o', label='Modularity')
-    ax1.tick_params(axis='y', labelcolor=color)
+    color = "tab:blue"
+    ax1.set_xlabel("Iteration")
+    ax1.set_ylabel("Modularity (Structure)", color=color)
+    ax1.plot(df["iteration"], df["modularity"], color=color, marker="o", label="Modularity")
+    ax1.tick_params(axis="y", labelcolor=color)
     ax1.grid(True, alpha=0.3)
 
     ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
 
-    color = 'tab:red'
-    ax2.set_ylabel('Topic Embedding Overlap (Semantics)', color=color)
+    color = "tab:red"
+    ax2.set_ylabel("Topic Embedding Overlap (Semantics)", color=color)
     # We expect Overlap to DECREASE as Modularity INCREASES if topics are becoming distinct
-    ax2.plot(df['iteration'], df['topic_overlap'], color=color, marker='x', linestyle='--', label='Topic Overlap')
-    ax2.tick_params(axis='y', labelcolor=color)
+    ax2.plot(
+        df["iteration"],
+        df["topic_overlap"],
+        color=color,
+        marker="x",
+        linestyle="--",
+        label="Topic Overlap",
+    )
+    ax2.tick_params(axis="y", labelcolor=color)
 
-    plt.title('Evolution of Structural Modularity vs. Semantic Topic Overlap')
+    plt.title("Evolution of Structural Modularity vs. Semantic Topic Overlap")
     fig.tight_layout()
-    
+
     # Save the plot
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=300)
@@ -69,15 +78,16 @@ def plot_evolution_metrics(csv_path: str, output_path: str) -> None:
 
 
 def plot_topic_heatmap(
-    topic_embeddings: Dict[str, np.ndarray], 
+    topic_embeddings: Dict[str, np.ndarray],
     topic_labels: Dict[str, str],
     output_path: str,
-    title: str = "Topic Similarity Heatmap"
+    title: str = "Topic Similarity Heatmap",
 ) -> None:
     """
     Generate and save a heatmap of topic similarity.
     """
     from graphknows.graphgen.analytics.plot_style import apply_thesis_style, truncate_label
+
     apply_thesis_style()
 
     try:
@@ -88,11 +98,12 @@ def plot_topic_heatmap(
         sorted_ids = sorted(topic_embeddings.keys())
         matrix = np.vstack([topic_embeddings[tid] for tid in sorted_ids])
         labels = [truncate_label(topic_labels.get(tid, tid), 20) for tid in sorted_ids]
-        
+
         # Calculate similarity
         from sklearn.metrics.pairwise import cosine_similarity
+
         sim_matrix = cosine_similarity(matrix)
-        
+
         plt.figure(figsize=(10, 8))
         sns.heatmap(sim_matrix, xticklabels=labels, yticklabels=labels, cmap="YlOrRd")
         plt.title(title)
@@ -101,14 +112,13 @@ def plot_topic_heatmap(
         plt.savefig(output_path, dpi=300)
         plt.close()
         logger.info(f"Saved heatmap to {output_path}")
-        
+
     except Exception:
         logger.exception("Failed to plot heatmap.")
 
+
 def generate_interactive_explorer(
-    graph: nx.DiGraph, 
-    output_path: str,
-    communities: Optional[Dict[str, int]] = None
+    graph: nx.DiGraph, output_path: str, communities: Optional[Dict[str, int]] = None
 ) -> None:
     """
     Generate an interactive HTML visualization using PyVis with search capability.
@@ -122,99 +132,114 @@ def generate_interactive_explorer(
     # Create network
     net = Network(height="750px", width="100%", bgcolor="#ffffff", font_color="black")
     net.force_atlas_2based()
-    
+
     # Add nodes and edges
     # Filter for Entities and Communities only (skip chunks to reduce noise)
-    valid_types = {'ENTITY_CONCEPT', 'COMMUNITY', 'SUBCOMMUNITY'}
-    
+    valid_types = {"ENTITY_CONCEPT", "COMMUNITY", "SUBCOMMUNITY"}
+
     display_graph = nx.DiGraph()
-    
+
     for n, data in graph.nodes(data=True):
-        if data.get('node_type') in valid_types:
+        if data.get("node_type") in valid_types:
             # Color by community
             color = "#97c2fc"
             if communities and n in communities:
                 import matplotlib.colors as mcolors
+
                 comm_id = communities[n]
                 # Generate color from hash
                 color = list(mcolors.TABLEAU_COLORS.values())[comm_id % 10]
-                
-            label = data.get('name', str(n))
-            
+
+            label = data.get("name", str(n))
+
             # Build comprehensive hover details
             title_parts = [f"<b>{label}</b>"]
             title_parts.append(f"Type: {data.get('node_type', 'Unknown')}")
-            
+
             # Add description if available
-            if 'description' in data and data['description']:
-                desc = data['description']
+            if "description" in data and data["description"]:
+                desc = data["description"]
                 # Show full description on hover
                 title_parts.append(f"<br><b>Description:</b> {desc}")
-            
+
             # Add chunk IDs if available
-            if 'chunk_ids' in data and data['chunk_ids']:
-                chunk_count = len(data['chunk_ids']) if isinstance(data['chunk_ids'], list) else 1
+            if "chunk_ids" in data and data["chunk_ids"]:
+                chunk_count = len(data["chunk_ids"]) if isinstance(data["chunk_ids"], list) else 1
                 title_parts.append(f"<br><b>Chunks:</b> {chunk_count}")
-            
+
             # Add any other metadata
-            excluded_keys = {'name', 'node_type', 'description', 'chunk_ids', 'pos', 'embedding'}
+            excluded_keys = {"name", "node_type", "description", "chunk_ids", "pos", "embedding"}
             for key, value in data.items():
                 if key not in excluded_keys and value is not None:
                     # Format the value nicely
                     if isinstance(value, (list, tuple)):
                         if value:
-                            title_parts.append(f"<br><b>{key.replace('_', ' ').title()}:</b> {len(value)} items")
+                            title_parts.append(
+                                f"<br><b>{key.replace('_', ' ').title()}:</b> {len(value)} items"
+                            )
                     elif isinstance(value, dict):
                         if value:
-                            title_parts.append(f"<br><b>{key.replace('_', ' ').title()}:</b> {len(value)} entries")
+                            title_parts.append(
+                                f"<br><b>{key.replace('_', ' ').title()}:</b> {len(value)} entries"
+                            )
                     elif isinstance(value, (int, float, str, bool)):
                         title_parts.append(f"<br><b>{key.replace('_', ' ').title()}:</b> {value}")
-            
+
             title = "".join(title_parts)
-            net.add_node(n, label=label, title=title, color=color, group=communities.get(n, 0) if communities else 0)
+            net.add_node(
+                n,
+                label=label,
+                title=title,
+                color=color,
+                group=communities.get(n, 0) if communities else 0,
+            )
 
     for u, v, data in graph.edges(data=True):
         if u in net.get_nodes() and v in net.get_nodes():
             # Build edge label from edge data
-            edge_label = data.get('relation_type', data.get('type', ''))
-            
+            edge_label = data.get("relation_type", data.get("type", ""))
+
             # Add score if available
-            if 'score' in data:
-                score = data['score']
+            if "score" in data:
+                score = data["score"]
                 if isinstance(score, float):
                     edge_label += f" ({score:.2f})"
                 else:
                     edge_label += f" ({score})"
-            
+
             # Build edge title (hover text)
             edge_title_parts = []
-            if 'relation_type' in data or 'type' in data:
-                edge_title_parts.append(f"<b>Relation:</b> {data.get('relation_type', data.get('type', 'Unknown'))}")
-            if 'score' in data:
+            if "relation_type" in data or "type" in data:
+                edge_title_parts.append(
+                    f"<b>Relation:</b> {data.get('relation_type', data.get('type', 'Unknown'))}"
+                )
+            if "score" in data:
                 edge_title_parts.append(f"<br><b>Score:</b> {data['score']}")
-            if 'weight' in data:
+            if "weight" in data:
                 edge_title_parts.append(f"<br><b>Weight:</b> {data['weight']}")
-            
+
             # Add any other edge metadata
-            excluded_edge_keys = {'relation_type', 'type', 'score', 'weight'}
+            excluded_edge_keys = {"relation_type", "type", "score", "weight"}
             for key, value in data.items():
                 if key not in excluded_edge_keys and value is not None:
                     if isinstance(value, (int, float, str, bool)):
-                        edge_title_parts.append(f"<br><b>{key.replace('_', ' ').title()}:</b> {value}")
-            
+                        edge_title_parts.append(
+                            f"<br><b>{key.replace('_', ' ').title()}:</b> {value}"
+                        )
+
             edge_title = "".join(edge_title_parts) if edge_title_parts else None
-            
+
             net.add_edge(u, v, label=edge_label, title=edge_title)
 
     # Inject custom search javascript
     # This is a bit hacky but standard for adding search to PyVis
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     net.save_graph(output_path)
-    
+
     # Post-process HTML to add search bar
-    with open(output_path, 'r', encoding='utf-8') as f:
+    with open(output_path, "r", encoding="utf-8") as f:
         html = f.read()
-        
+
     search_script = """
     <div id="search-container" style="position: absolute; top: 10px; left: 10px; z-index: 1000;">
         <input type="text" id="node-search" placeholder="Search entities..." onkeyup="searchNodes()">
@@ -248,63 +273,79 @@ def generate_interactive_explorer(
         }
     </script>
     """
-    
+
     # Insert before </body>
     if "</body>" in html:
         html = html.replace("</body>", f"{search_script}</body>")
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(html)
-            
+
     logger.info(f"Saved interactive explorer to {output_path}")
 
-def plot_node2vec_impact(
-    results_history: List[Dict[str, Any]],
-    output_path: str
-) -> None:
+
+def plot_node2vec_impact(results_history: List[Dict[str, Any]], output_path: str) -> None:
     """
     Generate and save a plot comparing Baseline vs Node2Vec modularity.
     """
     from graphknows.graphgen.analytics.plot_style import apply_thesis_style
+
     apply_thesis_style()
 
     try:
         if len(results_history) < 2:
             logger.info("Skipping Node2Vec plot: need at least 2 iterations.")
             return
-        
+
         plt.figure(figsize=(9, 5.5))
-        
+
         df = pd.DataFrame(results_history)
-        iterations = df['iteration']
-        modularity = df['modularity']
-        baseline = df['modularity_baseline']
-        
-        plt.plot(iterations, modularity, marker='o', label='Node2Vec Modularity', linewidth=2, color='#1f77b4')
-        plt.plot(iterations, baseline, marker='s', label='Baseline Modularity', linewidth=2, linestyle='--', color='#ff7f0e')
-        
-        plt.title('Impact of Node2Vec on Community Modularity', fontsize=16)
-        plt.xlabel('Iteration', fontsize=12)
-        plt.ylabel('Modularity', fontsize=12)
+        iterations = df["iteration"]
+        modularity = df["modularity"]
+        baseline = df["modularity_baseline"]
+
+        plt.plot(
+            iterations,
+            modularity,
+            marker="o",
+            label="Node2Vec Modularity",
+            linewidth=2,
+            color="#1f77b4",
+        )
+        plt.plot(
+            iterations,
+            baseline,
+            marker="s",
+            label="Baseline Modularity",
+            linewidth=2,
+            linestyle="--",
+            color="#ff7f0e",
+        )
+
+        plt.title("Impact of Node2Vec on Community Modularity", fontsize=16)
+        plt.xlabel("Iteration", fontsize=12)
+        plt.ylabel("Modularity", fontsize=12)
         plt.legend(fontsize=10)
         plt.xticks(iterations)
-        
+
         # Add annotations for delta
         for i, (m, b) in enumerate(zip(modularity, baseline)):
             delta = m - b
-            plt.annotate(f'{delta:+.3f}', 
-                         xy=(iterations[i], m), 
-                         xytext=(0, 10), 
-                         textcoords='offset points',
-                         ha='center', 
-                         color='green' if delta > 0 else 'red',
-                         fontsize=9)
-        
+            plt.annotate(
+                f"{delta:+.3f}",
+                xy=(iterations[i], m),
+                xytext=(0, 10),
+                textcoords="offset points",
+                ha="center",
+                color="green" if delta > 0 else "red",
+                fontsize=9,
+            )
+
         plt.tight_layout()
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         plt.savefig(output_path, dpi=300)
         plt.close()
         logger.info(f"Saved Node2Vec impact plot to {output_path}")
-        
+
     except Exception:
         logger.exception("Failed to plot Node2Vec impact.")
 
@@ -312,14 +353,19 @@ def plot_node2vec_impact(
 if __name__ == "__main__":
     import argparse
     from graphknows.graphgen.utils.logging import configure_logging
-    
+
     configure_logging()
     parser = argparse.ArgumentParser(description="Visualize Modularity vs Topic Overlap evolution.")
-    parser.add_argument("--csv", default="output/iterative_experiment_results.csv", help="Path to the results CSV")
-    parser.add_argument("--output", default="output/modularity_vs_overlap.png", help="Path to save the output image")
-    
+    parser.add_argument(
+        "--csv", default="output/iterative_experiment_results.csv", help="Path to the results CSV"
+    )
+    parser.add_argument(
+        "--output", default="output/modularity_vs_overlap.png", help="Path to save the output image"
+    )
+
     args = parser.parse_args()
     plot_evolution_metrics(args.csv, args.output)
+
 
 def plot_community_centrality(
     centrality_data: Dict[str, Dict[str, List[Dict[str, Any]]]],
@@ -331,8 +377,11 @@ def plot_community_centrality(
     One figure per community, with one subplot row per centrality measure.
     """
     from graphknows.graphgen.analytics.plot_style import (
-        apply_thesis_style, truncate_label, CENTRALITY_PALETTE,
+        apply_thesis_style,
+        truncate_label,
+        CENTRALITY_PALETTE,
     )
+
     apply_thesis_style()
 
     try:
@@ -351,7 +400,9 @@ def plot_community_centrality(
 
             fig.suptitle(
                 f"Community {comm_id} — Top Entities by Centrality",
-                fontsize=12, fontweight="bold", y=1.0,
+                fontsize=12,
+                fontweight="bold",
+                y=1.0,
             )
 
             for idx, (ax, measure) in enumerate(zip(axes, measure_names)):
@@ -389,8 +440,11 @@ def plot_global_centrality(
     measure across the entire graph.  One subplot row per measure.
     """
     from graphknows.graphgen.analytics.plot_style import (
-        apply_thesis_style, truncate_label, CENTRALITY_PALETTE,
+        apply_thesis_style,
+        truncate_label,
+        CENTRALITY_PALETTE,
     )
+
     apply_thesis_style()
 
     try:
@@ -406,7 +460,9 @@ def plot_global_centrality(
 
         fig.suptitle(
             "Global Entity Centrality Rankings",
-            fontsize=13, fontweight="bold", y=1.0,
+            fontsize=13,
+            fontweight="bold",
+            y=1.0,
         )
 
         for idx, (ax, measure) in enumerate(zip(axes, measure_names)):

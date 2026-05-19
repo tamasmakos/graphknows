@@ -8,7 +8,11 @@ import logging
 import asyncio
 import time
 
-from graphknows.graphgen.config.llm import _extract_secret, normalize_openrouter_model, _get_openrouter_api_key
+from graphknows.graphgen.config.llm import (
+    _extract_secret,
+    normalize_openrouter_model,
+    _get_openrouter_api_key,
+)
 from graphknows.graphgen.pipeline.entity_relation.dspy_module import GraphExtractorModule
 import dspy
 import os
@@ -35,7 +39,7 @@ def _endpoint_matches_hint(endpoint: str, entity_hints: List[str]) -> bool:
     if not endpoint_norm:
         return False
 
-    endpoint_tokens = {token for token in endpoint_norm.split('_') if len(token) > 2}
+    endpoint_tokens = {token for token in endpoint_norm.split("_") if len(token) > 2}
     for hint in entity_hints or []:
         hint_norm = _normalize_relation_candidate(hint)
         if not hint_norm:
@@ -45,7 +49,7 @@ def _endpoint_matches_hint(endpoint: str, entity_hints: List[str]) -> bool:
         if hint_norm in endpoint_norm or endpoint_norm in hint_norm:
             return True
 
-        hint_tokens = {token for token in hint_norm.split('_') if len(token) > 2}
+        hint_tokens = {token for token in hint_norm.split("_") if len(token) > 2}
         overlap = endpoint_tokens & hint_tokens
         if overlap and (len(overlap) >= 2 or len(endpoint_tokens) == 1 or len(hint_tokens) == 1):
             return True
@@ -69,7 +73,9 @@ def _is_grounded_relation_endpoint(
     if _candidate_grounded_in_evidence(endpoint, evidence):
         return True
 
-    ontology_set = {_normalize_relation_candidate(item) for item in (ontology_classes or []) if item}
+    ontology_set = {
+        _normalize_relation_candidate(item) for item in (ontology_classes or []) if item
+    }
     if endpoint_norm in ontology_set:
         return False
 
@@ -90,7 +96,9 @@ def _is_ungrounded_relation_triplet(
 
 
 def _relation_endpoints_in_hints(source: str, target: str, entity_hints: List[str]) -> bool:
-    return _endpoint_matches_hint(source, entity_hints) and _endpoint_matches_hint(target, entity_hints)
+    return _endpoint_matches_hint(source, entity_hints) and _endpoint_matches_hint(
+        target, entity_hints
+    )
 
 
 class BaseExtractor(ABC):
@@ -122,13 +130,18 @@ class DSPyExtractor(BaseExtractor):
         self.config = config
 
         # Configure DSPy with the LLM from config
-        llm_config = config.get('llm', {})
+        llm_config = config.get("llm", {})
         # Flatten if it's a pydantic model dump
-        if hasattr(llm_config, 'model_dump'):
+        if hasattr(llm_config, "model_dump"):
             llm_config = llm_config.model_dump()
 
         # Try to find the best model name from config
-        model = llm_config.get('extraction_model') or llm_config.get('base_model') or llm_config.get('model') or 'moonshotai/kimi-k2'
+        model = (
+            llm_config.get("extraction_model")
+            or llm_config.get("base_model")
+            or llm_config.get("model")
+            or "moonshotai/kimi-k2"
+        )
 
         # Configure DSPy for OpenRouter
         api_key = _get_openrouter_api_key(config)
@@ -140,13 +153,13 @@ class DSPyExtractor(BaseExtractor):
                 api_key=api_key,
                 api_base="https://openrouter.ai/api/v1",
                 temperature=0.0,
-                max_tokens=2048
+                max_tokens=2048,
             )
             dspy.configure(lm=lm)
         except Exception as e:
-             logger.warning(f"Failed to configure DSPy LM: {e}")
-             # Fallback or already configured
-             pass
+            logger.warning(f"Failed to configure DSPy LM: {e}")
+            # Fallback or already configured
+            pass
 
         self.module = GraphExtractorModule()
         logger.info(f"Initialized DSPy extractor with model {model}")
@@ -178,36 +191,36 @@ class DSPyExtractor(BaseExtractor):
                     candidate_relations=_candidates,
                 )
                 return prediction.triplets
-                
+
             triplets = await asyncio.to_thread(_extract_sync)
-            
+
             # Convert to expected format
             relations = []
             nodes_data = []
             seen_nodes = set()
             raw_triplets = []
             triplet_decisions = []
-            
+
             # triplets is expected to be a list of Triplet objects (pydantic models)
             if triplets:
                 for triplet in triplets:
                     # Handle both dict and object access just in case
                     if isinstance(triplet, dict):
-                        source = triplet.get('source')
-                        relation = triplet.get('relation')
-                        target = triplet.get('target')
-                        source_type = triplet.get('source_type')
-                        target_type = triplet.get('target_type')
-                        confidence = triplet.get('confidence', 1.0)
-                        evidence = triplet.get('evidence', "")
+                        source = triplet.get("source")
+                        relation = triplet.get("relation")
+                        target = triplet.get("target")
+                        source_type = triplet.get("source_type")
+                        target_type = triplet.get("target_type")
+                        confidence = triplet.get("confidence", 1.0)
+                        evidence = triplet.get("evidence", "")
                     else:
-                        source = getattr(triplet, 'source', None)
-                        relation = getattr(triplet, 'relation', None)
-                        target = getattr(triplet, 'target', None)
-                        source_type = getattr(triplet, 'source_type', None)
-                        target_type = getattr(triplet, 'target_type', None)
-                        confidence = getattr(triplet, 'confidence', 1.0)
-                        evidence = getattr(triplet, 'evidence', "")
+                        source = getattr(triplet, "source", None)
+                        relation = getattr(triplet, "relation", None)
+                        target = getattr(triplet, "target", None)
+                        source_type = getattr(triplet, "source_type", None)
+                        target_type = getattr(triplet, "target_type", None)
+                        confidence = getattr(triplet, "confidence", 1.0)
+                        evidence = getattr(triplet, "evidence", "")
 
                     raw_triplet = {
                         "source": source,
@@ -221,15 +234,21 @@ class DSPyExtractor(BaseExtractor):
                     raw_triplets.append(raw_triplet)
 
                     if not (source and relation and target):
-                        triplet_decisions.append({
-                            **raw_triplet,
-                            "kept": False,
-                            "drop_reason": "missing_triplet_field",
-                            "source_matches_hint": _endpoint_matches_hint(source, entity_hints),
-                            "target_matches_hint": _endpoint_matches_hint(target, entity_hints),
-                            "source_grounded": _is_grounded_relation_endpoint(source, entity_hints, ontology_classes, evidence),
-                            "target_grounded": _is_grounded_relation_endpoint(target, entity_hints, ontology_classes, evidence),
-                        })
+                        triplet_decisions.append(
+                            {
+                                **raw_triplet,
+                                "kept": False,
+                                "drop_reason": "missing_triplet_field",
+                                "source_matches_hint": _endpoint_matches_hint(source, entity_hints),
+                                "target_matches_hint": _endpoint_matches_hint(target, entity_hints),
+                                "source_grounded": _is_grounded_relation_endpoint(
+                                    source, entity_hints, ontology_classes, evidence
+                                ),
+                                "target_grounded": _is_grounded_relation_endpoint(
+                                    target, entity_hints, ontology_classes, evidence
+                                ),
+                            }
+                        )
                         continue
 
                     decision = {
@@ -238,8 +257,12 @@ class DSPyExtractor(BaseExtractor):
                         "drop_reason": None,
                         "source_matches_hint": _endpoint_matches_hint(source, entity_hints),
                         "target_matches_hint": _endpoint_matches_hint(target, entity_hints),
-                        "source_grounded": _is_grounded_relation_endpoint(source, entity_hints, ontology_classes, evidence),
-                        "target_grounded": _is_grounded_relation_endpoint(target, entity_hints, ontology_classes, evidence),
+                        "source_grounded": _is_grounded_relation_endpoint(
+                            source, entity_hints, ontology_classes, evidence
+                        ),
+                        "target_grounded": _is_grounded_relation_endpoint(
+                            target, entity_hints, ontology_classes, evidence
+                        ),
                     }
 
                     # --- Relation-type allowlist gate ---
@@ -251,14 +274,15 @@ class DSPyExtractor(BaseExtractor):
                             decision["drop_reason"] = "relation_type_not_in_taxonomy"
                             triplet_decisions.append(decision)
                             logger.debug(
-                                "Dropping DSPy triplet with unknown relation type %r "
-                                "(allowed: %s)",
+                                "Dropping DSPy triplet with unknown relation type %r (allowed: %s)",
                                 relation,
                                 _allowed,
                             )
                             continue
 
-                    if entity_hints and not _relation_endpoints_in_hints(source, target, entity_hints):
+                    if entity_hints and not _relation_endpoints_in_hints(
+                        source, target, entity_hints
+                    ):
                         decision["drop_reason"] = "endpoint_not_grounded_in_hints"
                         triplet_decisions.append(decision)
                         logger.debug(
@@ -295,28 +319,30 @@ class DSPyExtractor(BaseExtractor):
                     relation = standardize_label(relation)
                     source_type = standardize_label(source_type) if source_type else "ENTITY"
                     target_type = standardize_label(target_type) if target_type else "ENTITY"
-                    
-                    props = {
-                        "confidence": confidence,
-                        "evidence": evidence
-                    }
+
+                    props = {"confidence": confidence, "evidence": evidence}
                     relations.append((source, relation, target, props))
-                    
+
                     if source not in seen_nodes:
                         nodes_data.append({"id": source, "type": source_type, "properties": {}})
                         seen_nodes.add(source)
                     if target not in seen_nodes:
                         nodes_data.append({"id": target, "type": target_type, "properties": {}})
                         seen_nodes.add(target)
-                        
-            return relations, nodes_data, {
-                "raw_triplets": raw_triplets,
-                "triplet_decisions": triplet_decisions,
-            }
-            
+
+            return (
+                relations,
+                nodes_data,
+                {
+                    "raw_triplets": raw_triplets,
+                    "triplet_decisions": triplet_decisions,
+                },
+            )
+
         except Exception as e:
             logger.error(f"DSPy extraction failed: {e}", exc_info=True)
             return [], [], {}
+
 
 def get_extractor(config: Dict[str, Any]) -> BaseExtractor:
     """Return the sole supported extractor: DSPy."""
