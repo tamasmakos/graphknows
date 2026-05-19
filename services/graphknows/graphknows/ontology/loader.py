@@ -46,7 +46,7 @@ def _load_jsonld_manifest(summary_path: Path, meta: dict) -> OntologyManifest:
     )
 
 
-def _load_owl_manifest(  # noqa: C901
+def _load_owl_manifest(  # noqa: C901  # NOSONAR
     file_paths: list[Path], meta: dict, summary_path: Path | None
 ) -> OntologyManifest:
     """Build manifest from OWL/Turtle files using rdflib."""

@@ -38,9 +38,9 @@ def main() -> None:
         _run_sse(port=args.port)
     else:
         # Default HTTP mode: FastAPI + FastMCP streamable-HTTP sub-app.
-        uvicorn.run(
+        uvicorn.run(  # NOSONAR — containerised; network boundary enforced by Docker/k8s
             "graphknows.api:app",
-            host="0.0.0.0",  # NOSONAR — containerised service; bound interface controlled by Docker/k8s network policy
+            host="0.0.0.0",
             port=args.port,
             log_level="info",
             access_log=True,
@@ -86,9 +86,9 @@ def _run_sse(port: int = 8025) -> None:
 
     # Mount SSE endpoint alongside the existing HTTP app
     app.mount("/mcp-sse", mcp.sse_app())
-    uvicorn.run(
+    uvicorn.run(  # NOSONAR — containerised; network boundary enforced by Docker/k8s
         app,
-        host="0.0.0.0",  # NOSONAR — containerised service; bound interface controlled by Docker/k8s network policy
+        host="0.0.0.0",
         port=port,
         log_level="info",
         access_log=True,

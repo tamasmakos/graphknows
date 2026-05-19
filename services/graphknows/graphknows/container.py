@@ -228,7 +228,7 @@ class GraphKnowsContainer:
 # ---------------------------------------------------------------------------
 
 
-def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901
+def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901  # NOSONAR
     """Instantiate all 13 graphknows tools bound to container ``c``."""
 
     # ---- retrieve -------------------------------------------------------

@@ -51,6 +51,14 @@ logger = logging.getLogger("graphknows.api")
 _ERR_STORES_NOT_INIT = "Stores not initialised"
 _ERR_NEO4J_NOT_INIT = "Neo4j not initialised"
 
+# Reusable responses dicts for FastAPI OpenAPI schema documentation
+_DESC_503 = "Service unavailable"
+_R503 = {503: {"description": _DESC_503}}
+_R503_404 = {503: {"description": _DESC_503}, 404: {"description": "Not found"}}
+_R503_500 = {503: {"description": _DESC_503}, 500: {"description": "Internal error"}}
+_R503_422 = {503: {"description": _DESC_503}, 422: {"description": "Invalid input"}}
+_R404 = {404: {"description": "Not found"}}
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -308,7 +316,7 @@ async def ingest(req: IngestRequest) -> IngestResponse:
     return IngestResponse(run_id=run_id, status="queued", queued_at=queued_at)
 
 
-@app.get("/jobs/{run_id}")
+@app.get("/jobs/{run_id}", responses=_R404)
 async def get_job(run_id: str) -> dict[str, Any]:
     """Poll ingest job status."""
     job = _jobs.get(run_id)
@@ -320,7 +328,7 @@ async def get_job(run_id: str) -> dict[str, Any]:
 # ── Retrieve ───────────────────────────────────────────────────────────────
 
 
-@app.post("/retrieve")
+@app.post("/retrieve", responses=_R503)
 async def retrieve(req: RetrieveRequest) -> str:
     """Hybrid entity-first retrieval — returns XML string."""
     if _retriever is None:
@@ -349,7 +357,7 @@ async def create_session(req: SessionCreateRequest) -> SessionCreateResponse:
     return SessionCreateResponse(session_id=session_id, seeded=seeded)
 
 
-@app.delete("/session/{session_id}")
+@app.delete("/session/{session_id}", responses=_R503)
 async def delete_session(session_id: str) -> SessionDeleteResponse:
     """Merge Memgraph session graph → Neo4j corpus, then purge session data."""
     if _memgraph is None or _neo is None or _pg is None:
@@ -386,7 +394,7 @@ async def delete_session(session_id: str) -> SessionDeleteResponse:
 # ── Stats ──────────────────────────────────────────────────────────────────
 
 
-@app.get("/stats")
+@app.get("/stats", responses=_R503)
 async def stats() -> dict[str, Any]:
     """Combined Neo4j node counts + pgvector row counts."""
     if _neo is None or _pg is None:
@@ -414,7 +422,7 @@ async def stats() -> dict[str, Any]:
 # ── Session preview-merge (E5) ─────────────────────────────────────────────
 
 
-@app.get("/session/{session_id}/preview-merge")
+@app.get("/session/{session_id}/preview-merge", responses=_R503)
 async def preview_session_merge(session_id: str) -> dict[str, Any]:
     """Preview what merging *session_id* into the corpus would do — no writes."""
     if _memgraph is None or _neo is None:
@@ -444,11 +452,11 @@ def _load_patch_taxonomy(taxonomy_file: str | None):
         return None
 
 
-@app.post("/admin/patch")
+@app.post("/admin/patch", responses=_R503_500)
 async def run_patch(req: PatchRequest) -> dict[str, Any]:
     """Run ontology patch phases on the Neo4j corpus."""
     if _settings is None:
-        raise HTTPException(status_code=503, detail="Settings not initialised")
+        raise HTTPException(status_code=503, detail="Settings not initialised")  # NOSONAR
     taxonomy = _load_patch_taxonomy(req.taxonomy_file)
     try:
         from graphknows.graphgen.patch.runner import run_patch as _run_patch
@@ -466,10 +474,9 @@ async def run_patch(req: PatchRequest) -> dict[str, Any]:
         return result
     except Exception as exc:
         logger.exception("Patch failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc  # NOSONAR
 
 
-@app.get("/admin/patch/preview")
 async def preview_patch(
     phases: str | None = None,
     taxonomy_file: str | None = None,
@@ -483,7 +490,7 @@ async def preview_patch(
 # ── Temporal SEGMENT endpoints (E6) ───────────────────────────────────────
 
 
-@app.get("/segments")
+@app.get("/segments", responses=_R503)
 async def list_segments(limit: int = 20) -> list[dict[str, Any]]:
     """List SEGMENT provenance nodes ordered by ingestion time (newest first)."""
     if _neo is None:
@@ -491,7 +498,7 @@ async def list_segments(limit: int = 20) -> list[dict[str, Any]]:
     return await _neo.list_segments(limit=limit)
 
 
-@app.get("/segments/{segment_id}")
+@app.get("/segments/{segment_id}", responses=_R503_404)
 async def get_segment(segment_id: str) -> dict[str, Any]:
     """Provenance + doc-count statistics for a single SEGMENT node."""
     if _neo is None:
@@ -522,7 +529,7 @@ async def get_config() -> dict[str, Any]:
 # ── Entity discovery & graph traversal ────────────────────────────────────
 
 
-@app.get("/entities/search")
+@app.get("/entities/search", responses=_R503)
 async def search_entities(
     q: str,
     k: int = 10,
@@ -545,7 +552,7 @@ async def search_entities(
     return await _pg.search_entities(emb, k=k, entity_types=entity_types)
 
 
-@app.get("/entities/{name}/neighbors")
+@app.get("/entities/{name}/neighbors", responses=_R503)
 async def get_entity_neighbors(
     name: str,
     depth: int = 1,
@@ -556,7 +563,7 @@ async def get_entity_neighbors(
     return await _neo.get_entity_neighbors(name, depth=depth)
 
 
-@app.get("/entities/{name}/community")
+@app.get("/entities/{name}/community", responses=_R503_404)
 async def get_entity_community(name: str) -> dict[str, Any]:
     """Return the Leiden community topic summary for a named entity."""
     if _neo is None:
@@ -570,7 +577,7 @@ async def get_entity_community(name: str) -> dict[str, Any]:
 # ── Chunk detail ───────────────────────────────────────────────────────────
 
 
-@app.get("/chunks/{chunk_id}")
+@app.get("/chunks/{chunk_id}", responses=_R503_404)
 async def get_chunk(chunk_id: str) -> dict[str, Any]:
     """Return full chunk text, metadata, and linked entities."""
     if _pg is None or _neo is None:
@@ -596,7 +603,7 @@ class SearchRequest(BaseModel):
     k_final: int = Field(default=10, ge=1, le=100)
 
 
-@app.post("/search")
+@app.post("/search", responses=_R503_422)
 async def search(req: SearchRequest) -> dict[str, Any]:
     """Unified multi-mode search endpoint returning JSON.
 

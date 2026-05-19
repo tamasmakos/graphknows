@@ -56,7 +56,7 @@ class HybridRetriever:
         self.neo = neo
         self.embed_model = embed_model
 
-    async def retrieve(  # noqa: C901
+    async def retrieve(  # noqa: C901  # NOSONAR
         self,
         query: str,
         session_id: str,
@@ -308,7 +308,7 @@ class HybridRetriever:
     # GRAPH_TRAVERSAL mode — entity match → multi-hop neighborhood → chunks
     # ------------------------------------------------------------------
 
-    async def retrieve_graph_traversal(  # noqa: C901
+    async def retrieve_graph_traversal(  # noqa: C901  # NOSONAR
         self,
         query: str,
         session_id: str,
