@@ -42,7 +42,14 @@ def merge_session_to_neo4j(
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
 
-        if getattr(sgm, "_memgraph_ok", False):
+        memgraph_ok = getattr(sgm, "_memgraph_ok", False)
+        log.info(
+            "merge_session_to_neo4j START  session=%s  backend=%s",
+            session_id,
+            "memgraph" if memgraph_ok else "in-memory",
+        )
+
+        if memgraph_ok:
             with sgm._mg_driver.session() as mg:
                 node_rows = mg.run(
                     "MATCH (n {session_id: $sid}) RETURN n",
@@ -61,6 +68,10 @@ def merge_session_to_neo4j(
                     )
                     nodes.append({"name": name, "type": node_type})
 
+                log.debug(
+                    "  Memgraph read: %d nodes for session=%s",
+                    len(nodes), session_id,
+                )
                 edge_rows = mg.run(
                     "MATCH (a {session_id: $sid})-[r]->(b {session_id: $sid}) "
                     "RETURN a, r, b",
@@ -79,6 +90,51 @@ def merge_session_to_neo4j(
                         "rel_type": str(r.type),
                         "weight":   float(dict(r.items()).get("weight", 0.5) or 0.5),
                     })
+            log.debug(
+                "  Memgraph read complete: %d nodes, %d edges for session=%s",
+                len(nodes), len(edges), session_id,
+            )
+            # If Memgraph is empty (e.g. standalone run without DualWriter),
+            # fall back to the in-memory session store written by persist_graph.
+            if not nodes:
+                log.debug(
+                    "  Memgraph empty — checking in-memory fallback for session=%s",
+                    session_id,
+                )
+                mem = getattr(sgm, "_mem_sessions", {}).get(
+                    session_id, {"nodes": {}, "edges": []}
+                )
+                node_by_id = mem.get("nodes", {})
+                for node in node_by_id.values():
+                    props = node.get("properties", {})
+                    name = str(
+                        props.get("name") or node.get("name") or props.get("id") or ""
+                    )
+                    if not name:
+                        continue
+                    nodes.append({
+                        "name": name,
+                        "type": str(
+                            props.get("ontology_class") or node.get("label") or "Entity"
+                        ),
+                    })
+                for edge in mem.get("edges", []):
+                    src = node_by_id.get(edge.get("source", ""), {})
+                    tgt = node_by_id.get(edge.get("target", ""), {})
+                    src_name = str(src.get("properties", {}).get("name") or src.get("name") or "")
+                    tgt_name = str(tgt.get("properties", {}).get("name") or tgt.get("name") or "")
+                    if not src_name or not tgt_name:
+                        continue
+                    edges.append({
+                        "from":     src_name,
+                        "to":       tgt_name,
+                        "rel_type": str(edge.get("type", "RELATION")),
+                        "weight":   float(edge.get("properties", {}).get("weight", 0.5) or 0.5),
+                    })
+                log.debug(
+                    "  in-memory fallback read: %d nodes, %d edges for session=%s",
+                    len(nodes), len(edges), session_id,
+                )
         else:
             mem = getattr(sgm, "_mem_sessions", {}).get(
                 session_id, {"nodes": {}, "edges": []}
@@ -110,12 +166,21 @@ def merge_session_to_neo4j(
                     "rel_type": str(edge.get("type", "RELATION")),
                     "weight":   float(edge.get("properties", {}).get("weight", 0.5) or 0.5),
                 })
+            log.debug(
+                "  in-memory read: %d nodes, %d edges for session=%s",
+                len(nodes), len(edges), session_id,
+            )
 
         # ── write back to Neo4j ──────────────────────────────────────────────
+        log.info(
+            "  writing to Neo4j: %d nodes, %d edges for session=%s",
+            len(nodes), len(edges), session_id,
+        )
         merged_nodes = 0
         merged_edges = 0
         with sgm._n4j_driver.session() as n4j:
             for node in nodes:
+                log.debug("  MERGE node  name=%r  type=%s", node["name"], node["type"])
                 n4j.run(
                     """
                     MERGE (n:Entity {name: $name})
@@ -135,6 +200,10 @@ def merge_session_to_neo4j(
                 merged_nodes += 1
 
             for edge in edges:
+                log.debug(
+                    "  MERGE edge  %r -[%s]-> %r  w=%.2f",
+                    edge["from"], edge["rel_type"], edge["to"], edge["weight"],
+                )
                 n4j.run(
                     """
                     MATCH (a:Entity {name: $a_name})
@@ -156,10 +225,147 @@ def merge_session_to_neo4j(
                 )
                 merged_edges += 1
 
+        log.info(
+            "merge_session_to_neo4j DONE  session=%s  merged_nodes=%d  merged_edges=%d",
+            session_id, merged_nodes, merged_edges,
+        )
+
+        # ── post-merge graph analytics: dedup → pruning → GDS → write-back ───────────
+        _gds_result: dict[str, Any] = {}
+        if nodes:
+            try:
+                import re as _re
+                import networkx as nx
+
+                # Build networkx DiGraph from the merged nodes / edges
+                G: nx.DiGraph = nx.DiGraph()
+                for n in nodes:
+                    G.add_node(n["name"], node_type=n["type"])
+                for e in edges:
+                    G.add_edge(
+                        e["from"], e["to"],
+                        rel_type=e["rel_type"],
+                        confidence=e["weight"],
+                        graph_type="entity_relation",
+                    )
+                log.info(
+                    "post-merge graph built  nodes=%d  edges=%d  session=%s",
+                    G.number_of_nodes(), G.number_of_edges(), session_id,
+                )
+
+                # 1. Entity deduplication — merge nodes with the same
+                #    normalised name (lowercase + strip non-alphanumeric)
+                def _norm(s: str) -> str:
+                    return _re.sub(r"[^a-z0-9]", "", s.lower())
+
+                _norm_to_canon: dict[str, str] = {}
+                _aliases: list[tuple[str, str]] = []
+                for node_name in list(G.nodes()):
+                    key = _norm(node_name)
+                    if not key:
+                        continue
+                    if key not in _norm_to_canon:
+                        _norm_to_canon[key] = node_name
+                    else:
+                        canon = _norm_to_canon[key]
+                        _aliases.append((node_name, canon))
+                        # redirect in-bound edges
+                        for pred in list(G.predecessors(node_name)):
+                            if pred != canon and not G.has_edge(pred, canon):
+                                G.add_edge(pred, canon, **G.edges[pred, node_name])
+                        # redirect out-bound edges
+                        for succ in list(G.successors(node_name)):
+                            if succ != canon and not G.has_edge(canon, succ):
+                                G.add_edge(canon, succ, **G.edges[node_name, succ])
+                        G.remove_node(node_name)
+                        log.debug("  dedup  merged %r → %r", node_name, canon)
+
+                log.info(
+                    "entity dedup  removed=%d duplicates  graph: %d nodes, %d edges",
+                    len(_aliases), G.number_of_nodes(), G.number_of_edges(),
+                )
+
+                # 2. Graph pruning
+                from graphgen.pipeline.graph_cleaning.pruning import prune_graph as _prune
+                prune_stats = _prune(G, {
+                    "min_edge_confidence": 0.3,
+                    "prune_isolated_nodes": True,
+                })
+                log.info(
+                    "graph pruning  nodes_removed=%d  edges_removed=%d"
+                    "  final: %d nodes, %d edges",
+                    prune_stats["nodes_removed"], prune_stats["edges_removed"],
+                    prune_stats["final_nodes"], prune_stats["final_edges"],
+                )
+
+                # 3. GDS feature engineering
+                if G.number_of_nodes() >= 2:
+                    pagerank: dict[str, float] = nx.pagerank(G, alpha=0.85, max_iter=200)
+                    betweenness: dict[str, float] = nx.betweenness_centrality(
+                        G, normalized=True
+                    )
+                    try:
+                        communities = list(
+                            nx.community.greedy_modularity_communities(G.to_undirected())
+                        )
+                    except Exception:
+                        communities = [{n} for n in G.nodes()]
+                    node_community: dict[str, int] = {
+                        node: i
+                        for i, comm in enumerate(communities)
+                        for node in comm
+                    }
+                    top5 = sorted(pagerank.items(), key=lambda x: -x[1])[:5]
+                    log.info(
+                        "GDS features computed  nodes=%d  communities=%d  top_pagerank=%s",
+                        G.number_of_nodes(), len(communities),
+                        [(n, round(v, 4)) for n, v in top5],
+                    )
+
+                    # Write GDS features back to Neo4j
+                    with sgm._n4j_driver.session() as n4j:
+                        for node_name in G.nodes():
+                            pr = pagerank.get(node_name, 0.0)
+                            bc = betweenness.get(node_name, 0.0)
+                            comm_id = node_community.get(node_name, -1)
+                            log.debug(
+                                "  GDS  name=%r  pagerank=%.4f  betweenness=%.4f  community=%d",
+                                node_name, pr, bc, comm_id,
+                            )
+                            n4j.run(
+                                "MATCH (n:Entity {name: $name}) "
+                                "SET n.pagerank = $pr, n.betweenness = $bc, n.community = $comm",
+                                name=node_name,
+                                pr=round(pr, 6),
+                                bc=round(bc, 6),
+                                comm=comm_id,
+                            )
+                    log.info(
+                        "GDS features written to Neo4j  nodes=%d  session=%s",
+                        G.number_of_nodes(), session_id,
+                    )
+                    _gds_result = {
+                        "gds_communities": len(communities),
+                        "gds_top_pagerank": [(n, round(v, 4)) for n, v in top5],
+                        "gds_nodes_enriched": G.number_of_nodes(),
+                    }
+                else:
+                    log.info(
+                        "GDS skipped — graph too small (%d nodes)  session=%s",
+                        G.number_of_nodes(), session_id,
+                    )
+
+            except Exception as _analytics_exc:
+                log.warning(
+                    "Post-merge graph analytics failed (non-fatal)  session=%s: %s",
+                    session_id, _analytics_exc, exc_info=True,
+                )
+
         result: dict[str, Any] = {
             "merged_nodes": merged_nodes,
             "merged_edges": merged_edges,
             "session_id":   session_id,
+            **_gds_result,
         }
 
         # ── optional HTML export ─────────────────────────────────────────────
