@@ -1,17 +1,56 @@
 """GraphKnowsClient — HTTP client for the graphknows unified memory service.
 
 Single interface for retrieve (-> XML string), community lookup, ingest, and health check.
+
+Two implementations share ``GraphKnowsProtocol``:
+
+* ``GraphKnowsClient`` — HTTP (default; graphknows runs as a separate service).
+* ``InProcessGraphKnows`` — in-process (wraps a live ``GraphKnowsContainer``; no HTTP).
+
+Select via ``GRAPHKNOWS_MODE`` env var: ``http`` (default) or ``inprocess``.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
 log = logging.getLogger("agent.tools.graph.client")
 
 _DEFAULT_TIMEOUT = 30.0
+
+
+# ---------------------------------------------------------------------------
+# Shared protocol — both implementations satisfy this interface
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class GraphKnowsProtocol(Protocol):
+    """Structural protocol for graphknows clients.
+
+    Typed duck-typing: any object with these async methods can be injected
+    wherever a graphknows client is expected, regardless of transport.
+    """
+
+    async def retrieve(
+        self,
+        query: str,
+        session_id: str,
+        *,
+        k_entity: int = 10,
+        k_semantic: int = 20,
+        k_final: int = 10,
+    ) -> str: ...
+
+    async def ingest(
+        self,
+        documents: list[dict[str, Any]],
+        config_override: dict | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def health(self) -> dict[str, Any]: ...
 
 
 class GraphKnowsClient:
@@ -81,3 +120,52 @@ class GraphKnowsClient:
 # Backward-compatibility alias (old code may reference HybridRAGClient)
 # ---------------------------------------------------------------------------
 HybridRAGClient = GraphKnowsClient
+
+
+# ---------------------------------------------------------------------------
+# In-process implementation — wraps GraphKnowsContainer directly (no HTTP)
+# ---------------------------------------------------------------------------
+
+
+class InProcessGraphKnows:
+    """In-process graphknows client backed by a live ``GraphKnowsContainer``.
+
+    Use when the agent runs in the same process as graphknows to eliminate
+    HTTP overhead.  Satisfies ``GraphKnowsProtocol``.
+
+    Args:
+        container: An entered ``GraphKnowsContainer`` instance.
+    """
+
+    def __init__(self, container: Any) -> None:
+        self._container = container
+
+    async def retrieve(
+        self,
+        query: str,
+        session_id: str,
+        *,
+        k_entity: int = 10,
+        k_semantic: int = 20,
+        k_final: int = 10,
+    ) -> str:
+        ctx = await self._container.retriever.retrieve(
+            query, session_id, k_entity=k_entity, k_semantic=k_semantic, k_final=k_final
+        )
+        return ctx.to_xml()
+
+    async def ingest(
+        self,
+        documents: list[dict[str, Any]],
+        config_override: dict | None = None,
+    ) -> dict[str, Any]:
+        from graphknows.ingestion.pipeline import run_ingestion
+
+        stats = await run_ingestion(
+            documents=documents,
+            config_override=config_override,
+        )
+        return {"status": "completed", "stats": stats}
+
+    async def health(self) -> dict[str, Any]:
+        return {"status": "ok", "mode": "inprocess"}

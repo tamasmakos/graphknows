@@ -75,6 +75,7 @@ _graph_backend = None
 _tavily: Any | None = None
 _cellar: Any | None = None
 _extractor: Any | None = None
+_graphknows_client: Any | None = None  # GraphKnowsProtocol — http or inprocess
 _ws_connections: dict[str, WebSocket] = {}
 
 
@@ -174,9 +175,9 @@ def _get_ontology_components() -> tuple[Any | None, Any | None]:
     return _ontology_router, _rel_extractor
 
 
-def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, search_client: Any | None = None, graph_backend=None, tavily: Any | None = None, cellar: Any | None = None, extractor: Any | None = None) -> None:
+def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client: httpx.AsyncClient, search_client: Any | None = None, graph_backend=None, tavily: Any | None = None, cellar: Any | None = None, extractor: Any | None = None, graphknows_client: Any | None = None) -> None:
     """Initialize router singletons. Called from main.py lifespan."""
-    global _settings, _sgm, _http_client, _search_client, _graph_backend, _tavily, _cellar, _extractor
+    global _settings, _sgm, _http_client, _search_client, _graph_backend, _tavily, _cellar, _extractor, _graphknows_client
     _settings = settings
     _sgm = sgm
     _http_client = http_client
@@ -185,6 +186,7 @@ def _init_router(settings: AgentSettings, sgm: SessionGraphManager, http_client:
     _tavily = tavily
     _cellar = cellar
     _extractor = extractor
+    _graphknows_client = graphknows_client
 
 
 # ---------------------------------------------------------------------------

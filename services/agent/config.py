@@ -26,6 +26,7 @@ class AgentSettings(BaseServiceSettings):
         httpx_timeout: Timeout in seconds for downstream HTTP calls.
     """
     graphknows_url: str = Field(default="http://localhost:8025", alias="GRAPHKNOWS_URL")
+    graphknows_mode: str = Field(default="http", alias="GRAPHKNOWS_MODE")
     search_url: str = Field(default="http://localhost:8000", alias="SEARCH_URL")
     pgvector_dsn: str = Field(
         default="postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",
