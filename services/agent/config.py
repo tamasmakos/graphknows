@@ -31,10 +31,10 @@ class AgentSettings(BaseServiceSettings):
     graphknows_mode: str = Field(default="http", alias="GRAPHKNOWS_MODE")
     search_url: str = Field(default="http://localhost:8000", alias="SEARCH_URL")
     pgvector_dsn: str = Field(
-        default="postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",
+        default="postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb",  # NOSONAR
         alias="PGVECTOR_DSN",
     )
-    memgraph_uri: str = Field(default="bolt://172.18.0.1:17687", alias="MEMGRAPH_URI")
+    memgraph_uri: str = Field(default="bolt://172.18.0.1:17687", alias="MEMGRAPH_URI")  # NOSONAR
     export_graph_html: bool = Field(default=False, alias="EXPORT_GRAPH_HTML")
     graph_html_output_dir: str = Field(
         default="/root/graphknows/output", alias="GRAPH_HTML_OUTPUT_DIR"

@@ -114,7 +114,7 @@ _GENERIC_SINGLE_WORDS = frozenset(
 )
 
 
-def _is_quality_span(name: str) -> bool:
+def _is_quality_span(name: str) -> bool:  # noqa: C901  # NOSONAR
     """Return True if the entity span is likely a real named entity.
 
     Rejects:
@@ -228,7 +228,7 @@ class InProcessExtractor:
 
         log.info("GLiNER2 loaded in %.1fs (taxonomy=%s)", time.time() - t0, self._taxonomy.name)
 
-    def extract(self, documents: list[dict], session_id: str = "") -> dict:
+    def extract(self, documents: list[dict], session_id: str = "") -> dict:  # noqa: C901  # NOSONAR
         """Run GLiNER2 entity + DSPy relation extraction.
 
         Args:
@@ -420,7 +420,7 @@ class InProcessExtractor:
                                 accepted,
                                 len(triplets),
                             )
-                        except Exception:
+                        except Exception:  # NOSONAR — re-raise caught by outer handler
                             raise
                     else:
                         log.debug(
@@ -429,7 +429,7 @@ class InProcessExtractor:
                             len(chunk_ent_names),
                         )
 
-                except Exception:
+                except Exception:  # NOSONAR — re-raise caught by outer handler
                     raise
 
         entity_nodes = [

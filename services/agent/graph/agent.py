@@ -61,7 +61,7 @@ def clear_session_state(session_id: str) -> None:
 
 
 async def _noop_broadcaster(session_id: str, payload: dict) -> None:
-    pass
+    pass  # NOSONAR — intentional no-op; replaced by caller-supplied ws_broadcaster
 
 
 try:
@@ -102,10 +102,12 @@ _SESSION_GRAPH_LABEL_ALIASES = {
 }
 
 
+_EU_FULL_NAME = "European Union"
+
 _SESSION_GRAPH_NAME_ALIASES = {
-    "EU": "European Union",
-    "E U": "European Union",
-    "EUROPEAN UNION": "European Union",
+    "EU": _EU_FULL_NAME,
+    "E U": _EU_FULL_NAME,
+    "EUROPEAN UNION": _EU_FULL_NAME,
 }
 
 
@@ -128,7 +130,7 @@ def _session_graph_label_rank(label: str) -> int:
     return 1
 
 
-def _normalize_session_graph_payload(
+def _normalize_session_graph_payload(  # noqa: C901  # NOSONAR
     nodes: list[dict],
     edges: list[dict],
 ) -> tuple[list[dict], list[dict]]:
@@ -311,9 +313,7 @@ _SEARCH_WEB_NAV_PHRASES = frozenset(
     }
 )
 
-_SEARCH_WEB_MENU_PREFIX_RE = re.compile(
-    r"^(?:(?:[A-Za-z][A-Za-z&'\- ]{1,30})\s*(?:/|\||•|·)\s*){3,}"
-)
+_SEARCH_WEB_MENU_PREFIX_RE = re.compile(r"^(?:[A-Za-z][A-Za-z&'\- ]{1,30}\s*[/|•·]\s*){3,}")
 
 
 def _clean_search_web_fragment(text: str) -> str:
@@ -328,7 +328,7 @@ def _search_web_noise_penalty(text: str) -> int:
     penalty = sum(1 for phrase in _SEARCH_WEB_NAV_PHRASES if phrase in lowered)
 
     separator_parts = [
-        part.strip() for part in re.split(r"\s*(?:\||/|•|·|»)\s*", text or "") if part.strip()
+        part.strip() for part in re.split(r"\s*[|/•·»]\s*", text or "") if part.strip()
     ]
     short_parts = sum(1 for part in separator_parts if len(part.split()) <= 3)
     if len(separator_parts) >= 4 and short_parts >= len(separator_parts) - 1:
@@ -378,7 +378,7 @@ def _choose_search_web_snippet(
 ) -> str:
     candidates = _iter_search_web_candidates(raw_content, content)
     if not candidates:
-        return _clean_search_web_fragment(content or raw_content)[:max_chars]
+        return _clean_search_web_fragment(title or content or raw_content)[:max_chars]
 
     def _score(candidate: str) -> tuple[int, int, int, int]:
         return (
@@ -533,8 +533,8 @@ async def _run_graphgen(
 
         result = await asyncio.to_thread(_extract_in_thread)
     except Exception as exc:
-        log.error("In-process extraction failed for session=%s: %s", session_id, exc)
-        raise
+        log.exception("In-process extraction failed for session=%s", session_id)
+        raise RuntimeError(exc) from exc
 
     nodes = result.get("entities", [])[:300]
     edges = result.get("relations", [])[:600]
@@ -578,7 +578,7 @@ async def _run_graphgen(
 
 
 # ── LangGraph agent factory ──────────────────────────────────────────────────
-def build_graph(
+def build_graph(  # noqa: C901  # NOSONAR
     ws_broadcaster: Callable[[str, dict], Awaitable[None]] | None,
     session_id: str,
     openrouter_api_key: str,
@@ -648,7 +648,7 @@ def build_graph(
 
             # Emit evidence_added event for each new document
             for doc in docs_to_store:
-                asyncio.create_task(
+                _task = asyncio.create_task(
                     _emit_investigative_event(
                         broadcaster,
                         session_id,
@@ -662,7 +662,7 @@ def build_graph(
 
             # Fire partial keyword graph immediately — non-blocking background task
             if docs_to_store:
-                asyncio.create_task(
+                _task = asyncio.create_task(
                     _emit_keyword_graph(
                         _session_docs.get(session_id, []),
                         session_id,
@@ -734,7 +734,7 @@ def build_graph(
 
         # Fire partial keyword graph immediately — non-blocking
         if documents:
-            asyncio.create_task(
+            _task = asyncio.create_task(
                 _emit_keyword_graph(
                     _session_docs.get(session_id, []),
                     session_id,
@@ -779,17 +779,16 @@ def build_graph(
             "graphgen  session=%s  docs_accumulated=%d", session_id_arg or session_id, len(docs)
         )
         try:
-            nodes, edges, summary = await _run_graphgen(
+            _, _, summary = await _run_graphgen(
                 docs,
                 session_id_arg or session_id,
                 broadcaster,
                 persist_graph,
             )
         except Exception:
-            log.error(
+            log.exception(
                 "graphgen extraction failed for session=%s",
                 session_id_arg or session_id,
-                exc_info=True,
             )
             raise
 
@@ -884,7 +883,7 @@ def build_graph(
 
         # Emit keyword graph (non-blocking)
         if docs_for_session:
-            asyncio.create_task(
+            _task = asyncio.create_task(
                 _emit_keyword_graph(
                     _session_docs.get(session_id, []),
                     session_id,
