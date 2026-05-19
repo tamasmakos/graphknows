@@ -32,9 +32,10 @@ No agent framework is imported by this package.
 """
 from graphknows.config import GraphKnowsSettings
 from graphknows.container import GraphKnowsContainer
-from graphknows.ingestion import run_ingestion
+from graphknows.graphgen import run_ingestion
+from graphknows.models.tools import GraphKnowsTool
 from graphknows.retrieval import HybridRetriever, RetrievalContext
-from graphknows.stores import (
+from graphknows.retrieval.stores import (
     MemgraphStore,
     Neo4jStore,
     PgVectorStore,
@@ -42,7 +43,6 @@ from graphknows.stores import (
     embed_one,
     get_embedder,
 )
-from graphknows.tools import GraphKnowsTool
 
 # Ergonomic top-level alias — the most common import pattern:
 #   from graphknows import GraphKnows

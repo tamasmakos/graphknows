@@ -29,9 +29,9 @@ from fastapi import FastAPI, HTTPException
 from graphknows.config import GraphKnowsSettings
 from graphknows.mcp.server import _jobs, mcp, set_dependencies
 from graphknows.retrieval.retriever import HybridRetriever
-from graphknows.stores.memgraph import MemgraphStore
-from graphknows.stores.neo4j import Neo4jStore
-from graphknows.stores.pgvector import PgVectorStore
+from graphknows.retrieval.stores.memgraph import MemgraphStore
+from graphknows.retrieval.stores.neo4j import Neo4jStore
+from graphknows.retrieval.stores.pgvector import PgVectorStore
 from pydantic import BaseModel, Field
 from pythonjsonlogger import jsonlogger
 
@@ -265,7 +265,7 @@ async def _run_ingest_task(run_id: str, req: IngestRequest) -> None:
     _jobs[run_id]["status"] = "running"
     _jobs[run_id]["started_at"] = datetime.now(timezone.utc).isoformat()
     try:
-        from graphknows.ingestion.pipeline import run_ingestion
+        from graphknows.graphgen import run_ingestion
 
         docs = [d.model_dump() for d in req.documents]
         stats = await run_ingestion(
@@ -424,7 +424,7 @@ async def preview_session_merge(session_id: str) -> dict[str, Any]:
 def _load_patch_taxonomy(taxonomy_file: str | None):
     """Load taxonomy for a patch request; returns None on failure."""
     try:
-        from graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
+        from graphknows.graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
         return load_taxonomy(taxonomy_file) if taxonomy_file else get_default_taxonomy()
     except Exception as exc:
         logger.warning("Could not load patch taxonomy: %s", exc)
@@ -438,7 +438,7 @@ async def run_patch(req: PatchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Settings not initialised")
     taxonomy = _load_patch_taxonomy(req.taxonomy_file)
     try:
-        from graphgen.patch.runner import run_patch as _run_patch
+        from graphknows.graphgen.patch.runner import run_patch as _run_patch
         result = await asyncio.to_thread(
             _run_patch,
             neo4j_uri=_settings.neo4j_uri,
@@ -523,7 +523,7 @@ async def search_entities(
     """
     if _retriever is None or _pg is None:
         raise HTTPException(status_code=503, detail="Stores not initialised")
-    from graphknows.stores.embedder import embed
+    from graphknows.retrieval.stores.embedder import embed
 
     entity_types = [t.strip() for t in types.split(",")] if types else None
     emb_array = await asyncio.to_thread(embed, [q], _settings.embed_model)

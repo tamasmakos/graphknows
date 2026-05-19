@@ -56,10 +56,10 @@ def _run_stdio() -> None:
     from graphknows.api import GraphKnowsSettings
     from graphknows.mcp.server import mcp, set_dependencies
     from graphknows.retrieval.retriever import HybridRetriever
-    from graphknows.stores.embedder import embed  # warm up model cache
-    from graphknows.stores.memgraph import MemgraphStore
-    from graphknows.stores.neo4j import Neo4jStore
-    from graphknows.stores.pgvector import PgVectorStore
+    from graphknows.retrieval.stores.embedder import embed  # warm up model cache
+    from graphknows.retrieval.stores.memgraph import MemgraphStore
+    from graphknows.retrieval.stores.neo4j import Neo4jStore
+    from graphknows.retrieval.stores.pgvector import PgVectorStore
 
     logging.basicConfig(level=logging.WARNING)  # keep stdio clean
 

@@ -237,7 +237,7 @@ async def entity_search(
     Returns:
         JSON array of {name, label, score} objects sorted by similarity.
     """
-    from graphknows.stores.embedder import embed
+    from graphknows.retrieval.stores.embedder import embed
 
     pg = _require_pg()
     emb_array = await asyncio.to_thread(
@@ -351,7 +351,7 @@ async def session_memory(
     Returns:
         JSON dict confirming chunk_id stored and the resolved session_id.
     """
-    from graphknows.stores.embedder import embed
+    from graphknows.retrieval.stores.embedder import embed
 
     pg = _require_pg()
     sid = _resolve_session(session_id, client_id)
@@ -390,7 +390,7 @@ async def _run_mcp_ingest_task(
     _jobs[run_id]["status"] = "running"
     _jobs[run_id]["started_at"] = datetime.now(timezone.utc).isoformat()
     try:
-        from graphknows.ingestion.pipeline import run_ingestion
+        from graphknows.graphgen import run_ingestion
 
         stats = await run_ingestion(
             documents=[{"text": text, "title": title}],

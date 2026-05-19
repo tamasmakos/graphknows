@@ -34,11 +34,11 @@ from typing import Any
 
 from graphknows.config import GraphKnowsSettings
 from graphknows.retrieval.retriever import HybridRetriever
-from graphknows.stores.embedder import embed
-from graphknows.stores.memgraph import MemgraphStore
-from graphknows.stores.neo4j import Neo4jStore
-from graphknows.stores.pgvector import PgVectorStore
-from graphknows.tools import GraphKnowsTool
+from graphknows.retrieval.stores.embedder import embed
+from graphknows.retrieval.stores.memgraph import MemgraphStore
+from graphknows.retrieval.stores.neo4j import Neo4jStore
+from graphknows.retrieval.stores.pgvector import PgVectorStore
+from graphknows.models.tools import GraphKnowsTool
 
 logger = logging.getLogger("graphknows.container")
 
@@ -198,7 +198,7 @@ class GraphKnowsContainer:
         self._jobs[run_id]["status"] = "running"
         self._jobs[run_id]["started_at"] = datetime.now(timezone.utc).isoformat()
         try:
-            from graphknows.ingestion.pipeline import run_ingestion
+            from graphknows.graphgen import run_ingestion
 
             stats = await run_ingestion(
                 documents=[{"text": text, "title": title}],
