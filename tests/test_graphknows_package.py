@@ -69,8 +69,11 @@ class TestEntityLabel:
     def test_membership_check(self):
         from graphknows.models.constants import EntityLabel
 
-        assert "Person" in EntityLabel
-        assert "NotALabel" not in EntityLabel
+        # Use value iteration (compatible with Python 3.11 — EnumType.__contains__
+        # accepting raw strings requires Python 3.12+)
+        values = {e.value for e in EntityLabel}
+        assert "Person" in values
+        assert "NotALabel" not in values
 
 
 # ---------------------------------------------------------------------------
