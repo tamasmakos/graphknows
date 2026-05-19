@@ -1,3 +1,0 @@
-"""
-Knowledge Graph Generation Package
-"""
