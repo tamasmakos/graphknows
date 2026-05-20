@@ -107,6 +107,77 @@ async def list_tools() -> list[types.Tool]:
                 },
             },
         ),
+        types.Tool(
+            name="recall_by_document",
+            description=(
+                "Find document chunks whose mentioned entities match the query. "
+                "Returns chunks ranked by number of matched entities."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Free-text search query",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max results to return (1–20)",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="recall_by_dialog",
+            description=(
+                "Find past conversation utterances whose mentioned entities "
+                "match the query. Returns utterances with session context."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Free-text search query",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max results to return (1–20)",
+                    },
+                    "session_filter": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Optional session_id to scope results",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="recall_by_topic",
+            description=(
+                "Find topics whose label or member entities match the query. "
+                "Returns topics ranked by relevance."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Free-text search query",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max results to return (1–20)",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
@@ -127,6 +198,12 @@ async def _dispatch(name: str, args: dict) -> str:
         return await _tool_ltm_entity(args)
     if name == "ltm_topics":
         return await _tool_ltm_topics(args)
+    if name == "recall_by_document":
+        return await _tool_recall_by_document(args)
+    if name == "recall_by_dialog":
+        return await _tool_recall_by_dialog(args)
+    if name == "recall_by_topic":
+        return await _tool_recall_by_topic(args)
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -205,6 +282,58 @@ async def _tool_ltm_topics(args: dict) -> str:
         d.close()
 
     return json.dumps(rows, ensure_ascii=False, indent=2)
+
+
+async def _tool_recall_by_document(args: dict) -> str:
+    from graphknows.recall import recall_by_document as _rbd
+    query = str(args["query"])
+    top_k = max(1, min(int(args.get("top_k", 5)), 20))
+    d = _neo4j_driver()
+    try:
+        results = _rbd(d, query, top_k)
+    finally:
+        d.close()
+    return json.dumps(
+        [{"text": r.text, "entities": r.entity_names,
+          "provenance": r.provenance, "score": r.score}
+         for r in results],
+        ensure_ascii=False, indent=2,
+    )
+
+
+async def _tool_recall_by_dialog(args: dict) -> str:
+    from graphknows.recall import recall_by_dialog as _rbdia
+    query = str(args["query"])
+    top_k = max(1, min(int(args.get("top_k", 5)), 20))
+    session_filter = args.get("session_filter") or None
+    d = _neo4j_driver()
+    try:
+        results = _rbdia(d, query, top_k, session_filter)
+    finally:
+        d.close()
+    return json.dumps(
+        [{"text": r.text, "entities": r.entity_names,
+          "provenance": r.provenance, "score": r.score}
+         for r in results],
+        ensure_ascii=False, indent=2,
+    )
+
+
+async def _tool_recall_by_topic(args: dict) -> str:
+    from graphknows.recall import recall_by_topic as _rbt
+    query = str(args["query"])
+    top_k = max(1, min(int(args.get("top_k", 5)), 20))
+    d = _neo4j_driver()
+    try:
+        results = _rbt(d, query, top_k)
+    finally:
+        d.close()
+    return json.dumps(
+        [{"text": r.text, "entities": r.entity_names,
+          "provenance": r.provenance, "score": r.score}
+         for r in results],
+        ensure_ascii=False, indent=2,
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────

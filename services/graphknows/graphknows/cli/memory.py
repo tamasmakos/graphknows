@@ -127,3 +127,57 @@ def enrich(skip_topics):
         click.echo("Top entities by PageRank:")
         for e in result.top_entities[:5]:
             click.echo(f"  {e.get('name')}: pr={e.get('pr', 0):.4f} community={e.get('community')}")
+
+
+@cli.command("recall-docs")
+@click.argument("query")
+@click.option("--top-k", default=5, type=int, help="Max results")
+@click.option("--session", default=None, help="Filter to specific session")
+def recall_docs(query: str, top_k: int, session: str | None) -> None:
+    """Find document chunks matching QUERY."""
+    from graphknows.recall import recall_by_document
+    d = _neo4j_driver()
+    results = recall_by_document(d, query, top_k, session)
+    d.close()
+    for r in results:
+        click.echo(f"[{r.score:.2f}] {r.provenance.get('title', 'Unknown')} | {r.text[:120]}...")
+        click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
+    if not results:
+        click.echo("No results found.")
+
+
+@cli.command("recall-dialog")
+@click.argument("query")
+@click.option("--top-k", default=5, type=int)
+@click.option("--session", default=None)
+def recall_dialog(query: str, top_k: int, session: str | None) -> None:
+    """Find past conversation turns matching QUERY."""
+    from graphknows.recall import recall_by_dialog
+    d = _neo4j_driver()
+    results = recall_by_dialog(d, query, top_k, session)
+    d.close()
+    for r in results:
+        click.echo(f"[{r.score:.2f}] session={r.provenance.get('session_id', '?')} "
+                   f"turn={r.provenance.get('turn_index', 0)} "
+                   f"{r.provenance.get('role', '?')}: {r.text[:120]}...")
+        click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
+    if not results:
+        click.echo("No results found.")
+
+
+@cli.command("recall-topic")
+@click.argument("query")
+@click.option("--top-k", default=5, type=int)
+def recall_topic(query: str, top_k: int) -> None:
+    """Find topics related to QUERY."""
+    from graphknows.recall import recall_by_topic
+    d = _neo4j_driver()
+    results = recall_by_topic(d, query, top_k)
+    d.close()
+    for r in results:
+        click.echo(f"[{r.score:.2f}] {r.text[:120]} "
+                   f"(entities: {len(r.entity_names)}, "
+                   f"size: {r.provenance.get('size', 0)})")
+        click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
+    if not results:
+        click.echo("No results found.")
