@@ -38,7 +38,7 @@ class OntologyRelExtractor:
                     model="openrouter/moonshotai/kimi-k2",
                     api_key=os.environ["OPENROUTER_API_KEY"],
                     temperature=0.1,
-                    max_tokens=1024,
+                    max_tokens=2048,
                 )
                 _dspy.settings.configure(lm=_lm)
             self._available = True
