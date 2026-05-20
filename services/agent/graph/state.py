@@ -100,6 +100,7 @@ class InvestigativeState(TypedDict):
     ws_events: list[WSEvent]
     node_features: dict
     current_macro_phase: str
+    prior_knowledge: str  # LTM recall result injected at session start
 
 
 def build_initial_investigative_state(session_id: str, topic: str) -> InvestigativeState:
@@ -128,4 +129,5 @@ def build_initial_investigative_state(session_id: str, topic: str) -> Investigat
         ws_events=[],
         node_features={},
         current_macro_phase="scope",
+        prior_knowledge="",
     )

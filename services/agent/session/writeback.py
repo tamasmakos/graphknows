@@ -1,58 +1,129 @@
-"""WriteBackService — export confirmed session entities back to Neo4j."""
+"""WriteBackService v2 — temporal LTM write-back with Segment nodes."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from neo4j import GraphDatabase
+from datetime import datetime, timezone
+from typing import Any
+
+from neo4j import AsyncGraphDatabase
 
 log = logging.getLogger("agent.session.writeback")
 
 
 class WriteBackService:
-    """Exports high-confidence entities from Memgraph session graphs to Neo4j.
-
-    Uses the same deduplication strategy as graphgen/pipeline/graph_cleaning/resolution.py
-    — deduplicate by (name, label) for nodes, (src, tgt, relation_type) for edges.
-
-    Attributes:
-        neo4j_uri: Bolt URI for the persistent Neo4j KG.
-        neo4j_user: Neo4j username.
-        neo4j_password: Neo4j password.
-    """
-
     def __init__(self, neo4j_uri: str, neo4j_user: str, neo4j_password: str) -> None:
-        """Initialize WriteBackService with Neo4j connection details.
-
-        Args:
-            neo4j_uri: Bolt URI for the persistent Neo4j KG.
-            neo4j_user: Neo4j username.
-            neo4j_password: Neo4j password.
-        """
-        self._driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        self._uri = neo4j_uri
+        self._user = neo4j_user
+        self._password = neo4j_password
 
     async def write_back(
-        self, session_id: str, entities: list[dict], min_confidence: float = 0.7
-    ) -> dict:
-        """Write high-confidence entities from a session back to Neo4j.
-
-        Args:
-            session_id: The session whose entities to write back.
-            entities: List of entity dicts with name, label, confidence keys.
-            min_confidence: Minimum confidence threshold for write-back.
-
-        Returns:
-            Dict with keys written (int) and skipped (int).
-        """
-        high_conf = [e for e in entities if e.get("confidence", 1.0) >= min_confidence]
-        written = 0
-        with self._driver.session() as s:
-            for entity in high_conf:
-                s.run(
-                    "MERGE (e:Entity {name: $name, label: $label})",
-                    name=entity["name"],
-                    label=entity["label"],
+        self,
+        session_id: str,
+        entities: list[dict],
+        relations: list[dict],
+        query: str = "",
+        min_confidence: float = 0.6,
+    ) -> dict[str, Any]:
+        """Extract from Memgraph, merge into Neo4j with Segment node."""
+        ts = datetime.now(timezone.utc).isoformat()
+        driver = AsyncGraphDatabase.driver(self._uri, auth=(self._user, self._password))
+        try:
+            async with driver.session() as s:
+                # 1. Create/merge Segment node
+                await s.run(
+                    "MERGE (seg:Segment {session_id: $sid}) "
+                    "SET seg.timestamp = $ts, seg.query = $query",
+                    sid=session_id, ts=ts, query=query,
                 )
-                written += 1
-        skipped = len(entities) - written
-        log.info("WriteBack session=%s written=%d skipped=%d", session_id, written, skipped)
-        return {"written": written, "skipped": skipped}
+
+                # 2. Merge entities with temporal tracking + weight
+                high_conf = [e for e in entities if e.get("confidence", 1.0) >= min_confidence]
+                written_entities = 0
+                for e in high_conf:
+                    await s.run(
+                        "MERGE (ent:Entity {name: $name}) "
+                        "ON CREATE SET ent.type=$type, ent.first_seen=$ts, ent.last_seen=$ts, ent.confidence_avg=$conf "
+                        "ON MATCH SET ent.last_seen=$ts, ent.type=CASE WHEN ent.type IS NULL THEN $type ELSE ent.type END, "
+                        "ent.confidence_avg=(coalesce(ent.confidence_avg,0.0)+$conf)/2.0 "
+                        "WITH ent "
+                        "MATCH (seg:Segment {session_id: $sid}) "
+                        "MERGE (ent)-[:APPEARED_IN {confidence: $conf}]->(seg)",
+                        name=e["name"], type=e.get("type", "Entity"),
+                        ts=ts, conf=e.get("confidence", 1.0), sid=session_id,
+                    )
+                    written_entities += 1
+
+                # 3. Merge relations with weight accumulation
+                high_conf_rels = [r for r in relations if r.get("confidence", 1.0) >= min_confidence]
+                written_rels = 0
+                for rel in high_conf_rels:
+                    rel_type = rel.get("type", "RELATES").upper().replace(" ", "_")
+                    await s.run(
+                        "MERGE (a:Entity {name: $src}) "
+                        "MERGE (b:Entity {name: $tgt}) "
+                        "MERGE (a)-[r:RELATES {rel_type: $rtype, session_id: $sid}]->(b) "
+                        "SET r.weight=coalesce(r.weight,0)+1, r.confidence=$conf, r.last_seen=$ts",
+                        src=rel["source"], tgt=rel["target"],
+                        rtype=rel_type, sid=session_id,
+                        conf=rel.get("confidence", 1.0), ts=ts,
+                    )
+                    written_rels += 1
+
+        finally:
+            await driver.close()
+
+        # Feature engineering: run centrality + community detection on LTM graph
+        try:
+            from neo4j import GraphDatabase as _GDB
+
+            from graphknows.feature_engineering import LTMFeatureEngineer
+
+            sync_driver = _GDB.driver(self._uri, auth=(self._user, self._password))
+            fe = LTMFeatureEngineer(sync_driver)
+            fe_result = fe.run()
+            log.info("Feature engineering: entity_count=%d communities=%d algo=%s runtime_ms=%.0f",
+                     fe_result.entity_count, fe_result.community_count,
+                     fe_result.algorithm_used, fe_result.runtime_ms)
+            sync_driver.close()
+        except Exception:
+            log.exception("Feature engineering failed — non-fatal")
+
+        # Topic summarization: generate LLM summaries per Leiden community
+        try:
+            import os
+            import asyncio as _asyncio
+            from neo4j import GraphDatabase as _GDB2
+            from graphknows.topic_summarizer import TopicSummarizer
+
+            async def _run_topics():
+                try:
+                    ts = TopicSummarizer(
+                        neo4j_driver=_GDB2.driver(self._uri, auth=(self._user, self._password)),
+                        pg_conn_string=os.environ["PGVECTOR_DSN"],
+                        openrouter_api_key=os.environ["OPENROUTER_API_KEY"],
+                    )
+                    res = await ts.run()
+                    log.info("Topic summarization result: %s", res)
+                except Exception:
+                    log.exception("Topic summarization failed — non-fatal")
+
+            try:
+                loop = _asyncio.get_event_loop()
+                loop.create_task(_run_topics())
+            except RuntimeError:
+                _asyncio.run(_run_topics())
+        except Exception:
+            log.exception("Topic summarization init failed — non-fatal")
+
+        log.info(
+            "WriteBack session=%s entities=%d relations=%d",
+            session_id, written_entities, written_rels,
+        )
+        return {
+            "session_id": session_id,
+            "written_entities": written_entities,
+            "written_relations": written_rels,
+            "segment_ts": ts,
+        }

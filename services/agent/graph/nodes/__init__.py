@@ -3,9 +3,11 @@
 from services.agent.graph.nodes.scope import scope_node
 from services.agent.graph.nodes.investigate import investigate_node
 from services.agent.graph.nodes.communicate import communicate_node
+from services.agent.graph.nodes.recall import recall_node
 
 __all__ = [
     "scope_node",
     "investigate_node",
     "communicate_node",
+    "recall_node",
 ]

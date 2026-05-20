@@ -172,8 +172,11 @@ async def communicate_node(
     )
 
     system_prompt_content = EPRS_SYSTEM_PROMPT
+    prior = state.get("prior_knowledge", "")
+    if prior:
+        system_prompt_content = prior + "\n\n---\nFocus new research on gaps not covered above.\n\n" + system_prompt_content
     if graph_features_section:
-        system_prompt_content = EPRS_SYSTEM_PROMPT + "\n\n" + graph_features_section
+        system_prompt_content += "\n\n" + graph_features_section
 
     messages = [
         SystemMessage(content=system_prompt_content),

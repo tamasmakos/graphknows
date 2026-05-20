@@ -8,6 +8,7 @@ from langgraph.graph import END, StateGraph
 
 from services.agent.graph.nodes.communicate import make_communicate_node
 from services.agent.graph.nodes.investigate import make_investigate_node
+from services.agent.graph.nodes.recall import recall_node
 from services.agent.graph.nodes.scope import scope_node
 from services.agent.graph.state import InvestigativeState
 
@@ -68,10 +69,12 @@ def build_workflow(
 
     workflow = StateGraph(InvestigativeState)
     workflow.add_node("scope", scope_node)
+    workflow.add_node("recall", recall_node)
     workflow.add_node("investigate", inv_node)
     workflow.add_node("communicate", comm_node)
     workflow.set_entry_point("scope")
-    workflow.add_edge("scope", "investigate")
+    workflow.add_edge("scope", "recall")
+    workflow.add_edge("recall", "investigate")
     workflow.add_conditional_edges(
         "investigate",
         should_continue,

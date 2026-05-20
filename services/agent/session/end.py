@@ -9,11 +9,14 @@ available as a public helper for the communicate node and any external caller.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
 
+from agent.config import AgentSettings
 from agent.session.manager import SessionGraphManager
+from agent.session.writeback import WriteBackService
 from services.agent.graph.html_report import export_brief_html  # noqa: F401 — re-exported
 
 
@@ -381,6 +384,36 @@ def merge_session_to_neo4j(
 
             except Exception:
                 raise
+
+        # ── LTM write-back (fire-and-forget, non-blocking) ────────────────
+        async def _async_writeback():
+            try:
+                _settings = AgentSettings()
+                wb = WriteBackService(
+                    neo4j_uri=_settings.neo4j_uri,
+                    neo4j_user=_settings.neo4j_user,
+                    neo4j_password=_settings.neo4j_password,
+                )
+                await wb.write_back(
+                    session_id=session_id,
+                    entities=[{"name": n["name"], "type": n.get("type", "Entity"), "confidence": 1.0}
+                              for n in nodes],
+                    relations=[{"source": e["from"], "target": e["to"],
+                                "type": e.get("rel_type", "RELATES"), "confidence": 1.0}
+                               for e in edges],
+                    query="",
+                )
+            except Exception:
+                log.exception("LTM writeback failed for session %s — non-fatal", session_id)
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(_async_writeback())
+            else:
+                asyncio.run(_async_writeback())
+        except RuntimeError:
+            asyncio.run(_async_writeback())
 
         result: dict[str, Any] = {
             "merged_nodes": merged_nodes,
