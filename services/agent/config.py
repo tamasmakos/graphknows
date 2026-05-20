@@ -8,11 +8,23 @@ from pathlib import Path
 
 from pydantic import Field
 
-_SHARED_PKG_DIR = Path(__file__).resolve().parents[2] / "libs" / "python" / "graphknows-shared"
-if str(_SHARED_PKG_DIR) not in sys.path:
-    sys.path.insert(0, str(_SHARED_PKG_DIR))
+_GRAPHKNOWS_PKG_DIR = Path(__file__).resolve().parents[2] / "services" / "graphknows"
+if str(_GRAPHKNOWS_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_GRAPHKNOWS_PKG_DIR))
 
-from graphknows.shared.config import BaseServiceSettings
+# graphknows.shared was removed; the base settings now live in graphknows.config.
+# Import only the config module directly to avoid heavy container/asyncpg deps.
+import importlib.util as _ilu
+
+_spec = _ilu.spec_from_file_location(
+    "graphknows.config",
+    _GRAPHKNOWS_PKG_DIR / "graphknows" / "config.py",
+)
+_mod = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
+sys.modules.setdefault("graphknows.config", _mod)
+_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+
+from graphknows.config import GraphKnowsSettings as BaseServiceSettings  # noqa: E402
 
 SESSION_GRAPH_BACKEND: str = os.getenv("SESSION_GRAPH_BACKEND", "memgraph")
 
