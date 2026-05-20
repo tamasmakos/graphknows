@@ -29,6 +29,18 @@ class MemgraphBackend:
 
         await asyncio.to_thread(_sync)
 
+    # Label priority for deduplication: higher index = higher priority
+    _LABEL_PRIORITY: dict[str, int] = {
+        "Entity": 0,
+        "CONCEPT": 1,
+        "LOCATION": 2,
+        "EVENT": 3,
+        "DOCUMENT": 4,
+        "POLICY": 5,
+        "ORGANIZATION": 6,
+        "PERSON": 7,
+    }
+
     async def write_entities(self, session_id: str, entities: list[Any]) -> None:
         if not entities:
             return
@@ -37,15 +49,32 @@ class MemgraphBackend:
             with self._driver.session() as s:
                 for e in entities:
                     s.run(
-                        "MERGE (n:Entity {id: $id, session_id: $sid}) SET n += $props",
+                        """MERGE (n:Entity {name: $name, session_id: $sid})
+                           ON CREATE SET
+                               n.label = $label,
+                               n.all_labels = [$label],
+                               n.id = $id,
+                               n.confidence = $confidence,
+                               n.doc_ids = $doc_ids
+                           ON MATCH SET
+                               n.all_labels = CASE
+                                   WHEN $label IN n.all_labels THEN n.all_labels
+                                   ELSE n.all_labels + [$label]
+                               END,
+                               n.label = CASE
+                                   WHEN n.label = 'Entity' THEN $label
+                                   ELSE n.label
+                               END,
+                               n.confidence = CASE
+                                   WHEN $confidence > n.confidence THEN $confidence
+                                   ELSE n.confidence
+                               END""",
+                        name=e.name,
+                        label=e.label,
                         id=e.id,
                         sid=session_id,
-                        props={
-                            "name": e.name,
-                            "label": e.label,
-                            "confidence": e.confidence,
-                            "doc_ids": e.doc_ids,
-                        },
+                        confidence=e.confidence,
+                        doc_ids=e.doc_ids,
                     )
 
         await asyncio.to_thread(_sync)
@@ -54,6 +83,7 @@ class MemgraphBackend:
         if not relations:
             return
 
+        # Build a name lookup: entity id -> entity name, for relation endpoint resolution
         def _sync() -> None:
             with self._driver.session() as s:
                 for r in relations:

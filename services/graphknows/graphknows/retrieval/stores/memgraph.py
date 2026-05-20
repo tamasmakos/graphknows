@@ -46,7 +46,13 @@ class MemgraphStore:
         await asyncio.to_thread(_sync)
 
     async def write_entities(self, session_id: str, entities: list[Any]) -> None:
-        """Upsert entity nodes under *session_id*."""
+        """Upsert entity nodes under *session_id*.
+
+        Uses name+session_id as the MERGE key to prevent duplicate nodes for
+        the same entity surface form appearing under different label types.
+        On MATCH, preserves the most specific label (non-'Entity' wins) and
+        accumulates all seen labels in the ``all_labels`` property list.
+        """
         if not entities:
             return
 
@@ -54,15 +60,32 @@ class MemgraphStore:
             with self._driver.session() as s:
                 for e in entities:
                     s.run(
-                        "MERGE (n:Entity {id: $id, session_id: $sid}) SET n += $props",
+                        """MERGE (n:Entity {name: $name, session_id: $sid})
+                           ON CREATE SET
+                               n.label = $label,
+                               n.all_labels = [$label],
+                               n.id = $id,
+                               n.confidence = $confidence,
+                               n.doc_ids = $doc_ids
+                           ON MATCH SET
+                               n.all_labels = CASE
+                                   WHEN $label IN n.all_labels THEN n.all_labels
+                                   ELSE n.all_labels + [$label]
+                               END,
+                               n.label = CASE
+                                   WHEN n.label = 'Entity' THEN $label
+                                   ELSE n.label
+                               END,
+                               n.confidence = CASE
+                                   WHEN $confidence > n.confidence THEN $confidence
+                                   ELSE n.confidence
+                               END""",
+                        name=e.name,
+                        label=e.label,
                         id=e.id,
                         sid=session_id,
-                        props={
-                            "name": e.name,
-                            "label": e.label,
-                            "confidence": e.confidence,
-                            "doc_ids": e.doc_ids,
-                        },
+                        confidence=e.confidence,
+                        doc_ids=e.doc_ids,
                     )
 
         await asyncio.to_thread(_sync)
