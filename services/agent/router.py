@@ -831,6 +831,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
             session_id=session_id,
             openrouter_api_key=settings.openrouter_api_key,
             persist_graph=persist_graph,
+            extractor=_get_extractor(),
         )
 
         prev_phase = inv_state["current_macro_phase"]
@@ -843,7 +844,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
 
         async for event in graph.astream_events(
             {"messages": [HumanMessage(content=req.message)]},
-            config={"recursion_limit": 12},
+            config={"recursion_limit": 100},
             version="v2",
         ):
             kind = event["event"]
@@ -968,7 +969,7 @@ async def investigate_session(session_id: str, req: QueryRequest) -> StreamingRe
                 brief_state = dict(inv_state)
                 brief_state["chunks"] = chunks_for_brief
                 brief_state["topic"] = req.message
-                comm_result = await communicate_node(brief_state, retriever=None)
+                comm_result = await communicate_node(brief_state)
                 full_answer = comm_result.get("briefing", full_answer) or full_answer
         except Exception as _comm_exc:
             import logging as _logging
