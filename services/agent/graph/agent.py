@@ -30,6 +30,17 @@ from langchain_core.tools import tool
 log = logging.getLogger("agent.langgraph_agent")
 
 
+def _truncate_at_sentence(text: str, max_chars: int = 2000) -> str:
+    """Truncate text at a sentence boundary at or before max_chars."""
+    if len(text) <= max_chars:
+        return text
+    window = text[:max_chars]
+    for i in range(len(window) - 1, 0, -1):
+        if window[i] in '.!?' and (i + 1 >= len(window) or window[i + 1] in ' \n\t'):
+            return window[:i + 1].rstrip()
+    return window
+
+
 # ── AgentState — module-level so Python 3.13 get_type_hints can resolve it ──
 class AgentState(TypedDict):
     """Shared state passed through the LangGraph agent graph."""
@@ -40,6 +51,7 @@ class AgentState(TypedDict):
 # ── Module-level singletons — set by build_graph() per call ──────────────────
 _ws_broadcaster: Callable[[str, dict], Awaitable[None]] | None = None
 _session_id: str = ""
+_extractor: "Any | None" = None  # InProcessExtractor set at startup via build_graph()
 
 # Session-scoped document accumulator: session_id → list of collected docs
 _session_docs: dict[str, list[dict]] = {}
@@ -423,7 +435,7 @@ def _build_lexical_graph(documents: list[dict]) -> dict:
     for i, doc in enumerate(documents[:15]):
         doc_id = doc.get("id", f"doc-{i}")
         doc_title = doc.get("title", "") or doc_id
-        text = f"{doc_title} {doc.get('text', '')}".strip()[:2000]
+        text = _truncate_at_sentence(f"{doc_title} {doc.get('text', '')}".strip(), 2000)
 
         raw_terms = re.findall(r"\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*\b", text)
         terms = [t for t in raw_terms if t.lower() not in _STOPWORDS and len(t) > 3]
@@ -464,7 +476,7 @@ async def _emit_keyword_graph(
     entity_names: list[str] = []
 
     for doc in documents[:12]:
-        text = str(doc.get("text", "") or doc.get("title", ""))[:2000]
+        text = _truncate_at_sentence(str(doc.get("text", "") or doc.get("title", "")), 2000)
         title_terms = re.findall(r"\b[A-Z][a-zA-Z]+\b", doc.get("title", ""))
         proper_terms = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", text)
         acronyms = re.findall(r"\b[A-Z]{2,6}\b", text)
@@ -514,22 +526,26 @@ async def _run_graphgen(
             {
                 "id": d.get("id", d.get("url", "")[:60]),
                 "title": d.get("title", ""),
-                "text": str(d.get("text", ""))[:2000],
+                "text": _truncate_at_sentence(str(d.get("text", "")), 2000),
                 "source": d.get("source", ""),
             }
             for d in documents[:10]
         ]
 
         def _extract_in_thread() -> dict:
-            # Give this thread a fresh event loop so DSPy's internal
-            # run_until_complete() doesn't collide with the running asyncio loop.
+            # Give this thread a fresh event loop so async internals don't
+            # collide with the running asyncio loop.
             import asyncio as _asyncio
 
             _asyncio.set_event_loop(_asyncio.new_event_loop())
+            # Re-use the module-level singleton to avoid re-calling dspy.configure()
+            # from a new thread (DSPy 3.x only allows configure from the original thread).
+            if _extractor is not None:
+                return _extractor.extract(docs_input, session_id)
             from services.agent.tools.extraction.in_process import InProcessExtractor
 
-            _extractor = InProcessExtractor()
-            return _extractor.extract(docs_input, session_id)
+            _local_extractor = InProcessExtractor()
+            return _local_extractor.extract(docs_input, session_id)
 
         result = await asyncio.to_thread(_extract_in_thread)
     except Exception as exc:
@@ -583,9 +599,13 @@ def build_graph(  # noqa: C901  # NOSONAR
     session_id: str,
     openrouter_api_key: str,
     persist_graph: Callable[[str, list[dict], list[dict]], Awaitable[None]] | None = None,
+    extractor: "Any | None" = None,
 ):
     """Build and return a compiled LangGraph agent graph."""
+    global _extractor
     broadcaster = ws_broadcaster or _noop_broadcaster
+    if extractor is not None:
+        _extractor = extractor
 
     # ── Tool 1: search_web ───────────────────────────────────────────────────
     @tool
@@ -787,10 +807,10 @@ def build_graph(  # noqa: C901  # NOSONAR
             )
         except Exception:
             log.exception(
-                "graphgen extraction failed for session=%s",
+                "graphgen extraction failed for session=%s — continuing with empty graph",
                 session_id_arg or session_id,
             )
-            raise
+            summary = "Graph extraction encountered an error — partial results may be available."
 
         # Return entity list so LLM can reason from it
         entities = _session_entities.get(session_id_arg or session_id, [])

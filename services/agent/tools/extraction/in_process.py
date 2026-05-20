@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 
@@ -30,7 +31,7 @@ def _chunk_text(text: str) -> list[str]:
     return chunks[:10]
 
 
-_TRAILING_DIGIT_RE = __import__("re").compile(r"\d+$")
+_TRAILING_DIGIT_RE = re.compile(r"\d+$")
 
 # Short words that indicate a truncated span when they appear at the end
 _NOISE_LAST_WORDS = frozenset(
@@ -113,6 +114,13 @@ _GENERIC_SINGLE_WORDS = frozenset(
     }
 )
 
+_NAV_PHRASES = frozenset({
+    'advanced search', 'open data portal', 'past events', 'register',
+    'download', 'share this page', 'all rights reserved', 'skip to content',
+    'cookie policy', 'privacy policy', 'terms of use', 'back to top',
+    'read more', 'show more', 'load more', 'see all', 'view all',
+})
+
 
 def _is_quality_span(name: str) -> bool:  # noqa: C901  # NOSONAR
     """Return True if the entity span is likely a real named entity.
@@ -127,6 +135,9 @@ def _is_quality_span(name: str) -> bool:  # noqa: C901  # NOSONAR
     - Single words starting uppercase that are not generic (e.g. "Eurozone", "Bundestag")
     """
     if not name or len(name) < 2:
+        return False
+    # Nav/boilerplate phrase blocklist
+    if name.lower() in _NAV_PHRASES:
         return False
     # All-caps acronym of 2+ chars (EU, UK, ECB, CBDC …)
     if name.isupper() and len(name) >= 2:
@@ -203,9 +214,12 @@ class InProcessExtractor:
         # Allowed relation type set (for DSPy relation normalisation)
         self._allowed_relation_set: frozenset[str] = frozenset(
             rt.upper() for rt in self._taxonomy.relation_types
-        )
-        # List form used as DSPy input hint
-        self._allowed_relation_types: list[str] = list(self._taxonomy.relation_types)
+        ) | frozenset({"RELATED_TO", "CO_OCCURS"})
+        # List form used as DSPy input hint — include catch-alls so LLM has fallback options
+        self._allowed_relation_types: list[str] = list(self._taxonomy.relation_types) + [
+            "RELATED_TO",
+            "CO_OCCURS",
+        ]
 
         # ── DSPy setup ─────────────────────────────────────────────────────
         openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
@@ -220,6 +234,7 @@ class InProcessExtractor:
             "openrouter/google/gemini-2.0-flash-001",
             api_key=openrouter_key,
             max_tokens=1024,
+            temperature=0.6,
         )
         dspy.configure(lm=lm)
         self._dspy_module = GraphExtractorModule()
@@ -373,8 +388,23 @@ class InProcessExtractor:
                                 }
                             ) or list(self._taxonomy.entity_groups.keys())
                             # Seed DSPy with GLiNER2 joint-extraction candidates +
-                            # a small windowed CO_OCCURS hint from high-confidence entities
-                            candidate_relations = gliner_rels[:20] + [
+                            # sentence-level CO_OCCURS hints from all chunk entities +
+                            # a windowed CO_OCCURS hint from high-confidence entities
+                            sentences = re.split(r'(?<=[.!?])\s+', chunk)
+                            sent_cooccur: list[dict] = []
+                            for sent in sentences:
+                                sent_ents = [
+                                    n for n in chunk_ent_names
+                                    if n.lower() in sent.lower()
+                                ]
+                                for _i in range(len(sent_ents)):
+                                    for _j in range(_i + 1, len(sent_ents)):
+                                        sent_cooccur.append({
+                                            "source": sent_ents[_i],
+                                            "relation": "CO_OCCURS",
+                                            "target": sent_ents[_j],
+                                        })
+                            candidate_relations = gliner_rels[:20] + sent_cooccur[:20] + [
                                 {
                                     "source": high_conf_ents[i],
                                     "relation": "CO_OCCURS",
@@ -391,6 +421,13 @@ class InProcessExtractor:
                                 candidate_relations=candidate_relations[:30],
                             )
                             triplets = getattr(result, "triplets", []) or []
+                            log.info(
+                                "    chunk[%d]  DSPy call: entities=%d  candidates=%d  triplets_returned=%d",
+                                chunk_idx + 1,
+                                len(chunk_ent_names),
+                                len(candidate_relations[:30]),
+                                len(triplets),
+                            )
                             accepted = 0
                             for triplet in triplets:
                                 if not (triplet.source and triplet.target):
