@@ -149,11 +149,21 @@ jobs:
           uv run pytest \
             tests/test_graphknows_package.py \
             tests/test_langgraph_agent_search_web.py \
-            -v --tb=short
+            -v --tb=short \
+            --cov=services/graphknows/graphknows \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing
           # Other test files are excluded: they test pre-refactor module paths
           # (services.agent.*, services.graphgen.*, graphknows.shared.*) that
           # require a full multi-service environment not available in CI.
           # Track in: https://github.com/tamasmakos/graphknows/issues (TODO)
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
 
   # ── 5. SonarQube Cloud — quality gate (blocks merge on violations) ─────────
   sonar:
@@ -167,6 +177,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0       # full history required for blame / new-code detection
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-xml
+          path: .
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6

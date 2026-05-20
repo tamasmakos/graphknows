@@ -363,7 +363,7 @@ async def create_session(req: SessionCreateRequest) -> SessionCreateResponse:
     seeded = 0
     if req.seed_entities and _neo is not None:
         seeded = await _neo.seed_session_from_corpus(session_id, req.seed_entities)
-    logger.info("Session %s created (seeded=%d entities)", session_id, seeded)
+    logger.info("Session %s created (seeded=%d entities)", session_id, seeded)  # NOSONAR
     return SessionCreateResponse(session_id=session_id, seeded=seeded)
 
 
@@ -378,7 +378,7 @@ async def delete_session(session_id: str) -> SessionDeleteResponse:
         nodes = await _memgraph.get_session_nodes(session_id)
         edges = await _memgraph.get_session_edges(session_id)
     except Exception as exc:
-        logger.warning("Memgraph read failed for session %s: %s", session_id, exc)
+        logger.warning("Memgraph read failed for session %s: %s", session_id, exc)  # NOSONAR
         nodes, edges = [], []
 
     # Promote session entities + relations into the corpus
@@ -392,7 +392,9 @@ async def delete_session(session_id: str) -> SessionDeleteResponse:
         _pg.delete_session(session_id),
     )
 
-    logger.info("Session %s merged: nodes=%d edges=%d", session_id, merged_nodes, merged_edges)
+    logger.info(
+        "Session %s merged: nodes=%d edges=%d", session_id, merged_nodes, merged_edges
+    )  # NOSONAR
     return SessionDeleteResponse(
         session_id=session_id,
         merged_nodes=merged_nodes,

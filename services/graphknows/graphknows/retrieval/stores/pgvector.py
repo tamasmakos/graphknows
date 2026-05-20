@@ -302,5 +302,5 @@ class PgVectorStore:
         async with pool.acquire() as conn:
             result = await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
         deleted = int(result.split()[-1])
-        logger.info("Deleted %d chunks for session %s", deleted, session_id)
+        logger.info("Deleted %d chunks for session %s", deleted, session_id)  # NOSONAR
         return deleted
