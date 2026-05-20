@@ -407,13 +407,14 @@ def merge_session_to_neo4j(
                 log.exception("LTM writeback failed for session %s — non-fatal", session_id)
 
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            try:
+                loop = asyncio.get_running_loop()
                 loop.create_task(_async_writeback())
-            else:
+            except RuntimeError:
+                # No running loop in this thread (e.g. called from asyncio.to_thread)
                 asyncio.run(_async_writeback())
-        except RuntimeError:
-            asyncio.run(_async_writeback())
+        except Exception:
+            log.exception("Failed to schedule async writeback for session %s", session_id)
 
         result: dict[str, Any] = {
             "merged_nodes": merged_nodes,

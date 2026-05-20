@@ -34,8 +34,8 @@ class WriteBackService:
                 # 1. Create/merge Segment node
                 await s.run(
                     "MERGE (seg:Segment {session_id: $sid}) "
-                    "SET seg.timestamp = $ts, seg.query = $query",
-                    sid=session_id, ts=ts, query=query,
+                    "SET seg.timestamp = $ts, seg.query = $q",
+                    sid=session_id, ts=ts, q=query,
                 )
 
                 # 2. Merge entities with temporal tracking + weight
