@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from neo4j import GraphDatabase
+
 from agent.config import AgentSettings
+from agent.session.dialog import DialogWriteBack, TurnData
 from agent.session.manager import SessionGraphManager
 from agent.session.writeback import WriteBackService
 from services.agent.graph.html_report import export_brief_html  # noqa: F401 — re-exported
@@ -23,10 +27,55 @@ from services.agent.graph.html_report import export_brief_html  # noqa: F401 —
 log = logging.getLogger("agent.session.end")
 
 
+def _get_sync_driver(uri: str, user: str, password: str) -> GraphDatabase.driver:  # type: ignore[return-value]
+    """Create a synchronous Neo4j driver."""
+    return GraphDatabase.driver(uri, auth=(user, password))
+
+
+def _extract_turns_from_state(state: dict | None) -> list[TurnData]:
+    """Extract TurnData list from agent state messages or conversation_history."""
+    turns: list[TurnData] = []
+    if not state:
+        return turns
+    now = datetime.now(timezone.utc).isoformat()
+
+    messages = state.get("messages", [])
+    for i, msg in enumerate(messages):
+        role = getattr(msg, "type", None) or (
+            "user"
+            if getattr(msg, "__class__", None) and "Human" in msg.__class__.__name__
+            else "agent"
+        )
+        content = getattr(msg, "content", str(msg))
+        if not isinstance(content, str):
+            content = str(content)
+        turns.append(TurnData(
+            turn_index=i,
+            role="user" if role in ("human", "user") else "agent",
+            participant_name="user" if role in ("human", "user") else "GraphKnows-Agent",
+            text=content[:2000],
+            timestamp=now,
+        ))
+
+    if not turns:
+        for i, entry in enumerate(state.get("conversation_history", [])):
+            role = entry.get("role", "agent")
+            turns.append(TurnData(
+                turn_index=i,
+                role=role,
+                participant_name="user" if role == "user" else "GraphKnows-Agent",
+                text=str(entry.get("content", ""))[:2000],
+                timestamp=entry.get("timestamp", now),
+            ))
+
+    return turns
+
+
 def merge_session_to_neo4j(
     session_id: str,
     sgm: SessionGraphManager,
     *,
+    state: dict | None = None,
     export_html: bool = False,
     html_output_dir: str | Path = "/root/graphknows/output",
 ) -> dict[str, Any]:
@@ -384,6 +433,26 @@ def merge_session_to_neo4j(
 
             except Exception:
                 raise
+
+        # ── Dialog writeback ─────────────────────────────────────────────
+        try:
+            _settings = AgentSettings()
+            _sync_driver = _get_sync_driver(
+                _settings.neo4j_uri, _settings.neo4j_user, _settings.neo4j_password,
+            )
+            try:
+                _turns = _extract_turns_from_state(state)
+                if _turns:
+                    _dialog_wb = DialogWriteBack(neo4j_driver=_sync_driver)
+                    _dialog_result = _dialog_wb.write(session_id=session_id, turns=_turns)
+                    log.info(
+                        "dialog writeback: session=%s utterances=%d mentions=%d",
+                        session_id, _dialog_result.utterance_count, _dialog_result.mention_count,
+                    )
+            finally:
+                _sync_driver.close()
+        except Exception:
+            log.exception("Dialog writeback failed for session %s — non-fatal", session_id)
 
         # ── LTM write-back (fire-and-forget, non-blocking) ────────────────
         async def _async_writeback():
