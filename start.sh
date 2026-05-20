@@ -7,15 +7,29 @@ cd "$(dirname "$0")"
 set -a && source .env && set +a
 export LANG=C LC_ALL=C
 
-PYPATH="/root/graphknows/services/agent:/root/graphknows/services:/root/graphknows/services/graphgen"
+# ── Single-instance guard ────────────────────────────────────────────────────
+PIDFILE="/tmp/graphknows_start.pid"
+if [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
+    echo "[start.sh] Already running (PID $(cat $PIDFILE)). Exiting."
+    exit 0
+fi
+echo $$ > "$PIDFILE"
+trap 'rm -f "$PIDFILE"' EXIT
+
+PYPATH="/root/graphknows/services:/root/graphknows/services/graphknows:/root/graphknows/services/graphknows/graphknows"
+AGENT_UVICORN="/root/graphknows/services/agent/.venv/bin/uvicorn"
 
 echo "=== Graphknows startup $(date) ==="
 
 # ── Agent watchdog ──────────────────────────────────────────────────────────
 agent_watchdog() {
   while true; do
+    if curl -sf http://localhost:8002/health > /dev/null 2>&1; then
+      sleep 15
+      continue
+    fi
     echo "[watchdog] Starting agent on :8002..."
-    PYTHONPATH="$PYPATH" uvicorn services.agent.main:app \
+    PYTHONPATH="$PYPATH" $AGENT_UVICORN services.agent.main:app \
       --host 0.0.0.0 --port 8002 --log-level info \
       >> /tmp/agent.log 2>&1 || true
     echo "[watchdog] Agent exited — restarting in 5s..."
