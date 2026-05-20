@@ -1,32 +1,72 @@
 ---
-title: Frontend v2 Design — apps/web/
+title: "Frontend Design — apps/web/"
 created: 2026-05-04
-updated: 2026-05-15
-type: concept
-tags: [frontend, design, ux, visualization, export]
+updated: 2026-05-20
+type: product
+tags: [frontend, design, ux, visualization]
 confidence: high
 ---
 
-# Frontend v2 Design — `apps/web/`
+# Frontend Design — `apps/web/`
 
-The frontend is the only user-facing surface. It hides the service topology behind a split-pane investigation UI: chat on the left, graph on the right.
+The frontend is the only user-facing surface. It hides the service topology behind a split-pane investigation UI: chat on the left, knowledge graph on the right.
 
-## Current Implementation Status
+---
 
-The live frontend is not a Next.js application. The current shipped surface is:
+## Implementation Status (verified 2026-05-20)
 
-- `apps/web/index.html` — static single-page app with inline JavaScript and CSS
+**Live and working:**
+- `apps/web/index.html` — static single-page app (~5100 lines, inline JS + CSS)
 - `apps/web/server.py` — FastAPI server that serves `/`, proxies `/api/*`, and proxies `/ws/chat/{session_id}`
-- `apps/web/start.sh` — optional launcher with tunnel support
+- `apps/web/src/` — partial React component tree (`app/chat/`, `app/graph/`, `components/`) — coexists with the static page
+- Split-pane layout: chat left, D3 graph canvas right with collapsible graph panel
+- Named sessions sidebar with localStorage persistence (`graphknows_sessions` key)
+- Session rename, session list, new session button
+- D3 force-directed graph canvas (`#graph-canvas`) with node focus chip
+- Graph toolbar with layout controls
+- Mobile sidebar + graph panel toggle
+- Per-message export button (`btn-export-msg`) — exports individual message text
+- WebSocket integration for WS events (search_start, graph_update, brief_done, etc.)
 
-Current local ports:
+**Not yet implemented (aspirational):**
+- PDF export of full EPRS brief
+- Markdown export of full brief
+- Reasoning trace panel (was in earlier spec, removed)
+- Dual graph tabs (KG + Lexical) — single graph canvas in current build
+- Agent port: `8030` on host (NOT `8002` — that was a stale value from an earlier build)
 
-- frontend: `8080`
-- agent: `8002`
+---
 
-## Core UX Principle
+## Core UX Flow
 
-Ask -> investigate -> inspect graph -> export.
+1. User enters investigation topic in chat
+2. Agent streams progress: search events → graph_update (live D3 nodes/edges appear) → brief_done
+3. User inspects the knowledge graph (click node → focus chip shows entity details)
+4. User can start a new session or return to a past session from the sidebar
+
+---
+
+## Service Wiring
+
+- Frontend runs on host port `8080`
+- `server.py` proxies `/api/*` → `http://agent:8000` (container) = `http://localhost:8030` (host)
+- WebSocket: `server.py` proxies `/ws/chat/{session_id}` → agent WS endpoint
+- No direct calls to search or graphknows services from the browser
+
+---
+
+## Key Files
+
+```
+apps/web/
+  index.html       # Full SPA — layout, styles, session management, D3 graph, WS client
+  server.py        # FastAPI: serve static, proxy /api/* and /ws/*
+  launch.py        # Optional: starts server + cloudflare tunnel
+  start.sh         # Shell launcher
+  src/             # Partial React component structure (future migration target)
+  static/          # Static assets
+```
+
 
 The user should be able to:
 

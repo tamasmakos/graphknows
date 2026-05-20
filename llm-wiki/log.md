@@ -1,5 +1,13 @@
 # Wiki Log
 
+## [2026-05-20] fix | extraction quality — 6-card improvement sprint
+- communicate_node kwarg: removed retriever=None from router.py:972 call site
+- Sentence-boundary truncation: added _truncate_at_sentence() helper; replaced 3x [:2000] slices in agent.py
+- Nav/HTML suppression: stripped nav/footer/header/aside in ScrapingConnector base; added _NAV_PHRASES blocklist to _is_quality_span()
+- EPRS relevance: POST /search handler now overfetches (4x limit) then cosine-reranks with BAAI/bge-small-en-v1.5; drops docs <0.15 score
+- Entity dedup: Memgraph MERGE now keys on (name, session_id); ON MATCH promotes specific labels over generic 'Entity'; accumulates all_labels list
+- DSPy density: temperature=0.6; sentence-level co-occurrence candidate pass; relaxed prompt ('strongly implied' allowed); RELATED_TO+CO_OCCURS added to allowed types
+
 > Chronological record of all wiki actions. Append-only.
 > Format: ## [YYYY-MM-DD] action | subject
 > Rotate when >500 entries.
@@ -235,3 +243,23 @@ GLiNER2 loads in ~12s cold. Running it in-process inside the async agent would b
 - [42s] graph_update partial=False: GLiNER2+DSPy final graph
 - [44s] ANSWER with EPRS brief format citing entity names from graph
 - 17 total WS frames
+
+## [2026-05-20] delete | wiki cleanup pass — step 1 of rework
+- Moved adr-003-ontology-guided-extraction.md (wiki root) → adr/006-ontology-guided-extraction.md (correct location, proper frontmatter, renumbered 006)
+- Deleted research/ragas-evaluation.md — 2025-era pre-pivot baseline (old shared-KG architecture), not comparable to current per-session design
+- Deleted entities/graphgen-project.md — graphgen is no longer a standalone service
+- Created entities/graphknows-service.md — accurate description of services/graphknows consolidated package
+- Quarantined product/business-plan.md, product/market-analysis.md, product/gtm-strategy.md → product/future/ (speculative, unactionable for engineering subagents)
+- Updated index.md to reflect all changes
+- Wiki rework plan written to .hermes/plans/wiki-rework-2026-05-20.md
+
+## [2026-05-20] update | wiki rework — step 2 rewrites (all 9 pages)
+- architecture/service-agent.md: full rewrite — accurate directory tree, tools/ substructure, session/ breakdown, graph/backends/, WS event schema, config table, legacy orchestrator.py noted
+- architecture/service-search.md: full rewrite — correct path (connectors/sources/ not adapters/), all 13 connectors listed, phantom adapters removed, User-Agent note, Tavily clarification
+- architecture/reference.md: full rewrite — accurate port map, Memgraph URIs, full env var tables for all 3 services, local dev commands, API contract shapes
+- ops/technical-debt.md: full re-triage — 3 HIGH (Memgraph retriever path, session TTL, pgvector isolation), 5 MEDIUM (stub docs, embedder singleton, WS rate-limit, hardcoded prompt, missing integration test), 2 LOW, pre-pivot items clearly labelled
+- product/roadmap.md: rewrite — Done section reflects actual shipped state, Active sprint is current 5-item list with real priorities, Next and Horizon sections added
+- architecture/product-architecture.md: minor fix — stale wiki links corrected
+- adr/003-services-refactor.md: deviation note added — 4-service plan → 3 shipped (graphrag absorbed into graphknows)
+- adr/004-ontology-patch.md: scope note added — patch runner targets legacy Neo4j corpus only, not per-session Memgraph
+- product/frontend-design.md: status audit — live vs aspirational features separated, stale agent port (8002→8030) corrected

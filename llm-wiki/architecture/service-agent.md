@@ -1,175 +1,162 @@
 ---
-title: Service Design — services/agent/
+title: "Service Design — services/agent/"
 created: 2026-05-04
-updated: 2026-05-15
-type: concept
-tags: [architecture, agent, memgraph, search, service-design]
+updated: 2026-05-20
+type: architecture
+tags: [architecture, agent, memgraph, search, langgraph, service-design]
 confidence: high
 ---
 
 # Service Design — `services/agent/`
 
-The agent service is the single application-facing backend for the live frontend. It owns session lifecycle, the investigative workflow, session graph writes, retrieval, and final briefing generation.
+The agent service is the single application-facing backend. It owns session lifecycle, the 3-phase investigative workflow, dual-write (Memgraph + pgvector), hybrid retrieval, and final EPRS-style briefing generation.
 
-## Responsibility
+---
 
-The current live agent does all of the following:
+## Responsibilities
 
-- receives chat requests from the frontend
-- creates and tracks investigation sessions
-- runs the 3-phase workflow: `scope -> investigate -> communicate`
-- writes chunks to pgvector and entities/relations to the session graph backend
-- streams progress over websocket and SSE
-- returns final answer + graph snapshots on blocking HTTP `/chat`
+- Receives chat requests from the frontend (HTTP `/chat` + WebSocket `/ws/{session_id}`)
+- Creates and tracks investigation sessions
+- Runs the 3-phase LangGraph workflow: `scope → investigate → communicate`
+- Writes chunks to pgvector and entities/relations to the Memgraph session graph per iteration
+- Streams progress events over WebSocket
+- Returns final EPRS-style HTML brief + graph snapshot on `/chat`
 
-The browser path no longer depends on GraphRAG to answer `/chat` requests.
+---
 
-## Current Directory Layout
+## Directory Layout
 
-```text
+```
 services/agent/
-  main.py
-  router.py
-  config.py
-  orchestrator.py              # legacy iterative path still present
+  main.py                  # FastAPI app factory, lifespan, dependency wiring
+  router.py                # Route definitions: /chat, /ws/{session_id}, /health
+  config.py                # AgentSettings (Pydantic): GRAPHKNOWS_URL, SEARCH_URL,
+                           #   MEMGRAPH_URI, PGVECTOR_DSN, etc.
+
+  api/
+    schemas.py             # Request/response Pydantic models for HTTP endpoints
+
   graph/
-    workflow.py
-    state.py
-    events.py
+    workflow.py            # build_workflow() → compiled StateGraph (scope→investigate→communicate)
+    state.py               # InvestigativeState TypedDict + SubQuestion/RawDoc/Chunk/Entity/Relation dataclasses
+    events.py              # WS event constructors: search_start, docs_fetched, chunks_written,
+                           #   entities_written, novelty_check, graph_update, brief_done, etc.
+    stream_events.py       # astream_events v2 helpers for LangGraph streaming
+    agent.py               # LangGraph agent wiring (tool → node binding)
+    backend.py             # GraphBackend ABC — session graph abstraction
+    html_report.py         # HTML brief renderer (EPRS format)
+    viz.py                 # Graph snapshot serialiser (nodes/edges → JSON for frontend)
+
+    backends/
+      memgraph.py          # MemgraphBackend: per-session nodes/edges, bolt driver, MERGE queries
+      neo4j_gds.py         # Neo4jGDSBackend: pluggable alternative for GDS-based reasoning
+
     nodes/
-      scope.py
-      investigate.py
-      communicate.py
-  retrieval/
-    hybrid_retriever.py
+      scope.py             # scope_node: LLM decomposes topic into SubQuestions + source priorities
+      investigate.py       # make_investigate_node(): search → chunk → embed → dual-write → novelty check
+      communicate.py       # make_communicate_node(): hybrid retrieval → EPRS brief via LLM
+
   session/
-    manager.py
+    models.py              # Session Pydantic model: session_id, topic, status, created_at
+    manager.py             # SessionGraphManager: per-session Memgraph graph, Neo4j fallback
+    writeback.py           # WriteBackService: exports high-confidence entities to Neo4j post-session
+    end.py                 # Session teardown: TTL expiry, Memgraph cleanup
+
   tools/
-    search_client.py
-    tavily_tool.py
-    cellar_tool.py
-    extractor.py
-    search.py
+    base.py                # BaseTool ABC
+
+    search/
+      search.py            # SearchTool: parallel EU + Tavily search, BM25 re-rank
+      client.py            # SearchServiceClient: HTTP client for services/search/
+      web.py               # TavilySearchTool: Tavily API wrapper
+      cellar.py            # CellarSPARQLTool: direct SPARQL queries to EU CELLAR endpoint
+      router.py            # route_sources(): maps SubQuestion.source_priorities → connector IDs
+      ranking.py           # BM25 + date-decay document ranker
+
+    graph/
+      build.py             # build_session_graph(): keyword + GLiNER2 entity graph construction
+      extract.py           # Entity/relation extraction helpers
+      client.py            # GraphServiceClient: HTTP client for services/graphknows/ (optional mode)
+
+    extraction/
+      in_process.py        # In-process GLiNER2 + DSPy extraction (no HTTP hop to graphknows)
+
+  ontology/
+    loader.py              # OntologyLoader: reads OWL/JSONLD assets
+    router.py              # OntologyRouter: embedding-similarity → keyword → LLM classifier
+    rel_extractor.py       # OntologyRelExtractor: typed ONTOLOGY_REL edges from DSPy
+    assets/                # legal/, politics/, finance/, science/ ontology files + registry.json
 ```
 
-## Public API Surface
+---
 
-### HTTP
+## 3-Phase Workflow (workflow.py)
 
-| Route | Method | Purpose |
+```
+scope_node
+    │
+    ▼
+investigate_node ◄──────────────────────┐
+    │                                   │
+    │  should_continue():               │
+    │    dup_ratio > 0.6 → done         │
+    │    iteration_count >= 12 → done   │
+    └── continue ──────────────────────►┘
+    │
+    done
+    │
+    ▼
+communicate_node
+    │
+    ▼
+  END
+```
+
+**scope_node** — decomposes the research topic into `SubQuestion` objects, each with `source_priorities` (e.g. `["eprs_briefings", "ep_debates", "web"]`).
+
+**investigate_node** — per iteration:
+1. Runs `SearchTool` (EU connectors + Tavily) in parallel
+2. Chunks and embeds results (BAAI/bge-small-en-v1.5)
+3. Dual-writes: chunks → pgvector, entities/relations → Memgraph session graph
+4. Computes novelty signal (`dup_ratio`) via cosine similarity on chunk embeddings
+5. Emits `graph_update` WS event with current node/edge counts
+
+**communicate_node** — retrieves top-K context via `HybridRetriever`, constructs `NodeFeatures` from the session graph, and generates the EPRS-style 7-section brief via an LLM (Groq / OpenAI-compatible).
+
+---
+
+## WebSocket Event Schema
+
+| Event type | When fired | Key fields |
 |---|---|---|
-| `/health` | GET | liveness probe |
-| `/chat` | POST | blocking investigative answer path |
-| `/sessions` | POST | create session |
-| `/sessions/{session_id}` | GET | get session state |
-| `/sessions/{session_id}` | DELETE | close session |
-| `/session/{session_id}/merge` | POST | merge session graph to Neo4j |
-| `/sessions/{session_id}/query` | POST | SSE with final briefing |
-| `/sessions/{session_id}/investigate` | POST | typed SSE investigative stream |
+| `search_start` | Before each search iteration | `session_id`, `iteration`, `queries` |
+| `docs_fetched` | After search returns | `session_id`, `doc_count`, `sources` |
+| `chunks_written` | After pgvector write | `session_id`, `chunk_count` |
+| `entities_written` | After Memgraph write | `session_id`, `entity_count`, `relation_count` |
+| `novelty_check` | After dedup computation | `session_id`, `dup_ratio`, `decision` |
+| `graph_update` | After each iteration write | `session_id`, `nodes`, `edges`, `partial` |
+| `retrieval_done` | After hybrid retrieval | `session_id`, `chunk_count` |
+| `brief_done` | After brief generation | `session_id`, `word_count` |
 
-### WebSocket
+---
 
-| Route | Role |
-|---|---|
-| `/sessions/{session_id}/stream` | primary investigative stream |
-| `/ws/chat/{session_id}` | compatibility alias used by the current frontend |
+## Key Config (AgentSettings)
 
-## `/chat` Contract
+| Env var | Default | Purpose |
+|---|---|---|
+| `GRAPHKNOWS_URL` | `http://localhost:8025` | graphknows service (optional HTTP mode) |
+| `SEARCH_URL` | `http://localhost:8000` | search service |
+| `MEMGRAPH_URI` | `bolt://172.18.0.1:17687` | Memgraph session graph |
+| `PGVECTOR_DSN` | `postgresql://postgres:***@172.18.0.1:5432/vectordb` | pgvector |
+| `SESSION_GRAPH_BACKEND` | `memgraph` | `memgraph` or `neo4j_gds` |
+| `GRAPHKNOWS_MODE` | `http` | `http` (call graphknows service) or `inprocess` |
+| `LLM_PROVIDER` | `groq` | LLM provider |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | LLM model name |
 
-Request:
+---
 
-```json
-{
-  "message": "Build an investigation plan for the EU AI Act",
-  "session_id": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
+## Notes
 
-Response shape:
-
-```json
-{
-  "answer": "# Investigation Plan for the EU AI Act ...",
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "graph": {
-    "nodes": [],
-    "edges": []
-  },
-  "reasoning_steps": [],
-  "sources": []
-}
-```
-
-Important note: the current `/chat` path returns `sources: []` even when the answer text cites `[Doc-N]`. That is a frontend/data-contract gap, not a failure of the investigative workflow itself.
-
-## WebSocket Contract
-
-Observed live websocket flow:
-
-```json
-{"type":"status","status":"thinking"}
-{"type":"ws_event","payload":{"event_type":"plan_ready","payload":{}}}
-{"type":"ws_event","payload":{"event_type":"search_start","payload":{}}}
-{"type":"ws_event","payload":{"event_type":"docs_fetched","payload":{}}}
-{"type":"ws_event","payload":{"event_type":"chunks_written","payload":{}}}
-{"type":"ws_event","payload":{"event_type":"entities_written","payload":{}}}
-{"type":"ws_event","payload":{"event_type":"graph_update","payload":{}}}
-{"type":"ws_event","payload":{"event_type":"brief_done","payload":{}}}
-{"type":"done","briefing":"..."}
-```
-
-Key detail: workflow events are wrapped inside `type = ws_event`; `graph_update` is an inner `event_type`, not the top-level message type.
-
-## Workflow Phases
-
-### 1. Scope
-
-- decomposes the topic into sub-questions
-- emits `plan_ready`
-
-### 2. Investigate
-
-- fetches documents from search adapters and Tavily
-- writes chunks to pgvector
-- writes entities/relations to the session graph
-- emits `search_start`, `docs_fetched`, `chunks_written`, `entities_written`, `graph_update`, `novelty_check`, and eventually `search_done`
-
-### 3. Communicate
-
-- runs retrieval over the accumulated state
-- writes the final briefing
-- emits `retrieval_done`, `brief_chunk`, and `brief_done`
-
-## Dependencies
-
-| Dependency | Used for |
-|---|---|
-| `services/search` | structured EU-source retrieval |
-| Tavily | live web retrieval |
-| CELLAR | legal/publications lookup |
-| Neo4j | persistent KG |
-| Memgraph / pluggable graph backend | session-scoped graph state |
-| pgvector | chunk embeddings and retrieval |
-
-## Session Lifecycle
-
-1. create or resolve `session_id`
-2. create session graph if new
-3. run workflow
-4. stream progress over websocket or SSE
-5. return final briefing and graph snapshot
-6. optionally merge the session graph into Neo4j
-7. delete the session when finished
-
-## Current Local Run Command
-
-```bash
-cd /root/graphknows
-set -a && source .env && set +a
-PYTHONPATH="$PWD/services/agent:$PWD/services:$PWD/services/graphgen:$PWD/services/scrapers" \
-python3 -B -m uvicorn services.agent.main:app --host 0.0.0.0 --port 8002 --log-level info
-```
-
-## Links
-
-[[architecture/reference]] [[architecture/agent-design]] [[product/frontend-design]] [[ops/administration]]
+- `orchestrator.py` exists in the repo as a **legacy file** from the pre-LangGraph ReAct era. It is not in the main request path. Do not modify or reference it for new features.
+- `tools/extraction/in_process.py` calls the graphknows package directly (no HTTP), which is the default path. The `GRAPHKNOWS_MODE=http` path exists for future distributed deployment.
+- Session graph is **ephemeral**: Memgraph nodes are namespaced by `session_id` and cleaned up on session end. `WriteBackService` optionally promotes high-confidence entities to the persistent Neo4j corpus.

@@ -1,60 +1,63 @@
 ---
 title: "Project Roadmap — Deep Research Agent"
 created: 2026-05-12
-updated: 2026-05-12
-type: concept
-tags: [roadmap, kanban, planning]
+updated: 2026-05-20
+type: product
+tags: [roadmap, planning]
 confidence: high
 ---
 
 # Project Roadmap — Deep Research Agent
 
-See [[product-architecture-v2]] for the architecture this roadmap delivers. See [[kanban-plan]] for full task registry with IDs and dependencies.
+See [[architecture/product-architecture]] for the architecture this roadmap delivers.
 
 ---
 
-##  Done — Shipped
+## Done — Shipped
 
-- **services/search/** — Tavily + EU source adapters (EP, EUR-Lex, Council, EC, ECB, ECA, EPRS); job queue; idempotent ingestion
-- **services/graphgen/** — GLiNER2 NER + DSPy relation extraction pipeline; HTTP API; ontology injection
-- **services/agent/ skeleton** — LangGraph StateGraph stub; WebSocket streaming; session model
-- **apps/web/ v1** — Chat UI + D3 graph visualisation; split-pane layout; reasoning trace panel
-- **Memgraph integration** — bolt driver; session-namespaced node writes; CRUD helpers
-- **pgvector integration** — schema with `session_id` column; BAAI/bge-small-en-v1.5 embeddings
-- **RAGAS evaluation harness** — offline retrieval quality metrics baseline
-
----
-
-##  Now — Active Sprint (7 Cards)
-
-These 7 kanban cards constitute the core pivot deliverables:
-
-| ID | Card | Owner area |
-|---|---|---|
-| `product-vision-rewrite` | Rewrite all wiki docs to reflect deep-research-agent model | PM/docs |
-| `deep-research-loop` | Implement `search_loop` with novelty stopping in `investigate.py` | agent |
-| `dual-write` | `DualWriter.write()` — flush chunks to pgvector + entities/relations to Memgraph per iteration | agent |
-| `hybrid-retrieval` | `HybridRetriever.retrieve()` — pgvector dense top-20 → entity extract → 2-hop Memgraph → RRF → top-8 | agent/retrieval |
-| `brief-node` | `brief_node` — EPRS-style structured briefing renderer with inline citations | agent/communicate |
-| `session-lifecycle` | `session/manager.py` — session creation, state persistence, TTL expiry, Memgraph + pgvector cleanup | agent/session |
-| `pgvector-namespacing` | Enforce `session_id` filter on all pgvector reads; migration if needed | infra |
-
-Stopping criterion implementation detail: [[deep-research-agent-design]]
-Write/retrieval implementation detail: [[dual-write-hybrid-retrieval]]
+- **services/search/** — 13 EU + UK source connectors; job queue; idempotent ingestion; MCP server
+- **services/graphknows/** — GLiNER2 NER + DSPy relation extraction; ontology-guided domain-agnostic extraction; HybridRetriever (pgvector + Neo4j/Memgraph + RRF); 3-phase patch runner
+- **services/agent/** — LangGraph StateGraph (scope→investigate→communicate); WebSocket streaming; EPRS-style brief generation; session model
+- **apps/web/** — Chat UI + D3 graph canvas; split-pane layout; named sessions sidebar (localStorage)
+- **Memgraph integration** — per-session ephemeral session graphs; bolt driver; MERGE-based writes; pluggable backend (ADR-005)
+- **pgvector integration** — schema with `session_id` column; BAAI/bge-small-en-v1.5 embeddings; session-scoped search
+- **Dual-write** — `investigate_node` writes chunks to pgvector + entities/relations to Memgraph per iteration
+- **Session lifecycle** — `session/manager.py`, `session/models.py`, `session/end.py`; Memgraph + pgvector session cleanup
+- **Ontology system** — domain-agnostic routing (embedding-similarity → keyword → LLM fallback); legal/politics/finance/science assets
+- **WriteBackService** — promotes high-confidence session entities to Neo4j corpus post-session
 
 ---
 
-##  Next
+## Active — In Progress
 
-- **Session resume** — persist `InvestigativeState` to disk/Redis; allow users to reload a prior research session
-- **Frontend v2** — expose live KG growth in D3 during search_loop; per-node citation panel; entity timeline
-- **Export suite** — PDF export of EPRS briefing; CSV entity table; JSON citation list; Zotero-compatible RIS
-- **Bundestag adapter** — extend `services/search/` with Bundestag Drucksachen + Plenarprotokolle adapters; parity with EP adapter
+These are the highest-priority open items as of 2026-05-20. Track in Kanban.
+
+| # | Item | Area | Priority |
+|---|---|---|---|
+| 1 | **HybridRetriever Memgraph path** — entity graph traversal reads Neo4j, not Memgraph session graph. Breaks per-session retrieval correctness. | agent/retrieval | HIGH |
+| 2 | **Session TTL wiring** — `session/end.py` exists but cleanup is not triggered. Memgraph memory grows unbounded. | agent/session | HIGH |
+| 3 | **pgvector session_id enforcement** — audit all `PgVectorStore.search()` call sites; add integration test for session isolation | infra | HIGH |
+| 4 | **End-to-end integration test** — one real investigate loop against live Memgraph + pgvector | testing | MEDIUM |
+| 5 | **Embedder singleton** — move BAAI/bge-small-en-v1.5 load to module-level; remove per-call cold start | agent | MEDIUM |
 
 ---
 
-##  Horizon
+## Next — After Active Items
 
-- **Multi-user auth** — JWT + per-user session namespace; RBAC for shared sessions within an organisation
-- **Federated KG** — merge entity nodes across sessions for returning users; cross-session entity resolution via Neo4j
-- **Embed API** — expose `POST /research` as a headless API; webhook callbacks for async briefing delivery; embed widget for third-party news CMS
+- **RAGAS evaluation (per-session)** — baseline evaluation of retrieval quality on the new per-session architecture (old RAGAS results were pre-pivot and are not comparable)
+- **Stub doc alerting** — WS `search_error` event + circuit breaker when search service unavailable
+- **Prompt versioning** — EPRS system prompt to `graph/prompts/eprs.md`, configurable
+- **Frontend export** — PDF/Markdown export of EPRS briefs
+- **Source coverage expansion** — Bundestag DIP API, UK Hansard (planned, not yet implemented)
+- **Dead code cleanup** — delete `services/agent/orchestrator.py` (pre-LangGraph ReAct legacy)
+- **Ontology asset deduplication** — symlink `services/agent/ontology/assets/` → `services/graphknows/`
+
+---
+
+## Horizon — Strategic
+
+- **Multi-language support** — French, German, Hungarian document ingestion (current pipeline is English-only)
+- **Provenance graph** — PROV-O compliant lineage from source document to graph node to brief claim
+- **Persistent corpus** — opt-in write-back of high-confidence session entities to shared Neo4j corpus; corpus maintenance pipeline
+- **MCP surface** — expose agent as an MCP tool for third-party integrations (search MCP server already exists)
+- **ELTE thesis finalisation** — Node2Vec + community detection results on EP debate corpus; formal evaluation section

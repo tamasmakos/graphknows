@@ -1,207 +1,199 @@
-# Architecture Reference — Graphknows v2
+---
+title: "Service Topology & Reference — Ports, URLs, Env Vars"
+created: 2026-05-04
+updated: 2026-05-20
+type: architecture
+tags: [architecture, deployment, docker, reference, admin]
+confidence: high
+---
 
-> Purpose: authoritative reference for the current live stack, service boundaries, ports, routes, and local run commands.
-> Last updated: 2026-05-15
+# Service Topology & Reference
+
+Full service map, ports, environment variables, and local dev setup.
 
 ---
 
-## 1. Live Service Topology
+## Service Map
 
-```text
-Browser
-  -> frontend proxy :8080
-     -> agent :8002
-        -> search :8000
-        -> Neo4j :7687
-        -> pgvector :5432
-        -> Memgraph :17687
+```
+┌─────────────┐     WebSocket/HTTP      ┌──────────────┐
+│  apps/web   │ ──────────────────────► │ services/    │
+│  :8080      │                         │ agent :8030  │
+└─────────────┘                         └──────┬───────┘
+                                               │
+                          ┌────────────────────┼────────────────────┐
+                          │                    │                    │
+                          ▼                    ▼                    ▼
+               ┌──────────────────┐  ┌──────────────────┐  ┌───────────────┐
+               │ services/search  │  │services/graphknows│  │   Memgraph    │
+               │ :8040            │  │ :8025            │  │ bolt :7688    │
+               └──────────────────┘  └─────────┬────────┘  └───────────────┘
+                                               │
+                          ┌────────────────────┼────────────┐
+                          ▼                    ▼            ▼
+                   ┌──────────┐        ┌───────────┐  ┌──────────┐
+                   │  Neo4j   │        │ pgvector  │  │Memgraph  │
+                   │ :7687    │        │ :5432     │  │ :7688    │
+                   └──────────┘        └───────────┘  └──────────┘
 ```
 
-### Frontend (`apps/web/`)
-
-- serves the static SPA at `/`
-- proxies `/api/*` to the agent
-- proxies `/ws/chat/{session_id}` to the agent websocket
-
-### Agent (`services/agent/`)
-
-- owns the live investigative workflow
-- serves blocking HTTP `/chat`
-- serves websocket `/sessions/{session_id}/stream`
-- exposes `/ws/chat/{session_id}` compatibility alias
-- owns session creation, deletion, and merge
-
-### Search (`services/search/`)
-
-- EU-source retrieval service used during the investigate phase
-- not a browser-facing service in the normal local workflow
+**Rule:** The frontend NEVER calls search or graphknows directly. All requests go through `services/agent`.
 
 ---
 
-## 2. Current Query Path
+## Ports
 
-### Browser websocket path
-
-1. browser connects to `ws://localhost:8080/ws/chat/{session_id}`
-2. frontend proxy forwards to agent `ws://localhost:8002/ws/chat/{session_id}`
-3. agent emits:
-   - `status`
-   - wrapped `ws_event` messages (`plan_ready`, `search_start`, `docs_fetched`, `chunks_written`, `entities_written`, `graph_update`, `novelty_check`, `search_done`, `retrieval_done`, `brief_done`)
-   - `done`
-4. frontend renders the final answer card and graph state
-
-### Blocking HTTP path
-
-1. browser posts to `/api/chat`
-2. frontend proxy forwards to `POST /chat`
-3. agent runs the same macro workflow without streaming and returns final JSON
+| Service | Host port | Internal port | Notes |
+|---|---|---|---|
+| `neo4j` (HTTP) | 7474 | 7474 | Browser UI |
+| `neo4j` (Bolt) | 7687 | 7687 | Driver connections |
+| `pgvector` | 5432 | 5432 | PostgreSQL with vector extension |
+| `memgraph` (Bolt) | 7688 | 7687 | Host 7688 avoids collision with Neo4j |
+| `memgraph` (HTTP) | 7444 | 7444 | Memgraph Lab web UI |
+| `graphknows` | 8025 | 8025 | Consolidated graph/retrieval service |
+| `agent` | 8030 | 8000 | Main agent API |
+| `search` | 8040 | 8000 | EU source connector service |
+| `frontend` | 8080 | 8080 | Web app |
+| `langfuse` | 3000 | 3000 | Observability (optional profile) |
 
 ---
 
-## 3. Public Routes
+## Memgraph — from Hermes container
 
-### Frontend proxy (`:8080`)
+From inside the Hermes container (172.18.0.1 is the Docker bridge):
 
-| Route | Method | Behavior |
+```
+bolt://172.18.0.1:17687   ← confirmed working (no auth)
+```
+
+From inside Docker network:
+```
+bolt://memgraph:7687
+```
+
+From host machine:
+```
+bolt://localhost:7688
+```
+
+---
+
+## Environment Variables
+
+### services/agent
+
+| Variable | Default | Purpose |
 |---|---|---|
-| `/` | GET | serve `apps/web/index.html` |
-| `/static/*` | GET | serve static assets |
-| `/api/*` | ANY | proxy to agent |
-| `/ws/chat/{session_id}` | WS | websocket proxy to agent |
+| `GRAPHKNOWS_URL` | `http://graphknows:8025` | graphknows service base URL |
+| `GRAPHKNOWS_MODE` | `http` | `http` or `inprocess` |
+| `SEARCH_URL` | `http://search:8000` | search service base URL |
+| `MEMGRAPH_URI` | `bolt://memgraph:7687` | Memgraph bolt URI |
+| `PGVECTOR_DSN` | `postgresql://postgres:***@pgvector:5432/vectordb` | pgvector DSN |
+| `SESSION_GRAPH_BACKEND` | `memgraph` | `memgraph` or `neo4j_gds` |
+| `NEO4J_URI` | `bolt://neo4j:7687` | Neo4j bolt URI (for writeback) |
+| `NEO4J_USER` | `neo4j` | Neo4j auth |
+| `NEO4J_PASSWORD` | `changeme` | Neo4j auth |
+| `LLM_PROVIDER` | `groq` | LLM provider |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | LLM model |
+| `GROQ_API_KEY` | — | Required for Groq |
+| `GRAPHKNOWS_ENV` | `development` | Environment tag |
+| `EXPORT_GRAPH_HTML` | `false` | Write HTML graph snapshots to disk |
+| `GRAPH_HTML_OUTPUT_DIR` | `/root/graphknows/output` | Output dir for HTML snapshots |
 
-### Agent (`:8002`)
+### services/graphknows
 
-| Route | Method | Behavior |
+| Variable | Default | Purpose |
 |---|---|---|
-| `/health` | GET | liveness probe |
-| `/chat` | POST | blocking investigative answer |
-| `/sessions` | POST | create session |
-| `/sessions/{session_id}` | GET | session state |
-| `/sessions/{session_id}` | DELETE | close session |
-| `/session/{session_id}/merge` | POST | merge session graph |
-| `/sessions/{session_id}/query` | POST | SSE final briefing |
-| `/sessions/{session_id}/investigate` | POST | typed SSE stream |
-| `/sessions/{session_id}/stream` | WS | primary stream |
-| `/ws/chat/{session_id}` | WS | compatibility alias |
+| `NEO4J_URI` | `bolt://neo4j:7687` | Neo4j corpus KG |
+| `PGVECTOR_DSN` | `postgresql://postgres:***@pgvector:5432/vectordb` | pgvector |
+| `MEMGRAPH_URI` | `bolt://memgraph:7687` | Memgraph session graph |
+| `GROQ_API_KEY` | — | For DSPy relation extraction |
+| `LLM_PROVIDER` | `groq` | |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | |
+| `EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | Embedding model |
+| `INPUT_DIR` | `/data/input` | Graphgen pipeline input |
+| `OUTPUT_DIR` | `/data/output` | Graphgen pipeline output |
+| `GRAPHKNOWS_PORT` | `8025` | Service listen port |
+
+### services/search
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GRAPHGEN_URL` | `http://graphknows:8025` | graphknows service (legacy alias) |
+| `RAW_DATA_DIR` | `/data/raw` | Raw document cache mount |
+| `GRAPHKNOWS_ENV` | `development` | |
+| `SEARCH_PORT` | `8040` | Host port |
 
 ---
 
-## 4. Ports and Defaults
-
-| Component | Port | Default |
-|---|---|---|
-| frontend | `8080` | `PORT=8080` |
-| agent | `8002` | bound explicitly in local run |
-| search | `8000` | service-local |
-| Neo4j | `7687` | persistent KG |
-| pgvector | `5432` | vector DB |
-| Memgraph | `17687` | session graph |
-
-Frontend defaults:
-
-| Variable | Default |
-|---|---|
-| `AGENT_URL` | `http://localhost:8002` |
-| `PORT` | `8080` |
-
-Agent defaults commonly used in local dev:
-
-| Variable | Typical value |
-|---|---|
-| `SEARCH_URL` | `http://localhost:8000` |
-| `NEO4J_URI` | `bolt://172.18.0.1:7687` |
-| `PGVECTOR_DSN` | `postgresql://postgres:pgvectorpass123@172.18.0.1:5432/vectordb` |
-| `MEMGRAPH_URI` | `bolt://172.18.0.1:17687` |
-
----
-
-## 5. Exact Local Startup
-
-### Start the agent
+## Local Dev Setup
 
 ```bash
+# 1. Start infrastructure + services
 cd /root/graphknows
+docker compose up -d
+
+# 2. Check health
+curl http://localhost:8025/health   # graphknows
+curl http://localhost:8030/health   # agent  (NOTE: maps to container :8000)
+curl http://localhost:8040/health   # search (NOTE: maps to container :8000)
+curl http://localhost:8080/         # frontend
+
+# 3. Environment (for running services outside Docker)
 set -a && source .env && set +a
-PYTHONPATH="$PWD/services/agent:$PWD/services:$PWD/services/graphgen:$PWD/services/scrapers" \
-python3 -B -m uvicorn services.agent.main:app --host 0.0.0.0 --port 8002 --log-level info
-```
 
-### Start the frontend
-
-```bash
-cd /root/graphknows
-AGENT_URL=http://localhost:8002 \
-uvicorn apps.web.server:app --host 0.0.0.0 --port 8080
-```
-
-### Optional: start the search service
-
-```bash
-cd /root/graphknows
-PYTHONPATH="$PWD/services" uvicorn services.search.main:app --host 0.0.0.0 --port 8000
+# 4. Kill zombie graphgen workers if needed
+pkill -f graphgen_worker
 ```
 
 ---
 
-## 6. Backend-Only Validation
+## API Contracts
 
-### Health
+### agent: POST /chat
 
-```bash
-curl -s http://127.0.0.1:8002/health
+```json
+{
+  "session_id": "string",
+  "message": "string",
+  "stream": true
+}
 ```
 
-### Blocking `/chat`
+Response: streams WS events or returns JSON brief on HTTP.
 
-```bash
-curl -s \
-  -H 'content-type: application/json' \
-  -d '{"message":"health validation"}' \
-  http://127.0.0.1:8002/chat
+### agent: WS /ws/{session_id}
+
+Bidirectional. Client sends `{"message": "..."}`, server pushes event objects (see [[architecture/service-agent]] for event schema).
+
+### search: POST /search
+
+```json
+{
+  "query": "string",
+  "sources": ["ep_debates", "eurlex", "eprs_briefings"],
+  "max_results": 10
+}
 ```
 
-### Websocket smoke test
+Response: `list[ParsedDocument]`
 
-```bash
-cd /root/graphknows
-python - <<'PY'
-import asyncio
-import json
-import websockets
+### graphknows: POST /extract
 
-async def main():
-    uri = 'ws://127.0.0.1:8002/ws/chat/reference-smoke'
-    async with websockets.connect(uri, open_timeout=10, close_timeout=10) as ws:
-        await ws.send(json.dumps({
-            'message': 'Build a short investigation plan for the EU AI Act',
-            'session_id': 'reference-smoke',
-        }))
-        for _ in range(20):
-            msg = await asyncio.wait_for(ws.recv(), timeout=120)
-            data = json.loads(msg)
-            print(data.get('type'), (data.get('payload') or {}).get('event_type'))
-            if data.get('type') in {'done', 'answer', 'error'}:
-                break
-
-asyncio.run(main())
-PY
+```json
+{
+  "text": "string",
+  "session_id": "string",
+  "ontology": "politics"
+}
 ```
 
-Expected high-level sequence:
-
-- `status`
-- `ws_event plan_ready`
-- repeated search and graph events
-- `done`
-
-Long prompts can take several minutes.
+Response: `{entities: [...], relations: [...]}`
 
 ---
 
-## 7. Current Known Gap
+## Notes
 
-The current live frontend can complete an investigative run and render the graph correctly while the Sources side panel still shows `0`. The workflow data contract for sources and retrieval hits is not yet wired through to that side panel.
-
-## Links
-
-[[architecture/service-agent]] [[product/frontend-design]] [[ops/administration]] [[ops/technical-debt]]
+- `HYBRIDRAG_URL` and `GRAPHGEN_URL` env vars are legacy aliases for `GRAPHKNOWS_URL` — all three point to `http://graphknows:8025`.
+- The `agent` service Docker port is `8030:8000` (host:container). Client code should use `http://localhost:8030` from host, `http://agent:8000` from Docker network.
+- `search` service Docker port is `${SEARCH_PORT:-8040}:8000`. Use `http://localhost:8040` from host.

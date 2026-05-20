@@ -55,9 +55,18 @@ _ERR_NEO4J_NOT_INIT = "Neo4j not initialised"
 # Reusable responses dicts for FastAPI OpenAPI schema documentation
 _DESC_503: str = "Service unavailable"
 _R503: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}}
-_R503_404: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}, 404: {"description": "Not found"}}
-_R503_500: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}, 500: {"description": "Internal error"}}
-_R503_422: dict[int | str, dict[str, Any]] = {503: {"description": _DESC_503}, 422: {"description": "Invalid input"}}
+_R503_404: dict[int | str, dict[str, Any]] = {
+    503: {"description": _DESC_503},
+    404: {"description": "Not found"},
+}
+_R503_500: dict[int | str, dict[str, Any]] = {
+    503: {"description": _DESC_503},
+    500: {"description": "Internal error"},
+}
+_R503_422: dict[int | str, dict[str, Any]] = {
+    503: {"description": _DESC_503},
+    422: {"description": "Invalid input"},
+}
 _R404: dict[int | str, dict[str, Any]] = {404: {"description": "Not found"}}
 
 # ---------------------------------------------------------------------------

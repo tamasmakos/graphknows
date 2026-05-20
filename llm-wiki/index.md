@@ -1,7 +1,7 @@
 # Wiki Index — Graphknows
 
 > Deep research agent for political intelligence.
-> Last updated: 2026-05-15 | Pages: 26
+> Last updated: 2026-05-20 | Pages: 25
 
 ---
 
@@ -14,7 +14,7 @@
 | [[architecture/dual-write-retrieval]] | DualWriter (Memgraph + pgvector), RRF hybrid retrieval, HybridRetriever interface |
 | [[architecture/reference]] | Full service topology, API contracts, ports, env vars, local dev setup |
 | [[architecture/service-agent]] | services/agent/ internal design: LangGraph nodes, session graph, HTTP clients |
-| [[architecture/service-search]] | services/search/ design: BaseSource, adapter pattern, EU source adapters |
+| [[architecture/service-search]] | services/search/ design: BaseSource, connector pattern, EU source connectors |
 
 ---
 
@@ -24,21 +24,21 @@
 |---|---|---|---|
 | 001 | [[adr/001-langgraph-agent]] | Replace ReAct loop with LangGraph StateGraph | accepted |
 | 002 | [[adr/002-investigative-workflow]] | 3-phase investigative workflow (Scope→Investigate→Communicate) | accepted |
-| 003 | [[adr/003-services-refactor]] | Decompose monolith into search/graphgen/graphrag/agent microservices | accepted |
-| 004 | [[adr/004-ontology-patch]] | Ontology injection bug + 3-phase patch runner | accepted |
+| 003 | [[adr/003-services-refactor]] | Decompose monolith into search/graphknows/agent microservices | accepted |
+| 004 | [[adr/004-ontology-patch]] | Ontology injection bug + 3-phase patch runner (targets Neo4j legacy corpus) | accepted |
 | 005 | [[adr/005-pluggable-session-graph-backend]] | Pluggable session KG backend (Memgraph/Neo4j+GDS) + NodeFeatures for reasoning | accepted |
+| 006 | [[adr/006-ontology-guided-extraction]] | Domain-agnostic ontology-guided extraction: GLiNER2 labels from ontology + DSPy with schema context | accepted |
 
 ---
 
-## product/ — Vision, Roadmap, Business
+## product/ — Vision, Roadmap, UX
 
 | Page | Summary |
 |---|---|
 | [[product/roadmap]] | Current sprint, next features, horizon — living document |
-| [[product/business-plan]] | Business model, target users, monetisation |
-| [[product/market-analysis]] | Competitive landscape, market sizing |
-| [[product/frontend-design]] | Frontend v2 spec: split-pane chat + D3 graph canvas + export suite |
-| [[product/gtm-strategy]] | Go-to-market: beachhead users, channels, pricing |
+| [[product/frontend-design]] | Frontend spec: split-pane chat + D3 graph canvas + export suite |
+
+> Speculative future planning docs (business-plan, market-analysis, gtm-strategy) quarantined to `product/future/` — not grounded in current code state.
 
 ---
 
@@ -49,7 +49,8 @@
 | [[research/eu-source-taxonomy]] | Full taxonomy of EU public record types, endpoints, formats, political value |
 | [[research/kg-construction]] | KG construction methodology: GLiNER2, DSPy, Leiden, ontology |
 | [[research/thesis-findings]] | ELTE MSc thesis findings: EP debate corpus, Node2Vec, modularity results |
-| [[research/ragas-evaluation]] | RAGAS eval results (baseline): context_precision, faithfulness, relevancy |
+
+> RAGAS evaluation results removed — pre-pivot baseline (2025-05-04, old shared-KG architecture), not comparable to current per-session design.
 
 ---
 
@@ -66,7 +67,7 @@
 
 | Page | Summary |
 |---|---|
-| [[entities/graphgen-project]] | GraphGen pipeline: history, capabilities, current role |
+| [[entities/graphknows-service]] | services/graphknows consolidated package: graphgen pipeline, retrieval, ontology, MCP |
 
 ---
 

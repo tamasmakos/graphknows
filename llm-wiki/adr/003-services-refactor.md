@@ -123,7 +123,15 @@ c584958 fix(agent): UPPER_SNAKE_CASE normalisation + empty entity guard
 ```
 
 ## Related Pages
-- [[architecture-reference]]
-- [[service-design-agent]]
-- [[product-architecture-v2]]
-- [[technical-debt]]
+- [[architecture/reference]]
+- [[architecture/service-agent]]
+- [[architecture/product-architecture]]
+- [[ops/technical-debt]]
+
+## Deviation Note (2026-05-20)
+
+The original ADR planned **4 microservices**: search / graphgen / graphrag / agent.
+
+**What actually shipped:** 3 services — search / graphknows / agent.
+
+`graphrag` was never deployed as a standalone service. `HybridRetriever` (the graphrag responsibility) was absorbed into `services/graphknows/graphknows/retrieval/`. `graphgen` was renamed `graphknows` and expanded to include retrieval, ontology, and MCP. The refactor's hexagonal layout and test suite (54 tests) remain valid for the current structure.

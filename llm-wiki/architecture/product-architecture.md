@@ -15,7 +15,7 @@ Graphknows is a **per-session deep research agent** for investigative journalist
 
 The old model — pre-loading a monolithic shared KG from EU records and letting users query it — is retired. It did not scale to bespoke research needs and created unsustainable ingestion/maintenance burden.
 
-See also: [[deep-research-agent-design]], [[dual-write-hybrid-retrieval]]
+See also: [[architecture/dual-write-retrieval]], [[architecture/service-agent]]
 
 ---
 

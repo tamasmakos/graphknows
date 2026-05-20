@@ -181,6 +181,12 @@ The existing `iterative_orchestrator.py` runs a full pipeline. The patch runner 
 ---
 
 ## Related Pages
-- [[pipeline-stages]]
-- [[knowledge-graph-construction]]
-- [[graphgen-architecture]]
+- [[research/kg-construction]]
+- [[entities/graphknows-service]]
+- [[adr/006-ontology-guided-extraction]]
+
+## Scope Note (2026-05-20)
+
+This ADR and the `graphgen patch` runner target the **legacy shared Neo4j corpus** only — the pre-pivot batch-ingested KG.
+
+Per-session Memgraph graphs (the current production path) are built fresh on each investigation and do not need patching. The patch runner is only needed when running the corpus pipeline (`services/graphknows/graphknows/graphgen/`) to ingest documents into the permanent Neo4j KG.
