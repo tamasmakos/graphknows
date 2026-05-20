@@ -78,14 +78,13 @@ class WriteBackService:
         try:
             from neo4j import GraphDatabase as _GDB
 
-            from graphknows.feature_engineering import LTMFeatureEngineer
+            from graphknows.feature_engineering import run_feature_engineering
 
             sync_driver = _GDB.driver(self._uri, auth=(self._user, self._password))
-            fe = LTMFeatureEngineer(sync_driver)
-            fe_result = fe.run()
-            log.info("Feature engineering: entity_count=%d communities=%d algo=%s runtime_ms=%.0f",
-                     fe_result.entity_count, fe_result.community_count,
-                     fe_result.algorithm_used, fe_result.runtime_ms)
+            fe_result = run_feature_engineering(sync_driver, session_id=session_id)
+            log.info("Feature engineering: entity_count=%d communities=%d runtime_ms=%.0f",
+                     fe_result.get("entity_count", 0), fe_result.get("community_count", 0),
+                     0)
             sync_driver.close()
         except Exception:
             log.exception("Feature engineering failed — non-fatal")

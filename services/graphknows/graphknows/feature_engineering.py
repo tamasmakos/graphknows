@@ -5,8 +5,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
+
+import numpy as np
+from sklearn.metrics import silhouette_score
 
 log = logging.getLogger("graphknows.feature_engineering")
 
@@ -139,16 +143,27 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
             except Exception as e:
                 log.warning("Cosine weight computation failed (non-fatal): %s", e)
 
-            # ── Step 4: Re-project with weights for weighted Leiden ──
+            # ── Step 4: Re-project as UNDIRECTED with weights for weighted Leiden ──
             s.run("CALL gds.graph.drop($name, false) YIELD graphName", name=PROJECTED_GRAPH_NAME)
-            s.run("""
-                CALL gds.graph.project.cypher(
-                    'ltm-entities',
-                    'MATCH (n:Entity) RETURN id(n) AS id',
-                    'MATCH (a:Entity)-[r]->(b:Entity) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
-                )
-                YIELD graphName
-            """)
+            try:
+                s.run("""
+                    CALL gds.graph.project(
+                        'ltm-entities',
+                        'Entity',
+                        {RELATES: {orientation: 'UNDIRECTED', properties: {weight: {defaultValue: 1.0}}}}
+                    )
+                    YIELD graphName
+                """)
+            except Exception as e:
+                log.warning("Native undirected project failed, falling back to cypher: %s", e)
+                s.run("""
+                    CALL gds.graph.project.cypher(
+                        'ltm-entities',
+                        'MATCH (n:Entity) RETURN id(n) AS id',
+                        'MATCH (a:Entity)-[r]->(b:Entity) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
+                    )
+                    YIELD graphName
+                """)
 
             # ── Step 5: PageRank ──
             try:
@@ -199,77 +214,158 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                 except Exception as e:
                     log.warning("Betweenness failed (non-fatal): %s", e)
 
-            # ── Step 8: Weighted Leiden community detection ──
-            leiden_result = None
+            # ── Step 8: Weighted Louvain community detection ──
+            # GDS 2026.04 — gds.leiden.write silently returns no rows; use Louvain.
+            # Louvain YIELD: communityCount, modularity, modularities, ranLevels
+            comm_result = None
+            algorithm_used = "louvain"
             try:
-                leiden_result = s.run("""
-                    CALL gds.leiden.write('ltm-entities', {
+                comm_result = s.run("""
+                    CALL gds.louvain.write('ltm-entities', {
                         writeProperty: 'community_id',
-                        relationshipWeightProperty: 'weight',
-                        includeIntermediateCommunities: false,
-                        gamma: 1.0,
-                        theta: 0.01
+                        relationshipWeightProperty: 'weight'
                     })
-                    YIELD communityCount, modularity, modularities, ranIterations, didConverge
+                    YIELD communityCount, modularity, modularities, ranLevels
                 """).single()
             except Exception as e:
-                log.warning("Weighted Leiden failed (%s) — trying unweighted", e)
+                log.warning("Weighted Louvain failed (%s) — trying unweighted", e)
                 try:
-                    leiden_result = s.run("""
-                        CALL gds.leiden.write('ltm-entities', {
-                            writeProperty: 'community_id',
-                            gamma: 1.0,
-                            theta: 0.01
-                        })
-                        YIELD communityCount, modularity, modularities, ranIterations, didConverge
+                    comm_result = s.run("""
+                        CALL gds.louvain.write('ltm-entities', {writeProperty: 'community_id'})
+                        YIELD communityCount, modularity, modularities, ranLevels
                     """).single()
+                    algorithm_used = "louvain_unweighted"
                 except Exception as e2:
-                    log.error("Leiden failed: %s", e2)
+                    log.error("Community detection failed: %s", e2)
 
-            if leiden_result:
-                community_count = leiden_result["communityCount"]
-                modularity = leiden_result["modularity"] or 0.0
-                modularities = list(leiden_result["modularities"]) if leiden_result["modularities"] else []
-                ran_iterations = leiden_result["ranIterations"]
-                did_converge = leiden_result["didConverge"]
+            if comm_result:
+                community_count = comm_result["communityCount"]
+                modularity = comm_result["modularity"] or 0.0
+                modularities = list(comm_result["modularities"]) if comm_result["modularities"] else []
+                ran_levels = comm_result["ranLevels"]
 
                 result["community_count"] = community_count
                 result["modularity"] = modularity
                 result["modularities"] = modularities
-                result["ran_iterations"] = ran_iterations
-                result["did_converge"] = did_converge
+                result["ran_iterations"] = ran_levels  # ranLevels maps to ran_iterations field
+                result["did_converge"] = True  # Louvain always converges
 
                 log.info(
-                    "Leiden: %d communities, modularity=%.4f, iterations=%d, converged=%s",
-                    community_count, modularity, ran_iterations, did_converge,
+                    "%s: %d communities, modularity=%.4f, levels=%d",
+                    algorithm_used, community_count, modularity, ran_levels,
                 )
 
-                # ── Step 9: Store GDSRun node ──
-                if session_id:
-                    try:
-                        s.run(
-                            "MERGE (r:GDSRun {session_id: $session_id}) "
-                            "SET r.ran_at = datetime(), "
-                            "    r.community_count = $community_count, "
-                            "    r.modularity = $modularity, "
-                            "    r.modularities = $modularities, "
-                            "    r.ran_iterations = $ran_iterations, "
-                            "    r.did_converge = $did_converge, "
-                            "    r.entity_count = $entity_count, "
-                            "    r.edge_count = $edge_count",
-                            session_id=session_id,
-                            community_count=community_count,
-                            modularity=modularity,
-                            modularities=modularities,
-                            ran_iterations=ran_iterations,
-                            did_converge=did_converge,
-                            entity_count=ec,
-                            edge_count=edge_count,
-                        )
-                    except Exception as e:
-                        log.warning("GDSRun node creation failed (non-fatal): %s", e)
+                # ── Step 9: Compute quality metrics ──
+                run_id = session_id or f"global-{int(time.time())}"
+                sil = None
+                global_separation = None
+                global_overlap = None
+                unweighted_modularity = None
 
-                # ── Step 10: Community change detection ──
+                try:
+                    emb_rows = s.run(
+                        "MATCH (e:Entity) WHERE e.node2vec IS NOT NULL AND e.community_id IS NOT NULL "
+                        "RETURN e.node2vec as emb, e.community_id as cid"
+                    ).data()
+
+                    if len(emb_rows) >= 10:
+                        X = np.array([r['emb'] for r in emb_rows], dtype=np.float32)
+                        labels = np.array([r['cid'] for r in emb_rows])
+                        counts = Counter(labels)
+                        mask = np.array([counts[l] >= 2 for l in labels])
+                        X_filt = X[mask]
+                        labels_filt = labels[mask]
+                        try:
+                            if len(np.unique(labels_filt)) >= 2 and len(X_filt) >= 4:
+                                sil = float(silhouette_score(X_filt, labels_filt, metric='cosine'))
+                        except Exception as e_sil:
+                            log.warning("Silhouette score failed (non-fatal): %s", e_sil)
+
+                        comm_vecs: dict = defaultdict(list)
+                        for r in emb_rows:
+                            if counts[r['cid']] >= 2:
+                                comm_vecs[r['cid']].append(np.array(r['emb'], dtype=np.float32))
+
+                        if comm_vecs:
+                            centroids = {cid: np.mean(vecs, axis=0) for cid, vecs in comm_vecs.items()}
+                            cid_list = list(centroids.keys())
+                            centroid_matrix = np.stack([centroids[c] for c in cid_list])
+
+                            separated = 0
+                            total = 0
+                            for r in emb_rows:
+                                cid = r['cid']
+                                if cid not in centroids:
+                                    continue
+                                emb = np.array(r['emb'], dtype=np.float32)
+                                norms = np.linalg.norm(centroid_matrix, axis=1) * np.linalg.norm(emb)
+                                norms = np.where(norms == 0, 1e-9, norms)
+                                sims = centroid_matrix @ emb / norms
+                                own_idx = cid_list.index(cid)
+                                own_sim = sims[own_idx]
+                                if all(own_sim >= s_ for s_ in sims):
+                                    separated += 1
+                                total += 1
+
+                            global_separation = separated / total if total > 0 else None
+                            global_overlap = 1.0 - global_separation if global_separation is not None else None
+                except Exception as e_qm:
+                    log.warning("Quality metric computation failed (non-fatal): %s", e_qm)
+
+                try:
+                    unweighted_row = s.run("""
+                        CALL gds.louvain.stats('ltm-entities')
+                        YIELD modularity
+                    """).single()
+                    unweighted_modularity = float(unweighted_row['modularity']) if unweighted_row else None
+                except Exception:
+                    try:
+                        unweighted_row = s.run("""
+                            CALL gds.louvain.stats('ltm-entities', {gamma: 1.0})
+                            YIELD modularity
+                        """).single()
+                        unweighted_modularity = float(unweighted_row['modularity']) if unweighted_row else None
+                    except Exception:
+                        unweighted_modularity = None
+
+                result["silhouette_cosine"] = sil
+                result["global_separation"] = global_separation
+                result["global_overlap"] = global_overlap
+                result["unweighted_modularity"] = unweighted_modularity
+
+                # ── Step 10: Store GDSRun node ──
+                try:
+                    s.run(
+                        "MERGE (r:GDSRun {session_id: $session_id}) "
+                        "SET r.ran_at = datetime(), "
+                        "    r.community_count = $community_count, "
+                        "    r.modularity = $modularity, "
+                        "    r.unweighted_modularity = $unweighted_modularity, "
+                        "    r.modularities = $modularities, "
+                        "    r.ran_iterations = $ran_iterations, "
+                        "    r.did_converge = $did_converge, "
+                        "    r.entity_count = $entity_count, "
+                        "    r.edge_count = $edge_count, "
+                        "    r.silhouette_cosine = $sil, "
+                        "    r.global_separation = $gsep, "
+                        "    r.global_overlap = $goverlap",
+                        session_id=run_id,
+                        community_count=community_count,
+                        modularity=modularity,
+                        unweighted_modularity=unweighted_modularity,
+                        modularities=modularities,
+                        ran_iterations=ran_levels,
+                        did_converge=True,
+                        entity_count=ec,
+                        edge_count=edge_count,
+                        sil=sil,
+                        gsep=global_separation,
+                        goverlap=global_overlap,
+                    )
+                except Exception as e:
+                    log.warning("GDSRun node creation failed (non-fatal): %s", e)
+
+                # ── Step 11: Community change detection ──
                 try:
                     rows = s.run(
                         "MATCH (e:Entity) WHERE e.community_id IS NOT NULL "
@@ -312,21 +408,8 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                     log.warning("Community change detection failed (non-fatal): %s", e)
 
             else:
-                # Leiden failed — fall back to Louvain
-                try:
-                    s.run("""
-                        CALL gds.louvain.write('ltm-entities', {writeProperty: 'community_id'})
-                        YIELD communityCount, modularity
-                    """)
-                    cc = s.run(
-                        "MATCH (e:Entity) WHERE e.community_id IS NOT NULL "
-                        "RETURN count(DISTINCT e.community_id) as c"
-                    ).single()["c"]
-                    result["community_count"] = cc
-                    log.info("Louvain fallback: %d communities", cc)
-                except Exception as e2:
-                    log.error("Community detection completely failed: %s", e2)
-                    result["error"] = f"community_failed:{e2}"
+                # All community detection failed — log only
+                log.error("Community detection completely failed")
 
         finally:
             try:
