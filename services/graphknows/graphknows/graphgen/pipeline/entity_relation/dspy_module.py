@@ -17,12 +17,14 @@ class EntityRelation(dspy.Signature):
     """Extract knowledge graph triplets (source, relation, target) from text.
 
     Rules:
-    - Only extract relations EXPLICITLY stated in the text.
+    - Extract relations that are clearly stated or strongly implied by the text.
     - The *relation* field MUST be chosen from allowed_relation_types.
       Do NOT invent new relation labels.
     - Use entity_hints as the preferred surface forms for source/target.
     - Use candidate_relations as a starting point; verify them and add new ones.
-    - Skip trivial or very uncertain relations.
+    - Be generous: include all plausible relations supported by the text.
+    - Aim to produce at least one triplet per pair of co-occurring named entities.
+    - Set confidence >= 0.5 for relations clearly supported by the text.
     """
 
     text: str = dspy.InputField(desc="Input text to analyse.")

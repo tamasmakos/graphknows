@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -21,6 +22,67 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ── Reranker ──────────────────────────────────────────────────────────────────
+
+_embed_model: Any = None
+_EMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+_ST_AVAILABLE: bool | None = None  # lazily determined
+
+
+def _check_st_available() -> bool:
+    global _ST_AVAILABLE
+    if _ST_AVAILABLE is None:
+        try:
+            import sentence_transformers  # noqa: F401
+            _ST_AVAILABLE = True
+        except ImportError:
+            _ST_AVAILABLE = False
+            logger.warning("sentence_transformers not available; using keyword fallback for reranking")
+    return _ST_AVAILABLE
+
+
+def _get_embed_model() -> Any:
+    global _embed_model
+    if _embed_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embed_model = SentenceTransformer(_EMBED_MODEL_NAME)
+        logger.info("Loaded embedding model: %s", _EMBED_MODEL_NAME)
+    return _embed_model
+
+
+def _jaccard_score(query: str, text: str) -> float:
+    """Simple keyword overlap (Jaccard on lowercased unigrams)."""
+    q_tokens = set(query.lower().split())
+    t_tokens = set(text.lower().split())
+    if not q_tokens or not t_tokens:
+        return 0.0
+    intersection = q_tokens & t_tokens
+    union = q_tokens | t_tokens
+    return len(intersection) / len(union)
+
+
+def _rerank(query: str, results: list[SearchResult], min_score: float = 0.15) -> list[SearchResult]:
+    """Rerank results by relevance to query; drop docs with score < min_score."""
+    if not results:
+        return results
+
+    texts = [f"{r.title} {r.excerpt or ''}" for r in results]
+
+    if _check_st_available():
+        import numpy as np
+        model = _get_embed_model()
+        all_texts = [query] + texts
+        embs = model.encode(all_texts, batch_size=32, normalize_embeddings=True)
+        q_emb = embs[0]
+        d_embs = embs[1:]
+        scores = (d_embs @ q_emb).tolist()
+    else:
+        scores = [_jaccard_score(query, t) for t in texts]
+
+    scored = [(r, s) for r, s in zip(results, scores) if s >= min_score]
+    scored.sort(key=lambda x: -x[1])
+    return [r for r, _ in scored]
 
 # Registry is loaded once at import time from source_manifest.yaml
 _registry = get_registry()
@@ -70,7 +132,12 @@ async def search(query: SearchQuery) -> list[SearchResult]:
         raise HTTPException(status_code=400, detail=f"Unknown sources: {sorted(unknown)}")
 
     connectors = [_registry.get(src) for src in sources]
-    tasks = [c.search(query) for c in connectors if c is not None]
+    # Overfetch (up to 4× limit) to give reranking a meaningful candidate pool
+    _RERANK_POOL_FACTOR = 4
+    _RERANK_MIN_POOL = 20
+    fetch_limit = max(query.limit * _RERANK_POOL_FACTOR, _RERANK_MIN_POOL)
+    fetch_query = query.model_copy(update={"limit": fetch_limit})
+    tasks = [c.search(fetch_query) for c in connectors if c is not None]
     results_per_source = await asyncio.gather(*tasks, return_exceptions=True)
 
     combined: list[SearchResult] = []
@@ -80,8 +147,16 @@ async def search(query: SearchQuery) -> list[SearchResult]:
             continue
         combined.extend(res)
 
-    combined.sort(key=lambda r: r.date or "", reverse=True)
-    return combined[: query.limit]
+    # Rerank by cosine similarity (or keyword fallback); drop off-topic docs
+    reranked = _rerank(query.query, combined)
+
+    # If reranking dropped everything (all below threshold), fall back to date-sorted
+    if not reranked and combined:
+        logger.info("Reranking dropped all results; falling back to date-sorted results")
+        combined.sort(key=lambda r: r.date or "", reverse=True)
+        return combined[: query.limit]
+
+    return reranked[: query.limit]
 
 
 # ------------------------------------------------------------------ #
