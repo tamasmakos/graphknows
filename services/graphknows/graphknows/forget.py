@@ -80,3 +80,64 @@ class LTMForget:
                 "DETACH DELETE e RETURN count(e) as deleted"
             ).single()
         return {"deleted_segments": True, "orphaned_entities_deleted": result["deleted"] if result else 0}
+
+    def prune(self, session_id: str | None = None, utterance_ttl_days: int = 180) -> dict[str, Any]:
+        """Prune orphaned Document, Chunk, Dialog, Utterance nodes.
+
+        Args:
+            session_id: Ignored (kept for API compatibility).
+            utterance_ttl_days: Prune utterances older than this many days.
+
+        Returns:
+            Dict with counts of pruned nodes per type.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=utterance_ttl_days)).isoformat()
+        results: dict[str, Any] = {
+            "documents_orphaned": 0,
+            "chunks_orphaned": 0,
+            "dialogs_empty": 0,
+            "utterances_ttl": 0,
+        }
+        with self._driver.session() as s:
+            # Count then delete — Neo4j doesn't support aggregation + DELETE in one pass
+            r = s.run("MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() RETURN count(d) AS c").single()
+            results["documents_orphaned"] = r["c"] if r else 0
+            if results["documents_orphaned"]:
+                s.run("MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() DELETE d")
+
+            r = s.run(
+                "MATCH (c:Chunk) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() "
+                "RETURN count(c) AS c"
+            ).single()
+            results["chunks_orphaned"] = r["c"] if r else 0
+            if results["chunks_orphaned"]:
+                s.run("MATCH (c:Chunk) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() DETACH DELETE c")
+
+            r = s.run(
+                "MATCH (d:Dialog) WHERE NOT EXISTS { "
+                "  MATCH (d)-[:PARTICIPANT]->(:Participant)-[:SAID]->(:Utterance) "
+                "} RETURN count(d) AS c"
+            ).single()
+            if r:
+                results["dialogs_empty"] = r["c"]
+            if results["dialogs_empty"]:
+                s.run(
+                    "MATCH (d:Dialog) WHERE NOT EXISTS { "
+                    "  MATCH (d)-[:PARTICIPANT]->(:Participant)-[:SAID]->(:Utterance) "
+                    "} DELETE d"
+                )
+
+            r = s.run(
+                "MATCH (u:Utterance) WHERE u.timestamp < $cutoff RETURN count(u) AS c",
+                cutoff=cutoff,
+            ).single()
+            if r:
+                results["utterances_ttl"] = r["c"]
+            if results["utterances_ttl"]:
+                s.run(
+                    "MATCH (u:Utterance) WHERE u.timestamp < $cutoff DETACH DELETE u",
+                    cutoff=cutoff,
+                )
+
+        log.info("prune: %s", results)
+        return results

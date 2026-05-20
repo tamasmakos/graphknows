@@ -378,6 +378,45 @@ async def main() -> None:
                   f"global_overlap={round(r.get('global_overlap') or 0, 4)}")
     neo4j_driver.close()
 
+    # ── Schema Checks ──────────────────────────────────────────────────────────
+    console.rule('[bold cyan]Schema Checks[/bold cyan]', style='cyan')
+    from neo4j import GraphDatabase as _GDB4
+    _s_uri = os.environ.get('NEO4J_URI', 'bolt://172.18.0.1:7687')
+    _s_user = os.environ.get('NEO4J_USER', 'neo4j')
+    _s_pw = os.environ['NEO4J_PASSWORD']
+    _s_driver = _GDB4.driver(_s_uri, auth=(_s_user, _s_pw))
+    with _s_driver.session() as s:
+        constraints = s.run("SHOW CONSTRAINTS").data()
+        constraint_names = {c.get('name', '') for c in constraints}
+        schema_checks = [
+            ('Document constraint', any('document' in n.lower() for n in constraint_names)),
+            ('Chunk constraint', any('chunk' in n.lower() for n in constraint_names)),
+            ('Dialog constraint', any('dialog' in n.lower() for n in constraint_names)),
+            ('Utterance constraint', any('utterance' in n.lower() for n in constraint_names)),
+        ]
+        for name, ok in schema_checks:
+            mark = '[green]PASS[/green]' if ok else '[red]FAIL[/red]'
+            console.print(f'  {mark}  {name}')
+
+        # ── Orphan Document prune smoke test ──────────────────────────────────
+        console.rule('[bold cyan]Orphan Prune Smoke Test[/bold cyan]', style='cyan')
+        from graphknows.forget import LTMForget
+        _pg_dsn = os.environ.get('PGVECTOR_DSN', '')
+        forget_service = LTMForget(_s_driver, _pg_dsn)
+        s.run("MATCH (d:Document {id: 'orphan-doc-test'}) DELETE d")
+        s.run(
+            "CREATE (:Document {id: 'orphan-doc-test', title: 'test', ingested_at: datetime()})"
+        )
+        forget_service.prune(session_id=None)
+        count = s.run(
+            "MATCH (d:Document {id: 'orphan-doc-test'}) RETURN count(d) as c"
+        ).single()["c"]
+        if count == 0:
+            console.print('  [green]PASS[/green]  Orphan Document prune')
+        else:
+            console.print('  [red]FAIL[/red]  Orphan Document prune')
+    _s_driver.close()
+
     # ── Pass/fail summary ─────────────────────────────────────────────────────
     console.rule('[bold white]Test Summary[/bold white]')
     checks = [

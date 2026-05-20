@@ -9,7 +9,25 @@ from typing import Any
 
 from neo4j import AsyncGraphDatabase
 
+from graphknows.schema import apply_schema
+
 log = logging.getLogger("agent.session.writeback")
+
+_schema_applied = False
+
+
+def ensure_schema(uri: str, user: str, password: str) -> None:
+    """Apply schema (constraints + indexes) once at startup using sync driver. Idempotent."""
+    global _schema_applied  # noqa: PLW0603
+    if not _schema_applied:
+        from neo4j import GraphDatabase as _GDB
+        drv = _GDB.driver(uri, auth=(user, password))
+        try:
+            with drv.session() as s:
+                apply_schema(s)
+        finally:
+            drv.close()
+        _schema_applied = True
 
 
 class WriteBackService:
@@ -27,6 +45,7 @@ class WriteBackService:
         min_confidence: float = 0.6,
     ) -> dict[str, Any]:
         """Extract from Memgraph, merge into Neo4j with Segment node."""
+        ensure_schema(self._uri, self._user, self._password)
         ts = datetime.now(timezone.utc).isoformat()
         driver = AsyncGraphDatabase.driver(self._uri, auth=(self._user, self._password))
         try:
