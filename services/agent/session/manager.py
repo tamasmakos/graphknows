@@ -735,9 +735,12 @@ class SessionGraphManager:
             try:
                 with self._mg_driver.session() as mg:
                     mg.run(
-                        f"MERGE (n:{label} {{name: $name, session_id: $sid}}) SET n += $props",
+                        "MERGE (n:Entity {name: $name, session_id: $sid}) "
+                        "ON CREATE SET n += $props "
+                        "ON MATCH SET n.label = CASE WHEN n.label = 'Entity' THEN $label ELSE n.label END",
                         name=node_name,
                         sid=session_id,
+                        label=label,
                         props=merged_props,
                     )
             except Exception as exc:
@@ -791,6 +794,7 @@ class SessionGraphManager:
 
         if self._memgraph_ok:
             try:
+                edge_props = {**props, "session_id": session_id, "type": edge_type}
                 with self._mg_driver.session() as mg:
                     mg.run(
                         "MERGE (a:Entity {name: $a, session_id: $sid}) "
@@ -802,12 +806,12 @@ class SessionGraphManager:
                     mg.run(
                         f"MATCH (a:Entity {{name: $a, session_id: $sid}}) "
                         f"MATCH (b:Entity {{name: $b, session_id: $sid}}) "
-                        f"MERGE (a)-[r:{edge_type}]->(b) "
-                        "SET r += $props",
+                        f"MERGE (a)-[r:{edge_type} {{session_id: $sid}}]->(b) "
+                        "SET r += $edge_props",
                         a=source_name,
                         b=target_name,
                         sid=session_id,
-                        props=props,
+                        edge_props=edge_props,
                     )
             except Exception as exc:
                 logger.warning("Memgraph add_edge failed: %s", exc)
