@@ -56,3 +56,13 @@ repos:
         args: ["-r", "services/graphknows/graphknows/", "--skip", "B101"]
         # graphgen contains research code; scan the primary service package only
         exclude: "services/graphknows/graphknows/graphgen/"
+
+  # ─── import validator: catch undeclared deps before they hit CI ───────────────
+  - repo: local
+    hooks:
+      - id: check-imports
+        name: check undeclared service imports
+        language: python
+        entry: python3 scripts/check_imports.py
+        pass_filenames: false
+        always_run: true

@@ -27,6 +27,8 @@ dependencies = [
     "neo4j",
     # Persistent job queue
     "aiosqlite",
+    # HTML parsing
+    "beautifulsoup4",
 ]
 
 [build-system]

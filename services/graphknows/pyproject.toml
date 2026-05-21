@@ -37,6 +37,7 @@ dependencies = [
     "spacy>=3.7.0",
     "tiktoken>=0.7.0",
     # MCP
+    "psycopg2-binary>=2.9.0",
     "mcp>=1.0.0",
     # Shared config
 ]

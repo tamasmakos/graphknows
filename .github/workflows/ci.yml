@@ -60,6 +60,9 @@ jobs:
           fi
           echo "sentence-transformers: clean"
 
+      - name: Check undeclared service imports
+        run: python3 scripts/check_imports.py
+
   # ── 2. Type checking — blocked by lint, non-blocking during ramp-up ────────
   type-check:
     name: Type check (mypy)
