@@ -30,7 +30,7 @@ http_check() {
 
 tcp_check() {
   local label="$1" host="$2" port="$3"
-  if nc -z -w3 "$host" "$port" 2>/dev/null; then
+  if python3 -c "import socket,sys; s=socket.create_connection(('$host',$port),timeout=3); s.close()" 2>/dev/null; then
     ok "$label  ($host:$port)"
   else
     fail "$label  ($host:$port)"
@@ -41,7 +41,7 @@ pg_check() {
   local label="$1" host="$2" port="$3" user="$4" db="$5"
   if pg_isready -h "$host" -p "$port" -U "$user" -d "$db" -q 2>/dev/null; then
     ok "$label  ($host:$port)"
-  elif nc -z -w3 "$host" "$port" 2>/dev/null; then
+  elif python3 -c "import socket,sys; s=socket.create_connection(('$host',$port),timeout=3); s.close()" 2>/dev/null; then
     warn "$label  ($host:$port — TCP open, pg_isready not available)"
   else
     fail "$label  ($host:$port)"
@@ -61,7 +61,7 @@ PGVECTOR_PORT="${PGVECTOR_PORT:-5432}"
 PGVECTOR_USER="${PGVECTOR_USER:-postgres}"
 PGVECTOR_DB="${PGVECTOR_DB:-vectordb}"
 MEMGRAPH_HOST="${MEMGRAPH_HOST:-172.18.0.1}"
-MEMGRAPH_BOLT_PORT="${MEMGRAPH_BOLT_PORT:-7688}"
+MEMGRAPH_BOLT_PORT="${MEMGRAPH_BOLT_PORT:-17687}"
 
 echo ""
 echo -e "${BOLD}=== Graphknows Health Check ===${RESET}  $(date '+%Y-%m-%d %H:%M:%S')"
@@ -79,7 +79,7 @@ echo ""
 echo -e "${BOLD}Application Services${RESET}"
 http_check "graphknows   " "http://localhost:8025/health"
 http_check "agent        " "http://localhost:8002/health"
-http_check "search       " "http://localhost:8040/health"
+http_check "search       " "http://localhost:8040/api/v1/health"
 http_check "frontend     " "http://localhost:8080/"
 echo ""
 

@@ -46,15 +46,15 @@ if [ "$SKIP_INFRA" -eq 0 ]; then
   pgvector_host="${PGVECTOR_HOST:-172.18.0.1}"
   pgvector_port="${PGVECTOR_PORT:-5432}"
   memgraph_host="${MEMGRAPH_HOST:-172.18.0.1}"
-  memgraph_port="${MEMGRAPH_BOLT_PORT:-7688}"
+  memgraph_port="${MEMGRAPH_BOLT_PORT:-17687}"
 
   curl -sf --max-time 3 "http://${neo4j_host}:${neo4j_http_port}" > /dev/null 2>&1 \
     || { warn "Neo4j not reachable at ${neo4j_host}:${neo4j_http_port}"; infra_ok=0; }
 
-  nc -z -w3 "$pgvector_host" "$pgvector_port" 2>/dev/null \
+  python3 -c "import socket; s=socket.create_connection(('$pgvector_host',$pgvector_port),timeout=3); s.close()" 2>/dev/null \
     || { warn "pgvector not reachable at ${pgvector_host}:${pgvector_port}"; infra_ok=0; }
 
-  nc -z -w3 "$memgraph_host" "$memgraph_port" 2>/dev/null \
+  python3 -c "import socket; s=socket.create_connection(('$memgraph_host',$memgraph_port),timeout=3); s.close()" 2>/dev/null \
     || { warn "Memgraph not reachable at ${memgraph_host}:${memgraph_port}"; infra_ok=0; }
 
   if [ "$infra_ok" -eq 0 ]; then
@@ -159,7 +159,7 @@ wait_for_http "graphknows" "http://localhost:8025/health" && echo -e " ${GREEN}r
 echo -n "  agent"
 wait_for_http "agent" "http://localhost:8002/health" && echo -e " ${GREEN}ready${RESET}"
 echo -n "  search"
-wait_for_http "search" "http://localhost:8040/health" && echo -e " ${GREEN}ready${RESET}"
+wait_for_http "search" "http://localhost:8040/api/v1/health" && echo -e " ${GREEN}ready${RESET}"
 echo -n "  frontend"
 wait_for_http "frontend" "http://localhost:8080/" && echo -e " ${GREEN}ready${RESET}"
 
