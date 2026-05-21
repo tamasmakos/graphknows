@@ -59,7 +59,7 @@ User query
 ### Infrastructure
 
 - **Neo4j**: Stores long-term knowledge graph topology and properties.
-- **pgvector (Postgres)**: Stores 384-dimensional vector embeddings (`BAAI/bge-small-en-v1.5`) for hybrid retrieval.
+- **pgvector (Postgres)**: Stores 1536-dimensional vector embeddings (`openai/text-embedding-3-small` via OpenRouter) for hybrid retrieval.
 - **Memgraph**: Ephemeral in-memory graph for per-session overlays. Uses MAGE algorithms (Leiden, PageRank).
 
 ---
@@ -71,22 +71,23 @@ User query
 ### Prerequisites
 
 - Docker + Docker Compose (infrastructure: Neo4j, pgvector, Memgraph)
-- Python venvs installed under `services/agent/.venv`
-- `.env` file populated — copy from `.env.example` and fill in API keys
+- Python ≥3.11 and [uv](https://github.com/astral-sh/uv)
+- `.env` file — see setup below
 
-### Start everything
+### First time
 
 ```bash
-cd /root/graphknows
-make dev-local
+cd graphknows
+make setup        # copies .env.example → .env; tells you exactly what to fill in
+# edit .env, fill in the three REQUIRED keys
+make dev          # preflight check → infra → all services
 ```
 
-This single command:
-1. Checks Neo4j, pgvector, and Memgraph are reachable — offers to `docker compose up -d` them if not
-2. Kills any zombie processes on app ports (8025, 8002, 8040)
-3. Starts all 4 application service watchdogs in the background
-4. Waits up to 90s for each to pass its health check
-5. Prints the full status board
+### Every subsequent time
+
+```bash
+make dev          # one command: validates env, starts everything, waits for health
+```
 
 Without Cloudflare tunnel:
 
@@ -97,7 +98,9 @@ make dev-local-no-tunnel
 ### Health check
 
 ```bash
-make status
+make doctor       # pre-flight GO/NO-GO: env vars, Python, infra reachability, ports
+make status       # health check all 8 service endpoints
+make logs         # tail all four service logs in one view
 ```
 
 Expected output when everything is running:
@@ -136,16 +139,17 @@ Key targets:
 
 | Target | Description |
 |---|---|
-| `dev-local` | Smart local start: checks infra, starts apps, waits for health |
-| `dev-local-no-tunnel` | Same, without Cloudflare tunnel |
-| `status` | Health check all 8 services |
-| `infra-up` | Start Neo4j, pgvector, Memgraph containers only |
-| `infra-down` | Stop infrastructure containers |
-| `logs SVC=agent` | Tail logs for a specific Docker service |
-| `up` | Start full stack via Docker Compose (production images) |
-| `dev` | Start full stack with source-mount hot-reload |
-| `down` | Stop and remove containers |
-| `observability` | Start Langfuse tracing stack |
+| `make dev` | **Recommended:** preflight → infra check → start all services |
+| `make setup` | First-time: copy `.env.example → .env` if missing, then doctor |
+| `make doctor` | Pre-flight GO/NO-GO check (env vars, Python, infra, ports) |
+| `make logs` | Tail all four service logs in one view |
+| `make status` | Health check all 8 service endpoints |
+| `make dev-local` | Start services directly (skip preflight) |
+| `make dev-local-no-tunnel` | Same, without Cloudflare tunnel |
+| `make infra-up` | Start Neo4j, pgvector, Memgraph containers only |
+| `make infra-down` | Stop infrastructure containers |
+| `make up` | Start full stack via Docker Compose (production images) |
+| `make down` | Stop and remove containers |
 
 ### Log files (bare-metal services)
 
@@ -260,9 +264,9 @@ Expected WebSocket event sequence: `status(thinking)` → `plan_ready` → `sear
 ```
 (:Document {doc_id, title, source_path, created_at})
     -[:CONTAINS]->
-(:Chunk {chunk_id, text, position, doc_id, embedding[384]})
+(:Chunk {chunk_id, text, position, doc_id, embedding[1536]})
     -[:MENTIONS]->
-(:Entity {entity_id, name, type, embedding[384]})
+(:Entity {entity_id, name, type, embedding[1536]})
     -[:RELATED_TO {relation}]->
 (:Entity)
 ```
@@ -276,30 +280,17 @@ cp .env.example .env
 ```
 
 Required keys:
+Three required keys (everything else has sensible defaults):
 
 ```env
-# LLM
-GROQ_API_KEY=...
-LLM_MODEL=llama-3.3-70b-versatile
-
-# Neo4j (Docker bridge IP from inside container)
-NEO4J_HOST=172.18.0.1
-NEO4J_PORT=7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=...
-
-# pgvector
-PGVECTOR_HOST=172.18.0.1
-PGVECTOR_PORT=5432
-PGVECTOR_USER=postgres
-PGVECTOR_PASSWORD=...
-PGVECTOR_DB=vectordb
-
-# Memgraph (host-exposed port)
-MEMGRAPH_URI=bolt://172.18.0.1:17687
+OPENROUTER_API_KEY=...   # embeddings (text-embedding-3-small) + LLM calls
+NEO4J_PASSWORD=...       # must match docker-compose.yaml
+PGVECTOR_PASSWORD=...    # must match docker-compose.yaml
 ```
 
-> Note: Infrastructure is accessed via Docker bridge IPs (`172.18.0.1`), not `localhost`, because the application services run bare-metal inside the Hermes container while the databases run in separate Docker containers.
+All other variables are documented with `[REQUIRED]` / `[OPTIONAL]` markers in `.env.example`.
+
+> Infrastructure is accessed via Docker bridge IPs (`172.18.0.1`), not `localhost`, because app services run bare-metal while databases run in Docker containers.
 
 ---
 
@@ -316,8 +307,10 @@ MEMGRAPH_URI=bolt://172.18.0.1:17687
   tests/           # Committed pytest tests (CI-run)
   research/        # GITIGNORED — prototypes, demos, scratch scripts
   scripts/
-    health.sh      # Full-stack health check
-    dev-local.sh   # Smart local dev launcher
+    preflight.sh   # Pre-flight GO/NO-GO validator (env, Python, infra, ports)
+    dev-local.sh   # Smart local dev launcher (called by make dev)
+    health.sh      # Full-stack health check (called by make status)
+  .env.example     # All env vars documented — copy to .env to start
   Makefile         # All developer commands (run: make help)
   docker-compose.yaml
   docker-compose.dev.yaml
