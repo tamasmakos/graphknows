@@ -34,7 +34,9 @@ USER app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/services:/app/services/graphknows/graphknows
+    PYTHONPATH=/app/services:/app/services/graphknows/graphknows \
+    HF_HOME=/tmp/hf_cache \
+    TRANSFORMERS_CACHE=/tmp/hf_cache
 
 EXPOSE 8000
 

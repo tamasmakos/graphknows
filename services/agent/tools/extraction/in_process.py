@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import time
+from typing import Any
 
 log = logging.getLogger("extractor")
 
@@ -188,20 +189,20 @@ class InProcessExtractor:
 
     def __init__(self) -> None:
         t0 = time.time()
-        import contextlib
 
         from graphgen.config.taxonomy import get_default_taxonomy
-        from graphgen.pipeline.entity_relation.extraction import get_gliner2_model
-
-        with contextlib.redirect_stdout(sys.stderr):
-            self._gliner = get_gliner2_model()
 
         # ── Load taxonomy — single source of truth for all labels ──────────
         self._taxonomy = get_default_taxonomy()
 
-        # Build the GLiNER2Schema object from taxonomy descriptions + thresholds
+        # GLiNER2 model and schema are loaded lazily on first extraction request
+        # to avoid downloading a ~2 GB model at agent startup.
+        self._gliner: Any | None = None
+        self._gliner_schema: Any | None = None
+
+        # Build entity/relation specs now (cheap); applied to schema on first use
         _base_threshold = 0.35
-        entity_spec: dict[str, dict] = {
+        self._entity_spec: dict[str, dict] = {
             label.lower(): {
                 "description": grp.description.strip() or label.lower().replace("_", " "),
                 "threshold": max(grp.min_ner_confidence, _base_threshold),
@@ -209,15 +210,28 @@ class InProcessExtractor:
             for label, grp in self._taxonomy.entity_groups.items()
             if grp.description.strip()
         }
-        self._gliner_schema = self._gliner.create_schema()
-        self._gliner_schema.entities(entity_spec)
-
-        # Add taxonomy relation types to the schema for joint extraction
-        rel_descs: dict[str, str] = {
+        self._rel_descs: dict[str, str] = {
             rt: rt.replace("_", " ").lower() for rt in self._taxonomy.relation_types
         }
-        if rel_descs:
-            self._gliner_schema.relations(rel_descs)
+
+        log.info("InProcessExtractor initialised in %.2fs (model load deferred)", time.time() - t0)
+
+    def _ensure_model_loaded(self) -> None:
+        """Load GLiNER2 model on first call. Thread-safe via GIL for single load."""
+        if self._gliner is not None:
+            return
+        import contextlib
+
+        from graphgen.pipeline.entity_relation.extraction import get_gliner2_model
+
+        log.info("Loading GLiNER2 model (first extraction request)...")
+        with contextlib.redirect_stdout(sys.stderr):
+            self._gliner = get_gliner2_model()
+
+        self._gliner_schema = self._gliner.create_schema()
+        self._gliner_schema.entities(self._entity_spec)
+        if self._rel_descs:
+            self._gliner_schema.relations(self._rel_descs)
 
         # child label → canonical top-level group name mapping
         self._child_to_group: dict[str, str] = {}
@@ -297,7 +311,8 @@ class InProcessExtractor:
                 if not chunk.strip():
                     continue
                 try:
-                    # \u2500\u2500 Schema-guided extraction (taxonomy descriptions + thresholds) \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+                    self._ensure_model_loaded()
+                    # ── Schema-guided extraction (taxonomy descriptions + thresholds) ──────
                     _base_threshold = 0.35
                     raw = self._gliner.extract(
                         chunk, self._gliner_schema, _base_threshold, True, True, True
