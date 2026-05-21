@@ -1,0 +1,11 @@
+[run]
+relative_files = true
+source = services/graphknows/graphknows
+
+[report]
+omit =
+    */graphgen/*
+    */__pycache__/*
+
+[xml]
+output = coverage.xml

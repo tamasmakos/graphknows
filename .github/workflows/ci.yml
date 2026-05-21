@@ -191,7 +191,7 @@ jobs:
             -v --tb=short \
             -m "not integration" \
             --cov=services/graphknows/graphknows \
-            --cov=services/agent \
+            --cov-config=.coveragerc \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing
 
