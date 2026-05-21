@@ -1043,7 +1043,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pymupdf" },
     { name = "pyyaml" },
-    { name = "sentence-transformers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1060,7 +1059,6 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "pymupdf" },
     { name = "pyyaml" },
-    { name = "sentence-transformers" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 

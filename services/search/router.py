@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any
-
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
@@ -23,32 +21,43 @@ from .models import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# ── Reranker ──────────────────────────────────────────────────────────────────
+# ── Reranker ─────────────────────────────────────────────────────────────────
 
-_embed_model: Any = None
-_EMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-_ST_AVAILABLE: bool | None = None  # lazily determined
-
-
-def _check_st_available() -> bool:
-    global _ST_AVAILABLE
-    if _ST_AVAILABLE is None:
-        try:
-            import sentence_transformers  # noqa: F401
-            _ST_AVAILABLE = True
-        except ImportError:
-            _ST_AVAILABLE = False
-            logger.warning("sentence_transformers not available; using keyword fallback for reranking")
-    return _ST_AVAILABLE
+_OPENROUTER_EMBED_MODEL = "openai/text-embedding-3-small"
+_OPENROUTER_EMBED_URL = "https://openrouter.ai/api/v1/embeddings"
 
 
-def _get_embed_model() -> Any:
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer(_EMBED_MODEL_NAME)
-        logger.info("Loaded embedding model: %s", _EMBED_MODEL_NAME)
-    return _embed_model
+def _embed_via_openrouter(texts: list[str]) -> list[list[float]] | None:
+    """Call OpenRouter embeddings API. Returns list of float vectors or None on failure."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                _OPENROUTER_EMBED_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": _OPENROUTER_EMBED_MODEL, "input": texts},
+            )
+            resp.raise_for_status()
+            data = resp.json()["data"]
+            return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter embedding call failed, falling back to Jaccard: %s", exc)
+        return None
+
+
+def _cosine_sim(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two equal-length float vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 def _jaccard_score(query: str, text: str) -> float:
@@ -69,14 +78,10 @@ def _rerank(query: str, results: list[SearchResult], min_score: float = 0.15) ->
 
     texts = [f"{r.title} {r.excerpt or ''}" for r in results]
 
-    if _check_st_available():
-        import numpy as np
-        model = _get_embed_model()
-        all_texts = [query] + texts
-        embs = model.encode(all_texts, batch_size=32, normalize_embeddings=True)
+    embs = _embed_via_openrouter([query] + texts)
+    if embs is not None:
         q_emb = embs[0]
-        d_embs = embs[1:]
-        scores = (d_embs @ q_emb).tolist()
+        scores = [_cosine_sim(q_emb, e) for e in embs[1:]]
     else:
         scores = [_jaccard_score(query, t) for t in texts]
 

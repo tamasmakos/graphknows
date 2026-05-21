@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -91,18 +92,14 @@ class ArchiveEngine:
 
     Args:
         memgraph_uri: Bolt URI for Memgraph (default from env or localhost).
-        embed_model_name: SentenceTransformer model name.
+        embed_model_name: unused, kept for API compatibility.
     """
-
-    _embed_model: Any = None  # module-level singleton, loaded lazily
 
     def __init__(
         self,
         memgraph_uri: str = "bolt://172.18.0.1:17687",
-        embed_model_name: str = "all-MiniLM-L6-v2",
     ) -> None:
         self._memgraph_uri = memgraph_uri
-        self._embed_model_name = embed_model_name
         self._driver: Any = None
 
         # Ensure services/ is importable
@@ -111,14 +108,6 @@ class ArchiveEngine:
             sys.path.insert(0, str(_svc))
 
     # ── Lazy singletons ───────────────────────────────────────────────────────
-
-    def _get_model(self) -> Any:
-        if ArchiveEngine._embed_model is None:
-            from sentence_transformers import SentenceTransformer
-
-            ArchiveEngine._embed_model = SentenceTransformer(self._embed_model_name)
-            log.info("Loaded embedding model: %s", self._embed_model_name)
-        return ArchiveEngine._embed_model
 
     def _get_driver(self) -> Any:
         if self._driver is None:
@@ -253,17 +242,55 @@ class ArchiveEngine:
     # ── Light reranker ────────────────────────────────────────────────────────
 
     def _cosine_rerank(self, query: str, docs: list[dict], top_k: int) -> list[tuple[dict, float]]:
-        """Embed query + doc texts, rerank by cosine similarity."""
+        """Rerank docs using OpenRouter text-embedding-3-small; falls back to Jaccard."""
         if not docs:
             return []
-        model = self._get_model()
+
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
         texts = [f"{d['title']} {d['text']}" for d in docs]
-        all_texts = [query] + texts
-        embs = model.encode(all_texts, batch_size=32, normalize_embeddings=True)
-        q_emb = embs[0]
-        d_embs = embs[1:]
-        scores = d_embs @ q_emb  # cosine (normalized)
-        ranked = sorted(zip(docs, scores.tolist()), key=lambda x: -x[1])
+
+        if api_key:
+            try:
+                import httpx
+
+                with httpx.Client(timeout=15.0) as client:
+                    resp = client.post(
+                        "https://openrouter.ai/api/v1/embeddings",
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        json={"model": "openai/text-embedding-3-small", "input": [query] + texts},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()["data"]
+                    embs = [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
+                    q_emb = embs[0]
+
+                    def _cos(a: list[float], b: list[float]) -> float:
+                        dot = sum(x * y for x, y in zip(a, b))
+                        na = sum(x * x for x in a) ** 0.5
+                        nb = sum(x * x for x in b) ** 0.5
+                        return dot / (na * nb) if na and nb else 0.0
+
+                    ranked = sorted(
+                        zip(docs, [_cos(q_emb, e) for e in embs[1:]]),
+                        key=lambda x: -x[1],
+                    )
+                    return list(ranked[:top_k])
+            except Exception as exc:  # noqa: BLE001
+                log.warning("OpenRouter embedding failed, falling back to Jaccard: %s", exc)
+
+        # Jaccard fallback
+        q_tokens = set(query.lower().split())
+
+        def _jaccard(text: str) -> float:
+            t_tokens = set(text.lower().split())
+            if not q_tokens or not t_tokens:
+                return 0.0
+            return len(q_tokens & t_tokens) / len(q_tokens | t_tokens)
+
+        ranked = sorted(
+            [(d, _jaccard(t)) for d, t in zip(docs, texts)],
+            key=lambda x: -x[1],
+        )
         return ranked[:top_k]
 
     # ── Public API ────────────────────────────────────────────────────────────

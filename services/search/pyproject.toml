@@ -21,8 +21,7 @@ dependencies = [
     "pymupdf",
     # Language detection
     "langdetect",
-    # Semantic reranking
-    "sentence-transformers",
+    # Semantic search / NLP
     "numpy",
     # Graph cache
     "neo4j",
@@ -33,4 +32,3 @@ dependencies = [
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
-
