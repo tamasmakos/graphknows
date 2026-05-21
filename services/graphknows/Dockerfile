@@ -37,4 +37,7 @@ USER graphknows
 
 EXPOSE 8025
 
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8025/health')" || exit 1
+
 CMD ["python", "-m", "graphknows.run"]

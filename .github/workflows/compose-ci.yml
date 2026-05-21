@@ -1,0 +1,188 @@
+name: Compose CI
+
+# Builds all Docker images from the compose file, starts the full stack
+# (infra + app services), waits for health checks, runs HTTP smoke tests,
+# then tears everything down.
+#
+# Runs in parallel with the main CI lint/test jobs on every push/PR to main.
+# A failure here blocks merge just like a test failure would.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: compose-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  compose-build-and-smoke:
+    name: Build & smoke-test full stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Layer cache ────────────────────────────────────────────────────────
+      # Cache key covers all Dockerfiles and dependency lockfiles.
+      # Cache is only written on a miss to avoid unbounded growth.
+      - name: Restore Docker layer cache
+        id: docker-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.docker-layer-cache
+          key: docker-layers-${{ hashFiles('**/Dockerfile', '**/Dockerfile.*', 'uv.lock', '**/requirements*.txt') }}
+          restore-keys: |
+            docker-layers-
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      # ── Build ──────────────────────────────────────────────────────────────
+      # Build all images defined in docker-compose.yaml and load them into
+      # the local Docker daemon so `docker compose up` can use them directly.
+      - name: Build all compose images
+        uses: docker/bake-action@v5
+        with:
+          files: docker-compose.yaml
+          load: true
+          builder: ${{ steps.buildx.outputs.name }}
+          set: |
+            *.cache-from=type=local,src=/tmp/.docker-layer-cache
+            ${{ steps.docker-cache.outputs.cache-hit != 'true' && '*.cache-to=type=local,dest=/tmp/.docker-layer-cache-new,mode=max' || '' }}
+
+      - name: Rotate layer cache
+        run: |
+          rm -rf /tmp/.docker-layer-cache || true
+          mv /tmp/.docker-layer-cache-new /tmp/.docker-layer-cache 2>/dev/null || true
+
+      # ── Start stack ────────────────────────────────────────────────────────
+      # Use CI-safe defaults for infra credentials (no real secrets needed).
+      # App services connect to infra using Docker Compose service hostnames.
+      - name: Create CI environment file
+        run: |
+          cat > .env.ci <<'EOF'
+          # Neo4j
+          NEO4J_AUTH=neo4j/changeme
+          NEO4J_USER=neo4j
+          NEO4J_PASSWORD=changeme
+          NEO4J_DATABASE=neo4j
+          NEO4J_URI=bolt://neo4j:7687
+          NEO4J_HTTP_PORT=7474
+          NEO4J_BOLT_PORT=7687
+
+          # pgvector
+          PGVECTOR_USER=postgres
+          PGVECTOR_PASSWORD=changeme
+          PGVECTOR_DB=vectordb
+          PGVECTOR_PORT=5432
+          PGVECTOR_DSN=postgresql://postgres:changeme@pgvector:5432/vectordb
+
+          # Memgraph
+          MEMGRAPH_BOLT_PORT=7687
+          MEMGRAPH_HTTP_PORT=7444
+          MEMGRAPH_URI=bolt://memgraph:7687
+
+          # LLM — stub key; app services must handle missing key gracefully at startup
+          LLM_PROVIDER=groq
+          LLM_MODEL=llama-3.3-70b-versatile
+          GROQ_API_KEY=ci-placeholder
+          LLM_GROQ_API_KEY=ci-placeholder
+          OPENROUTER_API_KEY=ci-placeholder
+
+          # App service URLs (intra-compose hostnames)
+          HYBRIDRAG_URL=http://graphknows:8025
+          GRAPHKNOWS_URL=http://graphknows:8025
+          GRAPHGEN_URL=http://graphknows:8025
+          SEARCH_URL=http://search:8000
+          AGENT_URL=http://agent:8000
+
+          GRAPHKNOWS_ENV=ci
+          EOF
+          # Strip leading whitespace from heredoc
+          sed -i 's/^[[:space:]]*//' .env.ci
+          cp .env.ci .env
+
+      - name: Start full stack (infra + apps)
+        run: docker compose up -d
+
+      # ── Wait for health ────────────────────────────────────────────────────
+      # Poll Docker's own health status (which mirrors Dockerfile HEALTHCHECK)
+      # and fall back to HTTP probes. Timeout: 5 minutes.
+      - name: Wait for all services to become healthy
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          SERVICES="neo4j pgvector memgraph graphknows agent search frontend"
+          DEADLINE=$((SECONDS + 300))
+
+          echo "Waiting for services: $SERVICES"
+          while [ $SECONDS -lt $DEADLINE ]; do
+            all_ok=1
+            for svc in $SERVICES; do
+              status=$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null \
+                | awk -v s="$svc" '$1 == s { print $2 }')
+              case "$status" in
+                healthy)  ;;
+                "")       all_ok=0; echo "  $svc — not yet started" ;;
+                starting) all_ok=0; echo "  $svc — starting..." ;;
+                *)        all_ok=0; echo "  $svc — $status" ;;
+              esac
+            done
+            [ "$all_ok" -eq 1 ] && { echo "All services healthy."; exit 0; }
+            sleep 10
+          done
+
+          echo ""
+          echo "=== Timed out. Container state ==="
+          docker compose ps
+          echo ""
+          echo "=== Logs ==="
+          docker compose logs --tail=50
+          exit 1
+
+      # ── Smoke tests ────────────────────────────────────────────────────────
+      # Quick HTTP probe of every app service health endpoint.
+      # Dumps logs on failure so the cause is visible in CI.
+      - name: Smoke test — graphknows :8025
+        run: |
+          curl -fsS --max-time 10 http://localhost:8025/health \
+            || { docker compose logs graphknows --tail=50; exit 1; }
+
+      - name: Smoke test — agent :8030
+        run: |
+          curl -fsS --max-time 10 http://localhost:8030/health \
+            || { docker compose logs agent --tail=50; exit 1; }
+
+      - name: Smoke test — search :8040
+        run: |
+          curl -fsS --max-time 10 http://localhost:8040/api/v1/health \
+            || { docker compose logs search --tail=50; exit 1; }
+
+      - name: Smoke test — frontend :8080
+        run: |
+          curl -fsS --max-time 10 http://localhost:8080/ \
+            || { docker compose logs frontend --tail=50; exit 1; }
+
+      # ── Teardown ───────────────────────────────────────────────────────────
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v --remove-orphans
