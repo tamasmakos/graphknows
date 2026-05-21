@@ -40,7 +40,6 @@ if [ "$SKIP_INFRA" -eq 0 ]; then
   log "Checking infrastructure containers..."
 
   infra_ok=1
-
   neo4j_http_port="${NEO4J_HTTP_PORT:-7474}"
   neo4j_host="${NEO4J_HOST:-172.18.0.1}"
   pgvector_host="${PGVECTOR_HOST:-172.18.0.1}"
@@ -76,12 +75,12 @@ if [ "$SKIP_INFRA" -eq 0 ]; then
       done; echo ""
       log "Waiting for pgvector (up to 30s)..."
       for i in $(seq 1 6); do
-        nc -z -w3 "$pgvector_host" "$pgvector_port" 2>/dev/null && break
+        python3 -c "import socket; s=socket.create_connection(('$pgvector_host',$pgvector_port),timeout=3); s.close()" 2>/dev/null && break
         echo -n "."; sleep 5
       done; echo ""
       log "Waiting for Memgraph (up to 30s)..."
       for i in $(seq 1 6); do
-        nc -z -w3 "$memgraph_host" "$memgraph_port" 2>/dev/null && break
+        python3 -c "import socket; s=socket.create_connection(('$memgraph_host',$memgraph_port),timeout=3); s.close()" 2>/dev/null && break
         echo -n "."; sleep 5
       done; echo ""
     else

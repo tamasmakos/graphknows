@@ -100,6 +100,25 @@ dev-local: ## Smart local dev start: checks infra, kills zombies, starts service
 dev-local-no-tunnel: ## dev-local without Cloudflare tunnel
 	@bash scripts/dev-local.sh --no-tunnel
 
+dev: doctor dev-local ## Full dev startup: preflight → infra → services (recommended)
+
+doctor: ## Pre-flight: validate .env, Python, Docker, infra reachability, port availability
+	@bash scripts/preflight.sh
+
+setup: ## First-time setup: copy .env.example → .env if missing, then run doctor
+	@if [ ! -f .env ]; then \
+	  cp .env.example .env; \
+	  echo "  Created .env from .env.example — fill in the REQUIRED keys before running make dev"; \
+	  exit 1; \
+	else \
+	  echo "  .env already exists — running doctor..."; \
+	  bash scripts/preflight.sh; \
+	fi
+
+logs: ## Tail all service logs in one view
+	@tail -f /tmp/graphknows.log /tmp/agent.log /tmp/search.log /tmp/frontend.log 2>/dev/null \
+	  || echo "No service logs found yet — run 'make dev' first"
+
 # ── Help ──────────────────────────────────────────────────────────
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
