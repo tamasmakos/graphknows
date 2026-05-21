@@ -16,6 +16,12 @@ RUN uv sync --package graphknows-search --no-install-project --no-cache 2>/dev/n
         fastapi "uvicorn[standard]" httpx "pydantic>=2" pyyaml "mcp[cli]" \
         markdownify pymupdf langdetect sentence-transformers numpy neo4j aiosqlite
 
+# Replace GPU torch with CPU-only build to eliminate triton/CUDA (saves ~3 GB).
+# sentence-transformers only needs CPU inference in this service.
+RUN .venv/bin/pip install --quiet \
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    && .venv/bin/pip uninstall -y triton 2>/dev/null || true
+
 # Copy full repo context so scrapers/ and services/ are both importable
 COPY . .
 
