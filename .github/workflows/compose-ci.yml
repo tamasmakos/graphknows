@@ -29,6 +29,7 @@ jobs:
 
     permissions:
       contents: read
+      actions: write   # required for type=gha cache writes
 
     steps:
       # ── Free up runner disk space (~14 GB available by default on ubuntu-latest)
@@ -64,12 +65,18 @@ jobs:
           driver: docker-container
 
       # ── Build ──────────────────────────────────────────────────────────────
+      # type=gha uses the Actions cache API directly (no temp files, no rename
+      # races). mode=max caches every layer. On cache hit, only changed layers
+      # are rebuilt — typically cuts build time from ~10 min to ~1-2 min.
       - name: Build all compose images
         uses: docker/bake-action@v5
         with:
           files: docker-compose.yaml
           load: true
           builder: ${{ steps.buildx.outputs.name }}
+          set: |
+            *.cache-from=type=gha,scope=compose-ci
+            *.cache-to=type=gha,scope=compose-ci,mode=max
 
       # ── Start stack ────────────────────────────────────────────────────────
       # Use CI-safe defaults for infra credentials (no real secrets needed).
