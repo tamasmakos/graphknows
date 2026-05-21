@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from services.agent.graph.events import (
     chunks_written_event,
@@ -37,7 +38,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EMBED_MODEL: str = "BAAI/bge-small-en-v1.5"
+EMBED_MODEL: str = "openai/text-embedding-3-small"
+_OPENROUTER_EMBED_URL = "https://openrouter.ai/api/v1/embeddings"
+
+
+def _embed(texts: list[str]) -> np.ndarray | None:
+    """Embed texts via OpenRouter. Returns (N, D) float32 array or None on failure."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not api_key or not texts:
+        return None
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.post(
+                _OPENROUTER_EMBED_URL,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": EMBED_MODEL, "input": texts},
+            )
+            resp.raise_for_status()
+            data = sorted(resp.json()["data"], key=lambda x: x["index"])
+            return np.array([d["embedding"] for d in data], dtype=np.float32)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter embed failed, falling back to Jaccard novelty: %s", exc)
+        return None
 
 
 def _make_stub_doc(iteration: int, topic: str) -> RawDoc:
@@ -170,56 +192,53 @@ class DualWriter:
 def _compute_duplication_ratio(
     new_chunks: list[Chunk],
     existing_chunks: list[Chunk],
-    embedder: SentenceTransformer,
+    embedder: Any,
 ) -> float:
     """Compute duplication ratio using cosine similarity of chunk embeddings.
 
-    For each new chunk, computes max cosine similarity against existing chunks.
-    Returns the fraction of new chunks whose max similarity exceeds 0.85.
+    Uses OpenRouter embeddings when available, falls back to Jaccard overlap.
 
     Args:
         new_chunks: Newly generated chunks.
         existing_chunks: Previously stored chunks.
-        embedder: Sentence-transformer model for embedding.
+        embedder: Unused — kept for API compatibility. Embeddings now via OpenRouter.
 
     Returns:
         Duplication ratio between 0.0 and 1.0.
     """
-    if not new_chunks:
-        return 0.0
-    if not existing_chunks:
+    if not new_chunks or not existing_chunks:
         return 0.0
 
     existing_texts = [c.text for c in existing_chunks if c.text]
-    if len(existing_texts) < 2:
-        return 0.0
-
     new_texts = [c.text for c in new_chunks if c.text]
-    if not new_texts:
+    if not existing_texts or not new_texts:
         return 0.0
 
-    existing_embs: np.ndarray = embedder.encode(existing_texts, show_progress_bar=False)
-    new_embs: np.ndarray = embedder.encode(new_texts, show_progress_bar=False)
+    all_embs = _embed(new_texts + existing_texts)
+    if all_embs is not None:
+        new_embs = all_embs[: len(new_texts)]
+        existing_embs = all_embs[len(new_texts) :]
+        existing_norm = existing_embs / np.linalg.norm(existing_embs, axis=1, keepdims=True).clip(min=1e-9)
+        new_norm = new_embs / np.linalg.norm(new_embs, axis=1, keepdims=True).clip(min=1e-9)
+        sims = new_norm @ existing_norm.T
+        max_sims = sims.max(axis=1)
+        return int((max_sims > 0.85).sum()) / len(new_chunks)
 
-    # Ensure 2D arrays (n_samples, dim) — encode may return 1D for single text
-    if existing_embs.ndim == 1:
-        existing_embs = existing_embs.reshape(1, -1)
-    if new_embs.ndim == 1:
-        new_embs = new_embs.reshape(1, -1)
+    # Jaccard fallback
+    def _jaccard(a: str, b: str) -> float:
+        sa, sb = set(a.lower().split()), set(b.lower().split())
+        return len(sa & sb) / len(sa | sb) if sa | sb else 0.0
 
-    existing_norm = existing_embs / np.linalg.norm(existing_embs, axis=1, keepdims=True)
-    new_norm = new_embs / np.linalg.norm(new_embs, axis=1, keepdims=True)
-
-    sims = new_norm @ existing_norm.T
-    max_sims = sims.max(axis=1)
-    dup_count = int((max_sims > 0.85).sum())
-    return dup_count / len(new_chunks)
+    dup = sum(
+        1 for nt in new_texts if any(_jaccard(nt, et) > 0.5 for et in existing_texts)
+    )
+    return dup / len(new_chunks)
 
 
 def _novelty_check(
     state: InvestigativeState,
     new_chunks: list[Chunk],
-    embedder: SentenceTransformer | None = None,
+    embedder: Any | None = None,
 ) -> float:
     """Compute duplication ratio for new chunks against existing ones.
 
@@ -385,7 +404,7 @@ def make_investigate_node(
     Returns:
         Async function matching the LangGraph node signature.
     """
-    embedder: SentenceTransformer = SentenceTransformer(EMBED_MODEL)
+    embedder: Any = None  # embeddings now via OpenRouter in _embed()
 
     async def investigate_node(state: InvestigativeState) -> dict[str, Any]:
         """Execute a single pass of the investigate loop.

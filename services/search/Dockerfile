@@ -11,10 +11,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock* ./
 COPY services/search/pyproject.toml ./services/search/pyproject.toml
 
-RUN uv sync --package graphknows-search --no-install-project --no-cache 2>/dev/null \
-    || uv pip install --system \
-        fastapi "uvicorn[standard]" httpx "pydantic>=2" pyyaml "mcp[cli]" \
-        markdownify pymupdf langdetect numpy neo4j aiosqlite
+# Always install into .venv so runtime PATH is predictable
+RUN uv sync --package graphknows-search --no-install-project --no-cache
 
 # Copy full repo context so scrapers/ and services/ are both importable
 COPY . .
@@ -30,8 +28,6 @@ RUN groupadd -g 10001 app && useradd -u 10001 -g app -s /bin/false -M app
 
 WORKDIR /app
 COPY --from=builder --chown=app:app /app /app
-COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
-COPY --from=builder /usr/local/bin /usr/local/bin
 
 USER app
 
@@ -46,10 +42,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=5 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
 ENTRYPOINT ["tini", "--"]
-# SEARCH_MODE=mcp overrides to stdio MCP server; default is HTTP
 CMD ["uvicorn", "services.search.main:app", "--host", "0.0.0.0", "--port", "8000"]
-

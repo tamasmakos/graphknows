@@ -7,7 +7,31 @@ import logging
 import os
 from typing import Any
 
+import httpx
+
 from services.agent.graph.state import InvestigativeState
+
+_OPENROUTER_EMBED_URL = "https://openrouter.ai/api/v1/embeddings"
+_EMBED_MODEL = "openai/text-embedding-3-small"
+
+
+def _embed_query(text: str) -> list[float] | None:
+    """Embed a single query string via OpenRouter. Returns float list or None."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(
+                _OPENROUTER_EMBED_URL,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": _EMBED_MODEL, "input": [text]},
+            )
+            resp.raise_for_status()
+            return resp.json()["data"][0]["embedding"]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("recall_node: embed failed (%s) — skipping LTM recall", exc)
+        return None
 
 log = logging.getLogger("agent.graph.nodes.recall")
 
@@ -16,12 +40,9 @@ MAX_HUB_ENTITIES = 3
 MAX_PRIOR_CHARS = 1800  # hard cap — prior_knowledge is injected into LLM prompt
 
 
-def _get_embedder():
-    """Lazy singleton for BAAI/bge-small-en-v1.5."""
-    if not hasattr(_get_embedder, "_model"):
-        from sentence_transformers import SentenceTransformer
-        _get_embedder._model = SentenceTransformer("BAAI/bge-small-en-v1.5")
-    return _get_embedder._model
+def _get_embedder() -> None:
+    """Deprecated — embeddings now via OpenRouter. Returns None."""
+    return None
 
 
 async def recall_node(state: InvestigativeState) -> InvestigativeState:
@@ -50,7 +71,9 @@ async def recall_node(state: InvestigativeState) -> InvestigativeState:
             return {**state, "prior_knowledge": ""}
 
         # 1. Embed query
-        embedding = _get_embedder().encode(query, normalize_embeddings=True).tolist()
+        embedding = _embed_query(query)
+        if embedding is None:
+            return {**state, "prior_knowledge": ""}
         embedding_str = json.dumps(embedding)
 
         # 2. ANN search over ltm_topics
