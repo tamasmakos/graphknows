@@ -14,10 +14,16 @@ dependencies = [
     "asyncpg>=0.29.0",
     "httpx>=0.27.0",
     "numpy>=1.26.0",
-    # LLM
+    # LLM / agents
     "langchain-core>=0.2.0",
     "langchain-groq>=0.1.0",
     "langchain-openai>=0.1.0",
+    "langgraph>=0.2.0",
+    "dspy>=2.5.0",
+    # Data / graph utils
+    "networkx>=3.3",
+    "rdflib>=7.0.0",
+    "tavily-python>=0.3.0",
     # Observability
     "python-json-logger>=2.0.0",
 ]

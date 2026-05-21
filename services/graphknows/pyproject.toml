@@ -27,6 +27,14 @@ dependencies = [
     "langchain-text-splitters>=0.3.0",
     "langchain-openai>=0.3.0",
     "langchain-experimental>=0.3.0",
+    "dspy>=2.5.0",
+    "rdflib>=7.0.0",
+    "click>=8.1.0",
+    # Document parsing
+    "pymupdf>=1.24.0",
+    "pdfminer.six>=20221105",
+    "spacy>=3.7.0",
+    "tiktoken>=0.7.0",
     # MCP
     "mcp>=1.0.0",
     # Shared config
