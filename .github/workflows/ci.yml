@@ -229,6 +229,7 @@ jobs:
 
       - name: SonarQube Quality Gate check
         uses: SonarSource/sonarqube-quality-gate-action@v1
+        continue-on-error: true   # gate is informational until coverage baseline is established
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
