@@ -180,14 +180,20 @@ jobs:
           uv run pytest \
             tests/test_graphknows_package.py \
             tests/test_langgraph_agent_search_web.py \
+            tests/test_communicate_node.py \
+            tests/test_dual_writer.py \
+            tests/test_hybrid_retriever.py \
+            tests/test_hybridrag_api.py \
+            tests/test_investigative_state.py \
+            tests/test_search_client.py \
+            tests/test_session_graph.py \
+            tests/test_workflow_wired.py \
             -v --tb=short \
+            -m "not integration" \
             --cov=services/graphknows/graphknows \
+            --cov=services/agent \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing
-          # Other test files are excluded: they test pre-refactor module paths
-          # (services.agent.*, services.graphgen.*, graphknows.shared.*) that
-          # require a full multi-service environment not available in CI.
-          # Track in: https://github.com/tamasmakos/graphknows/issues (TODO)
 
       - name: Upload coverage report
         if: matrix.python-version == '3.11'
