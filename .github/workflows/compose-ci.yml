@@ -76,7 +76,7 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           set: |
             *.cache-from=type=gha,scope=compose-ci
-            *.cache-to=type=gha,scope=compose-ci,mode=max
+            *.cache-to=type=gha,scope=compose-ci,mode=min
 
       # ── Start stack ────────────────────────────────────────────────────────
       # Use CI-safe defaults for infra credentials (no real secrets needed).
