@@ -1,4 +1,5 @@
 """Tests for SearchServiceClient — all calls mocked at the httpx level."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -26,11 +27,27 @@ def client(mock_http_client: MagicMock) -> SearchServiceClient:
 
 
 class TestSearch:
-    async def test_search_returns_parsed_results(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_search_returns_parsed_results(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.json.return_value = [
-            {"id": "doc1", "source": "eurlex", "title": "Doc 1", "date": "2024-01-01", "url": "http://example.com/1", "excerpt": "Excerpt 1"},
-            {"id": "doc2", "source": "eurlex", "title": "Doc 2", "date": "2024-01-02", "url": "http://example.com/2", "excerpt": "Excerpt 2"},
+            {
+                "id": "doc1",
+                "source": "eurlex",
+                "title": "Doc 1",
+                "date": "2024-01-01",
+                "url": "http://example.com/1",
+                "excerpt": "Excerpt 1",
+            },
+            {
+                "id": "doc2",
+                "source": "eurlex",
+                "title": "Doc 2",
+                "date": "2024-01-02",
+                "url": "http://example.com/2",
+                "excerpt": "Excerpt 2",
+            },
         ]
         mock_http_client.post = AsyncMock(return_value=mock_response)
 
@@ -42,7 +59,9 @@ class TestSearch:
         assert results[1].source == "eurlex"
         mock_http_client.post.assert_awaited_once()
 
-    async def test_search_empty_results(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_search_empty_results(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.json.return_value = []
         mock_http_client.post = AsyncMock(return_value=mock_response)
@@ -50,20 +69,32 @@ class TestSearch:
         results = await client.search(query="nonexistent", limit=10)
         assert results == []
 
-    async def test_search_raises_on_http_error(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
-        mock_http_client.post = AsyncMock(side_effect=httpx.HTTPStatusError(
-            "error", request=MagicMock(), response=MagicMock(status_code=500),
-        ))
+    async def test_search_raises_on_http_error(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
+        mock_http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "error",
+                request=MagicMock(),
+                response=MagicMock(status_code=500),
+            )
+        )
         with pytest.raises(httpx.HTTPStatusError):
             await client.search(query="fail")
 
 
 class TestScrape:
-    async def test_scrape_returns_job(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_scrape_returns_job(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.json.return_value = {
-            "job_id": "job-123", "status": "queued", "created_at": "2024-01-01T00:00:00Z",
-            "progress": 0.0, "result": None, "error": None,
+            "job_id": "job-123",
+            "status": "queued",
+            "created_at": "2024-01-01T00:00:00Z",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
         }
         mock_http_client.post = AsyncMock(return_value=mock_response)
 
@@ -74,10 +105,32 @@ class TestScrape:
 
 
 class TestPollJob:
-    async def test_poll_until_complete(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_poll_until_complete(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         responses = [
-            MagicMock(spec=httpx.Response, json=lambda: {"job_id": "j1", "status": "running", "created_at": "", "progress": 0.5, "result": None, "error": None}),
-            MagicMock(spec=httpx.Response, json=lambda: {"job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0, "result": [{"id": "d1"}], "error": None}),
+            MagicMock(
+                spec=httpx.Response,
+                json=lambda: {
+                    "job_id": "j1",
+                    "status": "running",
+                    "created_at": "",
+                    "progress": 0.5,
+                    "result": None,
+                    "error": None,
+                },
+            ),
+            MagicMock(
+                spec=httpx.Response,
+                json=lambda: {
+                    "job_id": "j1",
+                    "status": "complete",
+                    "created_at": "",
+                    "progress": 1.0,
+                    "result": [{"id": "d1"}],
+                    "error": None,
+                },
+            ),
         ]
         mock_http_client.get = AsyncMock(side_effect=responses)
 
@@ -86,17 +139,35 @@ class TestPollJob:
         assert job.result == [{"id": "d1"}]
         assert mock_http_client.get.await_count == 2
 
-    async def test_poll_raises_timeout(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_poll_raises_timeout(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         mock_response = MagicMock(spec=httpx.Response)
-        mock_response.json.return_value = {"job_id": "j1", "status": "running", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        mock_response.json.return_value = {
+            "job_id": "j1",
+            "status": "running",
+            "created_at": "",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
         mock_http_client.get = AsyncMock(return_value=mock_response)
 
         with pytest.raises(TimeoutError, match="did not complete"):
             await client.poll_job("j1", timeout=0.1, interval=0.05)
 
-    async def test_poll_returns_failed_job(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_poll_returns_failed_job(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         mock_response = MagicMock(spec=httpx.Response)
-        mock_response.json.return_value = {"job_id": "j1", "status": "failed", "created_at": "", "progress": 0.5, "result": None, "error": "something went wrong"}
+        mock_response.json.return_value = {
+            "job_id": "j1",
+            "status": "failed",
+            "created_at": "",
+            "progress": 0.5,
+            "result": None,
+            "error": "something went wrong",
+        }
         mock_http_client.get = AsyncMock(return_value=mock_response)
 
         job = await client.poll_job("j1")
@@ -105,15 +176,47 @@ class TestPollJob:
 
 
 class TestFetchDocuments:
-    async def test_fetch_documents_end_to_end(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_fetch_documents_end_to_end(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         search_resp = MagicMock(spec=httpx.Response)
         search_resp.json.return_value = [
-            {"id": "d1", "source": "eurlex", "title": "Doc 1", "date": "2024-01-01", "url": "http://ex.com/1", "excerpt": "Excerpt 1"},
+            {
+                "id": "d1",
+                "source": "eurlex",
+                "title": "Doc 1",
+                "date": "2024-01-01",
+                "url": "http://ex.com/1",
+                "excerpt": "Excerpt 1",
+            },
         ]
         scrape_resp = MagicMock(spec=httpx.Response)
-        scrape_resp.json.return_value = {"job_id": "j1", "status": "queued", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        scrape_resp.json.return_value = {
+            "job_id": "j1",
+            "status": "queued",
+            "created_at": "",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
         poll_resp = MagicMock(spec=httpx.Response)
-        poll_resp.json.return_value = {"job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0, "result": [{"id": "d1", "source": "eurlex", "title": "Doc 1", "text": "Full text here", "metadata": {"url": "http://ex.com/1"}, "ingested_at": "2024-01-01T00:00:00Z"}], "error": None}
+        poll_resp.json.return_value = {
+            "job_id": "j1",
+            "status": "complete",
+            "created_at": "",
+            "progress": 1.0,
+            "result": [
+                {
+                    "id": "d1",
+                    "source": "eurlex",
+                    "title": "Doc 1",
+                    "text": "Full text here",
+                    "metadata": {"url": "http://ex.com/1"},
+                    "ingested_at": "2024-01-01T00:00:00Z",
+                }
+            ],
+            "error": None,
+        }
 
         mock_http_client.post = AsyncMock(side_effect=[search_resp, scrape_resp])
         mock_http_client.get = AsyncMock(return_value=poll_resp)
@@ -124,7 +227,9 @@ class TestFetchDocuments:
         assert raw_docs[0].text == "Full text here"
         assert raw_docs[0].url == "http://ex.com/1"
 
-    async def test_fetch_documents_no_results(self, client: SearchServiceClient, mock_http_client: MagicMock) -> None:
+    async def test_fetch_documents_no_results(
+        self, client: SearchServiceClient, mock_http_client: MagicMock
+    ) -> None:
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.json.return_value = []
         mock_http_client.post = AsyncMock(return_value=mock_response)
@@ -138,13 +243,41 @@ class TestFetchDocuments:
         """When scrape returns empty result, fall back to search excerpts."""
         search_resp = MagicMock(spec=httpx.Response)
         search_resp.json.return_value = [
-            {"id": "d1", "source": "eurlex", "title": "Doc 1", "date": "2024-01-01", "url": "http://ex.com/1", "excerpt": "Excerpt one"},
-            {"id": "d2", "source": "eurlex", "title": "Doc 2", "date": "2024-01-02", "url": "http://ex.com/2", "excerpt": "Excerpt two"},
+            {
+                "id": "d1",
+                "source": "eurlex",
+                "title": "Doc 1",
+                "date": "2024-01-01",
+                "url": "http://ex.com/1",
+                "excerpt": "Excerpt one",
+            },
+            {
+                "id": "d2",
+                "source": "eurlex",
+                "title": "Doc 2",
+                "date": "2024-01-02",
+                "url": "http://ex.com/2",
+                "excerpt": "Excerpt two",
+            },
         ]
         scrape_resp = MagicMock(spec=httpx.Response)
-        scrape_resp.json.return_value = {"job_id": "j1", "status": "queued", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        scrape_resp.json.return_value = {
+            "job_id": "j1",
+            "status": "queued",
+            "created_at": "",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
         poll_resp = MagicMock(spec=httpx.Response)
-        poll_resp.json.return_value = {"job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0, "result": [], "error": None}
+        poll_resp.json.return_value = {
+            "job_id": "j1",
+            "status": "complete",
+            "created_at": "",
+            "progress": 1.0,
+            "result": [],
+            "error": None,
+        }
 
         mock_http_client.post = AsyncMock(side_effect=[search_resp, scrape_resp])
         mock_http_client.get = AsyncMock(return_value=poll_resp)
@@ -161,14 +294,40 @@ class TestFetchDocuments:
         """When scrape returns real content, it takes priority over excerpts."""
         search_resp = MagicMock(spec=httpx.Response)
         search_resp.json.return_value = [
-            {"id": "d1", "source": "eurlex", "title": "Doc 1", "date": "2024-01-01", "url": "http://ex.com/1", "excerpt": "Short excerpt"},
+            {
+                "id": "d1",
+                "source": "eurlex",
+                "title": "Doc 1",
+                "date": "2024-01-01",
+                "url": "http://ex.com/1",
+                "excerpt": "Short excerpt",
+            },
         ]
         scrape_resp = MagicMock(spec=httpx.Response)
-        scrape_resp.json.return_value = {"job_id": "j1", "status": "queued", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        scrape_resp.json.return_value = {
+            "job_id": "j1",
+            "status": "queued",
+            "created_at": "",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
         poll_resp = MagicMock(spec=httpx.Response)
         poll_resp.json.return_value = {
-            "job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0,
-            "result": [{"id": "d1", "source": "eurlex", "title": "Doc 1", "text": "Full scraped text", "metadata": {"url": "http://ex.com/1"}, "ingested_at": "2024-01-01T00:00:00Z"}],
+            "job_id": "j1",
+            "status": "complete",
+            "created_at": "",
+            "progress": 1.0,
+            "result": [
+                {
+                    "id": "d1",
+                    "source": "eurlex",
+                    "title": "Doc 1",
+                    "text": "Full scraped text",
+                    "metadata": {"url": "http://ex.com/1"},
+                    "ingested_at": "2024-01-01T00:00:00Z",
+                }
+            ],
             "error": None,
         }
 
@@ -185,14 +344,49 @@ class TestFetchDocuments:
         """Results with None or empty excerpts are skipped in fallback."""
         search_resp = MagicMock(spec=httpx.Response)
         search_resp.json.return_value = [
-            {"id": "d1", "source": "eurlex", "title": "Has excerpt", "date": None, "url": "http://ex.com/1", "excerpt": "Valid excerpt"},
-            {"id": "d2", "source": "eurlex", "title": "No excerpt", "date": None, "url": "http://ex.com/2", "excerpt": None},
-            {"id": "d3", "source": "eurlex", "title": "Empty excerpt", "date": None, "url": "http://ex.com/3", "excerpt": ""},
+            {
+                "id": "d1",
+                "source": "eurlex",
+                "title": "Has excerpt",
+                "date": None,
+                "url": "http://ex.com/1",
+                "excerpt": "Valid excerpt",
+            },
+            {
+                "id": "d2",
+                "source": "eurlex",
+                "title": "No excerpt",
+                "date": None,
+                "url": "http://ex.com/2",
+                "excerpt": None,
+            },
+            {
+                "id": "d3",
+                "source": "eurlex",
+                "title": "Empty excerpt",
+                "date": None,
+                "url": "http://ex.com/3",
+                "excerpt": "",
+            },
         ]
         scrape_resp = MagicMock(spec=httpx.Response)
-        scrape_resp.json.return_value = {"job_id": "j1", "status": "queued", "created_at": "", "progress": 0.0, "result": None, "error": None}
+        scrape_resp.json.return_value = {
+            "job_id": "j1",
+            "status": "queued",
+            "created_at": "",
+            "progress": 0.0,
+            "result": None,
+            "error": None,
+        }
         poll_resp = MagicMock(spec=httpx.Response)
-        poll_resp.json.return_value = {"job_id": "j1", "status": "complete", "created_at": "", "progress": 1.0, "result": [], "error": None}
+        poll_resp.json.return_value = {
+            "job_id": "j1",
+            "status": "complete",
+            "created_at": "",
+            "progress": 1.0,
+            "result": [],
+            "error": None,
+        }
 
         mock_http_client.post = AsyncMock(side_effect=[search_resp, scrape_resp])
         mock_http_client.get = AsyncMock(return_value=poll_resp)

@@ -22,6 +22,7 @@ REGISTRY_ROOT = Path(__file__).parent.parent / "services" / "agent" / "ontology"
 # OntologyRelExtractor tests — DSPy mocked, no real LLM calls
 # ---------------------------------------------------------------------------
 
+
 class TestOntologyRelExtractor:
     def _make_extractor_with_mock(self, relations_json: str) -> OntologyRelExtractor:
         """Build an extractor whose DSPy ChainOfThought returns a fixed prediction."""
@@ -38,17 +39,32 @@ class TestOntologyRelExtractor:
         return extractor
 
     def test_extract_returns_validated_triples(self):
-        payload = json.dumps([
-            {"subject": "EU", "predicate": "regulates", "object": "AI systems", "confidence": 0.9},
-            {"subject": "Member States", "predicate": "implements", "object": "Directive", "confidence": 0.75},
-        ])
+        payload = json.dumps(
+            [
+                {
+                    "subject": "EU",
+                    "predicate": "regulates",
+                    "object": "AI systems",
+                    "confidence": 0.9,
+                },
+                {
+                    "subject": "Member States",
+                    "predicate": "implements",
+                    "object": "Directive",
+                    "confidence": 0.75,
+                },
+            ]
+        )
         extractor = self._make_extractor_with_mock(payload)
         loader = OntologyLoader(REGISTRY_ROOT)
         ontology = loader.load("lkif")
 
         result = extractor.extract(
             text="The EU regulates AI systems. Member States must implement the Directive.",
-            entities=[{"name": "EU", "label": "LegalPerson"}, {"name": "AI systems", "label": "CONCEPT"}],
+            entities=[
+                {"name": "EU", "label": "LegalPerson"},
+                {"name": "AI systems", "label": "CONCEPT"},
+            ],
             ontology_schema=ontology.summary_jsonld,
             ontology_id="lkif",
         )
@@ -57,11 +73,15 @@ class TestOntologyRelExtractor:
         assert result[0]["confidence"] == pytest.approx(0.9)
 
     def test_extract_strips_markdown_fences(self):
-        payload = "```json\n[{\"subject\": \"A\", \"predicate\": \"rel\", \"object\": \"B\", \"confidence\": 0.5}]\n```"
+        payload = (
+            '```json\n[{"subject": "A", "predicate": "rel", "object": "B", "confidence": 0.5}]\n```'
+        )
         extractor = self._make_extractor_with_mock(payload)
         loader = OntologyLoader(REGISTRY_ROOT)
         ontology = loader.load("political")
-        result = extractor.extract("A relates to B", [{"name": "A", "label": "X"}], ontology.summary_jsonld, "political")
+        result = extractor.extract(
+            "A relates to B", [{"name": "A", "label": "X"}], ontology.summary_jsonld, "political"
+        )
         assert len(result) == 1
         assert result[0]["subject"] == "A"
 
@@ -69,7 +89,9 @@ class TestOntologyRelExtractor:
         extractor = self._make_extractor_with_mock("not valid json at all")
         loader = OntologyLoader(REGISTRY_ROOT)
         ontology = loader.load("schema-org")
-        result = extractor.extract("text", [{"name": "X", "label": "Y"}], ontology.summary_jsonld, "schema-org")
+        result = extractor.extract(
+            "text", [{"name": "X", "label": "Y"}], ontology.summary_jsonld, "schema-org"
+        )
         assert result == []
 
     def test_extract_returns_empty_when_no_entities(self):
@@ -80,16 +102,20 @@ class TestOntologyRelExtractor:
         assert result == []
 
     def test_extract_filters_incomplete_triples(self):
-        payload = json.dumps([
-            {"subject": "A", "predicate": "rel", "object": "B"},        # valid
-            {"subject": "A", "predicate": "rel"},                        # missing object
-            {"predicate": "rel", "object": "B"},                         # missing subject
-            {"subject": "X", "object": "Y"},                             # missing predicate
-        ])
+        payload = json.dumps(
+            [
+                {"subject": "A", "predicate": "rel", "object": "B"},  # valid
+                {"subject": "A", "predicate": "rel"},  # missing object
+                {"predicate": "rel", "object": "B"},  # missing subject
+                {"subject": "X", "object": "Y"},  # missing predicate
+            ]
+        )
         extractor = self._make_extractor_with_mock(payload)
         loader = OntologyLoader(REGISTRY_ROOT)
         ontology = loader.load("lkif")
-        result = extractor.extract("text", [{"name": "A", "label": "Z"}], ontology.summary_jsonld, "lkif")
+        result = extractor.extract(
+            "text", [{"name": "A", "label": "Z"}], ontology.summary_jsonld, "lkif"
+        )
         assert len(result) == 1
         assert result[0]["subject"] == "A"
 
@@ -103,6 +129,7 @@ class TestOntologyRelExtractor:
 # ---------------------------------------------------------------------------
 # Neo4j write_ontology_relations — mock driver, assert Cypher params
 # ---------------------------------------------------------------------------
+
 
 class TestNeo4jOntologyWrite:
     def test_write_ontology_relations_calls_driver(self):
@@ -118,7 +145,9 @@ class TestNeo4jOntologyWrite:
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.run = MagicMock(side_effect=lambda q, **kw: run_calls.append((q, kw)) or MagicMock())
+        mock_session.run = MagicMock(
+            side_effect=lambda q, **kw: run_calls.append((q, kw)) or MagicMock()
+        )
 
         mock_driver = MagicMock()
         mock_driver.session = MagicMock(return_value=mock_session)
@@ -155,6 +184,7 @@ class TestNeo4jOntologyWrite:
 # Router integration: assert right ontology selected per domain text
 # ---------------------------------------------------------------------------
 
+
 class TestOntologyRouterIntegration:
     def setup_method(self):
         loader = OntologyLoader(REGISTRY_ROOT)
@@ -169,6 +199,8 @@ class TestOntologyRouterIntegration:
         assert m.id == "schema-org", f"Got {m.id}"
 
     def test_provenance_text_selects_prov_o(self):
-        text = "The activity was attributed to the agent. The organization delegated responsibility."
+        text = (
+            "The activity was attributed to the agent. The organization delegated responsibility."
+        )
         m = self.router.select(text, alpha=1.0)
         assert m.id == "prov-o", f"Got {m.id}"

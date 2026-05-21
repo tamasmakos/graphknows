@@ -14,6 +14,7 @@ into the stub tests.
 The ``_restore_stub_modules`` autouse fixture saves and restores the relevant
 ``sys.modules`` entries around every test.
 """
+
 from __future__ import annotations
 
 import sys

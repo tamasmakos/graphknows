@@ -1,4 +1,5 @@
 """Unit tests for HybridRAGClient — the unified HTTP client for hybridrag service."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,7 +30,9 @@ class TestHybridRAGClientRetrieve:
             mock_client.post.return_value = _mock_response(xml_result)
 
             client = HybridRAGClient("http://hybridrag:8020")
-            result = await client.retrieve("EU regulation", "session-1", k_entity=5, k_semantic=10, k_final=5)
+            result = await client.retrieve(
+                "EU regulation", "session-1", k_entity=5, k_semantic=10, k_final=5
+            )
 
             mock_client.post.assert_awaited_once_with(
                 "/retrieve",

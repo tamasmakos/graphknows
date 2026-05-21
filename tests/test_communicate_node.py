@@ -1,4 +1,5 @@
 """Unit tests for communicate_node -- briefing generation."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -33,11 +34,11 @@ _SAMPLE_XML = (
     '<graph_matches count="0"></graph_matches>'
     '<fused_results count="2">'
     '<chunk id="c1" doc_id="d1" rrf_score="0.016" sources="semantic" rank="1">'
-    '<text>Retrieved chunk 1</text></chunk>'
+    "<text>Retrieved chunk 1</text></chunk>"
     '<chunk id="c2" doc_id="d2" rrf_score="0.016" sources="semantic" rank="2">'
-    '<text>Retrieved chunk 2</text></chunk>'
-    '</fused_results>'
-    '</retrieval_context>'
+    "<text>Retrieved chunk 2</text></chunk>"
+    "</fused_results>"
+    "</retrieval_context>"
 )
 
 

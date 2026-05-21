@@ -1,4 +1,5 @@
 """Integration tests for SessionGraphManager."""
+
 import sys
 import os
 import socket
@@ -91,7 +92,13 @@ def test_close_session():
     mgr.create_session(SESSION_ID)
     mgr.add_reasoning_step(
         SESSION_ID,
-        {"step_num": 99, "thought": "cleanup", "action": "none", "observation": "", "chunk_ids": []},
+        {
+            "step_num": 99,
+            "thought": "cleanup",
+            "action": "none",
+            "observation": "",
+            "chunk_ids": [],
+        },
     )
     mgr.close_session(SESSION_ID)
     # After close, session graph should be empty

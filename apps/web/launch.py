@@ -6,6 +6,7 @@ import sys
 
 def start_server():
     import uvicorn
+
     # Need to run from the graphknows root so `apps.web.server` is importable
     uvicorn.run(
         "apps.web.server:app",
@@ -25,6 +26,7 @@ def main():
     tunnel = None
     try:
         from pyngrok import ngrok, conf
+
         # anonymous tunnel — no auth token required
         tunnel = ngrok.connect(8080, bind_tls=True)
         public_url = tunnel.public_url
@@ -32,11 +34,13 @@ def main():
     except Exception as e:
         print(f"⚠️  pyngrok failed ({e}), falling back to cloudflared …")
         import subprocess, os
+
         cf = "/tmp/cloudflared"
         if not os.path.exists(cf):
             subprocess.run(
                 "curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared && chmod +x /tmp/cloudflared",
-                shell=True, check=True,
+                shell=True,
+                check=True,
             )
         proc = subprocess.Popen(
             [cf, "tunnel", "--url", "http://localhost:8080"],
@@ -45,6 +49,7 @@ def main():
         )
         # Parse URL from stderr
         import re
+
         for line in proc.stderr:
             m = re.search(r"https://[a-z0-9\-]+\.trycloudflare\.com", line)
             if m:
@@ -59,12 +64,14 @@ def main():
         print("\nShutting down …")
         if tunnel:
             from pyngrok import ngrok
+
             ngrok.kill()
         sys.exit(0)
 
 
 if __name__ == "__main__":
     import os, sys
+
     # Ensure repo root is on path
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if repo_root not in sys.path:

@@ -53,8 +53,12 @@ def _install_langgraph_agent_import_stubs() -> None:
 
 def _load_langgraph_agent_module():
     # Purge real langgraph/langchain modules so our stubs always win on re-import.
-    for key in ("langgraph.prebuilt", "langchain_core.tools", "langchain_openai",
-                "langchain_core.messages"):
+    for key in (
+        "langgraph.prebuilt",
+        "langchain_core.tools",
+        "langchain_openai",
+        "langchain_core.messages",
+    ):
         sys.modules.pop(key, None)
     _install_langgraph_agent_import_stubs()
     sys.modules.pop("agent.graph.agent", None)
@@ -103,6 +107,7 @@ def _build_search_web_tool(agent_module):
     agent_module.END = object()
     # Also patch the canonical module since the shim delegates to agent.graph.agent
     import agent.graph.agent as _canonical_agent
+
     with (
         unittest.mock.patch.object(agent_module, "ToolNode", _FakeToolNode),
         unittest.mock.patch.object(_canonical_agent, "ChatOpenAI", _FakeChatOpenAI),

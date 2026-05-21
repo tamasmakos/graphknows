@@ -256,7 +256,10 @@ class ArchiveEngine:
                 with httpx.Client(timeout=15.0) as client:
                     resp = client.post(
                         "https://openrouter.ai/api/v1/embeddings",
-                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
                         json={"model": "openai/text-embedding-3-small", "input": [query] + texts},
                     )
                     resp.raise_for_status()

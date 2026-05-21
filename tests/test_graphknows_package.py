@@ -3,6 +3,7 @@
 Covers constants, entity labels, and settings without touching any
 external services (no DB, no network, no filesystem state).
 """
+
 from __future__ import annotations
 
 import os

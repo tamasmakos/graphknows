@@ -20,7 +20,9 @@ STATIC_DIR.mkdir(exist_ok=True)
 _client: httpx.AsyncClient | None = None
 
 
-async def _request_upstream(method: str, url: str, request: Request | None = None) -> httpx.Response:
+async def _request_upstream(
+    method: str, url: str, request: Request | None = None
+) -> httpx.Response:
     assert _client is not None
     headers: dict[str, str] = {}
     content: bytes | None = None
@@ -141,6 +143,7 @@ async def ws_proxy(websocket: WebSocket, session_id: str):
         pass
     except Exception as exc:
         import logging
+
         logging.getLogger("ws_proxy").warning("ws_proxy error for %s: %s", session_id, exc)
 
 

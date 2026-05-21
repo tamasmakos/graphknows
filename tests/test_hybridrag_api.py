@@ -5,6 +5,7 @@ Integration tests for the HybridRAG REST API.
 These tests require live Neo4j and pgvector services.
 Skip in CI by running: pytest -m "not integration"
 """
+
 from __future__ import annotations
 
 import os

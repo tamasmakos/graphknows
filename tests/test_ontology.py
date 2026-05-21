@@ -11,6 +11,7 @@ import pytest
 
 # Adjust sys.path so agent package is importable in test context
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "agent"))
 
 from ontology.loader import OntologyLoader, OntologyManifest
@@ -27,6 +28,7 @@ REGISTRY_ROOT = Path(__file__).parent.parent / "services" / "agent" / "ontology"
 # ---------------------------------------------------------------------------
 # OntologyLoader tests
 # ---------------------------------------------------------------------------
+
 
 class TestOntologyLoader:
     def setup_method(self):
@@ -91,6 +93,7 @@ class TestOntologyLoader:
 # ---------------------------------------------------------------------------
 # OntologyRouter tests (keyword-only — no embedding model dependency)
 # ---------------------------------------------------------------------------
+
 
 class TestOntologyRouterKeyword:
     """Test routing using keyword heuristic only (alpha=1.0)."""

@@ -119,14 +119,15 @@ class HttpMixin:
         # Strip nav/boilerplate tags and their content before conversion
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(html, "html.parser")
-            for tag in soup.find_all(['nav', 'footer', 'header', 'aside', 'script', 'style']):
+            for tag in soup.find_all(["nav", "footer", "header", "aside", "script", "style"]):
                 tag.decompose()
             html = str(soup)
         except ImportError:
             html = re.sub(
-                r'<(nav|footer|header|aside|script|style)[^>]*>.*?</\1>',
-                '',
+                r"<(nav|footer|header|aside|script|style)[^>]*>.*?</\1>",
+                "",
                 html,
                 flags=re.DOTALL | re.IGNORECASE,
             )

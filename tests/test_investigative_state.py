@@ -1,4 +1,5 @@
 """Tests for the ADR-002 investigative state types and state construction."""
+
 from __future__ import annotations
 
 import uuid

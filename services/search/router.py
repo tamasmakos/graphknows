@@ -89,6 +89,7 @@ def _rerank(query: str, results: list[SearchResult], min_score: float = 0.15) ->
     scored.sort(key=lambda x: -x[1])
     return [r for r, _ in scored]
 
+
 # Registry is loaded once at import time from source_manifest.yaml
 _registry = get_registry()
 

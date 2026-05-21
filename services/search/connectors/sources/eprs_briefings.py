@@ -78,15 +78,19 @@ class EPRSBriefingsConnector(ScrapingConnector):
         # Strip nav/boilerplate tags before building plain-text version
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(html, "html.parser")
-            for tag in soup.find_all(['nav', 'footer', 'header', 'aside', 'script', 'style']):
+            for tag in soup.find_all(["nav", "footer", "header", "aside", "script", "style"]):
                 tag.decompose()
             clean_html = str(soup)
         except ImportError:
             import re as _re
+
             clean_html = _re.sub(
-                r'<(nav|footer|header|aside|script|style)[^>]*>.*?</\1>',
-                '', html, flags=_re.DOTALL | _re.IGNORECASE,
+                r"<(nav|footer|header|aside|script|style)[^>]*>.*?</\1>",
+                "",
+                html,
+                flags=_re.DOTALL | _re.IGNORECASE,
             )
         raw_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", clean_html)).strip()
         language = self._detect_language(raw_text[:2000])

@@ -24,6 +24,7 @@ MIN_RESULTS = 3
 
 def _get_embedding(text: str) -> list:
     from sentence_transformers import SentenceTransformer
+
     model = SentenceTransformer("BAAI/bge-small-en-v1.5")
     return model.encode(text, normalize_embeddings=True).tolist()
 
@@ -31,6 +32,7 @@ def _get_embedding(text: str) -> list:
 def test_embed_model_constant_consistent():
     """EMBED_MODEL in hybridrag embedder must equal the expected model name."""
     from services.hybridrag.stores.embedder import EMBED_MODEL
+
     assert EMBED_MODEL == "BAAI/bge-small-en-v1.5", (
         f"Expected BAAI/bge-small-en-v1.5, got {EMBED_MODEL}"
     )
@@ -39,6 +41,7 @@ def test_embed_model_constant_consistent():
 def test_pgvector_connection():
     """PgVectorAdapter.connect() must return True."""
     from utils.graphdb.pgvector_adapter import PgVectorAdapter
+
     pg = PgVectorAdapter(PGVECTOR_DSN)
     assert pg.connect(), "PgVectorAdapter failed to connect"
     pg.close()
@@ -47,6 +50,7 @@ def test_pgvector_connection():
 def test_chunks_table_populated():
     """chunks table must have at least one row."""
     from utils.graphdb.pgvector_adapter import PgVectorAdapter
+
     pg = PgVectorAdapter(PGVECTOR_DSN)
     assert pg.connect()
     count = pg.chunk_count()
@@ -57,21 +61,20 @@ def test_chunks_table_populated():
 def test_search_chunks_returns_min_results():
     """search_chunks must return >= MIN_RESULTS for a known query."""
     from utils.graphdb.pgvector_adapter import PgVectorAdapter
+
     pg = PgVectorAdapter(PGVECTOR_DSN)
     assert pg.connect()
     qemb = _get_embedding(QUERY)
     results = pg.search_chunks(qemb, k=MIN_RESULTS)
     pg.close()
 
-    assert len(results) >= MIN_RESULTS, (
-        f"Expected >= {MIN_RESULTS} results, got {len(results)}"
-    )
+    assert len(results) >= MIN_RESULTS, f"Expected >= {MIN_RESULTS} results, got {len(results)}"
 
     # Validate shape of each result
     for r in results:
         assert "chunk_id" in r, f"Missing 'chunk_id' in result: {r}"
-        assert "text" in r,     f"Missing 'text' in result: {r}"
-        assert "score" in r,    f"Missing 'score' in result: {r}"
+        assert "text" in r, f"Missing 'text' in result: {r}"
+        assert "score" in r, f"Missing 'score' in result: {r}"
         assert isinstance(r["score"], float), f"score is not float: {r['score']}"
         assert 0.0 <= r["score"] <= 1.0, f"score out of [0,1] range: {r['score']}"
 
@@ -79,6 +82,7 @@ def test_search_chunks_returns_min_results():
 def test_search_chunks_scores_are_ordered():
     """Results must be returned in descending cosine similarity order."""
     from utils.graphdb.pgvector_adapter import PgVectorAdapter
+
     pg = PgVectorAdapter(PGVECTOR_DSN)
     assert pg.connect()
     qemb = _get_embedding(QUERY)
