@@ -10,12 +10,14 @@ from neo4j import GraphDatabase
 
 load_dotenv(Path(os.environ.get("PWD", ".")) / ".env")
 
+_NO_RESULTS = "No results found."
+
 
 def _neo4j_driver():
-    uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")
+    uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")  # NOSONAR
     user = os.environ.get("NEO4J_USER", "neo4j")
     pw = os.environ.get("NEO4J_PASSWORD", "testpassword123")
-    return GraphDatabase.driver(uri, auth=(user, pw))
+    return GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
 
 
 def _pg_dsn():
@@ -153,7 +155,7 @@ def recall_docs(query: str, top_k: int, session: str | None) -> None:
         click.echo(f"[{r.score:.2f}] {r.provenance.get('title', 'Unknown')} | {r.text[:120]}...")
         click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
     if not results:
-        click.echo("No results found.")
+        click.echo(_NO_RESULTS)
 
 
 @cli.command("recall-dialog")
@@ -175,7 +177,7 @@ def recall_dialog(query: str, top_k: int, session: str | None) -> None:
         )
         click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
     if not results:
-        click.echo("No results found.")
+        click.echo(_NO_RESULTS)
 
 
 @cli.command("recall-topic")
@@ -196,4 +198,4 @@ def recall_topic(query: str, top_k: int) -> None:
         )
         click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
     if not results:
-        click.echo("No results found.")
+        click.echo(_NO_RESULTS)

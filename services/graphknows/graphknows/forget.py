@@ -14,7 +14,7 @@ class LTMForget:
         self._driver = neo4j_driver
         self._pg_dsn = pg_dsn
 
-    def prune_disconnected(self, min_component_size: int = 2) -> dict:
+    def prune_disconnected(self, _min_component_size: int = 2) -> dict:
         """Drop Entity nodes with no relations (degree=0) or tiny components."""
         with self._driver.session() as s:
             result = s.run(
@@ -87,11 +87,13 @@ class LTMForget:
             "orphaned_entities_deleted": result["deleted"] if result else 0,
         }
 
-    def prune(self, session_id: str | None = None, utterance_ttl_days: int = 180) -> dict[str, Any]:
+    def prune(
+        self, _session_id: str | None = None, utterance_ttl_days: int = 180
+    ) -> dict[str, Any]:
         """Prune orphaned Document, Chunk, Dialog, Utterance nodes.
 
         Args:
-            session_id: Ignored (kept for API compatibility).
+            _session_id: Ignored (kept for API compatibility).
             utterance_ttl_days: Prune utterances older than this many days.
 
         Returns:

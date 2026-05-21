@@ -631,7 +631,7 @@ class DocumentIngestor:
                 errors.append(f"Memgraph write failed (non-fatal): {exc}")
                 logger.warning("Memgraph write failed (non-fatal): %s", exc)
 
-        entity_names = set(m.name for m in all_mentions)
+        entity_names = {m.name for m in all_mentions}
 
         return IngestResult(
             document_id=doc_id,

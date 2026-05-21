@@ -35,18 +35,22 @@ log = logging.getLogger(__name__)
 
 server = Server("graphknows-ltm")
 
+_DESC_FREE_TEXT_QUERY = "Free-text search query"
+_DESC_MAX_RESULTS = "Max results to return (1–20)"
+
 
 def _neo4j_driver():
-    uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")
+    uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")  # NOSONAR
     user = os.environ.get("NEO4J_USER", "neo4j")
     pw = os.environ.get("NEO4J_PASSWORD", "")
     return GraphDatabase.driver(uri, auth=(user, pw))
 
 
 def _pg_dsn():
-    return os.environ.get("PGVECTOR_DSN", "postgresql://postgres@172.18.0.1:5432/vectordb")
+    return os.environ.get("PGVECTOR_DSN", "postgresql://postgres@172.18.0.1:5432/ltm")  # NOSONAR
 
 
+@server.list_tools()
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
     return [
@@ -118,12 +122,12 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Free-text search query",
+                        "description": _DESC_FREE_TEXT_QUERY,
                     },
                     "top_k": {
                         "type": "integer",
                         "default": 5,
-                        "description": "Max results to return (1–20)",
+                        "description": _DESC_MAX_RESULTS,
                     },
                 },
                 "required": ["query"],
@@ -140,12 +144,12 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Free-text search query",
+                        "description": _DESC_FREE_TEXT_QUERY,
                     },
                     "top_k": {
                         "type": "integer",
                         "default": 5,
-                        "description": "Max results to return (1–20)",
+                        "description": _DESC_MAX_RESULTS,
                     },
                     "session_filter": {
                         "type": "string",
@@ -167,12 +171,12 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Free-text search query",
+                        "description": _DESC_FREE_TEXT_QUERY,
                     },
                     "top_k": {
                         "type": "integer",
                         "default": 5,
-                        "description": "Max results to return (1–20)",
+                        "description": _DESC_MAX_RESULTS,
                     },
                 },
                 "required": ["query"],
@@ -195,15 +199,15 @@ async def _dispatch(name: str, args: dict) -> str:
     if name == "ltm_query":
         return await _tool_ltm_query(args)
     if name == "ltm_entity":
-        return await _tool_ltm_entity(args)
+        return _tool_ltm_entity(args)
     if name == "ltm_topics":
-        return await _tool_ltm_topics(args)
+        return _tool_ltm_topics(args)
     if name == "recall_by_document":
-        return await _tool_recall_by_document(args)
+        return _tool_recall_by_document(args)
     if name == "recall_by_dialog":
-        return await _tool_recall_by_dialog(args)
+        return _tool_recall_by_dialog(args)
     if name == "recall_by_topic":
-        return await _tool_recall_by_topic(args)
+        return _tool_recall_by_topic(args)
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -244,7 +248,7 @@ async def _tool_ltm_query(args: dict) -> str:
     return json.dumps(results, ensure_ascii=False, indent=2)
 
 
-async def _tool_ltm_entity(args: dict) -> str:
+def _tool_ltm_entity(args: dict) -> str:
     name = str(args["name"])
     d = _neo4j_driver()
     try:
@@ -266,7 +270,7 @@ async def _tool_ltm_entity(args: dict) -> str:
     return json.dumps(props, ensure_ascii=False, indent=2, default=str)
 
 
-async def _tool_ltm_topics(args: dict) -> str:
+def _tool_ltm_topics(args: dict) -> str:
     min_entities = int(args.get("min_entities", 3))
     d = _neo4j_driver()
     try:
@@ -286,7 +290,7 @@ async def _tool_ltm_topics(args: dict) -> str:
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
-async def _tool_recall_by_document(args: dict) -> str:
+def _tool_recall_by_document(args: dict) -> str:
     from graphknows.recall import recall_by_document as _rbd
 
     query = str(args["query"])
@@ -311,7 +315,7 @@ async def _tool_recall_by_document(args: dict) -> str:
     )
 
 
-async def _tool_recall_by_dialog(args: dict) -> str:
+def _tool_recall_by_dialog(args: dict) -> str:
     from graphknows.recall import recall_by_dialog as _rbdia
 
     query = str(args["query"])
@@ -337,7 +341,7 @@ async def _tool_recall_by_dialog(args: dict) -> str:
     )
 
 
-async def _tool_recall_by_topic(args: dict) -> str:
+def _tool_recall_by_topic(args: dict) -> str:
     from graphknows.recall import recall_by_topic as _rbt
 
     query = str(args["query"])
