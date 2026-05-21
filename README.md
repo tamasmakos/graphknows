@@ -8,6 +8,100 @@ It consists of two primary microservices:
 
 ---
 
+## Developer Quickstart
+
+> One command to start the full local stack and verify everything is healthy.
+
+### Prerequisites
+
+- Docker + Docker Compose (for infrastructure: Neo4j, pgvector, Memgraph)
+- Python venvs already installed under `services/agent/.venv`
+- `.env` file populated (copy from `.env.example`)
+
+### Start everything
+
+```bash
+cd /root/graphknows
+make dev-local
+```
+
+This single command:
+1. Checks Neo4j, pgvector, and Memgraph are reachable — offers to `docker compose up -d` them if not
+2. Kills any zombie processes on app ports (8025, 8002, 8040)
+3. Starts all 4 application service watchdogs in the background
+4. Waits up to 90s for each to pass its health check
+5. Prints the full status board
+
+To skip the Cloudflare tunnel:
+
+```bash
+make dev-local-no-tunnel
+```
+
+### Check health at any time
+
+```bash
+make status
+```
+
+Output covers all 8 services:
+
+```
+=== Graphknows Health Check ===
+
+Infrastructure
+  OK    Neo4j HTTP     (http://172.18.0.1:7474)
+  OK    Neo4j Bolt     (172.18.0.1:7687)
+  WARN  pgvector       (172.18.0.1:5432 — TCP open, pg_isready not available)
+  OK    Memgraph Bolt  (172.18.0.1:17687)
+
+Application Services
+  OK    graphknows     (http://localhost:8025/health)
+  OK    agent          (http://localhost:8002/health)
+  OK    search         (http://localhost:8040/api/v1/health)
+  OK    frontend       (http://localhost:8080/)
+
+All services healthy.
+```
+
+### Start infrastructure only (if app services are already running)
+
+```bash
+make infra-up
+```
+
+### Service ports reference
+
+| Service | Port | Layer |
+|---|---|---|
+| Neo4j HTTP | 7474 | Infrastructure (Docker) |
+| Neo4j Bolt | 7687 | Infrastructure (Docker) |
+| pgvector | 5432 | Infrastructure (Docker) |
+| Memgraph Bolt | 17687 | Infrastructure (Docker) |
+| graphknows (HybridRAG) | 8025 | Application (bare-metal) |
+| agent (LangGraph) | 8002 | Application (bare-metal) |
+| search | 8040 | Application (bare-metal) |
+| frontend | 8080 | Application (bare-metal) |
+
+### Log files (bare-metal services)
+
+```
+/tmp/graphknows.log
+/tmp/agent.log
+/tmp/search.log
+/tmp/frontend.log
+/tmp/cf.log          # Cloudflare tunnel
+```
+
+### Kill zombie processes manually
+
+```bash
+fuser -k 8025/tcp 8002/tcp 8040/tcp 2>/dev/null || true
+pkill -f graphgen_worker 2>/dev/null || true
+```
+
+---
+
 ## System Architecture
 
 The system follows a strict producer-consumer model, decoupled by Neo4j as the shared storage layer.
@@ -64,17 +158,17 @@ Located in `services/graphrag`.
 
 ## Current Local Agent + Frontend Workflow
 
-The active local chat stack in this repo is:
+> **Quickstart:** Use `make dev-local` — see the [Developer Quickstart](#developer-quickstart) section above.
+
+The active local chat stack is:
 - `services/agent` on port `8002`
 - `apps/web` on port `8080`
 
-The web app proxies both HTTP and websocket traffic to the agent via `AGENT_URL`, which defaults to `http://localhost:8002` in [apps/web/server.py](apps/web/server.py).
+The web app proxies both HTTP and WebSocket traffic to the agent via `AGENT_URL`, which defaults to `http://localhost:8002` in [apps/web/server.py](apps/web/server.py).
 
-If you only need the current chat workflow, use this section instead of the older GraphGen/GraphRAG Docker walkthrough further below.
+If you need to start individual services manually (e.g. for debugging a single service):
 
-### 1. Start the Agent Backend
-
-From the repo root:
+### Start the Agent Backend manually
 
 ```bash
 cd /root/graphknows
@@ -82,8 +176,6 @@ set -a && source .env && set +a
 PYTHONPATH="$PWD/services/agent:$PWD/services:$PWD/services/graphgen:$PWD/services/scrapers" \
 python3 -B -m uvicorn services.agent.main:app --host 0.0.0.0 --port 8002 --log-level info
 ```
-
-This is the backend the frontend talks to by default.
 
 ### 2. Start the Frontend
 
