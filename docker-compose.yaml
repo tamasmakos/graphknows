@@ -145,6 +145,12 @@ services:
         condition: service_healthy
       graphknows:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
     restart: unless-stopped
 
   search:
@@ -222,6 +228,27 @@ services:
       retries: 5
     volumes:
       - langfuse_data:/var/lib/postgresql/data
+
+  # ── CI smoke-test runner ────────────────────────────────────────────────────
+  # Started only when COMPOSE_PROFILES=smoke (or explicitly in CI).
+  # Waits for all app services to be healthy, then probes every endpoint.
+  # CI uses: docker compose --profile smoke up --exit-code-from smoke-tests
+  smoke-tests:
+    profiles: [smoke]
+    image: python:3.11-slim
+    command: python /smoke.py
+    volumes:
+      - ./tests/smoke/smoke.py:/smoke.py:ro
+    depends_on:
+      graphknows:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+      search:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   neo4j_data:

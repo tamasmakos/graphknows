@@ -33,7 +33,7 @@ USER app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app/services
+    PYTHONPATH=/app/services:/app/services/graphknows
 
 EXPOSE 8000
 

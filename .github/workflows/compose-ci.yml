@@ -125,72 +125,17 @@ jobs:
           sed -i 's/^[[:space:]]*//' .env.ci
           cp .env.ci .env
 
-      - name: Start full stack (infra + apps)
-        run: docker compose up -d
-
-      # ── Wait for health ────────────────────────────────────────────────────
-      # Poll Docker's own health status (which mirrors Dockerfile HEALTHCHECK)
-      # and fall back to HTTP probes. Timeout: 5 minutes.
-      - name: Wait for all services to become healthy
-        timeout-minutes: 5
+      - name: Start full stack and run smoke tests
         run: |
-          set -euo pipefail
-          SERVICES="neo4j pgvector memgraph graphknows agent search frontend"
-          DEADLINE=$((SECONDS + 300))
-
-          echo "Waiting for services: $SERVICES"
-          while [ $SECONDS -lt $DEADLINE ]; do
-            all_ok=1
-            for svc in $SERVICES; do
-              status=$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null \
-                | awk -v s="$svc" '$1 == s { print $2 }')
-              case "$status" in
-                healthy)  ;;
-                "")       all_ok=0; echo "  $svc — not yet started" ;;
-                starting) all_ok=0; echo "  $svc — starting..." ;;
-                *)        all_ok=0; echo "  $svc — $status" ;;
-              esac
-            done
-            [ "$all_ok" -eq 1 ] && { echo "All services healthy."; exit 0; }
-            sleep 10
-          done
-
-          echo ""
-          echo "=== Timed out. Container state ==="
-          docker compose ps
-          echo ""
-          echo "=== Logs ==="
-          docker compose logs --tail=50
-          exit 1
-
-      # ── Smoke tests ────────────────────────────────────────────────────────
-      # Quick HTTP probe of every app service health endpoint.
-      # Dumps logs on failure so the cause is visible in CI.
-      - name: Smoke test — graphknows :8025
-        run: |
-          curl -fsS --max-time 10 http://localhost:8025/health \
-            || { docker compose logs graphknows --tail=50; exit 1; }
-
-      - name: Smoke test — agent :8030
-        run: |
-          curl -fsS --max-time 10 http://localhost:8030/health \
-            || { docker compose logs agent --tail=50; exit 1; }
-
-      - name: Smoke test — search :8040
-        run: |
-          curl -fsS --max-time 10 http://localhost:8040/api/v1/health \
-            || { docker compose logs search --tail=50; exit 1; }
-
-      - name: Smoke test — frontend :8080
-        run: |
-          curl -fsS --max-time 10 http://localhost:8080/ \
-            || { docker compose logs frontend --tail=50; exit 1; }
+          docker compose --profile smoke up \
+            --abort-on-container-exit \
+            --exit-code-from smoke-tests
 
       # ── Teardown ───────────────────────────────────────────────────────────
       - name: Dump logs on failure
         if: failure()
-        run: docker compose logs --tail=100
+        run: docker compose --profile smoke logs --tail=100
 
       - name: Tear down stack
         if: always()
-        run: docker compose down -v --remove-orphans
+        run: docker compose --profile smoke down -v --remove-orphans
