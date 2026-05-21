@@ -44,7 +44,7 @@ rebuild: ## Force-rebuild images (no cache)  →  make rebuild SVC=agent
 ps: ## Show running containers and their status
 	$(COMPOSE) ps
 
-status: ## Health check every service endpoint
+status: ## Health check every service endpoint (infra + app)
 	@bash scripts/health.sh
 
 logs: ## Tail logs — all services or specific one  →  make logs SVC=agent
@@ -88,11 +88,17 @@ prune: ## ⚠ Remove all stopped containers, unused images and networks
 	docker system prune -f
 
 # ── Local (bare-metal) ────────────────────────────────────────────
-start-local: ## Start all services directly on the host (no Docker)
+start-local: ## Start all services directly on the host (no Docker) — legacy
 	@bash start.sh
 
-start-local-no-tunnel: ## Start local services without Cloudflare tunnel
+start-local-no-tunnel: ## Start local services without Cloudflare tunnel — legacy
 	@bash start.sh --no-tunnel
+
+dev-local: ## Smart local dev start: checks infra, kills zombies, starts services, waits for health
+	@bash scripts/dev-local.sh
+
+dev-local-no-tunnel: ## dev-local without Cloudflare tunnel
+	@bash scripts/dev-local.sh --no-tunnel
 
 # ── Help ──────────────────────────────────────────────────────────
 help: ## Show this help
