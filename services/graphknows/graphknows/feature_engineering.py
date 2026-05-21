@@ -175,7 +175,7 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                     YIELD nodePropertiesWritten
                 """)
                 log.info("PageRank written")
-            except Exception as e:
+            except Exception:
                 # Fallback without weight property
                 try:
                     s.run("""

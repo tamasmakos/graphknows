@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 log = logging.getLogger("graphknows.forget")
@@ -27,7 +27,7 @@ class LTMForget:
 
     def prune_by_ttl(self, ttl_days: int = 90, pagerank_floor: float = 0.001) -> dict:
         """Drop entities not seen in ttl_days with pagerank below floor."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=ttl_days)).isoformat()
         with self._driver.session() as s:
             result = s.run(
                 "MATCH (e:Entity) "
@@ -42,7 +42,9 @@ class LTMForget:
 
     def forget_community(self, community_id: int) -> dict:
         """Delete all entities exclusively in this community + their Topic node."""
-        import asyncio, asyncpg as _pg
+        import asyncio
+
+        import asyncpg as _pg
 
         with self._driver.session() as s:
             result = s.run(
@@ -95,7 +97,7 @@ class LTMForget:
         Returns:
             Dict with counts of pruned nodes per type.
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=utterance_ttl_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=utterance_ttl_days)).isoformat()
         results: dict[str, Any] = {
             "documents_orphaned": 0,
             "chunks_orphaned": 0,

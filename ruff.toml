@@ -16,6 +16,14 @@ ignore = [
 [lint.per-file-ignores]
 "tests/*" = ["D", "S101"]
 "**/graphgen/**" = ["ALL"]  # absorbed research pipeline — linting deferred progressively
+# TODO(tech-debt): add docstrings and refactor complexity in the files below
+"**/document_ingestor.py" = ["D101"]
+"**/feature_engineering.py" = ["D101", "C901", "N806", "E741"]
+"**/forget.py" = ["D101"]
+"**/mcp_ltm.py" = ["D103"]
+"**/migrations/001_ltm8_schema.py" = ["D103"]
+"**/recall.py" = ["D101"]
+"**/topic_summarizer.py" = ["D101"]
 
 [lint.pydocstyle]
 convention = "google"

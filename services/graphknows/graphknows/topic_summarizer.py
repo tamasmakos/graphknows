@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
-import numpy as np
 
 log = logging.getLogger("graphknows.topic_summarizer")
 

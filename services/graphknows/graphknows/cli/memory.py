@@ -55,8 +55,10 @@ def stats():
 @click.option("--top-k", default=5, help="Number of topics to return")
 def query(query, top_k):
     """Semantic search over LTM topics."""
+    import asyncio
+
+    import asyncpg as apg
     from sentence_transformers import SentenceTransformer
-    import asyncio, asyncpg as apg
 
     embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
     embedding = json.dumps(embedder.encode(query, normalize_embeddings=True).tolist())
