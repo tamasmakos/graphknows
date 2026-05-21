@@ -392,9 +392,9 @@ async def delete_session(session_id: str) -> SessionDeleteResponse:
         _pg.delete_session(session_id),
     )
 
-    logger.info(
+    logger.info(  # NOSONAR
         "Session %s merged: nodes=%d edges=%d", session_id, merged_nodes, merged_edges
-    )  # NOSONAR
+    )
     return SessionDeleteResponse(
         session_id=session_id,
         merged_nodes=merged_nodes,

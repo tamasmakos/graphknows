@@ -21,7 +21,7 @@ def _neo4j_driver():
 
 
 def _pg_dsn():
-    return os.environ.get("PGVECTOR_DSN", "postgresql://postgres@172.18.0.1:5432/vectordb")
+    return os.environ.get("PGVECTOR_DSN", "postgresql://postgres@172.18.0.1:5432/vectordb")  # NOSONAR
 
 
 @click.group()

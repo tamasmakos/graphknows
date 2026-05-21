@@ -119,13 +119,13 @@ def _run_cosine_weights(s: Any) -> None:
         log.warning("Cosine weight computation failed (non-fatal): %s", e)
 
 
-def _project_undirected(s: Any, ec: int, edge_count: int) -> None:
+def _project_undirected(s: Any, _ec: int = 0, _edge_count: int = 0) -> None:
     """Re-project as UNDIRECTED with weights for weighted Leiden.
 
     Args:
         s: Neo4j session.
-        ec: Entity count (used for logging).
-        edge_count: Edge count (used for logging).
+        _ec: Unused — kept for call-site compatibility.
+        _edge_count: Unused — kept for call-site compatibility.
     """
     s.run(_DROP_GRAPH_CQL, name=PROJECTED_GRAPH_NAME)
     try:
@@ -248,12 +248,98 @@ def _run_community_detection(s: Any) -> tuple[Any, str]:
     return comm_result, algorithm_used
 
 
-def _compute_quality_metrics(s: Any, comm_result: Any) -> dict:
+def _compute_silhouette(emb_rows: list) -> float | None:
+    """Compute silhouette score from embedding rows.
+
+    Args:
+        emb_rows: Rows with 'emb' (embedding) and 'cid' (community id).
+
+    Returns:
+        Silhouette score or None if not computable.
+    """
+    if len(emb_rows) < 10:
+        return None
+    x_emb = np.array([r["emb"] for r in emb_rows], dtype=np.float32)
+    labels = np.array([r["cid"] for r in emb_rows])
+    counts = Counter(labels)
+    mask = np.array([counts[lbl] >= 2 for lbl in labels])
+    x_filt = x_emb[mask]
+    labels_filt = labels[mask]
+    try:
+        if len(np.unique(labels_filt)) >= 2 and len(x_filt) >= 4:
+            return float(silhouette_score(x_filt, labels_filt, metric="cosine", random_state=42))
+    except Exception as e_sil:
+        log.warning("Silhouette score failed (non-fatal): %s", e_sil)
+    return None
+
+
+def _compute_separation(emb_rows: list) -> tuple[float | None, float | None]:
+    """Compute global separation and overlap metrics.
+
+    Args:
+        emb_rows: Rows with 'emb' and 'cid'.
+
+    Returns:
+        Tuple of (global_separation, global_overlap), either may be None.
+    """
+    counts = Counter(r["cid"] for r in emb_rows)
+    comm_vecs: dict = defaultdict(list)
+    for r in emb_rows:
+        if counts[r["cid"]] >= 2:
+            comm_vecs[r["cid"]].append(np.array(r["emb"], dtype=np.float32))
+    if not comm_vecs:
+        return None, None
+
+    centroids = {cid: np.mean(vecs, axis=0) for cid, vecs in comm_vecs.items()}
+    cid_list = list(centroids.keys())
+    centroid_matrix = np.stack([centroids[c] for c in cid_list])
+
+    separated = 0
+    total = 0
+    for r in emb_rows:
+        cid = r["cid"]
+        if cid not in centroids:
+            continue
+        emb = np.array(r["emb"], dtype=np.float32)
+        norms = np.linalg.norm(centroid_matrix, axis=1) * np.linalg.norm(emb)
+        norms = np.where(norms == 0, 1e-9, norms)
+        sims = centroid_matrix @ emb / norms
+        own_idx = cid_list.index(cid)
+        if all(sims[own_idx] >= s_ for s_ in sims):
+            separated += 1
+        total += 1
+
+    sep = separated / total if total > 0 else None
+    return sep, (1.0 - sep if sep is not None else None)
+
+
+def _compute_modularity(s: Any) -> float | None:
+    """Query GDS louvain.stats for unweighted modularity.
+
+    Args:
+        s: Neo4j session.
+
+    Returns:
+        Modularity value or None.
+    """
+    for query in [
+        "CALL gds.louvain.stats('ltm-entities') YIELD modularity",
+        "CALL gds.louvain.stats('ltm-entities', {gamma: 1.0}) YIELD modularity",
+    ]:
+        try:
+            row = s.run(query).single()
+            return float(row["modularity"]) if row else None
+        except Exception:  # noqa: PERF203
+            pass
+    return None
+
+
+def _compute_quality_metrics(s: Any, _comm_result: Any = None) -> dict:
     """Compute silhouette score and community separation metrics.
 
     Args:
         s: Neo4j session.
-        comm_result: Result row from community detection.
+        _comm_result: Unused — retained for call-site compatibility.
 
     Returns:
         Dict with keys: sil, global_separation, global_overlap, unweighted_modularity.
@@ -261,81 +347,22 @@ def _compute_quality_metrics(s: Any, comm_result: Any) -> dict:
     sil = None
     global_separation = None
     global_overlap = None
-    unweighted_modularity = None
 
     try:
         emb_rows = s.run(
             "MATCH (e:Entity) WHERE e.node2vec IS NOT NULL AND e.community_id IS NOT NULL "
             "RETURN e.node2vec as emb, e.community_id as cid"
         ).data()
-
-        if len(emb_rows) >= 10:
-            x_emb = np.array([r["emb"] for r in emb_rows], dtype=np.float32)
-            labels = np.array([r["cid"] for r in emb_rows])
-            counts = Counter(labels)
-            mask = np.array([counts[l] >= 2 for l in labels])
-            x_filt = x_emb[mask]
-            labels_filt = labels[mask]
-            try:
-                if len(np.unique(labels_filt)) >= 2 and len(x_filt) >= 4:
-                    sil = float(
-                        silhouette_score(x_filt, labels_filt, metric="cosine", random_state=42)
-                    )
-            except Exception as e_sil:
-                log.warning("Silhouette score failed (non-fatal): %s", e_sil)
-
-            comm_vecs: dict = defaultdict(list)
-            for r in emb_rows:
-                if counts[r["cid"]] >= 2:
-                    comm_vecs[r["cid"]].append(np.array(r["emb"], dtype=np.float32))
-
-            if comm_vecs:
-                centroids = {cid: np.mean(vecs, axis=0) for cid, vecs in comm_vecs.items()}
-                cid_list = list(centroids.keys())
-                centroid_matrix = np.stack([centroids[c] for c in cid_list])
-
-                separated = 0
-                total = 0
-                for r in emb_rows:
-                    cid = r["cid"]
-                    if cid not in centroids:
-                        continue
-                    emb = np.array(r["emb"], dtype=np.float32)
-                    norms = np.linalg.norm(centroid_matrix, axis=1) * np.linalg.norm(emb)
-                    norms = np.where(norms == 0, 1e-9, norms)
-                    sims = centroid_matrix @ emb / norms
-                    own_idx = cid_list.index(cid)
-                    own_sim = sims[own_idx]
-                    if all(own_sim >= s_ for s_ in sims):
-                        separated += 1
-                    total += 1
-
-                global_separation = separated / total if total > 0 else None
-                global_overlap = 1.0 - global_separation if global_separation is not None else None
+        sil = _compute_silhouette(emb_rows)
+        global_separation, global_overlap = _compute_separation(emb_rows)
     except Exception as e_qm:
         log.warning("Quality metric computation failed (non-fatal): %s", e_qm)
-
-    try:
-        unweighted_row = s.run("""
-            CALL gds.louvain.stats('ltm-entities')
-            YIELD modularity
-        """).single()
-        unweighted_modularity = float(unweighted_row["modularity"]) if unweighted_row else None
-    except Exception:
-        try:
-            unweighted_row = s.run("""
-                CALL gds.louvain.stats('ltm-entities', {gamma: 1.0})
-                YIELD modularity
-            """).single()
-            unweighted_modularity = float(unweighted_row["modularity"]) if unweighted_row else None
-        except Exception:
-            unweighted_modularity = None
 
     return {
         "sil": sil,
         "global_separation": global_separation,
         "global_overlap": global_overlap,
-        "unweighted_modularity": unweighted_modularity,
+        "unweighted_modularity": _compute_modularity(s),
     }
 
 
