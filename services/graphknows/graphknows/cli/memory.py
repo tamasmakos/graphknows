@@ -62,10 +62,10 @@ def query(query, top_k):
     import asyncio
 
     import asyncpg as apg
-    from sentence_transformers import SentenceTransformer
 
-    embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
-    embedding = json.dumps(embedder.encode(query, normalize_embeddings=True).tolist())
+    from graphknows.retrieval.stores.embedder import embed_one
+
+    embedding = json.dumps(embed_one(query))
 
     async def _run():
         conn = await apg.connect(_pg_dsn())

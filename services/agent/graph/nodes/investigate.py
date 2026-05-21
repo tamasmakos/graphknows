@@ -218,7 +218,9 @@ def _compute_duplication_ratio(
     if all_embs is not None:
         new_embs = all_embs[: len(new_texts)]
         existing_embs = all_embs[len(new_texts) :]
-        existing_norm = existing_embs / np.linalg.norm(existing_embs, axis=1, keepdims=True).clip(min=1e-9)
+        existing_norm = existing_embs / np.linalg.norm(existing_embs, axis=1, keepdims=True).clip(
+            min=1e-9
+        )
         new_norm = new_embs / np.linalg.norm(new_embs, axis=1, keepdims=True).clip(min=1e-9)
         sims = new_norm @ existing_norm.T
         max_sims = sims.max(axis=1)
@@ -229,9 +231,7 @@ def _compute_duplication_ratio(
         sa, sb = set(a.lower().split()), set(b.lower().split())
         return len(sa & sb) / len(sa | sb) if sa | sb else 0.0
 
-    dup = sum(
-        1 for nt in new_texts if any(_jaccard(nt, et) > 0.5 for et in existing_texts)
-    )
+    dup = sum(1 for nt in new_texts if any(_jaccard(nt, et) > 0.5 for et in existing_texts))
     return dup / len(new_chunks)
 
 

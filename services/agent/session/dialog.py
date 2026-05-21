@@ -1,4 +1,5 @@
 """Dialog writeback: session turns -> Neo4j Dialog/Utterance/Participant nodes."""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +16,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class TurnData:
     """A single conversation turn."""
+
     turn_index: int
     role: str
     participant_name: str
@@ -44,8 +46,14 @@ class DialogWriteBack:
         self._driver = neo4j_driver
         self._embed = embedding_model
         self._ontology = ner_ontology or [
-            "PERSON", "ORGANIZATION", "LOCATION", "CONCEPT",
-            "POLICY", "LAW", "INSTITUTION", "TECHNOLOGY",
+            "PERSON",
+            "ORGANIZATION",
+            "LOCATION",
+            "CONCEPT",
+            "POLICY",
+            "LAW",
+            "INSTITUTION",
+            "TECHNOLOGY",
         ]
 
     def write(self, session_id: str, turns: list[TurnData]) -> DialogResult:
@@ -66,13 +74,16 @@ class DialogWriteBack:
             s.run(
                 "MERGE (dia:Dialog {id: $dialog_id}) "
                 "SET dia.session_id = $session_id, dia.started_at = $started_at",
-                dialog_id=dialog_id, session_id=session_id, started_at=now,
+                dialog_id=dialog_id,
+                session_id=session_id,
+                started_at=now,
             )
             s.run(
                 "MATCH (seg:Segment {session_id: $session_id}) "
                 "MATCH (dia:Dialog {id: $dialog_id}) "
                 "MERGE (seg)-[:HAS_DIALOG]->(dia)",
-                session_id=session_id, dialog_id=dialog_id,
+                session_id=session_id,
+                dialog_id=dialog_id,
             )
 
             for turn in turns:

@@ -47,9 +47,9 @@ class TopicSummarizer:
 
     def _get_embedder(self):
         if self._embedder is None:
-            from sentence_transformers import SentenceTransformer
+            from graphknows.retrieval.stores.embedder import get_embedder
 
-            self._embedder = SentenceTransformer(EMBED_MODEL)
+            self._embedder = get_embedder()
         return self._embedder
 
     def _embed(self, text: str) -> list[float]:

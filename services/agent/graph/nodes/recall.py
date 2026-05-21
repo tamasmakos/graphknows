@@ -33,6 +33,7 @@ def _embed_query(text: str) -> list[float] | None:
         log.warning("recall_node: embed failed (%s) — skipping LTM recall", exc)
         return None
 
+
 log = logging.getLogger("agent.graph.nodes.recall")
 
 MAX_TOPICS = 5
@@ -56,7 +57,9 @@ async def recall_node(state: InvestigativeState) -> InvestigativeState:
         msgs = state.get("messages", [])
         if msgs:
             last = msgs[-1]
-            query = last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
+            query = (
+                last.get("content", "") if isinstance(last, dict) else getattr(last, "content", "")
+            )
 
     if not query:
         log.debug("recall_node: no query — skipping")
@@ -94,6 +97,7 @@ async def recall_node(state: InvestigativeState) -> InvestigativeState:
 
         # 3. Fetch hub entity names from Neo4j for each community
         from neo4j import AsyncGraphDatabase
+
         neo4j_uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")
         neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
         neo4j_pw = os.environ.get("NEO4J_PASSWORD", "")
@@ -107,9 +111,7 @@ async def recall_node(state: InvestigativeState) -> InvestigativeState:
                     summary = row["summary"]
                     # hub_entities stored as JSON array in pgvector
                     hub = json.loads(row["hub_entities"] or "[]")[:MAX_HUB_ENTITIES]
-                    topic_blocks.append(
-                        f"- {summary} [key entities: {', '.join(hub)}]"
-                    )
+                    topic_blocks.append(f"- {summary} [key entities: {', '.join(hub)}]")
         finally:
             await driver.close()
 

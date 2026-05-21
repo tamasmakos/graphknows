@@ -73,10 +73,14 @@ class OntologyRouter:
         if embs is not None:
             norms = np.linalg.norm(embs, axis=1, keepdims=True).clip(min=1e-9)
             self._desc_embeddings = embs / norms
-            log.info("OntologyRouter ready with %d ontologies (embeddings OK)", len(self._manifests))
+            log.info(
+                "OntologyRouter ready with %d ontologies (embeddings OK)", len(self._manifests)
+            )
         else:
             self._desc_embeddings = None
-            log.info("OntologyRouter ready with %d ontologies (keyword-only mode)", len(self._manifests))
+            log.info(
+                "OntologyRouter ready with %d ontologies (keyword-only mode)", len(self._manifests)
+            )
         self._ready = True
 
     def _keyword_scores(self, text: str) -> list[float]:

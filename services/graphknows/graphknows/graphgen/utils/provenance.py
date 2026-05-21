@@ -92,7 +92,6 @@ def collect_environment_info() -> Dict[str, Any]:
         "seaborn",
         "torch",
         "pykeen",
-        "sentence-transformers",
         "pydantic",
     ]
     return {

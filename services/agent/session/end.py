@@ -49,24 +49,28 @@ def _extract_turns_from_state(state: dict | None) -> list[TurnData]:
         content = getattr(msg, "content", str(msg))
         if not isinstance(content, str):
             content = str(content)
-        turns.append(TurnData(
-            turn_index=i,
-            role="user" if role in ("human", "user") else "agent",
-            participant_name="user" if role in ("human", "user") else "GraphKnows-Agent",
-            text=content[:2000],
-            timestamp=now,
-        ))
+        turns.append(
+            TurnData(
+                turn_index=i,
+                role="user" if role in ("human", "user") else "agent",
+                participant_name="user" if role in ("human", "user") else "GraphKnows-Agent",
+                text=content[:2000],
+                timestamp=now,
+            )
+        )
 
     if not turns:
         for i, entry in enumerate(state.get("conversation_history", [])):
             role = entry.get("role", "agent")
-            turns.append(TurnData(
-                turn_index=i,
-                role=role,
-                participant_name="user" if role == "user" else "GraphKnows-Agent",
-                text=str(entry.get("content", ""))[:2000],
-                timestamp=entry.get("timestamp", now),
-            ))
+            turns.append(
+                TurnData(
+                    turn_index=i,
+                    role=role,
+                    participant_name="user" if role == "user" else "GraphKnows-Agent",
+                    text=str(entry.get("content", ""))[:2000],
+                    timestamp=entry.get("timestamp", now),
+                )
+            )
 
     return turns
 
@@ -438,7 +442,9 @@ def merge_session_to_neo4j(
         try:
             _settings = AgentSettings()
             _sync_driver = _get_sync_driver(
-                _settings.neo4j_uri, _settings.neo4j_user, _settings.neo4j_password,
+                _settings.neo4j_uri,
+                _settings.neo4j_user,
+                _settings.neo4j_password,
             )
             try:
                 _turns = _extract_turns_from_state(state)
@@ -447,7 +453,9 @@ def merge_session_to_neo4j(
                     _dialog_result = _dialog_wb.write(session_id=session_id, turns=_turns)
                     log.info(
                         "dialog writeback: session=%s utterances=%d mentions=%d",
-                        session_id, _dialog_result.utterance_count, _dialog_result.mention_count,
+                        session_id,
+                        _dialog_result.utterance_count,
+                        _dialog_result.mention_count,
                     )
             finally:
                 _sync_driver.close()
@@ -465,11 +473,19 @@ def merge_session_to_neo4j(
                 )
                 await wb.write_back(
                     session_id=session_id,
-                    entities=[{"name": n["name"], "type": n.get("type", "Entity"), "confidence": 1.0}
-                              for n in nodes],
-                    relations=[{"source": e["from"], "target": e["to"],
-                                "type": e.get("rel_type", "RELATES"), "confidence": 1.0}
-                               for e in edges],
+                    entities=[
+                        {"name": n["name"], "type": n.get("type", "Entity"), "confidence": 1.0}
+                        for n in nodes
+                    ],
+                    relations=[
+                        {
+                            "source": e["from"],
+                            "target": e["to"],
+                            "type": e.get("rel_type", "RELATES"),
+                            "confidence": 1.0,
+                        }
+                        for e in edges
+                    ],
                     query="",
                 )
             except Exception:

@@ -21,6 +21,7 @@ def ensure_schema(uri: str, user: str, password: str) -> None:
     global _schema_applied  # noqa: PLW0603
     if not _schema_applied:
         from neo4j import GraphDatabase as _GDB
+
         drv = _GDB.driver(uri, auth=(user, password))
         try:
             with drv.session() as s:
@@ -54,7 +55,9 @@ class WriteBackService:
                 await s.run(
                     "MERGE (seg:Segment {session_id: $sid}) "
                     "SET seg.timestamp = $ts, seg.query = $q",
-                    sid=session_id, ts=ts, q=query,
+                    sid=session_id,
+                    ts=ts,
+                    q=query,
                 )
 
                 # 2. Merge entities with temporal tracking + weight
@@ -69,13 +72,18 @@ class WriteBackService:
                         "WITH ent "
                         "MATCH (seg:Segment {session_id: $sid}) "
                         "MERGE (ent)-[:APPEARED_IN {confidence: $conf}]->(seg)",
-                        name=e["name"], type=e.get("type", "Entity"),
-                        ts=ts, conf=e.get("confidence", 1.0), sid=session_id,
+                        name=e["name"],
+                        type=e.get("type", "Entity"),
+                        ts=ts,
+                        conf=e.get("confidence", 1.0),
+                        sid=session_id,
                     )
                     written_entities += 1
 
                 # 3. Merge relations with weight accumulation
-                high_conf_rels = [r for r in relations if r.get("confidence", 1.0) >= min_confidence]
+                high_conf_rels = [
+                    r for r in relations if r.get("confidence", 1.0) >= min_confidence
+                ]
                 written_rels = 0
                 for rel in high_conf_rels:
                     rel_type = rel.get("type", "RELATES").upper().replace(" ", "_")
@@ -84,9 +92,12 @@ class WriteBackService:
                         "MERGE (b:Entity {name: $tgt}) "
                         "MERGE (a)-[r:RELATES {rel_type: $rtype, session_id: $sid}]->(b) "
                         "SET r.weight=coalesce(r.weight,0)+1, r.confidence=$conf, r.last_seen=$ts",
-                        src=rel["source"], tgt=rel["target"],
-                        rtype=rel_type, sid=session_id,
-                        conf=rel.get("confidence", 1.0), ts=ts,
+                        src=rel["source"],
+                        tgt=rel["target"],
+                        rtype=rel_type,
+                        sid=session_id,
+                        conf=rel.get("confidence", 1.0),
+                        ts=ts,
                     )
                     written_rels += 1
 
@@ -101,9 +112,12 @@ class WriteBackService:
 
             sync_driver = _GDB.driver(self._uri, auth=(self._user, self._password))
             fe_result = run_feature_engineering(sync_driver, session_id=session_id)
-            log.info("Feature engineering: entity_count=%d communities=%d runtime_ms=%.0f",
-                     fe_result.get("entity_count", 0), fe_result.get("community_count", 0),
-                     0)
+            log.info(
+                "Feature engineering: entity_count=%d communities=%d runtime_ms=%.0f",
+                fe_result.get("entity_count", 0),
+                fe_result.get("community_count", 0),
+                0,
+            )
             sync_driver.close()
         except Exception:
             log.exception("Feature engineering failed — non-fatal")
@@ -137,7 +151,9 @@ class WriteBackService:
 
         log.info(
             "WriteBack session=%s entities=%d relations=%d",
-            session_id, written_entities, written_rels,
+            session_id,
+            written_entities,
+            written_rels,
         )
         return {
             "session_id": session_id,

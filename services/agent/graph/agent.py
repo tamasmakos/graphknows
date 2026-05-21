@@ -36,8 +36,8 @@ def _truncate_at_sentence(text: str, max_chars: int = 2000) -> str:
         return text
     window = text[:max_chars]
     for i in range(len(window) - 1, 0, -1):
-        if window[i] in '.!?' and (i + 1 >= len(window) or window[i + 1] in ' \n\t'):
-            return window[:i + 1].rstrip()
+        if window[i] in ".!?" and (i + 1 >= len(window) or window[i + 1] in " \n\t"):
+            return window[: i + 1].rstrip()
     return window
 
 

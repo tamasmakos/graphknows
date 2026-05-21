@@ -16,14 +16,7 @@ def generate_rag_embeddings(graph: nx.DiGraph) -> None:
     try:
         from graphknows.retrieval.stores.embedder import embed
     except ImportError:
-        # Fallback: use sentence-transformers directly when graphknows isn't installed
-        from sentence_transformers import SentenceTransformer
-        import numpy as np
-
-        _model = SentenceTransformer("BAAI/bge-small-en-v1.5")
-
-        def embed(texts: list[str]) -> "np.ndarray":  # type: ignore[misc]
-            return _model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        from graphknows.retrieval.stores.embedder import embed  # noqa: PLC0415
 
     logger.info("Generating BGE-small-en-v1.5 embeddings for graph nodes …")
 

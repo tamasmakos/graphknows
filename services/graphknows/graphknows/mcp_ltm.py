@@ -47,10 +47,11 @@ def _neo4j_driver():
 
 
 def _pg_dsn():
-    return os.environ.get("PGVECTOR_DSN", "postgresql://postgres@172.18.0.1:5432/ltm")  # NOSONAR
+    return os.environ.get(
+        "PGVECTOR_DSN", "postgresql://postgres@172.18.0.1:5432/vectordb"
+    )  # NOSONAR
 
 
-@server.list_tools()
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
     return [
@@ -215,13 +216,12 @@ async def _dispatch(name: str, args: dict) -> str:
 
 
 async def _tool_ltm_query(args: dict) -> str:
-    from sentence_transformers import SentenceTransformer
+    from graphknows.retrieval.stores.embedder import embed_one
 
     query = str(args["query"])
     top_k = max(1, min(int(args.get("top_k", 5)), 20))
 
-    embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
-    embedding = json.dumps(embedder.encode(query, normalize_embeddings=True).tolist())
+    embedding = json.dumps(embed_one(query))
 
     import asyncpg as apg
 

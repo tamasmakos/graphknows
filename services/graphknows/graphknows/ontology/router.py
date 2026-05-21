@@ -46,13 +46,10 @@ class OntologyRouter:
             self._ready = True
             return
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
+            from graphknows.retrieval.stores.embedder import embed as _embed
 
-            self._embed_model = SentenceTransformer(self._model_name)
             descriptions = [m.description for m in self._manifests]
-            self._desc_embeddings = self._embed_model.encode(
-                descriptions, normalize_embeddings=True
-            )
+            self._desc_embeddings = _embed(descriptions)
             log.info("OntologyRouter ready with %d ontologies", len(self._manifests))
         except Exception as exc:
             log.warning("OntologyRouter: embedding model unavailable (%s) — keyword-only mode", exc)

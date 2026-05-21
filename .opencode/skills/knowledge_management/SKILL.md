@@ -44,16 +44,22 @@ wastes the source. Mediocre organization wastes the capture.
 - Compression is not the goal — **clarity** is. Short is good only if
   nothing is lost.
 
-### Metadata Integrity
+### Structural Consistency
 - Metadata is not decoration. Every piece of metadata must earn its
   place by making the note more findable, connectable, or trustworthy.
 - **Source provenance is mandatory.** An unsourced permanent note is
   an unverified claim. Mark it as such.
+- Dates, authors, titles, and URLs must be exact. Approximate metadata
+  degrades over time into noise.
 - Tags must form a **coherent lexical system** — consistent vocabulary,
   consistent granularity. Never invent a new tag if an existing one
   applies. Never reuse a tag for a different concept.
-- Dates, authors, titles, and URLs must be exact. Approximate metadata
-  degrades over time into noise.
+- Use the same word for the same concept, always. Synonyms in a
+  knowledge base create invisible silos.
+- When introducing a term, define it — either in the note itself or by
+  linking to a dedicated definition note.
+- If a concept is renamed or refined, update all references. Stale
+  vocabulary is structural debt.
 
 ### Linking and Connection
 - Every permanent note should connect to at least one other note.
@@ -63,14 +69,6 @@ wastes the source. Mediocre organization wastes the capture.
 - Actively look for contradictions, tensions, and open questions.
   These are the most valuable connections — they mark the edge of
   current understanding.
-
-### Lexical Consistency
-- Use the same word for the same concept, always. Synonyms in a
-  knowledge base create invisible silos.
-- When introducing a term, define it — either in the note itself or by
-  linking to a dedicated definition note.
-- If a concept is renamed or refined, update all references. Stale
-  vocabulary is structural debt.
 
 ---
 

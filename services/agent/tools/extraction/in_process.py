@@ -114,12 +114,27 @@ _GENERIC_SINGLE_WORDS = frozenset(
     }
 )
 
-_NAV_PHRASES = frozenset({
-    'advanced search', 'open data portal', 'past events', 'register',
-    'download', 'share this page', 'all rights reserved', 'skip to content',
-    'cookie policy', 'privacy policy', 'terms of use', 'back to top',
-    'read more', 'show more', 'load more', 'see all', 'view all',
-})
+_NAV_PHRASES = frozenset(
+    {
+        "advanced search",
+        "open data portal",
+        "past events",
+        "register",
+        "download",
+        "share this page",
+        "all rights reserved",
+        "skip to content",
+        "cookie policy",
+        "privacy policy",
+        "terms of use",
+        "back to top",
+        "read more",
+        "show more",
+        "load more",
+        "see all",
+        "view all",
+    }
+)
 
 
 def _is_quality_span(name: str) -> bool:  # noqa: C901  # NOSONAR
@@ -390,29 +405,34 @@ class InProcessExtractor:
                             # Seed DSPy with GLiNER2 joint-extraction candidates +
                             # sentence-level CO_OCCURS hints from all chunk entities +
                             # a windowed CO_OCCURS hint from high-confidence entities
-                            sentences = re.split(r'(?<=[.!?])\s+', chunk)
+                            sentences = re.split(r"(?<=[.!?])\s+", chunk)
                             sent_cooccur: list[dict] = []
                             for sent in sentences:
                                 sent_ents = [
-                                    n for n in chunk_ent_names
-                                    if n.lower() in sent.lower()
+                                    n for n in chunk_ent_names if n.lower() in sent.lower()
                                 ]
                                 for _i in range(len(sent_ents)):
                                     for _j in range(_i + 1, len(sent_ents)):
-                                        sent_cooccur.append({
-                                            "source": sent_ents[_i],
-                                            "relation": "CO_OCCURS",
-                                            "target": sent_ents[_j],
-                                        })
-                            candidate_relations = gliner_rels[:20] + sent_cooccur[:20] + [
-                                {
-                                    "source": high_conf_ents[i],
-                                    "relation": "CO_OCCURS",
-                                    "target": high_conf_ents[j],
-                                }
-                                for i in range(len(high_conf_ents))
-                                for j in range(i + 1, min(i + 4, len(high_conf_ents)))
-                            ]
+                                        sent_cooccur.append(
+                                            {
+                                                "source": sent_ents[_i],
+                                                "relation": "CO_OCCURS",
+                                                "target": sent_ents[_j],
+                                            }
+                                        )
+                            candidate_relations = (
+                                gliner_rels[:20]
+                                + sent_cooccur[:20]
+                                + [
+                                    {
+                                        "source": high_conf_ents[i],
+                                        "relation": "CO_OCCURS",
+                                        "target": high_conf_ents[j],
+                                    }
+                                    for i in range(len(high_conf_ents))
+                                    for j in range(i + 1, min(i + 4, len(high_conf_ents)))
+                                ]
+                            )
                             result = self._dspy_module(
                                 text=chunk[:1500],
                                 ontology_classes=ontology_classes,

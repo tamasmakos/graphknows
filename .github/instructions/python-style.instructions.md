@@ -218,6 +218,8 @@ def process(items: list[str] = []) -> None: ...
 # ALWAYS SOLVE ERRORS ON ROOT LEVEL
 # DON'T TRASH OR BLOAT THE CODEBASE
 # PREFER SIMPLE AND SMART SOLUTIONS NOT OVERCOMPLICATION
+# SIMPLEST SOLUTION FIRST — implement the simplest thing that could work; do not add abstractions or flexibility that weren't explicitly requested
+# DON'T TOUCH UNRELATED CODE — if a file or function is not directly part of the current task, do not modify it, even if you think it could be improved
 # BUILD FOR EVERYONE - DO NOT HARDCODE DOMAIN SPECIFIC SOLUTIONS
 # ALWAYS FOLLOW REPOSITORY STRUCTURE, KNOW WHERE YOU ARE DEVELOPING INTO
 # AIM FOR MODULARITY, THINK IN GENERAL DATAMODELS FIRST, KEEP DATAMODELS ON THEIR RELEVANT LEVEL
