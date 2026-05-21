@@ -9,8 +9,9 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 COPY services/agent/pyproject.toml ./services/agent/pyproject.toml
+COPY services/graphknows/pyproject.toml ./services/graphknows/pyproject.toml
 
-# Install agent deps into /app/.venv
+# Install agent deps (including graphknows workspace dep) into /app/.venv
 RUN uv sync --package agent --no-install-project --no-cache
 
 # Copy the entire repo for agent service imports
