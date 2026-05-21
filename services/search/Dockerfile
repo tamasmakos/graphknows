@@ -35,7 +35,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 USER app
 
-ENV PYTHONUNBUFFERED=1 \
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     EP_DEBATES_OUT_DIR=/data/raw/ep_debates \
