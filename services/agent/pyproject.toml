@@ -26,6 +26,9 @@ dependencies = [
     "tavily-python>=0.3.0",
     # Observability
     "python-json-logger>=2.0.0",
+    # graphknows shared lib — agent imports graphgen at runtime via PYTHONPATH;
+    # declaring it here ensures all transitive deps (sklearn, spacy, etc.) are installed
+    "graphknows",
 ]
 
 [build-system]
@@ -34,3 +37,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+
+[tool.uv.sources]
+graphknows = { workspace = true }
