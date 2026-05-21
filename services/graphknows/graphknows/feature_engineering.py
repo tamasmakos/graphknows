@@ -89,9 +89,7 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
             result["error"] = f"too_small:{ec}"
             return result
 
-        edge_count_row = s.run(
-            "MATCH (a:Entity)-[r]->(b:Entity) RETURN count(r) as c"
-        ).single()
+        edge_count_row = s.run("MATCH (a:Entity)-[r]->(b:Entity) RETURN count(r) as c").single()
         edge_count = edge_count_row["c"] if edge_count_row else 0
         result["edge_count"] = edge_count
 
@@ -241,7 +239,9 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
             if comm_result:
                 community_count = comm_result["communityCount"]
                 modularity = comm_result["modularity"] or 0.0
-                modularities = list(comm_result["modularities"]) if comm_result["modularities"] else []
+                modularities = (
+                    list(comm_result["modularities"]) if comm_result["modularities"] else []
+                )
                 ran_levels = comm_result["ranLevels"]
 
                 result["community_count"] = community_count
@@ -252,7 +252,10 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
 
                 log.info(
                     "%s: %d communities, modularity=%.4f, levels=%d",
-                    algorithm_used, community_count, modularity, ran_levels,
+                    algorithm_used,
+                    community_count,
+                    modularity,
+                    ran_levels,
                 )
 
                 # ── Step 9: Compute quality metrics ──
@@ -269,36 +272,40 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                     ).data()
 
                     if len(emb_rows) >= 10:
-                        X = np.array([r['emb'] for r in emb_rows], dtype=np.float32)
-                        labels = np.array([r['cid'] for r in emb_rows])
+                        X = np.array([r["emb"] for r in emb_rows], dtype=np.float32)
+                        labels = np.array([r["cid"] for r in emb_rows])
                         counts = Counter(labels)
                         mask = np.array([counts[l] >= 2 for l in labels])
                         X_filt = X[mask]
                         labels_filt = labels[mask]
                         try:
                             if len(np.unique(labels_filt)) >= 2 and len(X_filt) >= 4:
-                                sil = float(silhouette_score(X_filt, labels_filt, metric='cosine'))
+                                sil = float(silhouette_score(X_filt, labels_filt, metric="cosine"))
                         except Exception as e_sil:
                             log.warning("Silhouette score failed (non-fatal): %s", e_sil)
 
                         comm_vecs: dict = defaultdict(list)
                         for r in emb_rows:
-                            if counts[r['cid']] >= 2:
-                                comm_vecs[r['cid']].append(np.array(r['emb'], dtype=np.float32))
+                            if counts[r["cid"]] >= 2:
+                                comm_vecs[r["cid"]].append(np.array(r["emb"], dtype=np.float32))
 
                         if comm_vecs:
-                            centroids = {cid: np.mean(vecs, axis=0) for cid, vecs in comm_vecs.items()}
+                            centroids = {
+                                cid: np.mean(vecs, axis=0) for cid, vecs in comm_vecs.items()
+                            }
                             cid_list = list(centroids.keys())
                             centroid_matrix = np.stack([centroids[c] for c in cid_list])
 
                             separated = 0
                             total = 0
                             for r in emb_rows:
-                                cid = r['cid']
+                                cid = r["cid"]
                                 if cid not in centroids:
                                     continue
-                                emb = np.array(r['emb'], dtype=np.float32)
-                                norms = np.linalg.norm(centroid_matrix, axis=1) * np.linalg.norm(emb)
+                                emb = np.array(r["emb"], dtype=np.float32)
+                                norms = np.linalg.norm(centroid_matrix, axis=1) * np.linalg.norm(
+                                    emb
+                                )
                                 norms = np.where(norms == 0, 1e-9, norms)
                                 sims = centroid_matrix @ emb / norms
                                 own_idx = cid_list.index(cid)
@@ -308,7 +315,9 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                                 total += 1
 
                             global_separation = separated / total if total > 0 else None
-                            global_overlap = 1.0 - global_separation if global_separation is not None else None
+                            global_overlap = (
+                                1.0 - global_separation if global_separation is not None else None
+                            )
                 except Exception as e_qm:
                     log.warning("Quality metric computation failed (non-fatal): %s", e_qm)
 
@@ -317,14 +326,18 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                         CALL gds.louvain.stats('ltm-entities')
                         YIELD modularity
                     """).single()
-                    unweighted_modularity = float(unweighted_row['modularity']) if unweighted_row else None
+                    unweighted_modularity = (
+                        float(unweighted_row["modularity"]) if unweighted_row else None
+                    )
                 except Exception:
                     try:
                         unweighted_row = s.run("""
                             CALL gds.louvain.stats('ltm-entities', {gamma: 1.0})
                             YIELD modularity
                         """).single()
-                        unweighted_modularity = float(unweighted_row['modularity']) if unweighted_row else None
+                        unweighted_modularity = (
+                            float(unweighted_row["modularity"]) if unweighted_row else None
+                        )
                     except Exception:
                         unweighted_modularity = None
 
@@ -383,7 +396,9 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                     new_hashes: dict[int, str] = {}
                     for cid, names in community_members.items():
                         sorted_names = sorted(names)
-                        h = hashlib.sha1("|".join(sorted_names).encode()).hexdigest()
+                        h = hashlib.sha1(
+                            "|".join(sorted_names).encode(), usedforsecurity=False
+                        ).hexdigest()
                         new_hashes[cid] = h
 
                     # Fetch existing hashes from Topic nodes
@@ -413,7 +428,9 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
 
         finally:
             try:
-                s.run("CALL gds.graph.drop($name, false) YIELD graphName", name=PROJECTED_GRAPH_NAME)
+                s.run(
+                    "CALL gds.graph.drop($name, false) YIELD graphName", name=PROJECTED_GRAPH_NAME
+                )
             except Exception:
                 pass
 

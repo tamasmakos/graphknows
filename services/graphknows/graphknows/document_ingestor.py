@@ -13,8 +13,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_ONTOLOGY = [
-    "PERSON", "ORGANIZATION", "LOCATION", "EVENT", "CONCEPT",
-    "POLICY", "LAW", "INSTITUTION", "TECHNOLOGY", "PRODUCT",
+    "PERSON",
+    "ORGANIZATION",
+    "LOCATION",
+    "EVENT",
+    "CONCEPT",
+    "POLICY",
+    "LAW",
+    "INSTITUTION",
+    "TECHNOLOGY",
+    "PRODUCT",
 ]
 
 CHUNK_TOKENS = 500
@@ -120,8 +128,7 @@ class DocumentIngestor:
                 follow_redirects=True,
                 headers={
                     "User-Agent": (
-                        "Graphknows/1.0 (https://graphknows.io; "
-                        "research@graphknows.io)"
+                        "Graphknows/1.0 (https://graphknows.io; research@graphknows.io)"
                     ),
                 },
                 timeout=30,
@@ -226,9 +233,9 @@ class DocumentIngestor:
                 start_tok += stride
                 continue
 
-            chunk_id = hashlib.sha256(
-                f"{snapped_start}:{chunk_text[:200]}".encode()
-            ).hexdigest()[:16]
+            chunk_id = hashlib.sha256(f"{snapped_start}:{chunk_text[:200]}".encode()).hexdigest()[
+                :16
+            ]
 
             chunks.append(
                 ChunkData(
@@ -268,9 +275,7 @@ class DocumentIngestor:
         if key not in self._gliner_cache:
             from gliner import GLiNER  # type: ignore[import-untyped]
 
-            self._gliner_cache[key] = GLiNER.from_pretrained(
-                "urchade/gliner_multi-v2.1"
-            )
+            self._gliner_cache[key] = GLiNER.from_pretrained("urchade/gliner_multi-v2.1")
         return self._gliner_cache[key]
 
     def _get_spacy(self) -> Any:
@@ -293,13 +298,8 @@ class DocumentIngestor:
         """
         try:
             model = self._get_gliner(ontology)
-            preds = model.predict_entities(
-                chunk.text, ontology, threshold=0.5
-            )
-            return [
-                EntityMention(p["text"], p["label"], chunk.id, p["score"])
-                for p in preds
-            ]
+            preds = model.predict_entities(chunk.text, ontology, threshold=0.5)
+            return [EntityMention(p["text"], p["label"], chunk.id, p["score"]) for p in preds]
         except ImportError:
             pass
         except Exception as exc:
@@ -314,10 +314,7 @@ class DocumentIngestor:
                 if not ontology or ent.label_ in ontology
             ]
         except ImportError:
-            logger.warning(
-                "No NER backend (GLiNER2 or spaCy). "
-                "Returning empty entity list."
-            )
+            logger.warning("No NER backend (GLiNER2 or spaCy). Returning empty entity list.")
             return []
 
     # ------------------------------------------------------------------
@@ -606,8 +603,13 @@ class DocumentIngestor:
         # 6. Neo4j write
         try:
             self._write_neo4j(
-                doc_id, doc_title, resolved_url, source_type,
-                session_id, chunks, all_mentions,
+                doc_id,
+                doc_title,
+                resolved_url,
+                source_type,
+                session_id,
+                chunks,
+                all_mentions,
             )
         except Exception as exc:
             errors.append(f"Neo4j write failed: {exc}")
@@ -617,8 +619,13 @@ class DocumentIngestor:
         if self._mg is not None:
             try:
                 self._write_memgraph(
-                    doc_id, doc_title, resolved_url, source_type,
-                    session_id, chunks, all_mentions,
+                    doc_id,
+                    doc_title,
+                    resolved_url,
+                    source_type,
+                    session_id,
+                    chunks,
+                    all_mentions,
                 )
             except Exception as exc:
                 errors.append(f"Memgraph write failed (non-fatal): {exc}")

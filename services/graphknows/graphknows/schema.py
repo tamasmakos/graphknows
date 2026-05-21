@@ -48,6 +48,10 @@ def apply_schema(session: Any) -> dict[str, Any]:
             applied["indexes"] += 1
         except Exception as exc:
             applied["errors"].append(f"index: {exc}")
-    log.info("apply_schema: %d constraints, %d indexes, %d errors",
-             applied["constraints"], applied["indexes"], len(applied["errors"]))
+    log.info(
+        "apply_schema: %d constraints, %d indexes, %d errors",
+        applied["constraints"],
+        applied["indexes"],
+        len(applied["errors"]),
+    )
     return applied

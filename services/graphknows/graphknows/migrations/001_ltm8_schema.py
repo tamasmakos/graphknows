@@ -10,7 +10,9 @@ def run() -> None:
     settings = GraphKnowsSettings()
     from neo4j import GraphDatabase
 
-    driver = GraphDatabase.driver(settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password))
+    driver = GraphDatabase.driver(
+        settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
+    )
     try:
         with driver.session() as s:
             result = apply_schema(s)

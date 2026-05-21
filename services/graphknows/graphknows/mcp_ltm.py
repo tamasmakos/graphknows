@@ -225,7 +225,7 @@ async def _tool_ltm_query(args: dict) -> str:
     try:
         rows = await conn.fetch(
             "SELECT community_id, summary, entity_count, hub_entities FROM ltm_topics "
-            f"ORDER BY embedding <=> $1::vector LIMIT {top_k}",
+            f"ORDER BY embedding <=> $1::vector LIMIT {top_k}",  # nosec B608
             embedding,
         )
     finally:
@@ -233,12 +233,14 @@ async def _tool_ltm_query(args: dict) -> str:
 
     results = []
     for r in rows:
-        results.append({
-            "community_id": r["community_id"],
-            "summary": r["summary"],
-            "entity_count": r["entity_count"],
-            "hub_entities": r.get("hub_entities"),
-        })
+        results.append(
+            {
+                "community_id": r["community_id"],
+                "summary": r["summary"],
+                "entity_count": r["entity_count"],
+                "hub_entities": r.get("hub_entities"),
+            }
+        )
     return json.dumps(results, ensure_ascii=False, indent=2)
 
 
@@ -286,6 +288,7 @@ async def _tool_ltm_topics(args: dict) -> str:
 
 async def _tool_recall_by_document(args: dict) -> str:
     from graphknows.recall import recall_by_document as _rbd
+
     query = str(args["query"])
     top_k = max(1, min(int(args.get("top_k", 5)), 20))
     d = _neo4j_driver()
@@ -294,15 +297,23 @@ async def _tool_recall_by_document(args: dict) -> str:
     finally:
         d.close()
     return json.dumps(
-        [{"text": r.text, "entities": r.entity_names,
-          "provenance": r.provenance, "score": r.score}
-         for r in results],
-        ensure_ascii=False, indent=2,
+        [
+            {
+                "text": r.text,
+                "entities": r.entity_names,
+                "provenance": r.provenance,
+                "score": r.score,
+            }
+            for r in results
+        ],
+        ensure_ascii=False,
+        indent=2,
     )
 
 
 async def _tool_recall_by_dialog(args: dict) -> str:
     from graphknows.recall import recall_by_dialog as _rbdia
+
     query = str(args["query"])
     top_k = max(1, min(int(args.get("top_k", 5)), 20))
     session_filter = args.get("session_filter") or None
@@ -312,15 +323,23 @@ async def _tool_recall_by_dialog(args: dict) -> str:
     finally:
         d.close()
     return json.dumps(
-        [{"text": r.text, "entities": r.entity_names,
-          "provenance": r.provenance, "score": r.score}
-         for r in results],
-        ensure_ascii=False, indent=2,
+        [
+            {
+                "text": r.text,
+                "entities": r.entity_names,
+                "provenance": r.provenance,
+                "score": r.score,
+            }
+            for r in results
+        ],
+        ensure_ascii=False,
+        indent=2,
     )
 
 
 async def _tool_recall_by_topic(args: dict) -> str:
     from graphknows.recall import recall_by_topic as _rbt
+
     query = str(args["query"])
     top_k = max(1, min(int(args.get("top_k", 5)), 20))
     d = _neo4j_driver()
@@ -329,10 +348,17 @@ async def _tool_recall_by_topic(args: dict) -> str:
     finally:
         d.close()
     return json.dumps(
-        [{"text": r.text, "entities": r.entity_names,
-          "provenance": r.provenance, "score": r.score}
-         for r in results],
-        ensure_ascii=False, indent=2,
+        [
+            {
+                "text": r.text,
+                "entities": r.entity_names,
+                "provenance": r.provenance,
+                "score": r.score,
+            }
+            for r in results
+        ],
+        ensure_ascii=False,
+        indent=2,
     )
 
 

@@ -33,7 +33,8 @@ class LTMForget:
                 "MATCH (e:Entity) "
                 "WHERE e.last_seen < $cutoff AND coalesce(e.pagerank, 0) < $floor "
                 "DETACH DELETE e RETURN count(e) as deleted",
-                cutoff=cutoff, floor=pagerank_floor,
+                cutoff=cutoff,
+                floor=pagerank_floor,
             ).single()
             deleted = result["deleted"] if result else 0
         log.info("prune_by_ttl: removed %d stale low-rank entities", deleted)
@@ -79,7 +80,10 @@ class LTMForget:
                 "MATCH (e:Entity) WHERE NOT (e)-[:APPEARED_IN]->() AND NOT (e)--() "
                 "DETACH DELETE e RETURN count(e) as deleted"
             ).single()
-        return {"deleted_segments": True, "orphaned_entities_deleted": result["deleted"] if result else 0}
+        return {
+            "deleted_segments": True,
+            "orphaned_entities_deleted": result["deleted"] if result else 0,
+        }
 
     def prune(self, session_id: str | None = None, utterance_ttl_days: int = 180) -> dict[str, Any]:
         """Prune orphaned Document, Chunk, Dialog, Utterance nodes.
@@ -100,7 +104,9 @@ class LTMForget:
         }
         with self._driver.session() as s:
             # Count then delete — Neo4j doesn't support aggregation + DELETE in one pass
-            r = s.run("MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() RETURN count(d) AS c").single()
+            r = s.run(
+                "MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() RETURN count(d) AS c"
+            ).single()
             results["documents_orphaned"] = r["c"] if r else 0
             if results["documents_orphaned"]:
                 s.run("MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() DELETE d")
@@ -111,7 +117,9 @@ class LTMForget:
             ).single()
             results["chunks_orphaned"] = r["c"] if r else 0
             if results["chunks_orphaned"]:
-                s.run("MATCH (c:Chunk) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() DETACH DELETE c")
+                s.run(
+                    "MATCH (c:Chunk) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() DETACH DELETE c"
+                )
 
             r = s.run(
                 "MATCH (d:Dialog) WHERE NOT EXISTS { "

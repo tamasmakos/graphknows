@@ -1,4 +1,5 @@
 """LTM retrieval: recall_by_document, recall_by_dialog, recall_by_topic."""
+
 from __future__ import annotations
 
 import logging
@@ -76,16 +77,18 @@ def recall_by_document(
 
         results = []
         for r in rows:
-            results.append(RecallResult(
-                source_type="document",
-                text=r["text"],
-                entity_names=list(r["entities"]),
-                provenance={
-                    "title": r.get("title", "Unknown"),
-                    "url": r.get("url", ""),
-                },
-                score=r["score"],
-            ))
+            results.append(
+                RecallResult(
+                    source_type="document",
+                    text=r["text"],
+                    entity_names=list(r["entities"]),
+                    provenance={
+                        "title": r.get("title", "Unknown"),
+                        "url": r.get("url", ""),
+                    },
+                    score=r["score"],
+                )
+            )
         return results
     except Exception:
         log.exception("recall_by_document failed")
@@ -156,18 +159,20 @@ def recall_by_dialog(
 
         results = []
         for r in rows:
-            results.append(RecallResult(
-                source_type="dialog",
-                text=r["text"],
-                entity_names=list(r["entities"]),
-                provenance={
-                    "session_id": r.get("session_id", ""),
-                    "turn_index": r.get("turn_index", 0),
-                    "role": r.get("role", ""),
-                    "participant": r.get("participant", ""),
-                },
-                score=r["score"],
-            ))
+            results.append(
+                RecallResult(
+                    source_type="dialog",
+                    text=r["text"],
+                    entity_names=list(r["entities"]),
+                    provenance={
+                        "session_id": r.get("session_id", ""),
+                        "turn_index": r.get("turn_index", 0),
+                        "role": r.get("role", ""),
+                        "participant": r.get("participant", ""),
+                    },
+                    score=r["score"],
+                )
+            )
         return results
     except Exception:
         log.exception("recall_by_dialog failed")
@@ -232,19 +237,21 @@ def recall_by_topic(
             seen.add(tid)
             # Deduplicate entity names while preserving order
             ents: list[str] = []
-            for e in (r.get("entities") or []):
+            for e in r.get("entities") or []:
                 if e not in ents:
                     ents.append(e)
-            results.append(RecallResult(
-                source_type="topic",
-                text=r["label"],
-                entity_names=ents,
-                provenance={
-                    "topic_id": tid,
-                    "size": r.get("size", 0),
-                },
-                score=r["score"],
-            ))
+            results.append(
+                RecallResult(
+                    source_type="topic",
+                    text=r["label"],
+                    entity_names=ents,
+                    provenance={
+                        "topic_id": tid,
+                        "size": r.get("size", 0),
+                    },
+                    score=r["score"],
+                )
+            )
         return results
     except Exception:
         log.exception("recall_by_topic failed")

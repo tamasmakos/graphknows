@@ -17,6 +17,7 @@ def _neo4j_driver():
     pw = os.environ.get("NEO4J_PASSWORD", "testpassword123")
     return GraphDatabase.driver(uri, auth=(user, pw))
 
+
 def _pg_dsn():
     return os.environ.get("PGVECTOR_DSN", "postgresql://postgres@172.18.0.1:5432/vectordb")
 
@@ -65,7 +66,7 @@ def query(query, top_k):
         try:
             rows = await conn.fetch(
                 "SELECT community_id, summary, entity_count FROM ltm_topics "
-                f"ORDER BY embedding <=> $1::vector LIMIT {top_k}",
+                f"ORDER BY embedding <=> $1::vector LIMIT {top_k}",  # nosec B608
                 embedding,
             )
             return rows
@@ -88,6 +89,7 @@ def forget():
 def forget_disconnected():
     """Prune isolated Entity nodes with no relations."""
     from graphknows.forget import LTMForget
+
     f = LTMForget(_neo4j_driver(), _pg_dsn())
     result = f.prune_disconnected()
     click.echo(f"Deleted {result['deleted_entities']} isolated entities")
@@ -98,6 +100,7 @@ def forget_disconnected():
 def forget_before(date):
     """Delete Segment nodes older than DATE (ISO format: 2025-01-01)."""
     from graphknows.forget import LTMForget
+
     f = LTMForget(_neo4j_driver(), _pg_dsn())
     result = f.forget_before(date)
     click.echo(f"Deleted segments before {date}, orphans: {result['orphaned_entities_deleted']}")
@@ -108,6 +111,7 @@ def forget_before(date):
 def forget_community_cmd(community_id):
     """Delete all entities exclusively in a community."""
     from graphknows.forget import LTMForget
+
     f = LTMForget(_neo4j_driver(), _pg_dsn())
     result = f.forget_community(community_id)
     click.echo(f"Deleted community {result['community_id']}: {result['deleted_entities']} entities")
@@ -118,9 +122,12 @@ def forget_community_cmd(community_id):
 def enrich(skip_topics):
     """Run feature engineering (Leiden + centrality) on the full LTM graph."""
     from graphknows.feature_engineering import LTMFeatureEngineer
+
     fe = LTMFeatureEngineer(_neo4j_driver())
     result = fe.run()
-    click.echo(f"Entities: {result.entity_count}, Communities: {result.community_count}, Algorithm: {result.algorithm_used}, {result.runtime_ms:.0f}ms")
+    click.echo(
+        f"Entities: {result.entity_count}, Communities: {result.community_count}, Algorithm: {result.algorithm_used}, {result.runtime_ms:.0f}ms"
+    )
     if result.error:
         click.echo(f"Warning: {result.error}")
     if result.top_entities:
@@ -136,6 +143,7 @@ def enrich(skip_topics):
 def recall_docs(query: str, top_k: int, session: str | None) -> None:
     """Find document chunks matching QUERY."""
     from graphknows.recall import recall_by_document
+
     d = _neo4j_driver()
     results = recall_by_document(d, query, top_k, session)
     d.close()
@@ -153,13 +161,16 @@ def recall_docs(query: str, top_k: int, session: str | None) -> None:
 def recall_dialog(query: str, top_k: int, session: str | None) -> None:
     """Find past conversation turns matching QUERY."""
     from graphknows.recall import recall_by_dialog
+
     d = _neo4j_driver()
     results = recall_by_dialog(d, query, top_k, session)
     d.close()
     for r in results:
-        click.echo(f"[{r.score:.2f}] session={r.provenance.get('session_id', '?')} "
-                   f"turn={r.provenance.get('turn_index', 0)} "
-                   f"{r.provenance.get('role', '?')}: {r.text[:120]}...")
+        click.echo(
+            f"[{r.score:.2f}] session={r.provenance.get('session_id', '?')} "
+            f"turn={r.provenance.get('turn_index', 0)} "
+            f"{r.provenance.get('role', '?')}: {r.text[:120]}..."
+        )
         click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
     if not results:
         click.echo("No results found.")
@@ -171,13 +182,16 @@ def recall_dialog(query: str, top_k: int, session: str | None) -> None:
 def recall_topic(query: str, top_k: int) -> None:
     """Find topics related to QUERY."""
     from graphknows.recall import recall_by_topic
+
     d = _neo4j_driver()
     results = recall_by_topic(d, query, top_k)
     d.close()
     for r in results:
-        click.echo(f"[{r.score:.2f}] {r.text[:120]} "
-                   f"(entities: {len(r.entity_names)}, "
-                   f"size: {r.provenance.get('size', 0)})")
+        click.echo(
+            f"[{r.score:.2f}] {r.text[:120]} "
+            f"(entities: {len(r.entity_names)}, "
+            f"size: {r.provenance.get('size', 0)})"
+        )
         click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
     if not results:
         click.echo("No results found.")

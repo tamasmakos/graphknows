@@ -16,7 +16,7 @@ log = logging.getLogger("graphknows.topic_summarizer")
 
 MIN_COMMUNITY_SIZE = 3
 MAX_CONCURRENT_LLM = 4
-HUB_ENTITIES_K = 10   # top-K entities per community for the prompt
+HUB_ENTITIES_K = 10  # top-K entities per community for the prompt
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 SUBTOPIC_MIN_SIZE = 6  # minimum community size to attempt sub-Leiden
 
@@ -49,6 +49,7 @@ class TopicSummarizer:
     def _get_embedder(self):
         if self._embedder is None:
             from sentence_transformers import SentenceTransformer
+
             self._embedder = SentenceTransformer(EMBED_MODEL)
         return self._embedder
 
@@ -90,6 +91,7 @@ class TopicSummarizer:
     async def run(self, changed_community_ids: list[int] | None = None) -> TopicSummaryResult:
         """Summarize all (or specified) communities with >= MIN_COMMUNITY_SIZE entities."""
         import asyncpg
+
         result = TopicSummaryResult()
 
         # 1. Fetch communities from Neo4j
@@ -125,7 +127,8 @@ class TopicSummarizer:
                 ents = s.run(
                     "MATCH (e:Entity {community_id: $cid}) "
                     "RETURN e.name as name ORDER BY coalesce(e.pagerank,0) DESC LIMIT $k",
-                    cid=cid, k=HUB_ENTITIES_K,
+                    cid=cid,
+                    k=HUB_ENTITIES_K,
                 ).data()
                 community_entities[cid] = [e["name"] for e in ents]
 
@@ -139,12 +142,14 @@ class TopicSummarizer:
                     return cid, summary
                 except Exception as e:
                     log.warning("LLM summary failed for community %d: %s", cid, e)
-                    return cid, f"Community of {len(entities)} entities including: {', '.join(entities[:3])}"
+                    return (
+                        cid,
+                        f"Community of {len(entities)} entities including: {', '.join(entities[:3])}",
+                    )
 
-        summaries = await asyncio.gather(*[
-            summarize_one(c["cid"], community_entities[c["cid"]])
-            for c in communities
-        ])
+        summaries = await asyncio.gather(
+            *[summarize_one(c["cid"], community_entities[c["cid"]]) for c in communities]
+        )
 
         # 4. Write Topic nodes to Neo4j + embeddings to pgvector
         pg = await asyncpg.connect(self._pg_dsn)
@@ -164,7 +169,8 @@ class TopicSummarizer:
                     all_entity_names = [r["name"] for r in name_rows]
 
                 community_hash = hashlib.sha1(
-                    "|".join(sorted(all_entity_names)).encode()
+                    "|".join(sorted(all_entity_names)).encode(),
+                    usedforsecurity=False,  # content deduplication, not a security hash
                 ).hexdigest()
 
                 # Neo4j Topic node
@@ -180,7 +186,9 @@ class TopicSummarizer:
                         "WITH t "
                         "MATCH (e:Entity {community_id: $cid}) "
                         "MERGE (e)-[:BELONGS_TO]->(t)",
-                        cid=cid, summary=summary, ec=entity_count,
+                        cid=cid,
+                        summary=summary,
+                        ec=entity_count,
                         community_hash=community_hash,
                     )
 
@@ -195,7 +203,11 @@ class TopicSummarizer:
                     VALUES ($1, $2, $3::vector, $4, $5, NOW())
                     ON CONFLICT (community_id) DO UPDATE
                     SET summary=$2, embedding=$3::vector, entity_count=$4, hub_entities=$5, updated_at=NOW()""",
-                    cid, summary, json.dumps(embedding), entity_count, json.dumps(hub_names),
+                    cid,
+                    summary,
+                    json.dumps(embedding),
+                    entity_count,
+                    json.dumps(hub_names),
                 )
 
                 # 5. Sub-community detection for large communities
@@ -207,7 +219,9 @@ class TopicSummarizer:
 
         log.info(
             "Topic summarization: %d created, %d updated, %d subtopics created",
-            result.topics_created, result.topics_updated, result.subtopics_created,
+            result.topics_created,
+            result.topics_updated,
+            result.subtopics_created,
         )
         return result
 
@@ -245,7 +259,8 @@ class TopicSummarizer:
                     sub_community_count = sub_result["communityCount"]
                     log.info(
                         "Sub-communities for community %d: %d sub-communities",
-                        cid, sub_community_count,
+                        cid,
+                        sub_community_count,
                     )
 
                     # Fetch distinct sub-communities
@@ -264,7 +279,9 @@ class TopicSummarizer:
                         sub_ents = s.run(
                             "MATCH (e:Entity {community_id: $cid, subcommunity_id: $scid}) "
                             "RETURN e.name as name ORDER BY coalesce(e.pagerank, 0) DESC LIMIT $k",
-                            cid=cid, scid=scid, k=HUB_ENTITIES_K,
+                            cid=cid,
+                            scid=scid,
+                            k=HUB_ENTITIES_K,
                         ).data()
                         sub_entity_names = [e["name"] for e in sub_ents]
 
@@ -282,7 +299,10 @@ class TopicSummarizer:
                             "WITH st "
                             "MATCH (t:Topic {community_id: $cid}) "
                             "MERGE (st)-[:PART_OF]->(t)",
-                            cid=cid, scid=scid, summary=sub_summary, ec=scid_size,
+                            cid=cid,
+                            scid=scid,
+                            summary=sub_summary,
+                            ec=scid_size,
                         )
 
                         # Link entities to SubTopic
@@ -290,13 +310,16 @@ class TopicSummarizer:
                             "MATCH (e:Entity {community_id: $cid, subcommunity_id: $scid}) "
                             "MATCH (st:SubTopic {community_id: $cid, subcommunity_id: $scid}) "
                             "MERGE (e)-[:BELONGS_TO_SUB]->(st)",
-                            cid=cid, scid=scid,
+                            cid=cid,
+                            scid=scid,
                         )
 
                         result.subtopics_created += 1
 
             except Exception as e:
-                log.warning("Sub-community detection failed for community %d (non-fatal): %s", cid, e)
+                log.warning(
+                    "Sub-community detection failed for community %d (non-fatal): %s", cid, e
+                )
             finally:
                 try:
                     s.run(
