@@ -249,63 +249,11 @@ jobs:
           echo "  ${{ env.IMAGE_PREFIX }}-search:${{ steps.meta.outputs.tag }}"
           echo "  ${{ env.IMAGE_PREFIX }}-frontend:${{ steps.meta.outputs.tag }}"
 
-  # ── 2. Deploy to VPS via SSH (optional — skipped if secrets absent) ──────
-  deploy-vps:
-    name: Deploy to VPS
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    # Skip cleanly if secrets are not configured
-    if: |
-      needs.build-and-push.result == 'success' &&
-      vars.VPS_DEPLOY_ENABLED == 'true'
-
-    environment: production   # requires manual approval if configured in GitHub
-
-    steps:
-      - name: Checkout (for compose files)
-        uses: actions/checkout@v4
-
-      - name: Download docker-compose.prod.yml
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-compose-prod-${{ needs.build-and-push.outputs.tag }}
-
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: Copy compose file to VPS
-        run: |
-          scp -i ~/.ssh/deploy_key \
-            docker-compose.prod.yml \
-            ${{ secrets.SSH_USER }}@${{ secrets.VPS_HOST }}:/opt/graphknows/docker-compose.yml
-
-      - name: Pull images and redeploy
-        env:
-          TAG: ${{ needs.build-and-push.outputs.tag }}
-        run: |
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USER }}@${{ secrets.VPS_HOST }} \
-            "cd /opt/graphknows && \
-             sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${TAG}/' .env || echo IMAGE_TAG=${TAG} >> .env && \
-             docker compose pull && \
-             docker compose up -d --remove-orphans && \
-             docker compose ps"
-
-      - name: Verify deployment health
-        run: |
-          sleep 15
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USER }}@${{ secrets.VPS_HOST }} \
-            "curl -fsS http://localhost:8025/health && \
-             curl -fsS http://localhost:8030/health && \
-             curl -fsS http://localhost:8040/api/v1/health && \
-             curl -fsS http://localhost:8080/ && \
-             echo 'All services healthy on VPS.'"
+  # ── 2. Deploy to VPS — disabled, reserved for future use ────────────────
+  # Uncomment and configure SSH_USER, VPS_HOST, SSH_PRIVATE_KEY secrets
+  # plus set vars.VPS_DEPLOY_ENABLED=true to activate.
+  #
+  # deploy-vps:
+  #   name: Deploy to VPS
+  #   needs: build-and-push
+  #   ...
