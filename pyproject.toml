@@ -9,6 +9,8 @@ requires-python = ">=3.11"
 [tool.uv.workspace]
 members = [
     "services/graphknows",
+    "services/agent",
+    "services/search",
 ]
 
 # Dev-only tools (linting, testing) — installed in the devcontainer workspace
