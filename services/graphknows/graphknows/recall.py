@@ -199,37 +199,48 @@ def recall_by_topic(
         return []
 
     try:
+        # Match via summary text (primary) or entity name (secondary)
         cypher = """
             MATCH (t:Topic)
-            WHERE any(word IN $words WHERE toLower(coalesce(t.label, '')) CONTAINS toLower(word))
-               OR any(word IN $words
-                       WHERE any(e IN t.top_entities WHERE toLower(e) CONTAINS toLower(word)))
+            WHERE any(word IN $words WHERE toLower(coalesce(t.summary, '')) CONTAINS toLower(word))
+            OPTIONAL MATCH (e:Entity)-[:BELONGS_TO]->(t)
+            WITH t, collect(e.name)[..8] AS entities, 1.0 AS score
             RETURN t.community_id AS topic_id,
-                   coalesce(t.label, 'Topic ' + toString(t.community_id)) AS label,
-                   t.top_entities AS entities, t.entity_count AS size,
-                   1.0 AS score
+                   coalesce(t.summary, 'Topic ' + toString(t.community_id)) AS label,
+                   entities, t.entity_count AS size, score
             UNION
             MATCH (e:Entity)
             WHERE any(word IN $words WHERE toLower(e.name) CONTAINS toLower(word))
             MATCH (e)-[:BELONGS_TO]->(t:Topic)
+            OPTIONAL MATCH (e2:Entity)-[:BELONGS_TO]->(t)
+            WITH t, collect(e2.name)[..8] AS entities, 0.8 AS score
             RETURN t.community_id AS topic_id,
-                   coalesce(t.label, 'Topic ' + toString(t.community_id)) AS label,
-                   t.top_entities AS entities, t.entity_count AS size,
-                   0.8 AS score
+                   coalesce(t.summary, 'Topic ' + toString(t.community_id)) AS label,
+                   entities, t.entity_count AS size, score
             ORDER BY score DESC
             LIMIT $top_k
         """
         with driver.session() as s:
             rows = s.run(cypher, words=words, top_k=top_k).data()
 
+        seen: set[int] = set()
         results = []
         for r in rows:
+            tid = r["topic_id"]
+            if tid in seen:
+                continue
+            seen.add(tid)
+            # Deduplicate entity names while preserving order
+            ents: list[str] = []
+            for e in (r.get("entities") or []):
+                if e not in ents:
+                    ents.append(e)
             results.append(RecallResult(
                 source_type="topic",
                 text=r["label"],
-                entity_names=list(r.get("entities") or []),
+                entity_names=ents,
                 provenance={
-                    "topic_id": r["topic_id"],
+                    "topic_id": tid,
                     "size": r.get("size", 0),
                 },
                 score=r["score"],
