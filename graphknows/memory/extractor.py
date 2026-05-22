@@ -114,6 +114,7 @@ class GLiNER2EntityExtractor:
                 swallow. The caller (``MemoryIngestor``) must handle failures.
         """
         self._ensure_model_loaded()
+        assert self._gliner is not None  # guaranteed by _ensure_model_loaded
 
         raw = self._gliner.extract(
             text,

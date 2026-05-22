@@ -56,7 +56,7 @@ def _run_stdio() -> None:
     import asyncio
     import logging
 
-    from graphknows.api import GraphKnowsSettings
+    from graphknows.config import GraphKnowsSettings
     from graphknows.mcp.server import mcp, set_dependencies
     from graphknows.retrieval.retriever import HybridRetriever
     from graphknows.retrieval.stores.memgraph import MemgraphStore

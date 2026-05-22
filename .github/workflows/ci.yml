@@ -178,7 +178,6 @@ jobs:
         run: |
           uv run pytest \
             tests/test_graphknows_package.py \
-            tests/test_langgraph_agent_search_web.py \
             tests/test_hybridrag_api.py \
             -v --tb=short \
             -m "not integration" \

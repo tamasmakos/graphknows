@@ -57,7 +57,7 @@ class PlainTextParser(BaseParser):
         else:
             # Markdown with headings - build heading hierarchy
             sections = []
-            stack = []
+            stack: list[tuple[int, str]] = []
             for i, match in enumerate(matches):
                 level = len(match.group(1))
                 heading_line = match.group(0)

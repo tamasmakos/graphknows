@@ -142,7 +142,8 @@ class SessionFlusher:
     async def _read_stm(self, session_id: str) -> dict[str, Any]:
         """Read all STM nodes/edges for this session from Memgraph."""
         try:
-            return await self._mg.read_session_subgraph(session_id)
+            result: dict[str, Any] = await self._mg.read_session_subgraph(session_id)
+            return result
         except Exception as exc:
             log.warning("read_stm %s: %s", session_id, exc)
             return {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
@@ -194,7 +195,7 @@ class SessionFlusher:
 
         Uses gds.louvain.write (NOT leiden — broken in GDS 2026.04).
         """
-        count = await self._neo.summarize_topics(
+        count: int = await self._neo.summarize_topics(
             session_id=session_id,
             openrouter_key=self._openrouter_key,
             llm_model=self._llm_model,

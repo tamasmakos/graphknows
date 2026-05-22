@@ -456,9 +456,16 @@ async def preview_session_merge(session_id: str) -> dict[str, Any]:
 def _load_patch_taxonomy(taxonomy_file: str | None) -> dict[str, Any] | None:
     """Load taxonomy for a patch request; returns None on failure."""
     try:
-        from graphknows.graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
+        from graphknows.graphgen.config.taxonomy import (  # noqa: PLC0415
+            TaxonomyConfig,
+            get_default_taxonomy,
+            load_taxonomy,
+        )
 
-        return load_taxonomy(taxonomy_file) if taxonomy_file else get_default_taxonomy()
+        result: TaxonomyConfig = (
+            load_taxonomy(taxonomy_file) if taxonomy_file else get_default_taxonomy()
+        )
+        return result.model_dump()
     except Exception as exc:
         logger.warning("Could not load patch taxonomy: %s", exc)
         return None
