@@ -30,7 +30,7 @@ class OntologyRelExtractor:
                 "text, entities_json, ontology_schema -> relations_json"
             )
             if lm is not None:
-                dspy.settings.configure(lm=lm)
+                dspy.configure(lm=lm)
             elif os.environ.get("OPENROUTER_API_KEY"):
                 import dspy as _dspy
 
@@ -38,16 +38,16 @@ class OntologyRelExtractor:
                     model="openrouter/moonshotai/kimi-k2",
                     api_key=os.environ["OPENROUTER_API_KEY"],
                     temperature=0.1,
-                    max_tokens=1024,
+                    max_tokens=2048,
                 )
-                _dspy.settings.configure(lm=_lm)
+                _dspy.configure(lm=_lm)
             self._available = True
             log.info("OntologyRelExtractor: DSPy ready")
         except ImportError:
             log.warning("DSPy not installed — OntologyRelExtractor disabled")
             self._available = False
 
-    def extract(
+    def extract(  # noqa: C901
         self,
         text: str,
         entities: list[dict],
@@ -79,7 +79,7 @@ class OntologyRelExtractor:
                     "examples": relations_hint,
                 }
             )
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             schema_compact = ontology_schema[:800]
 
         entity_names = [e.get("name", "") for e in entities if e.get("name")]
@@ -93,7 +93,22 @@ class OntologyRelExtractor:
             )
             raw = getattr(pred, "relations_json", "") or ""
             # Strip markdown code fences if model wraps output
-            raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            # Strip markdown code fences using removeprefix/removesuffix (not lstrip,
+            # which strips individual characters rather than the whole prefix string).
+            raw = raw.strip()
+            for fence in ("```json", "```"):
+                if raw.startswith(fence):
+                    raw = raw[len(fence) :]
+                    break
+            raw = raw.removesuffix("```").strip()
+            # If the model added preamble before the JSON, skip to the first
+            # '[' or '{' — but only when raw doesn't already start with JSON.
+            if raw and raw[0] not in ("[", "{"):
+                for start_char in ("[", "{"):
+                    idx = raw.find(start_char)
+                    if idx >= 0:
+                        raw = raw[idx:]
+                        break
             relations = json.loads(raw)
             if not isinstance(relations, list):
                 return []

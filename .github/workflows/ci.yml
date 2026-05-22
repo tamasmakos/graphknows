@@ -34,10 +34,10 @@ jobs:
         run: uv tool install ruff
 
       - name: Check formatting
-        run: ruff format --check --config ruff.toml services/graphknows/
+        run: ruff format --check --config ruff.toml graphknows/
 
       - name: Check lint
-        run: ruff check --no-fix --config ruff.toml --output-format github services/graphknows/
+        run: ruff check --no-fix --config ruff.toml --output-format github graphknows/
 
       - name: Ban sentence-transformers imports in production code
         run: |
@@ -45,11 +45,11 @@ jobs:
           if grep -rn 'from sentence_transformers\|import sentence_transformers' \
             --include='*.py' \
             --exclude-dir='.venv' --exclude-dir='research' --exclude-dir='tests' \
-            services/graphknows/ ; then
+            graphknows/ ; then
             echo "::error::sentence-transformers import found in production code — remove it"
             exit 1
           fi
-          if grep -q 'sentence-transformers' services/graphknows/pyproject.toml 2>/dev/null; then
+          if grep -q 'sentence-transformers' pyproject.toml 2>/dev/null; then
             echo "::error::sentence-transformers dep found in pyproject.toml — remove it"
             exit 1
           fi
@@ -91,7 +91,7 @@ jobs:
       - name: mypy (graphknows core — excludes graphgen)
         run: |
           uv run mypy \
-            services/graphknows/graphknows/ \
+            graphknows/ \
             --exclude 'graphgen' \
             --exclude 'cli/memory' \
             --exclude 'feature_engineering' \
@@ -126,8 +126,8 @@ jobs:
       - name: bandit (OWASP — graphknows core, excludes graphgen)
         run: |
           bandit \
-            -r services/graphknows/graphknows/ \
-            --exclude services/graphknows/graphknows/graphgen \
+            -r graphknows/ \
+            --exclude graphknows/graphgen \
             --skip B101,B104,B105,B110 \
             -f screen
           # B101: assert — acceptable in non-prod code
@@ -171,7 +171,7 @@ jobs:
 
       - name: Run tests
         env:
-          PYTHONPATH: ".:services:services/agent"
+          PYTHONPATH: "."
           OPENROUTER_API_KEY: "ci-placeholder"
           SEARCH_SERVICE_URL: "http://localhost:8040"
           AGENT_SERVICE_URL: "http://localhost:8002"
@@ -179,17 +179,10 @@ jobs:
           uv run pytest \
             tests/test_graphknows_package.py \
             tests/test_langgraph_agent_search_web.py \
-            tests/test_communicate_node.py \
-            tests/test_dual_writer.py \
-            tests/test_hybrid_retriever.py \
             tests/test_hybridrag_api.py \
-            tests/test_investigative_state.py \
-            tests/test_search_client.py \
-            tests/test_session_graph.py \
-            tests/test_workflow_wired.py \
             -v --tb=short \
             -m "not integration" \
-            --cov=services/graphknows/graphknows \
+            --cov=graphknows \
             --cov-config=.coveragerc \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing

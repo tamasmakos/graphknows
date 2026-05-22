@@ -68,16 +68,8 @@ DIST_TO_IMPORT: dict[str, str] = {
 # Services to check: name → (source dirs, pyproject path)
 SERVICES: dict[str, tuple[list[Path], Path]] = {
     "graphknows": (
-        [ROOT / "services/graphknows/graphknows"],
-        ROOT / "services/graphknows/pyproject.toml",
-    ),
-    "agent": (
-        [ROOT / "services/agent"],
-        ROOT / "services/agent/pyproject.toml",
-    ),
-    "search": (
-        [ROOT / "services/search"],
-        ROOT / "services/search/pyproject.toml",
+        [ROOT / "graphknows"],
+        ROOT / "pyproject.toml",
     ),
 }
 
@@ -156,7 +148,7 @@ def check_service(name: str, src_dirs: list[Path], pyproject: Path) -> list[str]
 
     # also include workspace siblings as declared
     # (graphknows imports graphknows itself, agent imports agent, etc.)
-    internal = {name, "graphknows", "graphgen", "agent", "search", "services"}
+    internal = {name, "graphknows", "graphgen"}
     declared |= internal
 
     errors: list[str] = []
