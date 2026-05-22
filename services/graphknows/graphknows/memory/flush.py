@@ -84,6 +84,10 @@ class SessionFlusher:
         t0 = time.monotonic()
         result = FlushResult(session_id=session_id)
 
+        # Ensure pgvector is connected
+        if hasattr(self._pg, "connect") and not getattr(self._pg, "_pool", None):
+            await self._pg.connect()
+
         stm_data = await self._read_stm(session_id)
 
         if opts.merge_entities:
@@ -194,5 +198,5 @@ class SessionFlusher:
 
     async def _clear_stm(self, session_id: str) -> None:
         """Delete all STM data for session from Memgraph and stm_* pgvector tables."""
-        self._mg.delete_session(session_id)
+        await self._mg.delete_session(session_id)
         await self._pg.clear_stm(session_id)

@@ -734,6 +734,7 @@ class Neo4jStore:
             topic_id = str(_uuid.uuid5(_GK_NS, f"topic:{session_id}:{comm_id}"))
             topic = {
                 "id": topic_id,
+                "topic_id": topic_id,
                 "label": title,
                 "summary": summary,
                 "community_id": comm_id,

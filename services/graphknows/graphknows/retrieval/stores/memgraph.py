@@ -586,8 +586,11 @@ class MemgraphStore:
                     {"name": r["name"], "type": r["type"], "confidence": r["confidence"] or 1.0}
                     for r in s.run(
                         "MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)"
-                        "-[:HAS_ENTITY]->(e:ENTITY) "
+                        "-[:HAS_ENTITY|MENTIONS]->(e:ENTITY) "
                         "WHERE sess.id = $sid "
+                        "RETURN DISTINCT e.name AS name, e.type AS type, e.confidence AS confidence"
+                        " UNION "
+                        "MATCH (e:ENTITY) WHERE e.session_id = $sid "
                         "RETURN DISTINCT e.name AS name, e.type AS type, e.confidence AS confidence",
                         sid=session_id,
                     )
@@ -653,8 +656,12 @@ class MemgraphStore:
                     {"chunk_id": r["chunk_id"], "entity_name": r["entity_name"]}
                     for r in s.run(
                         "MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)"
-                        "-[:HAS_ENTITY]->(e:ENTITY) "
+                        "-[:HAS_ENTITY|MENTIONS]->(e:ENTITY) "
                         "WHERE sess.id = $sid "
+                        "RETURN c.id AS chunk_id, e.name AS entity_name"
+                        " UNION "
+                        "MATCH (c:CHUNK)-[:MENTIONS|HAS_ENTITY]->(e:ENTITY) "
+                        "WHERE e.session_id = $sid "
                         "RETURN c.id AS chunk_id, e.name AS entity_name",
                         sid=session_id,
                     )
@@ -663,7 +670,7 @@ class MemgraphStore:
                     {"turn_id": r["turn_id"], "entity_name": r["entity_name"]}
                     for r in s.run(
                         "MATCH (sess:SESSION)-[:IN_SESSION]->(d:DIALOG)-[:HAS_TURN]->(t:TURN)"
-                        "-[:HAS_ENTITY]->(e:ENTITY) "
+                        "-[:HAS_ENTITY|MENTIONS]->(e:ENTITY) "
                         "WHERE sess.id = $sid "
                         "RETURN t.id AS turn_id, e.name AS entity_name",
                         sid=session_id,

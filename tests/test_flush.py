@@ -23,7 +23,7 @@ def _make_flusher():
             "turns": [],
         }
     )
-    mg.delete_session = MagicMock()
+    mg.delete_session = AsyncMock()
 
     pg = MagicMock()
     pg.promote_to_ltm = AsyncMock(return_value=(5, 3))
@@ -111,7 +111,7 @@ async def test_topic_summarization_failure_adds_to_errors():
 @pytest.mark.asyncio
 async def test_clear_stm_failure_adds_to_errors():
     flusher, mg, pg, neo = _make_flusher()
-    mg.delete_session = MagicMock(side_effect=RuntimeError("Memgraph down"))
+    mg.delete_session = AsyncMock(side_effect=RuntimeError("Memgraph down"))
     result = await flusher.flush("s1", FlushOptions(summarize_topics=False))
     assert any("clear_stm" in e for e in result.errors)
 
