@@ -7,14 +7,10 @@ from typing import Dict, List, Tuple, Optional, Set, Any
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# igraph and leidenalg for community detection
-try:
-    import igraph as ig
-    import leidenalg as la
-
-    IGRAPH_AVAILABLE = True
-except ImportError:
-    IGRAPH_AVAILABLE = False
+# igraph and leidenalg are required for Leiden community detection (thesis pipeline).
+# Install via: pip install igraph leidenalg
+import igraph as ig
+import leidenalg as la
 
 
 class CommunityDetector:
@@ -53,20 +49,6 @@ class CommunityDetector:
         """Run Leiden algorithm once."""
         if graph.number_of_nodes() < 3 or graph.number_of_edges() == 0:
             return {node: 0 for node in graph.nodes()}
-
-        if not IGRAPH_AVAILABLE:
-            logger.warning(
-                "igraph and leidenalg not available, using simple community detection fallback"
-            )
-            # Simple fallback: group nodes by degree
-            degrees = dict(graph.degree())
-            max_degree = max(degrees.values()) if degrees else 1
-            communities = {}
-            for node, degree in degrees.items():
-                # Create communities based on degree bins
-                community_id = min(int(degree / (max_degree / 4)), 3)  # 4 communities max
-                communities[node] = community_id
-            return communities
 
         # Convert to igraph
         # Note: subgraph_view returns a view, but for igraph conversion we usually iterate edges

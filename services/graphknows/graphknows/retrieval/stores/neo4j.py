@@ -7,8 +7,8 @@ Idempotent upserts use UUID5 deterministic IDs keyed on (doc_id, chunk_hash).
 from __future__ import annotations
 
 import asyncio
-import itertools
 import logging
+import re
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -30,14 +30,98 @@ def entity_node_id(name: str) -> str:
     return str(uuid.uuid5(_GK_NS, f"entity:{name.strip().upper()}"))
 
 
+def _safe_rel_label(raw: str) -> str:
+    """Convert a free-text relation string to a valid Cypher relationship type.
+
+    Uppercases, replaces spaces/hyphens with underscores, strips non-alphanumeric
+    characters. Returns empty string if nothing valid remains.
+    """
+    label = raw.upper().replace("-", "_").replace(" ", "_")
+    label = re.sub(r"[^\w]", "", label)
+    return label
+
+
+def _write_relation_edges(
+    s: Any,
+    triplets: list[tuple[str, str, str]],
+    entity_by_name: dict[str, dict[str, Any]],
+) -> int:
+    """Write typed directed edges between ENTITY nodes using dynamic Cypher labels.
+
+    Each triplet is (source_name, relation_label, target_name). The relation_label
+    becomes an actual Cypher relationship type (e.g. REGULATES, FUNDS). Triplets
+    whose endpoints are not in entity_by_name are silently skipped.
+
+    Returns:
+        Number of edges written.
+    """
+    edges = 0
+    for src, rel, tgt in triplets:
+        if src not in entity_by_name or tgt not in entity_by_name:
+            continue
+        safe = _safe_rel_label(rel)
+        if not safe:
+            continue
+        s.run(
+            f"MATCH (e1:ENTITY {{name: $src}}), (e2:ENTITY {{name: $tgt}}) "  # noqa: S608
+            f"MERGE (e1)-[r:{safe}]->(e2) "
+            f"SET r.weight = coalesce(r.weight, 0) + 1",
+            src=src,
+            tgt=tgt,
+        )
+        edges += 1
+    return edges
+
+
+def _compute_silhouette(
+    names: list[str],
+    name_idx: dict[str, int],
+    communities: dict[int, list[str]],
+    rows: list[dict[str, Any]],
+    weights: list[float],
+) -> float | None:
+    """Compute silhouette score from weighted edge co-occurrence data.
+
+    Uses a distance matrix: d(i,j) = 1 - weight/max_weight. Returns None on
+    any failure (missing optional deps, single community, etc.).
+    """
+    try:
+        import numpy as np  # noqa: PLC0415
+        from sklearn.metrics import silhouette_score  # noqa: PLC0415
+
+        labels = [0] * len(names)
+        for comm_id, members in communities.items():
+            for m in members:
+                labels[name_idx[m]] = comm_id
+        if len(set(labels)) < 2:
+            return None
+        max_w = max(weights) if weights else 1.0
+        adj = [[1.0] * len(names) for _ in range(len(names))]
+        for edge_data, w in zip(rows, weights):
+            i, j = name_idx[edge_data["a"]], name_idx[edge_data["b"]]
+            d = 1.0 - w / max_w
+            adj[i][j] = d
+            adj[j][i] = d
+            adj[i][i] = 0.0
+            adj[j][j] = 0.0
+        return float(silhouette_score(np.array(adj), labels, metric="precomputed"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Silhouette computation skipped: %s", exc)
+        return None
+
+
 def _write_evidence_graph(
     s: Any,
     session_id: str,
     stm_data: dict[str, Any],
     entity_by_name: dict[str, dict[str, Any]],
     now: str,
-) -> tuple[int, int]:
-    """MERGE SESSION→FILE→CHUNK→ENTITY + CO_OCCURS into *s*. Returns (nodes, edges)."""
+) -> tuple[int, int, dict[str, list[str]]]:
+    """MERGE SESSION→FILE→CHUNK→ENTITY into *s*. Returns (nodes, edges, chunk_to_ents).
+
+    CO_OCCURS edges are NOT written here. Relation extraction runs separately in
+    flush.py using the returned chunk_to_ents map.
+    """
     nodes, edges = 1, 0
     s.run("MERGE (sess:SESSION {id: $sid}) SET sess.flushed_at = $now", sid=session_id, now=now)
     for f in stm_data.get("files", []):
@@ -87,15 +171,7 @@ def _write_evidence_graph(
             n=ename,
         )
         edges += 1
-    for ents in chunk_to_ents.values():
-        for a, b in itertools.combinations(sorted(set(ents)), 2):
-            s.run(
-                "MATCH (e1:ENTITY {name: $a}), (e2:ENTITY {name: $b}) MERGE (e1)-[:CO_OCCURS]->(e2)",
-                a=a,
-                b=b,
-            )
-            edges += 1
-    return nodes, edges
+    return nodes, edges, dict(chunk_to_ents)
 
 
 def _write_interaction_graph(
@@ -286,11 +362,15 @@ class Neo4jStore:
                 self._run(
                     """MERGE (tp:Topic {id:$id})
                        SET tp.label=$label, tp.summary=$summary,
-                           tp.community_id=$community_id""",
+                           tp.community_id=$community_id,
+                           tp.modularity=$modularity,
+                           tp.silhouette=$silhouette""",
                     id=t["id"],
                     label=t.get("label", ""),
                     summary=t.get("summary", ""),
                     community_id=t.get("community_id"),
+                    modularity=t.get("modularity"),
+                    silhouette=t.get("silhouette"),
                 )
                 for name in t.get("members", []):
                     eid = entity_node_id(name)
@@ -611,12 +691,78 @@ class Neo4jStore:
 
         def _sync() -> dict[str, int]:
             with self._driver.session() as s:
-                n1, e1 = _write_evidence_graph(s, session_id, stm_data, entity_by_name, now)
+                n1, e1, _chunk_to_ents = _write_evidence_graph(
+                    s, session_id, stm_data, entity_by_name, now
+                )
                 written: set[str] = {e["name"] for e in stm_data.get("entities", [])}
                 n2, e2 = _write_interaction_graph(s, session_id, stm_data, entity_by_name, written)
             return {"nodes": n1 + n2, "edges": e1 + e2}
 
         return await asyncio.to_thread(_sync)
+
+    async def extract_and_write_relations(
+        self,
+        stm_data: dict[str, Any],
+        openrouter_key: str,
+        llm_model: str = "openrouter/meta-llama/llama-3.1-8b-instruct",
+    ) -> int:
+        """Run DSPyExtractor per chunk; write dynamic typed ENTITY→ENTITY edges.
+
+        Each chunk's entity list is used as hints for the DSPy module. The extractor
+        returns (source, relation_label, target) triplets where relation_label is a
+        taxonomy-driven semantic type (e.g. REGULATES, FUNDS, APPOINTS). These become
+        actual Cypher relationship types via _write_relation_edges.
+
+        Raises:
+            Any exception from DSPyExtractor.extract_relations propagates immediately.
+            This is intentional — partial relation writes are worse than no writes.
+
+        Returns:
+            Total number of relation edges written.
+        """
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            DSPyExtractor,  # noqa: PLC0415
+        )
+
+        entity_by_name: dict[str, dict[str, Any]] = {
+            e["name"]: e for e in stm_data.get("entities", [])
+        }
+        chunk_to_ents: dict[str, list[str]] = defaultdict(list)
+        for ce in stm_data.get("chunk_entity_edges", []):
+            chunk_to_ents[ce["chunk_id"]].append(ce["entity_name"])
+
+        extractor = DSPyExtractor(
+            config={
+                "llm": {"model": llm_model},
+                "openrouter_api_key": openrouter_key,
+            }
+        )
+
+        all_triplets: list[tuple[str, str, str]] = []
+        for chunk in stm_data.get("chunks", []):
+            ents = chunk_to_ents.get(chunk["id"], [])
+            if len(ents) < 2:
+                continue  # need at least 2 entities to form a relation
+            # extract_relations returns (relations_list, nodes_data_list, diagnostics)
+            relations, _, _diag = await extractor.extract_relations(
+                text=chunk["text"],
+                keywords=ents,
+                entities=ents,
+            )
+            for item in relations:
+                # item is a tuple: (source, relation, target, metadata_dict)
+                src, rel, tgt = item[0], item[1], item[2]
+                if src and rel and tgt:
+                    all_triplets.append((src, rel, tgt))
+
+        if not all_triplets:
+            return 0
+
+        def _sync_write() -> int:
+            with self._driver.session() as s:
+                return _write_relation_edges(s, all_triplets, entity_by_name)
+
+        return await asyncio.to_thread(_sync_write)
 
     async def summarize_topics(
         self,
@@ -665,6 +811,11 @@ class Neo4jStore:
             g, leidenalg.ModularityVertexPartition, weights=weights
         )
         communities = {i: [g.vs[vi]["name"] for vi in partition[i]] for i in range(len(partition))}
+
+        # Quality metrics — computed once for the full partition
+        modularity: float = partition.quality()
+        # Silhouette score requires ≥2 communities (optional deps: sklearn, numpy)
+        silhouette: float | None = _compute_silhouette(names, name_idx, communities, rows, weights)
 
         topics_created = 0
         for comm_id, members in communities.items():
@@ -739,6 +890,8 @@ class Neo4jStore:
                 "summary": summary,
                 "community_id": comm_id,
                 "members": members,
+                "modularity": modularity,
+                "silhouette": silhouette,
             }
             await self.upsert_topics([topic])
 
@@ -757,33 +910,35 @@ class Neo4jStore:
 
             # Write pgvector ltm_topics if store provided
             if pg_store is not None:
-                try:
-                    await pg_store.write_ltm_topic(topic)
-                except Exception as exc:
-                    logger.warning("pgvector ltm_topic write failed: %s", exc)
+                await pg_store.write_ltm_topic(topic)
 
             topics_created += 1
 
         return topics_created
 
     async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
-        """Run GDS PageRank + betweenness on CO_OCCURS; write back to ENTITY nodes.
-
-        Optional step — gracefully fails and returns empty dict on any error.
+        """Run GDS PageRank + betweenness on all ENTITY→ENTITY edges; write back to ENTITY nodes.
 
         Args:
             session_id: Used to scope projection (session entities only).
 
         Returns:
-            {"pagerank_written": int, "betweenness_written": int} or {} on error.
+            {"pagerank_written": int, "betweenness_written": int}
+
+        Raises:
+            Exception: Propagates any GDS or Neo4j failure. Graph projection cleanup
+                is attempted in the finally block regardless.
         """
         proj_name = f"gk_enrich_{session_id.replace('-', '_')}"
         try:
-            # Project session-scoped CO_OCCURS sub-graph
+            # Project ALL relationship types between ENTITY nodes (dynamic — covers any
+            # taxonomy-derived labels written by the relation extractor)
             await self._arun(
-                "CALL gds.graph.project($proj, "
-                "  {ENTITY: {properties: []}}, "
-                "  {CO_OCCURS: {orientation: 'UNDIRECTED'}})",
+                "CALL gds.graph.project.cypher($proj, "
+                "  'MATCH (e:ENTITY) RETURN id(e) AS id', "
+                "  'MATCH (e1:ENTITY)-[r]->(e2:ENTITY) "
+                "   RETURN id(e1) AS source, id(e2) AS target, "
+                "   coalesce(r.weight, 1.0) AS weight')",
                 proj=proj_name,
             )
 
@@ -796,25 +951,31 @@ class Neo4jStore:
             )
             pr_written = pr_rows[0]["nodePropertiesWritten"] if pr_rows else 0
 
-            # Betweenness (approximate)
-            bc_rows = await self._arun(
-                "CALL gds.betweenness.write($proj, "
-                "  {samplingSize: 100, writeProperty: 'betweenness'}) "
-                "YIELD nodePropertiesWritten",
-                proj=proj_name,
+            # Betweenness (approximate) — needs at least 2 nodes AND 1 edge
+            ent_count_rows = await self._arun("MATCH (e:ENTITY) RETURN count(e) AS c")
+            ent_count = ent_count_rows[0]["c"] if ent_count_rows else 0
+            edge_count_rows = await self._arun(
+                "MATCH (e1:ENTITY)-[r]->(e2:ENTITY) RETURN count(r) AS c"
             )
-            bc_written = bc_rows[0]["nodePropertiesWritten"] if bc_rows else 0
+            edge_count = edge_count_rows[0]["c"] if edge_count_rows else 0
+            bc_written = 0
+            if ent_count > 1 and edge_count > 0:
+                sample = min(100, ent_count)
+                bc_rows = await self._arun(
+                    "CALL gds.betweenness.write($proj, "
+                    "  {samplingSize: $sample, writeProperty: 'betweenness'}) "
+                    "YIELD nodePropertiesWritten",
+                    proj=proj_name,
+                    sample=sample,
+                )
+                bc_written = bc_rows[0]["nodePropertiesWritten"] if bc_rows else 0
 
             return {"pagerank_written": pr_written, "betweenness_written": bc_written}
-
-        except Exception as exc:
-            logger.warning("GDS enrichment skipped: %s", exc)
-            return {}
 
         finally:
             try:
                 await self._arun("CALL gds.graph.drop($proj, false)", proj=proj_name)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def count_nodes(self) -> dict[str, int]:

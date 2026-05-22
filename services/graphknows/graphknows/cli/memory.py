@@ -60,20 +60,16 @@ def ingest_cmd(text_or_path: str, session: str, title: str, is_file: bool) -> No
     Accepts raw text directly or a file path (with --is-file).
     Parser is selected automatically based on file extension.
     """
-    from graphknows.memory.ingestor import MemoryIngestor
+    from graphknows.memory.ingestor import MemoryIngestor, _run
     from graphknows.retrieval.stores.memgraph import MemgraphStore
     from graphknows.retrieval.stores.pgvector import PgVectorStore
 
     mg = MemgraphStore(_mg_uri())
     pg = PgVectorStore(_pg_dsn())
-    # Lazy extractor — defaults to no-op if GLiNER unavailable
-    try:
-        from graphknows.graphgen.pipeline.entity_relation.extraction import InProcessExtractor
+    _run(pg.connect())  # connect inside _BG_LOOP so pool is on the right event loop
+    from graphknows.memory.extractor import GLiNER2EntityExtractor
 
-        extractor = InProcessExtractor()
-    except Exception:
-        extractor = _NoOpExtractor()
-
+    extractor = GLiNER2EntityExtractor()
     ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=_embed_fn())
 
     if is_file:
@@ -114,7 +110,13 @@ def flush_cmd(session_id: str, no_topics: bool, no_clear: bool, gds: bool) -> No
 
     mg = MemgraphStore(_mg_uri())
     pg = PgVectorStore(_pg_dsn())
-    neo = _neo4j_driver()
+
+    from graphknows.retrieval.stores.neo4j import Neo4jStore
+    neo = Neo4jStore(
+        uri=os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
+        user=os.environ.get("NEO4J_USER", "neo4j"),
+        password=os.environ.get("NEO4J_PASSWORD", "testpassword123"),
+    )
 
     key = os.environ.get("OPENROUTER_API_KEY", "")
     flusher = SessionFlusher(mg, pg, neo, openrouter_key=key)
@@ -125,7 +127,11 @@ def flush_cmd(session_id: str, no_topics: bool, no_clear: bool, gds: bool) -> No
         merge_entities=True,
     )
 
-    result = asyncio.run(flusher.flush(session_id, opts))
+    async def _run_flush():
+        await pg.connect()
+        return await flusher.flush(session_id, opts)
+
+    result = asyncio.run(_run_flush())
     click.echo(f"Flush session={session_id}")
     click.echo(f"  nodes:    {result.nodes_written}")
     click.echo(f"  edges:    {result.edges_written}")
@@ -154,12 +160,14 @@ def recall_short_cmd(query: str, session: str, top_k: int) -> None:
 
     Results are RRF-fused from ANN vector search and entity-first graph traversal.
     """
+    from graphknows.memory.ingestor import _run
     from graphknows.retrieval.recall_stm import recall_short_term
     from graphknows.retrieval.stores.memgraph import MemgraphStore
     from graphknows.retrieval.stores.pgvector import PgVectorStore
 
     mg = MemgraphStore(_mg_uri())
     pg = PgVectorStore(_pg_dsn())
+    _run(pg.connect())
     results = recall_short_term(
         mg, pg, query, session_id=session, top_k=top_k, embed_fn=_embed_fn()
     )
@@ -186,11 +194,18 @@ def recall_long_cmd(query: str, top_k: int, session: str | None) -> None:
 
     Entity-first graph traversal + ANN vector search, RRF-fused.
     """
+    from graphknows.memory.ingestor import _run
     from graphknows.retrieval.recall_ltm import recall_long_term
+    from graphknows.retrieval.stores.neo4j import Neo4jStore
     from graphknows.retrieval.stores.pgvector import PgVectorStore
 
     pg = PgVectorStore(_pg_dsn())
-    neo = _neo4j_driver()
+    _run(pg.connect())
+    neo = Neo4jStore(
+        uri=os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
+        user=os.environ.get("NEO4J_USER", "neo4j"),
+        password=os.environ.get("NEO4J_PASSWORD", "testpassword123"),
+    )
     results = recall_long_term(
         neo, pg, query, top_k=top_k, session_filter=session, embed_fn=_embed_fn()
     )
@@ -248,7 +263,7 @@ def stats_cmd(session: str | None) -> None:
     d = _neo4j_driver()
     with d.session() as s:
         ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]
-        tc = s.run("MATCH (t:TOPIC) RETURN count(t) as c").single()["c"]
+        tc = s.run("MATCH (t:Topic) RETURN count(t) as c").single()["c"]
         sess_c = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()["c"]
     d.close()
     click.echo("neo4j")
@@ -358,10 +373,3 @@ def doctor_cmd() -> None:
         click.echo("[OK] pgvector reachable")
     except Exception as exc:
         click.echo(f"[FAIL] pgvector: {exc}")
-
-
-class _NoOpExtractor:
-    """Fallback extractor when GLiNER is unavailable."""
-
-    def extract(self, text: str) -> list:
-        return []

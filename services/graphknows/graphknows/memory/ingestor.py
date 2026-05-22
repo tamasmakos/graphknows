@@ -157,23 +157,19 @@ class MemoryIngestor:
         self, parsed: ParsedFile, session_id: str, metadata: dict[str, Any]
     ) -> IngestResult:
         t0 = time.monotonic()
-        errors: list[str] = []
         entity_count = 0
 
         # 1. Ensure SESSION + FILE nodes in Memgraph
-        try:
-            _run(self._mg.write_session_metadata(session_id, {"started_at": t0}))
-            _run(
-                self._mg.write_file_node(
-                    session_id=session_id,
-                    file_id=parsed.source_id,
-                    title=parsed.title,
-                    parser_name=parsed.parser_name,
-                    source_hint=metadata.get("source_hint", ""),
-                )
+        _run(self._mg.write_session_metadata(session_id, {"started_at": t0}))
+        _run(
+            self._mg.write_file_node(
+                session_id=session_id,
+                file_id=parsed.source_id,
+                title=parsed.title,
+                parser_name=parsed.parser_name,
+                source_hint=metadata.get("source_hint", ""),
             )
-        except Exception as exc:
-            errors.append(f"graph_file_node: {exc}")
+        )
 
         # 2. Per-segment: extract entities, embed, write CHUNK + ENTITY nodes
         for seg in parsed.segments:
@@ -181,77 +177,62 @@ class MemoryIngestor:
                 f"{parsed.source_id}::{seg.char_offset}".encode()
             ).hexdigest()[:16]
 
-            entities: list[dict[str, Any]] = []
-            try:
-                entities = self._extractor.extract(seg.text)
-            except Exception as exc:
-                errors.append(f"extract chunk {chunk_id}: {exc}")
+            entities: list[dict[str, Any]] = self._extractor.extract(seg.text)
 
-            embedding: list[float] = []
-            try:
-                embedding = self._embed_fn(seg.text)
-            except Exception as exc:
-                errors.append(f"embed chunk {chunk_id}: {exc}")
+            embedding: list[float] = self._embed_fn(seg.text)
 
             # Write to Memgraph
-            try:
+            _run(
+                self._mg.write_chunk_node(
+                    session_id=session_id,
+                    file_id=parsed.source_id,
+                    chunk_id=chunk_id,
+                    text=seg.text,
+                    heading_path=seg.heading_path,
+                    metadata=seg.metadata,
+                )
+            )
+            for ent in entities:
                 _run(
-                    self._mg.write_chunk_node(
+                    self._mg.write_entity_node(
                         session_id=session_id,
-                        file_id=parsed.source_id,
-                        chunk_id=chunk_id,
-                        text=seg.text,
-                        heading_path=seg.heading_path,
-                        metadata=seg.metadata,
+                        entity_name=ent["name"],
+                        entity_type=ent.get("type", "ENTITY"),
+                        confidence=ent.get("score", 1.0),
                     )
                 )
-                for ent in entities:
-                    _run(
-                        self._mg.write_entity_node(
-                            session_id=session_id,
-                            entity_name=ent["name"],
-                            entity_type=ent.get("type", "ENTITY"),
-                            confidence=ent.get("score", 1.0),
-                        )
+                _run(
+                    self._mg.write_chunk_entity_edge(
+                        chunk_id=chunk_id,
+                        entity_name=ent["name"],
+                        session_id=session_id,
                     )
-                    _run(
-                        self._mg.write_chunk_entity_edge(
-                            chunk_id=chunk_id,
-                            entity_name=ent["name"],
-                            session_id=session_id,
-                        )
-                    )
-                    entity_count += 1
-            except Exception as exc:
-                errors.append(f"graph_chunk {chunk_id}: {exc}")
+                )
+                entity_count += 1
 
             # Write to pgvector STM
-            try:
-                _run(
-                    self._pg.write_stm_chunk(
-                        {
-                            "id": chunk_id,
-                            "session_id": session_id,
-                            "file_id": parsed.source_id,
-                            "text": seg.text,
-                            "heading_path": seg.heading_path,
-                            "embedding": embedding,
-                            "metadata": {**seg.metadata, **metadata},
-                        }
-                    )
+            _run(
+                self._pg.write_stm_chunk(
+                    {
+                        "id": chunk_id,
+                        "session_id": session_id,
+                        "file_id": parsed.source_id,
+                        "text": seg.text,
+                        "heading_path": seg.heading_path,
+                        "embedding": embedding,
+                        "metadata": {**seg.metadata, **metadata},
+                    }
                 )
-            except Exception as exc:
-                errors.append(f"pg_chunk {chunk_id}: {exc}")
+            )
 
         elapsed = time.monotonic() - t0
         log.info(
-            "ingest session=%s file=%s chunks=%d entities=%d elapsed=%.1fs errors=%d",
+            "ingest session=%s file=%s chunks=%d entities=%d elapsed=%.1fs",
             session_id,
             parsed.source_id,
             len(parsed.segments),
             entity_count,
             elapsed,
-            len(errors),
         )
         return IngestResult(
             session_id=session_id,
@@ -260,5 +241,5 @@ class MemoryIngestor:
             chunk_count=len(parsed.segments),
             entity_count=entity_count,
             elapsed_s=elapsed,
-            errors=errors,
+            errors=[],
         )

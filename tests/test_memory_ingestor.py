@@ -107,14 +107,22 @@ def test_ingest_parsed_calls_write_stm_chunk_per_segment():
     assert pg.write_stm_chunk.call_count == 2
 
 
-def test_extractor_failure_appended_to_errors_and_continues():
+def test_extractor_failure_propagates():
+    """Extraction errors now propagate immediately — no silent swallow."""
     ext_fn = MagicMock(side_effect=RuntimeError("NER crashed"))
     ingestor, mg, pg, _ext, embed = _make_ingestor(extractor=ext_fn)
     parsed = _make_parsed(2)
-    result = ingestor.ingest_parsed(parsed, session_id="s1")
-    # Should have 2 extract errors but still write chunks
-    assert any("extract" in e for e in result.errors)
-    assert mg.write_chunk_node.call_count == 2
+    with pytest.raises(RuntimeError, match="NER crashed"):
+        ingestor.ingest_parsed(parsed, session_id="s1")
+
+
+def test_embed_failure_propagates():
+    """Embed errors now propagate immediately — no silent zero-vector fallback."""
+    embed_fn = MagicMock(side_effect=RuntimeError("embed failed"))
+    ingestor, mg, pg, ext, _embed = _make_ingestor(embed_fn=embed_fn)
+    parsed = _make_parsed(1)
+    with pytest.raises(RuntimeError, match="embed failed"):
+        ingestor.ingest_parsed(parsed, session_id="s1")
 
 
 def test_ingest_result_has_correct_counts():

@@ -33,6 +33,7 @@ def _make_flusher():
     neo.write_session_subgraph = AsyncMock(return_value={"nodes": 10, "edges": 20})
     neo.summarize_topics = AsyncMock(return_value=3)
     neo.run_gds_enrichment = AsyncMock(return_value=None)
+    neo.extract_and_write_relations = AsyncMock(return_value=0)
 
     flusher = SessionFlusher(mg, pg, neo, openrouter_key="test_key")
     return flusher, mg, pg, neo
@@ -191,3 +192,24 @@ async def test_summarize_topics_skips_singletons():
     count = await store.summarize_topics("sess-2", openrouter_key="", pg_store=None)
     assert count == 0
     store.upsert_topics.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_flush_calls_extract_and_write_relations():
+    """flush() must call extract_and_write_relations on the Neo4j store."""
+    flusher, mg, pg, neo = _make_flusher()
+    neo.extract_and_write_relations = AsyncMock(return_value=5)
+    result = await flusher.flush("s1")
+    neo.extract_and_write_relations.assert_awaited_once()
+    # edges in result should include the 5 relation edges
+    assert result.edges_written >= 5
+
+
+@pytest.mark.asyncio
+async def test_flush_propagates_extraction_error():
+    """If extract_and_write_relations raises, flush must propagate the exception."""
+    flusher, mg, pg, neo = _make_flusher()
+    neo.extract_and_write_relations = AsyncMock(side_effect=RuntimeError("LLM failed"))
+    with pytest.raises(RuntimeError, match="LLM failed"):
+        await flusher.flush("s1")
+

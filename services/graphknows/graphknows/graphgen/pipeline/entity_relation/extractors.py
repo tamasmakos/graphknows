@@ -340,8 +340,7 @@ class DSPyExtractor(BaseExtractor):
             )
 
         except Exception as e:
-            logger.error(f"DSPy extraction failed: {e}", exc_info=True)
-            return [], [], {}
+            raise RuntimeError(f"DSPy relation extraction failed: {e}") from e
 
 
 def get_extractor(config: Dict[str, Any]) -> BaseExtractor:

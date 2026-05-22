@@ -168,7 +168,11 @@ class SessionFlusher:
         return resolved, merge_count
 
     async def _write_ltm_graph(self, session_id: str, stm_data: dict[str, Any]) -> dict[str, int]:
-        """MERGE all STM nodes/edges into Neo4j LTM with MERGE semantics."""
+        """MERGE all STM nodes/edges into Neo4j LTM with MERGE semantics.
+
+        Runs structural graph writes first, then async relation extraction (LLM).
+        Raises on relation extraction failure — fail-hard per spec.
+        """
         nodes = 0
         edges = 0
         try:
@@ -177,6 +181,12 @@ class SessionFlusher:
             edges = result.get("edges", 0)
         except Exception as exc:
             log.warning("write_ltm_graph %s: %s", session_id, exc)
+        # Relation extraction — fail-hard on error (no catch)
+        rel_edges = await self._neo.extract_and_write_relations(
+            stm_data=stm_data,
+            openrouter_key=self._openrouter_key,
+        )
+        edges += rel_edges
         return {"nodes": nodes, "edges": edges}
 
     async def _summarize_topics(self, session_id: str) -> int:

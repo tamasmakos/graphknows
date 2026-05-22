@@ -617,6 +617,65 @@ class PgVectorStore:
             for r in rows
         ]
 
+    async def search_ltm_turns(
+        self,
+        embedding: list[float],
+        top_k: int,
+        session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """ANN search on ltm_turns (interaction/dialog recall, optionally filtered by session).
+
+        Args:
+            embedding: Query embedding vector.
+            top_k: Number of results to return.
+            session_id: Optional session_id to narrow results.
+
+        Returns:
+            List of dicts: id, session_id, dialog_id, turn_index, role, text,
+            metadata, cosine_score.
+        """
+        pool = self._pool_or_raise()
+        emb_str = json.dumps(embedding)
+        async with pool.acquire() as conn:
+            if session_id:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, session_id, dialog_id, turn_index, role, text,
+                           1 - (embedding <=> $1::vector) AS cosine_score
+                    FROM ltm_turns
+                    WHERE session_id = $2
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $3
+                    """,
+                    emb_str,
+                    session_id,
+                    top_k,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, session_id, dialog_id, turn_index, role, text,
+                           1 - (embedding <=> $1::vector) AS cosine_score
+                    FROM ltm_turns
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $2
+                    """,
+                    emb_str,
+                    top_k,
+                )
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "dialog_id": r["dialog_id"],
+                "turn_index": r["turn_index"],
+                "role": r["role"],
+                "text": r["text"],
+                "cosine_score": float(r["cosine_score"]),
+            }
+            for r in rows
+        ]
+
     async def write_ltm_topic(self, topic: dict[str, Any]) -> None:
         """UPSERT a topic into ltm_topics.
 

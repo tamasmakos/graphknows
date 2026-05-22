@@ -239,8 +239,7 @@ async def _extract_entities_for_chunk(
         return (refined_entities, diagnostics) if return_diagnostics else refined_entities
 
     except Exception as e:
-        logger.error(f"GLiNER2 extraction failed for chunk: {e}")
-        return ([], diagnostics) if return_diagnostics else []
+        raise RuntimeError(f"GLiNER2 extraction failed for chunk: {e}") from e
 
 
 def _build_relation_eligible_entities(
