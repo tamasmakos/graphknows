@@ -743,8 +743,8 @@ class Neo4jStore:
             ents = chunk_to_ents.get(chunk["id"], [])
             if len(ents) < 2:
                 continue  # need at least 2 entities to form a relation
-            # extract_relations returns (relations_list, nodes_data_list)
-            relations, _ = await extractor.extract_relations(
+            # extract_relations returns (relations_list, nodes_data_list, audit_dict)
+            relations, _, _audit = await extractor.extract_relations(
                 text=chunk["text"],
                 keywords=ents,
                 entities=ents,

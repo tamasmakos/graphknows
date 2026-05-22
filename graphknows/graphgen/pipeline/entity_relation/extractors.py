@@ -113,7 +113,7 @@ class BaseExtractor(ABC):
         abstract_concepts: List[str] = None,
         allowed_relation_types: Optional[List[str]] = None,
         candidate_relations: Optional[List[Dict[str, Any]]] = None,
-    ) -> Tuple[List[Tuple[str, str, str, Dict[str, Any]]], List[Dict[str, Any]]]:
+    ) -> Tuple[List[Tuple[str, str, str, Dict[str, Any]]], List[Dict[str, Any]], Dict[str, Any]]:
         """Extract (source, relation, target, props) triplets from *text*."""
         pass
 
@@ -172,7 +172,7 @@ class DSPyExtractor(BaseExtractor):
         abstract_concepts: List[str] = None,
         allowed_relation_types: Optional[List[str]] = None,
         candidate_relations: Optional[List[Dict[str, Any]]] = None,
-    ) -> Tuple[List[Tuple[str, str, str, Dict[str, Any]]], List[Dict[str, Any]]]:
+    ) -> Tuple[List[Tuple[str, str, str, Dict[str, Any]]], List[Dict[str, Any]], Dict[str, Any]]:
         """Extract relations using DSPy."""
 
         ontology_classes = abstract_concepts or []
