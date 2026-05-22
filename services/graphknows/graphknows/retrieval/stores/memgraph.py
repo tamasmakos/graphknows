@@ -10,6 +10,8 @@ import asyncio
 import logging
 from typing import Any
 
+from graphknows.schema import MEMGRAPH_INDEXES
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,14 +32,11 @@ class MemgraphStore:
         self._driver.close()
 
     async def ensure_indexes(self) -> None:
-        """Create session entity indexes idempotently."""
+        """Create STM indexes from schema.MEMGRAPH_INDEXES idempotently."""
 
         def _sync() -> None:
             with self._driver.session() as s:
-                for stmt in [
-                    "CREATE INDEX ON :Entity(session_id)",
-                    "CREATE INDEX ON :Entity(id)",
-                ]:
+                for stmt in MEMGRAPH_INDEXES:
                     try:
                         s.run(stmt).consume()
                     except Exception:
@@ -45,13 +44,409 @@ class MemgraphStore:
 
         await asyncio.to_thread(_sync)
 
+    # ------------------------------------------------------------------
+    # Session metadata
+    # ------------------------------------------------------------------
+
+    async def write_session_metadata(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Upsert a SESSION node with arbitrary metadata properties.
+
+        Args:
+            session_id: Unique session identifier.
+            metadata: Flat dict of properties to set on the node.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    "MERGE (n:SESSION {id: $sid}) SET n += $props",
+                    sid=session_id,
+                    props=metadata,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    # ------------------------------------------------------------------
+    # File nodes
+    # ------------------------------------------------------------------
+
+    async def write_file_node(
+        self,
+        session_id: str,
+        file_id: str,
+        title: str,
+        parser_name: str,
+        source_hint: str,
+    ) -> None:
+        """Upsert a FILE node linked to a SESSION.
+
+        Args:
+            session_id: Owning session.
+            file_id: Unique file identifier.
+            title: Human-readable file title.
+            parser_name: Parser used for extraction.
+            source_hint: Original source path or URL hint.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MERGE (f:FILE {id: $fid})
+                    SET f.session_id = $sid,
+                        f.title = $title,
+                        f.parser_name = $parser_name,
+                        f.source_hint = $source_hint
+                    WITH f
+                    MATCH (sess:SESSION {id: $sid})
+                    MERGE (sess)-[:IN_SESSION]->(f)
+                    """,
+                    fid=file_id,
+                    sid=session_id,
+                    title=title,
+                    parser_name=parser_name,
+                    source_hint=source_hint,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    # ------------------------------------------------------------------
+    # Chunk nodes
+    # ------------------------------------------------------------------
+
+    async def write_chunk_node(
+        self,
+        session_id: str,
+        file_id: str,
+        chunk_id: str,
+        text: str,
+        heading_path: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Upsert a CHUNK node linked to its FILE.
+
+        Args:
+            session_id: Owning session.
+            file_id: Parent file identifier.
+            chunk_id: Unique chunk identifier.
+            text: Chunk text content.
+            heading_path: Slash-separated heading breadcrumb.
+            metadata: Additional metadata properties.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MERGE (c:CHUNK {id: $cid})
+                    SET c.session_id = $sid,
+                        c.file_id = $fid,
+                        c.text = $text,
+                        c.heading_path = $heading_path,
+                        c.metadata = $metadata
+                    WITH c
+                    MATCH (f:FILE {id: $fid})
+                    MERGE (f)-[:HAS_CHUNK]->(c)
+                    """,
+                    cid=chunk_id,
+                    sid=session_id,
+                    fid=file_id,
+                    text=text,
+                    heading_path=heading_path,
+                    metadata=str(metadata),
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    # ------------------------------------------------------------------
+    # Entity nodes
+    # ------------------------------------------------------------------
+
+    async def write_entity_node(
+        self,
+        session_id: str,
+        entity_name: str,
+        entity_type: str,
+        confidence: float,
+    ) -> None:
+        """Upsert an ENTITY node scoped to a session.
+
+        Args:
+            session_id: Owning session.
+            entity_name: Canonical entity name (merge key with session).
+            entity_type: Entity label/type string.
+            confidence: Extraction confidence score.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MERGE (e:ENTITY {name: $name, session_id: $sid})
+                    SET e.type = $etype,
+                        e.confidence = CASE
+                            WHEN $conf > coalesce(e.confidence, 0) THEN $conf
+                            ELSE e.confidence
+                        END
+                    """,
+                    name=entity_name,
+                    sid=session_id,
+                    etype=entity_type,
+                    conf=confidence,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    async def write_chunk_entity_edge(
+        self,
+        chunk_id: str,
+        entity_name: str,
+        session_id: str,
+    ) -> None:
+        """Create a MENTIONS edge from CHUNK to ENTITY.
+
+        Args:
+            chunk_id: Source chunk identifier.
+            entity_name: Target entity name.
+            session_id: Session namespace for entity lookup.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MATCH (c:CHUNK {id: $cid}),
+                          (e:ENTITY {name: $name, session_id: $sid})
+                    MERGE (c)-[:MENTIONS]->(e)
+                    """,
+                    cid=chunk_id,
+                    name=entity_name,
+                    sid=session_id,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    # ------------------------------------------------------------------
+    # Dialog and turn nodes
+    # ------------------------------------------------------------------
+
+    async def write_dialog_node(
+        self,
+        session_id: str,
+        dialog_id: str,
+        started_at: str,
+    ) -> None:
+        """Upsert a DIALOG node linked to a SESSION.
+
+        Args:
+            session_id: Owning session.
+            dialog_id: Unique dialog identifier.
+            started_at: ISO-8601 timestamp string.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MERGE (d:DIALOG {id: $did})
+                    SET d.session_id = $sid, d.started_at = $started_at
+                    WITH d
+                    MATCH (sess:SESSION {id: $sid})
+                    MERGE (sess)-[:IN_SESSION]->(d)
+                    """,
+                    did=dialog_id,
+                    sid=session_id,
+                    started_at=started_at,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    async def write_turn_node(
+        self,
+        dialog_id: str,
+        session_id: str,
+        turn_id: str,
+        turn_index: int,
+        role: str,
+        text: str,
+        timestamp: str,
+    ) -> None:
+        """Upsert a TURN node linked to its DIALOG.
+
+        Args:
+            dialog_id: Parent dialog identifier.
+            session_id: Owning session.
+            turn_id: Unique turn identifier.
+            turn_index: Ordinal position within dialog.
+            role: Speaker role: 'user', 'agent', or 'system'.
+            text: Turn text content.
+            timestamp: ISO-8601 timestamp string.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MERGE (t:TURN {id: $tid})
+                    SET t.session_id = $sid,
+                        t.dialog_id = $did,
+                        t.turn_index = $idx,
+                        t.role = $role,
+                        t.text = $text,
+                        t.timestamp = $ts
+                    WITH t
+                    MATCH (d:DIALOG {id: $did})
+                    MERGE (d)-[:HAS_TURN]->(t)
+                    """,
+                    tid=turn_id,
+                    sid=session_id,
+                    did=dialog_id,
+                    idx=turn_index,
+                    role=role,
+                    text=text,
+                    ts=timestamp,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    async def write_turn_sequence(self, prev_turn_id: str, next_turn_id: str) -> None:
+        """Create a NEXT edge between consecutive TURNs.
+
+        Args:
+            prev_turn_id: Source turn identifier.
+            next_turn_id: Destination turn identifier.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MATCH (a:TURN {id: $aid}), (b:TURN {id: $bid})
+                    MERGE (a)-[:NEXT]->(b)
+                    """,
+                    aid=prev_turn_id,
+                    bid=next_turn_id,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    async def query_entity_chunks(
+        self,
+        session_id: str,
+        entity_names: list[str],
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Return CHUNK nodes linked to any of the given entity names in *session_id*.
+
+        Args:
+            session_id: Session namespace for entity lookup.
+            entity_names: List of entity names to match.
+            top_k: Maximum number of chunk results to return.
+
+        Returns:
+            List of dicts with chunk_id and text.
+        """
+
+        def _sync() -> list[dict[str, Any]]:
+            with self._driver.session() as s:
+                rows = list(
+                    s.run(
+                        """
+                        UNWIND $names AS n
+                        MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY {name: n, session_id: $sid})
+                        RETURN DISTINCT c.id AS chunk_id, c.text AS text
+                        LIMIT $k
+                        """,
+                        names=entity_names,
+                        sid=session_id,
+                        k=top_k,
+                    )
+                )
+            return [{"chunk_id": r["chunk_id"], "text": r["text"]} for r in rows]
+
+        return await asyncio.to_thread(_sync)
+
+    # ------------------------------------------------------------------
+    async def write_turn_entity_edge(
+        self,
+        turn_id: str,
+        entity_name: str,
+        session_id: str,
+        confidence: float,
+    ) -> None:
+        """Create a MENTIONS edge from TURN to ENTITY.
+
+        Args:
+            turn_id: Source turn identifier.
+            entity_name: Target entity name.
+            session_id: Session namespace for entity lookup.
+            confidence: Mention confidence score.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MATCH (t:TURN {id: $tid}),
+                          (e:ENTITY {name: $name, session_id: $sid})
+                    MERGE (t)-[r:MENTIONS]->(e)
+                    SET r.confidence = $conf
+                    """,
+                    tid=turn_id,
+                    name=entity_name,
+                    sid=session_id,
+                    conf=confidence,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    async def write_tool_call_node(
+        self,
+        turn_id: str,
+        name: str,
+        args_hash: str,
+        latency_ms: int,
+    ) -> None:
+        """Upsert a TOOL_CALL node linked to a TURN.
+
+        Args:
+            turn_id: Parent turn identifier.
+            name: Tool name.
+            args_hash: Hash of the tool arguments for deduplication.
+            latency_ms: Execution latency in milliseconds.
+        """
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """
+                    MERGE (tc:TOOL_CALL {turn_id: $tid, args_hash: $hash})
+                    SET tc.name = $name, tc.latency_ms = $latency_ms
+                    WITH tc
+                    MATCH (t:TURN {id: $tid})
+                    MERGE (t)-[:CALLED]->(tc)
+                    """,
+                    tid=turn_id,
+                    hash=args_hash,
+                    name=name,
+                    latency_ms=latency_ms,
+                ).consume()
+
+        await asyncio.to_thread(_sync)
+
+    # ------------------------------------------------------------------
+    # Deprecated — kept for backward compatibility, do not use in new code
+    # ------------------------------------------------------------------
+
     async def write_entities(self, session_id: str, entities: list[Any]) -> None:
         """Upsert entity nodes under *session_id*.
 
-        Uses name+session_id as the MERGE key to prevent duplicate nodes for
-        the same entity surface form appearing under different label types.
-        On MATCH, preserves the most specific label (non-'Entity' wins) and
-        accumulates all seen labels in the ``all_labels`` property list.
+        .. deprecated::
+            Use :meth:`write_entity_node` for new code.
         """
         if not entities:
             return
@@ -91,7 +486,11 @@ class MemgraphStore:
         await asyncio.to_thread(_sync)
 
     async def write_relations(self, session_id: str, relations: list[Any]) -> None:
-        """Upsert RELATES edges between session entities."""
+        """Upsert RELATES edges between session entities.
+
+        .. deprecated::
+            Use :meth:`write_chunk_entity_edge` for new code.
+        """
         if not relations:
             return
 
@@ -170,6 +569,129 @@ class MemgraphStore:
             "nodes": nodes,
             "edges": edges,
         }
+
+    async def read_session_subgraph(self, session_id: str) -> dict:
+        """Read the full STM subgraph for *session_id* from Memgraph.
+
+        Returns a structured dict consumed by SessionFlusher:
+        {
+            entities, files, chunks, dialogs, turns,
+            chunk_entity_edges, turn_entity_edges, next_edges, _merge_count
+        }
+        """
+
+        def _sync() -> dict:
+            with self._driver.session() as s:
+                entities = [
+                    {"name": r["name"], "type": r["type"], "confidence": r["confidence"] or 1.0}
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)"
+                        "-[:HAS_ENTITY]->(e:ENTITY) "
+                        "WHERE sess.id = $sid "
+                        "RETURN DISTINCT e.name AS name, e.type AS type, e.confidence AS confidence",
+                        sid=session_id,
+                    )
+                ]
+                files = [
+                    {
+                        "id": r["id"],
+                        "title": r["title"],
+                        "parser_name": r["parser_name"],
+                        "source_hint": r["source_hint"],
+                    }
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE) "
+                        "WHERE sess.id = $sid "
+                        "RETURN f.id AS id, f.title AS title, f.parser_name AS parser_name, "
+                        "f.source_hint AS source_hint",
+                        sid=session_id,
+                    )
+                ]
+                chunks = [
+                    {
+                        "id": r["id"],
+                        "file_id": r["file_id"],
+                        "text": r["text"],
+                        "heading_path": r["heading_path"],
+                        "chunk_index": r["chunk_index"] if r["chunk_index"] is not None else 0,
+                    }
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
+                        "WHERE sess.id = $sid "
+                        "RETURN c.id AS id, f.id AS file_id, c.text AS text, "
+                        "c.heading_path AS heading_path, c.chunk_index AS chunk_index",
+                        sid=session_id,
+                    )
+                ]
+                dialogs = [
+                    {"id": r["id"], "session_id": r["session_id"], "started_at": r["started_at"]}
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(d:DIALOG) "
+                        "WHERE sess.id = $sid "
+                        "RETURN d.id AS id, d.session_id AS session_id, d.started_at AS started_at",
+                        sid=session_id,
+                    )
+                ]
+                turns = [
+                    {
+                        "id": r["id"],
+                        "dialog_id": r["dialog_id"],
+                        "session_id": r["session_id"],
+                        "turn_index": r["turn_index"],
+                        "role": r["role"],
+                        "text": r["text"],
+                    }
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(d:DIALOG)-[:HAS_TURN]->(t:TURN) "
+                        "WHERE sess.id = $sid "
+                        "RETURN t.id AS id, d.id AS dialog_id, t.session_id AS session_id, "
+                        "t.turn_index AS turn_index, t.role AS role, t.text AS text",
+                        sid=session_id,
+                    )
+                ]
+                chunk_entity_edges = [
+                    {"chunk_id": r["chunk_id"], "entity_name": r["entity_name"]}
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)"
+                        "-[:HAS_ENTITY]->(e:ENTITY) "
+                        "WHERE sess.id = $sid "
+                        "RETURN c.id AS chunk_id, e.name AS entity_name",
+                        sid=session_id,
+                    )
+                ]
+                turn_entity_edges = [
+                    {"turn_id": r["turn_id"], "entity_name": r["entity_name"]}
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(d:DIALOG)-[:HAS_TURN]->(t:TURN)"
+                        "-[:HAS_ENTITY]->(e:ENTITY) "
+                        "WHERE sess.id = $sid "
+                        "RETURN t.id AS turn_id, e.name AS entity_name",
+                        sid=session_id,
+                    )
+                ]
+                next_edges = [
+                    {"from_turn_id": r["from_turn_id"], "to_turn_id": r["to_turn_id"]}
+                    for r in s.run(
+                        "MATCH (sess:SESSION)-[:IN_SESSION]->(d:DIALOG)-[:HAS_TURN]->(t1:TURN)"
+                        "-[:NEXT]->(t2:TURN) "
+                        "WHERE sess.id = $sid "
+                        "RETURN t1.id AS from_turn_id, t2.id AS to_turn_id",
+                        sid=session_id,
+                    )
+                ]
+            return {
+                "entities": entities,
+                "files": files,
+                "chunks": chunks,
+                "dialogs": dialogs,
+                "turns": turns,
+                "chunk_entity_edges": chunk_entity_edges,
+                "turn_entity_edges": turn_entity_edges,
+                "next_edges": next_edges,
+                "_merge_count": 0,
+            }
+
+        return await asyncio.to_thread(_sync)
 
     async def get_session_node_count(self, session_id: str) -> int:
         """Return the number of Entity nodes stored for *session_id*."""

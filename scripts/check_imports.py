@@ -62,6 +62,7 @@ DIST_TO_IMPORT: dict[str, str] = {
     "neo4j": "neo4j",
     "asyncpg": "asyncpg",
     "sentence-transformers": "sentence_transformers",  # banned
+    "python-docx": "docx",
 }
 
 # Services to check: name → (source dirs, pyproject path)

@@ -23,31 +23,69 @@ logger = logging.getLogger(__name__)
 _DDL = """
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE IF NOT EXISTS chunks (
+-- Short-term memory (ephemeral, session-scoped)
+CREATE TABLE IF NOT EXISTS stm_chunks (
     id           TEXT PRIMARY KEY,
-    session_id   TEXT NOT NULL DEFAULT 'corpus',
-    doc_id       TEXT,
+    session_id   TEXT NOT NULL,
+    file_id      TEXT,
     text         TEXT NOT NULL,
-    embedding    VECTOR(384),
+    heading_path TEXT,
+    embedding    VECTOR(1536),
     metadata     JSONB,
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS chunks_session_idx
-    ON chunks (session_id);
-CREATE INDEX IF NOT EXISTS chunks_emb_idx
-    ON chunks USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 20);
+CREATE INDEX IF NOT EXISTS stm_chunks_session_idx ON stm_chunks (session_id);
+CREATE INDEX IF NOT EXISTS stm_chunks_emb_idx ON stm_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists=20);
 
-CREATE TABLE IF NOT EXISTS entities (
-    name        TEXT PRIMARY KEY,
-    label       TEXT,
-    embedding   VECTOR(384),
-    chunk_count INT DEFAULT 0,
-    updated_at  TIMESTAMPTZ DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS stm_turns (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    dialog_id    TEXT,
+    turn_index   INT,
+    role         TEXT NOT NULL,
+    text         TEXT NOT NULL,
+    embedding    VECTOR(1536),
+    created_at   TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS entities_emb_idx
-    ON entities USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 10);
+CREATE INDEX IF NOT EXISTS stm_turns_session_idx ON stm_turns (session_id);
+CREATE INDEX IF NOT EXISTS stm_turns_emb_idx ON stm_turns USING ivfflat (embedding vector_cosine_ops) WITH (lists=20);
+
+-- Long-term memory (permanent, flushed from STM)
+CREATE TABLE IF NOT EXISTS ltm_chunks (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT,
+    file_id      TEXT,
+    text         TEXT NOT NULL,
+    heading_path TEXT,
+    embedding    VECTOR(1536),
+    metadata     JSONB,
+    flushed_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ltm_chunks_session_idx ON ltm_chunks (session_id);
+CREATE INDEX IF NOT EXISTS ltm_chunks_emb_idx ON ltm_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists=50);
+
+CREATE TABLE IF NOT EXISTS ltm_turns (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT,
+    dialog_id    TEXT,
+    turn_index   INT,
+    role         TEXT,
+    text         TEXT NOT NULL,
+    embedding    VECTOR(1536),
+    flushed_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ltm_turns_session_idx ON ltm_turns (session_id);
+CREATE INDEX IF NOT EXISTS ltm_turns_emb_idx ON ltm_turns USING ivfflat (embedding vector_cosine_ops) WITH (lists=50);
+
+CREATE TABLE IF NOT EXISTS ltm_topics (
+    topic_id     TEXT PRIMARY KEY,
+    summary      TEXT,
+    embedding    VECTOR(1536),
+    entity_names TEXT[],
+    session_ids  TEXT[],
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ltm_topics_emb_idx ON ltm_topics USING ivfflat (embedding vector_cosine_ops) WITH (lists=10);
 """
 
 
@@ -304,3 +342,306 @@ class PgVectorStore:
         deleted = int(result.split()[-1])
         logger.info("Deleted %d chunks for session %s", deleted, session_id)  # NOSONAR
         return deleted
+
+    # ------------------------------------------------------------------
+    # STM writes
+    # ------------------------------------------------------------------
+
+    async def write_stm_chunk(self, chunk: dict[str, Any]) -> None:
+        """INSERT a chunk into stm_chunks.
+
+        Args:
+            chunk: Must have id, session_id, text. Optional: file_id,
+                heading_path, embedding (list[float]), metadata (dict).
+        """
+        pool = self._pool_or_raise()
+        embedding = json.dumps(chunk["embedding"]) if chunk.get("embedding") else None
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO stm_chunks
+                    (id, session_id, file_id, text, heading_path, embedding, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6::vector, $7::jsonb)
+                ON CONFLICT (id) DO UPDATE SET
+                    session_id   = EXCLUDED.session_id,
+                    file_id      = EXCLUDED.file_id,
+                    text         = EXCLUDED.text,
+                    heading_path = EXCLUDED.heading_path,
+                    embedding    = EXCLUDED.embedding,
+                    metadata     = EXCLUDED.metadata
+                """,
+                chunk["id"],
+                chunk["session_id"],
+                chunk.get("file_id"),
+                chunk["text"],
+                chunk.get("heading_path"),
+                embedding,
+                json.dumps(chunk.get("metadata") or {}),
+            )
+
+    async def write_stm_turn(self, turn: dict[str, Any]) -> None:
+        """INSERT a turn into stm_turns.
+
+        Args:
+            turn: Must have id, session_id, role, text. Optional: dialog_id,
+                turn_index (int), embedding (list[float]).
+        """
+        pool = self._pool_or_raise()
+        embedding = json.dumps(turn["embedding"]) if turn.get("embedding") else None
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO stm_turns
+                    (id, session_id, dialog_id, turn_index, role, text, embedding)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
+                ON CONFLICT (id) DO UPDATE SET
+                    session_id = EXCLUDED.session_id,
+                    dialog_id  = EXCLUDED.dialog_id,
+                    turn_index = EXCLUDED.turn_index,
+                    role       = EXCLUDED.role,
+                    text       = EXCLUDED.text,
+                    embedding  = EXCLUDED.embedding
+                """,
+                turn["id"],
+                turn["session_id"],
+                turn.get("dialog_id"),
+                turn.get("turn_index"),
+                turn["role"],
+                turn["text"],
+                embedding,
+            )
+
+    async def search_stm_chunks(
+        self,
+        session_id: str,
+        embedding: list[float],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """ANN search on stm_chunks filtered to *session_id*.
+
+        Args:
+            session_id: Session namespace to filter by.
+            embedding: Query embedding vector.
+            top_k: Number of results to return.
+
+        Returns:
+            List of dicts: id, session_id, file_id, text, heading_path,
+            metadata, cosine_score.
+        """
+        pool = self._pool_or_raise()
+        emb_str = json.dumps(embedding)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, session_id, file_id, text, heading_path, metadata,
+                       1 - (embedding <=> $1::vector) AS cosine_score
+                FROM stm_chunks
+                WHERE session_id = $2
+                ORDER BY embedding <=> $1::vector
+                LIMIT $3
+                """,
+                emb_str,
+                session_id,
+                top_k,
+            )
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "file_id": r["file_id"],
+                "text": r["text"],
+                "heading_path": r["heading_path"],
+                "metadata": json.loads(r["metadata"] or "{}"),
+                "cosine_score": float(r["cosine_score"]),
+            }
+            for r in rows
+        ]
+
+    async def search_stm_turns(
+        self,
+        session_id: str,
+        embedding: list[float],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """ANN search on stm_turns filtered to *session_id*.
+
+        Args:
+            session_id: Session namespace to filter by.
+            embedding: Query embedding vector.
+            top_k: Number of results to return.
+
+        Returns:
+            List of dicts: id, session_id, dialog_id, turn_index, role,
+            text, cosine_score.
+        """
+        pool = self._pool_or_raise()
+        emb_str = json.dumps(embedding)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, session_id, dialog_id, turn_index, role, text,
+                       1 - (embedding <=> $1::vector) AS cosine_score
+                FROM stm_turns
+                WHERE session_id = $2
+                ORDER BY embedding <=> $1::vector
+                LIMIT $3
+                """,
+                emb_str,
+                session_id,
+                top_k,
+            )
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "dialog_id": r["dialog_id"],
+                "turn_index": r["turn_index"],
+                "role": r["role"],
+                "text": r["text"],
+                "cosine_score": float(r["cosine_score"]),
+            }
+            for r in rows
+        ]
+
+    async def promote_to_ltm(self, session_id: str) -> tuple[int, int]:
+        """Copy stm_chunks and stm_turns to their ltm_* counterparts.
+
+        Args:
+            session_id: Session namespace to promote.
+
+        Returns:
+            Tuple of (chunks_promoted, turns_promoted).
+        """
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            chunks_result = await conn.execute(
+                """
+                INSERT INTO ltm_chunks
+                    (id, session_id, file_id, text, heading_path, embedding, metadata)
+                SELECT id, session_id, file_id, text, heading_path, embedding, metadata
+                FROM stm_chunks
+                WHERE session_id = $1
+                ON CONFLICT (id) DO NOTHING
+                """,
+                session_id,
+            )
+            turns_result = await conn.execute(
+                """
+                INSERT INTO ltm_turns
+                    (id, session_id, dialog_id, turn_index, role, text, embedding)
+                SELECT id, session_id, dialog_id, turn_index, role, text, embedding
+                FROM stm_turns
+                WHERE session_id = $1
+                ON CONFLICT (id) DO NOTHING
+                """,
+                session_id,
+            )
+        chunks_promoted = int(chunks_result.split()[-1])
+        turns_promoted = int(turns_result.split()[-1])
+        logger.info(
+            "Promoted session %s: %d chunks, %d turns to LTM",
+            session_id,
+            chunks_promoted,
+            turns_promoted,
+        )
+        return chunks_promoted, turns_promoted
+
+    async def clear_stm(self, session_id: str) -> None:
+        """DELETE all stm_chunks and stm_turns for *session_id*.
+
+        Args:
+            session_id: Session namespace to clear.
+        """
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM stm_chunks WHERE session_id = $1", session_id)
+            await conn.execute("DELETE FROM stm_turns WHERE session_id = $1", session_id)
+        logger.info("Cleared STM for session %s", session_id)
+
+    async def search_ltm_chunks(
+        self,
+        embedding: list[float],
+        top_k: int,
+        session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """ANN search on ltm_chunks (corpus-wide, optionally filtered by session).
+
+        Args:
+            embedding: Query embedding vector.
+            top_k: Number of results to return.
+            session_id: Optional session_id to narrow results.
+
+        Returns:
+            List of dicts: id, session_id, file_id, text, heading_path,
+            metadata, cosine_score.
+        """
+        pool = self._pool_or_raise()
+        emb_str = json.dumps(embedding)
+        async with pool.acquire() as conn:
+            if session_id:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, session_id, file_id, text, heading_path, metadata,
+                           1 - (embedding <=> $1::vector) AS cosine_score
+                    FROM ltm_chunks
+                    WHERE session_id = $2
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $3
+                    """,
+                    emb_str,
+                    session_id,
+                    top_k,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, session_id, file_id, text, heading_path, metadata,
+                           1 - (embedding <=> $1::vector) AS cosine_score
+                    FROM ltm_chunks
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $2
+                    """,
+                    emb_str,
+                    top_k,
+                )
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "file_id": r["file_id"],
+                "text": r["text"],
+                "heading_path": r["heading_path"],
+                "metadata": json.loads(r["metadata"] or "{}"),
+                "cosine_score": float(r["cosine_score"]),
+            }
+            for r in rows
+        ]
+
+    async def write_ltm_topic(self, topic: dict[str, Any]) -> None:
+        """UPSERT a topic into ltm_topics.
+
+        Args:
+            topic: Must have topic_id. Optional: summary, embedding
+                (list[float]), entity_names (list[str]),
+                session_ids (list[str]).
+        """
+        pool = self._pool_or_raise()
+        embedding = json.dumps(topic["embedding"]) if topic.get("embedding") else None
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO ltm_topics
+                    (topic_id, summary, embedding, entity_names, session_ids)
+                VALUES ($1, $2, $3::vector, $4, $5)
+                ON CONFLICT (topic_id) DO UPDATE SET
+                    summary      = EXCLUDED.summary,
+                    embedding    = EXCLUDED.embedding,
+                    entity_names = EXCLUDED.entity_names,
+                    session_ids  = EXCLUDED.session_ids
+                """,
+                topic["topic_id"],
+                topic.get("summary"),
+                embedding,
+                topic.get("entity_names") or [],
+                topic.get("session_ids") or [],
+            )

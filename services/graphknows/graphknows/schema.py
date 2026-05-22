@@ -1,4 +1,4 @@
-"""Neo4j schema: constraints, indexes, and migration for LTM nodes."""
+"""Graph schema: constraints and indexes for Neo4j (LTM) and Memgraph (STM)."""
 
 from __future__ import annotations
 
@@ -7,34 +7,39 @@ from typing import Any
 
 log = logging.getLogger("graphknows.schema")
 
+# Neo4j LTM constraints
 CONSTRAINTS: list[str] = [
-    # Existing (idempotent)
-    "CREATE CONSTRAINT entity_name_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE",
-    "CREATE CONSTRAINT segment_id_unique IF NOT EXISTS FOR (s:Segment) REQUIRE s.id IS UNIQUE",
-    "CREATE CONSTRAINT topic_id_unique IF NOT EXISTS FOR (t:Topic) REQUIRE t.community_id IS UNIQUE",
-    # New
-    "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
-    "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE",
-    "CREATE CONSTRAINT dialog_id_unique IF NOT EXISTS FOR (d:Dialog) REQUIRE d.id IS UNIQUE",
-    "CREATE CONSTRAINT utterance_id_unique IF NOT EXISTS FOR (u:Utterance) REQUIRE u.id IS UNIQUE",
-    "CREATE CONSTRAINT participant_id_unique IF NOT EXISTS FOR (p:Participant) REQUIRE p.id IS UNIQUE",
+    "CREATE CONSTRAINT session_id_unique IF NOT EXISTS FOR (s:SESSION) REQUIRE s.id IS UNIQUE",
+    "CREATE CONSTRAINT file_id_unique IF NOT EXISTS FOR (f:FILE) REQUIRE f.id IS UNIQUE",
+    "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS FOR (c:CHUNK) REQUIRE c.id IS UNIQUE",
+    "CREATE CONSTRAINT entity_name_unique IF NOT EXISTS FOR (e:ENTITY) REQUIRE e.name IS UNIQUE",
+    "CREATE CONSTRAINT dialog_id_unique IF NOT EXISTS FOR (d:DIALOG) REQUIRE d.id IS UNIQUE",
+    "CREATE CONSTRAINT turn_id_unique IF NOT EXISTS FOR (t:TURN) REQUIRE t.id IS UNIQUE",
+    "CREATE CONSTRAINT topic_id_unique IF NOT EXISTS FOR (tp:TOPIC) REQUIRE tp.id IS UNIQUE",
 ]
 
 INDEXES: list[str] = [
-    # Existing (idempotent)
-    "CREATE INDEX entity_type_idx IF NOT EXISTS FOR (e:Entity) ON (e.type)",
-    # New — full-text for dialog/chunk search
-    "CREATE FULLTEXT INDEX chunk_text_idx IF NOT EXISTS FOR (c:Chunk) ON EACH [c.text]",
-    "CREATE FULLTEXT INDEX utterance_text_idx IF NOT EXISTS FOR (u:Utterance) ON EACH [u.text]",
-    # Range indexes for temporal queries
-    "CREATE INDEX document_ingested_idx IF NOT EXISTS FOR (d:Document) ON (d.ingested_at)",
-    "CREATE INDEX utterance_timestamp_idx IF NOT EXISTS FOR (u:Utterance) ON (u.timestamp)",
-    "CREATE INDEX dialog_session_idx IF NOT EXISTS FOR (d:Dialog) ON (d.session_id)",
+    "CREATE INDEX entity_session_idx IF NOT EXISTS FOR (e:ENTITY) ON (e.session_id)",
+    "CREATE INDEX chunk_session_idx IF NOT EXISTS FOR (c:CHUNK) ON (c.session_id)",
+    "CREATE INDEX turn_session_idx IF NOT EXISTS FOR (t:TURN) ON (t.session_id)",
+    "CREATE FULLTEXT INDEX chunk_text_idx IF NOT EXISTS FOR (c:CHUNK) ON EACH [c.text]",
+    "CREATE FULLTEXT INDEX turn_text_idx IF NOT EXISTS FOR (t:TURN) ON EACH [t.text]",
+]
+
+# Memgraph STM indexes (Memgraph syntax — no IF NOT EXISTS on all)
+MEMGRAPH_INDEXES: list[str] = [
+    "CREATE INDEX ON :SESSION(id)",
+    "CREATE INDEX ON :FILE(id)",
+    "CREATE INDEX ON :CHUNK(session_id)",
+    "CREATE INDEX ON :ENTITY(session_id)",
+    "CREATE INDEX ON :ENTITY(name)",
+    "CREATE INDEX ON :DIALOG(session_id)",
+    "CREATE INDEX ON :TURN(session_id)",
 ]
 
 
 def apply_schema(session: Any) -> dict[str, Any]:
-    """Apply all constraints and indexes. Idempotent. Returns counts."""
+    """Apply Neo4j constraints and indexes. Idempotent. Returns counts."""
     applied: dict[str, Any] = {"constraints": 0, "indexes": 0, "errors": []}
     for stmt in CONSTRAINTS:
         try:
@@ -54,4 +59,16 @@ def apply_schema(session: Any) -> dict[str, Any]:
         applied["indexes"],
         len(applied["errors"]),
     )
+    return applied
+
+
+def apply_memgraph_schema(session: Any) -> dict[str, Any]:
+    """Apply Memgraph indexes. Idempotent (best-effort). Returns counts."""
+    applied: dict[str, Any] = {"indexes": 0, "errors": []}
+    for stmt in MEMGRAPH_INDEXES:
+        try:
+            session.run(stmt).consume()
+            applied["indexes"] += 1
+        except Exception as exc:
+            applied["errors"].append(f"index: {exc}")
     return applied

@@ -7,8 +7,10 @@ Idempotent upserts use UUID5 deterministic IDs keyed on (doc_id, chunk_hash).
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import uuid
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +28,136 @@ def chunk_node_id(doc_id: str, chunk_hash: str) -> str:
 def entity_node_id(name: str) -> str:
     """Deterministic UUID5 for an Entity node keyed on normalised name."""
     return str(uuid.uuid5(_GK_NS, f"entity:{name.strip().upper()}"))
+
+
+def _write_evidence_graph(
+    s: Any,
+    session_id: str,
+    stm_data: dict[str, Any],
+    entity_by_name: dict[str, dict[str, Any]],
+    now: str,
+) -> tuple[int, int]:
+    """MERGE SESSION→FILE→CHUNK→ENTITY + CO_OCCURS into *s*. Returns (nodes, edges)."""
+    nodes, edges = 1, 0
+    s.run("MERGE (sess:SESSION {id: $sid}) SET sess.flushed_at = $now", sid=session_id, now=now)
+    for f in stm_data.get("files", []):
+        s.run(
+            "MERGE (f:FILE {id: $fid}) "
+            "SET f.title=$title, f.parser_name=$parser_name, f.source_hint=$source_hint "
+            "WITH f MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(f)",
+            fid=f["id"],
+            title=f.get("title", ""),
+            parser_name=f.get("parser_name", ""),
+            source_hint=f.get("source_hint", ""),
+            sid=session_id,
+        )
+        nodes += 1
+        edges += 1
+    for c in stm_data.get("chunks", []):
+        s.run(
+            "MERGE (c:CHUNK {id: $cid}) "
+            "SET c.text=$text, c.heading_path=$hp, c.chunk_index=$ci "
+            "WITH c MATCH (f:FILE {id: $fid}) MERGE (f)-[:HAS_CHUNK]->(c)",
+            cid=c["id"],
+            text=c.get("text", ""),
+            hp=c.get("heading_path", ""),
+            ci=c.get("chunk_index", 0),
+            fid=c["file_id"],
+        )
+        nodes += 1
+        edges += 1
+    written: set[str] = set()
+    chunk_to_ents: dict[str, list[str]] = defaultdict(list)
+    for ce in stm_data.get("chunk_entity_edges", []):
+        ename = ce["entity_name"]
+        chunk_to_ents[ce["chunk_id"]].append(ename)
+        em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
+        if ename not in written:
+            s.run(
+                "MERGE (e:ENTITY {name: $n}) SET e.type=$t, e.confidence=$c",
+                n=ename,
+                t=em.get("type", "UNKNOWN"),
+                c=em.get("confidence", 1.0),
+            )
+            nodes += 1
+            written.add(ename)
+        s.run(
+            "MATCH (c:CHUNK {id: $cid}), (e:ENTITY {name: $n}) MERGE (c)-[:HAS_ENTITY]->(e)",
+            cid=ce["chunk_id"],
+            n=ename,
+        )
+        edges += 1
+    for ents in chunk_to_ents.values():
+        for a, b in itertools.combinations(sorted(set(ents)), 2):
+            s.run(
+                "MATCH (e1:ENTITY {name: $a}), (e2:ENTITY {name: $b}) MERGE (e1)-[:CO_OCCURS]->(e2)",
+                a=a,
+                b=b,
+            )
+            edges += 1
+    return nodes, edges
+
+
+def _write_interaction_graph(
+    s: Any,
+    session_id: str,
+    stm_data: dict[str, Any],
+    entity_by_name: dict[str, dict[str, Any]],
+    base_written: set[str],
+) -> tuple[int, int]:
+    """MERGE SESSION→DIALOG→TURN + NEXT + TURN→ENTITY into *s*. Returns (nodes, edges)."""
+    nodes, edges = 0, 0
+    for d in stm_data.get("dialogs", []):
+        s.run(
+            "MERGE (d:DIALOG {id: $did}) SET d.session_id=$sid, d.started_at=$sa "
+            "WITH d MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(d)",
+            did=d["id"],
+            sid=session_id,
+            sa=d.get("started_at", ""),
+        )
+        nodes += 1
+        edges += 1
+    for t in stm_data.get("turns", []):
+        s.run(
+            "MERGE (t:TURN {id: $tid}) "
+            "SET t.session_id=$sid, t.turn_index=$ti, t.role=$r, t.text=$txt "
+            "WITH t MATCH (d:DIALOG {id: $did}) MERGE (d)-[:HAS_TURN]->(t)",
+            tid=t["id"],
+            sid=session_id,
+            ti=t.get("turn_index", 0),
+            r=t.get("role", "unknown"),
+            txt=t.get("text", ""),
+            did=t["dialog_id"],
+        )
+        nodes += 1
+        edges += 1
+    for ne in stm_data.get("next_edges", []):
+        s.run(
+            "MATCH (t1:TURN {id: $a}), (t2:TURN {id: $b}) MERGE (t1)-[:NEXT]->(t2)",
+            a=ne["from_turn_id"],
+            b=ne["to_turn_id"],
+        )
+        edges += 1
+    written = set(base_written)
+    for te in stm_data.get("turn_entity_edges", []):
+        ename = te["entity_name"]
+        em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
+        if ename not in written:
+            s.run(
+                "MERGE (e:ENTITY {name: $n}) SET e.type=$t, e.confidence=$c",
+                n=ename,
+                t=em.get("type", "UNKNOWN"),
+                c=em.get("confidence", 1.0),
+            )
+            nodes += 1
+            written.add(ename)
+        s.run(
+            "MATCH (t:TURN {id: $tid}), (e:ENTITY {name: $n}) MERGE (t)-[:HAS_ENTITY]->(e)",
+            tid=te["turn_id"],
+            n=ename,
+        )
+        edges += 1
+    return nodes, edges
 
 
 class Neo4jStore:
@@ -457,6 +589,232 @@ class Neo4jStore:
             eid=eid,
         )
         return dict(rows[0]) if rows else None
+
+    async def write_session_subgraph(
+        self, session_id: str, stm_data: dict[str, Any]
+    ) -> dict[str, int]:
+        """MERGE a full STM subgraph into Neo4j LTM.
+
+        Idempotent — all writes use MERGE.  Returns node/edge counts written.
+
+        Args:
+            session_id: Session identifier.
+            stm_data: Dict produced by MemgraphStore.read_session_subgraph().
+
+        Returns:
+            {"nodes": int, "edges": int}
+        """
+        now = datetime.now(UTC).isoformat()
+        entity_by_name: dict[str, dict[str, Any]] = {
+            e["name"]: e for e in stm_data.get("entities", [])
+        }
+
+        def _sync() -> dict[str, int]:
+            with self._driver.session() as s:
+                n1, e1 = _write_evidence_graph(s, session_id, stm_data, entity_by_name, now)
+                written: set[str] = {e["name"] for e in stm_data.get("entities", [])}
+                n2, e2 = _write_interaction_graph(s, session_id, stm_data, entity_by_name, written)
+            return {"nodes": n1 + n2, "edges": e1 + e2}
+
+        return await asyncio.to_thread(_sync)
+
+    async def summarize_topics(
+        self,
+        session_id: str,
+        openrouter_key: str,
+        llm_model: str = "meta-llama/llama-3.1-8b-instruct",
+        pg_store: Any = None,
+    ) -> int:
+        """Detect entity communities via Leiden, optionally summarize with LLM, write TOPICs.
+
+        Args:
+            session_id: The session to summarize.
+            openrouter_key: OpenRouter API key. If empty, LLM step is skipped.
+            llm_model: Model identifier passed to OpenRouter.
+            pg_store: Optional PGVectorStore — if provided, writes ltm_topics rows.
+
+        Returns:
+            Number of topics created.
+        """
+        import json
+        import uuid as _uuid
+
+        import igraph as ig
+        import leidenalg
+
+        # Step 1: fetch co-occurrence pairs from Neo4j
+        rows = await self._arun(
+            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)"
+            "-[:HAS_CHUNK]->(c:CHUNK)-[:HAS_ENTITY]->(e1:ENTITY) "
+            "MATCH (c)-[:HAS_ENTITY]->(e2:ENTITY) "
+            "WHERE e1.name < e2.name "
+            "RETURN e1.name AS a, e2.name AS b, count(c) AS weight",
+            sid=session_id,
+        )
+        if not rows:
+            return 0
+
+        # Step 2: build igraph + run Leiden
+        names: list[str] = sorted({r["a"] for r in rows} | {r["b"] for r in rows})
+        name_idx = {n: i for i, n in enumerate(names)}
+        g = ig.Graph(n=len(names))
+        g.vs["name"] = names
+        g.add_edges([(name_idx[r["a"]], name_idx[r["b"]]) for r in rows])
+        weights = [float(r["weight"]) for r in rows]
+        partition = leidenalg.find_partition(
+            g, leidenalg.ModularityVertexPartition, weights=weights
+        )
+        communities = {i: [g.vs[vi]["name"] for vi in partition[i]] for i in range(len(partition))}
+
+        topics_created = 0
+        for comm_id, members in communities.items():
+            if len(members) < 2:
+                continue  # skip singletons
+
+            # Step 3: gather evidence chunks
+            evidence_rows = await self._arun(
+                "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)"
+                "-[:HAS_CHUNK]->(c:CHUNK)-[:HAS_ENTITY]->(e:ENTITY) "
+                "WHERE e.name IN $members "
+                "RETURN DISTINCT c.text AS text, c.heading_path AS hp "
+                "LIMIT 5",
+                sid=session_id,
+                members=members,
+            )
+            passages = "\n\n".join(
+                (f"[{r['hp']}] " if r["hp"] else "") + (r["text"] or "") for r in evidence_rows
+            )
+
+            # Step 4: LLM summarization
+            title = ", ".join(members[:5])
+            summary = ""
+            if openrouter_key:
+                try:
+                    import httpx
+
+                    payload = {
+                        "model": llm_model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are a knowledge graph analyst. Given a set of entities "
+                                    "and text passages, produce a short topic title and a 2-3 "
+                                    "sentence summary."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Entities: {', '.join(members)}\n\n"
+                                    f"Passages:\n{passages}\n\n"
+                                    'Output JSON: {"title": "...", "summary": "..."}'
+                                ),
+                            },
+                        ],
+                        "response_format": {"type": "json_object"},
+                    }
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        resp = await client.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {openrouter_key}"},
+                            json=payload,
+                        )
+                    resp.raise_for_status()
+                    content = resp.json()["choices"][0]["message"]["content"]
+                    parsed = json.loads(content)
+                    title = parsed.get("title", title)
+                    summary = parsed.get("summary", "")
+                except Exception as exc:
+                    logger.warning(
+                        "LLM topic summarization failed for community %d: %s", comm_id, exc
+                    )
+
+            # Step 5: upsert TOPIC to Neo4j
+            topic_id = str(_uuid.uuid5(_GK_NS, f"topic:{session_id}:{comm_id}"))
+            topic = {
+                "id": topic_id,
+                "label": title,
+                "summary": summary,
+                "community_id": comm_id,
+                "members": members,
+            }
+            await self.upsert_topics([topic])
+
+            # IN_TOPIC edges (new schema label)
+            def _link_topic(tid: str, mbs: list[str]) -> None:
+                with self._driver.session() as s:
+                    for name in mbs:
+                        s.run(
+                            "MATCH (tp:Topic {id: $tid}), (e:ENTITY {name: $name}) "
+                            "MERGE (e)-[:IN_TOPIC]->(tp)",
+                            tid=tid,
+                            name=name,
+                        )
+
+            await asyncio.to_thread(_link_topic, topic_id, members)
+
+            # Write pgvector ltm_topics if store provided
+            if pg_store is not None:
+                try:
+                    await pg_store.write_ltm_topic(topic)
+                except Exception as exc:
+                    logger.warning("pgvector ltm_topic write failed: %s", exc)
+
+            topics_created += 1
+
+        return topics_created
+
+    async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
+        """Run GDS PageRank + betweenness on CO_OCCURS; write back to ENTITY nodes.
+
+        Optional step — gracefully fails and returns empty dict on any error.
+
+        Args:
+            session_id: Used to scope projection (session entities only).
+
+        Returns:
+            {"pagerank_written": int, "betweenness_written": int} or {} on error.
+        """
+        proj_name = f"gk_enrich_{session_id.replace('-', '_')}"
+        try:
+            # Project session-scoped CO_OCCURS sub-graph
+            await self._arun(
+                "CALL gds.graph.project($proj, "
+                "  {ENTITY: {properties: []}}, "
+                "  {CO_OCCURS: {orientation: 'UNDIRECTED'}})",
+                proj=proj_name,
+            )
+
+            # PageRank
+            pr_rows = await self._arun(
+                "CALL gds.pageRank.write($proj, "
+                "  {dampingFactor: 0.85, maxIterations: 20, writeProperty: 'pagerank'}) "
+                "YIELD nodePropertiesWritten",
+                proj=proj_name,
+            )
+            pr_written = pr_rows[0]["nodePropertiesWritten"] if pr_rows else 0
+
+            # Betweenness (approximate)
+            bc_rows = await self._arun(
+                "CALL gds.betweenness.write($proj, "
+                "  {samplingSize: 100, writeProperty: 'betweenness'}) "
+                "YIELD nodePropertiesWritten",
+                proj=proj_name,
+            )
+            bc_written = bc_rows[0]["nodePropertiesWritten"] if bc_rows else 0
+
+            return {"pagerank_written": pr_written, "betweenness_written": bc_written}
+
+        except Exception as exc:
+            logger.warning("GDS enrichment skipped: %s", exc)
+            return {}
+
+        finally:
+            try:
+                await self._arun("CALL gds.graph.drop($proj, false)", proj=proj_name)
+            except Exception:
+                pass
 
     async def count_nodes(self) -> dict[str, int]:
         """Return counts of key node types."""

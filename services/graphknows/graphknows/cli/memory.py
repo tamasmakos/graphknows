@@ -1,12 +1,12 @@
-"""graphknows-memory CLI — long-term memory management tool."""
+"""graphknows-memory CLI — memory management: ingest, flush, recall, doctor, forget."""
 
-import json
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
 import click
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
 
 load_dotenv(Path(os.environ.get("PWD", ".")) / ".env")
 
@@ -14,191 +14,354 @@ _NO_RESULTS = "No results found."
 
 
 def _neo4j_driver():
+    from neo4j import GraphDatabase
+
     uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")  # NOSONAR
     user = os.environ.get("NEO4J_USER", "neo4j")
     pw = os.environ.get("NEO4J_PASSWORD", "testpassword123")
     return GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
 
 
-def _pg_dsn():
+def _pg_dsn() -> str:
     return os.environ.get(
         "PGVECTOR_DSN",
-        "postgresql://postgres@172.18.0.1:5432/vectordb",  # NOSONAR
+        "postgresql://postgres:postgres@172.18.0.1:5432/graphknows",
     )
 
 
+def _mg_uri() -> str:
+    return os.environ.get("MEMGRAPH_URI", "bolt://172.18.0.1:17687")
+
+
+def _embed_fn():
+    from graphknows.retrieval.stores.embedder import embed_one
+
+    return embed_one
+
+
 @click.group()
-def cli():
-    """GraphKnows long-term memory management."""
+def cli() -> None:
+    """GraphKnows memory management — ingest, flush, recall, forget."""
 
 
-@cli.command()
-def stats():
-    """Show LTM statistics: entity, topic, segment counts."""
-    d = _neo4j_driver()
-    with d.session() as s:
-        ec = s.run("MATCH (e:Entity) RETURN count(e) as c").single()["c"]
-        tc = s.run("MATCH (t:Topic) RETURN count(t) as c").single()["c"]
-        sc = s.run("MATCH (s:Segment) RETURN count(s) as c").single()["c"]
-        rc = s.run("MATCH ()-[r:RELATES]->() RETURN count(r) as c").single()["c"]
-        top = s.run(
-            "MATCH (e:Entity) WHERE e.pagerank IS NOT NULL "
-            "RETURN e.name, e.pagerank ORDER BY e.pagerank DESC LIMIT 5"
-        ).data()
-    d.close()
-    click.echo(f"Entities:  {ec}")
-    click.echo(f"Relations: {rc}")
-    click.echo(f"Topics:    {tc}")
-    click.echo(f"Segments:  {sc}")
-    click.echo("Top entities by PageRank:")
-    for e in top:
-        click.echo(f"  {e['e.name']}: {e['e.pagerank']:.4f}")
+# ---------------------------------------------------------------------------
+# memory ingest
+# ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command("ingest")
+@click.argument("text_or_path")
+@click.option("--session", required=True, help="Session ID for STM namespace")
+@click.option("--title", default="", help="Optional document title")
+@click.option("--is-file", is_flag=True, help="Treat argument as a file path")
+def ingest_cmd(text_or_path: str, session: str, title: str, is_file: bool) -> None:
+    """Ingest TEXT_OR_PATH into short-term memory (Memgraph + pgvector stm_*).
+
+    Accepts raw text directly or a file path (with --is-file).
+    Parser is selected automatically based on file extension.
+    """
+    from graphknows.memory.ingestor import MemoryIngestor
+    from graphknows.retrieval.stores.memgraph import MemgraphStore
+    from graphknows.retrieval.stores.pgvector import PgVectorStore
+
+    mg = MemgraphStore(_mg_uri())
+    pg = PgVectorStore(_pg_dsn())
+    # Lazy extractor — defaults to no-op if GLiNER unavailable
+    try:
+        from graphknows.graphgen.pipeline.entity_relation.extraction import InProcessExtractor
+
+        extractor = InProcessExtractor()
+    except Exception:
+        extractor = _NoOpExtractor()
+
+    ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=_embed_fn())
+
+    if is_file:
+        result = ingestor.ingest_file(text_or_path, session_id=session)
+    else:
+        result = ingestor.ingest_text(text_or_path, session_id=session, title=title)
+
+    click.echo(f"Ingested: file_id={result.file_id}")
+    click.echo(f"  chunks:   {result.chunk_count}")
+    click.echo(f"  entities: {result.entity_count}")
+    click.echo(f"  elapsed:  {result.elapsed_s:.2f}s")
+    if result.errors:
+        click.echo(f"  errors:   {len(result.errors)}")
+        for e in result.errors[:3]:
+            click.echo(f"    - {e}")
+
+
+# ---------------------------------------------------------------------------
+# memory flush
+# ---------------------------------------------------------------------------
+
+
+@cli.command("flush")
+@click.argument("session_id")
+@click.option("--no-topics", is_flag=True, help="Skip LLM topic summarization")
+@click.option("--no-clear", is_flag=True, help="Keep STM after flush")
+@click.option("--gds", is_flag=True, help="Run GDS PageRank + betweenness")
+def flush_cmd(session_id: str, no_topics: bool, no_clear: bool, gds: bool) -> None:
+    """Flush SESSION_ID from short-term memory (Memgraph/stm_*) into Neo4j/ltm_*.
+
+    Optionally runs topic summarization (Louvain + LLM) and GDS enrichment.
+    """
+    import asyncio
+
+    from graphknows.memory.flush import FlushOptions, SessionFlusher
+    from graphknows.retrieval.stores.memgraph import MemgraphStore
+    from graphknows.retrieval.stores.pgvector import PgVectorStore
+
+    mg = MemgraphStore(_mg_uri())
+    pg = PgVectorStore(_pg_dsn())
+    neo = _neo4j_driver()
+
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    flusher = SessionFlusher(mg, pg, neo, openrouter_key=key)
+    opts = FlushOptions(
+        summarize_topics=not no_topics,
+        run_gds=gds,
+        clear_stm=not no_clear,
+        merge_entities=True,
+    )
+
+    result = asyncio.run(flusher.flush(session_id, opts))
+    click.echo(f"Flush session={session_id}")
+    click.echo(f"  nodes:    {result.nodes_written}")
+    click.echo(f"  edges:    {result.edges_written}")
+    click.echo(f"  chunks:   {result.chunks_promoted}")
+    click.echo(f"  turns:    {result.turns_promoted}")
+    click.echo(f"  topics:   {result.topics_created}")
+    click.echo(f"  merged:   {result.merged_entities}")
+    click.echo(f"  elapsed:  {result.elapsed_s:.2f}s")
+    if result.errors:
+        click.echo(f"  errors:   {len(result.errors)}")
+        for e in result.errors[:3]:
+            click.echo(f"    - {e}")
+
+
+# ---------------------------------------------------------------------------
+# recall
+# ---------------------------------------------------------------------------
+
+
+@cli.command("recall-short")
 @click.argument("query")
-@click.option("--top-k", default=5, help="Number of topics to return")
-def query(query, top_k):
-    """Semantic search over LTM topics."""
+@click.option("--session", required=True, help="Session ID to scope recall")
+@click.option("--top-k", default=5, type=int, help="Max results")
+def recall_short_cmd(query: str, session: str, top_k: int) -> None:
+    """Recall from short-term memory (Memgraph + stm_chunks/stm_turns).
+
+    Results are RRF-fused from ANN vector search and entity-first graph traversal.
+    """
+    from graphknows.retrieval.recall_stm import recall_short_term
+    from graphknows.retrieval.stores.memgraph import MemgraphStore
+    from graphknows.retrieval.stores.pgvector import PgVectorStore
+
+    mg = MemgraphStore(_mg_uri())
+    pg = PgVectorStore(_pg_dsn())
+    results = recall_short_term(
+        mg, pg, query, session_id=session, top_k=top_k, embed_fn=_embed_fn()
+    )
+
+    if not results:
+        click.echo(_NO_RESULTS)
+        return
+    for r in results:
+        prefix = f"[{r.source_type.upper()} {r.score:.4f}]"
+        loc = r.heading_path or r.provenance.get("role", "")
+        click.echo(f"{prefix} {loc}")
+        click.echo(f"  {r.text[:200]}")
+        if r.entity_names:
+            click.echo(f"  entities: {', '.join(r.entity_names[:5])}")
+        click.echo()
+
+
+@cli.command("recall-long")
+@click.argument("query")
+@click.option("--top-k", default=5, type=int, help="Max results")
+@click.option("--session", default=None, help="Optional session filter")
+def recall_long_cmd(query: str, top_k: int, session: str | None) -> None:
+    """Recall from long-term memory (Neo4j + ltm_chunks/ltm_turns).
+
+    Entity-first graph traversal + ANN vector search, RRF-fused.
+    """
+    from graphknows.retrieval.recall_ltm import recall_long_term
+    from graphknows.retrieval.stores.pgvector import PgVectorStore
+
+    pg = PgVectorStore(_pg_dsn())
+    neo = _neo4j_driver()
+    results = recall_long_term(
+        neo, pg, query, top_k=top_k, session_filter=session, embed_fn=_embed_fn()
+    )
+    neo.close()
+
+    if not results:
+        click.echo(_NO_RESULTS)
+        return
+    for r in results:
+        prefix = f"[{r.source_type.upper()} {r.score:.4f}]"
+        loc = r.heading_path or r.provenance.get("session_id", "")
+        click.echo(f"{prefix} {loc}")
+        click.echo(f"  {r.text[:200]}")
+        if r.entity_names:
+            click.echo(f"  entities: {', '.join(r.entity_names[:5])}")
+        click.echo()
+
+
+# ---------------------------------------------------------------------------
+# stats
+# ---------------------------------------------------------------------------
+
+
+@cli.command("stats")
+@click.option("--session", default=None, help="Session to inspect")
+def stats_cmd(session: str | None) -> None:
+    """Show memory statistics: STM and LTM node/edge counts."""
     import asyncio
 
     import asyncpg as apg
 
-    from graphknows.retrieval.stores.embedder import embed_one
-
-    embedding = json.dumps(embed_one(query))
-
-    async def _run():
+    async def _pg_counts() -> dict:
         conn = await apg.connect(_pg_dsn())
         try:
-            rows = await conn.fetch(
-                "SELECT community_id, summary, entity_count FROM ltm_topics "
-                f"ORDER BY embedding <=> $1::vector LIMIT {top_k}",  # nosec B608
-                embedding,
-            )
-            return rows
+            sc = await conn.fetchval("SELECT count(*) FROM stm_chunks")
+            st = await conn.fetchval("SELECT count(*) FROM stm_turns")
+            lc = await conn.fetchval("SELECT count(*) FROM ltm_chunks")
+            lt = await conn.fetchval("SELECT count(*) FROM ltm_turns")
+            top = await conn.fetchval("SELECT count(*) FROM ltm_topics")
+            return {
+                "stm_chunks": sc,
+                "stm_turns": st,
+                "ltm_chunks": lc,
+                "ltm_turns": lt,
+                "ltm_topics": top,
+            }
         finally:
             await conn.close()
 
-    rows = asyncio.run(_run())
-    for r in rows:
-        click.echo(f"[community {r['community_id']}] ({r['entity_count']} entities)")
-        click.echo(f"  {r['summary']}")
-        click.echo()
+    pg_counts = asyncio.run(_pg_counts())
+    click.echo("pgvector")
+    for k, v in pg_counts.items():
+        click.echo(f"  {k}: {v}")
+
+    d = _neo4j_driver()
+    with d.session() as s:
+        ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]
+        tc = s.run("MATCH (t:TOPIC) RETURN count(t) as c").single()["c"]
+        sess_c = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()["c"]
+    d.close()
+    click.echo("neo4j")
+    click.echo(f"  sessions: {sess_c}")
+    click.echo(f"  entities: {ec}")
+    click.echo(f"  topics:   {tc}")
+
+
+# ---------------------------------------------------------------------------
+# forget
+# ---------------------------------------------------------------------------
 
 
 @cli.group()
-def forget():
-    """Forget/prune LTM entries."""
+def forget() -> None:
+    """Prune / delete memory entries."""
 
 
-@forget.command("disconnected")
-def forget_disconnected():
-    """Prune isolated Entity nodes with no relations."""
-    from graphknows.forget import LTMForget
+@forget.command("session")
+@click.argument("session_id")
+@click.option("--both", is_flag=True, help="Delete from LTM (Neo4j) too, not just STM")
+def forget_session(session_id: str, both: bool) -> None:
+    """Delete all STM data for SESSION_ID. With --both also deletes from LTM."""
+    import asyncio
 
-    f = LTMForget(_neo4j_driver(), _pg_dsn())
-    result = f.prune_disconnected()
-    click.echo(f"Deleted {result['deleted_entities']} isolated entities")
+    from graphknows.retrieval.stores.memgraph import MemgraphStore
+    from graphknows.retrieval.stores.pgvector import PgVectorStore
+
+    mg = MemgraphStore(_mg_uri())
+    pg = PgVectorStore(_pg_dsn())
+
+    mg.delete_session(session_id)
+    asyncio.run(pg.clear_stm(session_id))
+    click.echo(f"Deleted STM for session {session_id}")
+
+    if both:
+        d = _neo4j_driver()
+        with d.session() as s:
+            s.run(
+                "MATCH (sess:SESSION {id: $sid}) "
+                "OPTIONAL MATCH (sess)-[*..4]->(n) "
+                "DETACH DELETE sess, n",
+                sid=session_id,
+            )
+        d.close()
+        click.echo(f"Deleted LTM for session {session_id}")
 
 
 @forget.command("before")
 @click.argument("date")
-def forget_before(date):
-    """Delete Segment nodes older than DATE (ISO format: 2025-01-01)."""
-    from graphknows.forget import LTMForget
-
-    f = LTMForget(_neo4j_driver(), _pg_dsn())
-    result = f.forget_before(date)
-    click.echo(f"Deleted segments before {date}, orphans: {result['orphaned_entities_deleted']}")
-
-
-@forget.command("community")
-@click.option("--community-id", required=True, type=int)
-def forget_community_cmd(community_id):
-    """Delete all entities exclusively in a community."""
-    from graphknows.forget import LTMForget
-
-    f = LTMForget(_neo4j_driver(), _pg_dsn())
-    result = f.forget_community(community_id)
-    click.echo(f"Deleted community {result['community_id']}: {result['deleted_entities']} entities")
-
-
-@cli.command()
-@click.option("--skip-topics", is_flag=True)
-def enrich(skip_topics):
-    """Run feature engineering (Leiden + centrality) on the full LTM graph."""
-    from graphknows.feature_engineering import LTMFeatureEngineer
-
-    fe = LTMFeatureEngineer(_neo4j_driver())
-    result = fe.run()
-    click.echo(
-        f"Entities: {result.entity_count}, Communities: {result.community_count}, Algorithm: {result.algorithm_used}, {result.runtime_ms:.0f}ms"
-    )
-    if result.error:
-        click.echo(f"Warning: {result.error}")
-    if result.top_entities:
-        click.echo("Top entities by PageRank:")
-        for e in result.top_entities[:5]:
-            click.echo(f"  {e.get('name')}: pr={e.get('pr', 0):.4f} community={e.get('community')}")
-
-
-@cli.command("recall-docs")
-@click.argument("query")
-@click.option("--top-k", default=5, type=int, help="Max results")
-@click.option("--session", default=None, help="Filter to specific session")
-def recall_docs(query: str, top_k: int, session: str | None) -> None:
-    """Find document chunks matching QUERY."""
-    from graphknows.recall import recall_by_document
-
+def forget_before(date: str) -> None:
+    """Delete SESSION nodes flushed before DATE (ISO format: 2025-01-01)."""
     d = _neo4j_driver()
-    results = recall_by_document(d, query, top_k, session)
+    with d.session() as s:
+        r = s.run(
+            "MATCH (sess:SESSION) WHERE sess.flushed_at < $dt "
+            "OPTIONAL MATCH (sess)-[*..4]->(n) "
+            "DETACH DELETE sess, n "
+            "RETURN count(sess) AS deleted",
+            dt=date,
+        ).single()
     d.close()
-    for r in results:
-        click.echo(f"[{r.score:.2f}] {r.provenance.get('title', 'Unknown')} | {r.text[:120]}...")
-        click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
-    if not results:
-        click.echo(_NO_RESULTS)
+    click.echo(f"Deleted {r['deleted']} sessions before {date}")
 
 
-@cli.command("recall-dialog")
-@click.argument("query")
-@click.option("--top-k", default=5, type=int)
-@click.option("--session", default=None)
-def recall_dialog(query: str, top_k: int, session: str | None) -> None:
-    """Find past conversation turns matching QUERY."""
-    from graphknows.recall import recall_by_dialog
-
-    d = _neo4j_driver()
-    results = recall_by_dialog(d, query, top_k, session)
-    d.close()
-    for r in results:
-        click.echo(
-            f"[{r.score:.2f}] session={r.provenance.get('session_id', '?')} "
-            f"turn={r.provenance.get('turn_index', 0)} "
-            f"{r.provenance.get('role', '?')}: {r.text[:120]}..."
-        )
-        click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
-    if not results:
-        click.echo(_NO_RESULTS)
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
 
 
-@cli.command("recall-topic")
-@click.argument("query")
-@click.option("--top-k", default=5, type=int)
-def recall_topic(query: str, top_k: int) -> None:
-    """Find topics related to QUERY."""
-    from graphknows.recall import recall_by_topic
+@cli.command("doctor")
+def doctor_cmd() -> None:
+    """Health check: connectivity to Memgraph, Neo4j, pgvector."""
+    import asyncio
 
-    d = _neo4j_driver()
-    results = recall_by_topic(d, query, top_k)
-    d.close()
-    for r in results:
-        click.echo(
-            f"[{r.score:.2f}] {r.text[:120]} "
-            f"(entities: {len(r.entity_names)}, "
-            f"size: {r.provenance.get('size', 0)})"
-        )
-        click.echo(f"  Entities: {', '.join(r.entity_names[:5])}")
-    if not results:
-        click.echo(_NO_RESULTS)
+    import asyncpg as apg
+
+    # Memgraph
+    try:
+        from neo4j import GraphDatabase
+
+        mg_drv = GraphDatabase.driver(_mg_uri(), auth=("", ""))  # NOSONAR
+        with mg_drv.session() as s:
+            s.run("RETURN 1").single()
+        mg_drv.close()
+        click.echo("[OK] Memgraph reachable")
+    except Exception as exc:
+        click.echo(f"[FAIL] Memgraph: {exc}")
+
+    # Neo4j
+    try:
+        d = _neo4j_driver()
+        with d.session() as s:
+            s.run("RETURN 1").single()
+        d.close()
+        click.echo("[OK] Neo4j reachable")
+    except Exception as exc:
+        click.echo(f"[FAIL] Neo4j: {exc}")
+
+    # pgvector
+    async def _pg_check():
+        conn = await apg.connect(_pg_dsn())
+        await conn.close()
+
+    try:
+        asyncio.run(_pg_check())
+        click.echo("[OK] pgvector reachable")
+    except Exception as exc:
+        click.echo(f"[FAIL] pgvector: {exc}")
+
+
+class _NoOpExtractor:
+    """Fallback extractor when GLiNER is unavailable."""
+
+    def extract(self, text: str) -> list:
+        return []
