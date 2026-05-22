@@ -1,7 +1,11 @@
-# docker-compose.yaml — production service definitions
-# Override with docker-compose.dev.yaml for local development
-# Usage: docker compose up -d
-#        docker compose --profile observability up -d   (adds Langfuse)
+# docker-compose.yaml — graphknows local development stack
+# Starts infrastructure + the graphknows service only.
+# The agent, search, and frontend services live in the civicalgraph repository.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose --profile observability up -d   (adds Langfuse)
+
 version: "3.9"
 
 services:
@@ -64,7 +68,7 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── Application Services ────────────────────────────────────────────────────
+  # ── graphknows service ──────────────────────────────────────────────────────
 
   graphknows:
     build:
@@ -86,9 +90,8 @@ services:
       LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
       LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
       LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      # Embedding
-      EMBED_MODEL: "${EMBED_MODEL:-BAAI/bge-small-en-v1.5}"
-      # Filesystem (graphgen pipeline artefacts)
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      # Filesystem
       INPUT_DIR: "${GRAPHGEN_INPUT_DIR:-/data/input}"
       OUTPUT_DIR: "${GRAPHGEN_OUTPUT_DIR:-/data/output}"
       GRAPHKNOWS_ENV: "${GRAPHKNOWS_ENV:-development}"
@@ -111,89 +114,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-
-  agent:
-    build:
-      context: .
-      dockerfile: services/agent/Dockerfile
-    environment:
-      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
-      NEO4J_USER: "${NEO4J_USER:-neo4j}"
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
-      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
-      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
-      PGVECTOR_DB: "${PGVECTOR_DB:-vectordb}"
-      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
-      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
-      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
-      HYBRIDRAG_URL: "${HYBRIDRAG_URL:-http://graphknows:8025}"
-      GRAPHGEN_URL: "${GRAPHGEN_URL:-http://graphknows:8025}"
-      GRAPHKNOWS_URL: "${GRAPHKNOWS_URL:-http://graphknows:8025}"
-      SEARCH_URL: "${SEARCH_URL:-http://search:8000}"
-      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
-      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      GROQ_API_KEY: "${GROQ_API_KEY:-}"
-      GRAPHKNOWS_ENV: "${GRAPHKNOWS_ENV:-development}"
-    ports:
-      - "8030:8000"
-    depends_on:
-      neo4j:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-      memgraph:
-        condition: service_healthy
-      graphknows:
-        condition: service_started
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)\""]
-      interval: 15s
-      timeout: 5s
-      start_period: 60s
-      retries: 5
-    restart: unless-stopped
-
-  search:
-    build:
-      context: .
-      dockerfile: services/search/Dockerfile
-    environment:
-      GRAPHGEN_URL: "${GRAPHGEN_URL:-http://graphknows:8025}"
-      GRAPHKNOWS_ENV: "${GRAPHKNOWS_ENV:-development}"
-      # Canonical raw-document store — bind-mounted from host so scrapers and
-      # the search service always read/write the same files.
-      RAW_DATA_DIR: "/data/raw"
-    ports:
-      - "${SEARCH_PORT:-8040}:8000"
-    volumes:
-      - ./data/raw:/data/raw
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
-
-  frontend:
-    build:
-      context: apps/web
-      dockerfile: Dockerfile
-    environment:
-      AGENT_URL: "${AGENT_URL:-http://agent:8000}"
-      PORT: "8080"
-    ports:
-      - "${FRONTEND_PORT:-8080}:8080"
-    depends_on:
-      agent:
-        condition: service_started
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/')"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 15s
 
   # ── Observability (optional profile) ────────────────────────────────────────
 
@@ -229,27 +149,6 @@ services:
     volumes:
       - langfuse_data:/var/lib/postgresql/data
 
-  # ── CI smoke-test runner ────────────────────────────────────────────────────
-  # Started only when COMPOSE_PROFILES=smoke (or explicitly in CI).
-  # Waits for all app services to be healthy, then probes every endpoint.
-  # CI uses: docker compose --profile smoke up --exit-code-from smoke-tests
-  smoke-tests:
-    profiles: [smoke]
-    image: python:3.11-slim
-    command: python /smoke.py
-    volumes:
-      - ./tests/smoke/smoke.py:/smoke.py:ro
-    depends_on:
-      graphknows:
-        condition: service_healthy
-      agent:
-        condition: service_healthy
-      search:
-        condition: service_healthy
-      frontend:
-        condition: service_healthy
-    restart: "no"
-
 volumes:
   neo4j_data:
   pgvector_data:
@@ -259,5 +158,4 @@ volumes:
   langfuse_data:
 
 #  7474 neo4j HTTP   7687 neo4j Bolt   7688 memgraph Bolt   5432 pgvector
-#  8025 graphknows   8030 agent        8040 search
-#  8080 frontend     3000 langfuse (observability profile)
+#  8025 graphknows   3000 langfuse (observability profile)

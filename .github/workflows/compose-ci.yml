@@ -1,0 +1,147 @@
+name: Compose CI (graphknows integration)
+
+# Spins up the three infrastructure services (Neo4j, pgvector, Memgraph),
+# installs the graphknows package, and runs the integration test suite.
+#
+# Triggered manually only — not on every push (rapid iteration mode).
+# Reactivate push/PR triggers when preparing a versioned release.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: compose-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  graphknows-integration:
+    name: graphknows integration tests (live infra)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      # ── Free runner disk space ──────────────────────────────────────────────
+      - name: Free runner disk space
+        run: |
+          sudo docker image prune -af 2>/dev/null || true
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/share/swift \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk \
+            /opt/hostedtoolcache/Ruby \
+            /opt/hostedtoolcache/go \
+            /usr/local/share/boost \
+            /usr/lib/jvm \
+            /usr/share/man \
+            /var/lib/gems \
+            2>/dev/null || true
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Start infrastructure only ───────────────────────────────────────────
+      # graphknows needs Neo4j, pgvector, and Memgraph.
+      # We do NOT build the agent/search/frontend images here.
+      - name: Create CI environment file
+        run: |
+          cat > .env.ci <<'EOF'
+          NEO4J_AUTH=neo4j/ci-password
+          NEO4J_USER=neo4j
+          NEO4J_PASSWORD=ci-password
+          NEO4J_DATABASE=neo4j
+          NEO4J_URI=bolt://localhost:7687
+          PGVECTOR_DB=vectordb
+          PGVECTOR_USER=postgres
+          PGVECTOR_PASSWORD=ci-password
+          PGVECTOR_HOST=localhost
+          PGVECTOR_PORT=5432
+          MEMGRAPH_URI=bolt://localhost:7688
+          OPENROUTER_API_KEY=dummy-ci-key
+          EOF
+
+      - name: Start infrastructure services
+        run: |
+          set -a && source .env.ci && set +a
+          docker compose up -d neo4j pgvector memgraph
+          echo "Infrastructure starting..."
+
+      # ── Install graphknows ──────────────────────────────────────────────────
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install graphknows package
+        run: |
+          uv venv /opt/ci-venv --python 3.13
+          uv pip install --python /opt/ci-venv/bin/python \
+            -e services/graphknows \
+            pytest pytest-asyncio
+
+      # ── Wait for infra ──────────────────────────────────────────────────────
+      - name: Wait for Neo4j
+        run: |
+          for i in $(seq 1 30); do
+            if /opt/ci-venv/bin/python -c \
+              "import socket; socket.create_connection(('localhost', 7687), timeout=2)" 2>/dev/null; then
+              echo "Neo4j ready"; break
+            fi
+            echo "Waiting for Neo4j... ($i/30)"; sleep 3
+          done
+
+      - name: Wait for pgvector
+        run: |
+          for i in $(seq 1 20); do
+            if /opt/ci-venv/bin/python -c \
+              "import socket; socket.create_connection(('localhost', 5432), timeout=2)" 2>/dev/null; then
+              echo "pgvector ready"; break
+            fi
+            echo "Waiting for pgvector... ($i/20)"; sleep 3
+          done
+
+      - name: Wait for Memgraph
+        run: |
+          for i in $(seq 1 20); do
+            if /opt/ci-venv/bin/python -c \
+              "import socket; socket.create_connection(('localhost', 7688), timeout=2)" 2>/dev/null; then
+              echo "Memgraph ready"; break
+            fi
+            echo "Waiting for Memgraph... ($i/20)"; sleep 3
+          done
+
+      # ── Run integration tests ───────────────────────────────────────────────
+      - name: Run graphknows integration tests
+        env:
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: ci-password
+          PGVECTOR_HOST: localhost
+          PGVECTOR_PORT: "5432"
+          PGVECTOR_DB: vectordb
+          PGVECTOR_USER: postgres
+          PGVECTOR_PASSWORD: ci-password
+          MEMGRAPH_URI: bolt://localhost:7688
+          OPENROUTER_API_KEY: dummy-ci-key
+        run: |
+          /opt/ci-venv/bin/python -m pytest tests/ \
+            -m integration \
+            -v \
+            --tb=short \
+            --timeout=60
+
+      # ── Teardown ────────────────────────────────────────────────────────────
+      - name: Stop infrastructure
+        if: always()
+        run: docker compose down -v

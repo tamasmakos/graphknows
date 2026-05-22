@@ -45,13 +45,12 @@ jobs:
           if grep -rn 'from sentence_transformers\|import sentence_transformers' \
             --include='*.py' \
             --exclude-dir='.venv' --exclude-dir='research' --exclude-dir='tests' \
-            services/ ; then
+            services/graphknows/ ; then
             echo "::error::sentence-transformers import found in production code — remove it"
             exit 1
           fi
-          if grep -q 'sentence-transformers' services/graphknows/pyproject.toml \
-            services/search/pyproject.toml services/agent/pyproject.toml 2>/dev/null; then
-            echo "::error::sentence-transformers dep found in a pyproject.toml — remove it"
+          if grep -q 'sentence-transformers' services/graphknows/pyproject.toml 2>/dev/null; then
+            echo "::error::sentence-transformers dep found in pyproject.toml — remove it"
             exit 1
           fi
           if grep -c 'sentence.transform' uv.lock 2>/dev/null | grep -qv '^0$'; then
