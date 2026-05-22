@@ -112,6 +112,7 @@ def flush_cmd(session_id: str, no_topics: bool, no_clear: bool, gds: bool) -> No
     pg = PgVectorStore(_pg_dsn())
 
     from graphknows.retrieval.stores.neo4j import Neo4jStore
+
     neo = Neo4jStore(
         uri=os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
         user=os.environ.get("NEO4J_USER", "neo4j"),
