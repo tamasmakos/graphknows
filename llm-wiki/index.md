@@ -1,7 +1,7 @@
 # Wiki Index — Graphknows
 
 > Deep research agent for political intelligence.
-> Last updated: 2026-05-20 | Pages: 25
+> Last updated: 2026-05-23 | Pages: 28
 
 ---
 
@@ -15,6 +15,9 @@
 | [[architecture/reference]] | Full service topology, API contracts, ports, env vars, local dev setup |
 | [[architecture/service-agent]] | services/agent/ internal design: LangGraph nodes, session graph, HTTP clients |
 | [[architecture/service-search]] | services/search/ design: BaseSource, connector pattern, EU source connectors |
+| [[architecture/generic-memory-engine-discovery]] | Deep prototype findings for generic memory objects, raw-vs-distilled lanes, and cross-session promotion |
+| [[architecture/generic-agent-adapter-discovery]] | Repo-level findings on a host-agnostic adapter contract, generic event surfaces, and recall-lane gaps |
+| [[architecture/generic-agent-adapter-implementation-plan]] | Repo-level implementation wave, dependency graph, and acceptance gate for the generic adapter |
 
 ---
 

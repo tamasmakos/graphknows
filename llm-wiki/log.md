@@ -1,5 +1,26 @@
 # Wiki Log
 
+## [2026-05-23] create | generic agent adapter implementation plan
+- Added `architecture/generic-agent-adapter-implementation-plan.md` capturing the repo-level implementation wave for the generic adapter
+- Recorded the v1 scope: canonical types, adapter facade, deterministic terminal/tool summarization, metadata-aware recall, conformance tests, real-trace evaluation, docs
+- Logged the Kanban dependency graph and host-adapter acceptance gate before any Hermes/LangGraph/OpenAI/MCP integration work
+
+## [2026-05-22] create | generic agent adapter discovery
+- Added `architecture/generic-agent-adapter-discovery.md` to capture the repo-level discovery pass for a host-agnostic Graphknows memory adapter
+- Prototyped a research-only generic adapter over existing repo surfaces: `MemoryIngestor`, `DialogWriter`, `SessionFlusher`, STM/LTM recall
+- Validated the same adapter contract against two sources: one real Hermes-derived generic event stream and one synthetic non-Hermes host stream
+- Confirmed the storage/promotion backend is already generic enough; the missing repo piece is a unified adapter interface plus canonical event/record types
+- Identified the next repo-level gap: recall is still too flat; continuity queries can surface `raw_evidence` terminal chunks above distilled memory, so retrieval needs memory-class-aware filtering/boosting
+- Updated `index.md` page count to 27 and added the new architecture page
+
+## [2026-05-22] create | generic memory engine discovery
+- Added `architecture/generic-memory-engine-discovery.md` from the stronger v2 Hermes-memory prototype
+- Validated three-lane comparison on real Hermes sessions: raw trace vs step summaries vs distilled memory objects
+- Recorded quantitative retrieval result: distilled lane useful-hit-rate `0.8333` vs raw lane `0.3333` (+0.5 delta)
+- Confirmed automatic cross-session promotion of three durable facts: terminal filtering requirement, flush relation bug, step segmentation rule
+- Recorded architectural conclusion: raw events are evidence; distilled `State` / `Episode` / `Fact` objects should be the primary retrieval surface
+- Updated `index.md` page count to 26 and added the new architecture page
+
 ## [2026-05-20] fix | extraction quality — 6-card improvement sprint
 - communicate_node kwarg: removed retriever=None from router.py:972 call site
 - Sentence-boundary truncation: added _truncate_at_sentence() helper; replaced 3x [:2000] slices in agent.py
