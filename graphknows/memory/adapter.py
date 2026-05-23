@@ -111,6 +111,7 @@ class GraphknowsAdapter:
             )
             for p in participants
         ]
+        assert self._dialog_writer is not None  # set in __post_init__
         self._dialog_writer.start_dialog(
             session_id,
             dialog_id,
@@ -123,7 +124,7 @@ class GraphknowsAdapter:
         Args:
             turn: Turn data including text, role, and tool calls.
         """
-        dialog_id = self._active_dialog_id
+        dialog_id = self._active_dialog_id or ""
         mapped_tool_calls = [
             ToolCall(
                 name=tc.tool_name,
@@ -139,6 +140,7 @@ class GraphknowsAdapter:
             timestamp=time.time(),
             tool_calls=mapped_tool_calls,
         )
+        assert self._dialog_writer is not None  # set in __post_init__
         self._dialog_writer.write_turn(
             turn.session_id,
             dialog_id,
@@ -161,6 +163,7 @@ class GraphknowsAdapter:
             "memory_class": artifact.memory_class.value,
             "artifact_id": artifact.artifact_id,
         }
+        assert self._ingestor is not None  # set in __post_init__
         self._ingestor.ingest_text(
             artifact.content,
             session_id=session_id,
@@ -180,11 +183,12 @@ class GraphknowsAdapter:
         """
         from graphknows.retrieval.recall_stm import recall_short_term  # noqa: PLC0415
 
+        session_id: str = request.session_id or ""
         hits = recall_short_term(
             self.mg_store,
             self.pg_store,
             query=request.query,
-            session_id=request.session_id,
+            session_id=session_id,
             top_k=request.top_k,
             embed_fn=self.embed_fn,
         )
