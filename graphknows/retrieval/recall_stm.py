@@ -24,6 +24,21 @@ class RecallResult:
     entity_names: list[str] = field(default_factory=list)
     provenance: dict[str, Any] = field(default_factory=dict)
     heading_path: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+_SHAPE_FACTORS: dict[str | None, float] = {
+    "fact": 1.5,
+    "state": 1.4,
+    "episode": 1.3,
+    "summary": 1.2,
+    "raw_evidence": 0.6,
+}
+
+
+def _shape_score(score: float, memory_class: str | None) -> float:
+    """Apply memory_class-aware multiplicative boost/de-boost to a score."""
+    return score * _SHAPE_FACTORS.get(memory_class, 1.0)
 
 
 def _run_stm_ann(
@@ -48,7 +63,14 @@ def _run_stm_ann(
                         scope="short_term",
                         score=rrf,
                         heading_path=chunk.get("heading_path", ""),
-                        provenance={"session_id": session_id, "file_id": chunk.get("file_id", "")},
+                        provenance={
+                            "session_id": session_id,
+                            "file_id": chunk.get("file_id", ""),
+                            "memory_class": chunk.get("metadata", {}).get(
+                                "memory_class", "raw_evidence"
+                            ),
+                        },
+                        metadata=chunk.get("metadata", {}),
                     ),
                 )
     except Exception as exc:
@@ -67,7 +89,12 @@ def _run_stm_ann(
                         source_type="turn",
                         scope="short_term",
                         score=rrf,
-                        provenance={"session_id": session_id, "role": turn.get("role", "")},
+                        provenance={
+                            "session_id": session_id,
+                            "role": turn.get("role", ""),
+                            "memory_class": "raw_evidence",
+                        },
+                        metadata=turn.get("metadata", {}),
                     ),
                 )
     except Exception as exc:
@@ -139,4 +166,11 @@ def recall_short_term(
     _entity_boost(mg_store, session_id, words, top_k, results)
 
     sorted_results = sorted(results.values(), key=lambda x: x[0], reverse=True)
-    return [r for _, r in sorted_results[:top_k]]
+    shaped = []
+    for score, result in sorted_results:
+        memory_class = result.metadata.get("memory_class")
+        new_score = _shape_score(score, memory_class)
+        result.score = new_score
+        shaped.append((new_score, result))
+    shaped.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in shaped[:top_k]]

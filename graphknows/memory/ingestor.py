@@ -177,7 +177,9 @@ class MemoryIngestor:
                 f"{parsed.source_id}::{seg.char_offset}".encode()
             ).hexdigest()[:16]
 
-            entities: list[dict[str, Any]] = self._extractor.extract(seg.text)
+            entities: list[dict[str, Any]] = (
+                self._extractor.extract(seg.text) if self._extractor is not None else []
+            )
 
             embedding: list[float] = self._embed_fn(seg.text)
 

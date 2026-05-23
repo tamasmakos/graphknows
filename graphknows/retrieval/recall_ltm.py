@@ -10,6 +10,19 @@ from graphknows.retrieval.recall_stm import RRF_K, RecallResult
 
 log = logging.getLogger("graphknows.retrieval.recall_ltm")
 
+_SHAPE_FACTORS: dict[str | None, float] = {
+    "fact": 1.5,
+    "state": 1.4,
+    "episode": 1.3,
+    "summary": 1.2,
+    "raw_evidence": 0.6,
+}
+
+
+def _shape_score(score: float, memory_class: str | None) -> float:
+    """Apply memory_class-aware multiplicative boost/de-boost to a score."""
+    return score * _SHAPE_FACTORS.get(memory_class, 1.0)
+
 
 def _ann_chunks(
     pg_store: Any,
@@ -36,6 +49,7 @@ def _ann_chunks(
                         "session_id": chunk.get("session_id", ""),
                         "file_id": chunk.get("file_id", ""),
                     },
+                    metadata=chunk.get("metadata", {}),
                 ),
             )
     except Exception as exc:
@@ -67,6 +81,7 @@ def _ann_turns(
                         "turn_index": turn.get("turn_index"),
                         "role": turn.get("role", ""),
                     },
+                    metadata=turn.get("metadata", {}),
                 )
             )
     except Exception as exc:
@@ -123,6 +138,7 @@ def _entity_traversal(
                             score=rrf,
                             entity_names=row["entities"],
                             provenance={},
+                            metadata=row.get("metadata", {}),
                         ),
                     )
     except Exception as exc:
@@ -173,4 +189,11 @@ def recall_long_term(
         combined[id(r)] = (r.score, r)
 
     final = sorted(combined.values(), key=lambda x: x[0], reverse=True)
-    return [r for _, r in final[:top_k]]
+    shaped = []
+    for score, result in final:
+        memory_class = result.metadata.get("memory_class")
+        new_score = _shape_score(score, memory_class)
+        result.score = new_score
+        shaped.append((new_score, result))
+    shaped.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in shaped[:top_k]]

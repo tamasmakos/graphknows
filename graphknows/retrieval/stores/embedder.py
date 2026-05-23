@@ -21,8 +21,14 @@ EMBED_DIM: int = 1536  # text-embedding-3-small output dimension
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/embeddings"
 
 
+_MAX_CHARS_PER_TEXT = 20_000  # ~5000 tokens; leave headroom below 8192-token limit
+
+
 def embed(texts: list[str], model_name: str = EMBED_MODEL) -> np.ndarray:
     """Embed *texts* via OpenRouter, returning shape (N, EMBED_DIM).
+
+    Each text is silently truncated to ``_MAX_CHARS_PER_TEXT`` characters before
+    sending to avoid OpenRouter's per-text token limit.
 
     Args:
         texts: Input strings to embed.
@@ -46,14 +52,21 @@ def embed(texts: list[str], model_name: str = EMBED_MODEL) -> np.ndarray:
             "Set it in .env or the environment before running."
         )
 
+    truncated = [t[:_MAX_CHARS_PER_TEXT] for t in texts]
     resp = httpx.post(
         _OPENROUTER_URL,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": model_name, "input": texts},
+        json={"model": model_name, "input": truncated},
         timeout=30,
     )
     resp.raise_for_status()
-    data = resp.json()["data"]
+    body = resp.json()
+    if "data" not in body:
+        raise RuntimeError(
+            f"OpenRouter embeddings response missing 'data' key. "
+            f"Status {resp.status_code}. Body: {resp.text[:400]}"
+        )
+    data = body["data"]
     vecs = [d["embedding"] for d in sorted(data, key=lambda x: x["index"])]
     return np.array(vecs, dtype=np.float32)
 
