@@ -1,4 +1,5 @@
 """Unit tests for recall_short_term and recall_long_term."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -28,6 +29,7 @@ def _make_pg(chunks=None, turns=None):
 
 
 # --- STM recall ---
+
 
 def test_recall_short_term_calls_search_stm_chunks():
     mg = _make_mg()
@@ -85,7 +87,9 @@ def test_ann_failure_logs_warning_and_continues(caplog):
 
 def test_results_sorted_by_score_descending():
     mg = _make_mg()
-    chunks = [{"id": f"c{i}", "text": f"text{i}", "heading_path": "", "file_id": "f"} for i in range(3)]
+    chunks = [
+        {"id": f"c{i}", "text": f"text{i}", "heading_path": "", "file_id": "f"} for i in range(3)
+    ]
     pg = _make_pg(chunks=chunks)
     results = recall_short_term(mg, pg, "test", session_id="s1", embed_fn=_embed)
     scores = [r.score for r in results]
@@ -94,7 +98,9 @@ def test_results_sorted_by_score_descending():
 
 def test_top_k_respected():
     mg = _make_mg()
-    chunks = [{"id": f"c{i}", "text": f"text{i}", "heading_path": "", "file_id": "f"} for i in range(20)]
+    chunks = [
+        {"id": f"c{i}", "text": f"text{i}", "heading_path": "", "file_id": "f"} for i in range(20)
+    ]
     pg = _make_pg(chunks=chunks)
     results = recall_short_term(mg, pg, "test", session_id="s1", top_k=3, embed_fn=_embed)
     assert len(results) <= 3
@@ -102,12 +108,23 @@ def test_top_k_respected():
 
 # --- LTM recall ---
 
+
 def test_recall_long_term_calls_search_ltm_chunks():
     neo = MagicMock()
     neo._driver = MagicMock()
     neo._driver.session.return_value.__enter__ = MagicMock(return_value=MagicMock())
     neo._driver.session.return_value.__exit__ = MagicMock(return_value=False)
-    pg = _make_pg(chunks=[{"id": "c1", "text": "ltm content", "heading_path": "", "session_id": "s1", "file_id": "f1"}])
+    pg = _make_pg(
+        chunks=[
+            {
+                "id": "c1",
+                "text": "ltm content",
+                "heading_path": "",
+                "session_id": "s1",
+                "file_id": "f1",
+            }
+        ]
+    )
     results = recall_long_term(neo, pg, "test query", embed_fn=_embed)
     pg.search_ltm_chunks.assert_called_once()
 
@@ -117,7 +134,17 @@ def test_recall_long_term_scope_is_long_term():
     neo._driver = MagicMock()
     neo._driver.session.return_value.__enter__ = MagicMock(return_value=MagicMock())
     neo._driver.session.return_value.__exit__ = MagicMock(return_value=False)
-    pg = _make_pg(chunks=[{"id": "c1", "text": "ltm content", "heading_path": "", "session_id": "s1", "file_id": "f1"}])
+    pg = _make_pg(
+        chunks=[
+            {
+                "id": "c1",
+                "text": "ltm content",
+                "heading_path": "",
+                "session_id": "s1",
+                "file_id": "f1",
+            }
+        ]
+    )
     results = recall_long_term(neo, pg, "test query", embed_fn=_embed)
     for r in results:
         assert r.scope == "long_term"
@@ -128,7 +155,10 @@ def test_recall_long_term_results_sorted_descending():
     neo._driver = MagicMock()
     neo._driver.session.return_value.__enter__ = MagicMock(return_value=MagicMock())
     neo._driver.session.return_value.__exit__ = MagicMock(return_value=False)
-    chunks = [{"id": f"c{i}", "text": f"text{i}", "heading_path": "", "session_id": "s1", "file_id": "f"} for i in range(5)]
+    chunks = [
+        {"id": f"c{i}", "text": f"text{i}", "heading_path": "", "session_id": "s1", "file_id": "f"}
+        for i in range(5)
+    ]
     pg = _make_pg(chunks=chunks)
     results = recall_long_term(neo, pg, "test", embed_fn=_embed)
     scores = [r.score for r in results]

@@ -1,4 +1,5 @@
 """Unit tests for the modular parser pipeline."""
+
 from __future__ import annotations
 
 import io

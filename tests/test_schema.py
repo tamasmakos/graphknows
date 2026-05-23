@@ -27,9 +27,7 @@ def test_apply_schema_is_idempotent():
     assert result2["errors"] == []
     assert result1["constraints"] == result2["constraints"]
     assert result1["indexes"] == result2["indexes"]
-    assert mock_session.run.call_count == (
-        result1["constraints"] + result1["indexes"]
-    ) * 2
+    assert mock_session.run.call_count == (result1["constraints"] + result1["indexes"]) * 2
 
 
 def test_apply_schema_counts_constraints_and_indexes():
@@ -116,9 +114,7 @@ def test_pgvector_store_has_required_stm_methods():
     }
 
     for method_name, expected_params in required.items():
-        assert hasattr(PgVectorStore, method_name), (
-            f"PgVectorStore missing {method_name}"
-        )
+        assert hasattr(PgVectorStore, method_name), f"PgVectorStore missing {method_name}"
         sig = inspect.signature(getattr(PgVectorStore, method_name))
         params = set(sig.parameters.keys()) - {"self"}
         assert params == expected_params, (

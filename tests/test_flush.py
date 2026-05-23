@@ -1,4 +1,5 @@
 """Unit tests for SessionFlusher."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -139,10 +140,13 @@ def _make_neo4j_store_mock(co_occur_rows: list[dict]) -> Any:
     from unittest.mock import AsyncMock, MagicMock
 
     neo = MagicMock()
-    neo._arun = AsyncMock(side_effect=[
-        co_occur_rows,  # co-occurrence query
-        [],             # evidence chunks (one call per community)
-    ] * 10)  # plenty
+    neo._arun = AsyncMock(
+        side_effect=[
+            co_occur_rows,  # co-occurrence query
+            [],  # evidence chunks (one call per community)
+        ]
+        * 10
+    )  # plenty
     neo.upsert_topics = AsyncMock(return_value=None)
     neo._driver = MagicMock()
     neo._driver.session.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -164,10 +168,12 @@ async def test_summarize_topics_no_key_skips_llm(monkeypatch):
     store.upsert_topics = AsyncMock(return_value=None)
 
     # _arun returns: co-occur pairs → evidence rows for community 0
-    store._arun = AsyncMock(side_effect=[
-        [{"a": "EU", "b": "France", "weight": 3}],
-        [],  # evidence for community 0
-    ])
+    store._arun = AsyncMock(
+        side_effect=[
+            [{"a": "EU", "b": "France", "weight": 3}],
+            [],  # evidence for community 0
+        ]
+    )
 
     count = await store.summarize_topics("sess-1", openrouter_key="", pg_store=None)
     assert count == 1
@@ -212,4 +218,3 @@ async def test_flush_propagates_extraction_error():
     neo.extract_and_write_relations = AsyncMock(side_effect=RuntimeError("LLM failed"))
     with pytest.raises(RuntimeError, match="LLM failed"):
         await flusher.flush("s1")
-

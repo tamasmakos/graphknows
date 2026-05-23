@@ -1,4 +1,5 @@
 """Unit tests for DialogWriter."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -13,9 +14,15 @@ def _make_writer(extractor=None, embed_fn=None):
     pg = MagicMock()
     # All Memgraph and pgvector store methods are async — mock them as coroutines
     for attr in [
-        "write_dialog_node", "write_entity_node", "write_turn_node",
-        "write_turn_sequence", "write_turn_entity_edge", "write_tool_call_node",
-        "write_chunk_node", "write_chunk_entity_edge", "write_session_metadata",
+        "write_dialog_node",
+        "write_entity_node",
+        "write_turn_node",
+        "write_turn_sequence",
+        "write_turn_entity_edge",
+        "write_tool_call_node",
+        "write_chunk_node",
+        "write_chunk_entity_edge",
+        "write_session_metadata",
     ]:
         setattr(mg, attr, AsyncMock(return_value=None))
     pg.write_stm_turn = AsyncMock(return_value=None)

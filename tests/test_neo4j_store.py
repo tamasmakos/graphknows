@@ -1,4 +1,5 @@
 """Unit tests for neo4j.py module-level helpers."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

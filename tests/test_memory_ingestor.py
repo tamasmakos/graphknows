@@ -1,4 +1,5 @@
 """Unit tests for MemoryIngestor."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -31,8 +32,11 @@ def _make_ingestor(extractor=None, embed_fn=None):
     pg = MagicMock()
     # All store methods are async — mock as coroutines so _run() works
     for attr in [
-        "write_session_metadata", "write_file_node", "write_chunk_node",
-        "write_entity_node", "write_chunk_entity_edge",
+        "write_session_metadata",
+        "write_file_node",
+        "write_chunk_node",
+        "write_entity_node",
+        "write_chunk_entity_edge",
     ]:
         setattr(mg, attr, AsyncMock(return_value=None))
     pg.write_stm_chunk = AsyncMock(return_value=None)

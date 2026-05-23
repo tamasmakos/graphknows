@@ -4,6 +4,7 @@ These tests verify the CLI is importable, commands are registered,
 and core commands run without Python errors. DB connectivity is mocked
 at the store module level (lazy-import pattern).
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ def _runner():
 
 # --- doctor ---
 
+
 def test_doctor_outputs_check_lines():
     """Doctor must always output Memgraph / Neo4j / pgvector status lines."""
     runner = _runner()
@@ -31,6 +33,7 @@ def test_doctor_outputs_check_lines():
 
 
 # --- forget session ---
+
 
 def test_forget_session_calls_delete():
     import graphknows.retrieval.stores.memgraph as mg_mod
@@ -53,6 +56,7 @@ def test_forget_session_calls_delete():
 
 
 # --- ingest (smoke) ---
+
 
 def test_ingest_text_smoke():
     """CLI ingest command runs without import/syntax errors."""
@@ -114,6 +118,7 @@ def test_ingest_file_smoke(tmp_path):
 
 # --- recall-short (smoke) ---
 
+
 def test_recall_short_smoke():
     """CLI recall-short runs without import/syntax errors."""
     import graphknows.retrieval.recall_stm as rs_mod
@@ -142,6 +147,7 @@ def test_recall_short_smoke():
 
 # --- recall-long (smoke) ---
 
+
 def test_recall_long_smoke():
     """CLI recall-long runs without import/syntax errors."""
     import graphknows.retrieval.recall_ltm as rl_mod
@@ -166,6 +172,7 @@ def test_recall_long_smoke():
 
 
 # --- flush (smoke) ---
+
 
 def test_flush_smoke():
     """CLI flush runs without import/syntax errors."""
