@@ -365,18 +365,18 @@ class GraphknowsMemoryAdapter:
     pgvector/Neo4j queries for stats.
     """
 
-    def __init__(self, container=None):
+    def __init__(self, container: Any = None) -> None:
         self._container = container
 
     # ------------------------------------------------------------------
     # Lazy helpers
     # ------------------------------------------------------------------
 
-    def _stores_from_container(self):
+    def _stores_from_container(self) -> tuple[Any, Any, Any]:
         c = self._container
-        return c.memgraph, c.pg, c.neo
+        return c.memgraph, c.pg, c.neo  # type: ignore[no-any-return]
 
-    def _lazy_stores(self):
+    def _lazy_stores(self) -> tuple[Any, Any, Any, Any]:
         import os
 
         from graphknows.retrieval.stores.embedder import embed_one
@@ -388,7 +388,7 @@ class GraphknowsMemoryAdapter:
         pg = PgVectorStore(
             os.environ.get(
                 "PGVECTOR_DSN",
-                "postgresql://postgres:testpassword123@172.18.0.1:5432/graphknows",
+                "postgresql://postgres:***@172.18.0.1:5432/graphknows",
             )
         )
         neo = Neo4jStore(
@@ -398,7 +398,7 @@ class GraphknowsMemoryAdapter:
         )
         return mg, pg, neo, embed_one
 
-    def _get_extractor(self):
+    def _get_extractor(self) -> Any:
         from graphknows.memory.extractor import GLiNER2EntityExtractor
 
         return GLiNER2EntityExtractor()
@@ -466,8 +466,8 @@ class GraphknowsMemoryAdapter:
 
         from graphknows.retrieval.recall_stm import recall_short_term
 
-        stm_hits: list = []
-        ltm_hits: list = []
+        stm_hits: list[Any] = []
+        ltm_hits: list[Any] = []
 
         if scope in ("stm", "both"):
             stm_hits = await asyncio.to_thread(
@@ -587,8 +587,10 @@ class GraphknowsMemoryAdapter:
         drv = GraphDatabase.driver(uri, auth=(user, pw))
         try:
             with drv.session() as s:
-                ltm["entities"] = int(s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"])
-                ltm["sessions"] = int(s.run("MATCH (s:SESSION) RETURN count(s) as c").single()["c"])
+                row_e = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()
+                row_s = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()
+                ltm["entities"] = int(row_e["c"]) if row_e else 0
+                ltm["sessions"] = int(row_s["c"]) if row_s else 0
         finally:
             drv.close()
 

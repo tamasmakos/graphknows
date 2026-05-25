@@ -142,7 +142,7 @@ async def memory_doctor() -> dict[str, Any]:
 
     Returns a dict with boolean values for each backend, plus version and pid.
     """
-    import subprocess
+    import subprocess  # nosec B404 — read-only git version probe
 
     import asyncpg
 
@@ -185,7 +185,7 @@ async def memory_doctor() -> dict[str, Any]:
         result["pgvector"] = False
 
     try:
-        v = subprocess.check_output(
+        v = subprocess.check_output(  # nosec B603 B607 — fixed command, no user input
             ["git", "rev-parse", "--short", "HEAD"], cwd="/root/graphknows", text=True, timeout=3
         ).strip()
     except Exception:
@@ -480,8 +480,9 @@ async def ltm_query(query: str, top_k: int = 5) -> dict[str, Any]:
     try:
         rows = await conn.fetch(
             "SELECT topic_id, summary, entity_names, session_ids FROM ltm_topics "
-            f"ORDER BY embedding <=> $1::vector LIMIT {top_k}",
+            "ORDER BY embedding <=> $1::vector LIMIT $2",
             embedding,
+            top_k,
         )
     finally:
         await conn.close()
