@@ -98,7 +98,9 @@ class OntologyRouter:
         kw_scores = self._keyword_scores(snippet)
         emb_scores = self._embedding_scores(snippet)
 
-        combined = [alpha * kw + (1 - alpha) * emb for kw, emb in zip(kw_scores, emb_scores, strict=False)]
+        combined = [
+            alpha * kw + (1 - alpha) * emb for kw, emb in zip(kw_scores, emb_scores, strict=False)
+        ]
         best_idx = int(np.argmax(combined))
         best = self._manifests[best_idx]
         log.debug(
@@ -128,6 +130,8 @@ class OntologyRouter:
         snippet = text[:2000]
         kw_scores = self._keyword_scores(snippet)
         emb_scores = self._embedding_scores(snippet)
-        combined = [alpha * kw + (1 - alpha) * emb for kw, emb in zip(kw_scores, emb_scores, strict=False)]
+        combined = [
+            alpha * kw + (1 - alpha) * emb for kw, emb in zip(kw_scores, emb_scores, strict=False)
+        ]
         indices = sorted(range(len(combined)), key=lambda i: combined[i], reverse=True)[:top_k]
         return [self._manifests[i] for i in indices]

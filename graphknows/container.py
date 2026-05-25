@@ -306,7 +306,9 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
         run_id = str(uuid.uuid4())
         queued_at = datetime.now(UTC).isoformat()
         c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}
-        _bg_task = asyncio.create_task(c._run_ingest_task(run_id, text, title, config_override or {}))  # NOSONAR
+        _bg_task = asyncio.create_task(
+            c._run_ingest_task(run_id, text, title, config_override or {})
+        )  # NOSONAR
         c._background_tasks.add(_bg_task)
         _bg_task.add_done_callback(c._background_tasks.discard)
         return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})

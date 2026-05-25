@@ -293,7 +293,11 @@ class ToolSummarizer:
             return True
         if category == ToolCategory.file_write and outcome == "success":
             return True
-        return bool(category == ToolCategory.graph and outcome == "success" and ("nodes" in output_text.lower() or "relationships" in output_text.lower()))
+        return bool(
+            category == ToolCategory.graph
+            and outcome == "success"
+            and ("nodes" in output_text.lower() or "relationships" in output_text.lower())
+        )
 
 
 def summarize_tool_call(record: ToolCallRecord) -> ToolSummary:
