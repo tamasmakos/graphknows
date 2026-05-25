@@ -103,12 +103,12 @@ class GraphKnowsContainer:
             if self._pg is not None:
                 await self._pg.close()
         except Exception:
-            pass
+            logger.debug("Cleanup error ignored", exc_info=True)
         try:
             if self._neo is not None:
                 self._neo.close()
         except Exception:
-            pass
+            logger.debug("Cleanup error ignored", exc_info=True)
         self._pg = None
         self._neo = None
         self._memgraph = None

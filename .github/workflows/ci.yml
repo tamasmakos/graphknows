@@ -198,7 +198,8 @@ jobs:
             --cov=graphknows \
             --cov-config=.coveragerc \
             --cov-report=xml:coverage.xml \
-            --cov-report=term-missing
+            --cov-report=term-missing \
+            --cov-fail-under=55
 
       - name: Upload coverage report
         if: matrix.python-version == '3.11'
@@ -257,3 +258,40 @@ jobs:
 
       - name: Check module boundaries
         run: tach check
+
+  # ── 7. Dependency vulnerability scan — hard gate ──────────────────────────
+  dep-audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install pip-audit
+        run: uv tool install pip-audit
+
+      - name: Audit dependencies for known CVEs
+        run: pip-audit --requirement <(uv export --no-dev --format requirements-txt) --progress-spinner off
+
+  # ── 8. Secret scanning — hard gate ────────────────────────────────────────
+  secret-scan:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # full history for historical secret detection
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

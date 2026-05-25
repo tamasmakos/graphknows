@@ -40,7 +40,7 @@ class MemgraphStore:
                     try:
                         s.run(stmt).consume()
                     except Exception:
-                        pass
+                        logger.debug("Memgraph index creation ignored", exc_info=True)
 
         await asyncio.to_thread(_sync)
 
