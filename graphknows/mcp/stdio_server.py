@@ -531,7 +531,7 @@ def ltm_entity(name: str) -> dict[str, Any]:
     try:
         with d.session() as s:
             row = s.run(
-                "MATCH (e:Entity) "
+                "MATCH (e:ENTITY) "
                 "WHERE toLower(e.name) = toLower($name) "
                 "OPTIONAL MATCH (e)-[:APPEARED_IN]->(seg:Segment) "
                 "RETURN properties(e) AS props, count(DISTINCT seg) AS segment_count",
