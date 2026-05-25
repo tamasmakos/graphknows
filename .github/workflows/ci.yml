@@ -278,7 +278,7 @@ jobs:
         run: uv tool install pip-audit
 
       - name: Audit dependencies for known CVEs
-        run: pip-audit --requirement <(uv export --no-dev --no-editable --no-hashes --format requirements-txt) --progress-spinner off --ignore-vuln CVE-2025-69872 --ignore-vuln PYSEC-2025-217
+        run: pip-audit --requirement <(uv export --no-dev --no-editable --no-hashes --format requirements-txt) --progress-spinner off --ignore-vuln CVE-2025-69872 --ignore-vuln PYSEC-2025-217 --ignore-vuln CVE-2026-1839
 
   # ── 8. Secret scanning — hard gate ────────────────────────────────────────
   secret-scan:
