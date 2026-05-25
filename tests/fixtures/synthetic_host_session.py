@@ -1,4 +1,5 @@
 """Shared fixture factory for synthetic host adapter conformance tests."""
+
 from __future__ import annotations
 
 from graphknows.memory.adapter_types import (

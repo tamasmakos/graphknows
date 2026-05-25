@@ -1,4 +1,5 @@
 """Unit tests for GLiNER2EntityExtractor ExtractionResult."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -9,7 +10,16 @@ from graphknows.memory.extractor import ExtractionResult, GLiNER2EntityExtractor
 def test_extraction_result_has_entities_and_relations_fields():
     result = ExtractionResult(
         entities=[{"name": "EU", "type": "ORG", "score": 0.9}],
-        relations=[{"head": "EU", "head_type": "ORG", "relation": "REGULATES", "tail": "ECB", "tail_type": "ORG", "score": 1.0}],
+        relations=[
+            {
+                "head": "EU",
+                "head_type": "ORG",
+                "relation": "REGULATES",
+                "tail": "ECB",
+                "tail_type": "ORG",
+                "score": 1.0,
+            }
+        ],
     )
     assert len(result.entities) == 1
     assert result.entities[0]["name"] == "EU"

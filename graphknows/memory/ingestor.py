@@ -220,6 +220,31 @@ class MemoryIngestor:
                 )
                 entity_count += 1
 
+            # Wire relation extractor — write REL edges to Memgraph STM
+            if self._rel_extractor is not None and len(entities) >= 2:
+                try:
+                    relations = self._rel_extractor.extract(
+                        text=clean_text,
+                        entities=entities,
+                        ontology_schema="{}",
+                    )
+                    for rel in relations:
+                        _run(
+                            self._mg.write_relation_edge(
+                                session_id=session_id,
+                                subject_name=rel["subject"],
+                                relation_name=rel["predicate"],
+                                object_name=rel["object"],
+                                confidence=rel.get("confidence", 0.5),
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "rel_extractor failed for session=%s: %s",
+                        session_id,
+                        exc,
+                    )
+
             # Write to pgvector STM
             entity_names_list = [e["name"] for e in entities]
             _run(

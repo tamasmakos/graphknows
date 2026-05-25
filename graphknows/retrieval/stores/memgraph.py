@@ -509,6 +509,37 @@ class MemgraphStore:
 
         await asyncio.to_thread(_sync)
 
+    async def write_relation_edge(
+        self,
+        session_id: str,
+        subject_name: str,
+        relation_name: str,
+        object_name: str,
+        fact: str = "",
+        confidence: float = 0.5,
+        valid_at: Any | None = None,
+        created_at: Any | None = None,
+    ) -> None:
+        """Write a typed REL edge between two named entities in Memgraph STM."""
+
+        def _sync() -> None:
+            with self._driver.session() as s:
+                s.run(
+                    """MATCH (a:Entity {name: $subject, session_id: $session_id})
+                       MATCH (b:Entity {name: $object, session_id: $session_id})
+                       MERGE (a)-[r:REL {name: $name, session_id: $session_id}]->(b)
+                       SET r.fact = $fact,
+                           r.confidence = $confidence""",
+                    subject=subject_name,
+                    object=object_name,
+                    name=relation_name,
+                    session_id=session_id,
+                    fact=fact,
+                    confidence=confidence,
+                )
+
+        await asyncio.to_thread(_sync)
+
     async def delete_session(self, session_id: str) -> None:
         """Delete all nodes and edges for *session_id*."""
 

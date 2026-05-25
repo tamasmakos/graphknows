@@ -1,4 +1,5 @@
 """Conformance tests for GraphknowsAdapter against the synthetic host fixture."""
+
 from __future__ import annotations
 
 import pytest

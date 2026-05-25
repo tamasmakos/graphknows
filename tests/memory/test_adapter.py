@@ -20,6 +20,7 @@ from graphknows.memory.adapter import (
 # DTO tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_ingest_result_dataclass():
     r = IngestResult(file_id="f1", chunks=3, entities=5, elapsed_s=1.2)
@@ -68,6 +69,7 @@ def test_memory_stats_dataclass():
 # Protocol conformance
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_graphknows_memory_adapter_satisfies_protocol():
     adapter = GraphknowsMemoryAdapter()
@@ -77,6 +79,7 @@ def test_graphknows_memory_adapter_satisfies_protocol():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_recall_result(score, text, source_type="chunk", entities=None):
     from graphknows.retrieval.recall_stm import RecallResult
@@ -107,6 +110,7 @@ def mock_container():
 # ---------------------------------------------------------------------------
 # GraphknowsMemoryAdapter — ingest
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -152,6 +156,7 @@ async def test_ingest_delegates_to_memory_ingestor(mock_container):
 # GraphknowsMemoryAdapter — recall
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_recall_scope_stm(mock_container):
@@ -168,9 +173,7 @@ async def test_recall_scope_stm(mock_container):
         ),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.recall(
-            query="test", session_id="s1", top_k=5, scope="stm"
-        )
+        result = await adapter.recall(query="test", session_id="s1", top_k=5, scope="stm")
 
     assert len(result) == 1
     assert isinstance(result[0], RecallHit)
@@ -200,9 +203,7 @@ async def test_recall_scope_ltm(mock_container):
         ),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.recall(
-            query="test", session_id="s1", top_k=5, scope="ltm"
-        )
+        result = await adapter.recall(query="test", session_id="s1", top_k=5, scope="ltm")
 
     assert len(result) == 1
     assert result[0].score == 0.8
@@ -232,9 +233,7 @@ async def test_recall_scope_both(mock_container):
         ),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.recall(
-            query="test", session_id="s1", top_k=5, scope="both"
-        )
+        result = await adapter.recall(query="test", session_id="s1", top_k=5, scope="both")
 
     assert len(result) == 2
     scores = [r.score for r in result]
@@ -244,6 +243,7 @@ async def test_recall_scope_both(mock_container):
 # ---------------------------------------------------------------------------
 # GraphknowsMemoryAdapter — flush
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -276,6 +276,7 @@ async def test_flush_calls_session_flusher(mock_container):
 # ---------------------------------------------------------------------------
 # GraphknowsMemoryAdapter — stats via container
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -316,8 +317,7 @@ async def test_stats_queries_pg_and_neo4j(mock_container):
 # Protocol type-check
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_agent_memory_adapter_is_protocol():
-    assert hasattr(AgentMemoryAdapter, "__protocol__") or issubclass(
-        AgentMemoryAdapter, Protocol
-    )
+    assert hasattr(AgentMemoryAdapter, "__protocol__") or issubclass(AgentMemoryAdapter, Protocol)

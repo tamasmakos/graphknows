@@ -1,4 +1,5 @@
 """Tests for chunk metadata persistence in stm_chunks."""
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 from graphknows.memory.ingestor import MemoryIngestor
@@ -18,9 +19,7 @@ def test_entity_names_stored_in_chunk_metadata():
     # Patch _run to execute synchronously
     with patch("graphknows.memory.ingestor._run", side_effect=lambda coro: None):
         ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=embed_fn)
-        ingestor.ingest_text(
-            "GraphKnows uses Neo4j for storage.", session_id="test-meta"
-        )
+        ingestor.ingest_text("GraphKnows uses Neo4j for storage.", session_id="test-meta")
 
     # Find the write_stm_chunk call
     write_calls = [c for c in pg.method_calls if "write_stm_chunk" in str(c)]

@@ -76,7 +76,10 @@ def test_memory_doctor_all_ok():
 
     with (
         patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._neo4j_creds", return_value=("bolt://localhost:7687", "neo4j", "pw")),
+        patch(
+            "graphknows.mcp.stdio_server._neo4j_creds",
+            return_value=("bolt://localhost:7687", "neo4j", "pw"),
+        ),
         patch("neo4j.GraphDatabase.driver", return_value=drv),
         patch("asyncpg.connect", side_effect=_fake_connect),
     ):
@@ -116,7 +119,10 @@ def test_memory_doctor_memgraph_down():
 
     with (
         patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._neo4j_creds", return_value=("bolt://localhost:7687", "neo4j", "pw")),
+        patch(
+            "graphknows.mcp.stdio_server._neo4j_creds",
+            return_value=("bolt://localhost:7687", "neo4j", "pw"),
+        ),
         patch("neo4j.GraphDatabase.driver", side_effect=_driver_factory),
         patch("asyncpg.connect", side_effect=_fake_connect),
     ):
@@ -246,7 +252,9 @@ def test_ltm_recall_uses_session_filter_none():
         patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
         patch("graphknows.memory.ingestor._run"),
         patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
-        patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[hit]) as mock_recall_ltm,
+        patch(
+            "graphknows.retrieval.recall_ltm.recall_long_term", return_value=[hit]
+        ) as mock_recall_ltm,
     ):
         result = asyncio.run(memory_recall(query="test", session_id="current-session", scope="ltm"))
 
@@ -279,7 +287,9 @@ def test_clean_strips_content_prefix():
 
         with (
             patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-            patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
+            patch(
+                "graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"
+            ),
             patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
             patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
             patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
@@ -287,7 +297,9 @@ def test_clean_strips_content_prefix():
             patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
             patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[hit]),
         ):
-            return asyncio.run(memory_recall(query="x", session_id="s1", scope="ltm"))["hits"][0]["text"]
+            return asyncio.run(memory_recall(query="x", session_id="s1", scope="ltm"))["hits"][0][
+                "text"
+            ]
 
     assert _run_ltm("## Content\n\nSome real content here.") == "Some real content here."
     assert _run_ltm("## content\n\nLower case.") == "Lower case."
@@ -487,9 +499,7 @@ def test_scope_both_normalises_cross_scope_scores():
         patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[stm_hit]),
         patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[ltm_hit]),
     ):
-        result = asyncio.run(memory_recall(
-            query="x", session_id="s1", top_k=5, scope="both"
-        ))
+        result = asyncio.run(memory_recall(query="x", session_id="s1", top_k=5, scope="both"))
 
     assert len(result["hits"]) == 2
     # Both are single-element lists, so each normalises to 1.0:
@@ -534,7 +544,10 @@ def test_ltm_topics_returns_topics():
     ]
 
     with (
-        patch("graphknows.mcp.stdio_server._neo4j_creds", return_value=("bolt://localhost:7687", "neo4j", "pw")),
+        patch(
+            "graphknows.mcp.stdio_server._neo4j_creds",
+            return_value=("bolt://localhost:7687", "neo4j", "pw"),
+        ),
         patch("neo4j.GraphDatabase.driver", return_value=drv),
     ):
         result = ltm_topics(min_entities=3)
@@ -555,7 +568,10 @@ def test_ltm_entity_not_found():
     drv.session.return_value.run.return_value.single.return_value = None
 
     with (
-        patch("graphknows.mcp.stdio_server._neo4j_creds", return_value=("bolt://localhost:7687", "neo4j", "pw")),
+        patch(
+            "graphknows.mcp.stdio_server._neo4j_creds",
+            return_value=("bolt://localhost:7687", "neo4j", "pw"),
+        ),
         patch("neo4j.GraphDatabase.driver", return_value=drv),
     ):
         result = ltm_entity(name="NonExistent")
@@ -579,7 +595,10 @@ def test_ltm_entity_found():
     drv.session.return_value.run.return_value.single.return_value = mock_row
 
     with (
-        patch("graphknows.mcp.stdio_server._neo4j_creds", return_value=("bolt://localhost:7687", "neo4j", "pw")),
+        patch(
+            "graphknows.mcp.stdio_server._neo4j_creds",
+            return_value=("bolt://localhost:7687", "neo4j", "pw"),
+        ),
         patch("neo4j.GraphDatabase.driver", return_value=drv),
     ):
         result = ltm_entity(name="TestEntity")
