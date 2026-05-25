@@ -77,10 +77,12 @@ class MemoryIngestor:
         pg_store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
+        rel_extractor: Any | None = None,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
         self._extractor = extractor
+        self._rel_extractor = rel_extractor
         if embed_fn is not None:
             self._embed_fn = embed_fn
         else:
@@ -177,11 +179,17 @@ class MemoryIngestor:
                 f"{parsed.source_id}::{seg.char_offset}".encode()
             ).hexdigest()[:16]
 
+            # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
+            # The prefix dilutes embedding signal — embed pure content, not the heading.
+            import re as _re
+
+            clean_text = _re.sub(r"^##\s*Content\s*\n+", "", seg.text, flags=_re.IGNORECASE).strip()
+
             entities: list[dict[str, Any]] = (
-                self._extractor.extract(seg.text) if self._extractor is not None else []
+                self._extractor.extract(clean_text) if self._extractor is not None else []
             )
 
-            embedding: list[float] = self._embed_fn(seg.text)
+            embedding: list[float] = self._embed_fn(clean_text)
 
             # Write to Memgraph
             _run(
@@ -189,7 +197,7 @@ class MemoryIngestor:
                     session_id=session_id,
                     file_id=parsed.source_id,
                     chunk_id=chunk_id,
-                    text=seg.text,
+                    text=clean_text,
                     heading_path=seg.heading_path,
                     metadata=seg.metadata,
                 )
@@ -219,7 +227,7 @@ class MemoryIngestor:
                         "id": chunk_id,
                         "session_id": session_id,
                         "file_id": parsed.source_id,
-                        "text": seg.text,
+                        "text": clean_text,
                         "heading_path": seg.heading_path,
                         "embedding": embedding,
                         "metadata": {**seg.metadata, **metadata},
