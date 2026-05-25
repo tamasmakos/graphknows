@@ -13,11 +13,11 @@ from graphknows.retrieval.stores import (
 
 __all__ = [
     "HybridRetriever",
-    "RetrievalContext",
+    "MemgraphStore",
     "Neo4jStore",
     "PgVectorStore",
-    "MemgraphStore",
-    "get_embedder",
+    "RetrievalContext",
     "embed",
     "embed_one",
+    "get_embedder",
 ]

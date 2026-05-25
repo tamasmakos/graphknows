@@ -182,7 +182,7 @@ class GraphknowsAdapter:
         Returns:
             List of recall hits as dictionaries.
         """
-        from graphknows.retrieval.recall_stm import recall_short_term  # noqa: PLC0415
+        from graphknows.retrieval.recall_stm import recall_short_term
 
         session_id: str = request.session_id or ""
         hits = recall_short_term(

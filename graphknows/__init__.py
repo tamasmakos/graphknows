@@ -56,15 +56,15 @@ __all__ = [
     "GraphKnowsTool",
     # Retrieval
     "HybridRetriever",
-    "RetrievalContext",
+    "MemgraphStore",
     # Stores
     "Neo4jStore",
     "PgVectorStore",
-    "MemgraphStore",
-    # Embedder
-    "get_embedder",
+    "RetrievalContext",
     "embed",
     "embed_one",
+    # Embedder
+    "get_embedder",
     # Ingestion
     "run_ingestion",
 ]

@@ -105,8 +105,8 @@ def get_embedder(model_name: str = EMBED_MODEL) -> Any:
         def encode(
             self,
             texts: list[str] | str,
-            normalize_embeddings: bool = False,  # noqa: FBT001,FBT002
-            show_progress_bar: bool = False,  # noqa: FBT001,FBT002
+            normalize_embeddings: bool = False,
+            show_progress_bar: bool = False,
             batch_size: int = 32,
         ) -> np.ndarray:
             if isinstance(texts, str):

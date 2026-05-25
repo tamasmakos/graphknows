@@ -143,10 +143,11 @@ class SessionFlusher:
         """Read all STM nodes/edges for this session from Memgraph."""
         try:
             result: dict[str, Any] = await self._mg.read_session_subgraph(session_id)
-            return result
         except Exception as exc:
             log.warning("read_stm %s: %s", session_id, exc)
             return {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
+        else:
+            return result
 
     def _resolve_entities(self, entities: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         """Canonical entity name resolution: group by lowercase name, keep highest confidence.

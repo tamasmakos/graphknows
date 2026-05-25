@@ -132,7 +132,8 @@ class MemoryIngestor:
         """
         import os
 
-        text = open(path, encoding="utf-8", errors="replace").read()  # noqa: WPS515
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
         parser = get_parser(path)
         parsed = parser.parse(text, source_hint=path, title=os.path.basename(path))
         return self._ingest_parsed(parsed, session_id, metadata or {})
@@ -238,7 +239,7 @@ class MemoryIngestor:
                                 confidence=rel.get("confidence", 0.5),
                             )
                         )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log.warning(
                         "rel_extractor failed for session=%s: %s",
                         session_id,

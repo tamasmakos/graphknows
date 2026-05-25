@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import time
@@ -329,7 +330,7 @@ def _compute_modularity(s: Any) -> float | None:
         try:
             row = s.run(query).single()
             return float(row["modularity"]) if row else None
-        except Exception:  # noqa: PERF203
+        except Exception:
             pass
     return None
 
@@ -373,7 +374,7 @@ def _process_community_result(
     algorithm_used: str,
     session_id: str,
 ) -> None:
-    """Handle steps 9–11: quality metrics, GDSRun node, change detection.
+    """Handle steps 9-11: quality metrics, GDSRun node, change detection.
 
     Args:
         s: Neo4j session.
@@ -532,13 +533,13 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
         result["edge_count"] = edge_count
 
         try:
-            # ── Steps 1–4 ──
+            # ── Steps 1-4 ──
             _project_initial_graph(s, ec, edge_count)
             _run_node2vec(s)
             _run_cosine_weights(s)
             _project_undirected(s, ec, edge_count)
 
-            # ── Steps 5–7 ──
+            # ── Steps 5-7 ──
             _run_pagerank(s)
             _run_degree_centrality(s)
             _run_betweenness(s, ec)
@@ -552,10 +553,8 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
                 log.error("Community detection completely failed")
 
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 s.run(_DROP_GRAPH_CQL, name=PROJECTED_GRAPH_NAME)
-            except Exception:
-                pass
 
     elapsed_ms = (time.time() - t0) * 1000
     log.info(

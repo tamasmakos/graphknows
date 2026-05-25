@@ -63,7 +63,7 @@ def _write_relation_edges(
         if not safe:
             continue
         s.run(
-            f"MATCH (e1:ENTITY {{name: $src}}), (e2:ENTITY {{name: $tgt}}) "  # noqa: S608
+            f"MATCH (e1:ENTITY {{name: $src}}), (e2:ENTITY {{name: $tgt}}) "
             f"MERGE (e1)-[r:{safe}]->(e2) "
             f"SET r.weight = coalesce(r.weight, 0) + 1",
             src=src,
@@ -86,8 +86,8 @@ def _compute_silhouette(
     any failure (missing optional deps, single community, etc.).
     """
     try:
-        import numpy as np  # noqa: PLC0415
-        from sklearn.metrics import silhouette_score  # noqa: PLC0415
+        import numpy as np
+        from sklearn.metrics import silhouette_score
 
         labels = [0] * len(names)
         for comm_id, members in communities.items():
@@ -97,7 +97,7 @@ def _compute_silhouette(
             return None
         max_w = max(weights) if weights else 1.0
         adj = [[1.0] * len(names) for _ in range(len(names))]
-        for edge_data, w in zip(rows, weights):
+        for edge_data, w in zip(rows, weights, strict=False):
             i, j = name_idx[edge_data["a"]], name_idx[edge_data["b"]]
             d = 1.0 - w / max_w
             adj[i][j] = d
@@ -105,7 +105,7 @@ def _compute_silhouette(
             adj[i][i] = 0.0
             adj[j][j] = 0.0
         return float(silhouette_score(np.array(adj), labels, metric="precomputed"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Silhouette computation skipped: %s", exc)
         return None
 
@@ -596,7 +596,7 @@ class Neo4jStore:
 
         Args:
             entity_name: Starting entity (case-insensitive — normalised to UPPER).
-            depth: Number of hops to traverse (capped 1–3).
+            depth: Number of hops to traverse (capped 1-3).
             relationship_types: Optional allowlist of relationship type names.
                 Only alphanumeric + underscore names accepted (injection prevention).
 
@@ -721,7 +721,7 @@ class Neo4jStore:
             Total number of relation edges written.
         """
         from graphknows.graphgen.pipeline.entity_relation.extractors import (
-            DSPyExtractor,  # noqa: PLC0415
+            DSPyExtractor,
         )
 
         entity_by_name: dict[str, dict[str, Any]] = {

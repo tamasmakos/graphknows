@@ -64,7 +64,7 @@ class EntityMatch:
     Attributes:
         name: Entity name (normalised, uppercase).
         label: Entity type label.
-        similarity: Cosine similarity score (0–1).
+        similarity: Cosine similarity score (0-1).
         chunks: Chunks linked to this entity via MENTIONS edges.
     """
 

@@ -134,7 +134,8 @@ class OntologyRelExtractor:
                 len(validated),
                 len(entities),
             )
-            return validated
         except Exception as exc:
             log.warning("OntologyRelExtractor extraction failed: %s", exc)
             return []
+        else:
+            return validated

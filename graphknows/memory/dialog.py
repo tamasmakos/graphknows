@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # Reuse the background loop from ingestor so asyncpg pools are always on the same loop
-from graphknows.memory.ingestor import _run  # noqa: PLC2701
+from graphknows.memory.ingestor import _run
 
 log = logging.getLogger("graphknows.memory.dialog")
 

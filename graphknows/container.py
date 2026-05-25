@@ -53,6 +53,7 @@ class GraphKnowsContainer:
         self._memgraph: MemgraphStore | None = None
         self._retriever: HybridRetriever | None = None
         self._jobs: dict[str, dict[str, Any]] = {}
+        self._background_tasks: set[asyncio.Task] = set()
 
     # Sentinel message for guards that detect use outside the async context manager
     _ERR_NOT_ENTERED = "GraphKnowsContainer not entered — use 'async with'"
@@ -187,7 +188,7 @@ class GraphKnowsContainer:
                 finished_at=datetime.now(UTC).isoformat(),
             )
         except Exception as exc:
-            logger.exception("Ingest job %s failed: %s", run_id, exc)
+            logger.exception("Ingest job %s failed", run_id)
             self._jobs[run_id].update(
                 status="failed",
                 error=str(exc),
@@ -262,7 +263,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
             return_exceptions=True,
         )
         enriched: dict[str, Any] = {}
-        for cid, ent_result in zip(chunk_ids, entity_results):
+        for cid, ent_result in zip(chunk_ids, entity_results, strict=False):
             base = text_map.get(cid, {})
             enriched[cid] = {
                 "doc_id": base.get("doc_id", ""),
@@ -304,13 +305,15 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
     ) -> str:
         run_id = str(uuid.uuid4())
         queued_at = datetime.now(UTC).isoformat()
-        c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}  # noqa: SLF001
-        asyncio.create_task(c._run_ingest_task(run_id, text, title, config_override or {}))  # noqa: SLF001  # NOSONAR
+        c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}
+        _bg_task = asyncio.create_task(c._run_ingest_task(run_id, text, title, config_override or {}))  # NOSONAR
+        c._background_tasks.add(_bg_task)
+        _bg_task.add_done_callback(c._background_tasks.discard)
         return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
 
     # ---- poll_job -------------------------------------------------------
     async def _poll_job(run_id: str) -> str:  # NOSONAR — async per GraphKnowsTool contract
-        job = c._jobs.get(run_id)  # noqa: SLF001
+        job = c._jobs.get(run_id)
         if job is None:
             return json.dumps({"run_id": run_id, "status": "not_found"})
         return json.dumps({"run_id": run_id, **job})
@@ -323,7 +326,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
     # ---- get_corpus_stats -----------------------------------------------
     async def _get_corpus_stats() -> str:
         neo_counts = await c.neo.count_nodes()
-        pool = c.pg._pool  # noqa: SLF001
+        pool = c.pg._pool
         pg_counts: dict[str, int] = {"chunks": 0, "entities": 0}
         if pool:
             async with pool.acquire() as conn:

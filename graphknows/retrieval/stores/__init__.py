@@ -6,10 +6,10 @@ from graphknows.retrieval.stores.neo4j import Neo4jStore
 from graphknows.retrieval.stores.pgvector import PgVectorStore
 
 __all__ = [
+    "MemgraphStore",
     "Neo4jStore",
     "PgVectorStore",
-    "MemgraphStore",
-    "get_embedder",
     "embed",
     "embed_one",
+    "get_embedder",
 ]

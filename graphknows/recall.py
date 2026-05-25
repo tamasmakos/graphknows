@@ -1,4 +1,4 @@
-"""Legacy recall module — entity-graph–based recall over Neo4j LTM.
+"""Legacy recall module — entity-graph-based recall over Neo4j LTM.
 
 This module provides three entity-match recall functions used by the MCP tools:
   - recall_by_document  — document chunks ranked by matched entities
@@ -61,7 +61,7 @@ def recall_by_document(
     Args:
         driver: Neo4j GraphDatabase driver (already open).
         query: Free-text search query.
-        top_k: Max results to return (1–20).
+        top_k: Max results to return (1-20).
 
     Returns:
         List of RecallHit ordered by descending entity overlap score.
@@ -121,7 +121,7 @@ def recall_by_dialog(
     Args:
         driver: Neo4j GraphDatabase driver (already open).
         query: Free-text search query.
-        top_k: Max results to return (1–20).
+        top_k: Max results to return (1-20).
         session_filter: Optional session_id to restrict results.
 
     Returns:
@@ -190,7 +190,7 @@ def recall_by_topic(
     Args:
         driver: Neo4j GraphDatabase driver (already open).
         query: Free-text search query.
-        top_k: Max results to return (1–20).
+        top_k: Max results to return (1-20).
 
     Returns:
         List of RecallHit ordered by descending entity overlap score.

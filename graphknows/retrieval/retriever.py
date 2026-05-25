@@ -120,7 +120,7 @@ class HybridRetriever:
         ]
         neo_results = await asyncio.gather(*neo_tasks, return_exceptions=True)
 
-        for i, (ent, neo_chunks) in enumerate(zip(entity_rows, neo_results)):
+        for i, (ent, neo_chunks) in enumerate(zip(entity_rows, neo_results, strict=False)):
             if isinstance(neo_chunks, Exception):
                 logger.warning("Neo4j lookup failed for %r: %s", ent["name"], neo_chunks)
                 neo_chunks = []
@@ -357,7 +357,7 @@ class HybridRetriever:
                     all_raw.extend(result)
 
             chunk_matches: list[ChunkMatch] = []
-            for j, nc in enumerate(all_raw):
+            for _j, nc in enumerate(all_raw):
                 cid = nc["chunk_id"]
                 if cid not in seen_chunks:
                     seen_chunks[cid] = {
@@ -445,7 +445,7 @@ class HybridRetriever:
         community_results = await asyncio.gather(*community_tasks, return_exceptions=True)
 
         fused: list[dict] = []
-        for ent, topic in zip(entity_rows, community_results):
+        for ent, topic in zip(entity_rows, community_results, strict=False):
             if isinstance(topic, Exception) or topic is None:
                 continue
             fused.append(

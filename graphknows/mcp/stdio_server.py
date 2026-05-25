@@ -471,7 +471,7 @@ async def ltm_query(query: str, top_k: int = 5) -> dict[str, Any]:
 
     Args:
         query: Natural-language search query.
-        top_k: Number of topics to return (1–20, default 5).
+        top_k: Number of topics to return (1-20, default 5).
 
     Returns:
         Dict with a ``results`` key containing a list of matching topics.
@@ -595,7 +595,7 @@ def recall_by_document(query: str, top_k: int = 5) -> dict[str, Any]:
 
     Args:
         query: Free-text search query.
-        top_k: Max results to return (1–20, default 5).
+        top_k: Max results to return (1-20, default 5).
 
     Returns:
         Dict with a ``results`` key containing matched chunks.
@@ -635,7 +635,7 @@ def recall_by_dialog(
 
     Args:
         query: Free-text search query.
-        top_k: Max results to return (1–20, default 5).
+        top_k: Max results to return (1-20, default 5).
         session_filter: Optional session_id to scope results.
 
     Returns:
@@ -673,7 +673,7 @@ def recall_by_topic(query: str, top_k: int = 5) -> dict[str, Any]:
 
     Args:
         query: Free-text search query.
-        top_k: Max results to return (1–20, default 5).
+        top_k: Max results to return (1-20, default 5).
 
     Returns:
         Dict with a ``results`` key containing matched topics.
@@ -739,9 +739,10 @@ async def corpus_ingest(
         if taxonomy_file:
             config["taxonomy_file"] = taxonomy_file
         stats = await run_ingestion(documents=documents, config_override=config or None)
-        return stats
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"error": str(exc), "documents_processed": 0}
+    else:
+        return stats
 
 
 # ---------------------------------------------------------------------------
