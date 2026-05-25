@@ -7,7 +7,7 @@ import re
 
 from .base import BaseParser, ParsedFile, TextSegment
 
-HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+HEADING_RE = re.compile(r"^(#{1,6})\s+([^\n]+)$", re.MULTILINE)
 
 
 class PlainTextParser(BaseParser):
@@ -31,7 +31,7 @@ class PlainTextParser(BaseParser):
         source_id = self._make_source_id(source_hint, text)
 
         if not title:
-            h1_match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+            h1_match = re.search(r"^#\s+([^\n]+)$", text, re.MULTILINE)
             if h1_match:
                 title = h1_match.group(1).strip()
             elif source_hint:

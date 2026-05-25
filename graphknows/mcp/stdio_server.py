@@ -142,8 +142,6 @@ async def memory_doctor() -> dict[str, Any]:
 
     Returns a dict with boolean values for each backend, plus version and pid.
     """
-    import subprocess  # nosec B404 — read-only git version probe
-
     import asyncpg
 
     result: dict[str, Any] = {}
@@ -185,9 +183,14 @@ async def memory_doctor() -> dict[str, Any]:
         result["pgvector"] = False
 
     try:
-        v = subprocess.check_output(  # nosec B603 B607 — fixed command, no user input
-            ["git", "rev-parse", "--short", "HEAD"], cwd="/root/graphknows", text=True, timeout=3
-        ).strip()
+        proc = await asyncio.create_subprocess_exec(
+            "git", "rev-parse", "--short", "HEAD",
+            cwd="/root/graphknows",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        v = stdout.decode().strip() if proc.returncode == 0 else "unknown"
     except Exception:
         v = "unknown"
 
