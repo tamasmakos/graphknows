@@ -5,11 +5,8 @@ from __future__ import annotations
 import inspect
 from unittest.mock import MagicMock
 
-import pytest
-
-from graphknows.schema import apply_schema, apply_memgraph_schema
 from graphknows.retrieval.stores.pgvector import PgVectorStore
-
+from graphknows.schema import apply_memgraph_schema, apply_schema
 
 # ---------------------------------------------------------------------------
 # Neo4j schema

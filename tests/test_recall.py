@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from graphknows.retrieval.recall_stm import RecallResult, recall_short_term
 from graphknows.retrieval.recall_ltm import recall_long_term
+from graphknows.retrieval.recall_stm import recall_short_term
 
 
 def _embed(text: str) -> list[float]:

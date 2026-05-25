@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-from dataclasses import asdict
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from graphknows.memory.adapter import GraphknowsAdapter
 from graphknows.memory.adapter_types import AdapterCapabilities, RecallRequest
 from graphknows.retrieval.recall_stm import RecallResult
-
 from tests.fixtures.synthetic_host_session import (
     ARTIFACTS,
     DIALOG_ID,

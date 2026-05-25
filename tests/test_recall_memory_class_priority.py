@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.retrieval.recall_ltm import _shape_score as ltm_shape_score, recall_long_term
-from graphknows.retrieval.recall_stm import _shape_score as stm_shape_score, recall_short_term
+from graphknows.retrieval.recall_ltm import _shape_score as ltm_shape_score
+from graphknows.retrieval.recall_ltm import recall_long_term
+from graphknows.retrieval.recall_stm import _shape_score as stm_shape_score
+from graphknows.retrieval.recall_stm import recall_short_term
 
 
 def _embed(text: str) -> list[float]:

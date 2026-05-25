@@ -170,12 +170,8 @@ class GLiNER2EntityExtractor:
                     float(tail.get("confidence", 0.0)),
                 )
                 # Resolve entity types from extracted entities (best-effort)
-                src_type = next(
-                    (e["type"] for e in entities if e["name"] == src), "CONCEPT"
-                )
-                tgt_type = next(
-                    (e["type"] for e in entities if e["name"] == tgt), "CONCEPT"
-                )
+                src_type = next((e["type"] for e in entities if e["name"] == src), "CONCEPT")
+                tgt_type = next((e["type"] for e in entities if e["name"] == tgt), "CONCEPT")
                 relations.append(
                     {
                         "head": src,

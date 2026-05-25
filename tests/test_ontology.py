@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from graphknows.ontology.loader import OntologyLoader, OntologyManifest
 from graphknows.ontology.router import OntologyRouter
-
 
 # ---------------------------------------------------------------------------
 # Helpers

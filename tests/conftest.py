@@ -18,6 +18,7 @@ The ``_restore_stub_modules`` autouse fixture saves and restores the relevant
 from __future__ import annotations
 
 import sys
+
 import pytest
 
 _STUB_KEYS = (

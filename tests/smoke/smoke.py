@@ -16,7 +16,6 @@ import time
 import urllib.error
 import urllib.request
 
-
 PROBES = [
     ("graphknows", "http://graphknows:8025/health", 200),
     ("agent", "http://agent:8000/health", 200),

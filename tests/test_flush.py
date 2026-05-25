@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.memory.flush import FlushOptions, FlushResult, SessionFlusher
+from graphknows.memory.flush import FlushOptions, SessionFlusher
 
 
 def _make_flusher():

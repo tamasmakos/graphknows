@@ -6,10 +6,7 @@ external services (no DB, no network, no filesystem state).
 
 from __future__ import annotations
 
-import os
-
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Constants

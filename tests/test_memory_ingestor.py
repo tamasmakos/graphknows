@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -41,7 +41,9 @@ def _make_ingestor(extractor=None, embed_fn=None):
     ]:
         setattr(mg, attr, AsyncMock(return_value=None))
     pg.write_stm_chunk = AsyncMock(return_value=None)
-    extractor = extractor or MagicMock(return_value=ExtractionResult(entities=[{"name": "EU", "type": "ORG", "score": 0.9}]))
+    extractor = extractor or MagicMock(
+        return_value=ExtractionResult(entities=[{"name": "EU", "type": "ORG", "score": 0.9}])
+    )
     # extractor.extract() not extractor()
     ext_obj = MagicMock()
     ext_obj.extract = extractor
@@ -90,10 +92,12 @@ def test_ingest_parsed_calls_write_chunk_node_per_segment():
 def test_ingest_parsed_calls_write_entity_node_per_entity():
     # extractor returns 2 entities per chunk, 2 chunks → 4 total
     ext_fn = MagicMock(
-        return_value=ExtractionResult(entities=[
-            {"name": "EU", "type": "ORG", "score": 0.9},
-            {"name": "Germany", "type": "LOC", "score": 0.8},
-        ])
+        return_value=ExtractionResult(
+            entities=[
+                {"name": "EU", "type": "ORG", "score": 0.9},
+                {"name": "Germany", "type": "LOC", "score": 0.8},
+            ]
+        )
     )
     ingestor, mg, pg, _ext, embed = _make_ingestor(extractor=ext_fn)
     parsed = _make_parsed(2)
