@@ -97,7 +97,7 @@ def _derive_id(name: str, existing_id: Optional[str]) -> str:
     """Generate deterministic 12-char id when missing."""
     if existing_id:
         return str(existing_id)
-    digest = hashlib.md5(name.encode("utf-8")).hexdigest()
+    digest = hashlib.md5(name.encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
     return digest[:12]
 
 

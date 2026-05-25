@@ -61,7 +61,7 @@ def _distribution_from_result(phase_result: Dict[str, object]) -> Dict[str, int]
 def run_patch(
     neo4j_uri: str = "bolt://172.18.0.1:7687",
     neo4j_user: str = "neo4j",
-    neo4j_password: str = "testpassword123",
+    neo4j_password: str = "testpassword123",  # nosec B107 — default CLI arg, overridden by env/flag
     phases: list[str] | None = None,
     dry_run: bool = False,
     batch_size: int = 500,

@@ -86,7 +86,7 @@ class Neo4jGraphUploader:
         host: str = "neo4j",
         port: int = 7687,
         username: str = "neo4j",
-        password: str = "password",
+        password: str = "password",  # nosec B107 — default connection arg, overridden by env/config
         database: str = "neo4j",  # Default DB
         node_batch_size: int = 1000,
         rel_batch_size: int = 2000,

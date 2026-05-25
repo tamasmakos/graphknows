@@ -78,7 +78,7 @@ class IterativeLoader:
         # I'll use random.sample (without replacement within batch).
 
         batch_size = min(self.settings.batch_size, len(self.all_speeches))
-        sampled_dicts = random.sample(self.all_speeches, batch_size)
+        sampled_dicts = random.sample(self.all_speeches, batch_size)  # nosec B311 — statistical sampling, not crypto
 
         segments = []
         for i, s in enumerate(sampled_dicts):

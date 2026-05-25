@@ -62,14 +62,12 @@ jobs:
       - name: Check undeclared service imports
         run: python3 scripts/check_imports.py
 
-  # ── 2. Type checking — blocked by lint, non-blocking during ramp-up ────────
+  # ── 2. Type checking — hard gate, blocked by lint ────────────────────────
   type-check:
     name: Type check (mypy)
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true   # flip to false once the type baseline is clean
-
     steps:
       - uses: actions/checkout@v4
 
@@ -88,7 +86,7 @@ jobs:
       - name: Install dev group
         run: uv sync --group dev
 
-      - name: mypy (graphknows core — excludes graphgen)
+      - name: mypy (graphknows core — excludes untyped legacy modules)
         run: |
           uv run mypy \
             graphknows/ \
@@ -103,7 +101,7 @@ jobs:
             --ignore-missing-imports \
             --allow-untyped-decorators \
             --no-warn-unused-ignores
-          # TODO(tech-debt): remove excludes above as type annotations are added
+          # Excludes track remaining tech-debt; removing each is a Kanban task
 
   # ── 3. Security scan — always runs independently ──────────────────────────
   security:
@@ -123,11 +121,10 @@ jobs:
       - name: Install bandit (isolated tool)
         run: uv tool install bandit
 
-      - name: bandit (OWASP — graphknows core, excludes graphgen)
+      - name: bandit (OWASP — full graphknows package)
         run: |
           bandit \
             -r graphknows/ \
-            --exclude graphknows/graphgen \
             --skip B101,B104,B105,B110 \
             -f screen
           # B101: assert — acceptable in non-prod code
@@ -210,13 +207,12 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
-  # ── 5. SonarQube Cloud — quality gate (non-blocking until baseline is clean) ─
+  # ── 5. SonarQube Cloud — quality gate (hard, SONAR_TOKEN set) ────────────
   sonar:
     name: SonarQube analysis
     needs: [lint, test]        # only analyse code that already passes lint + tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true    # non-blocking: SonarCloud project needs SONAR_TOKEN + sonar-project.properties
     if: ${{ !cancelled() && needs.lint.result == 'success' }}
 
     steps:
@@ -237,7 +233,6 @@ jobs:
 
       - name: SonarQube Quality Gate check
         uses: SonarSource/sonarqube-quality-gate-action@v1
-        continue-on-error: true   # gate is informational until coverage baseline is established
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
