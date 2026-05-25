@@ -21,6 +21,7 @@ class RecallResult:
     source_type: Literal["chunk", "turn"]
     scope: Literal["short_term", "long_term"]
     score: float
+    cosine_score: float = 0.0
     entity_names: list[str] = field(default_factory=list)
     provenance: dict[str, Any] = field(default_factory=dict)
     heading_path: str = ""
@@ -62,6 +63,7 @@ def _run_stm_ann(
                         source_type="chunk",
                         scope="short_term",
                         score=rrf,
+                        cosine_score=chunk.get("cosine_score", 0.0),
                         heading_path=chunk.get("heading_path", ""),
                         provenance={
                             "session_id": session_id,

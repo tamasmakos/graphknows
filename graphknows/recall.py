@@ -79,12 +79,12 @@ def recall_by_document(
     WITH collect(DISTINCT e.name) AS matched_names, count(DISTINCT e) AS match_count
     MATCH (c:CHUNK)-[:HAS_ENTITY]->(e2:ENTITY)
     WHERE e2.name IN matched_names
-    WITH c, collect(DISTINCT e2.name) AS chunk_entities, count(DISTINCT e2) AS overlap
+    OPTIONAL MATCH (f:FILE)-[:HAS_CHUNK]->(c)
+    WITH c, f, collect(DISTINCT e2.name) AS chunk_entities, count(DISTINCT e2) AS overlap
     ORDER BY overlap DESC
     LIMIT $top_k
     RETURN c.text AS text,
-           c.session_id AS session_id,
-           c.file_id AS file_id,
+           f.id AS file_id,
            chunk_entities AS entities,
            overlap AS score
     """
@@ -99,7 +99,6 @@ def recall_by_document(
                 text=r.get("text") or "",
                 entity_names=r.get("entities") or [],
                 provenance={
-                    "session_id": r.get("session_id"),
                     "file_id": r.get("file_id"),
                 },
                 score=float(r.get("score") or 0),

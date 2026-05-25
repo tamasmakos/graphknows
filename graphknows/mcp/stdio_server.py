@@ -519,7 +519,7 @@ def ltm_entity(name: str) -> dict[str, Any]:
     first/last seen timestamps, and segment count.
 
     Args:
-        name: Entity name (case-sensitive).
+        name: Entity name (case-insensitive; GLiNER2 stores entities in lowercase).
 
     Returns:
         Dict with entity properties, or ``{"error": "..."}`` if not found.
@@ -531,7 +531,8 @@ def ltm_entity(name: str) -> dict[str, Any]:
     try:
         with d.session() as s:
             row = s.run(
-                "MATCH (e:Entity {name: $name}) "
+                "MATCH (e:Entity) "
+                "WHERE toLower(e.name) = toLower($name) "
                 "OPTIONAL MATCH (e)-[:APPEARED_IN]->(seg:Segment) "
                 "RETURN properties(e) AS props, count(DISTINCT seg) AS segment_count",
                 name=name,
