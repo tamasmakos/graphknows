@@ -221,6 +221,7 @@ class MemoryIngestor:
                 entity_count += 1
 
             # Write to pgvector STM
+            entity_names_list = [e["name"] for e in entities]
             _run(
                 self._pg.write_stm_chunk(
                     {
@@ -230,7 +231,13 @@ class MemoryIngestor:
                         "text": clean_text,
                         "heading_path": seg.heading_path,
                         "embedding": embedding,
-                        "metadata": {**seg.metadata, **metadata},
+                        "metadata": {
+                            **seg.metadata,
+                            **metadata,
+                            "atom_type": seg.metadata.get("atom_type", "text"),
+                            "memory_class": seg.metadata.get("memory_class", "raw_evidence"),
+                            "entity_names": entity_names_list,
+                        },
                     }
                 )
             )

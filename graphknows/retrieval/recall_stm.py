@@ -64,6 +64,7 @@ def _run_stm_ann(
                         scope="short_term",
                         score=rrf,
                         cosine_score=chunk.get("cosine_score", 0.0),
+                        entity_names=chunk.get("metadata", {}).get("entity_names", []),
                         heading_path=chunk.get("heading_path", ""),
                         provenance={
                             "session_id": session_id,
