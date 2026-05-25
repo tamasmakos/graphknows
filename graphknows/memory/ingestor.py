@@ -186,7 +186,7 @@ class MemoryIngestor:
             clean_text = _re.sub(r"^##\s*Content\s*\n+", "", seg.text, flags=_re.IGNORECASE).strip()
 
             entities: list[dict[str, Any]] = (
-                self._extractor.extract(clean_text) if self._extractor is not None else []
+                self._extractor.extract(clean_text).entities if self._extractor is not None else []
             )
 
             embedding: list[float] = self._embed_fn(clean_text)

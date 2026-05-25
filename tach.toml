@@ -1,0 +1,45 @@
+# tach.toml — module boundary enforcement for graphknows
+# Docs: https://docs.gauge.sh/usage/configuration
+#
+# NOTE (2026-05-25): several cross-module dependencies exist that violate the
+# ideal layered architecture. They are documented here as KNOWN ISSUES:
+#   - graphknows.memory imports from graphknows.retrieval (stores, embedder)
+#   - graphknows.graphgen imports from graphknows.retrieval (embedder)
+#   - graphknows.ontology imports from graphknows.retrieval (embedder)
+#   - graphknows.retrieval imports from graphknows.graphgen (DSPyExtractor)
+# TODO: extract shared utilities (embedder, stores) into graphknows.core
+# so the above dependencies can be eliminated.
+
+source_roots = ["."]
+
+[[modules]]
+path = "graphknows.models"
+depends_on = []
+
+[[modules]]
+path = "graphknows.ontology"
+depends_on = [ "graphknows.retrieval"]
+
+[[modules]]
+path = "graphknows.ingestion"
+depends_on = []
+
+[[modules]]
+path = "graphknows.graphgen"
+depends_on = [ "graphknows.retrieval"]
+
+[[modules]]
+path = "graphknows.memory"
+depends_on = [ "graphknows.graphgen", "graphknows.ingestion", "graphknows.retrieval"]
+
+[[modules]]
+path = "graphknows.retrieval"
+depends_on = [ "graphknows.graphgen", "graphknows.memory"]
+
+[[modules]]
+path = "graphknows.mcp"
+depends_on = [ "graphknows.memory", "graphknows.retrieval", "graphknows.graphgen", "graphknows.ontology"]
+
+[[modules]]
+path = "graphknows.cli"
+depends_on = [ "graphknows.memory", "graphknows.retrieval"]

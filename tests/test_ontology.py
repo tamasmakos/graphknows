@@ -9,20 +9,15 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-# Adjust sys.path so agent package is importable in test context
-import sys
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "agent"))
-
-from ontology.loader import OntologyLoader, OntologyManifest
-from ontology.router import OntologyRouter
+from graphknows.ontology.loader import OntologyLoader, OntologyManifest
+from graphknows.ontology.router import OntologyRouter
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-REGISTRY_ROOT = Path(__file__).parent.parent / "services" / "agent" / "ontology" / "assets"
+REGISTRY_ROOT = Path(__file__).parent.parent / "graphknows" / "ontology" / "assets"
 
 
 # ---------------------------------------------------------------------------

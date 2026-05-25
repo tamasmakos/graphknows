@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
+from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.ingestor import MemoryIngestor
 
 
@@ -10,10 +11,10 @@ def test_entity_names_stored_in_chunk_metadata():
     mg = MagicMock()
     pg = MagicMock()
     extractor = MagicMock()
-    extractor.extract.return_value = [
+    extractor.extract.return_value = ExtractionResult(entities=[
         {"name": "GraphKnows", "type": "ORGANIZATION", "score": 0.9},
         {"name": "Neo4j", "type": "PRODUCT", "score": 0.8},
-    ]
+    ])
     embed_fn = MagicMock(return_value=[0.1] * 1536)
 
     # Patch _run to execute synchronously

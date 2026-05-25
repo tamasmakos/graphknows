@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+from graphknows.memory.extractor import ExtractionResult
+
 import pytest
 
 from graphknows.memory.dialog import DialogResult, DialogWriter, Participant, ToolCall, Turn
@@ -67,7 +69,7 @@ def test_write_turn_no_next_edge_on_first_turn():
 
 def test_write_turn_calls_extractor_when_set():
     ext = MagicMock()
-    ext.extract = MagicMock(return_value=[{"name": "EU", "type": "ORG", "score": 0.9}])
+    ext.extract = MagicMock(return_value=ExtractionResult(entities=[{"name": "EU", "type": "ORG", "score": 0.9}]))
     writer, mg, pg, _ = _make_writer(extractor=ext)
     writer.write_turn("s1", "d1", _turn(0, text="The EU signed a deal."))
     ext.extract.assert_called_once()
@@ -76,10 +78,10 @@ def test_write_turn_calls_extractor_when_set():
 def test_write_turn_calls_write_entity_for_each_entity():
     ext = MagicMock()
     ext.extract = MagicMock(
-        return_value=[
+        return_value=ExtractionResult(entities=[
             {"name": "EU", "type": "ORG", "score": 0.9},
             {"name": "France", "type": "LOC", "score": 0.8},
-        ]
+        ])
     )
     writer, mg, pg, _ = _make_writer(extractor=ext)
     result = writer.write_turn("s1", "d1", _turn(0, text="EU and France"))
@@ -123,7 +125,7 @@ def test_pg_failure_appended_to_errors():
 
 def test_dialog_result_entity_count_matches_extracted():
     ext = MagicMock()
-    ext.extract = MagicMock(return_value=[{"name": "Berlin", "type": "LOC", "score": 0.95}])
+    ext.extract = MagicMock(return_value=ExtractionResult(entities=[{"name": "Berlin", "type": "LOC", "score": 0.95}]))
     writer, mg, pg, _ = _make_writer(extractor=ext)
     result = writer.write_turn("s1", "d1", _turn(0, text="Berlin is a city."))
     assert result.entity_count == 1

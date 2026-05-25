@@ -45,9 +45,10 @@ def _make_mg_mock(include_write_relation_edge: bool = True) -> MagicMock:
 
 def _make_extractor(n_entities: int = 2) -> MagicMock:
     """Return a mock extractor that always returns *n_entities* entities."""
+    from graphknows.memory.extractor import ExtractionResult
     entities = [{"name": f"Entity{i}", "type": "ENTITY", "score": 0.9} for i in range(n_entities)]
     ext = MagicMock()
-    ext.extract = MagicMock(return_value=entities)
+    ext.extract = MagicMock(return_value=ExtractionResult(entities=entities))
     return ext
 
 

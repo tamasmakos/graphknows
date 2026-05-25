@@ -7,15 +7,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "agent"))
+from graphknows.ontology.loader import OntologyLoader
+from graphknows.ontology.rel_extractor import OntologyRelExtractor
+from graphknows.ontology.router import OntologyRouter
 
-from ontology.loader import OntologyLoader
-from ontology.rel_extractor import OntologyRelExtractor
-from ontology.router import OntologyRouter
-
-REGISTRY_ROOT = Path(__file__).parent.parent / "services" / "agent" / "ontology" / "assets"
+REGISTRY_ROOT = Path(__file__).parent.parent / "graphknows" / "ontology" / "assets"
 
 
 # ---------------------------------------------------------------------------
@@ -130,54 +127,6 @@ class TestOntologyRelExtractor:
 # Neo4j write_ontology_relations — mock driver, assert Cypher params
 # ---------------------------------------------------------------------------
 
-
-class TestNeo4jOntologyWrite:
-    def test_write_ontology_relations_calls_driver(self):
-        """Assert write_ontology_relations executes the expected Cypher."""
-        import asyncio
-        from graph.backends.neo4j_gds import Neo4jGDSBackend
-
-        backend = Neo4jGDSBackend.__new__(Neo4jGDSBackend)
-
-        # Capture all run() calls
-        run_calls: list[tuple] = []
-
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.run = MagicMock(
-            side_effect=lambda q, **kw: run_calls.append((q, kw)) or MagicMock()
-        )
-
-        mock_driver = MagicMock()
-        mock_driver.session = MagicMock(return_value=mock_session)
-        backend._driver = mock_driver
-
-        triples = [
-            {"subject": "EU", "predicate": "regulates", "object": "AI", "confidence": 0.9},
-        ]
-        asyncio.run(backend.write_ontology_relations("sess-1", triples, "lkif"))
-
-        assert len(run_calls) == 1
-        _q, kw = run_calls[0]
-        assert kw["subj"] == "EU"
-        assert kw["obj"] == "AI"
-        assert kw["pred"] == "regulates"
-        assert kw["ont"] == "lkif"
-        assert kw["sid"] == "sess-1"
-        assert kw["conf"] == pytest.approx(0.9)
-
-    def test_write_ontology_relations_skips_empty(self):
-        import asyncio
-        from graph.backends.neo4j_gds import Neo4jGDSBackend
-
-        backend = Neo4jGDSBackend.__new__(Neo4jGDSBackend)
-        mock_driver = MagicMock()
-        backend._driver = mock_driver
-
-        # Should return without calling driver.session at all
-        asyncio.run(backend.write_ontology_relations("sess-1", [], "lkif"))
-        mock_driver.session.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

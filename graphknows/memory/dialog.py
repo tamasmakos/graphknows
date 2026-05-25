@@ -186,7 +186,7 @@ class DialogWriter:
         # Entity extraction from turn text
         if self._extractor and turn.text.strip():
             try:
-                entities = self._extractor.extract(turn.text)
+                entities = self._extractor.extract(turn.text).entities
                 for ent in entities:
                     _run(
                         self._mg.write_entity_node(
