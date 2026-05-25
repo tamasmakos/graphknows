@@ -184,7 +184,10 @@ async def memory_doctor() -> dict[str, Any]:
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "--short", "HEAD",
+            "git",
+            "rev-parse",
+            "--short",
+            "HEAD",
             cwd="/root/graphknows",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
