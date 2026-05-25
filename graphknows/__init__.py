@@ -9,9 +9,6 @@ or framework-specific glue::
         # Framework-agnostic tool list (name + description + JSON Schema + async callable)
         tools = gk.tools          # list[GraphKnowsTool]
 
-        # MCP server — for out-of-process / MCP-native agents
-        mcp_srv = gk.as_mcp_server()
-
         # Direct programmatic access
         ctx = await gk.retriever.retrieve("my query", session_id="s1")
 
