@@ -147,7 +147,7 @@ class ExtractionSettings(BaseSettings):
         return self.ner_backend
 
     # GLiNER Configuration
-    gliner_model: str = "knowledgator/gliner-multitask-large-v0.5"
+    gliner_model: str = "fastino/gliner2-multi-v1"
     gliner_threshold: float = 0.5
     gliner_preload: bool = True
     gliner2_top_k_labels: int = 5

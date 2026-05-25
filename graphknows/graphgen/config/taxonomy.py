@@ -8,12 +8,13 @@ Usage::
 
     from graphknows.graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
 
-    taxonomy = get_default_taxonomy()          # bundled eu-politics.yaml
+    taxonomy = get_default_taxonomy()          # bundled generic.yaml
     taxonomy = load_taxonomy("/path/my.yaml")  # custom domain
 """
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -96,9 +97,14 @@ def load_taxonomy(path: str) -> TaxonomyConfig:
 
 
 def get_default_taxonomy() -> TaxonomyConfig:
-    """Return the bundled ``eu-politics`` taxonomy (loaded from the package YAML).
+    """Return the bundled ``generic`` taxonomy (loaded from the package YAML).
 
-    This is the default taxonomy used when no ``GRAPHGEN_TAXONOMY_FILE`` env var is set.
+    This is the default taxonomy used when no ``GRAPHKNOWS_TAXONOMY_FILE`` env var is set.
+    To select the EU politics taxonomy instead, set the env var to ``taxonomy.eu-politics.yaml``.
     """
-    yaml_path = Path(__file__).parent / "taxonomy.eu-politics.yaml"
+    env_path = os.environ.get("GRAPHKNOWS_TAXONOMY_FILE")
+    if env_path:
+        yaml_path = Path(__file__).parent / env_path
+    else:
+        yaml_path = Path(__file__).parent / "taxonomy.generic.yaml"
     return load_taxonomy(str(yaml_path))

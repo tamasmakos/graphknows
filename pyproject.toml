@@ -54,6 +54,7 @@ packages = ["graphknows"]
 
 [project.scripts]
 graphknows-memory = "graphknows.cli.memory:cli"
+graphknows-mcp = "graphknows.mcp.stdio_server:main"
 
 # ── Dev tooling ────────────────────────────────────────────────────────────────
 

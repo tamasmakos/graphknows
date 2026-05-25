@@ -9,13 +9,10 @@ Typical usage in any agentic project::
     from graphknows import GraphKnows
 
     async with GraphKnows.from_env() as gk:
-        # Option A — framework-agnostic tool list
+        # Framework-agnostic tool list
         tools = gk.tools          # list[GraphKnowsTool]
 
-        # Option B — MCP server (for out-of-process / MCP-native agents)
-        mcp_srv = gk.as_mcp_server()
-
-        # Option C — direct programmatic access
+        # Direct programmatic access
         context = await gk.retriever.retrieve("query", session_id="s1")
 
 No agent framework is imported here.  Callers wrap ``GraphKnowsTool.fn`` for
@@ -149,31 +146,6 @@ class GraphKnowsContainer:
         if self._memgraph is None:
             raise RuntimeError(self._ERR_NOT_ENTERED)
         return self._memgraph
-
-    # ------------------------------------------------------------------
-    # MCP server (out-of-process / MCP-native agents)
-    # ------------------------------------------------------------------
-
-    def as_mcp_server(self) -> Any:
-        """Return the graphknows FastMCP server with this container wired in.
-
-        The MCP server already exposes all 13 tools; this method injects the
-        container's live store instances into it so MCP calls use the same
-        connections as the rest of the container.
-
-        Returns:
-            A ``FastMCP`` instance ready to be served or mounted.
-        """
-        from graphknows.mcp.server import mcp, set_dependencies
-
-        set_dependencies(
-            self._retriever,
-            self._pg,
-            self._neo,
-            self._memgraph,
-            {"embed_model": self.settings.embed_model},
-        )
-        return mcp
 
     # ------------------------------------------------------------------
     # Framework-agnostic tool list

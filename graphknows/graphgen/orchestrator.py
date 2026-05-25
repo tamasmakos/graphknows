@@ -573,7 +573,16 @@ async def run_pipeline(
         unknown_keys = []
         for key, value in config_override.items():
             if hasattr(settings, key):
-                setattr(settings, key, value)
+                existing = getattr(settings, key)
+                if isinstance(value, dict) and hasattr(existing, "__dict__"):
+                    # Nested section: merge individual sub-keys rather than replacing
+                    for sub_key, sub_val in value.items():
+                        if hasattr(existing, sub_key):
+                            setattr(existing, sub_key, sub_val)
+                        else:
+                            unknown_keys.append(f"{key}.{sub_key}")
+                else:
+                    setattr(settings, key, value)
             else:
                 unknown_keys.append(key)
         if unknown_keys:

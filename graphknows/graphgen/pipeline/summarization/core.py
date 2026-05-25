@@ -30,8 +30,10 @@ MAX_CHARS_PER_CHUNK = 2000  # Truncate individual chunks to avoid domination
 # XML Prompt Definition
 COMMUNITY_REPORT_PROMPT = """
 <system_role>
-You are an expert intelligence analyst specializing in graph-based pattern detection. 
-Your goal is to synthesize a comprehensive report on a specific community of entities within a larger network.
+You are a knowledge synthesis assistant. Your task is to analyze entities, relationships,
+and patterns within the knowledge graph community you have been given and produce a concise,
+factual summary of the key themes, entities, and connections. Do not assume any particular
+domain. Write clearly for a general technical audience.
 </system_role>
 
 <task_description>

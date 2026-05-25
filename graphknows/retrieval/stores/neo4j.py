@@ -917,66 +917,20 @@ class Neo4jStore:
         return topics_created
 
     async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
-        """Run GDS PageRank + betweenness on all ENTITY→ENTITY edges; write back to ENTITY nodes.
+        """Run full GDS feature enrichment via feature_engineering.run_feature_engineering.
 
         Args:
             session_id: Used to scope projection (session entities only).
 
         Returns:
-            {"pagerank_written": int, "betweenness_written": int}
+            Dict with entity_count, edge_count, community_count, modularity, etc.
 
         Raises:
-            Exception: Propagates any GDS or Neo4j failure. Graph projection cleanup
-                is attempted in the finally block regardless.
+            Exception: Propagates any GDS or Neo4j failure.
         """
-        proj_name = f"gk_enrich_{session_id.replace('-', '_')}"
-        try:
-            # Project ALL relationship types between ENTITY nodes (dynamic — covers any
-            # taxonomy-derived labels written by the relation extractor)
-            await self._arun(
-                "CALL gds.graph.project.cypher($proj, "
-                "  'MATCH (e:ENTITY) RETURN id(e) AS id', "
-                "  'MATCH (e1:ENTITY)-[r]->(e2:ENTITY) "
-                "   RETURN id(e1) AS source, id(e2) AS target, "
-                "   coalesce(r.weight, 1.0) AS weight')",
-                proj=proj_name,
-            )
+        from graphknows.feature_engineering import run_feature_engineering
 
-            # PageRank
-            pr_rows = await self._arun(
-                "CALL gds.pageRank.write($proj, "
-                "  {dampingFactor: 0.85, maxIterations: 20, writeProperty: 'pagerank'}) "
-                "YIELD nodePropertiesWritten",
-                proj=proj_name,
-            )
-            pr_written = pr_rows[0]["nodePropertiesWritten"] if pr_rows else 0
-
-            # Betweenness (approximate) — needs at least 2 nodes AND 1 edge
-            ent_count_rows = await self._arun("MATCH (e:ENTITY) RETURN count(e) AS c")
-            ent_count = ent_count_rows[0]["c"] if ent_count_rows else 0
-            edge_count_rows = await self._arun(
-                "MATCH (e1:ENTITY)-[r]->(e2:ENTITY) RETURN count(r) AS c"
-            )
-            edge_count = edge_count_rows[0]["c"] if edge_count_rows else 0
-            bc_written = 0
-            if ent_count > 1 and edge_count > 0:
-                sample = min(100, ent_count)
-                bc_rows = await self._arun(
-                    "CALL gds.betweenness.write($proj, "
-                    "  {samplingSize: $sample, writeProperty: 'betweenness'}) "
-                    "YIELD nodePropertiesWritten",
-                    proj=proj_name,
-                    sample=sample,
-                )
-                bc_written = bc_rows[0]["nodePropertiesWritten"] if bc_rows else 0
-
-            return {"pagerank_written": pr_written, "betweenness_written": bc_written}
-
-        finally:
-            try:
-                await self._arun("CALL gds.graph.drop($proj, false)", proj=proj_name)
-            except Exception:  # noqa: BLE001
-                pass
+        return await asyncio.to_thread(run_feature_engineering, self._driver)
 
     async def count_nodes(self) -> dict[str, int]:
         """Return counts of key node types."""

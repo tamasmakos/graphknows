@@ -7,9 +7,10 @@ and normalization stay outside this class.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from graphknows.memory.adapter_types import (
     AdapterCapabilities,
@@ -260,3 +261,335 @@ class GraphknowsAdapter:
             supports_recall=True,
             supports_promote=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# ADAPT-001: Host-agnostic protocol + concrete GraphknowsMemoryAdapter
+# ---------------------------------------------------------------------------
+# Data transfer objects
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class IngestResult:
+    """Result of a memory ingest operation."""
+
+    file_id: str
+    chunks: int
+    entities: int
+    elapsed_s: float
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RecallHit:
+    """A single hit returned by a memory recall query."""
+
+    score: float
+    text: str
+    session_id: str
+    entities: list[str] = field(default_factory=list)
+    source_type: str = ""
+
+
+@dataclass
+class FlushResult:
+    """Result of flushing a session from STM to LTM."""
+
+    nodes: int
+    edges: int
+    chunks: int
+    turns: int
+    elapsed_s: float
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MemoryStats:
+    """Aggregate node/chunk counts for STM and LTM."""
+
+    stm: dict[str, Any] = field(default_factory=dict)
+    ltm: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class AgentMemoryAdapter(Protocol):
+    """Stable interface between an agent runtime and Graphknows memory.
+
+    Implementations must be async-safe and session-scoped.
+    All methods are async so they can be used in any async agent loop.
+    """
+
+    async def ingest(
+        self,
+        text: str,
+        session_id: str,
+        title: str = "",
+    ) -> IngestResult:
+        """Ingest text into STM for the given session."""
+        ...
+
+    async def recall(
+        self,
+        query: str,
+        session_id: str,
+        top_k: int = 5,
+        scope: str = "stm",
+    ) -> list[RecallHit]:
+        """Recall relevant chunks from memory for the given query."""
+        ...
+
+    async def flush(self, session_id: str) -> FlushResult:
+        """Flush a session from STM to LTM."""
+        ...
+
+    async def stats(self, session_id: str = "") -> MemoryStats:
+        """Return node/chunk counts for STM and LTM."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Concrete implementation
+# ---------------------------------------------------------------------------
+
+
+class GraphknowsMemoryAdapter:
+    """Concrete AgentMemoryAdapter backed by the Graphknows memory stack.
+
+    Delegates to MemoryIngestor, STM/LTM recall, SessionFlusher, and
+    pgvector/Neo4j queries for stats.
+    """
+
+    def __init__(self, container=None):
+        self._container = container
+
+    # ------------------------------------------------------------------
+    # Lazy helpers
+    # ------------------------------------------------------------------
+
+    def _stores_from_container(self):
+        c = self._container
+        return c.memgraph, c.pg, c.neo
+
+    def _lazy_stores(self):
+        import os
+
+        from graphknows.retrieval.stores.embedder import embed_one
+        from graphknows.retrieval.stores.memgraph import MemgraphStore
+        from graphknows.retrieval.stores.neo4j import Neo4jStore
+        from graphknows.retrieval.stores.pgvector import PgVectorStore
+
+        mg = MemgraphStore(os.environ.get("MEMGRAPH_URI", "bolt://172.18.0.1:17687"))
+        pg = PgVectorStore(
+            os.environ.get(
+                "PGVECTOR_DSN",
+                "postgresql://postgres:testpassword123@172.18.0.1:5432/graphknows",
+            )
+        )
+        neo = Neo4jStore(
+            uri=os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
+            user=os.environ.get("NEO4J_USER", "neo4j"),
+            password=os.environ.get("NEO4J_PASSWORD", "testpassword123"),
+        )
+        return mg, pg, neo, embed_one
+
+    def _get_extractor(self):
+        from graphknows.memory.extractor import GLiNER2EntityExtractor
+
+        return GLiNER2EntityExtractor()
+
+    # ------------------------------------------------------------------
+    # ingest
+    # ------------------------------------------------------------------
+
+    async def ingest(
+        self,
+        text: str,
+        session_id: str,
+        title: str = "",
+    ) -> IngestResult:
+        """Ingest text into STM and return ingest statistics."""
+        if self._container is not None:
+            mg, pg, _ = self._stores_from_container()
+            embed_fn = getattr(self._container.settings, "embed_model", None)
+            from graphknows.retrieval.stores.embedder import embed_one
+
+            embed_fn = embed_one
+        else:
+            mg, pg, _, embed_fn = self._lazy_stores()
+
+        from graphknows.memory.ingestor import MemoryIngestor
+
+        extractor = self._get_extractor()
+        ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=embed_fn)
+
+        import asyncio
+
+        internal = await asyncio.to_thread(
+            ingestor.ingest_text,
+            text,
+            session_id=session_id,
+            title=title,
+        )
+        return IngestResult(
+            file_id=internal.file_id,
+            chunks=internal.chunk_count,
+            entities=internal.entity_count,
+            elapsed_s=internal.elapsed_s,
+            errors=list(internal.errors),
+        )
+
+    # ------------------------------------------------------------------
+    # recall
+    # ------------------------------------------------------------------
+
+    async def recall(
+        self,
+        query: str,
+        session_id: str,
+        top_k: int = 5,
+        scope: str = "stm",
+    ) -> list[RecallHit]:
+        """Recall relevant chunks from STM, LTM, or both."""
+        if self._container is not None:
+            mg, pg, neo = self._stores_from_container()
+            from graphknows.retrieval.stores.embedder import embed_one
+
+            embed_fn = embed_one
+        else:
+            mg, pg, neo, embed_fn = self._lazy_stores()
+
+        from graphknows.retrieval.recall_stm import recall_short_term
+
+        stm_hits: list = []
+        ltm_hits: list = []
+
+        if scope in ("stm", "both"):
+            stm_hits = await asyncio.to_thread(
+                recall_short_term,
+                mg,
+                pg,
+                query=query,
+                session_id=session_id,
+                top_k=top_k,
+                embed_fn=embed_fn,
+            )
+
+        if scope in ("ltm", "both"):
+            from graphknows.retrieval.recall_ltm import recall_long_term
+
+            ltm_hits = await asyncio.to_thread(
+                recall_long_term,
+                neo,
+                pg,
+                query,
+                top_k=top_k,
+                session_filter=session_id,
+                embed_fn=embed_fn,
+            )
+
+        all_hits = stm_hits + ltm_hits
+        result: list[RecallHit] = []
+        for h in all_hits:
+            result.append(
+                RecallHit(
+                    score=h.score,
+                    text=h.text,
+                    session_id=session_id,
+                    entities=list(h.entity_names or []),
+                    source_type=h.source_type,
+                )
+            )
+        result.sort(key=lambda r: r.score, reverse=True)
+        return result[:top_k]
+
+    # ------------------------------------------------------------------
+    # flush
+    # ------------------------------------------------------------------
+
+    async def flush(self, session_id: str) -> FlushResult:
+        """Flush a session from Memgraph STM to Neo4j LTM."""
+        if self._container is not None:
+            mg, pg, neo = self._stores_from_container()
+        else:
+            mg, pg, neo, _ = self._lazy_stores()
+            import asyncio as _asyncio
+
+            await _asyncio.to_thread(pg.connect)
+
+        from graphknows.memory.flush import SessionFlusher
+
+        flusher = SessionFlusher(mg, pg, neo)
+        internal = await flusher.flush(session_id)
+        return FlushResult(
+            nodes=internal.nodes_written,
+            edges=internal.edges_written,
+            chunks=internal.chunks_promoted,
+            turns=internal.turns_promoted,
+            elapsed_s=internal.elapsed_s,
+            errors=list(internal.errors),
+        )
+
+    # ------------------------------------------------------------------
+    # stats
+    # ------------------------------------------------------------------
+
+    async def stats(self, session_id: str = "") -> MemoryStats:
+        """Return aggregate node/chunk counts for STM and LTM."""
+        import asyncpg
+
+        if self._container is not None:
+            _, pg, neo = self._stores_from_container()
+            pg_dsn = getattr(pg, "_dsn", "")
+        else:
+            _, pg, neo, _ = self._lazy_stores()
+            pg_dsn = ""
+
+        if not pg_dsn:
+            import os
+
+            pg_dsn = os.environ.get(
+                "PGVECTOR_DSN",
+                "postgresql://postgres:testpassword123@172.18.0.1:5432/graphknows",
+            )
+
+        stm: dict[str, Any] = {}
+        ltm: dict[str, Any] = {}
+
+        conn = await asyncpg.connect(pg_dsn)
+        try:
+            stm["chunks"] = int(await conn.fetchval("SELECT count(*) FROM stm_chunks"))
+            stm["turns"] = int(await conn.fetchval("SELECT count(*) FROM stm_turns"))
+            ltm["chunks"] = int(await conn.fetchval("SELECT count(*) FROM ltm_chunks"))
+            ltm["turns"] = int(await conn.fetchval("SELECT count(*) FROM ltm_turns"))
+            ltm["topics"] = int(await conn.fetchval("SELECT count(*) FROM ltm_topics"))
+        finally:
+            await conn.close()
+
+        from neo4j import GraphDatabase
+
+        if self._container is not None:
+            uri = getattr(neo, "_uri", "")
+            user = getattr(neo, "_user", "")
+            pw = getattr(neo, "_password", "")
+        else:
+            import os
+
+            uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")
+            user = os.environ.get("NEO4J_USER", "neo4j")
+            pw = os.environ.get("NEO4J_PASSWORD", "testpassword123")
+
+        drv = GraphDatabase.driver(uri, auth=(user, pw))
+        try:
+            with drv.session() as s:
+                ltm["entities"] = int(s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"])
+                ltm["sessions"] = int(s.run("MATCH (s:SESSION) RETURN count(s) as c").single()["c"])
+        finally:
+            drv.close()
+
+        return MemoryStats(stm=stm, ltm=ltm)
