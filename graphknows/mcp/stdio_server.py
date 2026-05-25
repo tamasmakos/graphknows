@@ -103,7 +103,7 @@ _pg: Any = None
 _pg_connected: bool = False
 
 
-def _get_mg():
+def _get_mg() -> Any:
     global _mg
     if _mg is None:
         from graphknows.retrieval.stores.memgraph import MemgraphStore
@@ -112,7 +112,7 @@ def _get_mg():
     return _mg
 
 
-async def _get_pg():
+async def _get_pg() -> Any:
     global _pg, _pg_connected
     if _pg is None:
         from graphknows.retrieval.stores.pgvector import PgVectorStore
@@ -124,7 +124,7 @@ async def _get_pg():
     return _pg
 
 
-def _get_neo():
+def _get_neo() -> Any:
     from graphknows.retrieval.stores.neo4j import Neo4jStore
 
     uri, user, pw = _neo4j_creds()
@@ -235,9 +235,12 @@ async def memory_stats(session_id: str = "") -> dict[str, Any]:
     uri, user, pw = _neo4j_creds()
     drv = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
     with drv.session() as s:
-        ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]
-        tc = s.run("MATCH (t:Topic) RETURN count(t) as c").single()["c"]
-        sess_c = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()["c"]
+        row_e = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()
+        row_t = s.run("MATCH (t:Topic) RETURN count(t) as c").single()
+        row_s = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()
+        ec = row_e["c"] if row_e else 0
+        tc = row_t["c"] if row_t else 0
+        sess_c = row_s["c"] if row_s else 0
     drv.close()
 
     return {

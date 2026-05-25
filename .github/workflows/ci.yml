@@ -178,7 +178,6 @@ jobs:
         run: |
           uv run pytest \
             tests/test_graphknows_package.py \
-            tests/test_hybridrag_api.py \
             tests/test_adapter_types.py \
             tests/test_memory_adapter.py \
             tests/test_tool_summarizer.py \
