@@ -367,6 +367,69 @@ def _compute_quality_metrics(s: Any, _comm_result: Any = None) -> dict:
     }
 
 
+def _create_gds_run_node(
+    s: Any,
+    *,
+    run_id: str,
+    community_count: int,
+    modularity: float,
+    unweighted_modularity: float | None,
+    modularities: list,
+    ran_levels: int,
+    ec: int,
+    edge_count: int,
+    sil: float | None,
+    global_separation: float | None,
+    global_overlap: float | None,
+) -> None:
+    """Persist a GDSRun node to Neo4j, recording community detection metrics.
+
+    Args:
+        s: Neo4j session.
+        run_id: Unique identifier for this GDS run.
+        community_count: Number of communities detected.
+        modularity: Weighted modularity score.
+        unweighted_modularity: Unweighted modularity score, or None.
+        modularities: List of per-level modularity scores.
+        ran_levels: Number of algorithm levels executed.
+        ec: Entity (node) count.
+        edge_count: Edge count.
+        sil: Silhouette score, or None.
+        global_separation: Global cluster separation metric, or None.
+        global_overlap: Global cluster overlap metric, or None.
+    """
+    try:
+        s.run(
+            "MERGE (r:GDSRun {session_id: $session_id}) "
+            "SET r.ran_at = datetime(), "
+            "    r.community_count = $community_count, "
+            "    r.modularity = $modularity, "
+            "    r.unweighted_modularity = $unweighted_modularity, "
+            "    r.modularities = $modularities, "
+            "    r.ran_iterations = $ran_iterations, "
+            "    r.did_converge = $did_converge, "
+            "    r.entity_count = $entity_count, "
+            "    r.edge_count = $edge_count, "
+            "    r.silhouette_cosine = $sil, "
+            "    r.global_separation = $gsep, "
+            "    r.global_overlap = $goverlap",
+            session_id=run_id,
+            community_count=community_count,
+            modularity=modularity,
+            unweighted_modularity=unweighted_modularity,
+            modularities=modularities,
+            ran_iterations=ran_levels,
+            did_converge=True,
+            entity_count=ec,
+            edge_count=edge_count,
+            sil=sil,
+            gsep=global_separation,
+            goverlap=global_overlap,
+        )
+    except Exception as e:
+        log.warning("GDSRun node creation failed (non-fatal): %s", e)
+
+
 def _process_community_result(
     s: Any,
     result: dict,
@@ -419,36 +482,20 @@ def _process_community_result(
     result["unweighted_modularity"] = unweighted_modularity
 
     # ── Step 10: Store GDSRun node ──
-    try:
-        s.run(
-            "MERGE (r:GDSRun {session_id: $session_id}) "
-            "SET r.ran_at = datetime(), "
-            "    r.community_count = $community_count, "
-            "    r.modularity = $modularity, "
-            "    r.unweighted_modularity = $unweighted_modularity, "
-            "    r.modularities = $modularities, "
-            "    r.ran_iterations = $ran_iterations, "
-            "    r.did_converge = $did_converge, "
-            "    r.entity_count = $entity_count, "
-            "    r.edge_count = $edge_count, "
-            "    r.silhouette_cosine = $sil, "
-            "    r.global_separation = $gsep, "
-            "    r.global_overlap = $goverlap",
-            session_id=run_id,
-            community_count=community_count,
-            modularity=modularity,
-            unweighted_modularity=unweighted_modularity,
-            modularities=modularities,
-            ran_iterations=ran_levels,
-            did_converge=True,
-            entity_count=ec,
-            edge_count=edge_count,
-            sil=sil,
-            gsep=global_separation,
-            goverlap=global_overlap,
-        )
-    except Exception as e:
-        log.warning("GDSRun node creation failed (non-fatal): %s", e)
+    _create_gds_run_node(
+        s,
+        run_id=run_id,
+        community_count=community_count,
+        modularity=modularity,
+        unweighted_modularity=unweighted_modularity,
+        modularities=modularities,
+        ran_levels=ran_levels,
+        ec=ec,
+        edge_count=edge_count,
+        sil=sil,
+        global_separation=global_separation,
+        global_overlap=global_overlap,
+    )
 
     # ── Step 11: Community change detection ──
     try:
