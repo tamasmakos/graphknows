@@ -276,7 +276,10 @@ class TestExtract:
             "entities": {},
             "relation_extraction": {
                 "KNOWS": [
-                    {"head": {"text": "", "confidence": 0.9}, "tail": {"text": "Bob", "confidence": 0.9}},
+                    {
+                        "head": {"text": "", "confidence": 0.9},
+                        "tail": {"text": "Bob", "confidence": 0.9},
+                    },
                 ]
             },
         }
@@ -302,9 +305,7 @@ class TestExtract:
 
     def test_entity_type_canonical_mapped_via_child_to_group(self):
         raw = {
-            "entities": {
-                "politician": [{"text": "Macron", "confidence": 0.88}]
-            },
+            "entities": {"politician": [{"text": "Macron", "confidence": 0.88}]},
             "relation_extraction": {},
         }
         extractor = self._make_ready(raw)

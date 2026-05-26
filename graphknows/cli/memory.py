@@ -264,7 +264,7 @@ def stats_cmd(session: str | None) -> None:
     d = _neo4j_driver()
     with d.session() as s:
         ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]
-        tc = s.run("MATCH (t:Topic) RETURN count(t) as c").single()["c"]
+        tc = s.run("MATCH (t:TOPIC) RETURN count(t) as c").single()["c"]
         sess_c = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()["c"]
     d.close()
     click.echo("neo4j")

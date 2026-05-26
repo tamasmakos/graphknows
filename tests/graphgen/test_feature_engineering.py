@@ -251,6 +251,7 @@ class TestRunCommunityDetection:
         comm_row.__getitem__ = lambda self, k: 3
 
         s = MagicMock()
+
         def side_effect(cypher, **kwargs):
             call_no[0] += 1
             if call_no[0] == 1:
@@ -321,7 +322,6 @@ class TestLTMFeatureEngineer:
 # ===========================================================================
 
 
-
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -351,6 +351,7 @@ class TestComputeQualityMetrics:
 
         # Patch _compute_modularity separately
         from unittest.mock import patch
+
         with patch("graphknows.feature_engineering._compute_modularity", return_value=0.42):
             result = _compute_quality_metrics(s)
 
@@ -398,7 +399,12 @@ class TestProcessCommunityResult:
         with (
             __import__("unittest.mock", fromlist=["patch"]).patch(
                 "graphknows.feature_engineering._compute_quality_metrics",
-                return_value={"sil": 0.7, "global_separation": 0.5, "global_overlap": 0.1, "unweighted_modularity": 0.3}
+                return_value={
+                    "sil": 0.7,
+                    "global_separation": 0.5,
+                    "global_overlap": 0.1,
+                    "unweighted_modularity": 0.3,
+                },
             ),
             __import__("unittest.mock", fromlist=["patch"]).patch(
                 "graphknows.feature_engineering._create_gds_run_node"
@@ -425,8 +431,15 @@ class TestProcessCommunityResult:
         }
 
         with (
-            patch("graphknows.feature_engineering._compute_quality_metrics",
-                  return_value={"sil": None, "global_separation": None, "global_overlap": None, "unweighted_modularity": None}),
+            patch(
+                "graphknows.feature_engineering._compute_quality_metrics",
+                return_value={
+                    "sil": None,
+                    "global_separation": None,
+                    "global_overlap": None,
+                    "unweighted_modularity": None,
+                },
+            ),
             patch("graphknows.feature_engineering._create_gds_run_node"),
         ):
             _process_community_result(s, result, comm_result, "leiden", "sess-x")

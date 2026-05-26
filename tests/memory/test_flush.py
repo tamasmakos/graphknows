@@ -229,9 +229,7 @@ class TestFlushSurfacesNeo4jError:
         neo = AsyncMock()
 
         # Force Neo4j write to raise
-        neo.write_session_subgraph = AsyncMock(
-            side_effect=RuntimeError("neo4j connection refused")
-        )
+        neo.write_session_subgraph = AsyncMock(side_effect=RuntimeError("neo4j connection refused"))
         neo.extract_and_write_relations = AsyncMock(return_value=0)
 
         flusher = SessionFlusher.__new__(SessionFlusher)
@@ -250,6 +248,6 @@ class TestFlushSurfacesNeo4jError:
 
         # The error must be surfaced
         assert errors, "errors list must be populated when Neo4j raises"
-        assert any(
-            "neo4j" in e.lower() or "connection refused" in e.lower() for e in errors
-        ), f"Expected Neo4j error in errors list, got: {errors}"
+        assert any("neo4j" in e.lower() or "connection refused" in e.lower() for e in errors), (
+            f"Expected Neo4j error in errors list, got: {errors}"
+        )

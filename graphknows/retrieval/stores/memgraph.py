@@ -468,7 +468,7 @@ class MemgraphStore:
             with self._driver.session() as s:
                 for e in entities:
                     s.run(
-                        """MERGE (n:Entity {name: $name, session_id: $sid})
+                        """MERGE (n:ENTITY {name: $name, session_id: $sid})
                            ON CREATE SET
                                n.label = $label,
                                n.all_labels = [$label],
@@ -511,8 +511,8 @@ class MemgraphStore:
             with self._driver.session() as s:
                 for r in relations:
                     s.run(
-                        """MATCH (a:Entity {id:$src, session_id:$sid}),
-                                (b:Entity {id:$tgt, session_id:$sid})
+                        """MATCH (a:ENTITY {id:$src, session_id:$sid}),
+                                (b:ENTITY {id:$tgt, session_id:$sid})
                            MERGE (a)-[rel:RELATES {type:$rtype, session_id:$sid}]->(b)""",
                         src=r.source,
                         tgt=r.target,
@@ -538,8 +538,8 @@ class MemgraphStore:
         def _sync() -> None:
             with self._driver.session() as s:
                 s.run(
-                    """MATCH (a:Entity {name: $subject, session_id: $session_id})
-                       MATCH (b:Entity {name: $object, session_id: $session_id})
+                    """MATCH (a:ENTITY {name: $subject, session_id: $session_id})
+                       MATCH (b:ENTITY {name: $object, session_id: $session_id})
                        MERGE (a)-[r:REL {name: $name, session_id: $session_id}]->(b)
                        SET r.fact = $fact,
                            r.confidence = $confidence""",
@@ -569,7 +569,7 @@ class MemgraphStore:
             with self._driver.session() as s:
                 rows = list(
                     s.run(
-                        "MATCH (n:Entity {session_id: $sid}) RETURN properties(n) AS props",
+                        "MATCH (n:ENTITY {session_id: $sid}) RETURN properties(n) AS props",
                         sid=session_id,
                     )
                 )
@@ -584,7 +584,7 @@ class MemgraphStore:
             with self._driver.session() as s:
                 rows = list(
                     s.run(
-                        """MATCH (a:Entity {session_id:$sid})-[r:RELATES]->(b:Entity {session_id:$sid})
+                        """MATCH (a:ENTITY {session_id:$sid})-[r:RELATES]->(b:ENTITY {session_id:$sid})
                        RETURN a.name AS from, b.name AS to, r.type AS rel_type""",
                         sid=session_id,
                     )
@@ -768,7 +768,7 @@ class MemgraphStore:
             with self._driver.session() as s:
                 rows = list(
                     s.run(
-                        "MATCH (n:Entity {session_id:$sid}) RETURN count(n) AS c",
+                        "MATCH (n:ENTITY {session_id:$sid}) RETURN count(n) AS c",
                         sid=session_id,
                     )
                 )

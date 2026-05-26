@@ -242,7 +242,7 @@ async def memory_stats(session_id: str = "") -> dict[str, Any]:
     drv = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
     with drv.session() as s:
         row_e = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()
-        row_t = s.run("MATCH (t:Topic) RETURN count(t) as c").single()
+        row_t = s.run("MATCH (t:TOPIC) RETURN count(t) as c").single()
         row_s = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()
         ec = row_e["c"] if row_e else 0
         tc = row_t["c"] if row_t else 0
@@ -607,7 +607,7 @@ def ltm_topics(min_entities: int = 3) -> dict[str, Any]:
     try:
         with d.session() as s:
             rows = s.run(
-                "MATCH (t:Topic) "
+                "MATCH (t:TOPIC) "
                 "WHERE t.entity_count >= $min_entities "
                 "RETURN t.community_id AS community_id, "
                 "       t.summary AS summary, "

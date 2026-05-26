@@ -206,7 +206,7 @@ def recall_by_topic(
     MATCH (e:ENTITY)
     WHERE toLower(e.name) CONTAINS token
     WITH collect(DISTINCT e.name) AS matched_names
-    MATCH (t:Topic)
+    MATCH (t:TOPIC)
     OPTIONAL MATCH (t)<-[:COMPONENT_OF]-(e2:ENTITY)
     WHERE e2.name IN matched_names
     WITH t,

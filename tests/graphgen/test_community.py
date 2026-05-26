@@ -19,7 +19,7 @@ def _make_entity_graph(n_nodes: int = 5) -> nx.Graph:
     for i in range(n_nodes):
         G.add_node(f"E{i}", node_type="ENTITY")
     for i in range(n_nodes - 1):
-        G.add_edge(f"E{i}", f"E{i+1}", graph_type="entity_relation", weight=1.0)
+        G.add_edge(f"E{i}", f"E{i + 1}", graph_type="entity_relation", weight=1.0)
     return G
 
 
@@ -164,6 +164,7 @@ class TestMergeSmallCommunities:
         result = self.det._merge_small_communities(G, partition, min_size=2)
         # All communities have >=2 members → no merging needed
         from collections import Counter
+
         counts = Counter(result.values())
         assert all(c >= 2 for c in counts.values()) or len(counts) <= 2
 
@@ -173,6 +174,7 @@ class TestMergeSmallCommunities:
         partition = {"E0": 0, "E1": 0, "E2": 0, "E3": 1}
         result = self.det._merge_small_communities(G, partition, min_size=2)
         from collections import Counter
+
         counts = Counter(result.values())
         # Singletons should be absorbed
         assert min(counts.values()) >= 1  # at minimum no crash
@@ -187,7 +189,6 @@ class TestMergeSmallCommunities:
 # ===========================================================================
 # Subcommunity / enhanced attributes
 # ===========================================================================
-
 
 
 import networkx as nx
@@ -207,6 +208,7 @@ class TestAddEnhancedCommunityAttributes:
         from graphknows.graphgen.pipeline.community.subcommunities import (
             add_enhanced_community_attributes_to_graph,
         )
+
         return add_enhanced_community_attributes_to_graph(G, communities, subcommunities)
 
     def test_creates_topic_nodes_for_each_community(self):

@@ -88,7 +88,9 @@ class TestExtractJsonObject:
 
 class TestEscapeInnerQuotes:
     def test_no_op_for_clean_json(self):
-        from graphknows.graphgen.pipeline.summarization.core import _escape_inner_quotes_in_string_fields
+        from graphknows.graphgen.pipeline.summarization.core import (
+            _escape_inner_quotes_in_string_fields,
+        )
 
         clean = '{"title": "A clean title", "summary": "No quotes here"}'
         result = _escape_inner_quotes_in_string_fields(clean)
@@ -96,7 +98,9 @@ class TestEscapeInnerQuotes:
         assert json.loads(result)["title"] == "A clean title"
 
     def test_escapes_unescaped_inner_quote(self):
-        from graphknows.graphgen.pipeline.summarization.core import _escape_inner_quotes_in_string_fields
+        from graphknows.graphgen.pipeline.summarization.core import (
+            _escape_inner_quotes_in_string_fields,
+        )
 
         # The "bad" quote in the middle of summary value
         bad = '{"summary": "The EU said "no" to the proposal"}'
@@ -106,7 +110,9 @@ class TestEscapeInnerQuotes:
         assert len(result) >= len(bad)
 
     def test_handles_already_escaped_quotes(self):
-        from graphknows.graphgen.pipeline.summarization.core import _escape_inner_quotes_in_string_fields
+        from graphknows.graphgen.pipeline.summarization.core import (
+            _escape_inner_quotes_in_string_fields,
+        )
 
         already_escaped = '{"title": "The \\"EU\\" summit"}'
         result = _escape_inner_quotes_in_string_fields(already_escaped)
@@ -298,9 +304,7 @@ class TestFormatContextXml:
     def test_entities_appear_in_xml(self):
         from graphknows.graphgen.pipeline.summarization.core import _format_context_xml
 
-        task = self._make_task(
-            entities=[{"name": "Alice", "type": "PERSON", "degree": 5}]
-        )
+        task = self._make_task(entities=[{"name": "Alice", "type": "PERSON", "degree": 5}])
         xml = _format_context_xml(task)
         assert "Alice" in xml
         assert "PERSON" in xml
@@ -308,9 +312,7 @@ class TestFormatContextXml:
     def test_relationships_appear_in_xml(self):
         from graphknows.graphgen.pipeline.summarization.core import _format_context_xml
 
-        task = self._make_task(
-            relationships=[("Alice", "KNOWS", "Bob")]
-        )
+        task = self._make_task(relationships=[("Alice", "KNOWS", "Bob")])
         xml = _format_context_xml(task)
         assert "Alice" in xml
         assert "KNOWS" in xml
@@ -382,8 +384,7 @@ class TestGetCommunityStructure:
         _, relationships = get_community_structure(G, ["Alice", "EU"])
         # Alice → EU with MEMBER_OF should appear (edge attr is 'label')
         assert any(
-            src == "Alice" and rel == "MEMBER_OF" and tgt == "EU"
-            for src, rel, tgt in relationships
+            src == "Alice" and rel == "MEMBER_OF" and tgt == "EU" for src, rel, tgt in relationships
         )
 
     def test_excludes_external_edges(self):
@@ -417,7 +418,6 @@ class TestGetCommunityStructure:
 # ===========================================================================
 # Summarizer: format_context_xml, configure_dspy
 # ===========================================================================
-
 
 
 from unittest.mock import MagicMock, patch
@@ -463,20 +463,24 @@ class TestFormatContextXml:
 
     def test_entities_appear_in_output(self):
         summarizer = _make_summarizer_no_dspy()
-        task = _make_task(entities=[
-            {"name": "Alice", "type": "PERSON", "degree": 5},
-            {"name": "EU", "type": "ORG", "degree": 3},
-        ])
+        task = _make_task(
+            entities=[
+                {"name": "Alice", "type": "PERSON", "degree": 5},
+                {"name": "EU", "type": "ORG", "degree": 3},
+            ]
+        )
         result = summarizer._format_context_xml(task)
         assert "Alice" in result
         assert "EU" in result
 
     def test_relationships_appear_in_output(self):
         summarizer = _make_summarizer_no_dspy()
-        task = _make_task(relationships=[
-            ("Alice", "WORKS_FOR", "EU"),
-            ("Alice", "MEMBER_OF", "Council", {"since": "2022"}),
-        ])
+        task = _make_task(
+            relationships=[
+                ("Alice", "WORKS_FOR", "EU"),
+                ("Alice", "MEMBER_OF", "Council", {"since": "2022"}),
+            ]
+        )
         result = summarizer._format_context_xml(task)
         assert "Alice" in result
         assert "WORKS_FOR" in result or "works" in result.lower()
@@ -514,7 +518,9 @@ class TestConfigureDspy:
         """_configure_dspy should log warning but not raise when DSPy config fails."""
         from graphknows.graphgen.pipeline.summarization.summarizer import DSPySummarizer
 
-        with patch("graphknows.graphgen.pipeline.summarization.summarizer.CommunitySummarizerModule"):
+        with patch(
+            "graphknows.graphgen.pipeline.summarization.summarizer.CommunitySummarizerModule"
+        ):
             with patch("graphknows.graphgen.pipeline.summarization.summarizer.dspy.LM") as MockLM:
                 MockLM.side_effect = Exception("No API key")
                 # Should NOT raise — _configure_dspy catches exceptions
@@ -527,7 +533,9 @@ class TestConfigureDspy:
 
         config = {"llm": {"summarization_model": "openai/gpt-4", "openrouter_api_key": "sk-test"}}
 
-        with patch("graphknows.graphgen.pipeline.summarization.summarizer.CommunitySummarizerModule"):
+        with patch(
+            "graphknows.graphgen.pipeline.summarization.summarizer.CommunitySummarizerModule"
+        ):
             with patch("graphknows.graphgen.pipeline.summarization.summarizer.dspy") as mock_dspy:
                 mock_dspy.LM.return_value = MagicMock()
                 summarizer = DSPySummarizer(config=config)

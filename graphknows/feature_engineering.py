@@ -66,8 +66,8 @@ def _project_initial_graph(s: Any, ec: int, edge_count: int) -> None:
     s.run("""
         CALL gds.graph.project.cypher(
             'ltm-entities',
-            'MATCH (n:Entity) RETURN id(n) AS id',
-            'MATCH (a:Entity)-[r]->(b:Entity) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
+            'MATCH (n:ENTITY) RETURN id(n) AS id',
+            'MATCH (a:ENTITY)-[r]->(b:ENTITY) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
         )
         YIELD graphName, nodeCount, relationshipCount
     """)
@@ -111,7 +111,7 @@ def _run_cosine_weights(s: Any) -> None:
     """
     try:
         s.run("""
-            MATCH (a:Entity)-[r]->(b:Entity)
+            MATCH (a:ENTITY)-[r]->(b:ENTITY)
             WHERE a.node2vec IS NOT NULL AND b.node2vec IS NOT NULL
             SET r.weight = gds.similarity.cosine(a.node2vec, b.node2vec)
         """)
@@ -143,8 +143,8 @@ def _project_undirected(s: Any, _ec: int = 0, _edge_count: int = 0) -> None:
         s.run("""
             CALL gds.graph.project.cypher(
                 'ltm-entities',
-                'MATCH (n:Entity) RETURN id(n) AS id',
-                'MATCH (a:Entity)-[r]->(b:Entity) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
+                'MATCH (n:ENTITY) RETURN id(n) AS id',
+                'MATCH (a:ENTITY)-[r]->(b:ENTITY) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
             )
             YIELD graphName
         """)
@@ -351,7 +351,7 @@ def _compute_quality_metrics(s: Any, _comm_result: Any = None) -> dict:
 
     try:
         emb_rows = s.run(
-            "MATCH (e:Entity) WHERE e.node2vec IS NOT NULL AND e.community_id IS NOT NULL "
+            "MATCH (e:ENTITY) WHERE e.node2vec IS NOT NULL AND e.community_id IS NOT NULL "
             "RETURN e.node2vec as emb, e.community_id as cid"
         ).data()
         sil = _compute_silhouette(emb_rows)
@@ -500,7 +500,7 @@ def _process_community_result(
     # ── Step 11: Community change detection ──
     try:
         rows = s.run(
-            "MATCH (e:Entity) WHERE e.community_id IS NOT NULL "
+            "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
             "RETURN e.name as name, e.community_id as cid"
         ).data()
 
@@ -517,7 +517,7 @@ def _process_community_result(
             new_hashes[cid] = h
 
         existing_hash_rows = s.run(
-            "MATCH (t:Topic) WHERE t.community_id IS NOT NULL AND t.community_hash IS NOT NULL "
+            "MATCH (t:TOPIC) WHERE t.community_id IS NOT NULL AND t.community_hash IS NOT NULL "
             "RETURN t.community_id as cid, t.community_hash as hash"
         ).data()
         existing_hashes = {r["cid"]: r["hash"] for r in existing_hash_rows}
@@ -568,14 +568,14 @@ def run_feature_engineering(driver_or_session_id: Any, session_id: str = "") -> 
     }
 
     with driver.session() as s:
-        ec = s.run("MATCH (e:Entity) RETURN count(e) as c").single()["c"]
+        ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]
         result["entity_count"] = ec
         if ec < 3:
             log.info("LTM graph too small (%d entities) — skipping feature engineering", ec)
             result["error"] = f"too_small:{ec}"
             return result
 
-        edge_count_row = s.run("MATCH (a:Entity)-[r]->(b:Entity) RETURN count(r) as c").single()
+        edge_count_row = s.run("MATCH (a:ENTITY)-[r]->(b:ENTITY) RETURN count(r) as c").single()
         edge_count = edge_count_row["c"] if edge_count_row else 0
         result["edge_count"] = edge_count
 

@@ -168,7 +168,6 @@ def test_recall_long_term_results_sorted_descending():
 # ===========================================================================
 
 
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -322,7 +321,6 @@ def test_ltm_recall_distilled_outranks_raw():
 # ===========================================================================
 
 
-
 from graphknows.recall import (
     RecallHit,
     _extract_query_tokens,
@@ -470,9 +468,7 @@ def test_recall_by_document_returns_recall_hit_objects():
 
 
 def test_recall_by_document_hit_fields_mapped_correctly():
-    rows = [
-        {"text": "Found content", "file_id": "doc-42", "entities": ["EU", "NATO"], "score": 3}
-    ]
+    rows = [{"text": "Found content", "file_id": "doc-42", "entities": ["EU", "NATO"], "score": 3}]
     driver = FakeDriver(rows)
     hits = recall_by_document(driver, "EU and NATO cooperation")
     hit = hits[0]
@@ -704,7 +700,6 @@ class TestEntityBoostAddsNewChunks:
 # ===========================================================================
 # Mocked store tests: forget, prune, embed, ANN
 # ===========================================================================
-
 
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1055,7 +1050,9 @@ class TestEntityTraversal:
         mock_neo = MagicMock()
         mock_neo._driver.session.side_effect = Exception("fail")
         existing = {"x": (0.1, MagicMock())}
-        result = _entity_traversal(mock_neo, ["word"], top_k=5, session_filter=None, existing=existing)
+        result = _entity_traversal(
+            mock_neo, ["word"], top_k=5, session_filter=None, existing=existing
+        )
         assert "x" in result
 
 
@@ -1085,11 +1082,19 @@ class TestRecallLongTerm:
         )
 
         with (
-            patch("graphknows.retrieval.recall_ltm._ann_chunks", return_value={"c1": (0.9, chunk_result)}),
-            patch("graphknows.retrieval.recall_ltm._entity_traversal", return_value={"c1": (0.9, chunk_result)}),
+            patch(
+                "graphknows.retrieval.recall_ltm._ann_chunks",
+                return_value={"c1": (0.9, chunk_result)},
+            ),
+            patch(
+                "graphknows.retrieval.recall_ltm._entity_traversal",
+                return_value={"c1": (0.9, chunk_result)},
+            ),
             patch("graphknows.retrieval.recall_ltm._ann_turns", return_value=[turn_result]),
         ):
-            results = recall_long_term(mock_neo, mock_pg, "test query", top_k=5, embed_fn=fake_embed)
+            results = recall_long_term(
+                mock_neo, mock_pg, "test query", top_k=5, embed_fn=fake_embed
+            )
 
         assert len(results) >= 1
         assert all(hasattr(r, "score") for r in results)
@@ -1103,7 +1108,16 @@ class TestRecallLongTerm:
 
         # Make 10 chunks
         chunks = {
-            f"c{i}": (0.1 * i, RecallResult(text=f"text{i}", source_type="chunk", scope="long_term", score=0.1 * i, metadata={}))
+            f"c{i}": (
+                0.1 * i,
+                RecallResult(
+                    text=f"text{i}",
+                    source_type="chunk",
+                    scope="long_term",
+                    score=0.1 * i,
+                    metadata={},
+                ),
+            )
             for i in range(10)
         }
 
@@ -1112,7 +1126,9 @@ class TestRecallLongTerm:
             patch("graphknows.retrieval.recall_ltm._entity_traversal", return_value=chunks),
             patch("graphknows.retrieval.recall_ltm._ann_turns", return_value=[]),
         ):
-            results = recall_long_term(mock_neo, mock_pg, "q", top_k=3, embed_fn=lambda t: [0.1] * 10)
+            results = recall_long_term(
+                mock_neo, mock_pg, "q", top_k=3, embed_fn=lambda t: [0.1] * 10
+            )
 
         assert len(results) <= 3
 
@@ -1143,9 +1159,7 @@ class TestEmbed:
 
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
 
-        fake_response = {
-            "data": [{"index": 0, "embedding": [0.1] * EMBED_DIM}]
-        }
+        fake_response = {"data": [{"index": 0, "embedding": [0.1] * EMBED_DIM}]}
 
         with patch("httpx.post") as mock_post:
             mock_resp = MagicMock()
@@ -1168,9 +1182,7 @@ class TestEmbed:
         def fake_post(url, headers, json, timeout):
             sent_inputs.extend(json["input"])
             mock_resp = MagicMock()
-            mock_resp.json.return_value = {
-                "data": [{"index": 0, "embedding": [0.1] * EMBED_DIM}]
-            }
+            mock_resp.json.return_value = {"data": [{"index": 0, "embedding": [0.1] * EMBED_DIM}]}
             mock_resp.raise_for_status = MagicMock()
             return mock_resp
 

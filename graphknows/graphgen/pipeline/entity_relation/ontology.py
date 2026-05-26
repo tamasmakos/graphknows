@@ -360,13 +360,13 @@ def export_graphml_and_cypher_artifacts(
 
     cypher_path = output_dir / "ontology_memgraph.cypher"
     with cypher_path.open("w", encoding="utf-8") as fh:
-        fh.write("CREATE INDEX ON :Entity(name);\n")
+        fh.write("CREATE INDEX ON :ENTITY(name);\\n")
         for entity in entities:
             node_id = standardize_label(entity["text"])
             fh.write(
-                "MERGE (n:Entity {{id: '{id}'}}) "
+                "MERGE (n:ENTITY {{id: '{id}'}}) "
                 "SET n.name={name}, n.top_label='{top}', "
-                "n.ontology_label='{ont}', n.score={score};\n".format(
+                "n.ontology_label='{ont}', n.score={score};\\n".format(
                     id=node_id,
                     name=json.dumps(entity["text"]),
                     top=entity["label"],
@@ -378,11 +378,10 @@ def export_graphml_and_cypher_artifacts(
             source = standardize_label(relation["source"])
             target = standardize_label(relation["target"])
             fh.write(
-                "MATCH (a:Entity {{id: '{src}'}}), (b:Entity {{id: '{tgt}'}}) "
-                "MERGE (a)-[:{rel}]->(b);\n".format(
-                    src=source,
-                    tgt=target,
-                    rel=standardize_label(relation["relation"]),
+                "MATCH (a:ENTITY {{id: '{src}'}}), (b:ENTITY {{id: '{tgt}'}}) "
+                "MERGE (a)-[r:{rel_type}]->(b) "
+                "SET r.weight = coalesce(r.weight, 0) + 1;\\n".format(
+                    src=source, tgt=target, rel_type=standardize_label(relation["type"])
                 )
             )
 

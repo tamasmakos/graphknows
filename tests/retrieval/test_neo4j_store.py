@@ -24,6 +24,7 @@ from graphknows.retrieval.stores.neo4j import (
 # Shared fixture helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_session() -> MagicMock:
     s = MagicMock()
     s.run = MagicMock(return_value=None)
@@ -92,6 +93,7 @@ def _make_run_result(rows: list[dict]):
 # _safe_rel_label (merged from test_neo4j_store.py and test_neo4j_store_extended.py)
 # ---------------------------------------------------------------------------
 
+
 class TestSafeRelLabel:
     def test_simple_uppercase(self) -> None:
         assert _safe_rel_label("regulates") == "REGULATES"
@@ -132,6 +134,7 @@ class TestSafeRelLabel:
 # chunk_node_id
 # ---------------------------------------------------------------------------
 
+
 class TestChunkNodeId:
     def test_returns_uuid_string(self):
         result = chunk_node_id("doc1", "hashABC")
@@ -153,6 +156,7 @@ class TestChunkNodeId:
 # entity_node_id
 # ---------------------------------------------------------------------------
 
+
 class TestEntityNodeId:
     def test_returns_uuid_string(self):
         result = entity_node_id("Alice")
@@ -171,6 +175,7 @@ class TestEntityNodeId:
 # ---------------------------------------------------------------------------
 # _write_evidence_graph (merged from test_neo4j_store.py and test_wave3_neo4j_advanced.py)
 # ---------------------------------------------------------------------------
+
 
 class TestWriteEvidenceGraph:
     def test_no_co_occurs(self) -> None:
@@ -215,7 +220,10 @@ class TestWriteEvidenceGraph:
 
     def test_empty_stm_data_writes_session_only(self):
         session, nodes, edges, chunk_to_ents = self._call({})
-        assert any("MERGE" in str(c) and "SESSION" in str(c) for c in [str(call) for call in session.run.call_args_list])
+        assert any(
+            "MERGE" in str(c) and "SESSION" in str(c)
+            for c in [str(call) for call in session.run.call_args_list]
+        )
         assert nodes >= 1
         assert edges == 0
         assert chunk_to_ents == {}
@@ -231,7 +239,15 @@ class TestWriteEvidenceGraph:
     def test_chunk_nodes_written(self):
         stm = {
             "files": [{"id": "f1", "title": "T", "parser_name": "p", "source_hint": ""}],
-            "chunks": [{"id": "c1", "text": "hello", "heading_path": "/h", "chunk_index": 0, "file_id": "f1"}],
+            "chunks": [
+                {
+                    "id": "c1",
+                    "text": "hello",
+                    "heading_path": "/h",
+                    "chunk_index": 0,
+                    "file_id": "f1",
+                }
+            ],
         }
         session, nodes, edges, _ = self._call(stm)
         cypher_calls = [str(call) for call in session.run.call_args_list]
@@ -254,9 +270,7 @@ class TestWriteEvidenceGraph:
         }
         session, _, _, chunk_to_ents = self._call(stm)
         merge_entity_calls = [
-            str(c)
-            for c in session.run.call_args_list
-            if "MERGE (e:ENTITY" in str(c)
+            str(c) for c in session.run.call_args_list if "MERGE (e:ENTITY" in str(c)
         ]
         assert len(merge_entity_calls) == 1
 
@@ -264,6 +278,7 @@ class TestWriteEvidenceGraph:
 # ---------------------------------------------------------------------------
 # _write_relation_edges (merged from test_neo4j_store.py and test_neo4j_store_extended.py)
 # ---------------------------------------------------------------------------
+
 
 class TestWriteRelationEdges:
     def _make_mock_session(self):
@@ -364,6 +379,7 @@ class TestWriteRelationEdges:
 # Neo4jStore lifecycle
 # ---------------------------------------------------------------------------
 
+
 class TestNeo4jStoreLifecycle:
     def test_close(self):
         store, mock_driver, _ = _make_store()
@@ -381,6 +397,7 @@ class TestNeo4jStoreLifecycle:
 # Neo4jStore.upsert_chunks
 # ---------------------------------------------------------------------------
 
+
 class TestNeo4jStoreUpsertChunks:
     @pytest.mark.asyncio
     async def test_empty_chunks_is_noop(self):
@@ -394,7 +411,7 @@ class TestNeo4jStoreUpsertChunks:
         await store.upsert_chunks([{"id": "c1", "doc_id": "d1", "text": "hello world"}])
         assert mock_session.run.called
         cypher = mock_session.run.call_args[0][0]
-        assert "Chunk" in cypher
+        assert ":CHUNK" in cypher
         assert "MERGE" in cypher
 
     @pytest.mark.asyncio
@@ -410,6 +427,7 @@ class TestNeo4jStoreUpsertChunks:
 # Neo4jStore.upsert_entities_and_mentions
 # ---------------------------------------------------------------------------
 
+
 class TestNeo4jStoreUpsertEntitiesAndMentions:
     @pytest.mark.asyncio
     async def test_empty_is_noop(self):
@@ -420,14 +438,16 @@ class TestNeo4jStoreUpsertEntitiesAndMentions:
     @pytest.mark.asyncio
     async def test_writes_entity_and_mentions(self):
         store, _, mock_session = _make_store()
-        chunks = [{
-            "id": "c1",
-            "entities": [{"text": "Alice", "label": "PERSON"}],
-        }]
+        chunks = [
+            {
+                "id": "c1",
+                "entities": [{"text": "Alice", "label": "PERSON"}],
+            }
+        ]
         await store.upsert_entities_and_mentions(chunks)
         assert mock_session.run.call_count >= 2
         all_cyphers = [c[0][0] for c in mock_session.run.call_args_list]
-        assert any("Entity" in cy for cy in all_cyphers)
+        assert any(":ENTITY" in cy for cy in all_cyphers)
         assert any("MENTIONS" in cy for cy in all_cyphers)
 
     @pytest.mark.asyncio
@@ -450,6 +470,7 @@ class TestNeo4jStoreUpsertEntitiesAndMentions:
 # Neo4jStore.upsert_topics
 # ---------------------------------------------------------------------------
 
+
 class TestNeo4jStoreUpsertTopics:
     @pytest.mark.asyncio
     async def test_empty_is_noop(self):
@@ -460,19 +481,28 @@ class TestNeo4jStoreUpsertTopics:
     @pytest.mark.asyncio
     async def test_writes_topic_node_and_edges(self):
         store, _, mock_session = _make_store()
-        await store.upsert_topics([{
-            "id": "t1", "label": "AI Safety", "summary": "...",
-            "community_id": 0, "modularity": 0.5, "silhouette": 0.3,
-            "members": ["Alice", "Bob"],
-        }])
+        await store.upsert_topics(
+            [
+                {
+                    "id": "t1",
+                    "label": "AI Safety",
+                    "summary": "...",
+                    "community_id": 0,
+                    "modularity": 0.5,
+                    "silhouette": 0.3,
+                    "members": ["Alice", "Bob"],
+                }
+            ]
+        )
         all_cyphers = [c[0][0] for c in mock_session.run.call_args_list]
-        assert any("Topic" in cy for cy in all_cyphers)
+        assert any(":TOPIC" in cy for cy in all_cyphers)
         assert any("IN_COMMUNITY" in cy for cy in all_cyphers)
 
 
 # ---------------------------------------------------------------------------
 # Neo4jStore.upsert_co_occurs
 # ---------------------------------------------------------------------------
+
 
 class TestNeo4jStoreUpsertCoOccurs:
     @pytest.mark.asyncio
@@ -494,6 +524,7 @@ class TestNeo4jStoreUpsertCoOccurs:
 # Neo4jStore.get_chunks_for_entity
 # ---------------------------------------------------------------------------
 
+
 class TestNeo4jStoreGetChunksForEntity:
     @pytest.mark.asyncio
     async def test_returns_empty_if_no_results(self):
@@ -512,12 +543,13 @@ class TestNeo4jStoreGetChunksForEntity:
         assert len(results) == 1
         assert results[0]["chunk_id"] == "c1"
         cypher = mock_session.run.call_args[0][0]
-        assert "MENTIONS" in cypher or "Entity" in cypher
+        assert "MENTIONS" in cypher or ":ENTITY" in cypher
 
 
 # ---------------------------------------------------------------------------
 # Neo4jStore._arun
 # ---------------------------------------------------------------------------
+
 
 class TestNeo4jStoreArun:
     @pytest.mark.asyncio
@@ -531,6 +563,7 @@ class TestNeo4jStoreArun:
 # ---------------------------------------------------------------------------
 # _compute_silhouette (from test_wave3_neo4j_advanced.py)
 # ---------------------------------------------------------------------------
+
 
 class TestComputeSilhouette:
     def test_returns_none_for_single_community(self):
@@ -573,6 +606,7 @@ class TestComputeSilhouette:
 # ---------------------------------------------------------------------------
 # _write_interaction_graph (from test_wave3_neo4j_advanced.py)
 # ---------------------------------------------------------------------------
+
 
 class TestWriteInteractionGraph:
     def _call(self, stm_data: dict):
@@ -653,13 +687,16 @@ class TestWriteInteractionGraph:
             entity_by_name={},
             base_written={"BOB"},
         )
-        merge_calls = [str(c) for c in mock_session.run.call_args_list if "MERGE (e:ENTITY" in str(c)]
+        merge_calls = [
+            str(c) for c in mock_session.run.call_args_list if "MERGE (e:ENTITY" in str(c)
+        ]
         assert len(merge_calls) == 0
 
 
 # ---------------------------------------------------------------------------
 # Neo4jStore.merge_session_entities_to_corpus
 # ---------------------------------------------------------------------------
+
 
 class TestMergeSessionEntitiesToCorpus:
     def test_merges_valid_nodes_and_edges(self):
@@ -697,6 +734,7 @@ class TestMergeSessionEntitiesToCorpus:
 # Neo4jStore.preview_session_merge
 # ---------------------------------------------------------------------------
 
+
 class TestPreviewSessionMerge:
     def test_returns_expected_keys(self):
         store, _, _ = _make_neo4j_store()
@@ -725,6 +763,7 @@ class TestPreviewSessionMerge:
 # Neo4jStore.get_chunk_entities
 # ---------------------------------------------------------------------------
 
+
 class TestGetChunkEntities:
     def test_returns_entities(self):
         store, _, _ = _make_neo4j_store()
@@ -748,6 +787,7 @@ class TestGetChunkEntities:
 # ---------------------------------------------------------------------------
 # Neo4jStore.get_entity_neighbors
 # ---------------------------------------------------------------------------
+
 
 class TestGetEntityNeighbors:
     def test_filters_invalid_relationship_types(self):
@@ -785,6 +825,7 @@ class TestGetEntityNeighbors:
 # ---------------------------------------------------------------------------
 # _escape_cypher_identifier (from test_wave3_neo4j_adapter.py)
 # ---------------------------------------------------------------------------
+
 
 class TestEscapeCypherIdentifier:
     def test_simple_identifier_unchanged(self):
@@ -844,6 +885,7 @@ class TestEscapeCypherIdentifier:
 # ---------------------------------------------------------------------------
 # _clean_props_for_neo4j (from test_wave3_neo4j_adapter.py)
 # ---------------------------------------------------------------------------
+
 
 class TestCleanPropsForNeo4j:
     def test_removes_none_values(self):
@@ -928,6 +970,7 @@ class TestCleanPropsForNeo4j:
 # pgvector_adapter import (from test_wave3_neo4j_adapter.py)
 # ---------------------------------------------------------------------------
 
+
 class TestPgvectorAdapterImport:
     def test_module_importable(self):
         from graphknows.graphgen.utils.graphdb import pgvector_adapter
@@ -944,6 +987,7 @@ class TestPgvectorAdapterImport:
 # ---------------------------------------------------------------------------
 # Neo4jGraphUploader (from test_wave3_neo4j_adapter_uploader.py)
 # ---------------------------------------------------------------------------
+
 
 def _make_uploader():
     """Create a Neo4jGraphUploader with mocked driver."""
@@ -1044,7 +1088,6 @@ class TestClearDatabase:
 # ===========================================================================
 # Neo4j advanced: evidence graph, interaction graph, community
 # ===========================================================================
-
 
 
 import asyncio
@@ -1148,7 +1191,10 @@ class TestWriteEvidenceGraph:
     def test_empty_stm_data_writes_session_only(self):
         session, nodes, edges, chunk_to_ents = self._call({})
         # MERGE session node
-        assert any("MERGE" in str(c) and "SESSION" in str(c) for c in [str(call) for call in session.run.call_args_list])
+        assert any(
+            "MERGE" in str(c) and "SESSION" in str(c)
+            for c in [str(call) for call in session.run.call_args_list]
+        )
         assert nodes >= 1
         assert edges == 0
         assert chunk_to_ents == {}
@@ -1164,7 +1210,15 @@ class TestWriteEvidenceGraph:
     def test_chunk_nodes_written(self):
         stm = {
             "files": [{"id": "f1", "title": "T", "parser_name": "p", "source_hint": ""}],
-            "chunks": [{"id": "c1", "text": "hello", "heading_path": "/h", "chunk_index": 0, "file_id": "f1"}],
+            "chunks": [
+                {
+                    "id": "c1",
+                    "text": "hello",
+                    "heading_path": "/h",
+                    "chunk_index": 0,
+                    "file_id": "f1",
+                }
+            ],
         }
         session, nodes, edges, _ = self._call(stm)
         cypher_calls = [str(call) for call in session.run.call_args_list]
@@ -1188,9 +1242,7 @@ class TestWriteEvidenceGraph:
         session, _, _, chunk_to_ents = self._call(stm)
         # ALICE should be MERGE'd once; HAS_ENTITY edges twice
         merge_entity_calls = [
-            str(c)
-            for c in session.run.call_args_list
-            if "MERGE (e:ENTITY" in str(c)
+            str(c) for c in session.run.call_args_list if "MERGE (e:ENTITY" in str(c)
         ]
         assert len(merge_entity_calls) == 1
 
@@ -1279,7 +1331,9 @@ class TestWriteInteractionGraph:
             entity_by_name={},
             base_written={"BOB"},  # already written
         )
-        merge_calls = [str(c) for c in mock_session.run.call_args_list if "MERGE (e:ENTITY" in str(c)]
+        merge_calls = [
+            str(c) for c in mock_session.run.call_args_list if "MERGE (e:ENTITY" in str(c)
+        ]
         assert len(merge_calls) == 0
 
 
@@ -1421,7 +1475,6 @@ class TestGetEntityNeighbors:
 # ===========================================================================
 # Neo4j adapter: escape, clean props, pgvector import
 # ===========================================================================
-
 
 
 import json
@@ -1601,7 +1654,6 @@ class TestPgvectorAdapterImport:
 # ===========================================================================
 
 
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1730,6 +1782,7 @@ from graphknows.retrieval.stores.neo4j import (
 # Pure helper functions
 # ---------------------------------------------------------------------------
 
+
 class TestChunkNodeId:
     def test_returns_uuid_string(self):
         result = chunk_node_id("doc1", "hashABC")
@@ -1842,6 +1895,7 @@ class TestWriteRelationEdges:
 # Neo4jStore class methods (mocked driver)
 # ---------------------------------------------------------------------------
 
+
 def _make_store():
     """Build a Neo4jStore with mocked neo4j driver — no DB connection needed."""
     store = Neo4jStore.__new__(Neo4jStore)
@@ -1881,7 +1935,7 @@ class TestNeo4jStoreUpsertChunks:
         await store.upsert_chunks([{"id": "c1", "doc_id": "d1", "text": "hello world"}])
         assert mock_session.run.called
         cypher = mock_session.run.call_args[0][0]
-        assert "Chunk" in cypher
+        assert ":CHUNK" in cypher
         assert "MERGE" in cypher
 
     @pytest.mark.asyncio
@@ -1903,14 +1957,16 @@ class TestNeo4jStoreUpsertEntitiesAndMentions:
     @pytest.mark.asyncio
     async def test_writes_entity_and_mentions(self):
         store, _, mock_session = _make_store()
-        chunks = [{
-            "id": "c1",
-            "entities": [{"text": "Alice", "label": "PERSON"}],
-        }]
+        chunks = [
+            {
+                "id": "c1",
+                "entities": [{"text": "Alice", "label": "PERSON"}],
+            }
+        ]
         await store.upsert_entities_and_mentions(chunks)
         assert mock_session.run.call_count >= 2  # entity MERGE + MENTIONS MERGE
         all_cyphers = [c[0][0] for c in mock_session.run.call_args_list]
-        assert any("Entity" in cy for cy in all_cyphers)
+        assert any(":ENTITY" in cy for cy in all_cyphers)
         assert any("MENTIONS" in cy for cy in all_cyphers)
 
     @pytest.mark.asyncio
@@ -1942,13 +1998,21 @@ class TestNeo4jStoreUpsertTopics:
     @pytest.mark.asyncio
     async def test_writes_topic_node_and_edges(self):
         store, _, mock_session = _make_store()
-        await store.upsert_topics([{
-            "id": "t1", "label": "AI Safety", "summary": "...",
-            "community_id": 0, "modularity": 0.5, "silhouette": 0.3,
-            "members": ["Alice", "Bob"],
-        }])
+        await store.upsert_topics(
+            [
+                {
+                    "id": "t1",
+                    "label": "AI Safety",
+                    "summary": "...",
+                    "community_id": 0,
+                    "modularity": 0.5,
+                    "silhouette": 0.3,
+                    "members": ["Alice", "Bob"],
+                }
+            ]
+        )
         all_cyphers = [c[0][0] for c in mock_session.run.call_args_list]
-        assert any("Topic" in cy for cy in all_cyphers)
+        assert any(":TOPIC" in cy for cy in all_cyphers)
         assert any("IN_COMMUNITY" in cy for cy in all_cyphers)
 
 
@@ -1988,7 +2052,7 @@ class TestNeo4jStoreGetChunksForEntity:
         assert len(results) == 1
         assert results[0]["chunk_id"] == "c1"
         cypher = mock_session.run.call_args[0][0]
-        assert "MENTIONS" in cypher or "Entity" in cypher
+        assert "MENTIONS" in cypher or ":ENTITY" in cypher
 
 
 class TestNeo4jStoreArun:

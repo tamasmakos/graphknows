@@ -120,6 +120,7 @@ import pytest
 # InfrastructureSettings
 # ---------------------------------------------------------------------------
 
+
 class TestInfrastructureSettings:
     @pytest.fixture(autouse=True)
     def set_required_env(self, monkeypatch):
@@ -128,6 +129,7 @@ class TestInfrastructureSettings:
 
     def test_defaults(self, monkeypatch):
         from graphknows.graphgen.config.settings import InfrastructureSettings
+
         cfg = InfrastructureSettings()
         # Verify the fields exist and have expected types (values may be overridden by real .env)
         assert isinstance(cfg.neo4j_host, str)
@@ -138,24 +140,28 @@ class TestInfrastructureSettings:
     def test_neo4j_uri_property(self, monkeypatch):
         monkeypatch.setenv("PGVECTOR_PASSWORD", "testpassword")
         from graphknows.graphgen.config.settings import InfrastructureSettings
+
         cfg = InfrastructureSettings(NEO4J_HOST="myhost", NEO4J_PORT="9999")
         assert cfg.neo4j_uri == "bolt://myhost:9999"
 
     def test_pgvector_password_validator_rejects_empty(self, monkeypatch):
         monkeypatch.delenv("PGVECTOR_PASSWORD", raising=False)
         from graphknows.graphgen.config.settings import InfrastructureSettings
+
         with pytest.raises(Exception):
             InfrastructureSettings(PGVECTOR_PASSWORD="")
 
     def test_pgvector_password_validator_rejects_changeme(self, monkeypatch):
         monkeypatch.delenv("PGVECTOR_PASSWORD", raising=False)
         from graphknows.graphgen.config.settings import InfrastructureSettings
+
         with pytest.raises(Exception):
             InfrastructureSettings(PGVECTOR_PASSWORD="changeme")
 
     def test_pgvector_password_validator_accepts_real(self, monkeypatch):
         monkeypatch.delenv("PGVECTOR_PASSWORD", raising=False)
         from graphknows.graphgen.config.settings import InfrastructureSettings
+
         cfg = InfrastructureSettings(PGVECTOR_PASSWORD="s3cr3t!")
         assert cfg.pgvector_password == "s3cr3t!"
 
@@ -168,6 +174,7 @@ class TestInfrastructureSettings:
         """
         monkeypatch.setenv("PGVECTOR_PASSWORD", "mypassword")
         from graphknows.graphgen.config.settings import InfrastructureSettings
+
         cfg = InfrastructureSettings()
         dsn = cfg.pgvector_dsn
         # BUG: real password is exposed in the DSN string (should be masked)
@@ -178,9 +185,11 @@ class TestInfrastructureSettings:
 # LLMSettings
 # ---------------------------------------------------------------------------
 
+
 class TestLLMSettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import LLMSettings
+
         cfg = LLMSettings()
         assert cfg.temperature == 0.0
         assert cfg.max_retries == 3
@@ -188,6 +197,7 @@ class TestLLMSettings:
     def test_override_via_env(self, monkeypatch):
         monkeypatch.setenv("LLM_MODEL", "gpt-4")
         from graphknows.graphgen.config.settings import LLMSettings
+
         cfg = LLMSettings()
         assert cfg.base_model == "gpt-4"
 
@@ -196,9 +206,11 @@ class TestLLMSettings:
 # OntologySettings
 # ---------------------------------------------------------------------------
 
+
 class TestOntologySettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import OntologySettings
+
         cfg = OntologySettings()
         assert cfg.enabled is False
         assert cfg.merge_with_manual is True
@@ -209,9 +221,11 @@ class TestOntologySettings:
 # ExtractionSettings
 # ---------------------------------------------------------------------------
 
+
 class TestExtractionSettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import ExtractionSettings
+
         cfg = ExtractionSettings()
         assert cfg.chunk_size == 1200
         assert cfg.chunk_overlap == 100
@@ -220,21 +234,25 @@ class TestExtractionSettings:
 
     def test_backend_property_mirrors_ner_backend(self):
         from graphknows.graphgen.config.settings import ExtractionSettings
+
         cfg = ExtractionSettings(ner_backend="spacy")
         assert cfg.backend == "spacy"
 
     def test_entity_labels_validator_accepts_list(self):
         from graphknows.graphgen.config.settings import ExtractionSettings
+
         cfg = ExtractionSettings(gliner_labels=["PERSON", "ORG"])
         assert cfg.entity_labels == ["PERSON", "ORG"]
 
     def test_entity_labels_validator_accepts_none(self):
         from graphknows.graphgen.config.settings import ExtractionSettings
+
         cfg = ExtractionSettings(gliner_labels=None)
         assert cfg.entity_labels == []
 
     def test_normalize_backend_fields_compat(self):
         from graphknows.graphgen.config.settings import ExtractionSettings
+
         cfg = ExtractionSettings.model_validate({"backend": "custom_ner"})
         assert cfg.ner_backend == "custom_ner"
 
@@ -243,9 +261,11 @@ class TestExtractionSettings:
 # ProcessingSettings
 # ---------------------------------------------------------------------------
 
+
 class TestProcessingSettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import ProcessingSettings
+
         cfg = ProcessingSettings()
         assert cfg.enable_pruning is True
         assert cfg.similarity_threshold == 0.95
@@ -256,9 +276,11 @@ class TestProcessingSettings:
 # EmbeddingSettings
 # ---------------------------------------------------------------------------
 
+
 class TestEmbeddingSettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import EmbeddingSettings
+
         cfg = EmbeddingSettings()
         assert "bge" in cfg.model_name.lower()
         assert cfg.batch_size == 32
@@ -268,9 +290,11 @@ class TestEmbeddingSettings:
 # CommunitySettings
 # ---------------------------------------------------------------------------
 
+
 class TestCommunitySettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import CommunitySettings
+
         cfg = CommunitySettings()
         assert len(cfg.resolutions) > 0
         assert cfg.min_community_size == 3
@@ -278,6 +302,7 @@ class TestCommunitySettings:
 
     def test_resolutions_are_floats(self):
         from graphknows.graphgen.config.settings import CommunitySettings
+
         cfg = CommunitySettings()
         for r in cfg.resolutions:
             assert isinstance(r, float)
@@ -287,9 +312,11 @@ class TestCommunitySettings:
 # AnalyticsSettings
 # ---------------------------------------------------------------------------
 
+
 class TestAnalyticsSettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import AnalyticsSettings
+
         cfg = AnalyticsSettings()
         assert cfg.enabled is False
         assert cfg.silhouette_min_samples == 3
@@ -299,9 +326,11 @@ class TestAnalyticsSettings:
 # TestModeSettings
 # ---------------------------------------------------------------------------
 
+
 class TestTestModeSettings:
     def test_defaults(self):
         from graphknows.graphgen.config.settings import TestModeSettings
+
         cfg = TestModeSettings()
         assert cfg.enabled is False
         assert cfg.max_documents == 0
@@ -312,10 +341,12 @@ class TestTestModeSettings:
 # PipelineSettings (master object)
 # ---------------------------------------------------------------------------
 
+
 class TestPipelineSettings:
     def test_default_construction(self, monkeypatch):
         monkeypatch.setenv("PGVECTOR_PASSWORD", "testpw")
         from graphknows.graphgen.config.settings import PipelineSettings
+
         # The infra sub-settings will pick up the env var
         cfg = PipelineSettings()
         assert cfg.debug is False
@@ -325,6 +356,7 @@ class TestPipelineSettings:
         """analytics field synced to analysis when analytics provided."""
         monkeypatch.setenv("PGVECTOR_PASSWORD", "testpw")
         from graphknows.graphgen.config.settings import PipelineSettings, AnalyticsSettings
+
         analytics_data = AnalyticsSettings(ANALYTICS_ENABLED=True)
         cfg = PipelineSettings.model_validate({"analytics": analytics_data.model_dump()})
         # Both aliases should resolve to the same enabled state
@@ -334,6 +366,7 @@ class TestPipelineSettings:
     def test_schema_config_has_nodes(self, monkeypatch):
         monkeypatch.setenv("PGVECTOR_PASSWORD", "testpw")
         from graphknows.graphgen.config.settings import PipelineSettings
+
         cfg = PipelineSettings()
         assert "nodes" in cfg.schema_config
         assert len(cfg.schema_config["nodes"]) > 0

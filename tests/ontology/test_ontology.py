@@ -138,6 +138,8 @@ class TestOntologyRouterKeyword:
         results = self.router.select_multi(text, top_k=3, alpha=1.0)
         ids = [r.id for r in results]
         assert len(ids) == len(set(ids)), "select_multi returned duplicates"
+
+
 from unittest.mock import MagicMock
 from graphknows.ontology.loader import OntologyLoader
 from graphknows.ontology.rel_extractor import OntologyRelExtractor
@@ -292,6 +294,7 @@ class TestOntologyRouterIntegration:
 # Extended ontology tests
 # ---------------------------------------------------------------------------
 
+
 def _make_taxonomy(entity_groups=None):
     """Create a minimal taxonomy mock."""
     taxonomy = MagicMock()
@@ -385,7 +388,9 @@ class TestSelectCandidateLabels:
 
 class TestRefineEntitiesWithOntology:
     def test_returns_entities_with_ontology_label(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import refine_entities_with_ontology
+        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+            refine_entities_with_ontology,
+        )
 
         entities = [
             {"text": "Alice", "label": "PERSON", "confidence": 0.9},
@@ -396,7 +401,9 @@ class TestRefineEntitiesWithOntology:
         assert "ontology_label" in result[0]
 
     def test_empty_entities_returns_empty(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import refine_entities_with_ontology
+        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+            refine_entities_with_ontology,
+        )
 
         result = refine_entities_with_ontology([], label_space={}, taxonomy=None)
         assert result == []

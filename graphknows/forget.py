@@ -19,7 +19,7 @@ class LTMForget:
         """Drop Entity nodes with no relations (degree=0) or tiny components."""
         with self._driver.session() as s:
             result = s.run(
-                "MATCH (e:Entity) WHERE NOT (e)--() "
+                "MATCH (e:ENTITY) WHERE NOT (e)--() "
                 "WITH e DETACH DELETE e RETURN count(e) as deleted"
             ).single()
             deleted = result["deleted"] if result else 0
@@ -31,7 +31,7 @@ class LTMForget:
         cutoff = (datetime.now(UTC) - timedelta(days=ttl_days)).isoformat()
         with self._driver.session() as s:
             result = s.run(
-                "MATCH (e:Entity) "
+                "MATCH (e:ENTITY) "
                 "WHERE e.last_seen < $cutoff AND coalesce(e.pagerank, 0) < $floor "
                 "DETACH DELETE e RETURN count(e) as deleted",
                 cutoff=cutoff,
@@ -49,13 +49,13 @@ class LTMForget:
 
         with self._driver.session() as s:
             result = s.run(
-                "MATCH (e:Entity {community_id: $cid}) "
-                "WHERE NOT EXISTS { MATCH (e)-[:BELONGS_TO]->(t:Topic) WHERE t.community_id <> $cid } "
+                "MATCH (e:ENTITY {community_id: $cid}) "
+                "WHERE NOT EXISTS { MATCH (e)-[:BELONGS_TO]->(t:TOPIC) WHERE t.community_id <> $cid } "
                 "DETACH DELETE e RETURN count(e) as deleted",
                 cid=community_id,
             ).single()
             deleted = result["deleted"] if result else 0
-            s.run("MATCH (t:Topic {community_id: $cid}) DETACH DELETE t", cid=community_id)
+            s.run("MATCH (t:TOPIC {community_id: $cid}) DETACH DELETE t", cid=community_id)
 
         async def _pg_delete():
             conn = await _pg.connect(self._pg_dsn)
@@ -78,7 +78,7 @@ class LTMForget:
                 date=before_date,
             )
             result = s.run(
-                "MATCH (e:Entity) WHERE NOT (e)-[:APPEARED_IN]->() AND NOT (e)--() "
+                "MATCH (e:ENTITY) WHERE NOT (e)-[:APPEARED_IN]->() AND NOT (e)--() "
                 "DETACH DELETE e RETURN count(e) as deleted"
             ).single()
         return {
@@ -115,17 +115,17 @@ class LTMForget:
                 s.run("MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() DELETE d")
 
             r = s.run(
-                "MATCH (c:Chunk) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() "
+                "MATCH (c:CHUNK) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() "
                 "RETURN count(c) AS c"
             ).single()
             results["chunks_orphaned"] = r["c"] if r else 0
             if results["chunks_orphaned"]:
                 s.run(
-                    "MATCH (c:Chunk) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() DETACH DELETE c"
+                    "MATCH (c:CHUNK) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() DETACH DELETE c"
                 )
 
             r = s.run(
-                "MATCH (d:Dialog) WHERE NOT EXISTS { "
+                "MATCH (d:DIALOG) WHERE NOT EXISTS { "
                 "  MATCH (d)-[:PARTICIPANT]->(:Participant)-[:SAID]->(:Utterance) "
                 "} RETURN count(d) AS c"
             ).single()
@@ -133,7 +133,7 @@ class LTMForget:
                 results["dialogs_empty"] = r["c"]
             if results["dialogs_empty"]:
                 s.run(
-                    "MATCH (d:Dialog) WHERE NOT EXISTS { "
+                    "MATCH (d:DIALOG) WHERE NOT EXISTS { "
                     "  MATCH (d)-[:PARTICIPANT]->(:Participant)-[:SAID]->(:Utterance) "
                     "} DELETE d"
                 )

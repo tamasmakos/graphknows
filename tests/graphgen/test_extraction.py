@@ -76,7 +76,9 @@ class TestGetMaxConcurrent:
 
 class TestProcessSingleSegment:
     def test_adds_passage_node_to_graph(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         segment = _make_segment("Hello world sentence.")
@@ -89,8 +91,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id=doc_id, segment_index=0,
-                    global_segment_order=0, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id=doc_id,
+                    segment_index=0,
+                    global_segment_order=0,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -99,7 +106,9 @@ class TestProcessSingleSegment:
         assert passage_id in ctx.graph.nodes
 
     def test_passage_node_has_correct_attributes(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         segment = _make_segment("Short content.")
@@ -111,8 +120,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id="DOC_A", segment_index=2,
-                    global_segment_order=5, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id="DOC_A",
+                    segment_index=2,
+                    global_segment_order=5,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -121,7 +135,9 @@ class TestProcessSingleSegment:
         assert "content" in node_data
 
     def test_doc_to_passage_edge_added(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         ctx.graph.add_node("DOC_001")  # Ensure doc node exists
@@ -134,8 +150,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id="DOC_001", segment_index=0,
-                    global_segment_order=0, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id="DOC_001",
+                    segment_index=0,
+                    global_segment_order=0,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -144,7 +165,9 @@ class TestProcessSingleSegment:
         assert edge_data["label"] == "HAS_PASSAGE"
 
     def test_chunk_nodes_added_for_each_chunk(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         segment = _make_segment("Text with two chunks.")
@@ -157,8 +180,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id="DOC_002", segment_index=0,
-                    global_segment_order=0, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id="DOC_002",
+                    segment_index=0,
+                    global_segment_order=0,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -167,7 +195,9 @@ class TestProcessSingleSegment:
         assert "DOC_002_P0_C2" in ctx.graph.nodes
 
     def test_extraction_tasks_added_for_each_chunk(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         segment = _make_segment("Test segment.")
@@ -179,8 +209,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id="DOC_003", segment_index=0,
-                    global_segment_order=0, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id="DOC_003",
+                    segment_index=0,
+                    global_segment_order=0,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -188,7 +223,9 @@ class TestProcessSingleSegment:
         assert len(ctx.extraction_tasks) == 2
 
     def test_empty_content_uses_fallback_name(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         segment = _make_segment("")  # Empty content
@@ -200,8 +237,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id="DOC_004", segment_index=3,
-                    global_segment_order=3, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id="DOC_004",
+                    segment_index=3,
+                    global_segment_order=3,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -210,7 +252,9 @@ class TestProcessSingleSegment:
         assert "Passage 3" in node_data["name"] or node_data["name"] == ""
 
     def test_long_content_truncated_in_name(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         long_content = "A" * 100
@@ -223,8 +267,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id="DOC_005", segment_index=0,
-                    global_segment_order=0, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id="DOC_005",
+                    segment_index=0,
+                    global_segment_order=0,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -233,7 +282,9 @@ class TestProcessSingleSegment:
         assert len(node_data["name"]) <= 25  # 20 chars + "..."
 
     def test_chunk_to_passage_edge_has_correct_label(self):
-        from graphknows.graphgen.pipeline.lexical_graph_building.builder import process_single_segment
+        from graphknows.graphgen.pipeline.lexical_graph_building.builder import (
+            process_single_segment,
+        )
 
         ctx = _make_context()
         segment = _make_segment("Content.")
@@ -245,8 +296,13 @@ class TestProcessSingleSegment:
         ):
             asyncio.run(
                 process_single_segment(
-                    ctx, segment, doc_id="DOC_006", segment_index=0,
-                    global_segment_order=0, config={}, semaphore=semaphore
+                    ctx,
+                    segment,
+                    doc_id="DOC_006",
+                    segment_index=0,
+                    global_segment_order=0,
+                    config={},
+                    semaphore=semaphore,
                 )
             )
 
@@ -257,7 +313,6 @@ class TestProcessSingleSegment:
 # ===========================================================================
 # Extraction helpers: max_concurrent, extract_relations_llm
 # ===========================================================================
-
 
 
 import asyncio
@@ -397,9 +452,7 @@ class TestExtractRelationsWithLlmAsync:
         mock_extractor.extract_relations = AsyncMock(side_effect=ValueError("LLM failure"))
 
         with pytest.raises(RuntimeError, match="extract_relations_with_llm_async failed"):
-            asyncio.run(
-                extract_relations_with_llm_async("text", extractor=mock_extractor)
-            )
+            asyncio.run(extract_relations_with_llm_async("text", extractor=mock_extractor))
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +479,6 @@ class TestGetGliner2Model:
 # ===========================================================================
 
 
-
 import pytest
 
 
@@ -437,20 +489,26 @@ import pytest
 
 class TestNormalizeRelationCandidate:
     def test_normalizes_to_uppercase_with_underscores(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _normalize_relation_candidate
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _normalize_relation_candidate,
+        )
 
         result = _normalize_relation_candidate("works for")
         # standardize_label converts to UPPER_SNAKE_CASE
         assert "_" in result or result.isupper()
 
     def test_empty_returns_empty(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _normalize_relation_candidate
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _normalize_relation_candidate,
+        )
 
         assert _normalize_relation_candidate("") == ""
         assert _normalize_relation_candidate(None) == ""
 
     def test_already_normalized(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _normalize_relation_candidate
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _normalize_relation_candidate,
+        )
 
         result = _normalize_relation_candidate("MEMBER_OF")
         assert isinstance(result, str)
@@ -464,24 +522,32 @@ class TestNormalizeRelationCandidate:
 
 class TestCandidateGroundedInEvidence:
     def test_candidate_present_in_evidence(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _candidate_grounded_in_evidence
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _candidate_grounded_in_evidence,
+        )
 
         # "member" should be found in evidence text
         result = _candidate_grounded_in_evidence("member", "is a member of the group")
         assert isinstance(result, bool)
 
     def test_empty_candidate_returns_false(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _candidate_grounded_in_evidence
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _candidate_grounded_in_evidence,
+        )
 
         assert _candidate_grounded_in_evidence("", "some evidence") is False
 
     def test_empty_evidence_returns_false(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _candidate_grounded_in_evidence
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _candidate_grounded_in_evidence,
+        )
 
         assert _candidate_grounded_in_evidence("candidate", "") is False
 
     def test_none_candidate_returns_false(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _candidate_grounded_in_evidence
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _candidate_grounded_in_evidence,
+        )
 
         assert _candidate_grounded_in_evidence(None, "evidence text") is False
 
@@ -540,26 +606,34 @@ class TestEndpointMatchesHint:
 
 class TestIsGroundedRelationEndpoint:
     def test_empty_endpoint_not_grounded(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _is_grounded_relation_endpoint
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _is_grounded_relation_endpoint,
+        )
 
         result = _is_grounded_relation_endpoint("", ["alice"], [], "evidence")
         assert result is False
 
     def test_endpoint_in_hints_is_grounded(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _is_grounded_relation_endpoint
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _is_grounded_relation_endpoint,
+        )
 
         result = _is_grounded_relation_endpoint("alice", ["alice"], [], "unrelated")
         assert result is True
 
     def test_endpoint_in_evidence_is_grounded(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _is_grounded_relation_endpoint
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _is_grounded_relation_endpoint,
+        )
 
         # alice appears in evidence → grounded via evidence
         result = _is_grounded_relation_endpoint("alice", [], [], "alice attended the meeting")
         assert isinstance(result, bool)
 
     def test_ontology_class_endpoint_returns_false(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _is_grounded_relation_endpoint
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _is_grounded_relation_endpoint,
+        )
 
         # Endpoint is an ontology class but not in hints → False
         result = _is_grounded_relation_endpoint("person", [], ["person"], "other evidence")
@@ -573,16 +647,18 @@ class TestIsGroundedRelationEndpoint:
 
 class TestIsUngroundedRelationTriplet:
     def test_both_grounded_returns_false(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _is_ungrounded_relation_triplet
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _is_ungrounded_relation_triplet,
+        )
 
         # Both source and target are in entity_hints → grounded
-        result = _is_ungrounded_relation_triplet(
-            "alice", "bob", ["alice", "bob"], [], "text"
-        )
+        result = _is_ungrounded_relation_triplet("alice", "bob", ["alice", "bob"], [], "text")
         assert result is False
 
     def test_one_missing_returns_true(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _is_ungrounded_relation_triplet
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _is_ungrounded_relation_triplet,
+        )
 
         # Target not in hints → at least one ungrounded → triplet is ungrounded
         result = _is_ungrounded_relation_triplet(
@@ -591,11 +667,11 @@ class TestIsUngroundedRelationTriplet:
         assert result is True
 
     def test_both_missing_returns_true(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _is_ungrounded_relation_triplet
-
-        result = _is_ungrounded_relation_triplet(
-            "x", "y", [], [], "unrelated text"
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _is_ungrounded_relation_triplet,
         )
+
+        result = _is_ungrounded_relation_triplet("x", "y", [], [], "unrelated text")
         assert result is True
 
 
@@ -606,19 +682,25 @@ class TestIsUngroundedRelationTriplet:
 
 class TestRelationEndpointsInHints:
     def test_both_in_hints_returns_true(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _relation_endpoints_in_hints
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _relation_endpoints_in_hints,
+        )
 
         result = _relation_endpoints_in_hints("alice", "bob", ["alice", "bob"])
         assert result is True
 
     def test_only_one_in_hints_returns_false(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _relation_endpoints_in_hints
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _relation_endpoints_in_hints,
+        )
 
         result = _relation_endpoints_in_hints("alice", "charlie", ["alice", "bob"])
         assert result is False
 
     def test_empty_hints_returns_false(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import _relation_endpoints_in_hints
+        from graphknows.graphgen.pipeline.entity_relation.extractors import (
+            _relation_endpoints_in_hints,
+        )
 
         result = _relation_endpoints_in_hints("alice", "bob", [])
         assert result is False
@@ -627,7 +709,6 @@ class TestRelationEndpointsInHints:
 # ===========================================================================
 # Misc helpers: label space, ontology, chunking
 # ===========================================================================
-
 
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -669,14 +750,18 @@ class TestExtractionGetMaxConcurrent:
 class TestExtractRelationsEmptyGuard:
     def test_returns_empty_on_no_text(self):
         import asyncio
-        from graphknows.graphgen.pipeline.entity_relation.extraction import extract_relations_with_llm_async
+        from graphknows.graphgen.pipeline.entity_relation.extraction import (
+            extract_relations_with_llm_async,
+        )
 
         result = asyncio.run(extract_relations_with_llm_async("", extractor=MagicMock()))
         assert result == ([], [], {})
 
     def test_returns_empty_on_no_extractor(self):
         import asyncio
-        from graphknows.graphgen.pipeline.entity_relation.extraction import extract_relations_with_llm_async
+        from graphknows.graphgen.pipeline.entity_relation.extraction import (
+            extract_relations_with_llm_async,
+        )
 
         result = asyncio.run(extract_relations_with_llm_async("some text", extractor=None))
         assert result == ([], [], {})
@@ -707,19 +792,25 @@ class TestBuilderGetMaxConcurrent:
 
 class TestBuildTopLevelLabelSpace:
     def test_returns_dict_with_labels(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import build_top_level_label_space
+        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+            build_top_level_label_space,
+        )
 
         result = build_top_level_label_space(["PERSON", "ORG", "LOCATION"])
         assert isinstance(result, dict)
 
     def test_handles_empty_list(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import build_top_level_label_space
+        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+            build_top_level_label_space,
+        )
 
         result = build_top_level_label_space([])
         assert isinstance(result, dict)
 
     def test_known_labels_appear_as_keys(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import build_top_level_label_space
+        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+            build_top_level_label_space,
+        )
 
         result = build_top_level_label_space(["PERSON", "ORG"])
         # Keys should be normalized top-level labels
@@ -733,13 +824,17 @@ class TestBuildTopLevelLabelSpace:
 
 class TestRefineEntitiesWithOntology:
     def test_empty_entities_returns_empty(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import refine_entities_with_ontology
+        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+            refine_entities_with_ontology,
+        )
 
         result = refine_entities_with_ontology([], label_space={})
         assert result == []
 
     def test_entity_gets_ontology_label(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import refine_entities_with_ontology
+        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+            refine_entities_with_ontology,
+        )
 
         entities = [{"text": "Alice", "label": "PERSON"}]
         result = refine_entities_with_ontology(entities, label_space={})
@@ -756,14 +851,18 @@ class TestRefineEntitiesWithOntology:
 class TestChunkingHelpers:
     def test_process_document_splitting_empty_text(self):
         import asyncio
-        from graphknows.graphgen.pipeline.lexical_graph_building.chunking import process_document_splitting
+        from graphknows.graphgen.pipeline.lexical_graph_building.chunking import (
+            process_document_splitting,
+        )
 
         result = asyncio.run(process_document_splitting("", {}))
         assert isinstance(result, list)
 
     def test_process_document_splitting_short_text(self):
         import asyncio
-        from graphknows.graphgen.pipeline.lexical_graph_building.chunking import process_document_splitting
+        from graphknows.graphgen.pipeline.lexical_graph_building.chunking import (
+            process_document_splitting,
+        )
 
         result = asyncio.run(process_document_splitting("Hello world.", {}))
         assert isinstance(result, list)
@@ -933,7 +1032,9 @@ class TestLegacyPhase:
     def test_has_apply_function_or_class(self):
         from graphknows.graphgen.patch.phases import legacy
 
-        has_apply = hasattr(legacy, "apply") or hasattr(legacy, "LegacyPhase") or hasattr(legacy, "run")
+        has_apply = (
+            hasattr(legacy, "apply") or hasattr(legacy, "LegacyPhase") or hasattr(legacy, "run")
+        )
         assert has_apply or True  # just verifying importability is valuable
 
 

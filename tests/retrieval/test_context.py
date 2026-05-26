@@ -44,7 +44,7 @@ def test_esc_plain_text_unchanged():
 
 
 def test_esc_xss_payload_fully_escaped():
-    result = _esc('<script>alert(1)</script>')
+    result = _esc("<script>alert(1)</script>")
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
 
@@ -55,7 +55,9 @@ def test_esc_xss_payload_fully_escaped():
 
 
 def test_metadata_tag_all_fields_present():
-    tag = _metadata_tag({"title": "My Title", "url": "http://x.com", "source": "src", "date": "2024-01-01"})
+    tag = _metadata_tag(
+        {"title": "My Title", "url": "http://x.com", "source": "src", "date": "2024-01-01"}
+    )
     assert 'title="My Title"' in tag
     assert 'url="http://x.com"' in tag
     assert 'source="src"' in tag
@@ -81,7 +83,7 @@ def test_metadata_tag_zero_indent_no_leading_space():
 
 
 def test_metadata_tag_escapes_special_chars_in_values():
-    tag = _metadata_tag({"title": '<script>alert(1)</script>'})
+    tag = _metadata_tag({"title": "<script>alert(1)</script>"})
     assert "<script>" not in tag
     assert "&lt;script&gt;" in tag
 
@@ -168,7 +170,14 @@ def _make_full_context():
 def test_to_dict_has_required_top_level_keys():
     ctx = _make_full_context()
     d = ctx.to_dict()
-    for key in ("query", "session_id", "search_type", "graph_matches", "semantic_matches", "fused_results"):
+    for key in (
+        "query",
+        "session_id",
+        "search_type",
+        "graph_matches",
+        "semantic_matches",
+        "fused_results",
+    ):
         assert key in d
 
 
@@ -257,9 +266,7 @@ def test_to_xml_graph_matches_count_attr():
 
 
 def test_to_xml_semantic_matches_count_attr():
-    chunks = [
-        ChunkMatch(chunk_id=f"c{i}", doc_id="d1", text=f"text{i}") for i in range(3)
-    ]
+    chunks = [ChunkMatch(chunk_id=f"c{i}", doc_id="d1", text=f"text{i}") for i in range(3)]
     ctx = _simple_ctx(semantic_matches=chunks)
     root = ET.fromstring(ctx.to_xml())
     sm = root.find("semantic_matches")

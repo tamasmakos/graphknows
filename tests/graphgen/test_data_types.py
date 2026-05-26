@@ -4,6 +4,7 @@ Tests for small, 0%-covered utility modules:
 - graphknows.graphgen.config.schema (GraphSchema, NodeSchema, EdgeSchema, get_default_schema)
 - graphknows.forget (LTMForget — mocked neo4j driver)
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -61,7 +62,10 @@ class TestSegmentData:
 # ---------------------------------------------------------------------------
 
 from graphknows.graphgen.config.schema import (
-    NodeSchema, EdgeSchema, GraphSchema, get_default_schema
+    NodeSchema,
+    EdgeSchema,
+    GraphSchema,
+    get_default_schema,
 )
 
 
@@ -85,7 +89,9 @@ class TestEdgeSchema:
         assert not e.is_hierarchical
 
     def test_hierarchical(self):
-        e = EdgeSchema(source_label="A", target_label="B", relation_type="PART_OF", is_hierarchical=True)
+        e = EdgeSchema(
+            source_label="A", target_label="B", relation_type="PART_OF", is_hierarchical=True
+        )
         assert e.is_hierarchical
 
 

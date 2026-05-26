@@ -322,10 +322,10 @@ async def test_stats_queries_pg_and_neo4j(mock_container):
 def test_agent_memory_adapter_is_protocol():
     assert hasattr(AgentMemoryAdapter, "__protocol__") or issubclass(AgentMemoryAdapter, Protocol)
 
+
 # ===========================================================================
 # GraphknowsAdapter full lifecycle
 # ===========================================================================
-
 
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -583,10 +583,10 @@ async def test_promote_calls_session_flusher(
     assert result["elapsed_s"] == 1.5
     assert result["errors"] == []
 
+
 # ===========================================================================
 # Adapter conformance suite
 # ===========================================================================
-
 
 
 from unittest.mock import AsyncMock, MagicMock, patch

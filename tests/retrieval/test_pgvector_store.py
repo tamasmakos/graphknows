@@ -9,6 +9,7 @@ Strategy
 - Assert SQL content (substring checks) and parameter correctness.
 - Cover edge cases: empty inputs, missing optional fields, delete returns, error paths.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,6 +25,7 @@ from graphknows.retrieval.stores.pgvector import PgVectorStore
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _fake_row(**kw):
     """Dict-like object that supports r['key'] access (like asyncpg Record)."""
     d = dict(**kw)
@@ -31,6 +33,7 @@ def _fake_row(**kw):
     class _Row:
         def __getitem__(self, k):
             return d[k]
+
         def get(self, k, default=None):
             return d.get(k, default)
 
@@ -62,6 +65,7 @@ def _make_store():
 # Lifecycle: _pool_or_raise
 # ---------------------------------------------------------------------------
 
+
 def test_pool_or_raise_when_connected():
     store, _ = _make_store()
     # No exception if pool is set
@@ -79,11 +83,18 @@ def test_pool_or_raise_raises_when_not_connected():
 # upsert_chunks
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_upsert_chunks_calls_executemany():
     store, conn = _make_store()
     chunks = [
-        {"id": "c1", "doc_id": "d1", "text": "hello world", "embedding": [0.1, 0.2], "metadata": {"source": "test"}},
+        {
+            "id": "c1",
+            "doc_id": "d1",
+            "text": "hello world",
+            "embedding": [0.1, 0.2],
+            "metadata": {"source": "test"},
+        },
     ]
     await store.upsert_chunks("sess1", chunks)
     conn.executemany.assert_called_once()
@@ -111,7 +122,9 @@ async def test_upsert_chunks_truncates_long_text():
     """Text longer than 4000 chars should be truncated."""
     store, conn = _make_store()
     long_text = "x" * 5000
-    await store.upsert_chunks("s", [{"id": "c1", "doc_id": "d", "text": long_text, "embedding": []}])
+    await store.upsert_chunks(
+        "s", [{"id": "c1", "doc_id": "d", "text": long_text, "embedding": []}]
+    )
     _, records = conn.executemany.call_args[0]
     assert len(records[0][3]) == 4000
 
@@ -129,6 +142,7 @@ async def test_upsert_chunks_default_metadata():
 # upsert_entities
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_upsert_entities_empty_list_is_noop():
     store, conn = _make_store()
@@ -139,9 +153,9 @@ async def test_upsert_entities_empty_list_is_noop():
 @pytest.mark.asyncio
 async def test_upsert_entities_sql_content():
     store, conn = _make_store()
-    await store.upsert_entities([
-        {"name": "python", "label": "LANG", "embedding": [0.5, 0.6], "chunk_count": 3}
-    ])
+    await store.upsert_entities(
+        [{"name": "python", "label": "LANG", "embedding": [0.5, 0.6], "chunk_count": 3}]
+    )
     sql, records = conn.executemany.call_args[0]
     assert "INSERT INTO entities" in sql
     assert "ON CONFLICT" in sql
@@ -173,12 +187,21 @@ async def test_upsert_entities_default_chunk_count():
 # search_chunks
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_search_chunks_returns_parsed_rows():
     store, conn = _make_store()
-    conn.fetch = AsyncMock(return_value=[
-        _fake_row(id="c1", doc_id="d1", text="hello", metadata=json.dumps({"k": "v"}), cosine_score=0.88),
-    ])
+    conn.fetch = AsyncMock(
+        return_value=[
+            _fake_row(
+                id="c1",
+                doc_id="d1",
+                text="hello",
+                metadata=json.dumps({"k": "v"}),
+                cosine_score=0.88,
+            ),
+        ]
+    )
     results = await store.search_chunks([0.1, 0.2], session_id="s1", k=5)
     assert len(results) == 1
     r = results[0]
@@ -200,9 +223,11 @@ async def test_search_chunks_empty_result():
 @pytest.mark.asyncio
 async def test_search_chunks_null_doc_id_defaults_empty_string():
     store, conn = _make_store()
-    conn.fetch = AsyncMock(return_value=[
-        _fake_row(id="c1", doc_id=None, text="t", metadata=None, cosine_score=0.5),
-    ])
+    conn.fetch = AsyncMock(
+        return_value=[
+            _fake_row(id="c1", doc_id=None, text="t", metadata=None, cosine_score=0.5),
+        ]
+    )
     results = await store.search_chunks([0.1], session_id="s1", k=1)
     assert results[0]["doc_id"] == ""
 
@@ -211,12 +236,15 @@ async def test_search_chunks_null_doc_id_defaults_empty_string():
 # search_entities
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_search_entities_no_filter():
     store, conn = _make_store()
-    conn.fetch = AsyncMock(return_value=[
-        _fake_row(name="alice", label="PERSON", score=0.9),
-    ])
+    conn.fetch = AsyncMock(
+        return_value=[
+            _fake_row(name="alice", label="PERSON", score=0.9),
+        ]
+    )
     results = await store.search_entities([0.1], k=5)
     assert len(results) == 1
     assert results[0]["name"] == "alice"
@@ -238,9 +266,11 @@ async def test_search_entities_with_type_filter():
 @pytest.mark.asyncio
 async def test_search_entities_null_label_defaults():
     store, conn = _make_store()
-    conn.fetch = AsyncMock(return_value=[
-        _fake_row(name="x", label=None, score=0.5),
-    ])
+    conn.fetch = AsyncMock(
+        return_value=[
+            _fake_row(name="x", label=None, score=0.5),
+        ]
+    )
     results = await store.search_entities([0.1])
     assert results[0]["label"] == "Entity"
 
@@ -248,6 +278,7 @@ async def test_search_entities_null_label_defaults():
 # ---------------------------------------------------------------------------
 # get_chunks_by_ids
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_chunks_by_ids_empty():
@@ -260,10 +291,12 @@ async def test_get_chunks_by_ids_empty():
 @pytest.mark.asyncio
 async def test_get_chunks_by_ids_returns_dict():
     store, conn = _make_store()
-    conn.fetch = AsyncMock(return_value=[
-        _fake_row(id="c1", doc_id="d1", text="text", metadata=json.dumps({"x": 1})),
-        _fake_row(id="c2", doc_id="d2", text="other", metadata=None),
-    ])
+    conn.fetch = AsyncMock(
+        return_value=[
+            _fake_row(id="c1", doc_id="d1", text="text", metadata=json.dumps({"x": 1})),
+            _fake_row(id="c2", doc_id="d2", text="other", metadata=None),
+        ]
+    )
     result = await store.get_chunks_by_ids(["c1", "c2"])
     assert set(result.keys()) == {"c1", "c2"}
     assert result["c1"]["text"] == "text"
@@ -275,6 +308,7 @@ async def test_get_chunks_by_ids_returns_dict():
 # ---------------------------------------------------------------------------
 # delete_session
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_delete_session_returns_count():
@@ -297,6 +331,7 @@ async def test_delete_session_zero_rows():
 # ---------------------------------------------------------------------------
 # close() + connect() lifecycle
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_close_clears_pool():
@@ -321,13 +356,18 @@ async def test_close_noop_if_not_connected():
 # write_stm_chunk
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_stm_chunk_sql_and_params():
     store, conn = _make_store()
     chunk = {
-        "id": "stm1", "session_id": "s1", "text": "stm text",
-        "file_id": "f1", "heading_path": "H1 > H2",
-        "embedding": [0.1, 0.2], "metadata": {"a": 1},
+        "id": "stm1",
+        "session_id": "s1",
+        "text": "stm text",
+        "file_id": "f1",
+        "heading_path": "H1 > H2",
+        "embedding": [0.1, 0.2],
+        "metadata": {"a": 1},
     }
     await store.write_stm_chunk(chunk)
     conn.execute.assert_called_once()
@@ -353,12 +393,18 @@ async def test_write_stm_chunk_no_embedding():
 # write_stm_turn
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_stm_turn_sql_and_params():
     store, conn = _make_store()
     turn = {
-        "id": "t1", "session_id": "s1", "role": "user", "text": "hello",
-        "dialog_id": "dlg1", "turn_index": 3, "embedding": [0.3],
+        "id": "t1",
+        "session_id": "s1",
+        "role": "user",
+        "text": "hello",
+        "dialog_id": "dlg1",
+        "turn_index": 3,
+        "embedding": [0.3],
     }
     await store.write_stm_turn(turn)
     sql, *params = conn.execute.call_args[0]
@@ -372,10 +418,12 @@ async def test_write_stm_turn_sql_and_params():
 # promote_to_ltm
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_promote_to_ltm_returns_counts():
     store, conn = _make_store()
     call_count = [0]
+
     async def execute_side(*args, **kw):
         call_count[0] += 1
         if call_count[0] == 1:

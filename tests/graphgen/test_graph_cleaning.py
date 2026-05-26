@@ -270,6 +270,7 @@ from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
 # _types_compatible
 # ---------------------------------------------------------------------------
 
+
 def test_types_compatible_same_type():
     assert _types_compatible("PERSON", "PERSON")
 
@@ -293,6 +294,7 @@ def test_types_compatible_case_insensitive():
 # ---------------------------------------------------------------------------
 # _neighbor_signature
 # ---------------------------------------------------------------------------
+
 
 def test_neighbor_signature_empty_graph():
     g = nx.DiGraph()
@@ -326,6 +328,7 @@ def test_neighbor_signature_captures_in_edges():
 # _neighbor_compatibility
 # ---------------------------------------------------------------------------
 
+
 def test_neighbor_compatibility_none_graph():
     assert _neighbor_compatibility(None, "A", "B") == 0.0
 
@@ -358,6 +361,7 @@ def test_neighbor_compatibility_disjoint_neighbors():
 # BlockingResolver._get_blocking_keys
 # ---------------------------------------------------------------------------
 
+
 def test_blocking_keys_alpha_prefix():
     resolver = BlockingResolver()
     keys = resolver._get_blocking_keys("Apple Inc")
@@ -384,6 +388,7 @@ def test_blocking_keys_short_tokens_excluded():
 # ---------------------------------------------------------------------------
 # BlockingResolver._compute_similarity
 # ---------------------------------------------------------------------------
+
 
 def _make_rec(id_, text, type_="PERSON", emb=None):
     return EntityRecord(id=id_, text=text, type=type_, embedding=emb)
@@ -423,7 +428,7 @@ def test_similarity_string_dissimilar():
 def test_similarity_with_embeddings():
     resolver = BlockingResolver()
     emb_a = np.array([1.0, 0.0, 0.0])
-    emb_b = np.array([1.0, 0.0, 0.0])   # identical → cosine=1.0
+    emb_b = np.array([1.0, 0.0, 0.0])  # identical → cosine=1.0
     a = _make_rec("a", "Alice", emb=emb_a)
     b = _make_rec("b", "Alice", emb=emb_b)
     sim = resolver._compute_similarity(a, b)
@@ -433,9 +438,9 @@ def test_similarity_with_embeddings():
 def test_similarity_orthogonal_embeddings():
     resolver = BlockingResolver()
     emb_a = np.array([1.0, 0.0, 0.0])
-    emb_b = np.array([0.0, 1.0, 0.0])   # orthogonal → cosine=0
+    emb_b = np.array([0.0, 1.0, 0.0])  # orthogonal → cosine=0
     a = _make_rec("a", "Alice", emb=emb_a)
-    b = _make_rec("b", "Bob",   emb=emb_b)
+    b = _make_rec("b", "Bob", emb=emb_b)
     sim = resolver._compute_similarity(a, b)
     # Completely unrelated names AND zero cosine → low similarity
     assert sim < 0.5
@@ -450,8 +455,8 @@ def test_similarity_prefix_boost():
     We verify the actual (correct) behavior rather than a wrong assumption.
     """
     resolver = BlockingResolver()
-    a = _make_rec("a", "John")       # concept_like
-    b = _make_rec("b", "John Smith") # named_entity
+    a = _make_rec("a", "John")  # concept_like
+    b = _make_rec("b", "John Smith")  # named_entity
     sim = resolver._compute_similarity(a, b)
     # Mixed concept_like vs named_entity → guard returns 0.0
     assert sim == 0.0
@@ -472,13 +477,16 @@ def test_similarity_prefix_boost_same_class():
 # BlockingResolver.resolve — end-to-end
 # ---------------------------------------------------------------------------
 
+
 def test_resolve_merges_near_duplicates():
     """Two very similar names should resolve to the same cluster ID."""
     resolver = BlockingResolver(similarity_threshold=0.85)
-    resolver.add_records([
-        EntityRecord(id="r1", text="Barack Obama", type="PERSON"),
-        EntityRecord(id="r2", text="Barack Obama", type="PERSON"),  # exact dup
-    ])
+    resolver.add_records(
+        [
+            EntityRecord(id="r1", text="Barack Obama", type="PERSON"),
+            EntityRecord(id="r2", text="Barack Obama", type="PERSON"),  # exact dup
+        ]
+    )
     mapping = resolver.resolve()
     # Both records should map to the same canonical ID
     assert mapping["r1"] == mapping["r2"]
@@ -487,13 +495,19 @@ def test_resolve_merges_near_duplicates():
 def test_resolve_keeps_distinct_entities_separate():
     """Completely unrelated entities must NOT be merged."""
     resolver = BlockingResolver(similarity_threshold=0.85)
-    resolver.add_records([
-        EntityRecord(id="r1", text="Albert Einstein", type="PERSON"),
-        EntityRecord(id="r2", text="Quantum Mechanics", type="CONCEPT"),
-    ])
+    resolver.add_records(
+        [
+            EntityRecord(id="r1", text="Albert Einstein", type="PERSON"),
+            EntityRecord(id="r2", text="Quantum Mechanics", type="CONCEPT"),
+        ]
+    )
     mapping = resolver.resolve()
     # Different types → incompatible → should stay distinct
-    assert mapping.get("r1") != mapping.get("r2") or mapping.get("r1") is None or mapping.get("r2") is None
+    assert (
+        mapping.get("r1") != mapping.get("r2")
+        or mapping.get("r1") is None
+        or mapping.get("r2") is None
+    )
 
 
 def test_resolve_returns_all_ids():
@@ -513,10 +527,12 @@ def test_resolve_canonical_id_is_one_of_the_input_ids():
     Verify the values are texts from the input records, not arbitrary strings.
     """
     resolver = BlockingResolver(similarity_threshold=0.80)
-    resolver.add_records([
-        EntityRecord(id="a1", text="Google", type="ORG"),
-        EntityRecord(id="a2", text="Google Inc", type="ORG"),
-    ])
+    resolver.add_records(
+        [
+            EntityRecord(id="a1", text="Google", type="ORG"),
+            EntityRecord(id="a2", text="Google Inc", type="ORG"),
+        ]
+    )
     mapping = resolver.resolve()
     all_texts = {"Google", "Google Inc"}
     for resolved_val in mapping.values():
@@ -545,10 +561,12 @@ def test_resolve_alias_merges_at_high_threshold():
     because of the alias_bonus (0.97) in _compute_similarity.
     """
     resolver = BlockingResolver(similarity_threshold=0.90)
-    resolver.add_records([
-        EntityRecord(id="full", text="United States of America", type="GPE"),
-        EntityRecord(id="abbr", text="USA", type="GPE"),
-    ])
+    resolver.add_records(
+        [
+            EntityRecord(id="full", text="United States of America", type="GPE"),
+            EntityRecord(id="abbr", text="USA", type="GPE"),
+        ]
+    )
     mapping = resolver.resolve()
     # are_potential_aliases should fire for this pair
     # Both should be in the mapping; if merged, same canonical
@@ -559,7 +577,6 @@ def test_resolve_alias_merges_at_high_threshold():
 # ===========================================================================
 # Advanced resolution: canonicalize, similarity, coreference
 # ===========================================================================
-
 
 
 import numpy as np
@@ -688,14 +705,18 @@ class TestAreCoreferent:
 
 class TestResolveExtractionCoreferences:
     def test_empty_inputs_return_empty(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_extraction_coreferences
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            resolve_extraction_coreferences,
+        )
 
         result = resolve_extraction_coreferences([], [])
         assert result["cleaned_relations"] == []
         assert result["entity_mappings"] == {}
 
     def test_passes_through_non_overlapping_relations(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_extraction_coreferences
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            resolve_extraction_coreferences,
+        )
 
         relations = [("Alice", "KNOWS", "Bob", {})]
         result = resolve_extraction_coreferences(relations, [], similarity_threshold=0.9)
@@ -704,7 +725,9 @@ class TestResolveExtractionCoreferences:
         assert cleaned[0] in result["entity_mappings"].values() or cleaned[0] == "Alice"
 
     def test_merges_near_duplicate_entity_names(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_extraction_coreferences
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            resolve_extraction_coreferences,
+        )
 
         # "European Union" and "European Union." should merge
         relations = [
@@ -719,7 +742,9 @@ class TestResolveExtractionCoreferences:
         assert len(reps) == 1 or "European Union" in str(reps)
 
     def test_removes_self_loops_after_merge(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_extraction_coreferences
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            resolve_extraction_coreferences,
+        )
 
         # Two names that would merge — relation between them becomes self-loop → dropped
         relations = [("EU", "IS", "EU", {})]
@@ -729,14 +754,18 @@ class TestResolveExtractionCoreferences:
             assert s != t
 
     def test_handles_three_tuple_relations(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_extraction_coreferences
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            resolve_extraction_coreferences,
+        )
 
         relations = [("Alice", "KNOWS", "Bob")]  # 3-tuple (no props)
         result = resolve_extraction_coreferences(relations, [])
         assert len(result["cleaned_relations"]) >= 0  # Should not raise
 
     def test_entities_list_added_to_surface_forms(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_extraction_coreferences
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            resolve_extraction_coreferences,
+        )
 
         result = resolve_extraction_coreferences([], ["Alice", "Bob", "alice"])
         # "alice" and "Alice" both canonicalize to "alice" → same rep
@@ -744,7 +773,9 @@ class TestResolveExtractionCoreferences:
         assert "alice" in result["entity_mappings"]
 
     def test_returns_debug_log(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_extraction_coreferences
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            resolve_extraction_coreferences,
+        )
 
         result = resolve_extraction_coreferences([], ["A"])
         assert "debug_log" in result
@@ -758,14 +789,18 @@ class TestResolveExtractionCoreferences:
 
 class TestComputeSimilarityMatrix:
     def test_empty_embeddings_return_empty(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import _compute_similarity_matrix
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            _compute_similarity_matrix,
+        )
 
         ids, matrix = _compute_similarity_matrix({})
         assert ids == []
         assert matrix.size == 0
 
     def test_single_embedding(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import _compute_similarity_matrix
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            _compute_similarity_matrix,
+        )
 
         emb = {"e1": np.array([1.0, 0.0, 0.0])}
         ids, matrix = _compute_similarity_matrix(emb)
@@ -774,7 +809,9 @@ class TestComputeSimilarityMatrix:
         assert matrix[0, 0] == pytest.approx(1.0)
 
     def test_two_orthogonal_embeddings_score_zero(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import _compute_similarity_matrix
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            _compute_similarity_matrix,
+        )
 
         embs = {
             "e1": np.array([1.0, 0.0]),
@@ -786,7 +823,9 @@ class TestComputeSimilarityMatrix:
         assert matrix[i1, i2] == pytest.approx(0.0, abs=1e-5)
 
     def test_identical_embeddings_score_one(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import _compute_similarity_matrix
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            _compute_similarity_matrix,
+        )
 
         embs = {
             "a": np.array([0.5, 0.5, 0.5]),
@@ -797,7 +836,9 @@ class TestComputeSimilarityMatrix:
         assert matrix[ia, ib] == pytest.approx(1.0)
 
     def test_handles_zero_norm_embedding(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import _compute_similarity_matrix
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            _compute_similarity_matrix,
+        )
 
         # Zero vector — norms[norms == 0] = 1 prevents division by zero
         embs = {
@@ -809,7 +850,9 @@ class TestComputeSimilarityMatrix:
         assert not np.isnan(matrix).any()
 
     def test_matrix_is_symmetric(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import _compute_similarity_matrix
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            _compute_similarity_matrix,
+        )
 
         embs = {
             "a": np.random.rand(64).astype(np.float32),
@@ -820,7 +863,9 @@ class TestComputeSimilarityMatrix:
         np.testing.assert_allclose(matrix, matrix.T, atol=1e-5)
 
     def test_diagonal_is_approximately_one(self):
-        from graphknows.graphgen.pipeline.graph_cleaning.resolution import _compute_similarity_matrix
+        from graphknows.graphgen.pipeline.graph_cleaning.resolution import (
+            _compute_similarity_matrix,
+        )
 
         embs = {f"e{i}": np.random.rand(32).astype(np.float32) for i in range(5)}
         ids, matrix = _compute_similarity_matrix(embs)

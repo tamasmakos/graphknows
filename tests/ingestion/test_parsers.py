@@ -209,7 +209,6 @@ class TestCommonProperties:
 # ===========================================================================
 
 
-
 import asyncio
 import json
 import textwrap
@@ -442,7 +441,8 @@ class TestGliner2FallbackPhase:
 
         # Should have at least one callable for phase execution
         callables = [
-            name for name in dir(gliner2_fallback)
+            name
+            for name in dir(gliner2_fallback)
             if not name.startswith("_") and callable(getattr(gliner2_fallback, name))
         ]
         assert len(callables) > 0
@@ -458,7 +458,8 @@ class TestUnknownPhaseAdvanced:
         from graphknows.graphgen.patch.phases import unknown
 
         callables = [
-            name for name in dir(unknown)
+            name
+            for name in dir(unknown)
             if not name.startswith("_") and callable(getattr(unknown, name))
         ]
         assert len(callables) > 0
@@ -474,7 +475,8 @@ class TestStructuralPhaseAdvanced:
         from graphknows.graphgen.patch.phases import structural
 
         callables = [
-            name for name in dir(structural)
+            name
+            for name in dir(structural)
             if not name.startswith("_") and callable(getattr(structural, name))
         ]
         assert len(callables) > 0

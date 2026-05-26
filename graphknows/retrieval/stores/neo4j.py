@@ -282,9 +282,9 @@ class Neo4jStore:
 
         def _sync() -> None:
             for stmt in [
-                "CREATE INDEX chunk_id IF NOT EXISTS FOR (c:Chunk) ON (c.id)",
-                "CREATE INDEX entity_name IF NOT EXISTS FOR (e:Entity) ON (e.name)",
-                "CREATE INDEX topic_id IF NOT EXISTS FOR (t:Topic) ON (t.id)",
+                "CREATE INDEX chunk_id IF NOT EXISTS FOR (c:CHUNK) ON (c.id)",
+                "CREATE INDEX entity_name IF NOT EXISTS FOR (e:ENTITY) ON (e.name)",
+                "CREATE INDEX topic_id IF NOT EXISTS FOR (t:TOPIC) ON (t.id)",
                 "CREATE INDEX sess_entity_session IF NOT EXISTS FOR (n:SessionEntity) ON (n.session_id)",
                 "CREATE INDEX sess_entity_id IF NOT EXISTS FOR (n:SessionEntity) ON (n.entity_id)",
             ]:
@@ -309,7 +309,7 @@ class Neo4jStore:
         def _sync() -> None:
             for c in chunks:
                 self._run(
-                    "MERGE (ch:Chunk {id:$id}) SET ch.doc_id=$doc_id, ch.text=$text",
+                    "MERGE (ch:CHUNK {id:$id}) SET ch.doc_id=$doc_id, ch.text=$text",
                     id=c["id"],
                     doc_id=c.get("doc_id", ""),
                     text=(c.get("text") or "")[:3000],
@@ -337,14 +337,14 @@ class Neo4jStore:
                     )
                     eid = entity_node_id(name)
                     self._run(
-                        "MERGE (e:Entity {id:$eid}) SET e.name=$name, e.label=$label",
+                        "MERGE (e:ENTITY {id:$eid}) SET e.name=$name, e.label=$label",
                         eid=eid,
                         name=name,
                         label=label,
                     )
                     self._run(
-                        """MATCH (ch:Chunk {id:$cid})
-                           MATCH (e:Entity {id:$eid})
+                        """MATCH (ch:CHUNK {id:$cid})
+                           MATCH (e:ENTITY {id:$eid})
                            MERGE (ch)-[:MENTIONS]->(e)""",
                         cid=c["id"],
                         eid=eid,
@@ -360,7 +360,7 @@ class Neo4jStore:
         def _sync() -> None:
             for t in topics:
                 self._run(
-                    """MERGE (tp:Topic {id:$id})
+                    """MERGE (tp:TOPIC {id:$id})
                        SET tp.label=$label, tp.summary=$summary,
                            tp.community_id=$community_id,
                            tp.modularity=$modularity,
@@ -375,8 +375,8 @@ class Neo4jStore:
                 for name in t.get("members", []):
                     eid = entity_node_id(name)
                     self._run(
-                        """MATCH (e:Entity {id:$eid})
-                           MATCH (tp:Topic {id:$tid})
+                        """MATCH (e:ENTITY {id:$eid})
+                           MATCH (tp:TOPIC {id:$tid})
                            MERGE (e)-[:IN_COMMUNITY]->(tp)""",
                         eid=eid,
                         tid=t["id"],
@@ -394,8 +394,8 @@ class Neo4jStore:
                 ea_id = entity_node_id(a)
                 eb_id = entity_node_id(b)
                 self._run(
-                    """MATCH (ea:Entity {id:$ea_id})
-                       MATCH (eb:Entity {id:$eb_id})
+                    """MATCH (ea:ENTITY {id:$ea_id})
+                       MATCH (eb:ENTITY {id:$eb_id})
                        MERGE (ea)-[r:CO_OCCURS]->(eb)
                        SET r.weight=$w""",
                     ea_id=ea_id,
@@ -451,7 +451,7 @@ class Neo4jStore:
             for name in entity_names:
                 name_upper = name.strip().upper()
                 rows = self._run(
-                    "MATCH (e:Entity {name:$name}) RETURN e.label AS label",
+                    "MATCH (e:ENTITY {name:$name}) RETURN e.label AS label",
                     name=name_upper,
                 )
                 if not rows:
@@ -493,7 +493,7 @@ class Neo4jStore:
                     continue
                 eid = entity_node_id(name)
                 self._run(
-                    """MERGE (e:Entity {id:$id})
+                    """MERGE (e:ENTITY {id:$id})
                        SET e.name=$name, e.label=$label,
                            e.ingested_at=$ingested_at,
                            e.contributing_session_id=$session_id,
@@ -515,8 +515,8 @@ class Neo4jStore:
                 ea_id = entity_node_id(left)
                 eb_id = entity_node_id(right)
                 self._run(
-                    f"""MATCH (a:Entity {{id:$a_id}})
-                        MATCH (b:Entity {{id:$b_id}})
+                    f"""MATCH (a:ENTITY {{id:$a_id}})
+                        MATCH (b:ENTITY {{id:$b_id}})
                         MERGE (a)-[r:`{rel}`]->(b)""",
                     a_id=ea_id,
                     b_id=eb_id,
@@ -551,7 +551,7 @@ class Neo4jStore:
             if not name_list:
                 return 0
             rows = self._run(
-                "UNWIND $names AS n MATCH (e:Entity {name:n}) RETURN count(e) AS c",
+                "UNWIND $names AS n MATCH (e:ENTITY {name:n}) RETURN count(e) AS c",
                 names=name_list,
             )
             return int(rows[0]["c"]) if rows else 0
@@ -579,7 +579,7 @@ class Neo4jStore:
             List of dicts with name and label.
         """
         rows = await self._arun(
-            """MATCH (ch:Chunk {id: $cid})-[:MENTIONS]->(e:Entity)
+            """MATCH (ch:CHUNK {id: $cid})-[:MENTIONS]->(e:ENTITY)
                RETURN e.name AS name, e.label AS label
                LIMIT 20""",
             cid=chunk_id,
@@ -621,8 +621,8 @@ class Neo4jStore:
             rel_pattern = f"[r*1..{depth}]"
 
         rows = await self._arun(
-            f"""MATCH (start:Entity {{name: $name}})-{rel_pattern}-(neighbor)
-               WHERE neighbor:Entity OR neighbor:Topic
+            f"""MATCH (start:ENTITY {{name: $name}})-{rel_pattern}-(neighbor)
+               WHERE neighbor:ENTITY OR neighbor:TOPIC
                RETURN
                    neighbor.name AS name,
                    labels(neighbor)[0] AS node_label,
@@ -650,7 +650,7 @@ class Neo4jStore:
         """Return Chunk nodes linked to *entity_name* via MENTIONS edges."""
         name_upper = entity_name.strip().upper()
         rows = await self._arun(
-            """MATCH (ch:Chunk)-[:MENTIONS]->(e:Entity {name:$name})
+            """MATCH (ch:CHUNK)-[:MENTIONS]->(e:ENTITY {name:$name})
                RETURN ch.id AS chunk_id, ch.doc_id AS doc_id, ch.text AS text
                LIMIT $k""",
             name=name_upper,
@@ -663,7 +663,7 @@ class Neo4jStore:
         name_upper = entity_name.strip().upper()
         eid = entity_node_id(name_upper)
         rows = await self._arun(
-            """MATCH (e:Entity {id:$eid})-[:IN_COMMUNITY]->(tp:Topic)
+            """MATCH (e:ENTITY {id:$eid})-[:IN_COMMUNITY]->(tp:TOPIC)
                RETURN tp.id AS id, tp.label AS label, tp.summary AS summary
                LIMIT 1""",
             eid=eid,
@@ -900,7 +900,7 @@ class Neo4jStore:
                 with self._driver.session() as s:
                     for name in mbs:
                         s.run(
-                            "MATCH (tp:Topic {id: $tid}), (e:ENTITY {name: $name}) "
+                            "MATCH (tp:TOPIC {id: $tid}), (e:ENTITY {name: $name}) "
                             "MERGE (e)-[:IN_TOPIC]->(tp)",
                             tid=tid,
                             name=name,
