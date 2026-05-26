@@ -1,13 +1,15 @@
 """Optional Memgraph backend for session entity graphs.
 
 Used as an alternative to Neo4j for live session entity storage.
-Memgraph uses the Bolt protocol with no authentication.
+Memgraph uses the Bolt protocol. Authentication is enabled via
+``MEMGRAPH_USER`` / ``MEMGRAPH_PASSWORD`` environment variables.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 from graphknows.schema import MEMGRAPH_INDEXES
@@ -20,12 +22,19 @@ class MemgraphStore:
 
     Attributes:
         uri: Bolt URI for Memgraph, e.g. bolt://memgraph:7687.
+
+    Authentication is read from ``MEMGRAPH_USER`` / ``MEMGRAPH_PASSWORD``
+    environment variables.  If ``MEMGRAPH_USER`` is unset, the driver
+    connects without credentials (legacy / dev mode).
     """
 
     def __init__(self, uri: str) -> None:
         from neo4j import GraphDatabase
 
-        self._driver = GraphDatabase.driver(uri, auth=None)
+        user = os.environ.get("MEMGRAPH_USER", "")
+        password = os.environ.get("MEMGRAPH_PASSWORD", "")
+        auth = (user, password) if user else None
+        self._driver = GraphDatabase.driver(uri, auth=auth)
 
     def close(self) -> None:
         """Close the Bolt driver connection."""

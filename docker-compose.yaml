@@ -58,6 +58,8 @@ services:
       - "${MEMGRAPH_HTTP_PORT:-7444}:7444"
     environment:
       MEMGRAPH_STORAGE_MODE: IN_MEMORY_ANALYTICAL
+      MEMGRAPH_USER: "${MEMGRAPH_USER:-graphknows}"
+      MEMGRAPH_PASSWORD: "${MEMGRAPH_PASSWORD}"
     volumes:
       - memgraph_data:/var/lib/memgraph
     restart: unless-stopped
