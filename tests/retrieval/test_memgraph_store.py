@@ -14,6 +14,7 @@ from graphknows.retrieval.stores.memgraph import MemgraphStore
 # Shared fixture helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_store_with_mock_driver() -> tuple[MemgraphStore, MagicMock, MagicMock]:
     store = MemgraphStore.__new__(MemgraphStore)
     mock_driver = MagicMock()
@@ -36,6 +37,7 @@ def _make_store():
 # ---------------------------------------------------------------------------
 # Module-level tests (from test_memgraph_store.py)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_relation_edge_generates_correct_cypher():
@@ -71,6 +73,7 @@ async def test_write_relation_edge_generates_correct_cypher():
 # close()
 # ---------------------------------------------------------------------------
 
+
 def test_close_calls_driver_close():
     store, mock_driver, _ = _make_store()
     store.close()
@@ -80,6 +83,7 @@ def test_close_calls_driver_close():
 # ---------------------------------------------------------------------------
 # ensure_indexes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ensure_indexes_runs_index_stmts():
@@ -100,12 +104,13 @@ async def test_ensure_indexes_ignores_exceptions():
 # write_session_metadata
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_session_metadata_cypher():
     store, _, mock_session = _make_store()
     await store.write_session_metadata("s42", {"source": "test", "version": 1})
     mock_session.run.assert_called_once()
-    cypher, = mock_session.run.call_args[0][:1]
+    (cypher,) = mock_session.run.call_args[0][:1]
     assert "MERGE" in cypher
     assert "SESSION" in cypher
     kwargs = mock_session.run.call_args[1]
@@ -117,12 +122,12 @@ async def test_write_session_metadata_cypher():
 # write_file_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_file_node_cypher():
     store, _, mock_session = _make_store()
     await store.write_file_node(
-        session_id="s1", file_id="f1", title="Doc A",
-        parser_name="markdown", source_hint="file.md"
+        session_id="s1", file_id="f1", title="Doc A", parser_name="markdown", source_hint="file.md"
     )
     cypher = mock_session.run.call_args[0][0]
     kwargs = mock_session.run.call_args[1]
@@ -140,13 +145,17 @@ async def test_write_file_node_cypher():
 # write_chunk_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_chunk_node_cypher():
     store, _, mock_session = _make_store()
     await store.write_chunk_node(
-        session_id="s1", file_id="f1", chunk_id="c1",
-        text="hello world", heading_path="H1 > H2",
-        metadata={"idx": 0}
+        session_id="s1",
+        file_id="f1",
+        chunk_id="c1",
+        text="hello world",
+        heading_path="H1 > H2",
+        metadata={"idx": 0},
     )
     cypher = mock_session.run.call_args[0][0]
     kwargs = mock_session.run.call_args[1]
@@ -163,6 +172,7 @@ async def test_write_chunk_node_cypher():
 # ---------------------------------------------------------------------------
 # write_entity_node
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_entity_node_cypher():
@@ -194,6 +204,7 @@ async def test_write_entity_node_confidence_max_logic():
 # write_chunk_entity_edge
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_chunk_entity_edge_cypher():
     store, _, mock_session = _make_store()
@@ -212,6 +223,7 @@ async def test_write_chunk_entity_edge_cypher():
 # write_dialog_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_dialog_node_cypher():
     store, _, mock_session = _make_store()
@@ -229,12 +241,18 @@ async def test_write_dialog_node_cypher():
 # write_turn_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_turn_node_cypher():
     store, _, mock_session = _make_store()
     await store.write_turn_node(
-        dialog_id="dlg1", session_id="s1", turn_id="t1",
-        turn_index=2, role="user", text="hello", timestamp="2026-01-01T00:01:00"
+        dialog_id="dlg1",
+        session_id="s1",
+        turn_id="t1",
+        turn_index=2,
+        role="user",
+        text="hello",
+        timestamp="2026-01-01T00:01:00",
     )
     cypher = mock_session.run.call_args[0][0]
     kwargs = mock_session.run.call_args[1]
@@ -252,6 +270,7 @@ async def test_write_turn_node_cypher():
 # write_turn_sequence
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_turn_sequence_cypher():
     store, _, mock_session = _make_store()
@@ -266,6 +285,7 @@ async def test_write_turn_sequence_cypher():
 # ---------------------------------------------------------------------------
 # write_turn_entity_edge
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_turn_entity_edge_cypher():
@@ -286,6 +306,7 @@ async def test_write_turn_entity_edge_cypher():
 # write_tool_call_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_tool_call_node_cypher():
     store, _, mock_session = _make_store()
@@ -304,6 +325,7 @@ async def test_write_tool_call_node_cypher():
 # delete_session
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_delete_session_cypher():
     store, _, mock_session = _make_store()
@@ -317,6 +339,7 @@ async def test_delete_session_cypher():
 # ---------------------------------------------------------------------------
 # write_entities (deprecated batch method)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_entities_empty_list_is_noop():
@@ -347,6 +370,7 @@ async def test_write_entities_batch():
 # write_relations (deprecated batch method)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_relations_empty_list_is_noop():
     store, _, mock_session = _make_store()
@@ -372,6 +396,7 @@ async def test_write_relations_batch():
 # query_entity_chunks
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_query_entity_chunks_returns_parsed_rows():
     store, _, mock_session = _make_store()
@@ -394,6 +419,7 @@ async def test_query_entity_chunks_returns_parsed_rows():
 # get_session_nodes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_session_nodes_returns_props():
     store, _, mock_session = _make_store()
@@ -410,6 +436,7 @@ async def test_get_session_nodes_returns_props():
 # get_session_edges
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_session_edges_returns_edge_dicts():
     store, _, mock_session = _make_store()
@@ -425,6 +452,7 @@ async def test_get_session_edges_returns_edge_dicts():
 # ---------------------------------------------------------------------------
 # get_session_graph (assembles nodes + edges)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_session_graph_structure():
@@ -456,6 +484,7 @@ async def test_get_session_graph_structure():
 # ---------------------------------------------------------------------------
 # TestWriteChunkNodeChunkIndex
 # ---------------------------------------------------------------------------
+
 
 class TestWriteChunkNodeChunkIndex:
     @pytest.mark.asyncio
@@ -498,14 +527,16 @@ class TestWriteChunkNodeChunkIndex:
         assert calls, "run() was never called"
         cypher, params = calls[0]
         assert "chunk_index" in cypher.lower(), "Cypher must SET c.chunk_index"
-        assert "$chunk_index" in cypher or "chunk_index" in params, \
+        assert "$chunk_index" in cypher or "chunk_index" in params, (
             "chunk_index param must be passed separately"
+        )
         assert params.get("chunk_index") == 3, f"Expected chunk_index=3, got {params}"
 
 
 # ---------------------------------------------------------------------------
 # TestWriteEntityNodeNullType
 # ---------------------------------------------------------------------------
+
 
 class TestWriteEntityNodeNullType:
     @pytest.mark.asyncio
@@ -565,6 +596,7 @@ from graphknows.retrieval.stores.memgraph import MemgraphStore
 # Fixture
 # ---------------------------------------------------------------------------
 
+
 def _make_store():
     """MemgraphStore with mocked neo4j Bolt driver."""
     store = MemgraphStore.__new__(MemgraphStore)
@@ -579,6 +611,7 @@ def _make_store():
 # close()
 # ---------------------------------------------------------------------------
 
+
 def test_close_calls_driver_close():
     store, mock_driver, _ = _make_store()
     store.close()
@@ -588,6 +621,7 @@ def test_close_calls_driver_close():
 # ---------------------------------------------------------------------------
 # ensure_indexes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ensure_indexes_runs_index_stmts():
@@ -610,12 +644,13 @@ async def test_ensure_indexes_ignores_exceptions():
 # write_session_metadata
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_session_metadata_cypher():
     store, _, mock_session = _make_store()
     await store.write_session_metadata("s42", {"source": "test", "version": 1})
     mock_session.run.assert_called_once()
-    cypher, = mock_session.run.call_args[0][:1]
+    (cypher,) = mock_session.run.call_args[0][:1]
     assert "MERGE" in cypher
     assert "SESSION" in cypher
     kwargs = mock_session.run.call_args[1]
@@ -627,12 +662,12 @@ async def test_write_session_metadata_cypher():
 # write_file_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_file_node_cypher():
     store, _, mock_session = _make_store()
     await store.write_file_node(
-        session_id="s1", file_id="f1", title="Doc A",
-        parser_name="markdown", source_hint="file.md"
+        session_id="s1", file_id="f1", title="Doc A", parser_name="markdown", source_hint="file.md"
     )
     cypher = mock_session.run.call_args[0][0]
     kwargs = mock_session.run.call_args[1]
@@ -650,13 +685,17 @@ async def test_write_file_node_cypher():
 # write_chunk_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_chunk_node_cypher():
     store, _, mock_session = _make_store()
     await store.write_chunk_node(
-        session_id="s1", file_id="f1", chunk_id="c1",
-        text="hello world", heading_path="H1 > H2",
-        metadata={"idx": 0}
+        session_id="s1",
+        file_id="f1",
+        chunk_id="c1",
+        text="hello world",
+        heading_path="H1 > H2",
+        metadata={"idx": 0},
     )
     cypher = mock_session.run.call_args[0][0]
     kwargs = mock_session.run.call_args[1]
@@ -674,6 +713,7 @@ async def test_write_chunk_node_cypher():
 # ---------------------------------------------------------------------------
 # write_entity_node
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_entity_node_cypher():
@@ -705,6 +745,7 @@ async def test_write_entity_node_confidence_max_logic():
 # write_chunk_entity_edge
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_chunk_entity_edge_cypher():
     store, _, mock_session = _make_store()
@@ -723,6 +764,7 @@ async def test_write_chunk_entity_edge_cypher():
 # write_dialog_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_dialog_node_cypher():
     store, _, mock_session = _make_store()
@@ -740,12 +782,18 @@ async def test_write_dialog_node_cypher():
 # write_turn_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_turn_node_cypher():
     store, _, mock_session = _make_store()
     await store.write_turn_node(
-        dialog_id="dlg1", session_id="s1", turn_id="t1",
-        turn_index=2, role="user", text="hello", timestamp="2026-01-01T00:01:00"
+        dialog_id="dlg1",
+        session_id="s1",
+        turn_id="t1",
+        turn_index=2,
+        role="user",
+        text="hello",
+        timestamp="2026-01-01T00:01:00",
     )
     cypher = mock_session.run.call_args[0][0]
     kwargs = mock_session.run.call_args[1]
@@ -763,6 +811,7 @@ async def test_write_turn_node_cypher():
 # write_turn_sequence
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_turn_sequence_cypher():
     store, _, mock_session = _make_store()
@@ -777,6 +826,7 @@ async def test_write_turn_sequence_cypher():
 # ---------------------------------------------------------------------------
 # write_turn_entity_edge
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_turn_entity_edge_cypher():
@@ -797,6 +847,7 @@ async def test_write_turn_entity_edge_cypher():
 # write_tool_call_node
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_tool_call_node_cypher():
     store, _, mock_session = _make_store()
@@ -815,6 +866,7 @@ async def test_write_tool_call_node_cypher():
 # delete_session
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_delete_session_cypher():
     store, _, mock_session = _make_store()
@@ -828,6 +880,7 @@ async def test_delete_session_cypher():
 # ---------------------------------------------------------------------------
 # write_entities (deprecated batch method)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_entities_empty_list_is_noop():
@@ -860,6 +913,7 @@ async def test_write_entities_batch():
 # write_relations (deprecated batch method)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_write_relations_empty_list_is_noop():
     store, _, mock_session = _make_store()
@@ -885,6 +939,7 @@ async def test_write_relations_batch():
 # query_entity_chunks
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_query_entity_chunks_returns_parsed_rows():
     store, _, mock_session = _make_store()
@@ -908,6 +963,7 @@ async def test_query_entity_chunks_returns_parsed_rows():
 # get_session_nodes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_session_nodes_returns_props():
     store, _, mock_session = _make_store()
@@ -923,6 +979,7 @@ async def test_get_session_nodes_returns_props():
 # ---------------------------------------------------------------------------
 # get_session_edges
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_session_edges_returns_edge_dicts():
@@ -940,11 +997,13 @@ async def test_get_session_edges_returns_edge_dicts():
 # get_session_graph (assembles nodes + edges)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_session_graph_structure():
     store, _, mock_session = _make_store()
     # nodes and edges both returned from different calls
     call_count = [0]
+
     def run_side(cypher, **kw):
         call_count[0] += 1
         if "properties(n)" in cypher:
@@ -965,3 +1024,126 @@ async def test_get_session_graph_structure():
     assert "edge_count" in graph
     assert isinstance(graph["nodes"], list)
     assert isinstance(graph["edges"], list)
+
+
+# ---------------------------------------------------------------------------
+# Issue #30 — UNION fallback warning + check_chain_integrity
+# ---------------------------------------------------------------------------
+
+
+class TestReadSessionSubgraphIntegrity:
+    """Tests for read_session_subgraph fallback warning and check_chain_integrity."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_fires_logs_warning(self, caplog):
+        """When primary chain returns 0 entities but fallback returns 2, warning is logged."""
+        import logging
+
+        store, mock_driver, mock_session = _make_store()
+
+        def run_side(cypher, **kw):
+            # entities primary query
+            if (
+                "IN_SESSION" in cypher
+                and "HAS_CHUNK" in cypher
+                and "ENTITY" in cypher
+                and "e.session_id" not in cypher
+                and "chunk_id" not in cypher
+            ):
+                return []
+            # entities fallback query
+            if "MATCH (e:ENTITY) WHERE e.session_id" in cypher:
+                r1 = MagicMock()
+                r1.__getitem__ = lambda s, k: {
+                    "name": "Alice",
+                    "type": "PERSON",
+                    "confidence": 0.9,
+                }[k]
+                r2 = MagicMock()
+                r2.__getitem__ = lambda s, k: {"name": "Bob", "type": "PERSON", "confidence": 0.8}[
+                    k
+                ]
+                return [r1, r2]
+            return []
+
+        mock_session.run.side_effect = run_side
+
+        with caplog.at_level(logging.WARNING, logger="graphknows.retrieval.stores.memgraph"):
+            result = await store.read_session_subgraph("sess-broken")
+
+        assert len(result["entities"]) == 2
+        assert any(
+            "fallback" in msg.lower() or "chain" in msg.lower() for msg in caplog.messages
+        ), f"Expected warning, got: {caplog.messages}"
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_primary_chain_works(self, caplog):
+        """When primary chain returns entities, no chain-broken warning logged."""
+        import logging
+
+        store, mock_driver, mock_session = _make_store()
+
+        def run_side(cypher, **kw):
+            if (
+                "IN_SESSION" in cypher
+                and "HAS_CHUNK" in cypher
+                and "ENTITY" in cypher
+                and "e.session_id" not in cypher
+                and "chunk_id" not in cypher
+            ):
+                r = MagicMock()
+                r.__getitem__ = lambda s, k: {"name": "Alice", "type": "PERSON", "confidence": 0.9}[
+                    k
+                ]
+                return [r]
+            return []
+
+        mock_session.run.side_effect = run_side
+
+        with caplog.at_level(logging.WARNING, logger="graphknows.retrieval.stores.memgraph"):
+            await store.read_session_subgraph("sess-ok")
+
+        chain_warnings = [
+            m for m in caplog.messages if "chain" in m.lower() or "fallback" in m.lower()
+        ]
+        assert chain_warnings == [], f"Unexpected warnings: {chain_warnings}"
+
+    @pytest.mark.asyncio
+    async def test_check_chain_integrity_no_file_node(self):
+        """check_chain_integrity returns chain_ok=False when no FILE node exists."""
+        store, mock_driver, mock_session = _make_store()
+
+        def run_side(cypher, **kw):
+            if "SESSION" in cypher and ("count(sess)" in cypher or "count(s)" in cypher):
+                r = MagicMock()
+                r.__getitem__ = lambda s, k: 1
+                return [r]
+                r.__getitem__ = lambda s, k: 1
+                return [r]
+            if "FILE" in cypher and "count(f)" in cypher:
+                r = MagicMock()
+                r.__getitem__ = lambda s, k: 0
+                return [r]
+            if "CHUNK" in cypher and "count(c)" in cypher:
+                r = MagicMock()
+                r.__getitem__ = lambda s, k: 0
+                return [r]
+            if "ENTITY" in cypher and "count(e)" in cypher and "FILE" in cypher:
+                r = MagicMock()
+                r.__getitem__ = lambda s, k: 0
+                return [r]
+            if "ENTITY" in cypher and "session_id" in cypher and "count" in cypher:
+                r = MagicMock()
+                r.__getitem__ = lambda s, k: 0
+                return [r]
+            return []
+
+        mock_session.run.side_effect = run_side
+
+        result = await store.check_chain_integrity("sess-no-file")
+
+        assert result["session_id"] == "sess-no-file"
+        assert result["has_session_node"] is True
+        assert result["file_count"] == 0
+        assert result["chain_ok"] is False
+        assert "fallback_entity_count" in result

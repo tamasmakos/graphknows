@@ -626,19 +626,36 @@ class MemgraphStore:
 
         def _sync() -> dict:
             with self._driver.session() as s:
-                entities = [
+                # --- Entities: split UNION into two queries and detect fallback ---
+                primary_entities = [
                     {"name": r["name"], "type": r["type"], "confidence": r["confidence"] or 1.0}
                     for r in s.run(
                         "MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)"
                         "-[:HAS_ENTITY|MENTIONS]->(e:ENTITY) "
                         "WHERE sess.id = $sid "
-                        "RETURN DISTINCT e.name AS name, e.type AS type, e.confidence AS confidence"
-                        " UNION "
+                        "RETURN DISTINCT e.name AS name, e.type AS type, e.confidence AS confidence",
+                        sid=session_id,
+                    )
+                ]
+                fallback_entities = [
+                    {"name": r["name"], "type": r["type"], "confidence": r["confidence"] or 1.0}
+                    for r in s.run(
                         "MATCH (e:ENTITY) WHERE e.session_id = $sid "
                         "RETURN DISTINCT e.name AS name, e.type AS type, e.confidence AS confidence",
                         sid=session_id,
                     )
                 ]
+                primary_names = {e["name"] for e in primary_entities}
+                fallback_only = [e for e in fallback_entities if e["name"] not in primary_names]
+                if fallback_only and not primary_entities:
+                    logger.warning(
+                        "Session %s: CHUNK→ENTITY chain broken — %d entities found via fallback only. "
+                        "SESSION→FILE→CHUNK chain may be missing. Check MCP ingest path.",
+                        session_id,
+                        len(fallback_only),
+                    )
+                # Merge: primary takes precedence, add any fallback-only extras
+                entities = primary_entities + fallback_only
                 files = [
                     {
                         "id": r["id"],
@@ -756,5 +773,48 @@ class MemgraphStore:
                     )
                 )
             return int(rows[0]["c"]) if rows else 0
+
+        return await asyncio.to_thread(_sync)
+
+    async def check_chain_integrity(self, session_id: str) -> dict:
+        """Check SESSION→FILE→CHUNK chain integrity for *session_id*.
+
+        Returns:
+            Dict with keys: session_id, has_session_node, file_count, chunk_count,
+            entity_count, chain_ok, fallback_entity_count.
+        """
+
+        def _sync() -> dict:
+            with self._driver.session() as s:
+
+                def _count(cypher: str) -> int:
+                    rows = list(s.run(cypher, sid=session_id))
+                    return int(rows[0][0]) if rows else 0
+
+                session_count = _count("MATCH (sess:SESSION {id: $sid}) RETURN count(sess) AS n")
+                file_count = _count(
+                    "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE) RETURN count(f) AS n"
+                )
+                chunk_count = _count(
+                    "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
+                    "RETURN count(c) AS n"
+                )
+                entity_count = _count(
+                    "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)"
+                    "-[:HAS_ENTITY|MENTIONS]->(e:ENTITY) RETURN count(DISTINCT e) AS n"
+                )
+                fallback_entity_count = _count(
+                    "MATCH (e:ENTITY) WHERE e.session_id = $sid RETURN count(e) AS n"
+                )
+                chain_ok = file_count > 0 and chunk_count > 0 and entity_count > 0
+                return {
+                    "session_id": session_id,
+                    "has_session_node": session_count > 0,
+                    "file_count": file_count,
+                    "chunk_count": chunk_count,
+                    "entity_count": entity_count,
+                    "chain_ok": chain_ok,
+                    "fallback_entity_count": fallback_entity_count,
+                }
 
         return await asyncio.to_thread(_sync)

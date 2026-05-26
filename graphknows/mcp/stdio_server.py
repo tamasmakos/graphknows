@@ -439,6 +439,30 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
     from graphknows.retrieval.stores.neo4j import Neo4jStore
     from graphknows.retrieval.stores.pgvector import PgVectorStore
 
+    # Idempotency guard: check if session already exists in LTM
+    _neo_check = _get_neo()
+    with _neo_check.session() as _neo_sess:
+        _rows = list(
+            _neo_sess.run(
+                "MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n",
+                sid=session_id,
+            )
+        )
+    if _rows and _rows[0]["n"] > 0:
+        logger.info("Session %s already in LTM — skipping flush", session_id)
+        return {
+            "session_id": session_id,
+            "status": "already_flushed",
+            "nodes_written": 0,
+            "edges_written": 0,
+            "chunks_promoted": 0,
+            "turns_promoted": 0,
+            "topics_created": 0,
+            "merged_entities": 0,
+            "elapsed_s": 0.0,
+            "errors": [],
+        }
+
     mg = MemgraphStore(_mg_uri())
     pg = PgVectorStore(_pg_dsn())
     await pg.connect()

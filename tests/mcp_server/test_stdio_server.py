@@ -665,7 +665,6 @@ def test_corpus_ingest_empty_documents():
 # ===========================================================================
 
 
-
 import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -725,11 +724,14 @@ class TestNeo4jCreds:
     def test_returns_env_values_when_set(self):
         import graphknows.mcp.stdio_server as srv
 
-        with patch.dict(os.environ, {
-            "NEO4J_URI": "bolt://neo4j-host:7687",
-            "NEO4J_USER": "admin",
-            "NEO4J_PASSWORD": "secret",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "NEO4J_URI": "bolt://neo4j-host:7687",
+                "NEO4J_USER": "admin",
+                "NEO4J_PASSWORD": "secret",
+            },
+        ):
             uri, user, pw = srv._neo4j_creds()
         assert uri == "bolt://neo4j-host:7687"
         assert user == "admin"
@@ -738,7 +740,11 @@ class TestNeo4jCreds:
     def test_returns_defaults_without_env(self):
         import graphknows.mcp.stdio_server as srv
 
-        env = {k: v for k, v in os.environ.items() if k not in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD")}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD")
+        }
         with patch.dict(os.environ, env, clear=True):
             uri, user, pw = srv._neo4j_creds()
         assert "bolt://" in uri
@@ -805,3 +811,99 @@ class TestModuleConstants:
         # There should be multiple tool functions registered
         public = [n for n in dir(srv) if not n.startswith("_") and callable(getattr(srv, n))]
         assert len(public) > 5
+
+
+# ---------------------------------------------------------------------------
+# Issue #26 — Flush idempotency
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryFlushIdempotency:
+    """Tests for memory_flush idempotency guard (Issue #26)."""
+
+    @pytest.mark.asyncio
+    async def test_already_flushed_returns_early(self):
+        """When session already exists in LTM, return status=already_flushed without calling flusher."""
+        import graphknows.mcp.stdio_server as srv
+
+        # Mock _get_neo() to return a Neo4j store whose session.run returns count > 0
+        mock_neo = MagicMock()
+        mock_neo_session = MagicMock()
+        mock_neo.session.return_value.__enter__.return_value = mock_neo_session
+        # MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n  →  n=1
+        mock_record = MagicMock()
+        mock_record.__getitem__ = lambda self, k: 1
+        mock_neo_session.run.return_value = [mock_record]
+
+        mock_flusher_cls = MagicMock()
+
+        with (
+            patch.object(srv, "_get_neo", return_value=mock_neo),
+            patch("graphknows.mcp.stdio_server.SessionFlusher", mock_flusher_cls, create=True),
+        ):
+            # Patch the import inside the function
+            with patch.dict(
+                "sys.modules",
+                {
+                    "graphknows.memory.flush": MagicMock(
+                        FlushOptions=MagicMock(), SessionFlusher=mock_flusher_cls
+                    ),
+                },
+            ):
+                result = await srv.memory_flush("session-already-flushed", run_gds=False)
+
+        assert result["status"] == "already_flushed"
+        assert result["session_id"] == "session-already-flushed"
+        assert result["nodes_written"] == 0
+        assert result["errors"] == []
+        # Flusher should NOT have been instantiated
+        mock_flusher_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_new_session_calls_flusher(self):
+        """When session is NOT in LTM, the flusher should be called."""
+        import graphknows.mcp.stdio_server as srv
+
+        # Neo4j session returns count = 0 (not in LTM)
+        mock_neo = MagicMock()
+        mock_neo_session = MagicMock()
+        mock_neo.session.return_value.__enter__.return_value = mock_neo_session
+        mock_record = MagicMock()
+        mock_record.__getitem__ = lambda self, k: 0
+        mock_neo_session.run.return_value = [mock_record]
+
+        # Mock everything needed for flush
+        mock_result = MagicMock()
+        mock_result.nodes_written = 5
+        mock_result.edges_written = 3
+        mock_result.chunks_promoted = 2
+        mock_result.turns_promoted = 1
+        mock_result.elapsed_s = 0.5
+        mock_result.errors = []
+
+        mock_flusher_instance = AsyncMock()
+        mock_flusher_instance.flush = AsyncMock(return_value=mock_result)
+        mock_flusher_cls = MagicMock(return_value=mock_flusher_instance)
+
+        mock_mg = MagicMock()
+        mock_pg = AsyncMock()
+        mock_pg.connect = AsyncMock()
+
+        flush_mod = MagicMock()
+        flush_mod.FlushOptions = MagicMock(return_value=MagicMock())
+        flush_mod.SessionFlusher = mock_flusher_cls
+
+        with (
+            patch.object(srv, "_get_neo", return_value=mock_neo),
+            patch("graphknows.mcp.stdio_server.MemgraphStore", return_value=mock_mg, create=True),
+            patch("graphknows.mcp.stdio_server.PgVectorStore", return_value=mock_pg, create=True),
+            patch("graphknows.mcp.stdio_server.Neo4jStore", return_value=mock_neo, create=True),
+            patch.dict("sys.modules", {"graphknows.memory.flush": flush_mod}),
+        ):
+            result = await srv.memory_flush("session-new", run_gds=False)
+
+        # Flusher MUST have been instantiated
+        mock_flusher_cls.assert_called_once()
+        mock_flusher_instance.flush.assert_awaited_once()
+        # Result should NOT have already_flushed status
+        assert result.get("status") != "already_flushed"
