@@ -210,11 +210,6 @@ def test_flush_smoke():
 
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-from click.testing import CliRunner
-
 
 # ---------------------------------------------------------------------------
 # Helper functions — pure env var readers

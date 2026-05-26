@@ -9,7 +9,6 @@ import pytest
 
 from graphknows.retrieval.stores.memgraph import MemgraphStore
 
-
 # ---------------------------------------------------------------------------
 # Shared fixture helpers
 # ---------------------------------------------------------------------------
@@ -585,12 +584,8 @@ class TestWriteEntityNodeNullType:
 # ===========================================================================
 
 
-from unittest.mock import MagicMock
 
 import pytest
-
-from graphknows.retrieval.stores.memgraph import MemgraphStore
-
 
 # ---------------------------------------------------------------------------
 # Fixture

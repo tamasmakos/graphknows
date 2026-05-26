@@ -106,7 +106,7 @@ def test_memory_doctor_memgraph_down():
     # Memgraph driver raises, Neo4j driver succeeds
     call_count = [0]
 
-    def _driver_factory(uri, auth):  # noqa: ANN001
+    def _driver_factory(uri, auth):
         call_count[0] += 1
         drv = MagicMock()
         drv.session.return_value.__enter__ = lambda s: s
@@ -667,10 +667,8 @@ def test_corpus_ingest_empty_documents():
 
 import asyncio
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # _mg_uri / _pg_dsn / _neo4j_creds — env var readers

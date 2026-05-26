@@ -10,7 +10,6 @@ from graphknows.ingestion.parsers.base import ParsedFile, TextSegment
 from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.ingestor import IngestResult, MemoryIngestor
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------

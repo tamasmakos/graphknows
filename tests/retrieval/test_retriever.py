@@ -303,15 +303,10 @@ async def test_feeling_lucky_defaults_to_hybrid():
 # ===========================================================================
 
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import numpy as np
 import pytest
 
-from graphknows.retrieval.context import RetrievalContext
-from graphknows.retrieval.retriever import HybridRetriever, RRF_K
-
+from graphknows.retrieval.retriever import RRF_K
 
 # ---------------------------------------------------------------------------
 # Helpers

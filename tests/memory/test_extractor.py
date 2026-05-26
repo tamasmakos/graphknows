@@ -8,7 +8,6 @@ import pytest
 
 from graphknows.memory.extractor import ExtractionResult, GLiNER2EntityExtractor
 
-
 # ---------------------------------------------------------------------------
 # Standalone tests (test_extractor.py)
 # ---------------------------------------------------------------------------
@@ -176,9 +175,8 @@ class TestEnsureModelLoaded:
         with patch(
             "graphknows.graphgen.pipeline.entity_relation.extraction.get_gliner2_model",
             return_value=None,
-        ):
-            with pytest.raises(RuntimeError, match="GLiNER2 model failed to load"):
-                extractor._ensure_model_loaded()
+        ), pytest.raises(RuntimeError, match="GLiNER2 model failed to load"):
+            extractor._ensure_model_loaded()
 
     def test_loads_model_and_sets_attrs(self):
         extractor = _make_extractor()
