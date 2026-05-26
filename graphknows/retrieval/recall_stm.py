@@ -131,6 +131,25 @@ def _entity_boost(
                 old_result.score = new_score
                 old_result.entity_names = ec.get("entity_names", [])
                 results[cid] = (new_score, old_result)
+            else:
+                # Entity-only chunk — add it with entity_names from the graph result
+                results[cid] = (
+                    rrf,
+                    RecallResult(
+                        text=ec.get("text", ""),
+                        source_type="chunk",
+                        scope="short_term",
+                        score=rrf,
+                        entity_names=ec.get("entity_names", []),
+                        heading_path=ec.get("heading_path", ""),
+                        provenance={
+                            "session_id": session_id,
+                            "file_id": ec.get("file_id", ""),
+                            "memory_class": ec.get("memory_class", "raw_evidence"),
+                        },
+                        metadata=ec.get("metadata", {}),
+                    ),
+                )
     except Exception as exc:
         log.warning("Memgraph entity path failed: %s", exc)
 

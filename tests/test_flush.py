@@ -218,3 +218,38 @@ async def test_flush_propagates_extraction_error():
     neo.extract_and_write_relations = AsyncMock(side_effect=RuntimeError("LLM failed"))
     with pytest.raises(RuntimeError, match="LLM failed"):
         await flusher.flush("s1")
+
+
+class TestFlushSurfacesNeo4jError:
+    @pytest.mark.asyncio
+    async def test_neo4j_write_error_appears_in_flush_result_errors(self):
+        """When write_session_subgraph raises, FlushResult.errors must contain the error."""
+        mg = MagicMock()
+        pg = MagicMock()
+        neo = AsyncMock()
+
+        # Force Neo4j write to raise
+        neo.write_session_subgraph = AsyncMock(
+            side_effect=RuntimeError("neo4j connection refused")
+        )
+        neo.extract_and_write_relations = AsyncMock(return_value=0)
+
+        flusher = SessionFlusher.__new__(SessionFlusher)
+        flusher._mg = mg
+        flusher._pg = pg
+        flusher._neo = neo
+        flusher._openrouter_key = None
+
+        # Call the private helper directly
+        errors: list[str] = []
+        result = await flusher._write_ltm_graph(
+            session_id="test-session",
+            stm_data={"entities": [], "chunks": [], "turns": []},
+            errors=errors,
+        )
+
+        # The error must be surfaced
+        assert errors, "errors list must be populated when Neo4j raises"
+        assert any(
+            "neo4j" in e.lower() or "connection refused" in e.lower() for e in errors
+        ), f"Expected Neo4j error in errors list, got: {errors}"

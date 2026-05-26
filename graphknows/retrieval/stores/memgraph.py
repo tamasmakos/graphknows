@@ -137,6 +137,7 @@ class MemgraphStore:
             heading_path: Slash-separated heading breadcrumb.
             metadata: Additional metadata properties.
         """
+        chunk_index = metadata.get("chunk_index")
 
         def _sync() -> None:
             with self._driver.session() as s:
@@ -147,6 +148,7 @@ class MemgraphStore:
                         c.file_id = $fid,
                         c.text = $text,
                         c.heading_path = $heading_path,
+                        c.chunk_index = $chunk_index,
                         c.metadata = $metadata
                     WITH c
                     MATCH (f:FILE {id: $fid})
@@ -157,6 +159,7 @@ class MemgraphStore:
                     fid=file_id,
                     text=text,
                     heading_path=heading_path,
+                    chunk_index=chunk_index,
                     metadata=str(metadata),
                 ).consume()
 
@@ -170,7 +173,7 @@ class MemgraphStore:
         self,
         session_id: str,
         entity_name: str,
-        entity_type: str,
+        entity_type: str | None,
         confidence: float,
     ) -> None:
         """Upsert an ENTITY node scoped to a session.
@@ -183,6 +186,7 @@ class MemgraphStore:
         """
 
         def _sync() -> None:
+            etype = entity_type or "ENTITY"
             with self._driver.session() as s:
                 s.run(
                     """
@@ -195,7 +199,7 @@ class MemgraphStore:
                     """,
                     name=entity_name,
                     sid=session_id,
-                    etype=entity_type,
+                    etype=etype,
                     conf=confidence,
                 ).consume()
 

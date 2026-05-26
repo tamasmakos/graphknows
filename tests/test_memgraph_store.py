@@ -47,3 +47,93 @@ async def test_write_relation_edge_generates_correct_cypher():
     assert params["name"] == "OPPOSES"
     assert params["fact"] == "Viktor Orbán opposes Ukraine EU membership"
     assert params["confidence"] == 1.0
+
+
+class TestWriteChunkNodeChunkIndex:
+    @pytest.mark.asyncio
+    async def test_write_chunk_node_sets_chunk_index_property(self):
+        """chunk_index must be a top-level CHUNK property, not buried in metadata."""
+        store = MemgraphStore.__new__(MemgraphStore)
+        calls = []
+
+        class FakeSession:
+            def run(self, cypher, **params):
+                calls.append((cypher, params))
+
+                class R:
+                    def consume(self):
+                        return None
+
+                return R()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        class FakeDriver:
+            def session(self):
+                return FakeSession()
+
+        store._driver = FakeDriver()
+
+        await store.write_chunk_node(
+            session_id="s1",
+            file_id="f1",
+            chunk_id="c1",
+            text="hello world",
+            heading_path="h/p",
+            metadata={"chunk_index": 3, "extra": "val"},
+        )
+
+        assert calls, "run() was never called"
+        cypher, params = calls[0]
+        # chunk_index must be a top-level property set via parameter
+        assert "chunk_index" in cypher.lower(), "Cypher must SET c.chunk_index"
+        assert "$chunk_index" in cypher or "chunk_index" in params, \
+            "chunk_index param must be passed separately"
+        assert params.get("chunk_index") == 3, f"Expected chunk_index=3, got {params}"
+
+
+class TestWriteEntityNodeNullType:
+    @pytest.mark.asyncio
+    async def test_write_entity_node_normalises_none_type(self):
+        """entity_type=None must be written as 'ENTITY', not null."""
+        store = MemgraphStore.__new__(MemgraphStore)
+        calls = []
+
+        class FakeSession:
+            def run(self, cypher, **params):
+                calls.append((cypher, params))
+
+                class R:
+                    def consume(self):
+                        return None
+
+                return R()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        class FakeDriver:
+            def session(self):
+                return FakeSession()
+
+        store._driver = FakeDriver()
+
+        # Simulate GLiNER2 returning explicit None for type
+        await store.write_entity_node(
+            session_id="s1",
+            entity_name="Barack Obama",
+            entity_type=None,  # <-- explicit None, not missing
+            confidence=0.9,
+        )
+
+        assert calls, "run() was never called"
+        _cypher, params = calls[0]
+        assert params["etype"] is not None, "etype must not be None"
+        assert params["etype"] == "ENTITY", f"Expected default 'ENTITY', got {params['etype']!r}"
