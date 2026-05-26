@@ -893,12 +893,27 @@ class TestMemoryFlushIdempotency:
         flush_mod.FlushOptions = MagicMock(return_value=MagicMock())
         flush_mod.SessionFlusher = mock_flusher_cls
 
+        mock_mg_mod = MagicMock()
+        mock_mg_mod.MemgraphStore = MagicMock(return_value=mock_mg)
+        mock_pg_mod = MagicMock()
+        mock_pg_mod.PgVectorStore = MagicMock(return_value=mock_pg)
+        mock_neo4j_mod = MagicMock()
+        mock_neo4j_mod.Neo4jStore = MagicMock(return_value=mock_neo)
+
         with (
             patch.object(srv, "_get_neo", return_value=mock_neo),
             patch("graphknows.mcp.stdio_server.MemgraphStore", return_value=mock_mg, create=True),
             patch("graphknows.mcp.stdio_server.PgVectorStore", return_value=mock_pg, create=True),
             patch("graphknows.mcp.stdio_server.Neo4jStore", return_value=mock_neo, create=True),
-            patch.dict("sys.modules", {"graphknows.memory.flush": flush_mod}),
+            patch.dict(
+                "sys.modules",
+                {
+                    "graphknows.memory.flush": flush_mod,
+                    "graphknows.retrieval.stores.memgraph": mock_mg_mod,
+                    "graphknows.retrieval.stores.pgvector": mock_pg_mod,
+                    "graphknows.retrieval.stores.neo4j": mock_neo4j_mod,
+                },
+            ),
         ):
             result = await srv.memory_flush("session-new", run_gds=False)
 
