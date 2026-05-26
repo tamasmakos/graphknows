@@ -44,6 +44,7 @@ def _ann_chunks(
                     source_type="chunk",
                     scope="long_term",
                     score=rrf,
+                    cosine_score=chunk.get("cosine_score", 0.0),
                     heading_path=chunk.get("heading_path", ""),
                     provenance={
                         "session_id": chunk.get("session_id", ""),
@@ -75,6 +76,7 @@ def _ann_turns(
                     source_type="turn",
                     scope="long_term",
                     score=rrf,
+                    cosine_score=turn.get("cosine_score", 0.0),
                     provenance={
                         "session_id": turn.get("session_id", ""),
                         "dialog_id": turn.get("dialog_id", ""),

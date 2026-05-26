@@ -303,8 +303,17 @@ async def memory_ingest(
             rel_extractor = OntologyRelExtractor()
         except Exception:
             logger.exception("Failed to initialize OntologyRelExtractor")
+    else:
+        logger.warning(
+            "OPENROUTER_API_KEY not set — relation extraction disabled. "
+            "Set the key to enable semantic relation edges in the knowledge graph."
+        )
     ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=_embed_fn(), rel_extractor=rel_extractor)
     result = ingestor.ingest_text(text, session_id=session_id, title=title)
+
+    warnings: list[str] = []
+    if rel_extractor is None:
+        warnings.append("rel_extractor_disabled")
 
     return {
         "file_id": result.file_id,
@@ -312,6 +321,7 @@ async def memory_ingest(
         "entities": result.entity_count,
         "elapsed_s": round(result.elapsed_s, 3),
         "errors": list(result.errors),
+        "warnings": warnings,
     }
 
 
@@ -439,7 +449,7 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
     key = os.environ.get("OPENROUTER_API_KEY", "")
     flusher = SessionFlusher(mg, pg, neo, openrouter_key=key)
     opts = FlushOptions(
-        summarize_topics=False,
+        summarize_topics=bool(key),  # enable when key available
         run_gds=run_gds,
         clear_stm=True,
         merge_entities=True,

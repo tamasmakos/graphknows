@@ -83,10 +83,12 @@ class GLiNER2EntityExtractor:
 
         import contextlib
         import sys
+        import time
 
         from graphknows.graphgen.pipeline.entity_relation.extraction import get_gliner2_model
 
-        log.info("Loading GLiNER2 model (first extraction call)...")
+        log.info("GLiNER2 model not loaded — loading now (first call, expect 15–30s)...")  # noqa: RUF001
+        _t0 = time.monotonic()
         with contextlib.redirect_stdout(sys.stderr):
             model = get_gliner2_model()
 
@@ -111,7 +113,7 @@ class GLiNER2EntityExtractor:
         self._gliner = model
         self._gliner_schema = schema
         self._child_to_group = child_to_group
-        log.info("GLiNER2 model loaded (taxonomy=%s)", self._taxonomy.name)
+        log.info("GLiNER2 model loaded in %.1fs", time.monotonic() - _t0)
 
     def extract(self, text: str) -> ExtractionResult:
         """Extract entities and relations from ``text`` using GLiNER2 Schema API.
