@@ -6,39 +6,15 @@ import os
 
 import click
 
+from graphknows.builders import (
+    build_memgraph_store,
+    build_memory_ingestor,
+    build_neo4j_store,
+    build_pgvector_store,
+)
 from graphknows.config import GraphKnowsSettings
 
 _NO_RESULTS = "No results found."
-
-_settings: GraphKnowsSettings | None = None
-
-
-def _get_settings() -> GraphKnowsSettings:
-    global _settings
-    if _settings is None:
-        _settings = GraphKnowsSettings()
-    return _settings
-
-
-def _neo4j_driver():
-    from neo4j import GraphDatabase
-
-    s = _get_settings()
-    return GraphDatabase.driver(s.neo4j_uri, auth=(s.neo4j_user, s.neo4j_password))  # NOSONAR
-
-
-def _pg_dsn() -> str:
-    return _get_settings().pgvector_dsn
-
-
-def _mg_uri() -> str:
-    return _get_settings().memgraph_uri
-
-
-def _embed_fn():
-    from graphknows.retrieval.stores.embedder import embed_one
-
-    return embed_one
 
 
 @click.group()
@@ -62,21 +38,21 @@ def ingest_cmd(text_or_path: str, session: str, title: str, is_file: bool) -> No
     Accepts raw text directly or a file path (with --is-file).
     Parser is selected automatically based on file extension.
     """
-    from graphknows.memory.ingestor import MemoryIngestor, _run
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
-
-    mg = MemgraphStore(_mg_uri())
-    pg = PgVectorStore(_pg_dsn())
-    _run(pg.connect())  # connect inside _BG_LOOP so pool is on the right event loop
-    from graphknows.memory.extractor import GLiNER2EntityExtractor
-
-    extractor = GLiNER2EntityExtractor()
-    ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=_embed_fn())
+    s = GraphKnowsSettings()
 
     if is_file:
+        ingestor = build_memory_ingestor(s)
         result = ingestor.ingest_file(text_or_path, session_id=session)
     else:
+        from graphknows.memory.extractor import GLiNER2EntityExtractor
+        from graphknows.memory.ingestor import MemoryIngestor, _run
+        from graphknows.retrieval.stores.embedder import embed_one
+
+        mg = build_memgraph_store(s)
+        pg = build_pgvector_store(s)
+        _run(pg.connect())
+        extractor = GLiNER2EntityExtractor()
+        ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=embed_one)
         result = ingestor.ingest_text(text_or_path, session_id=session, title=title)
 
     click.echo(f"Ingested: file_id={result.file_id}")
@@ -107,21 +83,13 @@ def flush_cmd(session_id: str, no_topics: bool, no_clear: bool, gds: bool) -> No
     import asyncio
 
     from graphknows.memory.flush import FlushOptions, SessionFlusher
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
 
-    mg = MemgraphStore(_mg_uri())
-    pg = PgVectorStore(_pg_dsn())
+    s = GraphKnowsSettings()
+    mg = build_memgraph_store(s)
+    pg = build_pgvector_store(s)
+    neo = build_neo4j_store(s)
 
-    from graphknows.retrieval.stores.neo4j import Neo4jStore
-
-    neo = Neo4jStore(
-        uri=os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
-        user=os.environ.get("NEO4J_USER", "neo4j"),
-        password=os.environ.get("NEO4J_PASSWORD", "testpassword123"),
-    )
-
-    key = os.environ.get("OPENROUTER_API_KEY", "")
+    key = s.openrouter_api_key or os.environ.get("OPENROUTER_API_KEY", "")  # nosec
     flusher = SessionFlusher(mg, pg, neo, openrouter_key=key)
     opts = FlushOptions(
         summarize_topics=not no_topics,
@@ -165,15 +133,13 @@ def recall_short_cmd(query: str, session: str, top_k: int) -> None:
     """
     from graphknows.memory.ingestor import _run
     from graphknows.retrieval.recall_stm import recall_short_term
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
+    from graphknows.retrieval.stores.embedder import embed_one
 
-    mg = MemgraphStore(_mg_uri())
-    pg = PgVectorStore(_pg_dsn())
+    s = GraphKnowsSettings()
+    mg = build_memgraph_store(s)
+    pg = build_pgvector_store(s)
     _run(pg.connect())
-    results = recall_short_term(
-        mg, pg, query, session_id=session, top_k=top_k, embed_fn=_embed_fn()
-    )
+    results = recall_short_term(mg, pg, query, session_id=session, top_k=top_k, embed_fn=embed_one)
 
     if not results:
         click.echo(_NO_RESULTS)
@@ -199,18 +165,14 @@ def recall_long_cmd(query: str, top_k: int, session: str | None) -> None:
     """
     from graphknows.memory.ingestor import _run
     from graphknows.retrieval.recall_ltm import recall_long_term
-    from graphknows.retrieval.stores.neo4j import Neo4jStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
+    from graphknows.retrieval.stores.embedder import embed_one
 
-    pg = PgVectorStore(_pg_dsn())
+    s = GraphKnowsSettings()
+    pg = build_pgvector_store(s)
     _run(pg.connect())
-    neo = Neo4jStore(
-        uri=os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
-        user=os.environ.get("NEO4J_USER", "neo4j"),
-        password=os.environ.get("NEO4J_PASSWORD", "testpassword123"),
-    )
+    neo = build_neo4j_store(s)
     results = recall_long_term(
-        neo, pg, query, top_k=top_k, session_filter=session, embed_fn=_embed_fn()
+        neo, pg, query, top_k=top_k, session_filter=session, embed_fn=embed_one
     )
     neo.close()
 
@@ -238,41 +200,25 @@ def stats_cmd(session: str | None) -> None:
     """Show memory statistics: STM and LTM node/edge counts."""
     import asyncio
 
-    import asyncpg as apg
+    from graphknows.memory.adapter import GraphknowsMemoryAdapter
 
-    async def _pg_counts() -> dict:
-        conn = await apg.connect(_pg_dsn())
-        try:
-            sc = await conn.fetchval("SELECT count(*) FROM stm_chunks")
-            st = await conn.fetchval("SELECT count(*) FROM stm_turns")
-            lc = await conn.fetchval("SELECT count(*) FROM ltm_chunks")
-            lt = await conn.fetchval("SELECT count(*) FROM ltm_turns")
-            top = await conn.fetchval("SELECT count(*) FROM ltm_topics")
-            return {
-                "stm_chunks": sc,
-                "stm_turns": st,
-                "ltm_chunks": lc,
-                "ltm_turns": lt,
-                "ltm_topics": top,
-            }
-        finally:
-            await conn.close()
+    s = GraphKnowsSettings()
 
-    pg_counts = asyncio.run(_pg_counts())
+    async def _get_stats():
+        adapter = GraphknowsMemoryAdapter(s)
+        return await adapter.stats(session or "")
+
+    stats = asyncio.run(_get_stats())
     click.echo("pgvector")
-    for k, v in pg_counts.items():
-        click.echo(f"  {k}: {v}")
-
-    d = _neo4j_driver()
-    with d.session() as s:
-        ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]
-        tc = s.run("MATCH (t:TOPIC) RETURN count(t) as c").single()["c"]
-        sess_c = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()["c"]
-    d.close()
+    click.echo(f"  stm_chunks: {stats.stm.get('chunks', 0)}")
+    click.echo(f"  stm_turns:  {stats.stm.get('turns', 0)}")
+    click.echo(f"  ltm_chunks: {stats.ltm.get('chunks', 0)}")
+    click.echo(f"  ltm_turns:  {stats.ltm.get('turns', 0)}")
+    click.echo(f"  ltm_topics: {stats.ltm.get('topics', 0)}")
     click.echo("neo4j")
-    click.echo(f"  sessions: {sess_c}")
-    click.echo(f"  entities: {ec}")
-    click.echo(f"  topics:   {tc}")
+    click.echo(f"  sessions: {stats.ltm.get('sessions', 0)}")
+    click.echo(f"  entities: {stats.ltm.get('entities', 0)}")
+    click.echo(f"  topics:   {stats.ltm.get('topics', 0)}")
 
 
 # ---------------------------------------------------------------------------
@@ -292,26 +238,24 @@ def forget_session(session_id: str, both: bool) -> None:
     """Delete all STM data for SESSION_ID. With --both also deletes from LTM."""
     import asyncio
 
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
-
-    mg = MemgraphStore(_mg_uri())
-    pg = PgVectorStore(_pg_dsn())
+    s = GraphKnowsSettings()
+    mg = build_memgraph_store(s)
+    pg = build_pgvector_store(s)
 
     mg.delete_session(session_id)
     asyncio.run(pg.clear_stm(session_id))
     click.echo(f"Deleted STM for session {session_id}")
 
     if both:
-        d = _neo4j_driver()
-        with d.session() as s:
-            s.run(
+        neo = build_neo4j_store(s)
+        with neo._driver.session() as ns:  # nosec
+            ns.run(
                 "MATCH (sess:SESSION {id: $sid}) "
                 "OPTIONAL MATCH (sess)-[*..4]->(n) "
                 "DETACH DELETE sess, n",
                 sid=session_id,
             )
-        d.close()
+        neo.close()
         click.echo(f"Deleted LTM for session {session_id}")
 
 
@@ -319,16 +263,17 @@ def forget_session(session_id: str, both: bool) -> None:
 @click.argument("date")
 def forget_before(date: str) -> None:
     """Delete SESSION nodes flushed before DATE (ISO format: 2025-01-01)."""
-    d = _neo4j_driver()
-    with d.session() as s:
-        r = s.run(
+    s = GraphKnowsSettings()
+    neo = build_neo4j_store(s)
+    with neo._driver.session() as ns:  # nosec
+        r = ns.run(
             "MATCH (sess:SESSION) WHERE sess.flushed_at < $dt "
             "OPTIONAL MATCH (sess)-[*..4]->(n) "
             "DETACH DELETE sess, n "
             "RETURN count(sess) AS deleted",
             dt=date,
         ).single()
-    d.close()
+    neo.close()
     click.echo(f"Deleted {r['deleted']} sessions before {date}")
 
 

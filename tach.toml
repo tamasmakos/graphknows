@@ -171,7 +171,7 @@ depends_on = [
 [[modules]]
 path = "graphknows.cli"
 # TARGET: becomes graphknows.transports.cli in Wave 4
-depends_on = ["graphknows.memory", "graphknows.retrieval"]
+depends_on = ["graphknows.memory", "graphknows.retrieval", "graphknows.builders", "graphknows.config"]
 
 [[modules]]
 path = "graphknows.memory.workflows"
