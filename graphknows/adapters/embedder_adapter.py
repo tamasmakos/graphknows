@@ -25,7 +25,7 @@ class EmbedderAdapter:
         from graphknows.retrieval.stores.embedder import embed as _embed
 
         result: np.ndarray = _embed(texts, self._model_name)
-        return result.tolist()  # type: ignore[return-value]
+        return result.tolist()  # type: ignore[no-any-return]
 
     def embed_one(self, text: str) -> list[float]:
         """Embed a single string and return a plain float list."""
