@@ -659,10 +659,18 @@ def test_recall_by_topic_top_k_clamped_to_twenty():
 
 
 def test_recall_by_topic_null_summary_defaults_to_empty_string():
-    rows = [{"summary": None, "topic_id": None, "entities": [], "score": 0}]
+    rows = [
+        {
+            "summary": None,
+            "label": "climate policy",
+            "topic_id": None,
+            "entities": [],
+            "score": 0,
+        }
+    ]
     driver = FakeDriver(rows)
-    hits = recall_by_topic(driver, "some query text here")
-    assert hits[0].text == ""
+    hits = recall_by_topic(driver, "climate policy")
+    assert hits[0].text == "climate policy"
 
 
 def test_recall_by_topic_empty_rows_returns_empty_list():

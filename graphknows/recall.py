@@ -47,6 +47,40 @@ def _extract_query_tokens(query: str) -> list[str]:
     return result
 
 
+def _topic_text_overlap(tokens: list[str], row: dict[str, Any]) -> int:
+    """Count query-token overlap against topic label/summary text."""
+
+    text = " ".join(
+        part for part in [row.get("label") or "", row.get("summary") or ""] if part
+    ).lower()
+    return sum(1 for token in tokens if token in text)
+
+
+def _topic_entity_overlap(tokens: list[str], row: dict[str, Any]) -> int:
+    """Count query-token overlap against returned matched entity names."""
+
+    entity_names = row.get("entities") or []
+    return sum(
+        1
+        for name in entity_names
+        if isinstance(name, str) and any(token in name.lower() for token in tokens)
+    )
+
+
+def _topic_row_relevance(tokens: list[str], row: dict[str, Any]) -> float:
+    """Return a simple deterministic relevance score for topic recall rows."""
+
+    entity_overlap = _topic_entity_overlap(tokens, row)
+    text_overlap = _topic_text_overlap(tokens, row)
+    if entity_overlap == 0 and text_overlap == 0:
+        return 0.0
+
+    db_score = float(row.get("score") or 0)
+    if db_score > 0:
+        return db_score
+    return float((entity_overlap * 10) + text_overlap)
+
+
 def recall_by_document(
     driver: Any,
     query: str,
@@ -182,10 +216,10 @@ def recall_by_topic(
     query: str,
     top_k: int = 5,
 ) -> list[RecallHit]:
-    """Find topics whose label or member entities match the query.
+    """Find topics whose label, summary, or member entities match the query.
 
-    Matches Topic nodes by their label or by entity membership. Topics
-    are scored by number of matching entity members.
+    Matches Topic nodes by their label/summary text or by entity membership.
+    Topics with no positive text or entity relevance are filtered out.
 
     Args:
         driver: Neo4j GraphDatabase driver (already open).
@@ -193,7 +227,7 @@ def recall_by_topic(
         top_k: Max results to return (1-20).
 
     Returns:
-        List of RecallHit ordered by descending entity overlap score.
+        List of RecallHit ordered by descending topic relevance.
     """
     tokens = _extract_query_tokens(query)
     if not tokens:
@@ -202,22 +236,39 @@ def recall_by_topic(
     top_k = max(1, min(top_k, 20))
 
     cypher = """
-    UNWIND $tokens AS token
-    MATCH (e:ENTITY)
-    WHERE toLower(e.name) CONTAINS token
-    WITH collect(DISTINCT e.name) AS matched_names
+    WITH $tokens AS tokens
+    OPTIONAL MATCH (e:ENTITY)
+    WHERE any(token IN tokens WHERE toLower(e.name) CONTAINS token)
+    WITH tokens, collect(DISTINCT e.name) AS matched_names
     MATCH (t:TOPIC)
-    OPTIONAL MATCH (e2)-[:IN_TOPIC]->(t)
+    OPTIONAL MATCH (e2:ENTITY)-[:IN_TOPIC]->(t)
     WHERE e2.name IN matched_names
     WITH t,
+         tokens,
          collect(DISTINCT e2.name) AS matched_entities,
-         count(DISTINCT e2) AS overlap
-    ORDER BY overlap DESC, t.entity_count DESC
+         count(DISTINCT e2) AS entity_overlap,
+         toLower(coalesce(t.label, '') + ' ' + coalesce(t.summary, '')) AS topic_text
+    WITH t,
+         matched_entities,
+         entity_overlap,
+         size([token IN tokens WHERE topic_text CONTAINS token]) AS text_overlap
+    WHERE entity_overlap > 0 OR text_overlap > 0
+    WITH t,
+         matched_entities,
+         ((entity_overlap * 10) + text_overlap) AS relevance,
+         entity_overlap,
+         text_overlap
+    ORDER BY relevance DESC,
+             entity_overlap DESC,
+             text_overlap DESC,
+             coalesce(t.entity_count, 0) DESC,
+             t.community_id ASC
     LIMIT $top_k
     RETURN t.community_id AS topic_id,
-           t.summary AS summary,
+           coalesce(t.summary, t.label, '') AS summary,
+           t.label AS label,
            matched_entities AS entities,
-           overlap AS score
+           relevance AS score
     """
 
     with driver.session() as s:
@@ -225,12 +276,15 @@ def recall_by_topic(
 
     hits: list[RecallHit] = []
     for r in rows:
+        relevance = _topic_row_relevance(tokens, r)
+        if relevance <= 0:
+            continue
         hits.append(
             RecallHit(
-                text=r.get("summary") or "",
+                text=r.get("summary") or r.get("label") or "",
                 entity_names=r.get("entities") or [],
                 provenance={"topic_id": r.get("topic_id")},
-                score=float(r.get("score") or 0),
+                score=relevance,
             )
         )
     return hits
