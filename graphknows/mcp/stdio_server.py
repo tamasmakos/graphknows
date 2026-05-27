@@ -37,15 +37,20 @@ import os
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
-
-# Load .env — prefer GRAPHKNOWS_ENV_FILE if set (explicit), else PWD/.env
-_env_file = os.environ.get("GRAPHKNOWS_ENV_FILE") or str(Path(os.environ.get("PWD", ".")) / ".env")
-load_dotenv(_env_file, override=False)
+from graphknows.config import GraphKnowsSettings
 
 logger = logging.getLogger("graphknows.mcp.stdio")
 logging.basicConfig(level=logging.WARNING, stream=__import__("sys").stderr)
+
+_settings: GraphKnowsSettings | None = None
+
+
+def _get_settings() -> GraphKnowsSettings:
+    global _settings
+    if _settings is None:
+        _settings = GraphKnowsSettings()
+    return _settings
 
 # ---------------------------------------------------------------------------
 # FastMCP app
@@ -71,21 +76,16 @@ app = FastMCP(
 
 
 def _mg_uri() -> str:
-    return os.environ.get("MEMGRAPH_URI", "bolt://172.18.0.1:17687")
+    return _get_settings().memgraph_uri
 
 
 def _pg_dsn() -> str:
-    return os.environ.get(
-        "PGVECTOR_DSN",
-        "postgresql://postgres:***@172.18.0.1:5432/graphknows",
-    )
+    return _get_settings().pgvector_dsn
 
 
 def _neo4j_creds() -> tuple[str, str, str]:
-    uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")  # NOSONAR
-    user = os.environ.get("NEO4J_USER", "neo4j")
-    pw = os.environ.get("NEO4J_PASSWORD", "testpassword123")
-    return uri, user, pw
+    s = _get_settings()
+    return s.neo4j_uri, s.neo4j_user, s.neo4j_password
 
 
 def _embed_fn() -> Any:

@@ -6,31 +6,33 @@ import os
 from pathlib import Path
 
 import click
-from dotenv import load_dotenv
-
-load_dotenv(Path(os.environ.get("PWD", ".")) / ".env")
+from graphknows.config import GraphKnowsSettings
 
 _NO_RESULTS = "No results found."
+
+_settings: GraphKnowsSettings | None = None
+
+
+def _get_settings() -> GraphKnowsSettings:
+    global _settings
+    if _settings is None:
+        _settings = GraphKnowsSettings()
+    return _settings
 
 
 def _neo4j_driver():
     from neo4j import GraphDatabase
 
-    uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")  # NOSONAR
-    user = os.environ.get("NEO4J_USER", "neo4j")
-    pw = os.environ.get("NEO4J_PASSWORD", "testpassword123")
-    return GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
+    s = _get_settings()
+    return GraphDatabase.driver(s.neo4j_uri, auth=(s.neo4j_user, s.neo4j_password))  # NOSONAR
 
 
 def _pg_dsn() -> str:
-    return os.environ.get(
-        "PGVECTOR_DSN",
-        "postgresql://postgres:postgres@172.18.0.1:5432/graphknows",
-    )
+    return _get_settings().pgvector_dsn
 
 
 def _mg_uri() -> str:
-    return os.environ.get("MEMGRAPH_URI", "bolt://172.18.0.1:17687")
+    return _get_settings().memgraph_uri
 
 
 def _embed_fn():
