@@ -50,7 +50,7 @@ class GLiNER2EntityExtractor:
     """
 
     def __init__(self, taxonomy_path: str | None = None) -> None:
-        from graphknows.graphgen.config.taxonomy import get_default_taxonomy, load_taxonomy
+        from graphknows.domain.taxonomy import get_default_taxonomy, load_taxonomy
 
         self._taxonomy = load_taxonomy(taxonomy_path) if taxonomy_path else get_default_taxonomy()
         self._gliner: Any | None = None
