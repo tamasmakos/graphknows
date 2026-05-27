@@ -402,7 +402,7 @@ import pytest
 
 class TestEntityGroupConfig:
     def _make(self, tokens=None, patterns=None):
-        from graphknows.graphgen.config.taxonomy import EntityGroupConfig
+        from graphknows.domain.taxonomy import EntityGroupConfig
 
         return EntityGroupConfig(
             children=[],
@@ -430,7 +430,7 @@ class TestEntityGroupConfig:
 
 class TestTaxonomyConfig:
     def _make(self):
-        from graphknows.graphgen.config.taxonomy import EntityGroupConfig, TaxonomyConfig
+        from graphknows.domain.taxonomy import EntityGroupConfig, TaxonomyConfig
 
         return TaxonomyConfig(
             name="test",
@@ -455,13 +455,13 @@ class TestTaxonomyConfig:
 
 class TestLoadTaxonomy:
     def test_load_taxonomy_missing_file(self, tmp_path):
-        from graphknows.graphgen.config.taxonomy import load_taxonomy
+        from graphknows.domain.taxonomy import load_taxonomy
 
         with pytest.raises(FileNotFoundError):
             load_taxonomy(str(tmp_path / "nonexistent.yaml"))
 
     def test_load_taxonomy_valid_yaml(self, tmp_path):
-        from graphknows.graphgen.config.taxonomy import load_taxonomy
+        from graphknows.domain.taxonomy import load_taxonomy
 
         yaml_content = textwrap.dedent(
             """\
@@ -487,14 +487,14 @@ class TestLoadTaxonomy:
 
 class TestGetDefaultTaxonomy:
     def test_loads_without_env(self, monkeypatch):
-        from graphknows.graphgen.config.taxonomy import get_default_taxonomy
+        from graphknows.domain.taxonomy import get_default_taxonomy
 
         monkeypatch.delenv("GRAPHKNOWS_TAXONOMY_FILE", raising=False)
         tax = get_default_taxonomy()
         assert tax.name  # non-empty name
 
     def test_respects_env_var(self, monkeypatch, tmp_path):
-        from graphknows.graphgen.config.taxonomy import get_default_taxonomy
+        from graphknows.domain.taxonomy import get_default_taxonomy
 
         yaml_content = "name: custom\nentity_groups: {}\nrelation_types: []\n"
         custom_yaml = tmp_path / "custom.yaml"
