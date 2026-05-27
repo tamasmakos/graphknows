@@ -30,6 +30,24 @@
 
 source_roots = ["."]
 
+# --- NEW in Wave 2: adapters layer (infra ports + concrete wrappers) ---
+[[modules]]
+path = "graphknows.adapters"
+# Infra-only: concrete implementations of IGraphDb, ISessionDb, IVectorDb, IEmbedder, ILlm
+# Must NOT import graphknows.memory, graphknows.retrieval, graphknows.graphgen,
+# graphknows.mcp, or graphknows.cli
+# NOTE: concrete adapters import from graphknows.retrieval.stores (the existing stores)
+# at TYPE_CHECKING time or at call time — this is the backward-compat bridge for Wave 2.
+# In Wave 5 the stores themselves move here and these retrieval imports are removed.
+depends_on = ["graphknows.config", "graphknows.domain", "graphknows.retrieval"]
+
+# --- NEW in Wave 2: memory.services layer (business logic services) ---
+[[modules]]
+path = "graphknows.memory.services"
+# Service layer: accepts injected port interfaces (IGraphDb, ILlm)
+# Encapsulates orchestration logic extracted from Neo4jStore
+depends_on = ["graphknows.adapters", "graphknows.config", "graphknows.domain"]
+
 # --- NEW in Wave 0: domain already exists, now tracked ---
 [[modules]]
 path = "graphknows.domain"
@@ -72,6 +90,7 @@ path = "graphknows.memory"
 # SMELL: memory → graphgen violates "memory must not call batch pipeline directly"
 # SMELL: memory → retrieval is a bidirectional cycle; resolves when retrieval → adapters
 depends_on = [
+  "graphknows.adapters",
   "graphknows.domain",
   "graphknows.graphgen",
   "graphknows.ingestion",
@@ -108,4 +127,4 @@ depends_on = ["graphknows.memory", "graphknows.retrieval"]
 [[modules]]
 path = "graphknows.builders"
 # TARGET: composition root — Tier 3
-depends_on = ["graphknows.config", "graphknows.retrieval"]
+depends_on = ["graphknows.config", "graphknows.retrieval", "graphknows.adapters"]
