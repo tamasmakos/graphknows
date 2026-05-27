@@ -52,7 +52,11 @@ def _run_node2vec(s: Any) -> None:
             YIELD nodePropertiesWritten, computeMillis
         """).single()
         if n2v:
-            log.info("Node2Vec: %d embeddings in %dms", n2v["nodePropertiesWritten"], n2v["computeMillis"])
+            log.info(
+                "Node2Vec: %d embeddings in %dms",
+                n2v["nodePropertiesWritten"],
+                n2v["computeMillis"],
+            )
     except Exception as exc:
         log.warning("Node2Vec failed (non-fatal): %s", exc)
 
@@ -215,7 +219,9 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
             if comm_result:
                 community_count = comm_result["communityCount"]
                 modularity = comm_result["modularity"] or 0.0
-                modularities = list(comm_result["modularities"]) if comm_result["modularities"] else []
+                modularities = (
+                    list(comm_result["modularities"]) if comm_result["modularities"] else []
+                )
                 ran_levels = comm_result["ranLevels"]
                 result["community_count"] = community_count
                 result["modularity"] = modularity
@@ -233,7 +239,9 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
                         community_members.setdefault(row["cid"], []).append(row["name"])
                     new_hashes: dict[int, str] = {}
                     for cid, names in community_members.items():
-                        h = hashlib.sha1("|".join(sorted(names)).encode(), usedforsecurity=False).hexdigest()
+                        h = hashlib.sha1(
+                            "|".join(sorted(names)).encode(), usedforsecurity=False
+                        ).hexdigest()
                         new_hashes[cid] = h
                     existing = {
                         r["cid"]: r["hash"]
@@ -254,7 +262,12 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
                 s.run(_DROP_GRAPH_CQL, name=PROJECTED_GRAPH_NAME)
 
     elapsed_ms = (time.time() - t0) * 1000
-    log.info("GDS done: %d entities, %d communities, %.0fms", result["entity_count"], result["community_count"], elapsed_ms)
+    log.info(
+        "GDS done: %d entities, %d communities, %.0fms",
+        result["entity_count"],
+        result["community_count"],
+        elapsed_ms,
+    )
     return result
 
 

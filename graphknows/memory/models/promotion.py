@@ -30,4 +30,3 @@ class PromotionRecord(BaseModel):
     elapsed_s: float = 0.0
     errors: list[str] = Field(default_factory=list)
     gds_result: GDSResult | None = None
-
