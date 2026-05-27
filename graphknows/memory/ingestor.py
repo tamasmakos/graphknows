@@ -37,7 +37,6 @@ def _run(coro: Any) -> Any:
 log = logging.getLogger("graphknows.memory.ingestor")
 
 
-
 @dataclass
 class _IngestResultLegacy:
     """Result of a single ingest call.

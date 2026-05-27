@@ -1,4 +1,5 @@
 """Memory operation DTOs."""
+
 from graphknows.memory.adapter_types import MemoryClass
 from graphknows.memory.models.evidence import EvidenceItem
 from graphknows.memory.models.ingest import IngestRequest, IngestResult
