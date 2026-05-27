@@ -1,45 +1,105 @@
 # tach.toml — module boundary enforcement for graphknows
 # Docs: https://docs.gauge.sh/usage/configuration
 #
-# NOTE (2026-05-25): several cross-module dependencies exist that violate the
-# ideal layered architecture. They are documented here as KNOWN ISSUES:
-#   - graphknows.memory imports from graphknows.retrieval (stores, embedder)
-#   - graphknows.graphgen imports from graphknows.retrieval (embedder)
-#   - graphknows.ontology imports from graphknows.retrieval (embedder)
-#   - graphknows.retrieval imports from graphknows.graphgen (DSPyExtractor)
-# TODO: extract shared utilities (embedder, stores) into graphknows.core
-# so the above dependencies can be eliminated.
+# CURRENT STATE (2026-05-27): legacy layout — tracked as-is.
+# See .hermes/plans/wave0-package-map.md for full architecture rationale.
+#
+# KNOWN SMELLS (see wave0-package-map.md §Import Rules for full list):
+#   - graphknows.retrieval ↔ graphknows.graphgen  — bidirectional cycle
+#   - graphknows.retrieval ↔ graphknows.memory    — bidirectional cycle
+#   - graphknows.ontology  → graphknows.retrieval — ontology calling infra directly
+#   - graphknows.memory    → graphknows.graphgen  — memory calling batch pipeline
+#
+# TARGET ARCHITECTURE (to be enforced incrementally; fully active in Wave 5):
+#   graphknows.domain          depends_on = []
+#   graphknows.config          depends_on = []
+#   graphknows.adapters        depends_on = ["graphknows.config", "graphknows.domain"]
+#   graphknows.memory.models   depends_on = ["graphknows.domain", "graphknows.config"]
+#   graphknows.ingestion       depends_on = ["graphknows.domain", "graphknows.config"]
+#   graphknows.memory.stm      depends_on = ["graphknows.adapters", "graphknows.domain", "graphknows.memory.models", "graphknows.config", "graphknows.ingestion"]
+#   graphknows.memory.ltm      depends_on = ["graphknows.adapters", "graphknows.domain", "graphknows.memory.models", "graphknows.config"]
+#   graphknows.memory.semantic depends_on = ["graphknows.adapters", "graphknows.domain", "graphknows.memory.models", "graphknows.config"]
+#   graphknows.graphgen        depends_on = ["graphknows.adapters", "graphknows.domain", "graphknows.config", "graphknows.ingestion"]
+#   graphknows.builders        depends_on = ["graphknows.memory.stm", "graphknows.memory.ltm", "graphknows.memory.semantic", "graphknows.graphgen", "graphknows.adapters", "graphknows.domain", "graphknows.config"]
+#   graphknows.transports.mcp  depends_on = ["graphknows.builders", "graphknows.domain", "graphknows.config"]
+#   graphknows.transports.cli  depends_on = ["graphknows.builders", "graphknows.domain", "graphknows.config"]
+#
+# NOTE: graphknows.migrations is intentionally excluded from tach tracking (Wave 0
+# decision). Its dependency profile is infrastructure-level and not part of the
+# application graph. Revisit before any `tach sync` run in later waves.
 
 source_roots = ["."]
 
+# --- NEW in Wave 0: domain already exists, now tracked ---
+[[modules]]
+path = "graphknows.domain"
+# TARGET: zero-dependency leaf — canonical label constants, taxonomy schema
+# No SMELL: domain correctly imports nothing internal
+depends_on = []
+
+# --- Existing modules (unchanged depends_on; TARGET and SMELL annotations added) ---
+
 [[modules]]
 path = "graphknows.models"
+# TARGET: split into graphknows.memory.models (shared DTOs) + graphknows.graphgen
+#         (pipeline-only DTOs); stale/dead models deleted — Wave 2
+depends_on = []
+
+[[modules]]
+path = "graphknows.ingestion"
+# TARGET: keep as graphknows.ingestion; well-bounded document parsers
 depends_on = []
 
 [[modules]]
 path = "graphknows.ontology"
-depends_on = [ "graphknows.retrieval"]
-
-[[modules]]
-path = "graphknows.ingestion"
-depends_on = []
+# TARGET: split — rel_extractor → graphknows.graphgen.pipeline.entity_relation (Wave 3)
+#                               loader → graphknows.domain (Wave 1)
+# SMELL: ontology → retrieval violates "ontology must not call infra directly";
+#        resolves when retrieval splits into adapters + services in Wave 2
+depends_on = ["graphknows.retrieval"]
 
 [[modules]]
 path = "graphknows.graphgen"
-depends_on = [ "graphknows.retrieval"]
+# TARGET: keep as graphknows.graphgen; internal graphdb/vector_embedder utils
+#         should migrate to graphknows.adapters in Wave 3 (deferred)
+# SMELL: graphgen → retrieval is a cycle with retrieval → graphgen;
+#        both sides should depend on graphknows.adapters after Wave 2 split
+depends_on = ["graphknows.retrieval"]
 
 [[modules]]
 path = "graphknows.memory"
-depends_on = [ "graphknows.graphgen", "graphknows.ingestion", "graphknows.retrieval"]
+# TARGET: restructure into graphknows.memory.stm / .ltm / .semantic in Wave 2
+# SMELL: memory → graphgen violates "memory must not call batch pipeline directly"
+# SMELL: memory → retrieval is a bidirectional cycle; resolves when retrieval → adapters
+depends_on = [
+  "graphknows.graphgen",
+  "graphknows.ingestion",
+  "graphknows.retrieval",
+]
 
 [[modules]]
 path = "graphknows.retrieval"
-depends_on = [ "graphknows.graphgen", "graphknows.memory"]
+# TARGET: split — infra (stores, embedder) → graphknows.adapters
+#                 recall services → graphknows.memory.stm / .ltm — Wave 2
+# SMELL: retrieval → graphgen is a bidirectional cycle (both import each other)
+# SMELL: retrieval → memory is a bidirectional cycle (both import each other)
+depends_on = [
+  "graphknows.graphgen",
+  "graphknows.memory",
+]
 
 [[modules]]
 path = "graphknows.mcp"
-depends_on = [ "graphknows.memory", "graphknows.retrieval", "graphknows.graphgen", "graphknows.ontology"]
+# TARGET: becomes graphknows.transports.mcp in Wave 4;
+#         797-line stdio_server.py split into per-tool-group thin modules
+depends_on = [
+  "graphknows.memory",
+  "graphknows.retrieval",
+  "graphknows.graphgen",
+  "graphknows.ontology",
+]
 
 [[modules]]
 path = "graphknows.cli"
-depends_on = [ "graphknows.memory", "graphknows.retrieval"]
+# TARGET: becomes graphknows.transports.cli in Wave 4
+depends_on = ["graphknows.memory", "graphknows.retrieval"]
