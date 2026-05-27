@@ -11,7 +11,7 @@ constants to ensure consistency.
 
 **Usage**:
     from graphknows.domain.schema import LABEL_ENTITY, REL_HAS_ENTITY
-    
+
     query = f"MATCH (e:{LABEL_ENTITY}) WHERE e.name = $name RETURN e"
 """
 

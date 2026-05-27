@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Pre-commit import validator.
+"""Pre-commit import validator.
 
 Statically walks each service's source tree, collects all top-level
 (non-relative) imports, and checks that every third-party package is
@@ -50,7 +49,6 @@ DIST_TO_IMPORT: dict[str, str] = {
     "pymupdf": "fitz",
     "pdfminer.six": "pdfminer",
     "tavily-python": "tavily",
-    "beautifulsoup4": "bs4",
     "langchain-core": "langchain_core",
     "langchain-openai": "langchain_openai",
     "langchain-text-splitters": "langchain_text_splitters",
@@ -117,8 +115,9 @@ def parse_declared_imports(pyproject: Path) -> set[str]:
 
 
 def collect_imports(src_dirs: list[Path]) -> dict[str, set[str]]:
-    """
-    Walk source dirs, parse each .py file with ast, return
+    """Walk source dirs, parse each .py file with ast.
+
+    Return:
     {file_path: {top_level_import_names}}.
     """
     results: dict[str, set[str]] = {}
@@ -135,14 +134,14 @@ def collect_imports(src_dirs: list[Path]) -> dict[str, set[str]]:
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         names.add(alias.name.split(".")[0])
-                elif isinstance(node, ast.ImportFrom):
-                    if node.level == 0 and node.module:  # absolute import only
-                        names.add(node.module.split(".")[0])
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    names.add(node.module.split(".")[0])  # absolute import only
             results[str(py.relative_to(ROOT))] = names
     return results
 
 
 def check_service(name: str, src_dirs: list[Path], pyproject: Path) -> list[str]:
+    """Check a single service for undeclared or banned imports."""
     declared = parse_declared_imports(pyproject)
     file_imports = collect_imports(src_dirs)
 
@@ -174,6 +173,7 @@ def check_service(name: str, src_dirs: list[Path], pyproject: Path) -> list[str]
 
 
 def main() -> None:
+    """Entry point: check all or selected services and report errors."""
     filter_services = sys.argv[1:] if len(sys.argv) > 1 else list(SERVICES)
     total_errors: list[str] = []
 

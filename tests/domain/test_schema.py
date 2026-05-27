@@ -76,21 +76,25 @@ def test_no_mixed_case_labels_in_codebase():
     """
     # Forbidden patterns (PascalCase labels)
     forbidden_patterns = [
-        r'\([\w]*:Entity\b',
-        r'\([\w]*:Topic\b',
-        r'\([\w]*:Chunk\b',
-        r'\([\w]*:Dialog\b',
-        r'\([\w]*:Session\b',
-        r'\([\w]*:File\b',
-        r'\([\w]*:Turn\b',
+        r"\([\w]*:Entity\b",
+        r"\([\w]*:Topic\b",
+        r"\([\w]*:Chunk\b",
+        r"\([\w]*:Dialog\b",
+        r"\([\w]*:Session\b",
+        r"\([\w]*:File\b",
+        r"\([\w]*:Turn\b",
     ]
 
     violations = []
-    base = Path(__file__).parent.parent.parent / 'graphknows'
+    base = Path(__file__).parent.parent.parent / "graphknows"
 
-    for py_file in base.rglob('*.py'):
+    for py_file in base.rglob("*.py"):
         # Skip test files, migrations, and legacy patches
-        if 'test_' in py_file.name or '/migrations/' in str(py_file) or '/patch/phases/legacy.py' in str(py_file):
+        if (
+            "test_" in py_file.name
+            or "/migrations/" in str(py_file)
+            or "/patch/phases/legacy.py" in str(py_file)
+        ):
             continue
 
         try:
@@ -98,7 +102,11 @@ def test_no_mixed_case_labels_in_codebase():
                 for line_no, line in enumerate(f, 1):
                     # Skip comments and docstrings
                     stripped = line.strip()
-                    if stripped.startswith('#') or stripped.startswith('"""') or stripped.startswith("'''"):
+                    if (
+                        stripped.startswith("#")
+                        or stripped.startswith('"""')
+                        or stripped.startswith("'''")
+                    ):
                         continue
 
                     for pattern in forbidden_patterns:
@@ -127,11 +135,11 @@ def test_schema_ddl_uses_canonical_labels():
     all_ddl = "\n".join(CONSTRAINTS + INDEXES + MEMGRAPH_INDEXES)
 
     # Should contain uppercase labels
-    assert ':SESSION' in all_ddl
-    assert ':ENTITY' in all_ddl
-    assert ':TOPIC' in all_ddl
+    assert ":SESSION" in all_ddl
+    assert ":ENTITY" in all_ddl
+    assert ":TOPIC" in all_ddl
 
     # Should NOT contain mixed-case labels
-    assert ':Entity' not in all_ddl, "schema.py still has :Entity (should be :ENTITY)"
-    assert ':Topic' not in all_ddl, "schema.py still has :Topic (should be :TOPIC)"
-    assert ':Chunk' not in all_ddl, "schema.py still has :Chunk (should be :CHUNK)"
+    assert ":Entity" not in all_ddl, "schema.py still has :Entity (should be :ENTITY)"
+    assert ":Topic" not in all_ddl, "schema.py still has :Topic (should be :TOPIC)"
+    assert ":Chunk" not in all_ddl, "schema.py still has :Chunk (should be :CHUNK)"

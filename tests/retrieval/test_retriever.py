@@ -303,7 +303,6 @@ async def test_feeling_lucky_defaults_to_hybrid():
 # ===========================================================================
 
 
-
 import pytest
 
 from graphknows.retrieval.retriever import RRF_K

@@ -172,10 +172,13 @@ class TestEnsureModelLoaded:
         extractor = _make_extractor()
         extractor._gliner = None
 
-        with patch(
-            "graphknows.graphgen.pipeline.entity_relation.extraction.get_gliner2_model",
-            return_value=None,
-        ), pytest.raises(RuntimeError, match="GLiNER2 model failed to load"):
+        with (
+            patch(
+                "graphknows.graphgen.pipeline.entity_relation.extraction.get_gliner2_model",
+                return_value=None,
+            ),
+            pytest.raises(RuntimeError, match="GLiNER2 model failed to load"),
+        ):
             extractor._ensure_model_loaded()
 
     def test_loads_model_and_sets_attrs(self):
