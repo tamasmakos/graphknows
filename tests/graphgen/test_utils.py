@@ -504,7 +504,7 @@ class TestGetDefaultTaxonomy:
 
         # Patch the path resolution so it uses our tmp file directly
         with patch(
-            "graphknows.graphgen.config.taxonomy.load_taxonomy",
+            "graphknows.domain.taxonomy.load_taxonomy",
             return_value=MagicMock(name="custom"),
         ) as mock_load:
             get_default_taxonomy()
