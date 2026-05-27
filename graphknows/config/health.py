@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # nosec
 
 from graphknows.config import GraphKnowsSettings
 
@@ -10,7 +10,7 @@ from graphknows.config import GraphKnowsSettings
 def get_version() -> str:
     """Return current git commit SHA (short)."""
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()[:12]
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()[:12]  # nosec
     except Exception:
         return "unknown"
 
