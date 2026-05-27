@@ -31,7 +31,7 @@ No agent framework is imported by this package.
 from graphknows.config import GraphKnowsSettings
 from graphknows.container import GraphKnowsContainer
 from graphknows.graphgen import run_ingestion
-from graphknows.models.tools import GraphKnowsTool
+from graphknows.models.tools import GraphKnowsTool  # LEGACY: graphknows.models — retire in Wave 4
 from graphknows.retrieval import HybridRetriever, RetrievalContext
 from graphknows.retrieval.stores import (
     MemgraphStore,
