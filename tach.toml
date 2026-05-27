@@ -146,6 +146,7 @@ path = "graphknows.mcp"
 # TARGET: becomes graphknows.transports.mcp in Wave 4;
 #         797-line stdio_server.py split into per-tool-group thin modules
 depends_on = [
+  "graphknows.builders",
   "graphknows.memory",
   "graphknows.memory.workflows",
   "graphknows.retrieval",
@@ -162,6 +163,7 @@ depends_on = [
   "graphknows.config",
   "graphknows.memory",
   "graphknows.memory.workflows",
+  "graphknows.mcp",
   "graphknows.retrieval",
   "graphknows.recall",
 ]
@@ -186,4 +188,4 @@ depends_on = [
 [[modules]]
 path = "graphknows.builders"
 # TARGET: composition root — Tier 3
-depends_on = ["graphknows.config", "graphknows.retrieval", "graphknows.adapters"]
+depends_on = ["graphknows.config", "graphknows.memory", "graphknows.memory.workflows", "graphknows.retrieval", "graphknows.adapters"]

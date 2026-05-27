@@ -6,7 +6,7 @@ import os
 from typing import Any
 
 from graphknows.mcp._app import app
-from graphknows.mcp._state import get_settings
+from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get_settings
 
 
 def _normalise_and_weight(hits: list[Any], weight: float) -> None:
@@ -78,12 +78,9 @@ async def memory_recall(
     """
     import re
 
-    from graphknows.memory.ingestor import _run
+    from graphknows.retrieval.recall_stm import recall_short_term
     from graphknows.retrieval.stores.embedder import embed_one
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
 
-    s = get_settings()
     embed = embed_one
 
     def _clean(text: str) -> str:
@@ -104,11 +101,8 @@ async def memory_recall(
         ]
 
     if scope in ("stm", "both"):
-        from graphknows.retrieval.recall_stm import recall_short_term
-
-        mg = MemgraphStore(s.memgraph_uri)
-        pg = PgVectorStore(s.pgvector_dsn)
-        _run(pg.connect())
+        mg = get_mg_store()
+        pg = await get_pg_store()
         stm_hits = recall_short_term(
             mg, pg, query, session_id=session_id, top_k=top_k, embed_fn=embed
         )
@@ -118,9 +112,8 @@ async def memory_recall(
     if scope in ("ltm", "both"):
         from graphknows.retrieval.recall_ltm import recall_long_term
 
-        pg2 = PgVectorStore(s.pgvector_dsn)
-        _run(pg2.connect())
-        neo = _get_neo_store()
+        pg2 = await get_pg_store()
+        neo = get_neo_store()
         ltm_hits = recall_long_term(
             neo, pg2, query, top_k=top_k, session_filter=None, embed_fn=embed
         )
@@ -136,12 +129,6 @@ async def memory_recall(
     all_hits.sort(key=lambda r: r.score, reverse=True)
 
     return {"hits": _fmt(all_hits[:top_k])}
-
-
-def _get_neo_store() -> Any:
-    from graphknows.builders.stores import build_neo4j_store
-
-    return build_neo4j_store(get_settings())
 
 
 @app.tool()
@@ -167,11 +154,8 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
     logger = logging.getLogger("graphknows.mcp.tools.stm")
     s = get_settings()
 
-    # Idempotency guard — look up _get_neo via sys.modules so test patches are honoured
-    import sys
-
-    _srv = sys.modules.get("graphknows.mcp.stdio_server")
-    neo_check = _srv._get_neo() if _srv is not None else _get_neo_store()  # type: ignore[union-attr]
+    # Idempotency guard
+    neo_check = get_neo_store()
     with neo_check.session() as neo_sess:
         rows = list(
             neo_sess.run(
