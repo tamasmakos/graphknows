@@ -91,7 +91,8 @@ depends_on = ["graphknows.domain", "graphknows.retrieval"]
 [[modules]]
 path = "graphknows.memory"
 # TARGET: restructure into graphknows.memory.stm / .ltm / .semantic in Wave 2
-# RESOLVED Wave 5: memory.dialog.py deleted; memory no longer depends on graphknows.graphgen
+# PARTIAL Wave 5: memory.dialog.py shim deleted; memory.extractor still depends on graphgen (get_gliner2_model)
+# SMELL: memory → graphgen cycle persists; resolves when extractor moves to graphknows.adapters
 depends_on = [
   "graphknows.adapters",
   "graphknows.domain",
@@ -137,7 +138,8 @@ path = "graphknows.retrieval"
 # TARGET: split — infra (stores, embedder) → graphknows.adapters
 #                 recall services → graphknows.memory.stm / .ltm — Wave 2
 # SMELL: retrieval → graphgen is a bidirectional cycle (both import each other)
-# RESOLVED Wave 5: recall_stm.py deleted; retrieval no longer pulls memory.stm / .ltm / .graphgen
+# PARTIAL Wave 5: recall_stm.py shim deleted (shim→shim cycle broken); retrieval still depends on
+# memory.stm (RRF_K), memory.ltm (LTMEnrichmentService), graphgen (DSPyExtractor) via neo4j.py and recall_ltm.py
 depends_on = [
   "graphknows.memory.models",  # recall_ltm uses RecallResult from memory.models.recall
   "graphknows.memory.stm",     # recall_ltm uses RRF_K + _async_bridge from memory.stm
