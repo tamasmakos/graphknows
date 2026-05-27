@@ -144,3 +144,5 @@ class GraphKnowsSettings(BaseSettings):
             raise ValueError("NEO4J_PASSWORD is still the development default.")
         if "***" in self.pgvector_dsn:
             raise ValueError("PGVECTOR_DSN contains the masked development default.")
+
+from graphknows.config.health import check_backends, get_version  # noqa: F401

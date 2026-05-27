@@ -142,64 +142,10 @@ async def memory_doctor() -> dict[str, Any]:
 
     Returns a dict with boolean values for each backend, plus version and pid.
     """
-    import asyncpg
+    from graphknows.config.health import check_backends  # noqa: PLC0415
 
-    result: dict[str, Any] = {}
-
-    # Memgraph
-    try:
-        from neo4j import GraphDatabase
-
-        drv = GraphDatabase.driver(_mg_uri(), auth=("", ""))  # NOSONAR
-        with drv.session() as s:
-            s.run("RETURN 1").single()
-        drv.close()
-        result["memgraph"] = True
-    except Exception:
-        logger.exception("Memgraph connectivity check failed")
-        result["memgraph"] = False
-
-    # Neo4j
-    try:
-        from neo4j import GraphDatabase
-
-        uri, user, pw = _neo4j_creds()
-        drv = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
-        with drv.session() as s:
-            s.run("RETURN 1").single()
-        drv.close()
-        result["neo4j"] = True
-    except Exception:
-        logger.exception("Neo4j connectivity check failed")
-        result["neo4j"] = False
-
-    # pgvector
-    try:
-        conn = await asyncpg.connect(_pg_dsn())
-        await conn.close()
-        result["pgvector"] = True
-    except Exception:
-        logger.exception("pgvector connectivity check failed")
-        result["pgvector"] = False
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "rev-parse",
-            "--short",
-            "HEAD",
-            cwd="/root/graphknows",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
-        v = stdout.decode().strip() if proc.returncode == 0 else "unknown"
-    except Exception:
-        v = "unknown"
-
-    result["version"] = v
+    result = await check_backends(_get_settings())
     result["pid"] = os.getpid()
-
     return result
 
 

@@ -340,39 +340,11 @@ def forget_before(date: str) -> None:
 @cli.command("doctor")
 def doctor_cmd() -> None:
     """Health check: connectivity to Memgraph, Neo4j, pgvector."""
-    import asyncio
+    import asyncio  # noqa: PLC0415
 
-    import asyncpg as apg
+    from graphknows.config.health import check_backends  # noqa: PLC0415
 
-    # Memgraph
-    try:
-        from neo4j import GraphDatabase
-
-        mg_drv = GraphDatabase.driver(_mg_uri(), auth=("", ""))  # NOSONAR
-        with mg_drv.session() as s:
-            s.run("RETURN 1").single()
-        mg_drv.close()
-        click.echo("[OK] Memgraph reachable")
-    except Exception as exc:
-        click.echo(f"[FAIL] Memgraph: {exc}")
-
-    # Neo4j
-    try:
-        d = _neo4j_driver()
-        with d.session() as s:
-            s.run("RETURN 1").single()
-        d.close()
-        click.echo("[OK] Neo4j reachable")
-    except Exception as exc:
-        click.echo(f"[FAIL] Neo4j: {exc}")
-
-    # pgvector
-    async def _pg_check():
-        conn = await apg.connect(_pg_dsn())
-        await conn.close()
-
-    try:
-        asyncio.run(_pg_check())
-        click.echo("[OK] pgvector reachable")
-    except Exception as exc:
-        click.echo(f"[FAIL] pgvector: {exc}")
+    result = asyncio.run(check_backends(GraphKnowsSettings()))
+    for key, val in result.items():
+        status = "[OK]" if val is True else "[FAIL]" if val is False else "[INFO]"
+        click.echo(f"{status} {key}: {val}")
