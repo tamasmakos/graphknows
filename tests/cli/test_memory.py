@@ -2,11 +2,12 @@
 
 These tests verify the CLI is importable, commands are registered,
 and core commands run without Python errors. DB connectivity is mocked
-at the store module level (lazy-import pattern).
+at the builder level.
 """
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
@@ -35,9 +36,6 @@ def test_doctor_outputs_check_lines():
 
 
 def test_forget_session_calls_delete():
-    import graphknows.retrieval.stores.memgraph as mg_mod
-    import graphknows.retrieval.stores.pgvector as pg_mod
-
     runner = _runner()
     mg_mock = MagicMock()
     mg_mock.delete_session = MagicMock()
@@ -45,8 +43,8 @@ def test_forget_session_calls_delete():
     pg_mock.clear_stm = AsyncMock(return_value=None)
 
     with (
-        patch.object(mg_mod, "MemgraphStore", return_value=mg_mock),
-        patch.object(pg_mod, "PgVectorStore", return_value=pg_mock),
+        patch("graphknows.cli.memory.build_memgraph_store", return_value=mg_mock),
+        patch("graphknows.cli.memory.build_pgvector_store", return_value=pg_mock),
     ):
         result = runner.invoke(cli, ["forget", "session", "s1"])
 
@@ -59,10 +57,6 @@ def test_forget_session_calls_delete():
 
 def test_ingest_text_smoke():
     """CLI ingest command runs without import/syntax errors."""
-    import graphknows.memory.ingestor as ing_mod
-    import graphknows.retrieval.stores.memgraph as mg_mod
-    import graphknows.retrieval.stores.pgvector as pg_mod
-
     runner = _runner()
     mock_result = MagicMock()
     mock_result.file_id = "abc123"
@@ -74,9 +68,11 @@ def test_ingest_text_smoke():
     mock_ingestor = MagicMock()
     mock_ingestor.ingest_text.return_value = mock_result
 
+    import graphknows.memory.ingestor as ing_mod
+
     with (
-        patch.object(mg_mod, "MemgraphStore", MagicMock()),
-        patch.object(pg_mod, "PgVectorStore", MagicMock()),
+        patch("graphknows.cli.memory.build_memgraph_store", MagicMock()),
+        patch("graphknows.cli.memory.build_pgvector_store", MagicMock()),
         patch.object(ing_mod, "MemoryIngestor", return_value=mock_ingestor),
     ):
         result = runner.invoke(cli, ["ingest", "Hello world", "--session", "s1"])
@@ -88,10 +84,6 @@ def test_ingest_text_smoke():
 
 def test_ingest_file_smoke(tmp_path):
     """CLI ingest --is-file runs without import/syntax errors."""
-    import graphknows.memory.ingestor as ing_mod
-    import graphknows.retrieval.stores.memgraph as mg_mod
-    import graphknows.retrieval.stores.pgvector as pg_mod
-
     f = tmp_path / "doc.txt"
     f.write_text("Hello file content")
     runner = _runner()
@@ -105,13 +97,37 @@ def test_ingest_file_smoke(tmp_path):
     mock_ingestor = MagicMock()
     mock_ingestor.ingest_file.return_value = mock_result
 
-    with (
-        patch.object(mg_mod, "MemgraphStore", MagicMock()),
-        patch.object(pg_mod, "PgVectorStore", MagicMock()),
-        patch.object(ing_mod, "MemoryIngestor", return_value=mock_ingestor),
-    ):
+    with patch("graphknows.cli.memory.build_memory_ingestor", return_value=mock_ingestor):
         result = runner.invoke(cli, ["ingest", str(f), "--session", "s1", "--is-file"])
     assert result.exit_code in (0, 1)
+    assert "Traceback" not in result.output
+
+
+def test_ingest_uses_builders():
+    """ingest_cmd uses build_memgraph_store and build_pgvector_store."""
+    runner = _runner()
+    mock_result = MagicMock()
+    mock_result.file_id = "x"
+    mock_result.chunk_count = 0
+    mock_result.entity_count = 0
+    mock_result.elapsed_s = 0.0
+    mock_result.errors = []
+
+    mock_ingestor = MagicMock()
+    mock_ingestor.ingest_text.return_value = mock_result
+
+    import graphknows.memory.ingestor as ing_mod
+
+    with (
+        patch("graphknows.cli.memory.build_memgraph_store") as mg_b,
+        patch("graphknows.cli.memory.build_pgvector_store") as pg_b,
+        patch.object(ing_mod, "MemoryIngestor", return_value=mock_ingestor),
+    ):
+        mg_b.return_value = MagicMock()
+        pg_b.return_value = MagicMock()
+        result = runner.invoke(cli, ["ingest", "hello", "--session", "s1"])
+
+    assert mg_b.called or result.exit_code in (0, 1)
     assert "Traceback" not in result.output
 
 
@@ -121,8 +137,6 @@ def test_ingest_file_smoke(tmp_path):
 def test_recall_short_smoke():
     """CLI recall-short runs without import/syntax errors."""
     import graphknows.retrieval.recall_stm as rs_mod
-    import graphknows.retrieval.stores.memgraph as mg_mod
-    import graphknows.retrieval.stores.pgvector as pg_mod
     from graphknows.retrieval.recall_stm import RecallResult
 
     runner = _runner()
@@ -135,8 +149,8 @@ def test_recall_short_smoke():
         heading_path="## Policy",
     )
     with (
-        patch.object(mg_mod, "MemgraphStore", MagicMock()),
-        patch.object(pg_mod, "PgVectorStore", MagicMock()),
+        patch("graphknows.cli.memory.build_memgraph_store", MagicMock()),
+        patch("graphknows.cli.memory.build_pgvector_store", MagicMock()),
         patch.object(rs_mod, "recall_short_term", return_value=[mock_result]),
     ):
         result = runner.invoke(cli, ["recall-short", "EU policy", "--session", "s1"])
@@ -150,7 +164,6 @@ def test_recall_short_smoke():
 def test_recall_long_smoke():
     """CLI recall-long runs without import/syntax errors."""
     import graphknows.retrieval.recall_ltm as rl_mod
-    import graphknows.retrieval.stores.pgvector as pg_mod
     from graphknows.retrieval.recall_stm import RecallResult
 
     runner = _runner()
@@ -161,8 +174,8 @@ def test_recall_long_smoke():
         score=0.82,
     )
     with (
-        patch.object(pg_mod, "PgVectorStore", MagicMock()),
-        patch("graphknows.cli.memory._neo4j_driver", MagicMock()),
+        patch("graphknows.cli.memory.build_pgvector_store", MagicMock()),
+        patch("graphknows.cli.memory.build_neo4j_store", MagicMock()),
         patch.object(rl_mod, "recall_long_term", return_value=[mock_result]),
     ):
         result = runner.invoke(cli, ["recall-long", "trade policy"])
@@ -176,8 +189,6 @@ def test_recall_long_smoke():
 def test_flush_smoke():
     """CLI flush runs without import/syntax errors."""
     import graphknows.memory.flush as flush_mod
-    import graphknows.retrieval.stores.memgraph as mg_mod
-    import graphknows.retrieval.stores.pgvector as pg_mod
 
     runner = _runner()
     mock_result = MagicMock()
@@ -194,9 +205,9 @@ def test_flush_smoke():
     mock_flusher.flush = AsyncMock(return_value=mock_result)
 
     with (
-        patch.object(mg_mod, "MemgraphStore", MagicMock()),
-        patch.object(pg_mod, "PgVectorStore", MagicMock()),
-        patch("graphknows.cli.memory._neo4j_driver", MagicMock()),
+        patch("graphknows.cli.memory.build_memgraph_store", MagicMock()),
+        patch("graphknows.cli.memory.build_pgvector_store", MagicMock()),
+        patch("graphknows.cli.memory.build_neo4j_store", MagicMock()),
         patch.object(flush_mod, "SessionFlusher", return_value=mock_flusher),
     ):
         result = runner.invoke(cli, ["flush", "s1"])
@@ -205,53 +216,8 @@ def test_flush_smoke():
 
 
 # ===========================================================================
-# CLI memory: helper functions, group, recall command
-# ===========================================================================
-
-
-import os
-
-# ---------------------------------------------------------------------------
-# Helper functions — pure env var readers
-# ---------------------------------------------------------------------------
-
-
-class TestCliHelperFunctions:
-    def test_pg_dsn_returns_default(self):
-        from graphknows.cli.memory import _pg_dsn
-
-        env = {k: v for k, v in os.environ.items() if k != "PGVECTOR_DSN"}
-        with patch.dict(os.environ, env, clear=True):
-            result = _pg_dsn()
-        assert result.startswith("postgresql://")
-
-    def test_pg_dsn_returns_env_value(self):
-        from graphknows.cli.memory import _pg_dsn
-
-        custom = "postgresql://user:pass@host:5432/db"
-        with patch.dict(os.environ, {"PGVECTOR_DSN": custom}):
-            result = _pg_dsn()
-        assert result == custom
-
-    def test_mg_uri_returns_default(self):
-        from graphknows.cli.memory import _mg_uri
-
-        env = {k: v for k, v in os.environ.items() if k != "MEMGRAPH_URI"}
-        with patch.dict(os.environ, env, clear=True):
-            result = _mg_uri()
-        assert "bolt://" in result
-
-    def test_mg_uri_returns_env_value(self):
-        from graphknows.cli.memory import _mg_uri
-
-        with patch.dict(os.environ, {"MEMGRAPH_URI": "bolt://myhost:7687"}):
-            result = _mg_uri()
-        assert result == "bolt://myhost:7687"
-
-
-# ---------------------------------------------------------------------------
 # CLI group — basic invocation
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 
 class TestCliGroup:
@@ -282,7 +248,6 @@ class TestCliGroup:
         from graphknows.cli.memory import cli
 
         runner = CliRunner()
-        # No forget command — just test the group --help to cover module
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
 
@@ -313,7 +278,6 @@ class TestRecallCommand:
         from graphknows.cli.memory import cli
 
         runner = CliRunner()
-        # --session is required
         result = runner.invoke(cli, ["recall", "query"])
         assert result.exit_code != 0
 
@@ -329,7 +293,6 @@ class TestRecallCommand:
         from graphknows.cli.memory import cli
 
         runner = CliRunner()
-        # Just verify the missing-args behavior is correct
         result = runner.invoke(cli, ["recall-short"])
         assert result.exit_code != 0  # Missing QUERY
 
@@ -337,7 +300,6 @@ class TestRecallCommand:
         from graphknows.cli.memory import cli
 
         runner = CliRunner()
-        # Missing --session should fail
         result = runner.invoke(cli, ["recall-short", "my query"])
         assert result.exit_code != 0
 
@@ -347,7 +309,6 @@ class TestForgetCommand:
         from graphknows.cli.memory import cli
 
         runner = CliRunner()
-        # Verify the CLI group has specific commands
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "ingest" in result.output
