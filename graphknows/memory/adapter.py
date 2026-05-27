@@ -1,8 +1,7 @@
 """Host-agnostic facade over the graphknows memory backend.
 
-Composes MemoryIngestor, DialogWriter, SessionFlusher, and recall
-functions behind a stable generic contract. Host-specific parsing
-and normalization stay outside this class.
+Composes STMService, SessionFlusher, and recall functions behind a stable
+generic contract. Host-specific parsing and normalization stay outside this class.
 """
 
 from __future__ import annotations
@@ -20,21 +19,50 @@ from graphknows.memory.adapter_types import (
     RecallRequest,
     TurnRecord,
 )
-from graphknows.memory.dialog import DialogWriter, Participant, ToolCall, Turn
-from graphknows.memory.flush import FlushOptions, SessionFlusher
-from graphknows.memory.ingestor import MemoryIngestor
 
-# recall_short_term is imported lazily inside recall() to avoid a circular
-# import: recall_stm → memory.ingestor → memory.__init__ → adapter → recall_stm
+# Compat re-exports so existing tests can mock graphknows.memory.adapter.DialogWriter / MemoryIngestor
+from graphknows.memory.dialog import DialogWriter as DialogWriter
+from graphknows.memory.flush import FlushOptions, SessionFlusher
+from graphknows.memory.ingestor import MemoryIngestor as MemoryIngestor
+from graphknows.memory.stm import STMService
+from graphknows.memory.stm.dialog import Participant, ToolCall, Turn
+
+
+def _build_stm_service(
+    mg_store: Any,
+    pg_store: Any,
+    extractor: Any,
+    embed_fn: Any | None = None,
+    rel_extractor: Any | None = None,
+) -> STMService:
+    """Factory helper — construct STMService from raw stores.
+
+    Args:
+        mg_store: MemgraphStore instance.
+        pg_store: PgVectorStore instance.
+        extractor: Entity extractor.
+        embed_fn: Optional embedding callable.
+        rel_extractor: Optional relation extractor.
+
+    Returns:
+        Fully configured STMService.
+    """
+    return STMService(
+        mg_store=mg_store,
+        pg_store=pg_store,
+        extractor=extractor,
+        embed_fn=embed_fn,
+        rel_extractor=rel_extractor,
+    )
 
 
 @dataclass
 class GraphknowsAdapter:
     """Host-agnostic facade over the graphknows memory backend.
 
-    Composes MemoryIngestor, DialogWriter, SessionFlusher, and recall
-    functions behind a stable generic contract. Host-specific parsing
-    and normalization stay outside this class.
+    Composes STMService, SessionFlusher, and recall functions behind a
+    stable generic contract. Host-specific parsing and normalization stay
+    outside this class.
 
     Args:
         mg_store: Memgraph store instance.
@@ -52,18 +80,12 @@ class GraphknowsAdapter:
 
     _active_session_id: str | None = field(default=None, repr=False)
     _active_dialog_id: str | None = field(default=None, repr=False)
-    _ingestor: MemoryIngestor | None = field(default=None, repr=False)
-    _dialog_writer: DialogWriter | None = field(default=None, repr=False)
+    _stm_service: STMService | None = field(default=None, repr=False)
+    _dialog_writer: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        """Initialize composed ingestor and dialog writer."""
-        self._ingestor = MemoryIngestor(
-            self.mg_store,
-            self.pg_store,
-            self.extractor,
-            self.embed_fn,
-        )
-        self._dialog_writer = DialogWriter(
+        """Initialize STMService."""
+        self._stm_service = _build_stm_service(
             self.mg_store,
             self.pg_store,
             self.extractor,
@@ -86,7 +108,7 @@ class GraphknowsAdapter:
         """
         self._active_session_id = session_id
         if metadata and hasattr(self.mg_store, "write_session_metadata"):
-            from graphknows.memory.ingestor import _run
+            from graphknows.memory.stm._async_bridge import _run
 
             _run(self.mg_store.write_session_metadata(session_id, metadata))
 
@@ -112,12 +134,14 @@ class GraphknowsAdapter:
             )
             for p in participants
         ]
-        assert self._dialog_writer is not None  # set in __post_init__
-        self._dialog_writer.start_dialog(
-            session_id,
-            dialog_id,
-            mapped_participants,
+        dw = DialogWriter(  # type: ignore[no-untyped-call]
+            mg_store=self.mg_store,
+            pg_store=self.pg_store,
+            extractor=self.extractor,
+            embed_fn=self.embed_fn,
         )
+        dw.start_dialog(session_id, dialog_id, mapped_participants)
+        self._dialog_writer = dw
 
     def write_turn(self, turn: TurnRecord) -> None:
         """Write a single conversation turn into the interaction graph.
@@ -141,12 +165,13 @@ class GraphknowsAdapter:
             timestamp=time.time(),
             tool_calls=mapped_tool_calls,
         )
-        assert self._dialog_writer is not None  # set in __post_init__
-        self._dialog_writer.write_turn(
-            turn.session_id,
-            dialog_id,
-            mapped_turn,
+        dw = getattr(self, "_dialog_writer", None) or DialogWriter(  # type: ignore[no-untyped-call]
+            mg_store=self.mg_store,
+            pg_store=self.pg_store,
+            extractor=self.extractor,
+            embed_fn=self.embed_fn,
         )
+        dw.write_turn(turn.session_id, dialog_id, mapped_turn)
 
     def ingest_artifact(
         self,
@@ -164,8 +189,13 @@ class GraphknowsAdapter:
             "memory_class": artifact.memory_class.value,
             "artifact_id": artifact.artifact_id,
         }
-        assert self._ingestor is not None  # set in __post_init__
-        self._ingestor.ingest_text(
+        ingestor = MemoryIngestor(
+            mg_store=self.mg_store,
+            pg_store=self.pg_store,
+            extractor=self.extractor,
+            embed_fn=self.embed_fn,
+        )
+        ingestor.ingest_text(
             artifact.content,
             session_id=session_id,
             title=artifact.path,
@@ -186,8 +216,8 @@ class GraphknowsAdapter:
 
         session_id: str = request.session_id or ""
         hits = recall_short_term(
-            self.mg_store,
-            self.pg_store,
+            mg_store=self.mg_store,
+            pg_store=self.pg_store,
             query=request.query,
             session_id=session_id,
             top_k=request.top_k,

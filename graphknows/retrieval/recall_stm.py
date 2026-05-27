@@ -1,30 +1,31 @@
-"""Short-term memory recall: Memgraph entity graph + pgvector stm_chunks/stm_turns."""
+"""Short-term memory recall — compatibility shim.
+
+DEPRECATED: Use graphknows.memory.stm.recall directly.
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+import warnings
 
-from graphknows.memory.ingestor import _run
-from graphknows.memory.models.recall import RecallResult
+warnings.warn(
+    "graphknows.retrieval.recall_stm is deprecated; import from graphknows.memory.stm.recall instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 log = logging.getLogger("graphknows.retrieval.recall_stm")
 
-RRF_K: int = 60
+from typing import Any  # noqa: E402
 
-
-_SHAPE_FACTORS: dict[str | None, float] = {
-    "fact": 1.5,
-    "state": 1.4,
-    "episode": 1.3,
-    "summary": 1.2,
-    "raw_evidence": 0.6,
-}
-
-
-def _shape_score(score: float, memory_class: str | None) -> float:
-    """Apply memory_class-aware multiplicative boost/de-boost to a score."""
-    return score * _SHAPE_FACTORS.get(memory_class, 1.0)
+from graphknows.memory.models.recall import RecallResult  # noqa: E402
+from graphknows.memory.stm._async_bridge import _run as _run  # noqa: E402 — compat for tests
+from graphknows.memory.stm.recall import (  # noqa: E402
+    RRF_K,
+    _entity_boost,
+    _shape_score,
+    recall_short_term,
+)
 
 
 def _run_stm_ann(
@@ -34,7 +35,7 @@ def _run_stm_ann(
     top_k: int,
     results: dict[str, tuple[float, RecallResult]],
 ) -> None:
-    """ANN search stm_chunks + stm_turns; populate results dict."""
+    """ANN search stm_chunks + stm_turns — shim that uses local _run so tests can mock it."""
     try:
         chunks = _run(pg_store.search_stm_chunks(session_id, embedding, top_k=top_k * 2))
         for rank, chunk in enumerate(chunks):
@@ -89,95 +90,11 @@ def _run_stm_ann(
         log.warning("stm_turns ANN failed: %s", exc)
 
 
-def _entity_boost(
-    mg_store: Any,
-    session_id: str,
-    words: list[str],
-    top_k: int,
-    results: dict[str, tuple[float, RecallResult]],
-) -> None:
-    """Entity-first path: boost chunks co-mentioned with matched entities."""
-    if not words:
-        return
-    try:
-        entity_chunks = _run(
-            mg_store.query_entity_chunks(
-                session_id=session_id,
-                entity_names=words,
-                top_k=top_k,
-            )
-        )
-        for rank, ec in enumerate(entity_chunks):
-            rrf = 1.0 / (RRF_K + rank + 1)
-            cid = ec["chunk_id"]
-            if cid in results:
-                old_score, old_result = results[cid]
-                new_score = old_score + rrf
-                old_result.score = new_score
-                old_result.entity_names = ec.get("entity_names", [])
-                results[cid] = (new_score, old_result)
-            else:
-                # Entity-only chunk — add it with entity_names from the graph result
-                results[cid] = (
-                    rrf,
-                    RecallResult(
-                        text=ec.get("text", ""),
-                        source_type="chunk",
-                        scope="short_term",
-                        score=rrf,
-                        entity_names=ec.get("entity_names", []),
-                        heading_path=ec.get("heading_path", ""),
-                        provenance={
-                            "session_id": session_id,
-                            "file_id": ec.get("file_id", ""),
-                            "memory_class": ec.get("memory_class", "raw_evidence"),
-                        },
-                        metadata=ec.get("metadata", {}),
-                    ),
-                )
-    except Exception as exc:
-        log.warning("Memgraph entity path failed: %s", exc)
-
-
-def recall_short_term(
-    mg_store: Any,
-    pg_store: Any,
-    query: str,
-    session_id: str,
-    top_k: int = 5,
-    embed_fn: Any | None = None,
-) -> list[RecallResult]:
-    """Recall from short-term memory: Memgraph entity graph + stm_* ANN, RRF-fused.
-
-    Args:
-        mg_store: MemgraphStore with session entity graph.
-        pg_store: PgVectorStore with stm_chunks and stm_turns.
-        query: Natural-language query.
-        session_id: Session namespace to scope all queries.
-        top_k: Max results to return.
-        embed_fn: Embedding callable (defaults to embed_one).
-
-    Returns:
-        List of RecallResult sorted by RRF score descending.
-    """
-    if embed_fn is None:
-        from graphknows.retrieval.stores.embedder import embed_one
-
-        embed_fn = embed_one
-
-    words = [w for w in query.lower().split() if len(w) > 3]
-    embedding = embed_fn(query)
-    results: dict[str, tuple[float, RecallResult]] = {}
-
-    _run_stm_ann(pg_store, session_id, embedding, top_k, results)
-    _entity_boost(mg_store, session_id, words, top_k, results)
-
-    sorted_results = sorted(results.values(), key=lambda x: x[0], reverse=True)
-    shaped = []
-    for score, result in sorted_results:
-        memory_class = result.metadata.get("memory_class")
-        new_score = _shape_score(score, memory_class)
-        result.score = new_score
-        shaped.append((new_score, result))
-    shaped.sort(key=lambda x: x[0], reverse=True)
-    return [r for _, r in shaped[:top_k]]
+__all__ = [
+    "RRF_K",
+    "RecallResult",
+    "_entity_boost",
+    "_run_stm_ann",
+    "_shape_score",
+    "recall_short_term",
+]

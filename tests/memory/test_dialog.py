@@ -1,8 +1,14 @@
-"""Unit tests for DialogWriter."""
+"""Unit tests for DialogWriter (shim — delegates to DialogCapture).
+
+These tests verify shim backward-compatibility and DeprecationWarning.
+"""
 
 from __future__ import annotations
 
+import warnings
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from graphknows.memory.dialog import DialogWriter, Participant, ToolCall, Turn
 from graphknows.memory.extractor import ExtractionResult
@@ -26,7 +32,8 @@ def _make_writer(extractor=None, embed_fn=None):
         setattr(mg, attr, AsyncMock(return_value=None))
     pg.write_stm_turn = AsyncMock(return_value=None)
     embed = embed_fn or MagicMock(return_value=[0.1] * 10)
-    writer = DialogWriter(mg, pg, extractor=extractor, embed_fn=embed)
+    with pytest.warns(DeprecationWarning, match="DialogWriter is deprecated"):
+        writer = DialogWriter(mg, pg, extractor=extractor, embed_fn=embed)
     return writer, mg, pg, embed
 
 

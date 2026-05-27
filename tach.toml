@@ -88,13 +88,32 @@ depends_on = ["graphknows.domain", "graphknows.retrieval"]
 path = "graphknows.memory"
 # TARGET: restructure into graphknows.memory.stm / .ltm / .semantic in Wave 2
 # SMELL: memory → graphgen violates "memory must not call batch pipeline directly"
-# SMELL: memory → retrieval is a bidirectional cycle; resolves when retrieval → adapters
 depends_on = [
   "graphknows.adapters",
   "graphknows.domain",
   "graphknows.graphgen",
   "graphknows.ingestion",
   "graphknows.retrieval",
+  "graphknows.memory.stm",
+  "graphknows.memory.models",
+]
+
+[[modules]]
+path = "graphknows.memory.stm"
+# Owns: STM ingest, dialog capture, STM recall.
+depends_on = [
+  "graphknows.config",
+  "graphknows.domain",
+  "graphknows.memory.models",
+  "graphknows.ingestion",
+  "graphknows.retrieval",   # temporary: direct store access until #37 adapters land
+]
+
+[[modules]]
+path = "graphknows.memory.models"
+depends_on = [
+  "graphknows.domain",
+  "graphknows.memory",
 ]
 
 [[modules]]
@@ -102,10 +121,11 @@ path = "graphknows.retrieval"
 # TARGET: split — infra (stores, embedder) → graphknows.adapters
 #                 recall services → graphknows.memory.stm / .ltm — Wave 2
 # SMELL: retrieval → graphgen is a bidirectional cycle (both import each other)
-# SMELL: retrieval → memory is a bidirectional cycle (both import each other)
+# recall_stm.py is now a shim; deep deps moved to graphknows.memory.stm
 depends_on = [
   "graphknows.graphgen",
-  "graphknows.memory",
+  "graphknows.memory.stm",
+  "graphknows.memory.models",  # recall_stm shim re-exports RecallResult
 ]
 
 [[modules]]
