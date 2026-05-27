@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from graphknows.adapters.ports.graph_db import IGraphDb
 from graphknows.adapters.ports.llm import ILlm
+from graphknows.adapters.ports.vector_db import IVectorDb
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class TopicService:
         session_id: str,
         openrouter_key: str,
         llm_model: str = "meta-llama/llama-3.1-8b-instruct",
-        pg_store: Any = None,
+        pg_store: IVectorDb | None = None,
     ) -> int:
         """Detect entity communities, summarize with LLM, write TOPICs.
 

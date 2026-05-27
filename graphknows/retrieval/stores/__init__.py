@@ -8,12 +8,8 @@
 
 from __future__ import annotations
 
+import importlib
 import warnings
-
-from graphknows.retrieval.stores.embedder import embed, embed_one, get_embedder
-from graphknows.retrieval.stores.memgraph import MemgraphStore
-from graphknows.retrieval.stores.neo4j import Neo4jStore
-from graphknows.retrieval.stores.pgvector import PgVectorStore
 
 __all__ = [
     "MemgraphStore",
@@ -24,7 +20,16 @@ __all__ = [
     "get_embedder",
 ]
 
-_DEPRECATED_NAMES: dict[str, str] = {
+_LAZY_MAP: dict[str, tuple[str, str]] = {
+    "MemgraphStore": ("graphknows.retrieval.stores.memgraph", "MemgraphStore"),
+    "Neo4jStore": ("graphknows.retrieval.stores.neo4j", "Neo4jStore"),
+    "PgVectorStore": ("graphknows.retrieval.stores.pgvector", "PgVectorStore"),
+    "embed": ("graphknows.retrieval.stores.embedder", "embed"),
+    "embed_one": ("graphknows.retrieval.stores.embedder", "embed_one"),
+    "get_embedder": ("graphknows.retrieval.stores.embedder", "get_embedder"),
+}
+
+_REPLACEMENT: dict[str, str] = {
     "MemgraphStore": "graphknows.adapters.memgraph_adapter.MemgraphAdapter",
     "Neo4jStore": "graphknows.adapters.neo4j_adapter.Neo4jAdapter",
     "PgVectorStore": "graphknows.adapters.pgvector_adapter.PgVectorAdapter",
@@ -35,14 +40,16 @@ _DEPRECATED_NAMES: dict[str, str] = {
 
 
 def __getattr__(name: str) -> object:
-    """PEP 562 module __getattr__ for DeprecationWarning on store imports."""
-    if name in _DEPRECATED_NAMES:
+    """PEP 562 lazy import with DeprecationWarning."""
+    if name in _LAZY_MAP:
         warnings.warn(
             f"graphknows.retrieval.stores.{name} is deprecated. "
-            f"Use {_DEPRECATED_NAMES[name]} or the IGraphDb/ISessionDb/IVectorDb ports instead. "
+            f"Use {_REPLACEMENT[name]} or the port interfaces instead. "
             "This shim will be removed in Wave 5.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return globals()[name]
+        mod_name, attr = _LAZY_MAP[name]
+        mod = importlib.import_module(mod_name)
+        return getattr(mod, attr)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
