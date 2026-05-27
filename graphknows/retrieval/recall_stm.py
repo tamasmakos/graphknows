@@ -6,18 +6,26 @@ DEPRECATED: Use graphknows.memory.stm.recall directly.
 from __future__ import annotations
 
 import logging
-from typing import Any
+import warnings
 
-from graphknows.memory.models.recall import RecallResult
-from graphknows.memory.stm._async_bridge import _run as _run
-from graphknows.memory.stm.recall import (
+warnings.warn(
+    "graphknows.retrieval.recall_stm is deprecated; import from graphknows.memory.stm.recall instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+log = logging.getLogger("graphknows.retrieval.recall_stm")
+
+from typing import Any  # noqa: E402
+
+from graphknows.memory.models.recall import RecallResult  # noqa: E402
+from graphknows.memory.stm._async_bridge import _run as _run  # noqa: E402 — compat for tests
+from graphknows.memory.stm.recall import (  # noqa: E402
     RRF_K,
     _entity_boost,
     _shape_score,
     recall_short_term,
 )
-
-log = logging.getLogger("graphknows.retrieval.recall_stm")
 
 
 def _run_stm_ann(
