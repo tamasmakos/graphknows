@@ -173,15 +173,45 @@ class GraphKnowsContainer:
         title: str,
         config_override: dict[str, Any],
     ) -> None:
+        import warnings
+
+        warnings.warn(
+            "GraphKnowsContainer._run_ingest_task is deprecated and will be removed in Wave 4. "
+            "Use graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._jobs[run_id]["status"] = "running"
         self._jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
         try:
-            from graphknows.graphgen import run_ingestion
-
-            stats = await run_ingestion(
-                documents=[{"text": text, "title": title}],
-                config_override=config_override or None,
+            from graphknows.memory.extractor import GLiNER2EntityExtractor
+            from graphknows.memory.workflows.corpus_ingest import (
+                CorpusIngestRequest,
+                CorpusIngestWorkflow,
             )
+
+            extractor = GLiNER2EntityExtractor()
+            workflow = CorpusIngestWorkflow(
+                mg_store=self._memgraph,
+                pg_store=self._pg,
+                neo_store=self._neo,
+                extractor=extractor,
+                embed_fn=None,
+            )
+            request = CorpusIngestRequest(
+                documents=[{"text": text, "title": title}],
+            )
+            result = await workflow.run(request)
+            stats = {
+                "session_id": result.session_id,
+                "documents_processed": result.documents_processed,
+                "entities_extracted": result.entities_extracted,
+                "chunks_written": result.chunks_written,
+                "nodes_written": result.nodes_written,
+                "edges_written": result.edges_written,
+                "elapsed_s": result.elapsed_s,
+                "errors": result.errors,
+            }
             self._jobs[run_id].update(
                 status="completed",
                 stats=stats,

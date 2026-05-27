@@ -45,6 +45,15 @@ async def run_ingestion(
         RuntimeError: If ``graphknows.graphgen.orchestrator`` is not importable.
         ValueError: If ``documents`` is empty.
     """
+    import warnings
+
+    warnings.warn(
+        "graphknows.graphgen.ingest.run_ingestion is deprecated and will be removed in Wave 4. "
+        "Use graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     from graphknows.graphgen.orchestrator import run_pipeline
 
     if not documents:

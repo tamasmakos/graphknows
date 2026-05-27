@@ -614,26 +614,54 @@ def test_ltm_entity_found():
 
 
 def test_corpus_ingest_calls_run_ingestion():
-    """corpus_ingest calls run_ingestion with documents and returns stats."""
+    """corpus_ingest routes through CorpusIngestWorkflow (not graphgen.run_ingestion)."""
     import asyncio
 
     from graphknows.mcp.stdio_server import corpus_ingest
 
-    mock_stats = {
-        "documents_processed": 1,
-        "entities_extracted": 5,
-        "relations_extracted": 3,
-        "nodes_written": 5,
-        "edges_written": 3,
-        "errors": [],
-    }
+    fake_result = MagicMock()
+    fake_result.session_id = "sess-abc"
+    fake_result.documents_processed = 1
+    fake_result.entities_extracted = 5
+    fake_result.chunks_written = 2
+    fake_result.nodes_written = 5
+    fake_result.edges_written = 3
+    fake_result.elapsed_s = 0.1
+    fake_result.errors = []
+
+    mock_workflow = MagicMock()
+    mock_workflow.run = AsyncMock(return_value=fake_result)
+    mock_workflow_cls = MagicMock(return_value=mock_workflow)
 
     with (
         patch(
-            "graphknows.graphgen.ingest.run_ingestion",
-            new_callable=AsyncMock,
-            return_value=mock_stats,
-        ) as mock_run,
+            "graphknows.mcp.stdio_server._get_mg",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "graphknows.mcp.stdio_server._get_pg",
+            new=AsyncMock(return_value=MagicMock()),
+        ),
+        patch(
+            "graphknows.mcp.stdio_server._get_neo",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "graphknows.mcp.stdio_server._embed_fn",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "graphknows.mcp.stdio_server._get_settings",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow",
+            mock_workflow_cls,
+        ),
+        patch(
+            "graphknows.memory.extractor.GLiNER2EntityExtractor",
+            MagicMock(),
+        ),
     ):
         result = asyncio.run(
             corpus_ingest(
@@ -641,11 +669,9 @@ def test_corpus_ingest_calls_run_ingestion():
             )
         )
 
-    mock_run.assert_called_once_with(
-        documents=[{"text": "test", "title": "t", "id": "1"}],
-        config_override=None,
-    )
-    assert result == mock_stats
+    assert result["documents_processed"] == 1
+    assert result["nodes_written"] == 5
+    assert "session_id" in result
 
 
 def test_corpus_ingest_empty_documents():
@@ -920,3 +946,72 @@ class TestMemoryFlushIdempotency:
         mock_flusher_instance.flush.assert_awaited_once()
         # Result should NOT have already_flushed status
         assert result.get("status") != "already_flushed"
+
+
+# ---------------------------------------------------------------------------
+# corpus_ingest — must NOT call graphgen.run_ingestion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_corpus_ingest_does_not_call_graphgen_run_ingestion(monkeypatch) -> None:
+    """corpus_ingest tool must never call graphknows.graphgen.ingest.run_ingestion."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    # Sentinel to detect if the old code path is invoked
+    graphgen_run_ingestion = MagicMock(side_effect=AssertionError("must not be called"))
+
+    monkeypatch.setattr(
+        "graphknows.graphgen.ingest.run_ingestion",
+        graphgen_run_ingestion,
+    )
+
+    # Build a fake CorpusIngestResult
+    fake_result = MagicMock()
+    fake_result.session_id = "test-session-abc"
+    fake_result.documents_processed = 1
+    fake_result.entities_extracted = 3
+    fake_result.chunks_written = 2
+    fake_result.nodes_written = 4
+    fake_result.edges_written = 3
+    fake_result.elapsed_s = 0.1
+    fake_result.errors = []
+
+    mock_workflow = MagicMock()
+    mock_workflow.run = AsyncMock(return_value=fake_result)
+    mock_workflow_cls = MagicMock(return_value=mock_workflow)
+
+    mock_extractor = MagicMock()
+    mock_extractor_cls = MagicMock(return_value=mock_extractor)
+
+    with (
+        patch(
+            "graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow",
+            mock_workflow_cls,
+        ),
+        patch(
+            "graphknows.mcp.stdio_server.CorpusIngestWorkflow",
+            mock_workflow_cls,
+            create=True,
+        ),
+        patch(
+            "graphknows.mcp.stdio_server.GLiNER2EntityExtractor",
+            mock_extractor_cls,
+            create=True,
+        ),
+        patch("graphknows.mcp.stdio_server._get_mg", return_value=MagicMock()),
+        patch("graphknows.mcp.stdio_server._get_pg", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
+        patch("graphknows.mcp.stdio_server._embed_fn", return_value=MagicMock()),
+        patch("graphknows.mcp.stdio_server._get_settings", return_value=MagicMock()),
+    ):
+        from graphknows.mcp import stdio_server as srv
+
+        result = await srv.corpus_ingest(
+            documents=[{"text": "Hello world.", "id": "d1", "title": "Test"}]
+        )
+
+    # The old graphgen path must never have been touched
+    graphgen_run_ingestion.assert_not_called()
+    assert "documents_processed" in result
+
