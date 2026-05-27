@@ -46,6 +46,8 @@ async def corpus_ingest(
         request = CorpusIngestRequest(
             documents=documents,
             taxonomy_file=taxonomy_file,
+            summarize_topics=False,
+            run_gds=False,
         )
         result = await workflow.run(request)
     except Exception as exc:

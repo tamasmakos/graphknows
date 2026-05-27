@@ -619,6 +619,60 @@ def test_corpus_ingest_calls_run_ingestion():
     assert "session_id" in result
 
 
+def test_corpus_ingest_constructs_timeout_safe_request_defaults():
+    """MCP corpus_ingest must disable topic summarization and GDS by default."""
+    import asyncio
+
+    from graphknows.mcp.tools.corpus import corpus_ingest
+
+    fake_result = MagicMock()
+    fake_result.session_id = "sess-defaults"
+    fake_result.documents_processed = 1
+    fake_result.entities_extracted = 0
+    fake_result.chunks_written = 0
+    fake_result.nodes_written = 0
+    fake_result.edges_written = 0
+    fake_result.elapsed_s = 0.1
+    fake_result.errors = []
+
+    mock_workflow = MagicMock()
+    mock_workflow.run = AsyncMock(return_value=fake_result)
+
+    constructed = {}
+
+    class FakeCorpusIngestRequest:
+        def __init__(self, **kwargs):
+            constructed.update(kwargs)
+
+    with (
+        patch(
+            "graphknows.mcp.tools.corpus.get_settings",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "graphknows.builders.stores.build_corpus_workflow",
+            return_value=mock_workflow,
+        ),
+        patch(
+            "graphknows.memory.workflows.corpus_ingest.CorpusIngestRequest",
+            FakeCorpusIngestRequest,
+        ),
+    ):
+        result = asyncio.run(
+            corpus_ingest(
+                documents=[{"text": "test", "title": "t", "id": "1"}],
+            )
+        )
+
+    assert result["documents_processed"] == 1
+    assert constructed == {
+        "documents": [{"text": "test", "title": "t", "id": "1"}],
+        "taxonomy_file": None,
+        "summarize_topics": False,
+        "run_gds": False,
+    }
+
+
 def test_corpus_ingest_empty_documents():
     """corpus_ingest returns error when documents list is empty."""
     import asyncio
