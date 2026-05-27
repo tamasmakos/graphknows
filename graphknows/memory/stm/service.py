@@ -97,7 +97,7 @@ class STMService:
                 embed_fn=self._embed_fn,
                 rel_extractor=self._rel_extractor,
             )
-        return self._ingest_handler.ingest_text(  # type: ignore[return-value]
+        return self._ingest_handler.ingest_text(  # type: ignore[no-any-return]
             text,
             session_id=session_id,
             title=title,
