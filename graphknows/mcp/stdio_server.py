@@ -129,13 +129,42 @@ def _get_neo() -> object:
 from graphknows.mcp.tools.stm import _normalise_and_weight  # noqa: F401, E402
 
 
+async def _startup_warmup() -> None:
+    """Pre-warm embedder and pgvector pool before first tool call."""
+    log = logging.getLogger("graphknows.startup")
+
+    # 1. Probe embedder (validates API key + network reachability)
+    try:
+        from graphknows.retrieval.stores.embedder import embed_one
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, embed_one, "warmup")
+        log.warning("Embedder warmup OK")
+    except Exception as exc:
+        log.warning("Embedder warmup failed (non-fatal): %s", exc)
+
+    # 2. Pre-connect the LTM pgvector store (validates config)
+    try:
+        from graphknows.mcp._state import get_settings
+
+        get_settings()
+        log.warning("Settings warmup OK")
+    except Exception as exc:
+        log.warning("Settings warmup failed (non-fatal): %s", exc)
+
+
+async def _run_server() -> None:
+    await _startup_warmup()
+    await app.run_stdio_async()
+
+
 def main() -> None:
     """Run the graphknows MCP stdio server.
 
     Reads JSON-RPC 2.0 requests on stdin, writes responses on stdout.
     All logging goes to stderr.
     """
-    asyncio.run(app.run_stdio_async())
+    asyncio.run(_run_server())
 
 
 if __name__ == "__main__":
