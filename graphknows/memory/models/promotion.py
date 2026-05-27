@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from graphknows.memory.models.gds import GDSResult
+
 
 class PromotionRequest(BaseModel, frozen=True):
     """Parameters for a STM→LTM flush operation."""
@@ -27,3 +29,4 @@ class PromotionRecord(BaseModel):
     merged_entities: int = 0
     elapsed_s: float = 0.0
     errors: list[str] = Field(default_factory=list)
+    gds_result: GDSResult | None = None

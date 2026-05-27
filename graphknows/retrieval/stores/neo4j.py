@@ -917,7 +917,7 @@ class Neo4jStore:
         return topics_created
 
     async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
-        """Run full GDS feature enrichment via feature_engineering.run_feature_engineering.
+        """Run full GDS feature enrichment via LTMEnrichmentService.
 
         Args:
             session_id: Used to scope projection (session entities only).
@@ -928,9 +928,11 @@ class Neo4jStore:
         Raises:
             Exception: Propagates any GDS or Neo4j failure.
         """
-        from graphknows.feature_engineering import run_feature_engineering
+        from graphknows.memory.ltm.enrichment import LTMEnrichmentService
 
-        return await asyncio.to_thread(run_feature_engineering, self._driver)
+        svc = LTMEnrichmentService()
+        result = await asyncio.to_thread(svc.run_gds, self._driver)
+        return result.model_dump()
 
     async def count_nodes(self) -> dict[str, int]:
         """Return counts of key node types."""

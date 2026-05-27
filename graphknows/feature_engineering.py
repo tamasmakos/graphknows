@@ -1,6 +1,16 @@
-"""LTM Feature Engineering — Node2Vec + weighted Leiden community detection + centrality measures."""
+"""LTM Feature Engineering — compatibility shim. DEPRECATED: use graphknows.memory.ltm.enrichment.LTMEnrichmentService."""
+# ruff: noqa: E402
 
 from __future__ import annotations
+
+import warnings
+
+warnings.warn(
+    "graphknows.feature_engineering is deprecated. Use graphknows.memory.ltm.enrichment.LTMEnrichmentService",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 
 import contextlib
 import hashlib
