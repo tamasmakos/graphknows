@@ -71,6 +71,10 @@ class CorpusIngestWorkflow:
         Returns:
             CorpusIngestResult with aggregated counts and any errors.
         """
+        # Ensure asyncpg pool is created on THIS event loop (not _BG_LOOP)
+        if not getattr(self._pg, "_pool", None):
+            await self._pg.connect()
+
         from graphknows.memory.flush import FlushOptions, SessionFlusher
         from graphknows.memory.stm.service import STMService
 
