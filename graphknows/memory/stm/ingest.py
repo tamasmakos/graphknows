@@ -139,14 +139,10 @@ class _STMIngestHandler:
             ).hexdigest()[:16]
 
             # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
-            clean_text = re.sub(
-                r"^##\s*Content\s*\n+", "", seg.text, flags=re.IGNORECASE
-            ).strip()
+            clean_text = re.sub(r"^##\s*Content\s*\n+", "", seg.text, flags=re.IGNORECASE).strip()
 
             entities: list[dict[str, Any]] = (
-                self._extractor.extract(clean_text).entities
-                if self._extractor is not None
-                else []
+                self._extractor.extract(clean_text).entities if self._extractor is not None else []
             )
 
             embedding: list[float] = self._embed_fn(clean_text)
