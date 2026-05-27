@@ -36,8 +36,12 @@ def _run(coro: Any) -> Any:
 log = logging.getLogger("graphknows.memory.ingestor")
 
 
+# COMPAT SHIM: prefer graphknows.memory.models.IngestResult
+from graphknows.memory.models.ingest import IngestResult  # noqa: E402, F401
+
+
 @dataclass
-class IngestResult:
+class _IngestResultLegacy:
     """Result of a single ingest call.
 
     Attributes:
