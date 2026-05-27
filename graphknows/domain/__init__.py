@@ -1,11 +1,5 @@
 """Domain layer: shared concepts, taxonomy, canonical schema, and business rules."""
 
-from graphknows.domain.taxonomy import (
-    EntityGroupConfig,
-    TaxonomyConfig,
-    get_default_taxonomy,
-    load_taxonomy,
-)
 from graphknows.domain.schema import (
     # Node labels
     LABEL_CHUNK,
@@ -25,17 +19,18 @@ from graphknows.domain.schema import (
     REL_HAS_TURN,
     REL_RELATES_TO,
 )
+from graphknows.domain.taxonomy import (
+    EntityGroupConfig,
+    TaxonomyConfig,
+    get_default_taxonomy,
+    load_taxonomy,
+)
 
 __all__ = [
-    "EntityGroupConfig",
-    "TaxonomyConfig",
-    "get_default_taxonomy",
-    "load_taxonomy",
     "LABEL_CHUNK",
     "LABEL_DIALOG",
     "LABEL_ENTITY",
     "LABEL_FILE",
-    # Node labels
     "LABEL_SESSION",
     "LABEL_TOPIC",
     "LABEL_TURN",
@@ -44,8 +39,11 @@ __all__ = [
     "REL_HAS_CHUNK",
     "REL_HAS_DIALOG",
     "REL_HAS_ENTITY",
-    # Relationship types
     "REL_HAS_FILE",
     "REL_HAS_TURN",
     "REL_RELATES_TO",
+    "EntityGroupConfig",
+    "TaxonomyConfig",
+    "get_default_taxonomy",
+    "load_taxonomy",
 ]

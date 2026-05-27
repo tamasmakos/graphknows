@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -27,15 +27,15 @@ class EntityGroupConfig(BaseModel):
     """Configuration for a single top-level entity group (e.g. PERSON, ORGANIZATION)."""
 
     # Canonical sub-labels that belong to this group (used by label-space builder)
-    children: List[str] = Field(default_factory=list)
+    children: list[str] = Field(default_factory=list)
     # Text hints used by select_candidate_labels() for GLiNER2 schema selection
-    aliases: List[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
     # Free-text description passed to GLiNER2 schema (schema-guided NER)
     description: str = ""
     # Normalised uppercase tokens used by the rule-based classifier
-    classification_tokens: List[str] = Field(default_factory=list)
+    classification_tokens: list[str] = Field(default_factory=list)
     # Regex patterns (applied to normalised UPPER_SNAKE form) for the classifier
-    classification_patterns: List[str] = Field(default_factory=list)
+    classification_patterns: list[str] = Field(default_factory=list)
     # Minimum GLiNER2 confidence required for an entity to be relation-eligible
     min_ner_confidence: float = 0.0
 
@@ -56,19 +56,19 @@ class TaxonomyConfig(BaseModel):
 
     name: str
     version: str = "1.0"
-    entity_groups: Dict[str, EntityGroupConfig] = Field(default_factory=dict)
+    entity_groups: dict[str, EntityGroupConfig] = Field(default_factory=dict)
     # Hard overrides: normalised entity name → canonical label
-    overrides: Dict[str, str] = Field(default_factory=dict)
-    relation_types: List[str] = Field(default_factory=list)
+    overrides: dict[str, str] = Field(default_factory=dict)
+    relation_types: list[str] = Field(default_factory=list)
     # Graph hierarchy metadata (informational; consumed by schema.py and E6 segment builder)
-    hierarchy: Dict[str, Any] = Field(default_factory=dict)
+    hierarchy: dict[str, Any] = Field(default_factory=dict)
 
     def get_min_ner_confidence(self, label: str) -> float:
         """Return the minimum NER confidence threshold for *label* (default 0.0)."""
         group = self.entity_groups.get(label)
         return group.min_ner_confidence if group else 0.0
 
-    def entity_label_keys(self) -> List[str]:
+    def entity_label_keys(self) -> list[str]:
         """Return top-level entity group names (e.g. ['PERSON', 'ORGANIZATION', ...])."""
         return list(self.entity_groups.keys())
 

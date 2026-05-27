@@ -136,7 +136,7 @@ class TestGLiNER2EntityExtractorInit:
         mock_taxonomy.entity_groups = {"PERSON": grp_has_desc, "NOTYPE": grp_no_desc}
 
         with patch(
-            "graphknows.graphgen.config.taxonomy.get_default_taxonomy",
+            "graphknows.domain.taxonomy.get_default_taxonomy",
             return_value=mock_taxonomy,
         ):
             extractor = GLiNER2EntityExtractor()
@@ -151,7 +151,7 @@ class TestGLiNER2EntityExtractorInit:
         mock_taxonomy.entity_groups = {}
 
         with patch(
-            "graphknows.graphgen.config.taxonomy.get_default_taxonomy",
+            "graphknows.domain.taxonomy.get_default_taxonomy",
             return_value=mock_taxonomy,
         ):
             extractor = GLiNER2EntityExtractor()
