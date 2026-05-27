@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dotenv import dotenv_values
+from graphknows.config.env_loader import load_env_file
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -36,9 +36,7 @@ def _find_repo_env() -> Path | None:
 def _load_repo_env() -> dict[str, str]:
     """Load repo-local .env values when present."""
     env_file = _find_repo_env()
-    if env_file is None:
-        return {}
-    return {k: v for k, v in dotenv_values(str(env_file)).items() if isinstance(v, str)}
+    return load_env_file(env_file)
 
 
 class GraphKnowsSettings(BaseSettings):
