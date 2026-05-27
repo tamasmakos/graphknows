@@ -1,4 +1,5 @@
 """Centralised .env file loading for graphknows."""
+
 from __future__ import annotations
 
 import os

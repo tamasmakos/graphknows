@@ -34,10 +34,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+
 from graphknows.config import GraphKnowsSettings
 
 logger = logging.getLogger("graphknows.mcp.stdio")
@@ -51,6 +51,7 @@ def _get_settings() -> GraphKnowsSettings:
     if _settings is None:
         _settings = GraphKnowsSettings()
     return _settings
+
 
 # ---------------------------------------------------------------------------
 # FastMCP app
@@ -142,7 +143,7 @@ async def memory_doctor() -> dict[str, Any]:
 
     Returns a dict with boolean values for each backend, plus version and pid.
     """
-    from graphknows.config.health import check_backends  # noqa: PLC0415
+    from graphknows.config.health import check_backends
 
     result = await check_backends(_get_settings())
     result["pid"] = os.getpid()

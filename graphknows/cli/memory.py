@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import click
+
 from graphknows.config import GraphKnowsSettings
 
 _NO_RESULTS = "No results found."
@@ -340,9 +340,9 @@ def forget_before(date: str) -> None:
 @cli.command("doctor")
 def doctor_cmd() -> None:
     """Health check: connectivity to Memgraph, Neo4j, pgvector."""
-    import asyncio  # noqa: PLC0415
+    import asyncio
 
-    from graphknows.config.health import check_backends  # noqa: PLC0415
+    from graphknows.config.health import check_backends
 
     result = asyncio.run(check_backends(GraphKnowsSettings()))
     for key, val in result.items():

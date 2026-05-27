@@ -26,7 +26,7 @@ async def check_backends(settings: GraphKnowsSettings) -> dict[str, object]:
 
     # neo4j
     try:
-        from neo4j import GraphDatabase  # noqa: PLC0415
+        from neo4j import GraphDatabase
 
         driver = GraphDatabase.driver(
             settings.neo4j_uri,
@@ -35,28 +35,28 @@ async def check_backends(settings: GraphKnowsSettings) -> dict[str, object]:
         driver.verify_connectivity()
         driver.close()
         result["neo4j"] = True
-    except Exception:  # noqa: BLE001
+    except Exception:
         result["neo4j"] = False
 
     # memgraph (bolt, no auth by default)
     try:
-        from neo4j import GraphDatabase  # noqa: PLC0415
+        from neo4j import GraphDatabase
 
         driver = GraphDatabase.driver(settings.memgraph_uri)
         driver.verify_connectivity()
         driver.close()
         result["memgraph"] = True
-    except Exception:  # noqa: BLE001
+    except Exception:
         result["memgraph"] = False
 
     # pgvector
     try:
-        import asyncpg  # noqa: PLC0415
+        import asyncpg
 
         conn = await asyncpg.connect(settings.pgvector_dsn)
         await conn.close()
         result["pgvector"] = True
-    except Exception:  # noqa: BLE001
+    except Exception:
         result["pgvector"] = False
 
     return result

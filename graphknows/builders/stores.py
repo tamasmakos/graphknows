@@ -1,4 +1,5 @@
 """Shared store factory functions."""
+
 from __future__ import annotations
 
 from graphknows.config import GraphKnowsSettings

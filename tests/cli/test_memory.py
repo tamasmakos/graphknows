@@ -22,12 +22,12 @@ def _runner():
 
 
 def test_doctor_outputs_check_lines():
-    """Doctor must always output Memgraph / Neo4j / pgvector status lines."""
+    """Doctor must always output backend status lines."""
     runner = _runner()
     result = runner.invoke(cli, ["doctor"])
     assert result.exit_code == 0
-    assert "Memgraph" in result.output
-    assert "Neo4j" in result.output
+    assert "memgraph" in result.output
+    assert "neo4j" in result.output
     assert "pgvector" in result.output
 
 

@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graphknows.config.env_loader import load_env_file
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from graphknows.config.env_loader import load_env_file
 
 _MASKED_PGVECTOR_DSN = "postgresql://postgres:***@172.18.0.1:5432/vectordb"
 
@@ -145,4 +146,5 @@ class GraphKnowsSettings(BaseSettings):
         if "***" in self.pgvector_dsn:
             raise ValueError("PGVECTOR_DSN contains the masked development default.")
 
-from graphknows.config.health import check_backends, get_version  # noqa: F401
+
+from graphknows.config.health import check_backends, get_version  # noqa: F401, E402
