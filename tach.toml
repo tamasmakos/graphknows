@@ -103,3 +103,8 @@ depends_on = [
 path = "graphknows.cli"
 # TARGET: becomes graphknows.transports.cli in Wave 4
 depends_on = ["graphknows.memory", "graphknows.retrieval"]
+
+[[modules]]
+path = "graphknows.builders"
+# TARGET: composition root — Tier 3
+depends_on = ["graphknows.config", "graphknows.retrieval"]

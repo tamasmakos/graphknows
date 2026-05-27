@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dotenv import dotenv_values
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from graphknows.config.env_loader import load_env_file
 
 _MASKED_PGVECTOR_DSN = "postgresql://postgres:***@172.18.0.1:5432/vectordb"
 
@@ -36,9 +37,7 @@ def _find_repo_env() -> Path | None:
 def _load_repo_env() -> dict[str, str]:
     """Load repo-local .env values when present."""
     env_file = _find_repo_env()
-    if env_file is None:
-        return {}
-    return {k: v for k, v in dotenv_values(str(env_file)).items() if isinstance(v, str)}
+    return load_env_file(env_file)
 
 
 class GraphKnowsSettings(BaseSettings):
@@ -146,3 +145,6 @@ class GraphKnowsSettings(BaseSettings):
             raise ValueError("NEO4J_PASSWORD is still the development default.")
         if "***" in self.pgvector_dsn:
             raise ValueError("PGVECTOR_DSN contains the masked development default.")
+
+
+from graphknows.config.health import check_backends, get_version  # noqa: F401, E402

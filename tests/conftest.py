@@ -32,6 +32,17 @@ _STUB_KEYS = (
 
 
 @pytest.fixture(autouse=True)
+def _reset_settings_singletons():
+    """Reset module-level _settings singletons so env-patching tests stay isolated."""
+    import sys
+    yield
+    for mod_name in ("graphknows.mcp.stdio_server", "graphknows.cli.memory"):
+        mod = sys.modules.get(mod_name)
+        if mod is not None and hasattr(mod, "_settings"):
+            mod._settings = None
+
+
+@pytest.fixture(autouse=True)
 def _restore_stub_modules():
     """Save and restore stub-sensitive ``sys.modules`` entries around each test."""
     sentinel = object()
