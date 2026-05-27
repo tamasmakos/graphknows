@@ -396,7 +396,7 @@ class LTMEnrichmentService:
         """
         if hasattr(driver, "summarize_topics"):
             # driver is actually a Neo4jStore (or compatible) — delegate directly
-            return await driver.summarize_topics(
+            return await driver.summarize_topics(  # type: ignore[return-value, no-any-return]
                 session_id="",
                 openrouter_key=llm_key,
                 llm_model=llm_model,
