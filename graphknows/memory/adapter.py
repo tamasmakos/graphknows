@@ -134,7 +134,7 @@ class GraphknowsAdapter:
             )
             for p in participants
         ]
-        dw = DialogWriter(
+        dw = DialogWriter(  # type: ignore[no-untyped-call]
             mg_store=self.mg_store,
             pg_store=self.pg_store,
             extractor=self.extractor,
@@ -165,7 +165,7 @@ class GraphknowsAdapter:
             timestamp=time.time(),
             tool_calls=mapped_tool_calls,
         )
-        dw = getattr(self, "_dialog_writer", None) or DialogWriter(
+        dw = getattr(self, "_dialog_writer", None) or DialogWriter(  # type: ignore[no-untyped-call]
             mg_store=self.mg_store,
             pg_store=self.pg_store,
             extractor=self.extractor,
