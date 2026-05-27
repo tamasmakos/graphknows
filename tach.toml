@@ -72,6 +72,7 @@ path = "graphknows.memory"
 # SMELL: memory → graphgen violates "memory must not call batch pipeline directly"
 # SMELL: memory → retrieval is a bidirectional cycle; resolves when retrieval → adapters
 depends_on = [
+  "graphknows.domain",
   "graphknows.graphgen",
   "graphknows.ingestion",
   "graphknows.retrieval",
