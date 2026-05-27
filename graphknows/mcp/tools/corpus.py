@@ -15,10 +15,10 @@ async def corpus_ingest(
 ) -> dict[str, Any]:
     r"""Ingest a corpus of documents into the long-term knowledge graph.
 
-    Runs the full graphgen pipeline: NER → relation extraction → graph
-    cleaning → community detection → Neo4j write-back.  Use for batch
-    knowledge ingestion.  GDS enrichment (Node2Vec + Louvain) runs
-    automatically after write.
+    Runs the STM-first corpus pipeline via `CorpusIngestWorkflow`: document ingest
+    into short-term memory, then promotion into the long-term graph. In the MCP
+    path, topic summarization and GDS enrichment are skipped by default for speed;
+    use the CLI workflow for heavier enrichment jobs.
 
     Args:
         documents: List of document dicts. Each must have:
@@ -27,13 +27,13 @@ async def corpus_ingest(
             - id (str): unique document identifier
             - source (str, optional): provenance URL or label
         taxonomy_file: Optional path or name of taxonomy YAML to use.
-            Defaults to taxonomy.generic.yaml.  Pass
+            Defaults to taxonomy.generic.yaml. Pass
             \"taxonomy.eu-politics.yaml\" for EU political domain.
 
     Returns:
         Dict with pipeline statistics: documents_processed,
-        entities_extracted, relations_extracted, nodes_written,
-        edges_written, errors (list).
+        entities_extracted, chunks_written, nodes_written,
+        edges_written, elapsed_s, errors (list).
     """
     if not documents:
         return {"documents_processed": 0, "error": "no documents provided"}
