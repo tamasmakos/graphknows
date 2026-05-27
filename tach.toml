@@ -147,6 +147,7 @@ path = "graphknows.mcp"
 #         797-line stdio_server.py split into per-tool-group thin modules
 depends_on = [
   "graphknows.memory",
+  "graphknows.memory.workflows",
   "graphknows.retrieval",
   "graphknows.graphgen",
   "graphknows.ontology",
@@ -156,6 +157,18 @@ depends_on = [
 path = "graphknows.cli"
 # TARGET: becomes graphknows.transports.cli in Wave 4
 depends_on = ["graphknows.memory", "graphknows.retrieval"]
+
+[[modules]]
+path = "graphknows.memory.workflows"
+depends_on = [
+  "graphknows.domain",
+  "graphknows.config",
+  "graphknows.memory",
+  "graphknows.memory.stm",
+  "graphknows.memory.ltm",
+  "graphknows.memory.models",
+  "graphknows.retrieval",
+]
 
 [[modules]]
 path = "graphknows.builders"

@@ -691,10 +691,8 @@ async def corpus_ingest(
 ) -> dict:
     """Ingest a corpus of documents into the long-term knowledge graph.
 
-    Runs the full graphgen pipeline: NER → relation extraction → graph
-    cleaning → community detection → Neo4j write-back.  Use for batch
-    knowledge ingestion.  GDS enrichment (Node2Vec + Louvain) runs
-    automatically after write.
+    Routes documents through STM (Memgraph + pgvector) first, then promotes
+    to Neo4j LTM via the canonical SessionFlusher pipeline.
 
     Args:
         documents: List of document dicts. Each must have:
@@ -702,28 +700,55 @@ async def corpus_ingest(
             - title (str): human-readable title
             - id (str): unique document identifier
             - source (str, optional): provenance URL or label
-        taxonomy_file: Optional path or name of taxonomy YAML to use.
-            Defaults to taxonomy.generic.yaml.  Pass
-            "taxonomy.eu-politics.yaml" for EU political domain.
+        taxonomy_file: Optional taxonomy name (reserved for Wave 4; ignored in Wave 3).
 
     Returns:
-        Dict with pipeline statistics: documents_processed,
-        entities_extracted, relations_extracted, nodes_written,
-        edges_written, errors (list).
+        Dict with pipeline statistics: session_id, documents_processed,
+        entities_extracted, chunks_written, nodes_written, edges_written,
+        elapsed_s, errors (list).
     """
     if not documents:
         return {"documents_processed": 0, "error": "no documents provided"}
     try:
-        from graphknows.graphgen.ingest import run_ingestion
+        from graphknows.memory.extractor import GLiNER2EntityExtractor
+        from graphknows.memory.workflows.corpus_ingest import (
+            CorpusIngestRequest,
+            CorpusIngestWorkflow,
+        )
 
-        config: dict = {}
-        if taxonomy_file:
-            config["taxonomy_file"] = taxonomy_file
-        stats = await run_ingestion(documents=documents, config_override=config or None)
+        mg = _get_mg()
+        pg = await _get_pg()
+        neo = _get_neo()
+        extractor = GLiNER2EntityExtractor()
+        s = _get_settings()
+        openrouter_key = getattr(s, "openrouter_api_key", "") or ""
+
+        workflow = CorpusIngestWorkflow(
+            mg_store=mg,
+            pg_store=pg,
+            neo_store=neo,
+            extractor=extractor,
+            embed_fn=_embed_fn(),
+            openrouter_key=openrouter_key,
+        )
+        request = CorpusIngestRequest(
+            documents=documents,
+            taxonomy_file=taxonomy_file,
+        )
+        result = await workflow.run(request)
     except Exception as exc:
         return {"error": str(exc), "documents_processed": 0}
     else:
-        return stats
+        return {
+            "session_id": result.session_id,
+            "documents_processed": result.documents_processed,
+            "entities_extracted": result.entities_extracted,
+            "chunks_written": result.chunks_written,
+            "nodes_written": result.nodes_written,
+            "edges_written": result.edges_written,
+            "elapsed_s": result.elapsed_s,
+            "errors": result.errors,
+        }
 
 
 # ---------------------------------------------------------------------------
