@@ -910,6 +910,16 @@ class Neo4jStore:
 
             # Write pgvector ltm_topics if store provided
             if pg_store is not None:
+                embedding_text = (summary or "").strip() or (title or "").strip()
+                if embedding_text:
+                    try:
+                        from graphknows.retrieval.stores.embedder import embed_one
+
+                        topic["embedding"] = await asyncio.to_thread(embed_one, embedding_text)
+                    except Exception as exc:
+                        logger.warning(
+                            "Topic embedding failed for community %d: %s", comm_id, exc
+                        )
                 await pg_store.write_ltm_topic(topic)
 
             topics_created += 1
