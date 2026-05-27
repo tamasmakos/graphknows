@@ -9,6 +9,8 @@ from graphknows.config import GraphKnowsSettings
 _settings: GraphKnowsSettings | None = None
 _pg: Any = None
 _pg_connected: bool = False
+_pg_bridge: Any = None
+_pg_bridge_connected: bool = False
 
 
 def get_settings() -> GraphKnowsSettings:
@@ -37,6 +39,21 @@ async def get_pg_store() -> Any:
         await _pg.connect()
         _pg_connected = True
     return _pg
+
+
+def get_pg_store_bridge() -> Any:
+    """Return a connected PgVectorStore singleton bound to the background recall loop."""
+    global _pg_bridge, _pg_bridge_connected
+    if _pg_bridge is None:
+        from graphknows.builders.stores import build_pgvector_store
+
+        _pg_bridge = build_pgvector_store(get_settings())
+    if not _pg_bridge_connected:
+        from graphknows.memory.stm._async_bridge import _run
+
+        _run(_pg_bridge.connect())
+        _pg_bridge_connected = True
+    return _pg_bridge
 
 
 def get_neo_store() -> Any:

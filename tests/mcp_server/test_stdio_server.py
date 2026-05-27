@@ -155,7 +155,7 @@ def test_memory_recall_returns_hits():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
@@ -185,7 +185,7 @@ def test_memory_recall_hit_has_cosine_score():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
@@ -206,12 +206,42 @@ def test_memory_recall_empty():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[]),
     ):
         result = asyncio.run(memory_recall(query="unknown", session_id="test-001"))
 
     assert result == {"hits": []}
+
+
+def test_memory_recall_scope_stm_uses_pg_store_bridge_not_async_pg_store():
+    """scope='stm' must use get_pg_store_bridge() and never await get_pg_store()."""
+    import asyncio
+
+    from graphknows.mcp.stdio_server import memory_recall
+
+    hit = MagicMock()
+    hit.score = 0.42
+    hit.source_type = "chunk"
+    hit.text = "bridge-backed stm recall"
+    hit.provenance = {"session_id": "test-001"}
+    hit.entity_names = []
+
+    bridge_store = MagicMock()
+    get_pg_store = AsyncMock(side_effect=AssertionError("get_pg_store should not be awaited for stm recall"))
+
+    with (
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=bridge_store) as mock_bridge,
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=get_pg_store),
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]) as mock_recall,
+    ):
+        result = asyncio.run(memory_recall(query="bridge", session_id="test-001", scope="stm"))
+
+    mock_bridge.assert_called_once_with()
+    get_pg_store.assert_not_awaited()
+    assert mock_recall.call_args.args[1] is bridge_store
+    assert len(result["hits"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +431,7 @@ def test_scope_stm_unchanged():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="x", session_id="test-001", scope="stm"))
@@ -460,6 +490,7 @@ def test_scope_both_normalises_cross_scope_scores():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[stm_hit]),
@@ -928,6 +959,88 @@ class TestMemoryFlushIdempotency:
         mock_flusher_instance.flush.assert_awaited_once()
         # Result should NOT have already_flushed status
         assert result.get("status") != "already_flushed"
+
+    @pytest.mark.asyncio
+    async def test_new_session_run_gds_false_disables_topic_summarization(self):
+        """run_gds=False must build FlushOptions with summarize_topics=False."""
+        from graphknows.mcp.tools import stm as stm_mod
+
+        mock_neo = MagicMock()
+        mock_neo._db = "neo4j"
+        mock_neo_session = MagicMock()
+        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
+        mock_record = MagicMock()
+        mock_record.__getitem__ = lambda self, k: 0
+        mock_neo_session.run.return_value = [mock_record]
+
+        mock_result = MagicMock()
+        mock_result.nodes_written = 1
+        mock_result.edges_written = 2
+        mock_result.chunks_promoted = 3
+        mock_result.turns_promoted = 4
+        mock_result.elapsed_s = 0.5
+        mock_result.errors = []
+
+        mock_flusher_instance = AsyncMock()
+        mock_flusher_instance.flush = AsyncMock(return_value=mock_result)
+        mock_flush_options = MagicMock(return_value=MagicMock(name="flush_options"))
+
+        with (
+            patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
+            patch("graphknows.memory.flush.FlushOptions", mock_flush_options),
+            patch("graphknows.builders.stores.build_session_flusher", return_value=mock_flusher_instance),
+        ):
+            result = await stm_mod.memory_flush("session-new", run_gds=False)
+
+        mock_flush_options.assert_called_once_with(
+            summarize_topics=False,
+            run_gds=False,
+            clear_stm=True,
+            merge_entities=True,
+        )
+        mock_flusher_instance.flush.assert_awaited_once()
+        assert result["nodes"] == 1
+
+    @pytest.mark.asyncio
+    async def test_new_session_run_gds_true_enables_topic_summarization(self):
+        """run_gds=True must build FlushOptions with summarize_topics=True."""
+        from graphknows.mcp.tools import stm as stm_mod
+
+        mock_neo = MagicMock()
+        mock_neo._db = "neo4j"
+        mock_neo_session = MagicMock()
+        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
+        mock_record = MagicMock()
+        mock_record.__getitem__ = lambda self, k: 0
+        mock_neo_session.run.return_value = [mock_record]
+
+        mock_result = MagicMock()
+        mock_result.nodes_written = 1
+        mock_result.edges_written = 2
+        mock_result.chunks_promoted = 3
+        mock_result.turns_promoted = 4
+        mock_result.elapsed_s = 0.5
+        mock_result.errors = []
+
+        mock_flusher_instance = AsyncMock()
+        mock_flusher_instance.flush = AsyncMock(return_value=mock_result)
+        mock_flush_options = MagicMock(return_value=MagicMock(name="flush_options"))
+
+        with (
+            patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
+            patch("graphknows.memory.flush.FlushOptions", mock_flush_options),
+            patch("graphknows.builders.stores.build_session_flusher", return_value=mock_flusher_instance),
+        ):
+            result = await stm_mod.memory_flush("session-new", run_gds=True)
+
+        mock_flush_options.assert_called_once_with(
+            summarize_topics=True,
+            run_gds=True,
+            clear_stm=True,
+            merge_entities=True,
+        )
+        mock_flusher_instance.flush.assert_awaited_once()
+        assert result["edges"] == 2
 
 
 # ---------------------------------------------------------------------------

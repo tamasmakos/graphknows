@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from graphknows.mcp._app import app
-from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get_settings
+from graphknows.mcp._state import (
+    get_mg_store,
+    get_neo_store,
+    get_pg_store,
+    get_pg_store_bridge,
+    get_settings,
+)
 
 
 def _normalise_and_weight(hits: list[Any], weight: float) -> None:
@@ -102,7 +107,7 @@ async def memory_recall(
 
     if scope in ("stm", "both"):
         mg = get_mg_store()
-        pg = await get_pg_store()
+        pg = get_pg_store_bridge()
         stm_hits = recall_short_term(
             mg, pg, query, session_id=session_id, top_k=top_k, embed_fn=embed
         )
@@ -179,9 +184,8 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
         }
 
     flusher = build_session_flusher(s)
-    key = s.openrouter_api_key or os.environ.get("OPENROUTER_API_KEY", "")
     opts = FlushOptions(
-        summarize_topics=bool(key),
+        summarize_topics=run_gds,
         run_gds=run_gds,
         clear_stm=True,
         merge_entities=True,
