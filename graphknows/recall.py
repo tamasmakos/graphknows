@@ -49,7 +49,6 @@ def _extract_query_tokens(query: str) -> list[str]:
 
 def _topic_text_overlap(tokens: list[str], row: dict[str, Any]) -> int:
     """Count query-token overlap against topic label/summary text."""
-
     text = " ".join(
         part for part in [row.get("label") or "", row.get("summary") or ""] if part
     ).lower()
@@ -58,7 +57,6 @@ def _topic_text_overlap(tokens: list[str], row: dict[str, Any]) -> int:
 
 def _topic_entity_overlap(tokens: list[str], row: dict[str, Any]) -> int:
     """Count query-token overlap against returned matched entity names."""
-
     entity_names = row.get("entities") or []
     return sum(
         1
@@ -69,7 +67,6 @@ def _topic_entity_overlap(tokens: list[str], row: dict[str, Any]) -> int:
 
 def _topic_row_relevance(tokens: list[str], row: dict[str, Any]) -> float:
     """Return a simple deterministic relevance score for topic recall rows."""
-
     entity_overlap = _topic_entity_overlap(tokens, row)
     text_overlap = _topic_text_overlap(tokens, row)
     if entity_overlap == 0 and text_overlap == 0:

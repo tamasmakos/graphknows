@@ -110,6 +110,27 @@ def _compute_silhouette(
         return None
 
 
+async def _write_pgvector_topic(
+    pg_store: Any,
+    topic: dict[str, Any],
+    *,
+    title: str,
+    summary: str,
+    comm_id: int,
+) -> None:
+    """Write a topic row to pgvector, embedding summary/title text when available."""
+    embedding_text = (summary or "").strip() or (title or "").strip()
+    if embedding_text:
+        try:
+            from graphknows.retrieval.stores.embedder import embed_one
+
+            topic["embedding"] = await asyncio.to_thread(embed_one, embedding_text)
+        except Exception as exc:
+            logger.warning("Topic embedding failed for community %d: %s", comm_id, exc)
+
+    await pg_store.write_ltm_topic(topic)
+
+
 def _write_evidence_graph(
     s: Any,
     session_id: str,
@@ -910,17 +931,13 @@ class Neo4jStore:
 
             # Write pgvector ltm_topics if store provided
             if pg_store is not None:
-                embedding_text = (summary or "").strip() or (title or "").strip()
-                if embedding_text:
-                    try:
-                        from graphknows.retrieval.stores.embedder import embed_one
-
-                        topic["embedding"] = await asyncio.to_thread(embed_one, embedding_text)
-                    except Exception as exc:
-                        logger.warning(
-                            "Topic embedding failed for community %d: %s", comm_id, exc
-                        )
-                await pg_store.write_ltm_topic(topic)
+                await _write_pgvector_topic(
+                    pg_store,
+                    topic,
+                    title=title,
+                    summary=summary,
+                    comm_id=comm_id,
+                )
 
             topics_created += 1
 
