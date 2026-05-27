@@ -156,7 +156,7 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
 
     # Idempotency guard
     neo_check = get_neo_store()
-    with neo_check.session() as neo_sess:
+    with neo_check._driver.session(database=neo_check._db) as neo_sess:
         rows = list(
             neo_sess.run(
                 "MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n",

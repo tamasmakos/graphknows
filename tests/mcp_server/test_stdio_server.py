@@ -816,10 +816,11 @@ class TestMemoryFlushIdempotency:
         """When session already exists in LTM, return status=already_flushed without calling flusher."""
         from graphknows.mcp.tools import stm as stm_mod
 
-        # Mock get_neo_store() to return a Neo4j store whose session.run returns count > 0
+        # Mock get_neo_store() to return a Neo4j store whose _driver.session.run returns count > 0
         mock_neo = MagicMock()
+        mock_neo._db = "neo4j"
         mock_neo_session = MagicMock()
-        mock_neo.session.return_value.__enter__.return_value = mock_neo_session
+        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
         # MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n  →  n=1
         mock_record = MagicMock()
         mock_record.__getitem__ = lambda self, k: 1
@@ -854,8 +855,9 @@ class TestMemoryFlushIdempotency:
 
         # Neo4j session returns count = 0 (not in LTM)
         mock_neo = MagicMock()
+        mock_neo._db = "neo4j"
         mock_neo_session = MagicMock()
-        mock_neo.session.return_value.__enter__.return_value = mock_neo_session
+        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
         mock_record = MagicMock()
         mock_record.__getitem__ = lambda self, k: 0
         mock_neo_session.run.return_value = [mock_record]

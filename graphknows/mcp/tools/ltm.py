@@ -22,6 +22,7 @@ async def ltm_query(query: str, top_k: int = 5) -> dict[str, Any]:
     Returns:
         Dict with a ``results`` key containing a list of matching topics.
     """
+    import asyncio
     import json
 
     import asyncpg as apg
@@ -30,7 +31,10 @@ async def ltm_query(query: str, top_k: int = 5) -> dict[str, Any]:
 
     s = get_settings()
     top_k = max(1, min(top_k, 20))
-    embedding = json.dumps(embed_one(query))
+
+    # Run CPU-bound embedding in thread pool to avoid blocking the event loop
+    loop = asyncio.get_event_loop()
+    embedding = json.dumps(await loop.run_in_executor(None, embed_one, query))
 
     conn = await apg.connect(s.pgvector_dsn)
     try:
