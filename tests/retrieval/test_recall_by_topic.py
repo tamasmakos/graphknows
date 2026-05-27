@@ -26,7 +26,38 @@ def test_recall_by_topic_uses_in_topic_relationship() -> None:
 
     source = inspect.getsource(recall_by_topic)
     assert "IN_TOPIC" in source, "recall_by_topic must use IN_TOPIC relationship"
-    assert "COMPONENT_OF" not in source, "recall_by_topic must not use old COMPONENT_OF relationship"
+    assert "COMPONENT_OF" not in source, (
+        "recall_by_topic must not use old COMPONENT_OF relationship"
+    )
+
+
+def test_recall_by_topic_matches_entity_concept_nodes() -> None:
+    """Cypher must match ENTITY_CONCEPT nodes so IN_TOPIC join can resolve."""
+    import inspect
+
+    source = inspect.getsource(recall_by_topic)
+    assert "(e:ENTITY OR e:ENTITY_CONCEPT)" in source, (
+        "recall_by_topic Cypher must match both ENTITY and ENTITY_CONCEPT nodes"
+    )
+
+
+def test_recall_by_topic_entity_concept_returns_nonempty_entities() -> None:
+    """When driver returns an ENTITY_CONCEPT name, entities must be non-empty and score > 0."""
+    rows = [
+        {
+            "topic_id": 42,
+            "summary": "Topic about memory architecture",
+            "entities": ["memory"],
+            "score": 3,
+        }
+    ]
+    driver = _make_driver(rows)
+
+    hits = recall_by_topic(driver, "memory architecture agents", top_k=5)
+
+    assert len(hits) == 1
+    assert hits[0].entity_names != [], "entities must be non-empty when ENTITY_CONCEPT matched"
+    assert hits[0].score > 0, "score must be > 0 when overlap exists"
 
 
 def test_recall_by_topic_returns_hits() -> None:
