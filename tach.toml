@@ -64,7 +64,7 @@ path = "graphknows.graphgen"
 #         should migrate to graphknows.adapters in Wave 3 (deferred)
 # SMELL: graphgen → retrieval is a cycle with retrieval → graphgen;
 #        both sides should depend on graphknows.adapters after Wave 2 split
-depends_on = ["graphknows.retrieval"]
+depends_on = ["graphknows.domain", "graphknows.retrieval"]
 
 [[modules]]
 path = "graphknows.memory"
