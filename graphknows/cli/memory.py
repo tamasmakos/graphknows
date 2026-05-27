@@ -132,7 +132,7 @@ def recall_short_cmd(query: str, session: str, top_k: int) -> None:
     Results are RRF-fused from ANN vector search and entity-first graph traversal.
     """
     from graphknows.memory.ingestor import _run
-    from graphknows.retrieval.recall_stm import recall_short_term
+    from graphknows.memory.stm.recall import recall_short_term
     from graphknows.retrieval.stores.embedder import embed_one
 
     s = GraphKnowsSettings()

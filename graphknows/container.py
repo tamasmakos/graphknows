@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.models.tools import GraphKnowsTool  # LEGACY: graphknows.models — retire in Wave 4
+from graphknows.models.tools import GraphKnowsTool
 from graphknows.retrieval.retriever import HybridRetriever
 from graphknows.retrieval.stores.embedder import embed
 from graphknows.retrieval.stores.memgraph import MemgraphStore
@@ -163,67 +163,8 @@ class GraphKnowsContainer:
         return _build_tools(self)
 
     # ------------------------------------------------------------------
-    # Internal: background ingest helper shared by the ingest tool
+    # (legacy _run_ingest_task removed in Wave 5 Epic #43)
     # ------------------------------------------------------------------
-
-    async def _run_ingest_task(
-        self,
-        run_id: str,
-        text: str,
-        title: str,
-        config_override: dict[str, Any],
-    ) -> None:
-        import warnings
-
-        warnings.warn(
-            "GraphKnowsContainer._run_ingest_task is deprecated and will be removed in Wave 4. "
-            "Use graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._jobs[run_id]["status"] = "running"
-        self._jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
-        try:
-            from graphknows.memory.extractor import GLiNER2EntityExtractor
-            from graphknows.memory.workflows.corpus_ingest import (
-                CorpusIngestRequest,
-                CorpusIngestWorkflow,
-            )
-
-            extractor = GLiNER2EntityExtractor()
-            workflow = CorpusIngestWorkflow(
-                mg_store=self._memgraph,
-                pg_store=self._pg,
-                neo_store=self._neo,
-                extractor=extractor,
-                embed_fn=None,
-            )
-            request = CorpusIngestRequest(
-                documents=[{"text": text, "title": title}],
-            )
-            result = await workflow.run(request)
-            stats = {
-                "session_id": result.session_id,
-                "documents_processed": result.documents_processed,
-                "entities_extracted": result.entities_extracted,
-                "chunks_written": result.chunks_written,
-                "nodes_written": result.nodes_written,
-                "edges_written": result.edges_written,
-                "elapsed_s": result.elapsed_s,
-                "errors": result.errors,
-            }
-            self._jobs[run_id].update(
-                status="completed",
-                stats=stats,
-                finished_at=datetime.now(UTC).isoformat(),
-            )
-        except Exception as exc:
-            logger.exception("Ingest job %s failed", run_id)
-            self._jobs[run_id].update(
-                status="failed",
-                error=str(exc),
-                finished_at=datetime.now(UTC).isoformat(),
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +277,53 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
         run_id = str(uuid.uuid4())
         queued_at = datetime.now(UTC).isoformat()
         c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}
-        _bg_task = asyncio.create_task(
-            c._run_ingest_task(run_id, text, title, config_override or {})
-        )  # NOSONAR
+
+        async def _run_workflow() -> None:
+            c._jobs[run_id]["status"] = "running"
+            c._jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
+            try:
+                from graphknows.memory.extractor import GLiNER2EntityExtractor
+                from graphknows.memory.workflows.corpus_ingest import (
+                    CorpusIngestRequest,
+                    CorpusIngestWorkflow,
+                )
+
+                extractor = GLiNER2EntityExtractor()
+                workflow = CorpusIngestWorkflow(
+                    mg_store=c._memgraph,
+                    pg_store=c._pg,
+                    neo_store=c._neo,
+                    extractor=extractor,
+                    embed_fn=None,
+                )
+                request = CorpusIngestRequest(
+                    documents=[{"text": text, "title": title}],
+                )
+                result = await workflow.run(request)
+                stats = {
+                    "session_id": result.session_id,
+                    "documents_processed": result.documents_processed,
+                    "entities_extracted": result.entities_extracted,
+                    "chunks_written": result.chunks_written,
+                    "nodes_written": result.nodes_written,
+                    "edges_written": result.edges_written,
+                    "elapsed_s": result.elapsed_s,
+                    "errors": result.errors,
+                }
+                c._jobs[run_id].update(
+                    status="completed",
+                    stats=stats,
+                    finished_at=datetime.now(UTC).isoformat(),
+                )
+            except Exception as exc:
+                logger.exception("Ingest job %s failed", run_id)
+                c._jobs[run_id].update(
+                    status="failed",
+                    error=str(exc),
+                    finished_at=datetime.now(UTC).isoformat(),
+                )
+
+        _bg_task = asyncio.create_task(_run_workflow())  # NOSONAR
         c._background_tasks.add(_bg_task)
         _bg_task.add_done_callback(c._background_tasks.discard)
         return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
@@ -359,17 +344,17 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
     async def _get_corpus_stats() -> str:
         neo_counts = await c.neo.count_nodes()
         pool = c.pg._pool
-        pg_counts: dict[str, int] = {"chunks": 0, "entities": 0}
+        pg_counts: dict[str, int] = {"stm_chunks": 0, "ltm_chunks": 0}
         if pool:
             async with pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT (SELECT count(*) FROM chunks) AS chunks, "
-                    "(SELECT count(*) FROM entities) AS entities"
+                    "SELECT (SELECT count(*) FROM stm_chunks) AS stm_chunks, "
+                    "(SELECT count(*) FROM ltm_chunks) AS ltm_chunks"
                 )
                 if rows:
                     pg_counts = {
-                        "chunks": int(rows[0]["chunks"]),
-                        "entities": int(rows[0]["entities"]),
+                        "stm_chunks": int(rows[0]["stm_chunks"]),
+                        "ltm_chunks": int(rows[0]["ltm_chunks"]),
                     }
         return json.dumps({"neo4j": neo_counts, "pgvector": pg_counts})
 

@@ -78,7 +78,7 @@ async def memory_recall(
     """
     import re
 
-    from graphknows.retrieval.recall_stm import recall_short_term
+    from graphknows.memory.stm.recall import recall_short_term
     from graphknows.retrieval.stores.embedder import embed_one
 
     embed = embed_one

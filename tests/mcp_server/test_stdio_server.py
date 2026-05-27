@@ -156,7 +156,7 @@ def test_memory_recall_returns_hits():
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
-        patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[hit]),
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
 
@@ -186,7 +186,7 @@ def test_memory_recall_hit_has_cosine_score():
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
-        patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[hit]),
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
 
@@ -207,7 +207,7 @@ def test_memory_recall_empty():
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
-        patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[]),
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[]),
     ):
         result = asyncio.run(memory_recall(query="unknown", session_id="test-001"))
 
@@ -402,7 +402,7 @@ def test_scope_stm_unchanged():
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
-        patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[hit]),
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="x", session_id="test-001", scope="stm"))
 
@@ -462,7 +462,7 @@ def test_scope_both_normalises_cross_scope_scores():
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
-        patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[stm_hit]),
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[stm_hit]),
         patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[ltm_hit]),
     ):
         result = asyncio.run(memory_recall(query="x", session_id="s1", top_k=5, scope="both"))

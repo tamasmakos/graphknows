@@ -136,8 +136,8 @@ def test_ingest_uses_builders():
 
 def test_recall_short_smoke():
     """CLI recall-short runs without import/syntax errors."""
-    import graphknows.retrieval.recall_stm as rs_mod
-    from graphknows.retrieval.recall_stm import RecallResult
+    import graphknows.memory.stm.recall as rs_mod
+    from graphknows.memory.models.recall import RecallResult
 
     runner = _runner()
     mock_result = RecallResult(
@@ -164,7 +164,7 @@ def test_recall_short_smoke():
 def test_recall_long_smoke():
     """CLI recall-long runs without import/syntax errors."""
     import graphknows.retrieval.recall_ltm as rl_mod
-    from graphknows.retrieval.recall_stm import RecallResult
+    from graphknows.memory.models.recall import RecallResult
 
     runner = _runner()
     mock_result = RecallResult(

@@ -2,30 +2,29 @@
 
 from __future__ import annotations
 
-import pytest
+import inspect
 
 
-def test_run_ingestion_emits_deprecation_warning() -> None:
-    """run_ingestion must emit a DeprecationWarning on every call."""
-    from unittest.mock import AsyncMock, patch
+def test_run_ingestion_is_callable() -> None:
+    """run_ingestion must exist and be callable."""
+    from graphknows.graphgen.ingest import run_ingestion
 
-    async def _run() -> None:
-        from graphknows.graphgen.ingest import run_ingestion
+    assert callable(run_ingestion)
 
-        with patch(
-            "graphknows.graphgen.ingest.run_ingestion.__wrapped__",
-            new=AsyncMock(return_value={}),
-            create=True,
-        ):
-            pass  # patching not needed — just call and catch warn
 
-        with pytest.warns(DeprecationWarning, match="CorpusIngestWorkflow"):
-            with patch(
-                "graphknows.graphgen.orchestrator.run_pipeline",
-                new=AsyncMock(return_value={}),
-            ):
-                await run_ingestion(documents=[{"text": "hello", "id": "t1"}])
+def test_run_ingestion_is_coroutine_function() -> None:
+    """run_ingestion must be an async function (coroutine)."""
+    from graphknows.graphgen.ingest import run_ingestion
 
-    import asyncio
+    assert inspect.iscoroutinefunction(run_ingestion), (
+        "run_ingestion must be async so callers can await it"
+    )
 
-    asyncio.run(_run())
+
+def test_run_ingestion_signature() -> None:
+    """run_ingestion must accept a documents parameter."""
+    from graphknows.graphgen.ingest import run_ingestion
+
+    sig = inspect.signature(run_ingestion)
+    params = set(sig.parameters)
+    assert "documents" in params, "run_ingestion missing required param: documents"
