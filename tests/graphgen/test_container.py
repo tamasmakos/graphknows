@@ -128,27 +128,29 @@ class TestPropertyGuards:
 
 
 class TestRunIngestTask:
-    def test_ingest_task_sets_running_status(self):
+    def test_ingest_queues_job_and_returns_run_id(self):
+        """_ingest tool should enqueue a job and return a run_id immediately."""
         container = _make_container()
 
-        run_id = "test-run-123"
-        container._jobs[run_id] = {"status": "queued"}
-
         async def run():
-            with patch("graphknows.graphgen.run_ingestion", AsyncMock(return_value={"ok": True})):
-                try:
-                    await container._run_ingest_task(
-                        run_id=run_id,
-                        text="Hello world",
-                        title="Test",
-                        config_override={},
-                    )
-                except Exception:
-                    pass  # May fail — we just want to verify status was set to "running"
+            from graphknows.container import _build_tools
+            tools = _build_tools(container)
+            ingest_tool = next(t for t in tools if t.name == "ingest")
+            with (
+                patch("graphknows.memory.extractor.GLiNER2EntityExtractor", MagicMock()),
+                patch(
+                    "graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow",
+                    MagicMock(),
+                ),
+            ):
+                result_json = await ingest_tool.fn(text="Hello world", title="Test")
+            return result_json
 
-        asyncio.run(run())
-        # Status should have been set to "running" (even if it later transitions)
-        assert container._jobs[run_id]["status"] in ("running", "done", "failed", "completed")
+        import json
+        result = asyncio.run(run())
+        data = json.loads(result)
+        assert "run_id" in data
+        assert data["status"] == "queued"
 
 
 class TestAexit:

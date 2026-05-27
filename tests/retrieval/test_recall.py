@@ -1,8 +1,7 @@
-"""Unit tests for recall_short_term (re-export parity) and recall_long_term.
+"""Unit tests for recall_short_term and recall_long_term.
 
 STM deep tests have moved to tests/memory/stm/test_recall.py.
-These tests verify the shim in graphknows.retrieval.recall_stm still re-exports
-the canonical function correctly.
+These tests verify the canonical recall_short_term from memory.stm.recall.
 """
 
 from __future__ import annotations
@@ -10,12 +9,12 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from graphknows.retrieval.recall_ltm import recall_long_term
-from graphknows.retrieval.recall_stm import recall_short_term
+from graphknows.memory.stm.recall import recall_short_term
 from graphknows.memory.stm.recall import recall_short_term as canonical_recall_short_term
 
 
 def test_shim_reexports_canonical_function():
-    """The retrieval shim must re-export the same object as the canonical module."""
+    """Both imports should resolve to the same canonical function object."""
     assert recall_short_term is canonical_recall_short_term
 
 
@@ -185,8 +184,8 @@ import pytest
 
 from graphknows.retrieval.recall_ltm import _shape_score as ltm_shape_score
 from graphknows.retrieval.recall_ltm import recall_long_term
-from graphknows.retrieval.recall_stm import _shape_score as stm_shape_score
-from graphknows.retrieval.recall_stm import recall_short_term
+from graphknows.memory.stm.recall import _shape_score as stm_shape_score
+from graphknows.memory.stm.recall import recall_short_term
 
 
 def _embed(text: str) -> list[float]:
@@ -677,7 +676,8 @@ def test_recall_by_topic_empty_rows_returns_empty_list():
 # ===========================================================================
 
 
-from graphknows.retrieval.recall_stm import RecallResult, _entity_boost
+from graphknows.memory.stm.recall import _entity_boost
+from graphknows.memory.models.recall import RecallResult
 
 
 class TestEntityBoostAddsNewChunks:
@@ -962,7 +962,7 @@ class TestShapeScore:
 class TestAnnChunks:
     def test_builds_recall_results_from_pg_rows(self):
         from graphknows.retrieval.recall_ltm import _ann_chunks
-        from graphknows.retrieval.recall_stm import RRF_K
+        from graphknows.memory.stm.recall import RRF_K
 
         mock_pg = MagicMock()
         rows = [
@@ -1070,7 +1070,7 @@ class TestEntityTraversal:
 class TestRecallLongTerm:
     def test_returns_sorted_recall_results(self):
         from graphknows.retrieval.recall_ltm import recall_long_term
-        from graphknows.retrieval.recall_stm import RecallResult
+        from graphknows.memory.models.recall import RecallResult
 
         mock_neo = MagicMock()
         mock_pg = MagicMock()
@@ -1112,7 +1112,7 @@ class TestRecallLongTerm:
 
     def test_top_k_is_respected(self):
         from graphknows.retrieval.recall_ltm import recall_long_term
-        from graphknows.retrieval.recall_stm import RecallResult
+        from graphknows.memory.models.recall import RecallResult
 
         mock_neo = MagicMock()
         mock_pg = MagicMock()

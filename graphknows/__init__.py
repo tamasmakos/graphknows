@@ -28,19 +28,16 @@ Wrapping tools for a specific framework takes one line by the caller:
 No agent framework is imported by this package.
 """
 
+from __future__ import annotations
+
 from graphknows.config import GraphKnowsSettings
 from graphknows.container import GraphKnowsContainer
-from graphknows.graphgen import run_ingestion
-from graphknows.models.tools import GraphKnowsTool  # LEGACY: graphknows.models — retire in Wave 4
+from graphknows.models.tools import GraphKnowsTool
 from graphknows.retrieval import HybridRetriever, RetrievalContext
-from graphknows.retrieval.stores import (
-    MemgraphStore,
-    Neo4jStore,
-    PgVectorStore,
-    embed,
-    embed_one,
-    get_embedder,
-)
+from graphknows.retrieval.stores.embedder import embed, embed_one, get_embedder
+from graphknows.retrieval.stores.memgraph import MemgraphStore
+from graphknows.retrieval.stores.neo4j import Neo4jStore
+from graphknows.retrieval.stores.pgvector import PgVectorStore
 
 # Ergonomic top-level alias — the most common import pattern:
 #   from graphknows import GraphKnows
@@ -65,6 +62,4 @@ __all__ = [
     "embed_one",
     # Embedder
     "get_embedder",
-    # Ingestion
-    "run_ingestion",
 ]

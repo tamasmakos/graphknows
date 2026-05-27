@@ -19,12 +19,12 @@ from graphknows.memory.adapter_types import (
     RecallRequest,
     TurnRecord,
 )
-
-# Compat re-exports so existing tests can mock graphknows.memory.adapter.DialogWriter / MemoryIngestor
-from graphknows.memory.dialog import DialogWriter as DialogWriter
 from graphknows.memory.flush import FlushOptions, SessionFlusher
 from graphknows.memory.ingestor import MemoryIngestor as MemoryIngestor
 from graphknows.memory.stm import STMService
+
+# Compat re-exports so existing tests can mock graphknows.memory.adapter.MemoryIngestor
+from graphknows.memory.stm.dialog import DialogCapture as DialogCapture
 from graphknows.memory.stm.dialog import Participant, ToolCall, Turn
 
 
@@ -134,7 +134,7 @@ class GraphknowsAdapter:
             )
             for p in participants
         ]
-        dw = DialogWriter(  # type: ignore[no-untyped-call]
+        dw = DialogCapture(  # type: ignore[no-untyped-call]
             mg_store=self.mg_store,
             pg_store=self.pg_store,
             extractor=self.extractor,
@@ -165,7 +165,7 @@ class GraphknowsAdapter:
             timestamp=time.time(),
             tool_calls=mapped_tool_calls,
         )
-        dw = getattr(self, "_dialog_writer", None) or DialogWriter(  # type: ignore[no-untyped-call]
+        dw = getattr(self, "_dialog_writer", None) or DialogCapture(  # type: ignore[no-untyped-call]
             mg_store=self.mg_store,
             pg_store=self.pg_store,
             extractor=self.extractor,
@@ -212,7 +212,7 @@ class GraphknowsAdapter:
         Returns:
             List of recall hits as dictionaries.
         """
-        from graphknows.retrieval.recall_stm import recall_short_term
+        from graphknows.memory.stm.recall import recall_short_term
 
         session_id: str = request.session_id or ""
         hits = recall_short_term(
@@ -494,7 +494,7 @@ class GraphknowsMemoryAdapter:
         else:
             mg, pg, neo, embed_fn = self._lazy_stores()
 
-        from graphknows.retrieval.recall_stm import recall_short_term
+        from graphknows.memory.stm.recall import recall_short_term
 
         stm_hits: list[Any] = []
         ltm_hits: list[Any] = []

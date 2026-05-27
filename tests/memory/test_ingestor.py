@@ -52,8 +52,7 @@ def _make_ingestor(extractor=None, embed_fn=None):
     ext_obj = MagicMock()
     ext_obj.extract = extractor
     embed = embed_fn or MagicMock(return_value=[0.1] * 10)
-    with pytest.warns(DeprecationWarning, match="MemoryIngestor is deprecated"):
-        ingestor = MemoryIngestor(mg, pg, ext_obj, embed_fn=embed)
+    ingestor = MemoryIngestor(mg, pg, ext_obj, embed_fn=embed)
     return ingestor, mg, pg, ext_obj, embed
 
 
@@ -200,7 +199,7 @@ def test_entity_names_stored_in_chunk_metadata():
 
 def test_entity_names_from_metadata_in_recall_result():
     """RecallResult.entity_names must be populated from stm_chunks.metadata."""
-    from graphknows.retrieval.recall_stm import _run_stm_ann
+    from graphknows.memory.stm.recall import _run_stm_ann
 
     pg = MagicMock()
     chunk = {
@@ -214,7 +213,7 @@ def test_entity_names_from_metadata_in_recall_result():
             "memory_class": "fact",
         },
     }
-    with patch("graphknows.retrieval.recall_stm._run", return_value=[chunk]):
+    with patch("graphknows.memory.stm.recall._run", return_value=[chunk]):
         results = {}
         _run_stm_ann(pg, "test-meta", [0.1] * 1536, 5, results)
 

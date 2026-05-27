@@ -6,9 +6,13 @@
 #
 # KNOWN SMELLS (see wave0-package-map.md §Import Rules for full list):
 #   - graphknows.retrieval ↔ graphknows.graphgen  — bidirectional cycle
-#   - graphknows.retrieval ↔ graphknows.memory    — bidirectional cycle
 #   - graphknows.ontology  → graphknows.retrieval — ontology calling infra directly
-#   - graphknows.memory    → graphknows.graphgen  — memory calling batch pipeline
+#
+# RESOLVED IN WAVE 5 EPIC #43:
+#   - graphknows.retrieval.recall_stm shim deleted; callers use memory.stm.recall directly
+#   - graphknows.memory.dialog (DialogWriter) shim deleted; callers use memory.stm.dialog directly
+#   - graphknows.retrieval no longer depends on graphknows.memory.stm / .ltm / .graphgen
+#   - graphknows.memory no longer depends on graphknows.graphgen
 #
 # TARGET ARCHITECTURE (to be enforced incrementally; fully active in Wave 5):
 #   graphknows.domain          depends_on = []
@@ -87,16 +91,16 @@ depends_on = ["graphknows.domain", "graphknows.retrieval"]
 [[modules]]
 path = "graphknows.memory"
 # TARGET: restructure into graphknows.memory.stm / .ltm / .semantic in Wave 2
-# SMELL: memory → graphgen violates "memory must not call batch pipeline directly"
+# RESOLVED Wave 5: memory.dialog.py deleted; memory no longer depends on graphknows.graphgen
 depends_on = [
   "graphknows.adapters",
   "graphknows.domain",
-  "graphknows.graphgen",
   "graphknows.ingestion",
   "graphknows.retrieval",
   "graphknows.memory.stm",
   "graphknows.memory.ltm",
   "graphknows.memory.models",
+  "graphknows.graphgen",       # extractor.py uses get_gliner2_model from graphgen
 ]
 
 [[modules]]
@@ -133,12 +137,12 @@ path = "graphknows.retrieval"
 # TARGET: split — infra (stores, embedder) → graphknows.adapters
 #                 recall services → graphknows.memory.stm / .ltm — Wave 2
 # SMELL: retrieval → graphgen is a bidirectional cycle (both import each other)
-# recall_stm.py is now a shim; deep deps moved to graphknows.memory.stm
+# RESOLVED Wave 5: recall_stm.py deleted; retrieval no longer pulls memory.stm / .ltm / .graphgen
 depends_on = [
-  "graphknows.graphgen",
-  "graphknows.memory.stm",
-  "graphknows.memory.ltm",
-  "graphknows.memory.models",  # recall_stm shim re-exports RecallResult
+  "graphknows.memory.models",  # recall_ltm uses RecallResult from memory.models.recall
+  "graphknows.memory.stm",     # recall_ltm uses RRF_K + _async_bridge from memory.stm
+  "graphknows.memory.ltm",     # neo4j.py uses LTMEnrichmentService
+  "graphknows.graphgen",       # neo4j.py uses DSPyExtractor
 ]
 
 [[modules]]
@@ -166,12 +170,13 @@ depends_on = [
   "graphknows.mcp",
   "graphknows.retrieval",
   "graphknows.recall",
+  "graphknows.memory.stm",
 ]
 
 [[modules]]
 path = "graphknows.cli"
 # TARGET: becomes graphknows.transports.cli in Wave 4
-depends_on = ["graphknows.memory", "graphknows.retrieval", "graphknows.builders", "graphknows.config"]
+depends_on = ["graphknows.memory", "graphknows.retrieval", "graphknows.builders", "graphknows.config", "graphknows.memory.stm"]
 
 [[modules]]
 path = "graphknows.memory.workflows"

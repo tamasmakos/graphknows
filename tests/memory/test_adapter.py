@@ -82,7 +82,7 @@ def test_graphknows_memory_adapter_satisfies_protocol():
 
 
 def _make_recall_result(score, text, source_type="chunk", entities=None):
-    from graphknows.retrieval.recall_stm import RecallResult
+    from graphknows.memory.models.recall import RecallResult
 
     return RecallResult(
         text=text,
@@ -162,7 +162,7 @@ async def test_ingest_delegates_to_memory_ingestor(mock_container):
 async def test_recall_scope_stm(mock_container):
     with (
         patch(
-            "graphknows.retrieval.recall_stm.recall_short_term",
+            "graphknows.memory.stm.recall.recall_short_term",
             return_value=[
                 _make_recall_result(0.9, "stm hit", entities=["e1"]),
             ],
@@ -188,7 +188,7 @@ async def test_recall_scope_stm(mock_container):
 async def test_recall_scope_ltm(mock_container):
     with (
         patch(
-            "graphknows.retrieval.recall_stm.recall_short_term",
+            "graphknows.memory.stm.recall.recall_short_term",
             return_value=[],
         ),
         patch(
@@ -216,7 +216,7 @@ async def test_recall_scope_ltm(mock_container):
 async def test_recall_scope_both(mock_container):
     with (
         patch(
-            "graphknows.retrieval.recall_stm.recall_short_term",
+            "graphknows.memory.stm.recall.recall_short_term",
             return_value=[
                 _make_recall_result(0.9, "stm hit", entities=["e1"]),
             ],
@@ -343,7 +343,7 @@ from graphknows.memory.adapter_types import (
     ToolCallRecord,
     TurnRecord,
 )
-from graphknows.retrieval.recall_stm import RecallResult
+from graphknows.memory.models.recall import RecallResult
 
 
 def _make_adapter():
@@ -356,7 +356,7 @@ def _make_adapter():
 
 
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 def test_open_session_sets_active_session_id(
     mock_dialog_writer,
     mock_ingestor,
@@ -367,7 +367,7 @@ def test_open_session_sets_active_session_id(
 
 
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 def test_start_dialog_delegates_to_dialog_writer(
     mock_dialog_writer,
     mock_ingestor,
@@ -395,7 +395,7 @@ def test_start_dialog_delegates_to_dialog_writer(
 
 
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 def test_write_turn_delegates_to_dialog_writer(
     mock_dialog_writer,
     mock_ingestor,
@@ -431,7 +431,7 @@ def test_write_turn_delegates_to_dialog_writer(
 
 
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 def test_ingest_artifact_delegates_to_ingestor(
     mock_dialog_writer,
     mock_ingestor,
@@ -457,9 +457,9 @@ def test_ingest_artifact_delegates_to_ingestor(
     assert metadata.get("artifact_id") == "a1"
 
 
-@patch("graphknows.retrieval.recall_stm.recall_short_term")
+@patch("graphknows.memory.stm.recall.recall_short_term")
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 def test_recall_returns_hits_as_dicts(
     mock_dialog_writer,
     mock_ingestor,
@@ -484,9 +484,9 @@ def test_recall_returns_hits_as_dicts(
     assert result[0]["scope"] == "short_term"
 
 
-@patch("graphknows.retrieval.recall_stm.recall_short_term")
+@patch("graphknows.memory.stm.recall.recall_short_term")
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 def test_recall_filters_raw_evidence_when_include_raw_false(
     mock_dialog_writer,
     mock_ingestor,
@@ -522,7 +522,7 @@ def test_recall_filters_raw_evidence_when_include_raw_false(
 
 
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 def test_capabilities_returns_all_true(
     mock_dialog_writer,
     mock_ingestor,
@@ -541,7 +541,7 @@ def test_capabilities_returns_all_true(
 
 @patch("graphknows.memory.adapter.SessionFlusher")
 @patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogWriter")
+@patch("graphknows.memory.adapter.DialogCapture")
 @pytest.mark.asyncio
 async def test_promote_calls_session_flusher(
     mock_dialog_writer,
@@ -595,7 +595,7 @@ import pytest
 
 from graphknows.memory.adapter import GraphknowsAdapter
 from graphknows.memory.adapter_types import AdapterCapabilities, RecallRequest
-from graphknows.retrieval.recall_stm import RecallResult
+from graphknows.memory.models.recall import RecallResult
 from tests.fixtures.synthetic_host_session import (
     ARTIFACTS,
     DIALOG_ID,
@@ -622,7 +622,7 @@ class TestAdapterLifecycle:
     """Conformance tests for full adapter lifecycle sequences."""
 
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     def test_full_session_write_sequence(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
         adapter.open_session(SESSION_ID)
@@ -639,9 +639,9 @@ class TestAdapterLifecycle:
             adapter.ingest_artifact(artifact, SESSION_ID)
         assert mock_ing_cls.return_value.ingest_text.call_count == len(ARTIFACTS)
 
-    @patch("graphknows.retrieval.recall_stm.recall_short_term")
+    @patch("graphknows.memory.stm.recall.recall_short_term")
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     def test_recall_after_write(self, mock_dw_cls, mock_ing_cls, mock_recall):
         mock_recall.return_value = [
             RecallResult(
@@ -666,7 +666,7 @@ class TestAdapterLifecycle:
 
     @patch("graphknows.memory.adapter.SessionFlusher")
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     @pytest.mark.asyncio
     async def test_promote_after_write(self, mock_dw_cls, mock_ing_cls, mock_flusher_cls):
         mock_flush_result = MagicMock()
@@ -684,7 +684,7 @@ class TestAdapterLifecycle:
         assert isinstance(result, dict)
 
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     def test_capabilities_contract(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
         caps = adapter.capabilities()
@@ -697,7 +697,7 @@ class TestAdapterLifecycle:
         assert caps.supports_promote is True
 
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     def test_turn_with_tool_calls_maps_correctly(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
         adapter.open_session(SESSION_ID)
@@ -712,7 +712,7 @@ class TestAdapterLifecycle:
         assert written_turn.tool_calls[0].name == "web_search"
 
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     def test_artifact_metadata_includes_memory_class(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
         adapter.ingest_artifact(ARTIFACTS[0], SESSION_ID)
@@ -721,16 +721,16 @@ class TestAdapterLifecycle:
         assert call_kwargs["metadata"]["memory_class"] == "raw_evidence"
 
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     def test_open_session_idempotent(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
         adapter.open_session(SESSION_ID)
         adapter.open_session(SESSION_ID)  # second call — no exception
         assert adapter._active_session_id == SESSION_ID
 
-    @patch("graphknows.retrieval.recall_stm.recall_short_term")
+    @patch("graphknows.memory.stm.recall.recall_short_term")
     @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogWriter")
+    @patch("graphknows.memory.adapter.DialogCapture")
     def test_recall_include_raw_false_filters(self, mock_dw_cls, mock_ing_cls, mock_recall):
         mock_recall.return_value = [
             RecallResult(
