@@ -1,6 +1,6 @@
 r"""Standalone MCP stdio server for graphknows memory operations.
 
-Exposes 11 tools over JSON-RPC 2.0 via stdin/stdout so any MCP-aware client
+Exposes 13 tools over JSON-RPC 2.0 via stdin/stdout so any MCP-aware client
 (Claude Desktop, Cursor, Zed, Hermes, OpenCode) can use graphknows memory
 without requiring the full agent service.
 
@@ -21,6 +21,9 @@ LTM tools:
   recall_by_dialog      — conversation utterances by entity match
   recall_by_topic       — topic matching by entity relevance
 
+Corpus:
+  corpus_ingest   — batch document ingestion into LTM knowledge graph
+
 Usage (stdio probe)::
 
     echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
@@ -33,727 +36,97 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-
-from graphknows.config import GraphKnowsSettings
-
-logger = logging.getLogger("graphknows.mcp.stdio")
 logging.basicConfig(level=logging.WARNING, stream=__import__("sys").stderr)
 
-_settings: GraphKnowsSettings | None = None
+# --- Import tool modules (registers @app.tool() decorators) ---
+import graphknows.mcp.tools.admin  # noqa: E402
+import graphknows.mcp.tools.corpus  # noqa: E402
+import graphknows.mcp.tools.ltm  # noqa: E402
+import graphknows.mcp.tools.recall  # noqa: E402
+import graphknows.mcp.tools.stm  # noqa: F401, E402
+from graphknows.mcp._app import app  # noqa: E402
 
-
-def _get_settings() -> GraphKnowsSettings:
-    global _settings
-    if _settings is None:
-        _settings = GraphKnowsSettings()
-    return _settings
-
-
-# ---------------------------------------------------------------------------
-# FastMCP app
-# ---------------------------------------------------------------------------
-
-app = FastMCP(
-    "graphknows-memory",
-    instructions=(
-        "graphknows-memory exposes short-term and long-term knowledge-graph "
-        "backed memory. Use memory_ingest to store content, memory_recall to "
-        "retrieve it, memory_flush to promote session memory to long-term, "
-        "memory_doctor to verify backend connectivity, and memory_stats for counts. "
-        "For LTM exploration: ltm_query searches topics semantically, "
-        "ltm_entity looks up named entities, ltm_topics lists topics by threshold. "
-        "recall_by_document, recall_by_dialog, and recall_by_topic provide "
-        "entity-matched retrieval across documents, conversations, and topics."
-    ),
+# Re-export tool functions so existing code/tests can reference them on this module
+from graphknows.mcp.tools.admin import memory_doctor, memory_stats  # noqa: F401, E402
+from graphknows.mcp.tools.corpus import corpus_ingest  # noqa: F401, E402
+from graphknows.mcp.tools.ltm import ltm_entity, ltm_query, ltm_topics  # noqa: F401, E402
+from graphknows.mcp.tools.recall import (  # noqa: F401, E402
+    recall_by_dialog,
+    recall_by_document,
+    recall_by_topic,
 )
+from graphknows.mcp.tools.stm import memory_flush, memory_ingest, memory_recall  # noqa: F401, E402
 
 # ---------------------------------------------------------------------------
-# Backend helpers — re-use the same env-var pattern as cli/memory.py
+# Backward-compat shims — kept for existing test patches
 # ---------------------------------------------------------------------------
+_mg: object = None
+_pg: object = None
+_pg_connected: bool = False
+
+
+def _get_settings() -> object:  # type: ignore[return]
+    from graphknows.mcp._state import get_settings
+
+    return get_settings()
 
 
 def _mg_uri() -> str:
-    return _get_settings().memgraph_uri
+    import os
+
+    return os.environ.get("MEMGRAPH_URI", "bolt://localhost:17687")
 
 
 def _pg_dsn() -> str:
-    return _get_settings().pgvector_dsn
+    import os
+
+    return os.environ.get("PGVECTOR_DSN", "postgresql://localhost:5432/graphknows")
 
 
 def _neo4j_creds() -> tuple[str, str, str]:
-    s = _get_settings()
-    return s.neo4j_uri, s.neo4j_user, s.neo4j_password
+    import os
+
+    return (
+        os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
+        os.environ.get("NEO4J_USER", "neo4j"),
+        os.environ.get("NEO4J_PASSWORD", ""),
+    )
 
 
-def _embed_fn() -> Any:
+def _embed_fn() -> object:
     from graphknows.retrieval.stores.embedder import embed_one
 
     return embed_one
 
 
-# ---------------------------------------------------------------------------
-# Lazy singleton stores — initialised on first tool call, not at import time
-# ---------------------------------------------------------------------------
-
-_mg: Any = None
-_pg: Any = None
-_pg_connected: bool = False
-
-
-def _get_mg() -> Any:
+def _get_mg() -> object:
     global _mg
     if _mg is None:
-        from graphknows.retrieval.stores.memgraph import MemgraphStore
+        from graphknows.mcp._state import get_mg_store
 
-        _mg = MemgraphStore(_mg_uri())
+        _mg = get_mg_store()
     return _mg
 
 
-async def _get_pg() -> Any:
+async def _get_pg() -> object:
     global _pg, _pg_connected
-    if _pg is None:
-        from graphknows.retrieval.stores.pgvector import PgVectorStore
+    if _pg is None or not _pg_connected:
+        from graphknows.mcp._state import get_pg_store
 
-        _pg = PgVectorStore(_pg_dsn())
-    if not _pg_connected:
-        await _pg.connect()
+        _pg = await get_pg_store()
         _pg_connected = True
     return _pg
 
 
-def _get_neo() -> Any:
-    from graphknows.retrieval.stores.neo4j import Neo4jStore
+def _get_neo() -> object:
+    from graphknows.mcp._state import get_neo_store
 
-    uri, user, pw = _neo4j_creds()
-    return Neo4jStore(uri=uri, user=user, password=pw)
+    return get_neo_store()
 
 
-# ---------------------------------------------------------------------------
-# Tools
-# ---------------------------------------------------------------------------
-
-
-@app.tool()
-async def memory_doctor() -> dict[str, Any]:
-    """Check graphknows backend connectivity (Memgraph, Neo4j, pgvector).
-
-    Returns a dict with boolean values for each backend, plus version and pid.
-    """
-    from graphknows.config.health import check_backends
-
-    result = await check_backends(_get_settings())
-    result["pid"] = os.getpid()
-    return result
-
-
-@app.tool()
-async def memory_stats(session_id: str = "") -> dict[str, Any]:
-    """Return graphknows memory statistics (STM and LTM counts).
-
-    Args:
-        session_id: Optional session to filter STM stats by.  Empty string
-            returns aggregate counts.
-
-    Returns:
-        Dict with ``stm`` and ``ltm`` sub-dicts containing row counts.
-    """
-    import asyncpg
-
-    async def _pg_counts() -> dict[str, int]:
-        conn = await asyncpg.connect(_pg_dsn())
-        try:
-            sc = await conn.fetchval("SELECT count(*) FROM stm_chunks")
-            st = await conn.fetchval("SELECT count(*) FROM stm_turns")
-            lc = await conn.fetchval("SELECT count(*) FROM ltm_chunks")
-            lt = await conn.fetchval("SELECT count(*) FROM ltm_turns")
-            top = await conn.fetchval("SELECT count(*) FROM ltm_topics")
-            return {
-                "stm_chunks": int(sc),
-                "stm_turns": int(st),
-                "ltm_chunks": int(lc),
-                "ltm_turns": int(lt),
-                "ltm_topics": int(top),
-            }
-        finally:
-            await conn.close()
-
-    pg = await _pg_counts()
-
-    from neo4j import GraphDatabase
-
-    uri, user, pw = _neo4j_creds()
-    drv = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
-    with drv.session() as s:
-        row_e = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()
-        row_t = s.run("MATCH (t:TOPIC) RETURN count(t) as c").single()
-        row_s = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()
-        ec = row_e["c"] if row_e else 0
-        tc = row_t["c"] if row_t else 0
-        sess_c = row_s["c"] if row_s else 0
-    drv.close()
-
-    return {
-        "stm": {
-            "chunks": pg["stm_chunks"],
-            "turns": pg["stm_turns"],
-        },
-        "ltm": {
-            "sessions": int(sess_c),
-            "entities": int(ec),
-            "topics": int(tc),
-            "chunks": pg["ltm_chunks"],
-            "turns": pg["ltm_turns"],
-        },
-    }
-
-
-@app.tool()
-async def memory_ingest(
-    text: str,
-    session_id: str,
-    title: str = "",
-) -> dict[str, Any]:
-    """Ingest text into graphknows short-term memory (Memgraph + pgvector STM).
-
-    GLiNER2 entity extraction runs on the text; extracted entities are stored
-    as nodes in Memgraph.  The text is chunked and embedded into pgvector stm_*.
-
-    Note: First call takes ~15s while GLiNER2 model loads.
-
-    Args:
-        text: The text content to ingest.
-        session_id: Session namespace for the STM graph.
-        title: Optional document title for provenance.
-
-    Returns:
-        Dict with file_id, chunks, entities, elapsed_s, errors.
-    """
-    from graphknows.memory.extractor import GLiNER2EntityExtractor
-    from graphknows.memory.ingestor import MemoryIngestor, _run
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
-
-    mg = MemgraphStore(_mg_uri())
-    pg = PgVectorStore(_pg_dsn())
-    _run(pg.connect())
-
-    extractor = GLiNER2EntityExtractor()
-    rel_extractor = None
-    if os.environ.get("OPENROUTER_API_KEY"):
-        try:
-            from graphknows.ontology.rel_extractor import OntologyRelExtractor
-
-            rel_extractor = OntologyRelExtractor()
-        except Exception:
-            logger.exception("Failed to initialize OntologyRelExtractor")
-    else:
-        logger.warning(
-            "OPENROUTER_API_KEY not set — relation extraction disabled. "
-            "Set the key to enable semantic relation edges in the knowledge graph."
-        )
-    ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=_embed_fn(), rel_extractor=rel_extractor)
-    result = ingestor.ingest_text(text, session_id=session_id, title=title)
-
-    warnings: list[str] = []
-    if rel_extractor is None:
-        warnings.append("rel_extractor_disabled")
-
-    return {
-        "file_id": result.file_id,
-        "chunks": result.chunk_count,
-        "entities": result.entity_count,
-        "elapsed_s": round(result.elapsed_s, 3),
-        "errors": list(result.errors),
-        "warnings": warnings,
-    }
-
-
-def _normalise_and_weight(hits: list, weight: float) -> None:
-    """Min-max normalise scores in-place, then apply weight."""
-    if not hits:
-        return
-    scores = [h.score for h in hits]
-    mn, mx = min(scores), max(scores)
-    rng = mx - mn
-    for h in hits:
-        h.score = weight * ((h.score - mn) / rng if rng else 1.0)
-
-
-@app.tool()
-async def memory_recall(
-    query: str,
-    session_id: str,
-    top_k: int = 5,
-    scope: str = "stm",
-) -> dict[str, Any]:
-    """Recall from graphknows memory using hybrid RRF search.
-
-    Args:
-        query: Natural language query to recall against.
-        session_id: Session namespace to scope the search.
-        top_k: Maximum number of hits to return (default 5).
-        scope: ``"stm"`` for short-term, ``"ltm"`` for long-term,
-            ``"both"`` for RRF-merged results from both.
-
-    Returns:
-        Dict with ``hits`` list, each item having score, type, text,
-        session_id, and entities fields.
-    """
-    from graphknows.memory.ingestor import _run
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
-
-    embed = _embed_fn()
-
-    def _clean(text: str) -> str:
-        r"""Strip the '## Content\n' heading artifact inserted by the formatter."""
-        import re
-
-        return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
-
-    def _fmt(results: list) -> list[dict]:
-        return [
-            {
-                "score": round(r.score, 6),
-                "cosine_score": round(getattr(r, "cosine_score", r.score), 6),
-                "type": r.source_type,
-                "text": _clean(r.text),
-                "session_id": r.provenance.get("session_id", session_id),
-                "entities": list(r.entity_names or []),
-            }
-            for r in results
-        ]
-
-    if scope in ("stm", "both"):
-        from graphknows.retrieval.recall_stm import recall_short_term
-
-        mg = MemgraphStore(_mg_uri())
-        pg = PgVectorStore(_pg_dsn())
-        _run(pg.connect())
-        stm_hits = recall_short_term(
-            mg, pg, query, session_id=session_id, top_k=top_k, embed_fn=embed
-        )
-    else:
-        stm_hits = []
-
-    if scope in ("ltm", "both"):
-        from graphknows.retrieval.recall_ltm import recall_long_term
-        from graphknows.retrieval.stores.pgvector import PgVectorStore
-
-        pg2 = PgVectorStore(_pg_dsn())
-        _run(pg2.connect())
-        neo = _get_neo()
-        ltm_hits = recall_long_term(
-            neo, pg2, query, top_k=top_k, session_filter=None, embed_fn=embed
-        )
-        neo.close()
-    else:
-        ltm_hits = []
-
-    # Normalise cross-scope scores when merging both
-    if scope in ("both",):
-        _normalise_and_weight(stm_hits, weight=0.6)
-        _normalise_and_weight(ltm_hits, weight=0.4)
-
-    # Merge and re-rank by score if both scopes used
-    all_hits = stm_hits + ltm_hits
-    all_hits.sort(key=lambda r: r.score, reverse=True)
-
-    return {"hits": _fmt(all_hits[:top_k])}
-
-
-@app.tool()
-async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]:
-    """Flush a session from short-term memory into long-term memory.
-
-    Promotes Memgraph STM nodes → Neo4j LTM with entity merging.
-    Louvain topic summarization and GDS enrichment are skipped by default;
-    set ``run_gds=True`` for full enrichment (Node2Vec, Leiden, PageRank, etc.).
-
-    Args:
-        session_id: Session to promote from STM to LTM.
-        run_gds: Whether to run GDS enrichment after the flush.
-
-    Returns:
-        Dict with nodes, edges, chunks, turns, elapsed_s, errors.
-    """
-    from graphknows.memory.flush import FlushOptions, SessionFlusher
-    from graphknows.retrieval.stores.memgraph import MemgraphStore
-    from graphknows.retrieval.stores.neo4j import Neo4jStore
-    from graphknows.retrieval.stores.pgvector import PgVectorStore
-
-    # Idempotency guard: check if session already exists in LTM
-    _neo_check = _get_neo()
-    with _neo_check.session() as _neo_sess:
-        _rows = list(
-            _neo_sess.run(
-                "MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n",
-                sid=session_id,
-            )
-        )
-    if _rows and _rows[0]["n"] > 0:
-        logger.info("Session %s already in LTM — skipping flush", session_id)
-        return {
-            "session_id": session_id,
-            "status": "already_flushed",
-            "nodes_written": 0,
-            "edges_written": 0,
-            "chunks_promoted": 0,
-            "turns_promoted": 0,
-            "topics_created": 0,
-            "merged_entities": 0,
-            "elapsed_s": 0.0,
-            "errors": [],
-        }
-
-    mg = MemgraphStore(_mg_uri())
-    pg = PgVectorStore(_pg_dsn())
-    await pg.connect()
-
-    uri, user, pw = _neo4j_creds()
-    neo = Neo4jStore(uri=uri, user=user, password=pw)
-
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    flusher = SessionFlusher(mg, pg, neo, openrouter_key=key)
-    opts = FlushOptions(
-        summarize_topics=bool(key),  # enable when key available
-        run_gds=run_gds,
-        clear_stm=True,
-        merge_entities=True,
-    )
-
-    result = await flusher.flush(session_id, opts)
-
-    return {
-        "nodes": result.nodes_written,
-        "edges": result.edges_written,
-        "chunks": result.chunks_promoted,
-        "turns": result.turns_promoted,
-        "elapsed_s": round(result.elapsed_s, 3),
-        "errors": list(result.errors),
-    }
-
-
-# ---------------------------------------------------------------------------
-# LTM tools — merged from graphknows/mcp_ltm.py
-# ---------------------------------------------------------------------------
-
-
-@app.tool()
-async def ltm_query(query: str, top_k: int = 5) -> dict[str, Any]:
-    """Semantic search over LTM topic summaries.
-
-    Embeds the query and returns the nearest matching topics from the
-    pgvector ltm_topics table.
-
-    Args:
-        query: Natural-language search query.
-        top_k: Number of topics to return (1-20, default 5).
-
-    Returns:
-        Dict with a ``results`` key containing a list of matching topics.
-    """
-    import json
-
-    import asyncpg as apg
-
-    from graphknows.retrieval.stores.embedder import embed_one
-
-    top_k = max(1, min(top_k, 20))
-    embedding = json.dumps(embed_one(query))
-
-    conn = await apg.connect(_pg_dsn())
-    try:
-        rows = await conn.fetch(
-            "SELECT topic_id, summary, entity_names, session_ids FROM ltm_topics "
-            "ORDER BY embedding <=> $1::vector LIMIT $2",
-            embedding,
-            top_k,
-        )
-    finally:
-        await conn.close()
-
-    results = []
-    for r in rows:
-        import json as _json
-
-        entity_names = r["entity_names"]
-        if isinstance(entity_names, str):
-            entity_names = _json.loads(entity_names)
-        session_ids = r["session_ids"]
-        if isinstance(session_ids, str):
-            session_ids = _json.loads(session_ids)
-        results.append(
-            {
-                "topic_id": r["topic_id"],
-                "summary": r["summary"],
-                "entity_names": entity_names or [],
-                "session_ids": session_ids or [],
-            }
-        )
-    return {"results": results}
-
-
-@app.tool()
-def ltm_entity(name: str) -> dict[str, Any]:
-    """Look up a named entity in the LTM Neo4j graph.
-
-    Returns all properties including community, PageRank, betweenness,
-    first/last seen timestamps, and segment count.
-
-    Args:
-        name: Entity name (case-insensitive; GLiNER2 stores entities in lowercase).
-
-    Returns:
-        Dict with entity properties, or ``{"error": "..."}`` if not found.
-    """
-    from neo4j import GraphDatabase
-
-    uri, user, pw = _neo4j_creds()
-    d = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
-    try:
-        with d.session() as s:
-            row = s.run(
-                "MATCH (e:ENTITY) "
-                "WHERE toLower(e.name) = toLower($name) "
-                "OPTIONAL MATCH (e)-[:APPEARED_IN]->(seg:Segment) "
-                "RETURN properties(e) AS props, count(DISTINCT seg) AS segment_count",
-                name=name,
-            ).single()
-    finally:
-        d.close()
-
-    if row is None:
-        return {"error": f"Entity '{name}' not found"}
-
-    props = dict(row["props"])
-    props["segment_count"] = row["segment_count"]
-    return props
-
-
-@app.tool()
-def ltm_topics(min_entities: int = 3) -> dict[str, Any]:
-    """List all Topic nodes with an entity count above the threshold.
-
-    Ordered by entity_count descending.
-
-    Args:
-        min_entities: Minimum entity count threshold (default 3).
-
-    Returns:
-        Dict with a ``topics`` key containing the topic list.
-    """
-    from neo4j import GraphDatabase
-
-    uri, user, pw = _neo4j_creds()
-    d = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
-    try:
-        with d.session() as s:
-            rows = s.run(
-                "MATCH (t:TOPIC) "
-                "WHERE t.entity_count >= $min_entities "
-                "RETURN t.community_id AS community_id, "
-                "       t.summary AS summary, "
-                "       t.entity_count AS entity_count "
-                "ORDER BY t.entity_count DESC",
-                min_entities=min_entities,
-            ).data()
-    finally:
-        d.close()
-
-    return {"topics": rows}
-
-
-@app.tool()
-def recall_by_document(query: str, top_k: int = 5) -> dict[str, Any]:
-    """Find document chunks whose mentioned entities match the query.
-
-    Returns chunks ranked by number of matched entities.
-
-    Args:
-        query: Free-text search query.
-        top_k: Max results to return (1-20, default 5).
-
-    Returns:
-        Dict with a ``results`` key containing matched chunks.
-    """
-    from neo4j import GraphDatabase
-
-    from graphknows.recall import recall_by_document as _rbd
-
-    top_k = max(1, min(top_k, 20))
-    uri, user, pw = _neo4j_creds()
-    d = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
-    try:
-        results = _rbd(d, query, top_k)
-    finally:
-        d.close()
-
-    return {
-        "results": [
-            {
-                "text": r.text,
-                "entities": r.entity_names,
-                "provenance": r.provenance,
-                "score": r.score,
-            }
-            for r in results
-        ]
-    }
-
-
-@app.tool()
-def recall_by_dialog(
-    query: str,
-    top_k: int = 5,
-    session_filter: str = "",
-) -> dict[str, Any]:
-    """Find past conversation utterances whose mentioned entities match.
-
-    Args:
-        query: Free-text search query.
-        top_k: Max results to return (1-20, default 5).
-        session_filter: Optional session_id to scope results.
-
-    Returns:
-        Dict with a ``results`` key containing matched utterances.
-    """
-    from neo4j import GraphDatabase
-
-    from graphknows.recall import recall_by_dialog as _rbdia
-
-    top_k = max(1, min(top_k, 20))
-    filt = session_filter or None
-    uri, user, pw = _neo4j_creds()
-    d = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
-    try:
-        results = _rbdia(d, query, top_k, filt)
-    finally:
-        d.close()
-
-    return {
-        "results": [
-            {
-                "text": r.text,
-                "entities": r.entity_names,
-                "provenance": r.provenance,
-                "score": r.score,
-            }
-            for r in results
-        ]
-    }
-
-
-@app.tool()
-def recall_by_topic(query: str, top_k: int = 5) -> dict[str, Any]:
-    """Find topics whose label or member entities match the query.
-
-    Args:
-        query: Free-text search query.
-        top_k: Max results to return (1-20, default 5).
-
-    Returns:
-        Dict with a ``results`` key containing matched topics.
-    """
-    from neo4j import GraphDatabase
-
-    from graphknows.recall import recall_by_topic as _rbt
-
-    top_k = max(1, min(top_k, 20))
-    uri, user, pw = _neo4j_creds()
-    d = GraphDatabase.driver(uri, auth=(user, pw))  # NOSONAR
-    try:
-        results = _rbt(d, query, top_k)
-    finally:
-        d.close()
-
-    return {
-        "results": [
-            {
-                "text": r.text,
-                "entities": r.entity_names,
-                "provenance": r.provenance,
-                "score": r.score,
-            }
-            for r in results
-        ]
-    }
-
-
-@app.tool()
-async def corpus_ingest(
-    documents: list[dict],
-    taxonomy_file: str | None = None,
-) -> dict:
-    """Ingest a corpus of documents into the long-term knowledge graph.
-
-    Routes documents through STM (Memgraph + pgvector) first, then promotes
-    to Neo4j LTM via the canonical SessionFlusher pipeline.
-
-    Args:
-        documents: List of document dicts. Each must have:
-            - text (str): document content
-            - title (str): human-readable title
-            - id (str): unique document identifier
-            - source (str, optional): provenance URL or label
-        taxonomy_file: Optional taxonomy name (reserved for Wave 4; ignored in Wave 3).
-
-    Returns:
-        Dict with pipeline statistics: session_id, documents_processed,
-        entities_extracted, chunks_written, nodes_written, edges_written,
-        elapsed_s, errors (list).
-    """
-    if not documents:
-        return {"documents_processed": 0, "error": "no documents provided"}
-    try:
-        from graphknows.memory.extractor import GLiNER2EntityExtractor
-        from graphknows.memory.workflows.corpus_ingest import (
-            CorpusIngestRequest,
-            CorpusIngestWorkflow,
-        )
-
-        mg = _get_mg()
-        pg = await _get_pg()
-        neo = _get_neo()
-        extractor = GLiNER2EntityExtractor()
-        s = _get_settings()
-        openrouter_key = getattr(s, "openrouter_api_key", "") or ""
-
-        workflow = CorpusIngestWorkflow(
-            mg_store=mg,
-            pg_store=pg,
-            neo_store=neo,
-            extractor=extractor,
-            embed_fn=_embed_fn(),
-            openrouter_key=openrouter_key,
-        )
-        request = CorpusIngestRequest(
-            documents=documents,
-            taxonomy_file=taxonomy_file,
-        )
-        result = await workflow.run(request)
-    except Exception as exc:
-        return {"error": str(exc), "documents_processed": 0}
-    else:
-        return {
-            "session_id": result.session_id,
-            "documents_processed": result.documents_processed,
-            "entities_extracted": result.entities_extracted,
-            "chunks_written": result.chunks_written,
-            "nodes_written": result.nodes_written,
-            "edges_written": result.edges_written,
-            "elapsed_s": result.elapsed_s,
-            "errors": result.errors,
-        }
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+# Keep private helper accessible for tests that import it
+from graphknows.mcp.tools.stm import _normalise_and_weight  # noqa: F401, E402
 
 
 def main() -> None:

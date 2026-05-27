@@ -151,6 +151,19 @@ depends_on = [
   "graphknows.retrieval",
   "graphknows.graphgen",
   "graphknows.ontology",
+  "graphknows.mcp.tools",
+]
+
+[[modules]]
+path = "graphknows.mcp.tools"
+# Wave 4: per-tool-group modules; thin layer over builders + memory services
+depends_on = [
+  "graphknows.builders",
+  "graphknows.config",
+  "graphknows.memory",
+  "graphknows.memory.workflows",
+  "graphknows.retrieval",
+  "graphknows.recall",
 ]
 
 [[modules]]

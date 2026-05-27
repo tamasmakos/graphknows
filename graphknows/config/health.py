@@ -60,3 +60,63 @@ async def check_backends(settings: GraphKnowsSettings) -> dict[str, object]:
         result["pgvector"] = False
 
     return result
+
+
+async def get_memory_stats(settings: GraphKnowsSettings, session_id: str = "") -> dict[str, object]:
+    """Return STM and LTM memory counts.
+
+    Args:
+        settings: Runtime configuration.
+        session_id: Optional session filter (currently unused; returns aggregate).
+
+    Returns:
+        Dict with ``stm`` and ``ltm`` sub-dicts containing row counts.
+    """
+    import asyncpg
+    from neo4j import GraphDatabase
+
+    async def _pg_counts() -> dict[str, int]:
+        conn = await asyncpg.connect(settings.pgvector_dsn)
+        try:
+            sc = await conn.fetchval("SELECT count(*) FROM stm_chunks")
+            st = await conn.fetchval("SELECT count(*) FROM stm_turns")
+            lc = await conn.fetchval("SELECT count(*) FROM ltm_chunks")
+            lt = await conn.fetchval("SELECT count(*) FROM ltm_turns")
+            top = await conn.fetchval("SELECT count(*) FROM ltm_topics")
+            return {
+                "stm_chunks": int(sc),
+                "stm_turns": int(st),
+                "ltm_chunks": int(lc),
+                "ltm_turns": int(lt),
+                "ltm_topics": int(top),
+            }
+        finally:
+            await conn.close()
+
+    pg = await _pg_counts()
+
+    drv = GraphDatabase.driver(  # nosec
+        settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
+    )
+    with drv.session() as s:
+        row_e = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()
+        row_t = s.run("MATCH (t:TOPIC) RETURN count(t) as c").single()
+        row_s = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()
+        ec = row_e["c"] if row_e else 0
+        tc = row_t["c"] if row_t else 0
+        sess_c = row_s["c"] if row_s else 0
+    drv.close()
+
+    return {
+        "stm": {
+            "chunks": pg["stm_chunks"],
+            "turns": pg["stm_turns"],
+        },
+        "ltm": {
+            "sessions": int(sess_c),
+            "entities": int(ec),
+            "topics": int(tc),
+            "chunks": pg["ltm_chunks"],
+            "turns": pg["ltm_turns"],
+        },
+    }
