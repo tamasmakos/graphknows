@@ -76,6 +76,8 @@ depends_on = [
   "graphknows.graphgen",
   "graphknows.ingestion",
   "graphknows.retrieval",
+  "graphknows.memory.ltm",
+  "graphknows.memory.models",
 ]
 
 [[modules]]
@@ -87,6 +89,8 @@ path = "graphknows.retrieval"
 depends_on = [
   "graphknows.graphgen",
   "graphknows.memory",
+  "graphknows.memory.ltm",
+  "graphknows.memory.models",
 ]
 
 [[modules]]
@@ -109,3 +113,18 @@ depends_on = ["graphknows.memory", "graphknows.retrieval"]
 path = "graphknows.builders"
 # TARGET: composition root — Tier 3
 depends_on = ["graphknows.config", "graphknows.retrieval"]
+
+[[modules]]
+path = "graphknows.memory.ltm"
+# Canonical home for LTM promotion and GDS enrichment.
+depends_on = [
+  "graphknows.domain",
+  "graphknows.config",
+  "graphknows.memory.models",
+  "graphknows.retrieval",   # temporary: direct store access until #37 adapters land
+]
+
+[[modules]]
+path = "graphknows.memory.models"
+# SMELL: models/__init__ re-exports MemoryClass from memory.adapter_types (bidirectional cycle); deferred to Wave 3 cleanup
+depends_on = ["graphknows.memory"]

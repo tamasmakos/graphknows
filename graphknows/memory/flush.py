@@ -8,6 +8,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from graphknows.memory.ltm import LTMEnrichmentService, LTMWriter
+
 log = logging.getLogger("graphknows.memory.flush")
 
 
@@ -44,10 +46,10 @@ class SessionFlusher:
     Flush steps (in order):
     1. Read SESSION subgraph from Memgraph.
     2. Optional entity resolution: canonical name, highest confidence.
-    3. MERGE into Neo4j: SESSION → FILE → CHUNK → ENTITY, SESSION → DIALOG → TURN.
+    3. MERGE into Neo4j via LTMWriter: SESSION → FILE → CHUNK → ENTITY, SESSION → DIALOG → TURN.
     4. Copy stm_chunks → ltm_chunks, stm_turns → ltm_turns.
-    5. Optional Louvain community detection → LLM summarization → ltm_topics.
-    6. Optional GDS PageRank + betweenness.
+    5. Optional Louvain community detection → LLM summarization → ltm_topics (via LTMEnrichmentService).
+    6. Optional GDS PageRank + betweenness (via LTMEnrichmentService).
     7. Optional STM clear.
 
     Attributes:
@@ -177,45 +179,32 @@ class SessionFlusher:
         stm_data: dict[str, Any],
         errors: list[str] | None = None,
     ) -> dict[str, int]:
-        """MERGE all STM nodes/edges into Neo4j LTM with MERGE semantics.
-
-        Runs structural graph writes first, then async relation extraction (LLM).
-        Raises on relation extraction failure — fail-hard per spec.
-        """
-        nodes = 0
-        edges = 0
-        try:
-            result = await self._neo.write_session_subgraph(session_id, stm_data)
-            nodes = result.get("nodes", 0)
-            edges = result.get("edges", 0)
-        except Exception as exc:
-            log.warning("write_ltm_graph %s: %s", session_id, exc)
-            if errors is not None:
-                errors.append(f"write_ltm_graph: {exc}")
-        # Relation extraction — fail-hard on error (no catch)
-        rel_edges = await self._neo.extract_and_write_relations(
+        """MERGE all STM nodes/edges into Neo4j LTM via LTMWriter."""
+        return await LTMWriter.write(
+            session_id=session_id,
             stm_data=stm_data,
-            openrouter_key=self._openrouter_key,
+            neo_store=self._neo,
+            errors=errors,
         )
-        edges += rel_edges
-        return {"nodes": nodes, "edges": edges}
 
     async def _summarize_topics(self, session_id: str) -> int:
-        """Run Louvain community detection on ENTITY nodes, LLM summarize each community.
-
-        Uses gds.louvain.write (NOT leiden — broken in GDS 2026.04).
-        """
-        count: int = await self._neo.summarize_topics(
-            session_id=session_id,
-            openrouter_key=self._openrouter_key,
-            llm_model=self._llm_model,
+        """Run topic summarization via LTMEnrichmentService."""
+        svc = LTMEnrichmentService()
+        return await svc.run_topic_summarization(
+            driver=self._neo,
             pg_store=self._pg,
+            llm_key=self._openrouter_key,
+            llm_model=self._llm_model,
         )
-        return count
 
     async def _run_gds(self, session_id: str) -> None:
-        """Run GDS PageRank + betweenness on entity graph."""
-        await self._neo.run_gds_enrichment(session_id)
+        """Run GDS enrichment via LTMEnrichmentService."""
+        svc = LTMEnrichmentService()
+        driver = getattr(self._neo, "_driver", None)
+        if driver is None:
+            log.warning("GDS enrichment skipped: neo_store has no _driver attribute")
+            return
+        await svc.run_gds_async(driver)
 
     async def _clear_stm(self, session_id: str) -> None:
         """Delete all STM data for session from Memgraph and stm_* pgvector tables."""
