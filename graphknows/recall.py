@@ -203,8 +203,8 @@ def recall_by_topic(
 
     cypher = """
     UNWIND $tokens AS token
-    MATCH (e:ENTITY)
-    WHERE toLower(e.name) CONTAINS token
+    MATCH (e)
+    WHERE (e:ENTITY OR e:ENTITY_CONCEPT) AND toLower(e.name) CONTAINS token
     WITH collect(DISTINCT e.name) AS matched_names
     MATCH (t:TOPIC)
     OPTIONAL MATCH (e2)-[:IN_TOPIC]->(t)

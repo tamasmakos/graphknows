@@ -57,7 +57,7 @@ def embed(texts: list[str], model_name: str = EMBED_MODEL) -> np.ndarray:
         _OPENROUTER_URL,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={"model": model_name, "input": truncated},
-        timeout=30,
+        timeout=httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=5.0),
     )
     resp.raise_for_status()
     body = resp.json()
