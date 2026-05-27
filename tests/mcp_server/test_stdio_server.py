@@ -583,7 +583,7 @@ def test_corpus_ingest_calls_run_ingestion():
     """corpus_ingest routes through CorpusIngestWorkflow (not graphgen.run_ingestion)."""
     import asyncio
 
-    from graphknows.mcp.stdio_server import corpus_ingest
+    from graphknows.mcp.tools.corpus import corpus_ingest
 
     fake_result = MagicMock()
     fake_result.session_id = "sess-abc"
@@ -597,36 +597,15 @@ def test_corpus_ingest_calls_run_ingestion():
 
     mock_workflow = MagicMock()
     mock_workflow.run = AsyncMock(return_value=fake_result)
-    mock_workflow_cls = MagicMock(return_value=mock_workflow)
 
     with (
         patch(
-            "graphknows.mcp.stdio_server._get_mg",
+            "graphknows.mcp.tools.corpus.get_settings",
             return_value=MagicMock(),
         ),
         patch(
-            "graphknows.mcp.stdio_server._get_pg",
-            new=AsyncMock(return_value=MagicMock()),
-        ),
-        patch(
-            "graphknows.mcp.stdio_server._get_neo",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "graphknows.mcp.stdio_server._embed_fn",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "graphknows.mcp.stdio_server._get_settings",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow",
-            mock_workflow_cls,
-        ),
-        patch(
-            "graphknows.memory.extractor.GLiNER2EntityExtractor",
-            MagicMock(),
+            "graphknows.builders.stores.build_corpus_workflow",
+            return_value=mock_workflow,
         ),
     ):
         result = asyncio.run(
@@ -816,10 +795,11 @@ class TestMemoryFlushIdempotency:
         """When session already exists in LTM, return status=already_flushed without calling flusher."""
         from graphknows.mcp.tools import stm as stm_mod
 
-        # Mock get_neo_store() to return a Neo4j store whose session.run returns count > 0
+        # Mock get_neo_store() to return a Neo4j store whose _driver.session.run returns count > 0
         mock_neo = MagicMock()
+        mock_neo._db = "neo4j"
         mock_neo_session = MagicMock()
-        mock_neo.session.return_value.__enter__.return_value = mock_neo_session
+        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
         # MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n  →  n=1
         mock_record = MagicMock()
         mock_record.__getitem__ = lambda self, k: 1
@@ -854,8 +834,9 @@ class TestMemoryFlushIdempotency:
 
         # Neo4j session returns count = 0 (not in LTM)
         mock_neo = MagicMock()
+        mock_neo._db = "neo4j"
         mock_neo_session = MagicMock()
-        mock_neo.session.return_value.__enter__.return_value = mock_neo_session
+        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
         mock_record = MagicMock()
         mock_record.__getitem__ = lambda self, k: 0
         mock_neo_session.run.return_value = [mock_record]

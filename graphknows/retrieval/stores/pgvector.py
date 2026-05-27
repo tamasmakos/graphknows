@@ -105,7 +105,9 @@ class PgVectorStore:
     # ------------------------------------------------------------------
 
     async def connect(self) -> None:
-        """Open the asyncpg connection pool."""
+        """Open the asyncpg connection pool. Idempotent — no-op if already connected."""
+        if self._pool is not None:
+            return
         self._pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=8)
 
     async def close(self) -> None:
