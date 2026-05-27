@@ -12,6 +12,7 @@ from typing import Any
 
 from graphknows.ingestion.parsers.base import ParsedFile
 from graphknows.ingestion.parsers.registry import get_parser
+from graphknows.memory.models.ingest import IngestResult  # compat shim
 
 # A single background thread with its own persistent event loop.
 # All async store calls are dispatched into this loop — so asyncpg pools,
@@ -35,9 +36,6 @@ def _run(coro: Any) -> Any:
 
 log = logging.getLogger("graphknows.memory.ingestor")
 
-
-# COMPAT SHIM: prefer graphknows.memory.models.IngestResult
-from graphknows.memory.models.ingest import IngestResult  # noqa: E402, F401
 
 
 @dataclass

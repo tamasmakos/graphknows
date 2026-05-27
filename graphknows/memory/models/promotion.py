@@ -1,4 +1,5 @@
 """Promotion (STM→LTM flush) request/result DTOs."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

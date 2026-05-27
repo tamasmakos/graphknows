@@ -6,13 +6,11 @@ import logging
 from typing import Any
 
 from graphknows.memory.ingestor import _run
+from graphknows.memory.models.recall import RecallResult
 
 log = logging.getLogger("graphknows.retrieval.recall_stm")
 
 RRF_K: int = 60
-
-
-from graphknows.memory.models.recall import RecallResult  # COMPAT SHIM: prefer graphknows.memory.models
 
 
 _SHAPE_FACTORS: dict[str | None, float] = {

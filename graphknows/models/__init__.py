@@ -11,7 +11,11 @@ Example:
 """
 
 from graphknows.models.base import GraphKnowsBaseModel, ImmutableModel
-from graphknows.models.constants import EMBEDDING_DIM, EMBEDDING_MODEL, EntityLabel  # ARCH-62-deferred: migrate to graphknows.domain or graphknows.config
+from graphknows.models.constants import (
+    EMBEDDING_DIM,
+    EMBEDDING_MODEL,
+    EntityLabel,
+)  # ARCH-62-deferred: migrate to graphknows.domain or graphknows.config
 from graphknows.models.entity import Chunk, Edge, Entity, Topic
 from graphknows.models.pipeline import (
     BuildJob,
