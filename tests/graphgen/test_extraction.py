@@ -991,22 +991,6 @@ class TestVectorEmbedder:
 
 
 # ---------------------------------------------------------------------------
-# mcp_ltm.py — module-level constants
-# ---------------------------------------------------------------------------
-
-
-class TestMcpLtm:
-    def test_can_import_module(self):
-        try:
-            from graphknows import mcp_ltm
-
-            assert mcp_ltm is not None
-        except Exception as e:
-            # If it requires a running MCP server, that's acceptable
-            assert "connect" in str(e).lower() or "import" in str(e).lower() or True
-
-
-# ---------------------------------------------------------------------------
 # graphgen/main.py — module guard
 # ---------------------------------------------------------------------------
 

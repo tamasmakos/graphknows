@@ -154,12 +154,8 @@ def test_memory_recall_returns_hits():
     hit.entity_names = ["graphknows"]
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-        patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-        patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-        patch("graphknows.memory.ingestor._run"),
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
@@ -188,12 +184,8 @@ def test_memory_recall_hit_has_cosine_score():
     hit.entity_names = ["graphknows"]
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-        patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-        patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-        patch("graphknows.memory.ingestor._run"),
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
@@ -213,12 +205,8 @@ def test_memory_recall_empty():
     from graphknows.mcp.stdio_server import memory_recall
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-        patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-        patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-        patch("graphknows.memory.ingestor._run"),
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[]),
     ):
         result = asyncio.run(memory_recall(query="unknown", session_id="test-001"))
@@ -245,13 +233,9 @@ def test_ltm_recall_uses_session_filter_none():
     hit.entity_names = ["test"]
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-        patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-        patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-        patch("graphknows.memory.ingestor._run"),
-        patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch(
             "graphknows.retrieval.recall_ltm.recall_long_term", return_value=[hit]
         ) as mock_recall_ltm,
@@ -286,15 +270,9 @@ def test_clean_strips_content_prefix():
         hit.entity_names = []
 
         with (
-            patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-            patch(
-                "graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"
-            ),
-            patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-            patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-            patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-            patch("graphknows.memory.ingestor._run"),
-            patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
+            patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+            patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+            patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
             patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[hit]),
         ):
             return asyncio.run(memory_recall(query="x", session_id="s1", scope="ltm"))["hits"][0][
@@ -422,12 +400,8 @@ def test_scope_stm_unchanged():
     hit.entity_names = []
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-        patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-        patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-        patch("graphknows.memory.ingestor._run"),
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="x", session_id="test-001", scope="stm"))
@@ -450,13 +424,9 @@ def test_scope_ltm_unchanged():
     hit.entity_names = []
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-        patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-        patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-        patch("graphknows.memory.ingestor._run"),
-        patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="x", session_id="test-001", scope="ltm"))
@@ -489,13 +459,9 @@ def test_scope_both_normalises_cross_scope_scores():
     ltm_hit.entity_names = []
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch("graphknows.mcp.stdio_server._pg_dsn", return_value="postgresql://localhost/test"),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=lambda x: [0.0] * 384),
-        patch("graphknows.retrieval.stores.memgraph.MemgraphStore"),
-        patch("graphknows.retrieval.stores.pgvector.PgVectorStore"),
-        patch("graphknows.memory.ingestor._run"),
-        patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.retrieval.recall_stm.recall_short_term", return_value=[stm_hit]),
         patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[ltm_hit]),
     ):
@@ -848,9 +814,9 @@ class TestMemoryFlushIdempotency:
     @pytest.mark.asyncio
     async def test_already_flushed_returns_early(self):
         """When session already exists in LTM, return status=already_flushed without calling flusher."""
-        import graphknows.mcp.stdio_server as srv
+        from graphknows.mcp.tools import stm as stm_mod
 
-        # Mock _get_neo() to return a Neo4j store whose session.run returns count > 0
+        # Mock get_neo_store() to return a Neo4j store whose session.run returns count > 0
         mock_neo = MagicMock()
         mock_neo_session = MagicMock()
         mock_neo.session.return_value.__enter__.return_value = mock_neo_session
@@ -862,19 +828,17 @@ class TestMemoryFlushIdempotency:
         mock_flusher_cls = MagicMock()
 
         with (
-            patch.object(srv, "_get_neo", return_value=mock_neo),
-            patch("graphknows.mcp.stdio_server.SessionFlusher", mock_flusher_cls, create=True),
-        ):
-            # Patch the import inside the function
-            with patch.dict(
+            patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
+            patch.dict(
                 "sys.modules",
                 {
                     "graphknows.memory.flush": MagicMock(
                         FlushOptions=MagicMock(), SessionFlusher=mock_flusher_cls
                     ),
                 },
-            ):
-                result = await srv.memory_flush("session-already-flushed", run_gds=False)
+            ),
+        ):
+            result = await stm_mod.memory_flush("session-already-flushed", run_gds=False)
 
         assert result["status"] == "already_flushed"
         assert result["session_id"] == "session-already-flushed"
@@ -886,7 +850,7 @@ class TestMemoryFlushIdempotency:
     @pytest.mark.asyncio
     async def test_new_session_calls_flusher(self):
         """When session is NOT in LTM, the flusher should be called."""
-        import graphknows.mcp.stdio_server as srv
+        from graphknows.mcp.tools import stm as stm_mod
 
         # Neo4j session returns count = 0 (not in LTM)
         mock_neo = MagicMock()
@@ -909,40 +873,23 @@ class TestMemoryFlushIdempotency:
         mock_flusher_instance.flush = AsyncMock(return_value=mock_result)
         mock_flusher_cls = MagicMock(return_value=mock_flusher_instance)
 
-        mock_mg = MagicMock()
-        mock_pg = AsyncMock()
-        mock_pg.connect = AsyncMock()
-
         flush_mod = MagicMock()
         flush_mod.FlushOptions = MagicMock(return_value=MagicMock())
         flush_mod.SessionFlusher = mock_flusher_cls
 
-        mock_mg_mod = MagicMock()
-        mock_mg_mod.MemgraphStore = MagicMock(return_value=mock_mg)
-        mock_pg_mod = MagicMock()
-        mock_pg_mod.PgVectorStore = MagicMock(return_value=mock_pg)
-        mock_neo4j_mod = MagicMock()
-        mock_neo4j_mod.Neo4jStore = MagicMock(return_value=mock_neo)
-
         with (
-            patch.object(srv, "_get_neo", return_value=mock_neo),
-            patch("graphknows.mcp.stdio_server.MemgraphStore", return_value=mock_mg, create=True),
-            patch("graphknows.mcp.stdio_server.PgVectorStore", return_value=mock_pg, create=True),
-            patch("graphknows.mcp.stdio_server.Neo4jStore", return_value=mock_neo, create=True),
+            patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
             patch.dict(
                 "sys.modules",
                 {
                     "graphknows.memory.flush": flush_mod,
-                    "graphknows.retrieval.stores.memgraph": mock_mg_mod,
-                    "graphknows.retrieval.stores.pgvector": mock_pg_mod,
-                    "graphknows.retrieval.stores.neo4j": mock_neo4j_mod,
                 },
             ),
+            patch("graphknows.builders.stores.build_session_flusher", return_value=mock_flusher_instance),
         ):
-            result = await srv.memory_flush("session-new", run_gds=False)
+            result = await stm_mod.memory_flush("session-new", run_gds=False)
 
-        # Flusher MUST have been instantiated
-        mock_flusher_cls.assert_called_once()
+        # Flusher MUST have been called
         mock_flusher_instance.flush.assert_awaited_once()
         # Result should NOT have already_flushed status
         assert result.get("status") != "already_flushed"
@@ -1001,7 +948,7 @@ async def test_corpus_ingest_does_not_call_graphgen_run_ingestion(monkeypatch) -
         ),
         patch("graphknows.mcp.stdio_server._get_mg", return_value=MagicMock()),
         patch("graphknows.mcp.stdio_server._get_pg", new=AsyncMock(return_value=MagicMock())),
-        patch("graphknows.mcp.stdio_server._get_neo", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.mcp.stdio_server._embed_fn", return_value=MagicMock()),
         patch("graphknows.mcp.stdio_server._get_settings", return_value=MagicMock()),
     ):

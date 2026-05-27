@@ -6,6 +6,8 @@ adapter factories that return port-typed instances.
 
 from __future__ import annotations
 
+from typing import Any
+
 from graphknows.adapters.embedder_adapter import EmbedderAdapter
 from graphknows.adapters.memgraph_adapter import MemgraphAdapter
 from graphknows.adapters.neo4j_adapter import Neo4jAdapter
@@ -61,3 +63,52 @@ def build_session_db(settings: GraphKnowsSettings) -> ISessionDb:
 def build_embedder(model_name: str = "openai/text-embedding-3-small") -> IEmbedder:
     """Build an IEmbedder adapter."""
     return EmbedderAdapter(model_name=model_name)
+
+
+# --- Service factories (MCP transport layer) ---
+
+
+def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
+    """Build a MemoryIngestor from settings (rel_extractor=None per design)."""
+    from graphknows.memory.extractor import GLiNER2EntityExtractor
+    from graphknows.memory.ingestor import MemoryIngestor, _run
+    from graphknows.retrieval.stores.embedder import embed_one
+
+    mg = build_memgraph_store(settings)
+    pg = build_pgvector_store(settings)
+    _run(pg.connect())
+
+    extractor = GLiNER2EntityExtractor()
+    return MemoryIngestor(mg, pg, extractor, embed_fn=embed_one, rel_extractor=None)
+
+
+def build_session_flusher(settings: GraphKnowsSettings) -> Any:
+    """Build a SessionFlusher from settings."""
+    from graphknows.memory.flush import SessionFlusher
+
+    mg = build_memgraph_store(settings)
+    pg = build_pgvector_store(settings)
+    neo = build_neo4j_store(settings)
+    key = settings.openrouter_api_key or ""
+    return SessionFlusher(mg, pg, neo, openrouter_key=key)
+
+
+def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
+    """Build a CorpusIngestWorkflow from settings."""
+    from graphknows.memory.extractor import GLiNER2EntityExtractor
+    from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
+    from graphknows.retrieval.stores.embedder import embed_one
+
+    mg = build_memgraph_store(settings)
+    pg = build_pgvector_store(settings)
+    neo = build_neo4j_store(settings)
+    extractor = GLiNER2EntityExtractor()
+    key = settings.openrouter_api_key or ""
+    return CorpusIngestWorkflow(
+        mg_store=mg,
+        pg_store=pg,
+        neo_store=neo,
+        extractor=extractor,
+        embed_fn=embed_one,
+        openrouter_key=key,
+    )
