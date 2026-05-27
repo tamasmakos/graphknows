@@ -53,6 +53,4 @@ class RelationService:
             "RelationService.extract_and_write_relations: %d chunks",
             len(stm_data.get("chunks", [])),
         )
-        return await self._graph_db.extract_and_write_relations(
-            stm_data, openrouter_key, llm_model
-        )
+        return await self._graph_db.extract_and_write_relations(stm_data, openrouter_key, llm_model)

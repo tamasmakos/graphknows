@@ -42,7 +42,9 @@ class MemgraphAdapter:
         parser_name: str,
         source_hint: str,
     ) -> None:
-        return await self._store.write_file_node(session_id, file_id, title, parser_name, source_hint)
+        return await self._store.write_file_node(
+            session_id, file_id, title, parser_name, source_hint
+        )
 
     async def write_chunk_node(
         self,
@@ -106,7 +108,9 @@ class MemgraphAdapter:
         session_id: str,
         confidence: float,
     ) -> None:
-        return await self._store.write_turn_entity_edge(turn_id, entity_name, session_id, confidence)
+        return await self._store.write_turn_entity_edge(
+            turn_id, entity_name, session_id, confidence
+        )
 
     async def write_tool_call_node(
         self,
@@ -158,8 +162,14 @@ class MemgraphAdapter:
         created_at: Any | None = None,
     ) -> None:
         return await self._store.write_relation_edge(
-            session_id, subject_name, relation_name, object_name,
-            fact, confidence, valid_at, created_at,
+            session_id,
+            subject_name,
+            relation_name,
+            object_name,
+            fact,
+            confidence,
+            valid_at,
+            created_at,
         )
 
 
