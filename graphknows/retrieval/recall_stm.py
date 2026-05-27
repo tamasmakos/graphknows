@@ -3,29 +3,14 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from graphknows.memory.ingestor import _run
+from graphknows.memory.models.recall import RecallResult
 
 log = logging.getLogger("graphknows.retrieval.recall_stm")
 
 RRF_K: int = 60
-
-
-@dataclass
-class RecallResult:
-    """A single recall result from either STM or LTM."""
-
-    text: str
-    source_type: Literal["chunk", "turn"]
-    scope: Literal["short_term", "long_term"]
-    score: float
-    cosine_score: float = 0.0
-    entity_names: list[str] = field(default_factory=list)
-    provenance: dict[str, Any] = field(default_factory=dict)
-    heading_path: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 _SHAPE_FACTORS: dict[str | None, float] = {

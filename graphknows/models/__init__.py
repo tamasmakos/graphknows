@@ -1,3 +1,6 @@
+# DEPRECATED: graphknows.models is stale pipeline-era code.
+# New code must use graphknows.memory.models for DTOs.
+# Active legacy callers will be retired in Wave 4.
 """Domain models for the graphknows package.
 
 All Pydantic models inherit from :class:`GraphKnowsBaseModel` or
@@ -8,7 +11,11 @@ Example:
 """
 
 from graphknows.models.base import GraphKnowsBaseModel, ImmutableModel
-from graphknows.models.constants import EMBEDDING_DIM, EMBEDDING_MODEL, EntityLabel
+from graphknows.models.constants import (
+    EMBEDDING_DIM,
+    EMBEDDING_MODEL,
+    EntityLabel,
+)  # ARCH-62-deferred: migrate to graphknows.domain or graphknows.config
 from graphknows.models.entity import Chunk, Edge, Entity, Topic
 from graphknows.models.pipeline import (
     BuildJob,

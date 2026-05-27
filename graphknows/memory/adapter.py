@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from graphknows.memory.adapter_types import (
@@ -193,7 +193,7 @@ class GraphknowsAdapter:
             top_k=request.top_k,
             embed_fn=self.embed_fn,
         )
-        hit_dicts = [asdict(hit) for hit in hits]
+        hit_dicts = [hit.model_dump() for hit in hits]
         if not request.include_raw:
             hit_dicts = [
                 hit

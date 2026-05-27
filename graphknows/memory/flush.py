@@ -11,6 +11,7 @@ from typing import Any
 log = logging.getLogger("graphknows.memory.flush")
 
 
+# COMPAT: FlushOptions retained for callers (cli/mcp). Canonical DTO: PromotionRequest.
 @dataclass
 class FlushOptions:
     """Options controlling flush behavior."""
@@ -21,6 +22,7 @@ class FlushOptions:
     merge_entities: bool = True
 
 
+# COMPAT: FlushResult retained for backward compatibility. Canonical DTO: PromotionRecord.
 @dataclass
 class FlushResult:
     """Output of a flush operation."""
