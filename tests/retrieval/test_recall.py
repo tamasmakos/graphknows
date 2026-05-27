@@ -1,4 +1,9 @@
-"""Unit tests for recall_short_term and recall_long_term."""
+"""Unit tests for recall_short_term (re-export parity) and recall_long_term.
+
+STM deep tests have moved to tests/memory/stm/test_recall.py.
+These tests verify the shim in graphknows.retrieval.recall_stm still re-exports
+the canonical function correctly.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from graphknows.retrieval.recall_ltm import recall_long_term
 from graphknows.retrieval.recall_stm import recall_short_term
+from graphknows.memory.stm.recall import recall_short_term as canonical_recall_short_term
+
+
+def test_shim_reexports_canonical_function():
+    """The retrieval shim must re-export the same object as the canonical module."""
+    assert recall_short_term is canonical_recall_short_term
 
 
 def _embed(text: str) -> list[float]:

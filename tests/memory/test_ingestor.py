@@ -52,7 +52,9 @@ def _make_ingestor(extractor=None, embed_fn=None):
     ext_obj = MagicMock()
     ext_obj.extract = extractor
     embed = embed_fn or MagicMock(return_value=[0.1] * 10)
-    return MemoryIngestor(mg, pg, ext_obj, embed_fn=embed), mg, pg, ext_obj, embed
+    with pytest.warns(DeprecationWarning, match="MemoryIngestor is deprecated"):
+        ingestor = MemoryIngestor(mg, pg, ext_obj, embed_fn=embed)
+    return ingestor, mg, pg, ext_obj, embed
 
 
 # ---------------------------------------------------------------------------

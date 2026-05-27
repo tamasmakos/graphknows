@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from graphknows.memory.ingestor import _run
+from graphknows.memory.stm._async_bridge import _run
 from graphknows.retrieval.recall_stm import RRF_K, RecallResult
 
 log = logging.getLogger("graphknows.retrieval.recall_ltm")
