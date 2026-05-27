@@ -11,7 +11,7 @@ class IngestRequest(BaseModel, frozen=True):
     text: str
     session_id: str
     title: str = ""
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class IngestResult(BaseModel):

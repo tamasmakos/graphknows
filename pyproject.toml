@@ -104,3 +104,11 @@ module = [
     "graphknows.ontology.*",
 ]
 disable_error_code = ["no-any-return", "type-arg", "arg-type", "union-attr", "attr-defined", "return-value"]
+
+[[tool.mypy.overrides]]
+module = [
+    "graphknows.graphgen.analytics.*",
+    "graphknows.graphgen.pipeline.visualization.*",
+]
+ignore_missing_imports = true
+disable_error_code = ["import-not-found", "import-untyped"]

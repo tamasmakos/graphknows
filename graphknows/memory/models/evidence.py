@@ -16,4 +16,4 @@ class EvidenceItem(BaseModel):
     mime_type: str = "text/plain"
     memory_class: MemoryClass
     session_id: str | None = None
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
