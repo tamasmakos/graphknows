@@ -583,7 +583,7 @@ def test_corpus_ingest_calls_run_ingestion():
     """corpus_ingest routes through CorpusIngestWorkflow (not graphgen.run_ingestion)."""
     import asyncio
 
-    from graphknows.mcp.stdio_server import corpus_ingest
+    from graphknows.mcp.tools.corpus import corpus_ingest
 
     fake_result = MagicMock()
     fake_result.session_id = "sess-abc"
@@ -597,36 +597,15 @@ def test_corpus_ingest_calls_run_ingestion():
 
     mock_workflow = MagicMock()
     mock_workflow.run = AsyncMock(return_value=fake_result)
-    mock_workflow_cls = MagicMock(return_value=mock_workflow)
 
     with (
         patch(
-            "graphknows.mcp.stdio_server._get_mg",
+            "graphknows.mcp.tools.corpus.get_settings",
             return_value=MagicMock(),
         ),
         patch(
-            "graphknows.mcp.stdio_server._get_pg",
-            new=AsyncMock(return_value=MagicMock()),
-        ),
-        patch(
-            "graphknows.mcp.stdio_server._get_neo",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "graphknows.mcp.stdio_server._embed_fn",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "graphknows.mcp.stdio_server._get_settings",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow",
-            mock_workflow_cls,
-        ),
-        patch(
-            "graphknows.memory.extractor.GLiNER2EntityExtractor",
-            MagicMock(),
+            "graphknows.builders.stores.build_corpus_workflow",
+            return_value=mock_workflow,
         ),
     ):
         result = asyncio.run(
