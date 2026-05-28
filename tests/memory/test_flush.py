@@ -213,11 +213,14 @@ async def test_flush_calls_extract_and_write_relations():
 
 @pytest.mark.asyncio
 async def test_flush_propagates_extraction_error():
-    """If extract_and_write_relations raises, flush must propagate the exception."""
+    """If extract_and_write_relations raises with a valid key, flush degrades gracefully and records error."""
     flusher, mg, pg, neo = _make_flusher()
     neo.extract_and_write_relations = AsyncMock(side_effect=RuntimeError("LLM failed"))
-    with pytest.raises(RuntimeError, match="LLM failed"):
-        await flusher.flush("s1")
+    # Provide a non-empty key so extraction is attempted
+    flusher._openrouter_key = "test-key"
+    result = await flusher.flush("s1")
+    # Flush must NOT raise — errors are captured, not propagated
+    assert any("extract_and_write_relations" in e for e in result.errors)
 
 
 class TestFlushSurfacesNeo4jError:

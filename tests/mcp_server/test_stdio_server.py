@@ -1058,3 +1058,61 @@ def test_stm_recall_hit_entity_only_has_cosine_score_zero():
     hits = result.get("hits", [])
     assert len(hits) == 1
     assert hits[0]["cosine_score"] == 0.0
+
+
+class TestLTMWriterRelationExtractionGuard:
+    """LTMWriter must skip/survive relation extraction failures (issue: memory_flush timeout)."""
+
+    @pytest.mark.asyncio
+    async def test_write_skips_extraction_when_key_empty(self) -> None:
+        """Empty or whitespace-only openrouter_key → extract_and_write_relations is never called."""
+        from unittest.mock import AsyncMock
+
+        from graphknows.memory.ltm.writer import LTMWriter
+
+        for empty_key in ("", "   ", "\t"):
+            mock_neo = AsyncMock()
+            mock_neo.write_session_subgraph.return_value = {"nodes": 2, "edges": 1}
+            stm_data: dict = {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
+            errors: list[str] = []
+
+            result = await LTMWriter.write(
+                session_id="test-no-key",
+                stm_data=stm_data,
+                neo_store=mock_neo,
+                errors=errors,
+                openrouter_key=empty_key,
+            )
+
+            assert result == {"nodes": 2, "edges": 1}
+            mock_neo.extract_and_write_relations.assert_not_called()
+            assert errors == []
+
+    @pytest.mark.asyncio
+    async def test_write_survives_auth_error_when_key_present(self) -> None:
+        """Auth failure in extraction is caught; flush returns graph counts and appends error."""
+        from unittest.mock import AsyncMock
+
+        from graphknows.memory.ltm.writer import LTMWriter
+
+        mock_neo = AsyncMock()
+        mock_neo.write_session_subgraph.return_value = {"nodes": 3, "edges": 2}
+        mock_neo.extract_and_write_relations.side_effect = Exception(
+            "AuthenticationError: 401 Unauthorized"
+        )
+        stm_data: dict = {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
+        errors: list[str] = []
+
+        result = await LTMWriter.write(
+            session_id="test-bad-key",
+            stm_data=stm_data,
+            neo_store=mock_neo,
+            errors=errors,
+            openrouter_key="bad-key-xyz",
+        )
+
+        assert result["nodes"] == 3
+        assert result["edges"] == 2  # rel_edges=0; exception caught
+        assert len(errors) == 1
+        assert "extract_and_write_relations" in errors[0]
+        assert "AuthenticationError" in errors[0]

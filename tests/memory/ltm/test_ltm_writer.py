@@ -23,6 +23,7 @@ async def test_write_returns_correct_counts() -> None:
         session_id="sess-1",
         stm_data={"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []},
         neo_store=store,
+        openrouter_key="test-key",  # key required to trigger relation extraction
     )
     assert result["nodes"] == 5
     assert result["edges"] == 6  # 4 + 2 rel edges

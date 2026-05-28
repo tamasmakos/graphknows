@@ -28,6 +28,7 @@ class LTMWriter:
         stm_data: dict[str, Any],
         neo_store: Any,
         errors: list[str] | None = None,
+        openrouter_key: str = "",
     ) -> dict[str, int]:
         """MERGE all STM nodes/edges into Neo4j LTM.
 
@@ -37,6 +38,8 @@ class LTMWriter:
             neo_store: Neo4jStore (or compatible) — must expose write_session_subgraph
                        and extract_and_write_relations coroutines.
             errors: Optional mutable list; non-fatal errors are appended here.
+            openrouter_key: API key for relation extraction LLM. If empty, relation
+                extraction is skipped to avoid LLM retry storms (empty-key guard).
 
         Returns:
             dict with ``nodes`` and ``edges`` counts.
@@ -52,10 +55,28 @@ class LTMWriter:
             if errors is not None:
                 errors.append(f"write_ltm_graph: {exc}")
 
-        # Relation extraction (fail-hard per spec — no try/except here)
-        rel_edges = await neo_store.extract_and_write_relations(
-            stm_data=stm_data,
-            openrouter_key="",
-        )
+        # Relation extraction: skip when no key is available to avoid LLM retry storms.
+        if not (openrouter_key or "").strip():
+            log.warning(
+                "LTMWriter.write %s: openrouter_key is empty — skipping "
+                "extract_and_write_relations (rel_edges=0)",
+                session_id,
+            )
+            return {"nodes": nodes, "edges": edges}
+
+        rel_edges = 0
+        try:
+            rel_edges = await neo_store.extract_and_write_relations(
+                stm_data=stm_data,
+                openrouter_key=openrouter_key,
+            )
+        except Exception as exc:
+            log.warning(
+                "LTMWriter.write %s: extract_and_write_relations failed: %s",
+                session_id,
+                exc,
+            )
+            if errors is not None:
+                errors.append(f"extract_and_write_relations: {exc}")
         edges += rel_edges
         return {"nodes": nodes, "edges": edges}

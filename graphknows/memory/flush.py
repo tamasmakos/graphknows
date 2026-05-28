@@ -185,6 +185,7 @@ class SessionFlusher:
             stm_data=stm_data,
             neo_store=self._neo,
             errors=errors,
+            openrouter_key=self._openrouter_key,
         )
 
     async def _summarize_topics(self, session_id: str) -> int:
