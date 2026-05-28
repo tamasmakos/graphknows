@@ -466,7 +466,6 @@ def test_scope_both_normalises_cross_scope_scores():
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm._bg_run"),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[stm_hit]),
         patch("graphknows.retrieval.recall_ltm.recall_long_term", return_value=[ltm_hit]),
