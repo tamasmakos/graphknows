@@ -1150,3 +1150,14 @@ def test_dspy_lm_num_retries_zero(monkeypatch):
         pass
 
     assert captured.get("num_retries") == 0, "num_retries must be 0 to prevent LiteLLM retry storms"
+
+
+def test_get_openrouter_api_key_finds_key_under_infra():
+    """_get_openrouter_api_key must find the key when placed under config['infra']."""
+    from graphknows.graphgen.config.llm import _get_openrouter_api_key
+
+    config = {
+        "llm": {"model": "openai/gpt-4o"},
+        "infra": {"openrouter_api_key": "sk-or-test-1234"},
+    }
+    assert _get_openrouter_api_key(config) == "sk-or-test-1234"

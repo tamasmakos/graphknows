@@ -734,7 +734,7 @@ class Neo4jStore:
         extractor = DSPyExtractor(
             config={
                 "llm": {"model": llm_model},
-                "openrouter_api_key": openrouter_key,
+                "infra": {"openrouter_api_key": openrouter_key},
             }
         )
 
