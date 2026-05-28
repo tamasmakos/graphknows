@@ -96,13 +96,11 @@ def build_session_flusher(settings: GraphKnowsSettings) -> Any:
 def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     """Build a CorpusIngestWorkflow from settings."""
     from graphknows.memory.extractor import GLiNER2EntityExtractor
-    from graphknows.memory.ingestor import _run
     from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
     from graphknows.retrieval.stores.embedder import embed_one
 
     mg = build_memgraph_store(settings)
     pg = build_pgvector_store(settings)
-    _run(pg.connect())
     neo = build_neo4j_store(settings)
     extractor = GLiNER2EntityExtractor()
     key = settings.openrouter_api_key or ""
