@@ -38,7 +38,6 @@ packages/**/dist
 output/
 input/
 data/raw/
-services/data/
 demo_ingest.py
 
 # ─── Editor / OS ──────────────────────────────────────────────────────────────
@@ -47,14 +46,16 @@ demo_ingest.py
 *.DS_Store
 Thumbs.db
 
-# ─── Legacy / removed / external clones ──────────────────────────────────────
-lib/
-research
+# ─── Backup / temp files ─────────────────────────────────────────────────────
+*.bak
+.pre_surgical*
 
-mcp.json
-.hermes
-.worktrees/
-.briefs
-.opencode
+# ─── Legacy / removed ─────────────────────────────────────────────────────────
+langfuse/
+.gemini
+.gemini*.log
+.geminiignore
+lib/
+
+
 research
-llm-wiki
