@@ -154,6 +154,7 @@ class DSPyExtractor(BaseExtractor):
                 api_base="https://openrouter.ai/api/v1",
                 temperature=0.0,
                 max_tokens=2048,
+                num_retries=0,
             )
             dspy.configure(lm=lm)
         except Exception as e:

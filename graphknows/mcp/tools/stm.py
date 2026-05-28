@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from graphknows.builders.stores import build_pgvector_store
@@ -188,7 +189,11 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
         merge_entities=True,
     )
 
-    result = await flusher.flush(session_id, opts)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: _bg_run(flusher.flush(session_id, opts)),
+    )
 
     return {
         "nodes": result.nodes_written,

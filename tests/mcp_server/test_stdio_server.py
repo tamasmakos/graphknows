@@ -1116,3 +1116,37 @@ class TestLTMWriterRelationExtractionGuard:
         assert len(errors) == 1
         assert "extract_and_write_relations" in errors[0]
         assert "AuthenticationError" in errors[0]
+
+
+def test_bg_run_flush_offload():
+    """_bg_run correctly submits a coroutine to _BG_LOOP from sync context."""
+    import asyncio
+    from graphknows.memory.stm._async_bridge import _run as _bg_run
+
+    async def _simple():
+        await asyncio.sleep(0)
+        return 42
+
+    result = _bg_run(_simple())
+    assert result == 42
+
+
+def test_dspy_lm_num_retries_zero(monkeypatch):
+    """dspy.LM must be constructed with num_retries=0 to prevent retry storms."""
+    import dspy
+
+    captured: dict = {}
+
+    def mock_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        # avoid actually calling init (no real API key)
+
+    monkeypatch.setattr(dspy.LM, "__init__", mock_init)
+
+    try:
+        from graphknows.graphgen.pipeline.entity_relation.extractors import DSPyExtractor
+        DSPyExtractor(config={"openrouter_api_key": "fake", "model": "openai/gpt-4o"})
+    except Exception:
+        pass
+
+    assert captured.get("num_retries") == 0, "num_retries must be 0 to prevent LiteLLM retry storms"
