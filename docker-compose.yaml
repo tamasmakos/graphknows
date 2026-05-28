@@ -1,11 +1,7 @@
-# docker-compose.yaml — graphknows local development stack
-# Starts infrastructure + the graphknows service only.
-# The agent, search, and frontend services live in the civicalgraph repository.
-#
-# Usage:
-#   docker compose up -d
-#   docker compose --profile observability up -d   (adds Langfuse)
-
+# docker-compose.yaml — production service definitions
+# Override with docker-compose.dev.yaml for local development
+# Usage: docker compose up -d
+#        docker compose --profile observability up -d   (adds Langfuse)
 version: "3.9"
 
 services:
@@ -58,8 +54,6 @@ services:
       - "${MEMGRAPH_HTTP_PORT:-7444}:7444"
     environment:
       MEMGRAPH_STORAGE_MODE: IN_MEMORY_ANALYTICAL
-      MEMGRAPH_USER: "${MEMGRAPH_USER:-graphknows}"
-      MEMGRAPH_PASSWORD: "${MEMGRAPH_PASSWORD}"
     volumes:
       - memgraph_data:/var/lib/memgraph
     restart: unless-stopped
@@ -70,13 +64,54 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── graphknows service ──────────────────────────────────────────────────────
+  # ── Application Services ────────────────────────────────────────────────────
 
-  graphknows:
+  graphgen:
     build:
       context: .
-      dockerfile: services/graphknows/Dockerfile
-    command: python -m graphknows.run
+      dockerfile: services/graphgen/Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    environment:
+      # Neo4j
+      NEO4J_HOST: "${NEO4J_HOST:-neo4j}"
+      NEO4J_PORT: "${NEO4J_PORT:-7687}"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
+      NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
+      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
+      # pgvector
+      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
+      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
+      PGVECTOR_DB: "${PGVECTOR_DB:-vectordb}"
+      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
+      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
+      # LLM
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
+      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
+      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
+      # Filesystem
+      INPUT_DIR: "${GRAPHGEN_INPUT_DIR:-/data/input}"
+      OUTPUT_DIR: "${GRAPHGEN_OUTPUT_DIR:-/data/output}"
+      PYTHONPATH: /app/src
+    ports:
+      - "8020:8000"
+    volumes:
+      - graphgen_input:/data/input
+      - graphgen_output:/data/output
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  graphrag:
+    build:
+      context: .
+      dockerfile: services/graphrag/Dockerfile
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
     environment:
       # Neo4j
       NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
@@ -84,24 +119,58 @@ services:
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
       NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
       # pgvector
-      PGVECTOR_DSN: "${PGVECTOR_DSN:-postgresql://postgres:changeme@pgvector:5432/vectordb}"
-      # Memgraph
-      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
+      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
+      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
+      PGVECTOR_DB: "${PGVECTOR_DB:-vectordb}"
+      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
+      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
       # LLM
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
       LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
+      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
       LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
       LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
-      # Filesystem
-      INPUT_DIR: "${GRAPHGEN_INPUT_DIR:-/data/input}"
-      OUTPUT_DIR: "${GRAPHGEN_OUTPUT_DIR:-/data/output}"
+      # Observability
+      LANGFUSE_HOST: "${LANGFUSE_HOST:-http://langfuse:3000}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      # Service models
+      GRAPHRAG_KEYWORDS_MODEL: "${GRAPHRAG_KEYWORDS_MODEL:-llama-3.1-8b-instant}"
+      GRAPHRAG_CHAT_MODEL: "${GRAPHRAG_CHAT_MODEL:-llama-3.3-70b-versatile}"
+      GRAPHRAG_EMBEDDING_MODEL: "${GRAPHRAG_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}"
+      PYTHONPATH: /app/src
+    ports:
+      - "8010:8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    environment:
+      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
+      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
+      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
+      PGVECTOR_DB: "${PGVECTOR_DB:-vectordb}"
+      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
+      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
+      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
+      GRAPHRAG_URL: "${GRAPHRAG_URL:-http://graphrag:8000}"
+      GRAPHGEN_URL: "${GRAPHGEN_URL:-http://graphgen:8000}"
+      SEARCH_URL: "${SEARCH_URL:-http://search:8000}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
+      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
       GRAPHKNOWS_ENV: "${GRAPHKNOWS_ENV:-development}"
     ports:
-      - "${GRAPHKNOWS_PORT:-8025}:8025"
-    volumes:
-      - graphknows_input:/data/input
-      - graphknows_output:/data/output
+      - "8030:8000"
     depends_on:
       neo4j:
         condition: service_healthy
@@ -109,13 +178,25 @@ services:
         condition: service_healthy
       memgraph:
         condition: service_healthy
+      graphrag:
+        condition: service_started
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8025/health')"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+
+  search:
+    build:
+      context: .
+      dockerfile: services/search/Dockerfile
+    environment:
+      GRAPHGEN_URL: "${GRAPHGEN_URL:-http://graphgen:8000}"
+      GRAPHKNOWS_ENV: "${GRAPHKNOWS_ENV:-development}"
+      # Canonical raw-document store — bind-mounted from host so scrapers and
+      # the search service always read/write the same files.
+      RAW_DATA_DIR: "/data/raw"
+    ports:
+      - "8040:8000"
+    volumes:
+      - ./data/raw:/data/raw
+    restart: unless-stopped
 
   # ── Observability (optional profile) ────────────────────────────────────────
 
@@ -155,9 +236,6 @@ volumes:
   neo4j_data:
   pgvector_data:
   memgraph_data:
-  graphknows_input:
-  graphknows_output:
+  graphgen_input:
+  graphgen_output:
   langfuse_data:
-
-#  7474 neo4j HTTP   7687 neo4j Bolt   7688 memgraph Bolt   5432 pgvector
-#  8025 graphknows   3000 langfuse (observability profile)
