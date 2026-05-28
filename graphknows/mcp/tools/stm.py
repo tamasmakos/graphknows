@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from graphknows.mcp._app import app
@@ -179,9 +178,8 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
         }
 
     flusher = build_session_flusher(s)
-    key = s.openrouter_api_key or os.environ.get("OPENROUTER_API_KEY", "")
     opts = FlushOptions(
-        summarize_topics=bool(key),
+        summarize_topics=False,  # Never block MCP flush on LLM call; pipeline must stay <60s
         run_gds=run_gds,
         clear_stm=True,
         merge_entities=True,

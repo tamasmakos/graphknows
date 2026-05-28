@@ -967,3 +967,40 @@ def test_memory_ingest_returns_no_warnings():
         result = asyncio.run(memory_ingest("some text", session_id="test", title="t"))
         assert result["warnings"] == [], f"Expected no warnings, got: {result['warnings']}"
         assert "rel_extractor_disabled" not in result["warnings"]
+
+
+def test_memory_flush_does_not_summarize_topics():
+    """memory_flush must use summarize_topics=False — never block on LLM call (issue #114)."""
+    import asyncio
+    from graphknows.mcp.stdio_server import memory_flush
+
+    captured_opts = {}
+
+    async def fake_flush(session_id, opts):
+        captured_opts["summarize_topics"] = opts.summarize_topics
+        m = MagicMock()
+        m.nodes_written = 1
+        m.edges_written = 1
+        m.chunks_promoted = 1
+        m.turns_promoted = 0
+        m.elapsed_s = 1.0
+        m.errors = []
+        return m
+
+    mock_neo = MagicMock()
+    mock_neo_sess = MagicMock()
+    mock_neo_sess.run.return_value = [{"n": 0}]
+    mock_neo._driver.session.return_value.__enter__ = lambda s: mock_neo_sess
+    mock_neo._driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("graphknows.builders.stores.build_session_flusher") as mock_build,
+        patch("graphknows.mcp.tools.stm.get_settings"),
+        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=mock_neo),
+    ):
+        mock_flusher = MagicMock()
+        mock_flusher.flush = fake_flush
+        mock_build.return_value = mock_flusher
+        asyncio.run(memory_flush("test-session", run_gds=False))
+        assert captured_opts.get("summarize_topics") is False, \
+            "memory_flush must pass summarize_topics=False to FlushOptions"
