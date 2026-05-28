@@ -126,6 +126,7 @@ def _entity_boost(
                         source_type="chunk",
                         scope="short_term",
                         score=rrf,
+                        cosine_score=0.0,  # entity-only hit; no ANN vector score available
                         entity_names=ec.get("entity_names", []),
                         heading_path=ec.get("heading_path", ""),
                         provenance={

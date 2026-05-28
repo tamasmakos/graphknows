@@ -1034,3 +1034,28 @@ def test_stm_recall_uses_bg_loop_pg_store():
         mock_get_pg.assert_not_called()
         mock_build.assert_called_once()
         mock_bg_run.assert_called_once()
+
+
+def test_stm_recall_hit_entity_only_has_cosine_score_zero():
+    """Entity-only recall hits must have cosine_score explicitly set to 0.0 — issue #112."""
+    import asyncio
+    from graphknows.mcp.stdio_server import memory_recall
+
+    entity_hit = MagicMock()
+    entity_hit.score = 0.016
+    entity_hit.cosine_score = 0.0
+    entity_hit.source_type = "chunk"
+    entity_hit.text = "entity-only hit"
+    entity_hit.provenance = {"session_id": "test-001"}
+    entity_hit.entity_names = ["graphknows"]
+
+    with (
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm._bg_run"),
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[entity_hit]),
+    ):
+        result = asyncio.run(memory_recall(query="test", session_id="test-001", scope="stm"))
+    hits = result.get("hits", [])
+    assert len(hits) == 1
+    assert hits[0]["cosine_score"] == 0.0
