@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from graphknows.memory.stm._async_bridge import _run as _stm_run
+
 log = logging.getLogger("graphknows.memory.workflows.corpus_ingest")
 
 
@@ -71,9 +73,10 @@ class CorpusIngestWorkflow:
         Returns:
             CorpusIngestResult with aggregated counts and any errors.
         """
-        # Ensure asyncpg pool is created on THIS event loop (not _BG_LOOP)
+        # Ensure asyncpg pool is created on _BG_LOOP where stm.ingest() dispatches queries.
+        # Using _stm_run (sync) avoids binding the pool to the MCP event loop.
         if not getattr(self._pg, "_pool", None):
-            await self._pg.connect()
+            _stm_run(self._pg.connect())
 
         from graphknows.memory.flush import FlushOptions, SessionFlusher
         from graphknows.memory.stm.service import STMService
@@ -122,9 +125,15 @@ class CorpusIngestWorkflow:
                 log.warning(err)
 
         # Phase 2: flush STM → LTM
+        # Build a separate pg store for the flusher so it connects on the MCP async event loop
+        # (self._pg is bound to _BG_LOOP for STM ingest and cannot be reused here).
+        from graphknows.builders.stores import build_pgvector_store
+        from graphknows.mcp._state import get_settings
+
+        flush_pg = build_pgvector_store(get_settings())
         flusher = SessionFlusher(
             mg_store=self._mg,
-            pg_store=self._pg,
+            pg_store=flush_pg,
             neo_store=self._neo,
             openrouter_key=self._openrouter_key,
         )

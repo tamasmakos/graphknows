@@ -196,3 +196,26 @@ async def test_workflow_accepts_explicit_session_id() -> None:
     # Verify flush was called with the explicit session_id
     call_args = mock_flusher.flush.call_args
     assert call_args[0][0] == explicit_sid or call_args.args[0] == explicit_sid
+
+
+@pytest.mark.asyncio
+async def test_corpus_ingest_connects_pg_on_bg_loop() -> None:
+    """corpus_ingest must connect pg store on _BG_LOOP via _stm_run, not via await."""
+    wf = _make_workflow()
+    wf._pg._pool = None  # force the reconnect path
+
+    mock_stm = MagicMock()
+    mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
+
+    mock_flusher = MagicMock()
+    mock_flusher.flush = AsyncMock(return_value=_make_flush_result())
+
+    with (
+        patch("graphknows.memory.workflows.corpus_ingest._stm_run") as mock_run,
+        patch("graphknows.memory.stm.service.STMService", return_value=mock_stm),
+        patch("graphknows.memory.flush.SessionFlusher", return_value=mock_flusher),
+    ):
+        request = CorpusIngestRequest(documents=[{"id": "d1", "text": "Test text."}])
+        await wf.run(request)
+
+    assert mock_run.called, "_stm_run must be called to connect pg on _BG_LOOP"
