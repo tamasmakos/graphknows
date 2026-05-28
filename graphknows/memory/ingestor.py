@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import logging
 import time
+import warnings
 from dataclasses import dataclass, field
 from threading import Thread
 from typing import Any
@@ -83,6 +84,11 @@ class MemoryIngestor:
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
     ) -> None:
+        warnings.warn(
+            "MemoryIngestor is deprecated; use graphknows.memory.stm.STMService instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._mg = mg_store
         self._pg = pg_store
         self._extractor = extractor

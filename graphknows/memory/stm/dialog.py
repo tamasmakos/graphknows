@@ -1,32 +1,44 @@
+<<<<<<<< HEAD:graphknows/memory/stm/dialog.py
 """DialogCapture: record agent/user conversation turns into STM interaction graph.
 
 Migrated from graphknows.memory.dialog (DialogWriter).
+========
+"""DialogWriter: record agent/user conversation turns into STM interaction graph.
+
+DEPRECATED: This module is a compatibility shim. Use graphknows.memory.stm.dialog directly.
+>>>>>>>> origin/wave2/epic-38:graphknows/memory/dialog.py
 """
 
 from __future__ import annotations
 
-import hashlib
-import logging
-import time
-from dataclasses import dataclass, field
-from typing import Any
+import warnings
 
+<<<<<<<< HEAD:graphknows/memory/stm/dialog.py
 from graphknows.memory.stm._async_bridge import _run
 
 log = logging.getLogger("graphknows.memory.stm.dialog")
+========
+# Re-export all public names from the new canonical location.
+from graphknows.memory.stm.dialog import (
+    DialogCapture,
+    DialogResult,
+    Participant,
+    ToolCall,
+    Turn,
+)
+
+__all__ = ["DialogCapture", "DialogResult", "DialogWriter", "Participant", "ToolCall", "Turn"]
+>>>>>>>> origin/wave2/epic-38:graphknows/memory/dialog.py
 
 
-@dataclass
-class ToolCall:
-    """A tool invocation recorded within a turn.
+class DialogWriter(DialogCapture):
+    """Compatibility shim for DialogCapture.
 
-    Attributes:
-        name: Tool function name.
-        args: Raw arguments dict — stored as hash for privacy.
-        result_summary: Short summary of result.
-        latency_ms: Execution latency in milliseconds.
+    .. deprecated::
+        Use :class:`graphknows.memory.stm.dialog.DialogCapture` instead.
     """
 
+<<<<<<<< HEAD:graphknows/memory/stm/dialog.py
     name: str
     args: dict[str, Any] = field(default_factory=dict)
     result_summary: str = ""
@@ -252,4 +264,12 @@ class DialogCapture:
             turn_id=turn.id,
             entity_count=entity_count,
             errors=errors,
+========
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        warnings.warn(
+            "DialogWriter is deprecated; use graphknows.memory.stm.dialog.DialogCapture instead.",
+            DeprecationWarning,
+            stacklevel=2,
+>>>>>>>> origin/wave2/epic-38:graphknows/memory/dialog.py
         )
+        super().__init__(*args, **kwargs)
