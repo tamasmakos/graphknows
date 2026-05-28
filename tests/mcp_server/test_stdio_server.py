@@ -155,7 +155,8 @@ def test_memory_recall_returns_hits():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm._bg_run"),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
@@ -185,7 +186,8 @@ def test_memory_recall_hit_has_cosine_score():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm._bg_run"),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
@@ -206,7 +208,8 @@ def test_memory_recall_empty():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm._bg_run"),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[]),
     ):
         result = asyncio.run(memory_recall(query="unknown", session_id="test-001"))
@@ -401,7 +404,8 @@ def test_scope_stm_unchanged():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm._bg_run"),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
     ):
         result = asyncio.run(memory_recall(query="x", session_id="test-001", scope="stm"))
@@ -460,6 +464,8 @@ def test_scope_both_normalises_cross_scope_scores():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm._bg_run"),
         patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[stm_hit]),
@@ -1004,3 +1010,27 @@ def test_memory_flush_does_not_summarize_topics():
         asyncio.run(memory_flush("test-session", run_gds=False))
         assert captured_opts.get("summarize_topics") is False, \
             "memory_flush must pass summarize_topics=False to FlushOptions"
+
+
+# ---------------------------------------------------------------------------
+# Issue #111 — STM recall uses _BG_LOOP pg store, not get_pg_store()
+# ---------------------------------------------------------------------------
+
+
+def test_stm_recall_uses_bg_loop_pg_store():
+    """memory_recall builds a fresh pg store on _BG_LOOP for stm scope, not get_pg_store()."""
+    import asyncio
+
+    from graphknows.mcp.tools.stm import memory_recall
+
+    with (
+        patch("graphknows.mcp.tools.stm.get_pg_store") as mock_get_pg,
+        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
+        patch("graphknows.mcp.tools.stm.build_pgvector_store") as mock_build,
+        patch("graphknows.mcp.tools.stm._bg_run") as mock_bg_run,
+        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[]),
+    ):
+        asyncio.run(memory_recall("test query", session_id="test-session", scope="stm"))
+        mock_get_pg.assert_not_called()
+        mock_build.assert_called_once()
+        mock_bg_run.assert_called_once()

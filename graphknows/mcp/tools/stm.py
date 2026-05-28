@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from graphknows.builders.stores import build_pgvector_store
 from graphknows.mcp._app import app
 from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get_settings
+from graphknows.memory.stm._async_bridge import _run as _bg_run
 
 
 def _normalise_and_weight(hits: list[Any], weight: float) -> None:
@@ -101,7 +103,8 @@ async def memory_recall(
 
     if scope in ("stm", "both"):
         mg = get_mg_store()
-        pg = await get_pg_store()
+        pg = build_pgvector_store(get_settings())
+        _bg_run(pg.connect())  # pool created on _BG_LOOP where recall_short_term will use it
         stm_hits = recall_short_term(
             mg, pg, query, session_id=session_id, top_k=top_k, embed_fn=embed
         )
