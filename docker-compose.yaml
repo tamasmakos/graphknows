@@ -130,10 +130,6 @@ services:
       LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
       LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
       LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      # Observability
-      LANGFUSE_HOST: "${LANGFUSE_HOST:-http://langfuse:3000}"
-      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
-      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
       # Service models
       GRAPHRAG_KEYWORDS_MODEL: "${GRAPHRAG_KEYWORDS_MODEL:-llama-3.1-8b-instant}"
       GRAPHRAG_CHAT_MODEL: "${GRAPHRAG_CHAT_MODEL:-llama-3.3-70b-versatile}"
@@ -197,40 +193,6 @@ services:
     volumes:
       - ./data/raw:/data/raw
     restart: unless-stopped
-
-  # ── Observability (optional profile) ────────────────────────────────────────
-
-  langfuse:
-    image: langfuse/langfuse:2.95.0
-    profiles: [ "observability" ]
-    depends_on:
-      langfuse-db:
-        condition: service_healthy
-    ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: "${LANGFUSE_DATABASE_URL:-postgresql://langfuse:langfuse@langfuse-db:5432/langfuse}"
-      NEXTAUTH_SECRET: "${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-production}"
-      SALT: "${LANGFUSE_SALT:-change-me-in-production}"
-      NEXTAUTH_URL: "http://localhost:3000"
-      TELEMETRY_ENABLED: "false"
-    restart: unless-stopped
-
-  langfuse-db:
-    image: postgres:16.6-alpine
-    profiles: [ "observability" ]
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: langfuse
-      POSTGRES_DB: langfuse
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U langfuse -d langfuse" ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - langfuse_data:/var/lib/postgresql/data
 
 volumes:
   neo4j_data:

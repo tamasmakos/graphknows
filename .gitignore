@@ -64,3 +64,6 @@ research
 .github
 .opencode
 .hermes
+research
+llm-wiki
+.coverage*
