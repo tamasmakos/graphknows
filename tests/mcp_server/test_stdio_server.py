@@ -943,3 +943,27 @@ async def test_corpus_ingest_does_not_call_graphgen_run_ingestion(monkeypatch) -
     graphgen_run_ingestion.assert_not_called()
     assert "documents_processed" in result
 
+
+
+def test_memory_ingest_returns_no_warnings():
+    """memory_ingest must not return rel_extractor_disabled warning — issue #113."""
+    import asyncio
+    from graphknows.mcp.stdio_server import memory_ingest
+
+    mock_result = MagicMock()
+    mock_result.file_id = "abc123"
+    mock_result.chunk_count = 1
+    mock_result.entity_count = 5
+    mock_result.elapsed_s = 1.0
+    mock_result.errors = []
+
+    with (
+        patch("graphknows.builders.stores.build_memory_ingestor") as mock_build,
+        patch("graphknows.mcp.tools.stm.get_settings"),
+    ):
+        mock_ingestor = MagicMock()
+        mock_ingestor.ingest_text.return_value = mock_result
+        mock_build.return_value = mock_ingestor
+        result = asyncio.run(memory_ingest("some text", session_id="test", title="t"))
+        assert result["warnings"] == [], f"Expected no warnings, got: {result['warnings']}"
+        assert "rel_extractor_disabled" not in result["warnings"]

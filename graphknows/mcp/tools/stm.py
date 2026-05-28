@@ -52,7 +52,7 @@ async def memory_ingest(
         "entities": result.entity_count,
         "elapsed_s": round(result.elapsed_s, 3),
         "errors": list(result.errors),
-        "warnings": ["rel_extractor_disabled"],
+        "warnings": [],
     }
 
 
