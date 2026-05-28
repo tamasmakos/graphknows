@@ -1,35 +1,20 @@
-<<<<<<<< HEAD:graphknows/memory/stm/recall.py
 """STM recall: Memgraph entity graph + pgvector stm_chunks/stm_turns, RRF-fused.
 
 Migrated from graphknows.retrieval.recall_stm.
-========
-"""Short-term memory recall — compatibility shim.
-
-DEPRECATED: Use graphknows.memory.stm.recall directly.
->>>>>>>> origin/wave2/epic-38:graphknows/retrieval/recall_stm.py
 """
 
 from __future__ import annotations
 
 import logging
-import warnings
+from typing import Any
 
-<<<<<<<< HEAD:graphknows/memory/stm/recall.py
 from graphknows.memory.models.recall import RecallResult
 from graphknows.memory.stm._async_bridge import _run
-========
-warnings.warn(
-    "graphknows.retrieval.recall_stm is deprecated; import from graphknows.memory.stm.recall instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
->>>>>>>> origin/wave2/epic-38:graphknows/retrieval/recall_stm.py
 
 log = logging.getLogger("graphknows.memory.stm.recall")
 
-from typing import Any  # noqa: E402
+RRF_K: int = 60
 
-<<<<<<<< HEAD:graphknows/memory/stm/recall.py
 _SHAPE_FACTORS: dict[str | None, float] = {
     "fact": 1.5,
     "state": 1.4,
@@ -42,16 +27,6 @@ _SHAPE_FACTORS: dict[str | None, float] = {
 def _shape_score(score: float, memory_class: str | None) -> float:
     """Apply memory_class-aware multiplicative boost/de-boost to a score."""
     return score * _SHAPE_FACTORS.get(memory_class, 1.0)
-========
-from graphknows.memory.models.recall import RecallResult  # noqa: E402
-from graphknows.memory.stm._async_bridge import _run as _run  # noqa: E402 — compat for tests
-from graphknows.memory.stm.recall import (  # noqa: E402
-    RRF_K,
-    _entity_boost,
-    _shape_score,
-    recall_short_term,
-)
->>>>>>>> origin/wave2/epic-38:graphknows/retrieval/recall_stm.py
 
 
 def _run_stm_ann(
@@ -61,7 +36,7 @@ def _run_stm_ann(
     top_k: int,
     results: dict[str, tuple[float, RecallResult]],
 ) -> None:
-    """ANN search stm_chunks + stm_turns — shim that uses local _run so tests can mock it."""
+    """ANN search stm_chunks + stm_turns; populate results dict."""
     try:
         chunks = _run(pg_store.search_stm_chunks(session_id, embedding, top_k=top_k * 2))
         for rank, chunk in enumerate(chunks):
@@ -116,7 +91,6 @@ def _run_stm_ann(
         log.warning("stm_turns ANN failed: %s", exc)
 
 
-<<<<<<<< HEAD:graphknows/memory/stm/recall.py
 def _entity_boost(
     mg_store: Any,
     session_id: str,
@@ -208,13 +182,3 @@ def recall_short_term(
         shaped.append((new_score, result))
     shaped.sort(key=lambda x: x[0], reverse=True)
     return [r for _, r in shaped[:top_k]]
-========
-__all__ = [
-    "RRF_K",
-    "RecallResult",
-    "_entity_boost",
-    "_run_stm_ann",
-    "_shape_score",
-    "recall_short_term",
-]
->>>>>>>> origin/wave2/epic-38:graphknows/retrieval/recall_stm.py
