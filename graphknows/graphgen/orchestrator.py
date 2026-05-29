@@ -377,7 +377,11 @@ class KnowledgePipeline:
 
         try:
             from graphknows.graphgen.analytics.reporting import generate_topic_separation_report
+        except ImportError:
+            logger.debug("Step 4.5: Topic Analysis skipped (analytics package not available)")
+            return
 
+        try:
             logger.info("Step 4.5: Topic Separation Analysis")
 
             # Generate statistical report

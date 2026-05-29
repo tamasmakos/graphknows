@@ -1,0 +1,24 @@
+[importlinter]
+root_package = graphknows
+unmatched_ignore_imports_alerting = none
+
+[importlinter:contract:layers]
+name = Declared architecture layers
+type = layers
+layers =
+    graphknows.mcp
+    graphknows.builders
+    graphknows.graphgen
+    graphknows.memory
+    graphknows.adapters
+    graphknows.config
+    graphknows.domain
+ignore_imports =
+    graphknows.memory.models -> graphknows.memory
+    graphknows.memory -> graphknows.graphgen
+    graphknows.retrieval -> graphknows.graphgen
+    graphknows.retrieval -> graphknows.memory.stm
+    graphknows.retrieval -> graphknows.memory.ltm
+    graphknows.mcp.tools -> graphknows.mcp
+    graphknows.config -> graphknows.config.health
+    graphknows.config.health -> graphknows.config

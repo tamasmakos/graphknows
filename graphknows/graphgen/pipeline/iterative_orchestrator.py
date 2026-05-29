@@ -22,18 +22,6 @@ from graphknows.graphgen.pipeline.community.subcommunities import (
 )
 from graphknows.graphgen.pipeline.graph_cleaning.resolution import resolve_entities_semantically
 from graphknows.graphgen.pipeline.summarization.core import generate_community_summaries
-from graphknows.graphgen.analytics.reporting import generate_topic_separation_report
-from graphknows.graphgen.analytics.metrics import calculate_node2vec_significance
-from graphknows.graphgen.analytics.visualizer import (
-    plot_node2vec_impact,
-    plot_community_centrality,
-    plot_global_centrality,
-)
-from graphknows.graphgen.analytics.centrality import (
-    calculate_centrality_measures,
-    get_top_entities_global,
-    get_top_entities_per_community,
-)
 from graphknows.graphgen.utils.vector_embedder.rag import generate_rag_embeddings
 from graphknows.graphgen.config.llm import get_langchain_llm
 from graphknows.graphgen.config.schema import GraphSchema
@@ -341,11 +329,18 @@ class IterativeOrchestrator:
         thesis_output_dir: str,
     ) -> AnalyticsResult:
         """Run analytics, save checkpoints, and return the stats report."""
-        stats_report = generate_topic_separation_report(
-            ctx.graph,
-            f"{self.settings.infra.output_dir}/iteration_{iteration + 1}_report.json",
-            self.settings.analytics,
-        )
+        try:
+            from graphknows.graphgen.analytics.reporting import generate_topic_separation_report
+        except ImportError:
+            generate_topic_separation_report = None  # type: ignore[assignment]
+
+        stats_report: AnalyticsResult = {}
+        if generate_topic_separation_report is not None:
+            stats_report = generate_topic_separation_report(
+                ctx.graph,
+                f"{self.settings.infra.output_dir}/iteration_{iteration + 1}_report.json",
+                self.settings.analytics,
+            )
 
         if self.settings.analytics.enabled:
             self._run_full_analytics(ctx, iteration, comm_results)
@@ -359,7 +354,11 @@ class IterativeOrchestrator:
         self, ctx: PipelineContext, iteration: int, comm_results: CommunityResult
     ) -> None:
         """Run GraphAnalyzer heatmap/KGE analysis and centrality analytics."""
-        from graphknows.graphgen.analytics.analyzer import GraphAnalyzer
+        try:
+            from graphknows.graphgen.analytics.analyzer import GraphAnalyzer
+        except ImportError:
+            logger.debug("Analytics package not available, skipping full analytics")
+            return
 
         analyzer = GraphAnalyzer(
             config=self.settings.analytics.model_dump(),
@@ -376,6 +375,19 @@ class IterativeOrchestrator:
         communities_map: Dict[str, Any],
     ) -> None:
         """Calculate centrality scores and save per-iteration JSON; plot on final iteration."""
+        try:
+            from graphknows.graphgen.analytics.centrality import (
+                calculate_centrality_measures,
+                get_top_entities_global,
+                get_top_entities_per_community,
+            )
+            from graphknows.graphgen.analytics.visualizer import (
+                plot_global_centrality,
+                plot_community_centrality,
+            )
+        except ImportError:
+            logger.debug("Analytics package not available, skipping centrality analysis")
+            return
         try:
             logger.info("Running advanced centrality analysis...")
             centrality_scores = calculate_centrality_measures(ctx.graph)
@@ -542,6 +554,12 @@ class IterativeOrchestrator:
     def _run_node2vec_final_analysis(self) -> None:
         """Compute Node2Vec significance test and save impact plot (runs once at end)."""
         if not (self.settings.community.node2vec_enabled and len(self.results) >= 2):
+            return
+        try:
+            from graphknows.graphgen.analytics.metrics import calculate_node2vec_significance
+            from graphknows.graphgen.analytics.visualizer import plot_node2vec_impact
+        except ImportError:
+            logger.debug("Analytics package not available, skipping node2vec final analysis")
             return
         try:
             n2v_stats = calculate_node2vec_significance(self.results)
