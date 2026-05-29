@@ -522,6 +522,20 @@ class MemgraphStore:
 
         await asyncio.to_thread(_sync)
 
+    # Relation types where only one target per (head, relation_type) should be
+    # current at a time. When a new fact arrives for a single-valued relation,
+    # any existing current edge with a *different* tail is tombstoned.
+    _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
+        {
+            "AFFILIATED_WITH",
+            "LOCATED_IN",
+            "PART_OF",
+            "PRODUCED_BY",
+            "PRECEDED_BY",
+            "SUCCEEDED_BY",
+        }
+    )
+
     async def write_relation_edge(
         self,
         session_id: str,
@@ -533,22 +547,56 @@ class MemgraphStore:
         valid_at: Any | None = None,
         created_at: Any | None = None,
     ) -> None:
-        """Write a typed REL edge between two named entities in Memgraph STM."""
+        """Write a bi-temporal REL edge between two named entities in Memgraph STM.
+
+        Edge properties added/updated:
+          - ``valid_from``: ISO timestamp when this fact became valid (= now on create).
+          - ``valid_to``: None while current; set to close timestamp when tombstoned.
+          - ``is_current``: True while the fact is the authoritative current state.
+
+        For single-valued relation types (e.g. AFFILIATED_WITH, LOCATED_IN) a new
+        incoming edge with a *different* tail automatically tombstones any existing
+        current edge for the same (subject, relation_name) pair — no LLM needed.
+        """
+        import datetime
+
+        now = datetime.datetime.utcnow().isoformat()
 
         def _sync() -> None:
             with self._driver.session() as s:
+                # Invalidation: tombstone existing current edges for single-valued types
+                if relation_name in self._SINGLE_VALUED_RELATIONS:
+                    s.run(
+                        """MATCH (a:ENTITY {name: $subject, session_id: $session_id})
+                               -[r:REL {name: $name, session_id: $session_id, is_current: true}]
+                               ->(b:ENTITY)
+                           WHERE toLower(b.name) <> toLower($object)
+                           SET r.is_current = false, r.valid_to = $now""",
+                        subject=subject_name,
+                        name=relation_name,
+                        session_id=session_id,
+                        object=object_name,
+                        now=now,
+                    )
+
+                # Write new edge with bi-temporal fields
                 s.run(
                     """MATCH (a:ENTITY {name: $subject, session_id: $session_id})
                        MATCH (b:ENTITY {name: $object, session_id: $session_id})
                        MERGE (a)-[r:REL {name: $name, session_id: $session_id}]->(b)
-                       SET r.fact = $fact,
-                           r.confidence = $confidence""",
+                       SET r.fact        = $fact,
+                           r.confidence  = $confidence,
+                           r.valid_from  = coalesce(r.valid_from, $now),
+                           r.valid_to    = null,
+                           r.is_current  = true,
+                           r.created_at  = coalesce(r.created_at, $now)""",
                     subject=subject_name,
                     object=object_name,
                     name=relation_name,
                     session_id=session_id,
                     fact=fact,
                     confidence=confidence,
+                    now=now,
                 )
 
         await asyncio.to_thread(_sync)

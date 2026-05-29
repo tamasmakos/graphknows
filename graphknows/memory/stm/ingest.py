@@ -10,6 +10,7 @@ from typing import Any
 
 from graphknows.ingestion.parsers.base import ParsedFile
 from graphknows.ingestion.parsers.registry import get_parser
+from graphknows.memory.extractor import ExtractionResult as _ExtractionResult
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.stm._async_bridge import _run
 
@@ -141,9 +142,14 @@ class _STMIngestHandler:
             # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
             clean_text = re.sub(r"^##\s*Content\s*\n+", "", seg.text, flags=re.IGNORECASE).strip()
 
-            entities: list[dict[str, Any]] = (
-                self._extractor.extract(clean_text).entities if self._extractor is not None else []
+            # One GLiNER2 call returns both entities and relations — capture both.
+            # Previously only .entities was captured; .relations was silently discarded.
+            extraction = (
+                self._extractor.extract(clean_text)
+                if self._extractor is not None
+                else _ExtractionResult()
             )
+            entities: list[dict[str, Any]] = extraction.entities
 
             embedding: list[float] = self._embed_fn(clean_text)
 
@@ -176,28 +182,70 @@ class _STMIngestHandler:
                 )
                 entity_count += 1
 
-            # Wire relation extractor — write REL edges to Memgraph STM
-            if self._rel_extractor is not None and len(entities) >= 2:
+            # Write GLiNER2 relations — bi-temporal edges with invalidation.
+            # Minimum confidence threshold filters noisy low-score pairs.
+            _rel_threshold = 0.5
+            for rel in extraction.relations:
+                if rel.get("score", 0.0) < _rel_threshold:
+                    continue
                 try:
-                    relations = self._rel_extractor.extract(
-                        text=clean_text,
-                        entities=entities,
-                        ontology_schema="{}",
-                    )
-                    for rel in relations:
-                        _run(
-                            self._mg.write_relation_edge(
-                                session_id=session_id,
-                                subject_name=rel["subject"],
-                                relation_name=rel["predicate"],
-                                object_name=rel["object"],
-                                confidence=rel.get("confidence", 0.5),
-                            )
+                    _run(
+                        self._mg.write_relation_edge(
+                            session_id=session_id,
+                            subject_name=rel["head"],
+                            relation_name=rel["relation"],
+                            object_name=rel["tail"],
+                            confidence=rel.get("score", 0.5),
                         )
+                    )
                 except Exception as exc:
                     log.warning(
-                        "rel_extractor failed for session=%s: %s",
+                        "write_relation_edge failed session=%s rel=%s: %s",
                         session_id,
+                        rel.get("relation"),
+                        exc,
+                    )
+
+            # DSPy ontology-guided relation extraction (Pass 3).
+            # Runs after GLiNER2 to add richer, ontology-typed edges.
+            # Uses domain-routed ontology (graphknows vs Schema.org) and
+            # co-occurrence warm-start candidates for maximum recall.
+            if self._rel_extractor is not None and len(entities) >= 2:
+                try:
+                    dspy_rels = self._rel_extractor.extract(
+                        text=clean_text,
+                        entities=entities,
+                        ontology_schema=None,  # auto-routed by doc type
+                        ontology_id=f"{session_id}:{chunk_id[:8]}",
+                    )
+                    for drel in dspy_rels:
+                        try:
+                            _run(
+                                self._mg.write_relation_edge(
+                                    session_id=session_id,
+                                    subject_name=drel["subject"],
+                                    relation_name=drel["predicate"],
+                                    object_name=drel["object"],
+                                    confidence=drel.get("confidence", 0.5),
+                                )
+                            )
+                        except Exception as exc:
+                            log.warning(
+                                "DSPy write_relation_edge failed session=%s: %s",
+                                session_id,
+                                exc,
+                            )
+                    log.debug(
+                        "DSPy extraction session=%s chunk=%s: %d triples",
+                        session_id,
+                        chunk_id[:8],
+                        len(dspy_rels),
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "DSPy rel_extractor failed session=%s chunk=%s: %s",
+                        session_id,
+                        chunk_id[:8],
                         exc,
                     )
 

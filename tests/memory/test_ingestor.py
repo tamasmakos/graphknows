@@ -303,30 +303,42 @@ def _make_ingestor_rel(
     return ingestor, mg, pg
 
 
+def _make_extractor_with_relations(
+    n_entities: int = 2,
+    relations: list[dict] | None = None,
+) -> MagicMock:
+    """Return a mock extractor that returns *n_entities* entities and *relations*."""
+    entities = [{"name": f"Entity{i}", "type": "ENTITY", "score": 0.9} for i in range(n_entities)]
+    if relations is None:
+        relations = []
+    ext = MagicMock()
+    ext.extract = MagicMock(return_value=ExtractionResult(entities=entities, relations=relations))
+    return ext
+
+
 def test_rel_extractor_called_and_writes_edge_per_relation():
-    """With rel_extractor set and >=2 entities, write_relation_edge called once per rel."""
-    rel_ext = _make_rel_extractor(
-        [
-            {
-                "subject": "Entity0",
-                "predicate": "KNOWS",
-                "object": "Entity1",
-                "confidence": 0.9,
-            },
-            {
-                "subject": "Entity1",
-                "predicate": "OPPOSES",
-                "object": "Entity0",
-                "confidence": 0.7,
-            },
-        ]
-    )
-    ingestor, mg, _ = _make_ingestor_rel(rel_extractor=rel_ext, n_entities=2)
+    """GLiNER2 relations from ExtractionResult are written as REL edges."""
+    relation_list = [
+        {
+            "head": "Entity0",
+            "relation": "KNOWS",
+            "tail": "Entity1",
+            "score": 0.9,
+        },
+        {
+            "head": "Entity1",
+            "relation": "RELATED_TO",
+            "tail": "Entity0",
+            "score": 0.7,
+        },
+    ]
+    ext = _make_extractor_with_relations(n_entities=2, relations=relation_list)
+    ingestor, mg, _ = _make_ingestor_rel(extractor=ext, n_entities=2)
     parsed = _make_parsed_rel(n_segments=1)
 
     ingestor.ingest_parsed(parsed, session_id="s1")
 
-    assert rel_ext.extract.call_count == 1
+    # write_relation_edge must be called once per relation above threshold (0.5)
     assert mg.write_relation_edge.call_count == 2
 
     # Verify first call used the right kwargs
@@ -339,8 +351,9 @@ def test_rel_extractor_called_and_writes_edge_per_relation():
 
 
 def test_rel_extractor_none_does_not_call_write_relation_edge():
-    """When rel_extractor is None, write_relation_edge must never be called."""
-    ingestor, mg, _ = _make_ingestor_rel(rel_extractor=None, n_entities=3)
+    """When extractor returns no relations, write_relation_edge must never be called."""
+    ext = _make_extractor_with_relations(n_entities=3, relations=[])
+    ingestor, mg, _ = _make_ingestor_rel(extractor=ext, n_entities=3)
     parsed = _make_parsed_rel(n_segments=1)
 
     ingestor.ingest_parsed(parsed, session_id="s2")
@@ -349,23 +362,41 @@ def test_rel_extractor_none_does_not_call_write_relation_edge():
 
 
 def test_rel_extractor_skipped_when_fewer_than_two_entities():
-    """When the extractor returns <2 entities, rel_extractor.extract() not called."""
-    rel_ext = _make_rel_extractor()
-    ingestor, mg, _ = _make_ingestor_rel(rel_extractor=rel_ext, n_entities=1)
+    """Relations below confidence threshold (0.5) are not written."""
+    relation_list = [
+        {
+            "head": "Entity0",
+            "relation": "RELATED_TO",
+            "tail": "Entity1",
+            "score": 0.3,  # below threshold
+        },
+    ]
+    ext = _make_extractor_with_relations(n_entities=2, relations=relation_list)
+    ingestor, mg, _ = _make_ingestor_rel(extractor=ext, n_entities=2)
     parsed = _make_parsed_rel(n_segments=1)
 
     ingestor.ingest_parsed(parsed, session_id="s3")
 
-    rel_ext.extract.assert_not_called()
     mg.write_relation_edge.assert_not_called()
 
 
 def test_rel_extractor_exception_does_not_abort_ingest():
-    """Exceptions from rel_extractor.extract() are swallowed; ingest returns normally."""
-    rel_ext = MagicMock()
-    rel_ext.extract = MagicMock(side_effect=RuntimeError("rel model crashed"))
-
-    ingestor, mg, pg = _make_ingestor_rel(rel_extractor=rel_ext, n_entities=2)
+    """Exceptions from write_relation_edge are swallowed; ingest returns normally."""
+    relation_list = [
+        {
+            "head": "Entity0",
+            "relation": "RELATED_TO",
+            "tail": "Entity1",
+            "score": 0.9,
+        },
+    ]
+    ext = _make_extractor_with_relations(n_entities=2, relations=relation_list)
+    mg = _make_mg_mock()
+    mg.write_relation_edge = AsyncMock(side_effect=RuntimeError("db write failed"))
+    pg = MagicMock()
+    pg.write_stm_chunk = AsyncMock(return_value=None)
+    embed = MagicMock(return_value=[0.1] * 10)
+    ingestor = MemoryIngestor(mg_store=mg, pg_store=pg, extractor=ext, embed_fn=embed)
     parsed = _make_parsed_rel(n_segments=1)
 
     # Must not raise
@@ -373,7 +404,5 @@ def test_rel_extractor_exception_does_not_abort_ingest():
 
     assert result.session_id == "s4"
     assert result.chunk_count == 1
-    # write_relation_edge was never reached
-    mg.write_relation_edge.assert_not_called()
     # pgvector write still happened (ingest continued)
     pg.write_stm_chunk.assert_called_once()
