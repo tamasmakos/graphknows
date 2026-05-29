@@ -601,27 +601,9 @@ class GraphknowsMemoryAdapter:
         finally:
             await conn.close()
 
-        from neo4j import GraphDatabase
-
-        if self._container is not None:
-            uri = getattr(neo, "_uri", "")
-            user = getattr(neo, "_user", "")
-            pw = getattr(neo, "_password", "")
-        else:
-            import os
-
-            uri = os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687")
-            user = os.environ.get("NEO4J_USER", "neo4j")
-            pw = os.environ.get("NEO4J_PASSWORD", "testpassword123")
-
-        drv = GraphDatabase.driver(uri, auth=(user, pw))
-        try:
-            with drv.session() as s:
-                row_e = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()
-                row_s = s.run("MATCH (s:SESSION) RETURN count(s) as c").single()
-                ltm["entities"] = int(row_e["c"]) if row_e else 0
-                ltm["sessions"] = int(row_s["c"]) if row_s else 0
-        finally:
-            drv.close()
+        rows_e = await neo._arun("MATCH (e:ENTITY) RETURN count(e) AS c")
+        rows_s = await neo._arun("MATCH (s:SESSION) RETURN count(s) AS c")
+        ltm["entities"] = int(rows_e[0]["c"]) if rows_e else 0
+        ltm["sessions"] = int(rows_s[0]["c"]) if rows_s else 0
 
         return MemoryStats(stm=stm, ltm=ltm)

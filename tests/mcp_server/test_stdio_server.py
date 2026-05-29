@@ -507,21 +507,13 @@ def test_ltm_topics_returns_topics():
     """ltm_topics returns topic list above threshold."""
     from graphknows.mcp.stdio_server import ltm_topics
 
-    drv = MagicMock()
-    drv.session.return_value.__enter__ = lambda s: s
-    drv.session.return_value.__exit__ = MagicMock(return_value=False)
-    drv.session.return_value.run.return_value.data.return_value = [
+    mock_store = MagicMock()
+    mock_store.list_topic_nodes.return_value = [
         {"community_id": 1, "summary": "AI topics", "entity_count": 5},
         {"community_id": 2, "summary": "ML topics", "entity_count": 3},
     ]
 
-    with (
-        patch(
-            "graphknows.mcp.stdio_server._neo4j_creds",
-            return_value=("bolt://localhost:7687", "neo4j", "pw"),
-        ),
-        patch("neo4j.GraphDatabase.driver", return_value=drv),
-    ):
+    with patch("graphknows.mcp.tools.ltm.get_neo_store", return_value=mock_store):
         result = ltm_topics(min_entities=3)
 
     assert "topics" in result
@@ -556,23 +548,12 @@ def test_ltm_entity_found():
     """ltm_entity returns entity properties when found."""
     from graphknows.mcp.stdio_server import ltm_entity
 
-    mock_props = {"name": "TestEntity", "pagerank": 0.5}
+    mock_props = {"name": "TestEntity", "pagerank": 0.5, "segment_count": 3}
 
-    mock_row = MagicMock()
-    mock_row.__getitem__.side_effect = lambda k: {"props": mock_props, "segment_count": 3}[k]
+    mock_store = MagicMock()
+    mock_store.get_entity_by_name.return_value = mock_props
 
-    drv = MagicMock()
-    drv.session.return_value.__enter__ = lambda s: s
-    drv.session.return_value.__exit__ = MagicMock(return_value=False)
-    drv.session.return_value.run.return_value.single.return_value = mock_row
-
-    with (
-        patch(
-            "graphknows.mcp.stdio_server._neo4j_creds",
-            return_value=("bolt://localhost:7687", "neo4j", "pw"),
-        ),
-        patch("neo4j.GraphDatabase.driver", return_value=drv),
-    ):
+    with patch("graphknows.mcp.tools.ltm.get_neo_store", return_value=mock_store):
         result = ltm_entity(name="TestEntity")
 
     assert "error" not in result

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from graphknows.mcp._app import app
-from graphknows.mcp._state import get_settings
+from graphknows.mcp._state import get_neo_store, get_settings
 
 
 @app.tool()
@@ -79,28 +79,15 @@ def ltm_entity(name: str) -> dict[str, Any]:
     Returns:
         Dict with entity properties, or ``{"error": "..."}`` if not found.
     """
-    from neo4j import GraphDatabase
-
-    s = get_settings()
-    d = GraphDatabase.driver(s.neo4j_uri, auth=(s.neo4j_user, s.neo4j_password))  # nosec
+    neo = get_neo_store()
     try:
-        with d.session() as sess:
-            row = sess.run(
-                "MATCH (e:ENTITY) "
-                "WHERE toLower(e.name) = toLower($name) "
-                "OPTIONAL MATCH (e)-[:APPEARED_IN]->(seg:Segment) "
-                "RETURN properties(e) AS props, count(DISTINCT seg) AS segment_count",
-                name=name,
-            ).single()
+        result = neo.get_entity_by_name(name)
     finally:
-        d.close()
+        neo.close()
 
-    if row is None:
+    if result is None:
         return {"error": f"Entity '{name}' not found"}
-
-    props = dict(row["props"])
-    props["segment_count"] = row["segment_count"]
-    return props
+    return result
 
 
 @app.tool()
@@ -115,22 +102,10 @@ def ltm_topics(min_entities: int = 3) -> dict[str, Any]:
     Returns:
         Dict with a ``topics`` key containing the topic list.
     """
-    from neo4j import GraphDatabase
-
-    s = get_settings()
-    d = GraphDatabase.driver(s.neo4j_uri, auth=(s.neo4j_user, s.neo4j_password))  # nosec
+    neo = get_neo_store()
     try:
-        with d.session() as sess:
-            rows = sess.run(
-                "MATCH (t:TOPIC) "
-                "WHERE t.entity_count >= $min_entities "
-                "RETURN t.community_id AS community_id, "
-                "       t.summary AS summary, "
-                "       t.entity_count AS entity_count "
-                "ORDER BY t.entity_count DESC",
-                min_entities=min_entities,
-            ).data()
+        topics = neo.list_topic_nodes(min_entities)
     finally:
-        d.close()
+        neo.close()
 
-    return {"topics": rows}
+    return {"topics": topics}
