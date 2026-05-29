@@ -111,3 +111,51 @@ def get_default_taxonomy() -> TaxonomyConfig:
     else:
         yaml_path = Path(__file__).parent / "taxonomy.generic.yaml"
     return load_taxonomy(str(yaml_path))
+
+
+# ---------------------------------------------------------------------------
+# Bundled taxonomy discovery
+# ---------------------------------------------------------------------------
+
+_BUNDLED_DIR = Path(__file__).parent
+
+
+def list_bundled_taxonomies() -> list[dict[str, str]]:
+    """Return metadata for all bundled taxonomy YAML files.
+
+    Returns a list of dicts, each with ``name`` (the filename short-form
+    accepted by :func:`resolve_taxonomy_path`) and ``path`` (absolute path).
+    """
+    return [
+        {"name": p.name, "path": str(p)}
+        for p in sorted(_BUNDLED_DIR.glob("taxonomy.*.yaml"))
+    ]
+
+
+def resolve_taxonomy_path(taxonomy_file: str) -> str:
+    """Resolve a taxonomy file argument to an absolute path.
+
+    Accepts either:
+    - An absolute or relative path to a ``.yaml`` file (passed through as-is).
+    - A short name like ``"taxonomy.eu-politics.yaml"`` — resolved against the
+      bundled domain directory so users don't need to know install paths.
+
+    Raises:
+        FileNotFoundError: If the file cannot be found.
+    """
+    candidate = Path(taxonomy_file)
+    if candidate.is_absolute():
+        if not candidate.exists():
+            raise FileNotFoundError(f"Taxonomy file not found: {taxonomy_file}")
+        return str(candidate)
+    # Try relative path from cwd first
+    if candidate.exists():
+        return str(candidate.resolve())
+    # Try bundled directory
+    bundled = _BUNDLED_DIR / taxonomy_file
+    if bundled.exists():
+        return str(bundled)
+    raise FileNotFoundError(
+        f"Taxonomy '{taxonomy_file}' not found as a path or bundled name. "
+        f"Bundled options: {[p['name'] for p in list_bundled_taxonomies()]}"
+    )

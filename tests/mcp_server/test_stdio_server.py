@@ -31,7 +31,7 @@ def test_import_does_not_load_gliner2():
 
 
 def test_all_twelve_tools_registered():
-    """All 12 expected tools must be present in the FastMCP app."""
+    """All 13 expected tools must be present in the FastMCP app."""
     from graphknows.mcp.stdio_server import app
 
     # FastMCP exposes list_tools() synchronously or via the tool registry
@@ -49,6 +49,7 @@ def test_all_twelve_tools_registered():
         "recall_by_dialog",
         "recall_by_topic",
         "corpus_ingest",
+        "list_taxonomies",
     }
     assert expected == tool_names, f"Missing tools: {expected - tool_names}"
 

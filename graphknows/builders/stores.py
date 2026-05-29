@@ -69,9 +69,10 @@ def build_embedder(model_name: str = "openai/text-embedding-3-small") -> IEmbedd
 
 
 def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
-    """Build a MemoryIngestor from settings (rel_extractor=None per design)."""
+    """Build a MemoryIngestor from settings with DSPy relation extractor."""
     from graphknows.memory.extractor import GLiNER2EntityExtractor
     from graphknows.memory.ingestor import MemoryIngestor, _run
+    from graphknows.ontology.rel_extractor import OntologyRelExtractor
     from graphknows.retrieval.stores.embedder import embed_one
 
     mg = build_memgraph_store(settings)
@@ -79,7 +80,8 @@ def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
     _run(pg.connect())
 
     extractor = GLiNER2EntityExtractor()
-    return MemoryIngestor(mg, pg, extractor, embed_fn=embed_one, rel_extractor=None)
+    rel_extractor = OntologyRelExtractor()
+    return MemoryIngestor(mg, pg, extractor, embed_fn=embed_one, rel_extractor=rel_extractor)
 
 
 def build_session_flusher(settings: GraphKnowsSettings) -> Any:
@@ -97,12 +99,14 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     """Build a CorpusIngestWorkflow from settings."""
     from graphknows.memory.extractor import GLiNER2EntityExtractor
     from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
+    from graphknows.ontology.rel_extractor import OntologyRelExtractor
     from graphknows.retrieval.stores.embedder import embed_one
 
     mg = build_memgraph_store(settings)
     pg = build_pgvector_store(settings)
     neo = build_neo4j_store(settings)
     extractor = GLiNER2EntityExtractor()
+    rel_extractor = OntologyRelExtractor()
     key = settings.openrouter_api_key or ""
     return CorpusIngestWorkflow(
         mg_store=mg,
@@ -111,4 +115,5 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
         extractor=extractor,
         embed_fn=embed_one,
         openrouter_key=key,
+        rel_extractor=rel_extractor,
     )

@@ -18,7 +18,7 @@ class CorpusIngestRequest:
     """Request parameters for batch corpus ingestion."""
 
     documents: list[dict[str, Any]]
-    taxonomy_file: str | None = None  # reserved for Wave 4; silently ignored
+    taxonomy_file: str | None = None  # short name or path; None = bundled generic taxonomy
     session_id: str | None = None  # auto-generated if None; supply for idempotent retry
     run_gds: bool = False
     clear_stm: bool = True
@@ -85,12 +85,34 @@ class CorpusIngestWorkflow:
         session_id = request.session_id or f"corpus-{uuid.uuid4().hex}"
         result = CorpusIngestResult(session_id=session_id)
 
+        # Resolve taxonomy — None means default bundled generic taxonomy.
+        # When a taxonomy_file is specified, build fresh per-run extractors so that
+        # entity types and relation types both come from the same YAML.
+        resolved_extractor = self._extractor
+        resolved_rel_extractor = self._rel_extractor
+        if request.taxonomy_file is not None:
+            try:
+                from graphknows.domain.taxonomy import load_taxonomy, resolve_taxonomy_path
+                from graphknows.memory.extractor import GLiNER2EntityExtractor
+                from graphknows.ontology.rel_extractor import OntologyRelExtractor
+
+                taxonomy_path = resolve_taxonomy_path(request.taxonomy_file)
+                taxonomy = load_taxonomy(taxonomy_path)
+                resolved_extractor = GLiNER2EntityExtractor(taxonomy_path=taxonomy_path)
+                # Build a relation dict from taxonomy relation_types for the rel extractor
+                rel_ontology = {rt: rt.replace("_", " ").lower() for rt in taxonomy.relation_types}
+                resolved_rel_extractor = OntologyRelExtractor(taxonomy_ontology=rel_ontology)
+            except Exception as exc:
+                err = f"Failed to load taxonomy '{request.taxonomy_file}': {exc}"
+                result.errors.append(err)
+                log.warning(err)
+
         stm = STMService(
             mg_store=self._mg,
             pg_store=self._pg,
-            extractor=self._extractor,
+            extractor=resolved_extractor,
             embed_fn=self._embed_fn,
-            rel_extractor=self._rel_extractor,
+            rel_extractor=resolved_rel_extractor,
         )
 
         # Phase 1: ingest each document into STM

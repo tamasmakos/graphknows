@@ -23,6 +23,7 @@ LTM tools:
 
 Corpus:
   corpus_ingest   — batch document ingestion into LTM knowledge graph
+  list_taxonomies — discover available ontology taxonomy configurations
 
 Usage (stdio probe)::
 
@@ -45,6 +46,7 @@ import graphknows.mcp.tools.corpus  # noqa: E402
 import graphknows.mcp.tools.ltm  # noqa: E402
 import graphknows.mcp.tools.recall  # noqa: E402
 import graphknows.mcp.tools.stm  # noqa: F401, E402
+import graphknows.mcp.tools.taxonomy  # noqa: F401, E402
 from graphknows.mcp._app import app  # noqa: E402
 
 # Re-export tool functions so existing code/tests can reference them on this module
