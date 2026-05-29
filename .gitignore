@@ -40,6 +40,9 @@ dogfood-output/
 input/
 data/raw/
 demo_ingest.py
+demo_*.py
+three_pass_benchmark.py
+scripts/demo_*.py
 
 # ─── Editor / OS ──────────────────────────────────────────────────────────────
 .vscode/settings.json
