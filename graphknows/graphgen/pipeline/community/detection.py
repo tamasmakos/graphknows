@@ -255,9 +255,6 @@ class CommunityDetector:
         entity_graph: nx.Graph,  # This might be the full graph passed from pipeline
         communities: Dict[str, int],
         min_sub_size: int = 2,
-        sub_resolution_min: float = 0.7,  # Ignored now
-        sub_resolution_max: float = 1.3,  # Ignored now
-        sub_resolution_steps: int = 7,  # Ignored now
         max_depth: int = 1,
     ) -> Dict[str, Tuple[int, int]]:
         """Run Leiden inside each parent community to find meaningful subcommunities.

@@ -42,91 +42,109 @@ log = logging.getLogger(__name__)
 # ── Built-in domain ontologies ────────────────────────────────────────────────
 
 DOMAIN_GK_ONTOLOGY: dict[str, str] = {
-    "component_of":    "software component or module X is part of larger system Y",
-    "depends_on":      "X requires Y to function; removing Y breaks X",
-    "implements":      "X is a concrete implementation of abstract interface or pattern Y",
-    "wraps":           "X provides a thin adapter layer around underlying system Y",
-    "stores_in":       "agent or pipeline X persists data into storage system Y",
-    "reads_from":      "agent or pipeline X retrieves data from storage system Y",
-    "exposes_tool":    "MCP server or service X exposes tool or API endpoint Y",
-    "calls_tool":      "agent or system X invokes tool, function, or API Y",
-    "returns":         "function or tool X returns value, object, or result type Y",
-    "supersedes":      "X makes Y obsolete; X is the current valid fact, Y is tombstoned",
-    "valid_at":        "fact or relation X was valid at time or date Y",
-    "causes":          "condition or bug X directly causes failure, error, or symptom Y",
-    "fixes":           "code change or patch X resolves bug, error, or issue Y",
-    "diagnosed_as":    "failure or anomaly X is classified under root cause Y",
-    "triggers":        "event or condition X triggers or initiates process or pipeline Y",
-    "evaluated_by":    "system or output X is assessed by agent role or method Y",
-    "achieves_score":  "system or method X achieves metric value or benchmark score Y",
-    "outperforms":     "approach X produces better results than baseline or alternative Y",
-    "contrasts_with":  "design X and design Y differ in approach or trade-off",
-    "stored_in_stm":   "entity or fact X is held in short-term memory store Y",
+    "component_of": "software component or module X is part of larger system Y",
+    "depends_on": "X requires Y to function; removing Y breaks X",
+    "implements": "X is a concrete implementation of abstract interface or pattern Y",
+    "wraps": "X provides a thin adapter layer around underlying system Y",
+    "stores_in": "agent or pipeline X persists data into storage system Y",
+    "reads_from": "agent or pipeline X retrieves data from storage system Y",
+    "exposes_tool": "MCP server or service X exposes tool or API endpoint Y",
+    "calls_tool": "agent or system X invokes tool, function, or API Y",
+    "returns": "function or tool X returns value, object, or result type Y",
+    "supersedes": "X makes Y obsolete; X is the current valid fact, Y is tombstoned",
+    "valid_at": "fact or relation X was valid at time or date Y",
+    "causes": "condition or bug X directly causes failure, error, or symptom Y",
+    "fixes": "code change or patch X resolves bug, error, or issue Y",
+    "diagnosed_as": "failure or anomaly X is classified under root cause Y",
+    "triggers": "event or condition X triggers or initiates process or pipeline Y",
+    "evaluated_by": "system or output X is assessed by agent role or method Y",
+    "achieves_score": "system or method X achieves metric value or benchmark score Y",
+    "outperforms": "approach X produces better results than baseline or alternative Y",
+    "contrasts_with": "design X and design Y differ in approach or trade-off",
+    "stored_in_stm": "entity or fact X is held in short-term memory store Y",
     "promoted_to_ltm": "entity or session X was flushed and promoted into long-term memory Y",
-    "recalled_by":     "fact or chunk X is retrieved by recall query Y",
-    "entity_type":     "extracted entity X is classified under ontology label or type Y",
-    "extracted_from":  "entity, relation, or chunk X was extracted from source document Y",
-    "chunked_into":    "document X was split into chunk Y by the ingest pipeline",
-    "embedded_as":     "text X was encoded and stored as vector embedding in Y",
-    "designed_as":     "system or component X was intentionally architected as approach Y",
-    "replaces":        "design decision or component X replaces previous approach Y",
-    "validates":       "test, assertion, or metric X confirms correctness of component Y",
-    "extends":         "X adds functionality on top of base class or interface Y",
-    "preceded_by":     "fact or component X was preceded or replaced by earlier version Y",
+    "recalled_by": "fact or chunk X is retrieved by recall query Y",
+    "entity_type": "extracted entity X is classified under ontology label or type Y",
+    "extracted_from": "entity, relation, or chunk X was extracted from source document Y",
+    "chunked_into": "document X was split into chunk Y by the ingest pipeline",
+    "embedded_as": "text X was encoded and stored as vector embedding in Y",
+    "designed_as": "system or component X was intentionally architected as approach Y",
+    "replaces": "design decision or component X replaces previous approach Y",
+    "validates": "test, assertion, or metric X confirms correctness of component Y",
+    "extends": "X adds functionality on top of base class or interface Y",
+    "preceded_by": "fact or component X was preceded or replaced by earlier version Y",
 }
 
 SCHEMA_ORG_ONTOLOGY: dict[str, str] = {
-    "memberOf":             "a group or organization that an agent belongs to",
-    "member":               "a member of an organization, group, or network",
-    "founder":              "a person who founded or created an organization",
-    "employee":             "a person who is employed by an organization",
-    "affiliation":          "an organization that a person is affiliated with",
-    "subOrganization":      "a division that is part of a larger organization",
-    "parentOrganization":   "the larger organization that a subsidiary belongs to",
-    "knowsAbout":           "a topic that an agent has knowledge or expertise about",
-    "colleague":            "a person who is a professional peer of another",
-    "author":               "the person or organization who wrote a creative work",
-    "creator":              "the person or entity who originally created something",
-    "contributor":          "a person or organization that contributed to a project",
-    "publisher":            "the organization responsible for publishing a work",
-    "mentions":             "something that is mentioned or discussed in a work",
-    "about":                "the subject or main theme of a creative work",
-    "citation":             "a citation or reference to another publication",
-    "isBasedOn":            "a work that this work is derived from",
-    "hasPart":              "a component included within a larger work",
-    "isPartOf":             "a larger collection that this item belongs to",
-    "organizer":            "the person or organization who organized an event",
-    "performer":            "a person or entity who performed at an event",
-    "sponsor":              "a person or organization that supports an event or person",
-    "attendee":             "a person who attended or participated in an event",
-    "location":             "the place or venue where an event took place",
-    "result":               "the outcome or output produced by an action or event",
-    "instrument":           "a tool, software, or method used to perform an action",
-    "agent":                "the person, organization, or agent that performed an action",
-    "manufacturer":         "the organization that manufactured or produced a product",
-    "brand":                "the brand or trademark associated with a product",
-    "isRelatedTo":          "a product, concept, or entity that is related to this one",
-    "isSimilarTo":          "a product or entity that is similar or comparable",
+    "memberOf": "a group or organization that an agent belongs to",
+    "member": "a member of an organization, group, or network",
+    "founder": "a person who founded or created an organization",
+    "employee": "a person who is employed by an organization",
+    "affiliation": "an organization that a person is affiliated with",
+    "subOrganization": "a division that is part of a larger organization",
+    "parentOrganization": "the larger organization that a subsidiary belongs to",
+    "knowsAbout": "a topic that an agent has knowledge or expertise about",
+    "colleague": "a person who is a professional peer of another",
+    "author": "the person or organization who wrote a creative work",
+    "creator": "the person or entity who originally created something",
+    "contributor": "a person or organization that contributed to a project",
+    "publisher": "the organization responsible for publishing a work",
+    "mentions": "something that is mentioned or discussed in a work",
+    "about": "the subject or main theme of a creative work",
+    "citation": "a citation or reference to another publication",
+    "isBasedOn": "a work that this work is derived from",
+    "hasPart": "a component included within a larger work",
+    "isPartOf": "a larger collection that this item belongs to",
+    "organizer": "the person or organization who organized an event",
+    "performer": "a person or entity who performed at an event",
+    "sponsor": "a person or organization that supports an event or person",
+    "attendee": "a person who attended or participated in an event",
+    "location": "the place or venue where an event took place",
+    "result": "the outcome or output produced by an action or event",
+    "instrument": "a tool, software, or method used to perform an action",
+    "agent": "the person, organization, or agent that performed an action",
+    "manufacturer": "the organization that manufactured or produced a product",
+    "brand": "the brand or trademark associated with a product",
+    "isRelatedTo": "a product, concept, or entity that is related to this one",
+    "isSimilarTo": "a product or entity that is similar or comparable",
     "softwareRequirements": "software or libraries required to run this application",
-    "applicationCategory":  "the category or type that a software application belongs to",
-    "teaches":              "the skill or competency that a course or resource teaches",
-    "assesses":             "the skill or competency assessed by this resource",
-    "inLanguage":           "the natural language a creative work is written in",
-    "containsPlace":        "a location geographically contained within another place",
-    "containedInPlace":     "the larger geographic area this place is situated within",
-    "category":             "the category or classification that an entity belongs to",
-    "sameAs":               "a URL pointing to an equivalent entity in another KB",
-    "subjectOf":            "a creative work that this entity is the subject of",
+    "applicationCategory": "the category or type that a software application belongs to",
+    "teaches": "the skill or competency that a course or resource teaches",
+    "assesses": "the skill or competency assessed by this resource",
+    "inLanguage": "the natural language a creative work is written in",
+    "containsPlace": "a location geographically contained within another place",
+    "containedInPlace": "the larger geographic area this place is situated within",
+    "category": "the category or classification that an entity belongs to",
+    "sameAs": "a URL pointing to an equivalent entity in another KB",
+    "subjectOf": "a creative work that this entity is the subject of",
 }
 
 # ── Doc-type classifier ───────────────────────────────────────────────────────
 
 _GK_KEYWORDS: set[str] = {
-    "memgraph", "neo4j", "pgvector", "graphknows", "gliner",
-    "memory_ingest", "memory_recall", "ltm_query", "stm", "ltm", "mcp",
-    "session_id", "chunk", "entity_extraction", "relation_extraction",
-    "ingest", "flush", "cosine_score", "bi-temporal", "tombstone",
-    "valid_from", "valid_to", "is_current",
+    "memgraph",
+    "neo4j",
+    "pgvector",
+    "graphknows",
+    "gliner",
+    "memory_ingest",
+    "memory_recall",
+    "ltm_query",
+    "stm",
+    "ltm",
+    "mcp",
+    "session_id",
+    "chunk",
+    "entity_extraction",
+    "relation_extraction",
+    "ingest",
+    "flush",
+    "cosine_score",
+    "bi-temporal",
+    "tombstone",
+    "valid_from",
+    "valid_to",
+    "is_current",
 }
 
 
@@ -139,6 +157,7 @@ def _classify_doc_type(text: str) -> str:
 
 # ── Co-occurrence warm-start ──────────────────────────────────────────────────
 
+
 def _build_cooccurrence_candidates(text: str, entities: list[str]) -> list[dict[str, Any]]:
     """Emit CO_OCCURS candidates for entity pairs appearing in the same sentence."""
     candidates: list[dict[str, Any]] = []
@@ -147,7 +166,7 @@ def _build_cooccurrence_candidates(text: str, entities: list[str]) -> list[dict[
         sent_lower = sent.lower()
         sent_ents = [e for e in entities if e.lower() in sent_lower]
         for i, e1 in enumerate(sent_ents):
-            for e2 in sent_ents[i + 1:]:
+            for e2 in sent_ents[i + 1 :]:
                 candidates.append(
                     {"subject": e1, "predicate": "CO_OCCURS", "object": e2, "confidence": 0.4}
                 )
@@ -155,6 +174,7 @@ def _build_cooccurrence_candidates(text: str, entities: list[str]) -> list[dict[
 
 
 # ── DSPy Signature ────────────────────────────────────────────────────────────
+
 
 def _make_extractor() -> Any:
     """Build a DSPy ChainOfThought module with a typed Signature."""
@@ -201,6 +221,7 @@ def _make_extractor() -> Any:
 
 
 # ── Main extractor class ──────────────────────────────────────────────────────
+
 
 class OntologyRelExtractor:
     """Extract typed relations from text guided by an ontology schema.
@@ -295,7 +316,7 @@ class OntologyRelExtractor:
         raw = raw.strip()
         for fence in ("```json", "```"):
             if raw.startswith(fence):
-                raw = raw[len(fence):]
+                raw = raw[len(fence) :]
                 break
         raw = raw.removesuffix("```").strip()
         if raw and raw[0] not in ("[", "{"):
@@ -306,9 +327,7 @@ class OntologyRelExtractor:
                     break
         return raw
 
-    def _validate_relations(
-        self, relations: list[Any], threshold: float
-    ) -> list[dict[str, Any]]:
+    def _validate_relations(self, relations: list[Any], threshold: float) -> list[dict[str, Any]]:
         """Validate, filter, and deduplicate a raw relations list."""
         seen: dict[tuple[str, str], dict[str, Any]] = {}
         for r in relations:
@@ -365,7 +384,11 @@ class OntologyRelExtractor:
         if not entities:
             return []
 
-        threshold = confidence_threshold if confidence_threshold is not None else getattr(self, "_threshold", 0.5)
+        threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else getattr(self, "_threshold", 0.5)
+        )
         ont_dict = self._resolve_ontology(text, ontology_schema)
         schema_compact = json.dumps(ont_dict, ensure_ascii=False)[:3000]
 

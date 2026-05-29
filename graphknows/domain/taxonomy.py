@@ -126,10 +126,7 @@ def list_bundled_taxonomies() -> list[dict[str, str]]:
     Returns a list of dicts, each with ``name`` (the filename short-form
     accepted by :func:`resolve_taxonomy_path`) and ``path`` (absolute path).
     """
-    return [
-        {"name": p.name, "path": str(p)}
-        for p in sorted(_BUNDLED_DIR.glob("taxonomy.*.yaml"))
-    ]
+    return [{"name": p.name, "path": str(p)} for p in sorted(_BUNDLED_DIR.glob("taxonomy.*.yaml"))]
 
 
 def resolve_taxonomy_path(taxonomy_file: str) -> str:
