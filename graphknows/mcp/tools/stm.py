@@ -11,6 +11,57 @@ from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get
 from graphknows.memory.stm._async_bridge import _run as _bg_run
 
 
+async def _sync_topics_to_pgvector(neo_store: Any, pg_store: Any) -> int:
+    """Read TOPIC nodes from Neo4j and upsert embeddings into pgvector ltm_topics.
+
+    Called after every memory_flush so ltm_query works without run_gds=True.
+
+    Args:
+        neo_store: Open Neo4jStore instance (caller must close).
+        pg_store: Connected PgVectorStore instance.
+
+    Returns:
+        Number of topics synced.
+    """
+    import json
+
+    from graphknows.retrieval.stores.embedder import embed_one
+
+    # Read existing TOPIC nodes from Neo4j
+    with neo_store._driver.session(database=neo_store._db) as s:
+        rows = s.run(
+            "MATCH (t:TOPIC) "
+            "OPTIONAL MATCH (e:ENTITY)-[:IN_TOPIC]->(t) "
+            "RETURN t.id AS topic_id, t.summary AS summary, t.community_id AS comm_id, "
+            "collect(e.name) AS members"
+        ).data()
+
+    if not rows:
+        return 0
+
+    synced = 0
+    loop = asyncio.get_running_loop()
+    for row in rows:
+        topic_id = row.get("topic_id") or f"TOPIC_{row.get('comm_id', synced)}"
+        summary = (row.get("summary") or "").strip()
+        members = row.get("members") or []
+        text = summary or topic_id
+
+        embedding = await loop.run_in_executor(None, embed_one, text)
+
+        topic = {
+            "topic_id": topic_id,
+            "summary": summary,
+            "embedding": embedding,
+            "entity_names": [m for m in members if m],
+            "session_ids": [],
+        }
+        await pg_store.write_ltm_topic(topic)
+        synced += 1
+
+    return synced
+
+
 def _normalise_and_weight(hits: list[Any], weight: float) -> None:
     """Min-max normalise scores in-place, then apply weight."""
     if not hits:
@@ -194,6 +245,16 @@ async def memory_flush(session_id: str, run_gds: bool = False) -> dict[str, Any]
         None,
         lambda: _bg_run(flusher.flush(session_id, opts)),
     )
+
+    # Sync all Neo4j TOPIC nodes to pgvector ltm_topics (embed summary → ANN index).
+    # This runs outside the 60s flush window — non-blocking, best-effort.
+    try:
+        pg = await get_pg_store()
+        neo_sync = get_neo_store()
+        await _sync_topics_to_pgvector(neo_sync, pg)
+        neo_sync.close()
+    except Exception as _topic_exc:
+        result.errors.append(f"topic_sync: {_topic_exc}")
 
     return {
         "nodes": result.nodes_written,

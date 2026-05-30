@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS stm_chunks (
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS stm_chunks_session_idx ON stm_chunks (session_id);
-CREATE INDEX IF NOT EXISTS stm_chunks_emb_idx ON stm_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists=20);
+CREATE INDEX IF NOT EXISTS stm_chunks_emb_idx ON stm_chunks USING hnsw (embedding vector_cosine_ops);
 
 CREATE TABLE IF NOT EXISTS stm_turns (
     id           TEXT PRIMARY KEY,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS stm_turns (
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS stm_turns_session_idx ON stm_turns (session_id);
-CREATE INDEX IF NOT EXISTS stm_turns_emb_idx ON stm_turns USING ivfflat (embedding vector_cosine_ops) WITH (lists=20);
+CREATE INDEX IF NOT EXISTS stm_turns_emb_idx ON stm_turns USING hnsw (embedding vector_cosine_ops);
 
 -- Long-term memory (permanent, flushed from STM)
 CREATE TABLE IF NOT EXISTS ltm_chunks (
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS ltm_chunks (
     flushed_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ltm_chunks_session_idx ON ltm_chunks (session_id);
-CREATE INDEX IF NOT EXISTS ltm_chunks_emb_idx ON ltm_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists=50);
+CREATE INDEX IF NOT EXISTS ltm_chunks_emb_idx ON ltm_chunks USING hnsw (embedding vector_cosine_ops);
 
 CREATE TABLE IF NOT EXISTS ltm_turns (
     id           TEXT PRIMARY KEY,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS ltm_turns (
     flushed_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ltm_turns_session_idx ON ltm_turns (session_id);
-CREATE INDEX IF NOT EXISTS ltm_turns_emb_idx ON ltm_turns USING ivfflat (embedding vector_cosine_ops) WITH (lists=50);
+CREATE INDEX IF NOT EXISTS ltm_turns_emb_idx ON ltm_turns USING hnsw (embedding vector_cosine_ops);
 
 CREATE TABLE IF NOT EXISTS ltm_topics (
     topic_id     TEXT PRIMARY KEY,
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS ltm_topics (
     session_ids  TEXT[],
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS ltm_topics_emb_idx ON ltm_topics USING ivfflat (embedding vector_cosine_ops) WITH (lists=10);
+CREATE INDEX IF NOT EXISTS ltm_topics_emb_idx ON ltm_topics USING hnsw (embedding vector_cosine_ops);
 """
 
 
