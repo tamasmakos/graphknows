@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-log = logging.getLogger("graphknows.forget")
+log = logging.getLogger("graphknows.memory.forget")
 
 
 class LTMForget:
