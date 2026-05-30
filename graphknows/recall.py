@@ -224,13 +224,30 @@ def recall_by_topic(
         rows = s.run(cypher, tokens=tokens, top_k=top_k).data()
 
     hits: list[RecallHit] = []
+    token_set = set(tokens)
     for r in rows:
+        entity_score = float(r.get("score") or 0)
+        # Fall back to label when summary is absent
+        summary = r.get("summary") or r.get("label") or ""
+        entities = r.get("entities") or []
+
+        # When entity overlap is zero, compute text-overlap bonus from summary
+        if entity_score == 0:
+            text_bonus = sum(1 for t in token_set if t in summary.lower()) if summary else 0
+            score = float(text_bonus)
+        else:
+            score = entity_score
+
+        # Skip hits with no entity overlap AND no text match signal
+        if score == 0:
+            continue
+
         hits.append(
             RecallHit(
-                text=r.get("summary") or "",
-                entity_names=r.get("entities") or [],
+                text=summary,
+                entity_names=entities,
                 provenance={"topic_id": r.get("topic_id")},
-                score=float(r.get("score") or 0),
+                score=score,
             )
         )
     return hits

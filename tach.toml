@@ -89,6 +89,11 @@ path = "graphknows.graphgen"
 depends_on = ["graphknows.domain", "graphknows.retrieval"]
 
 [[modules]]
+path = "graphknows.memory.models"
+# New in Wave 1 — canonical shared DTOs; depends on memory for adapter_types
+depends_on = ["graphknows.memory"]
+
+[[modules]]
 path = "graphknows.memory"
 # TARGET: restructure into graphknows.memory.stm / .ltm / .semantic in Wave 2
 # PARTIAL Wave 5: memory.dialog.py shim deleted; memory.extractor still depends on graphgen (get_gliner2_model)
