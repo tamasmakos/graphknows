@@ -18,8 +18,15 @@ The ``_restore_stub_modules`` autouse fixture saves and restores the relevant
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
+
+# Make services/agent importable for ontology tests
+_agent_path = str(Path(__file__).parent.parent / "services" / "agent")
+if _agent_path not in sys.path:
+    sys.path.insert(0, _agent_path)
+
 
 _STUB_KEYS = (
     "langgraph.prebuilt",

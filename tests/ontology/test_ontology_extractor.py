@@ -11,11 +11,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "agent"))
 
-from ontology.loader import OntologyLoader
-from ontology.rel_extractor import OntologyRelExtractor
-from ontology.router import OntologyRouter
+from services.agent.ontology.loader import OntologyLoader
+from services.agent.ontology.rel_extractor import OntologyRelExtractor
+from services.agent.ontology.router import OntologyRouter
 
-REGISTRY_ROOT = Path(__file__).parent.parent / "packages" / "ontologies"
+REGISTRY_ROOT = Path(__file__).parent.parent.parent / "packages" / "ontologies"
 
 
 # ---------------------------------------------------------------------------

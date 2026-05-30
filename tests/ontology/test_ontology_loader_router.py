@@ -13,15 +13,15 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "agent"))
 
-from ontology.loader import OntologyLoader, OntologyManifest
-from ontology.router import OntologyRouter
+from services.agent.ontology.loader import OntologyLoader, OntologyManifest
+from services.agent.ontology.router import OntologyRouter
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-REGISTRY_ROOT = Path(__file__).parent.parent / "packages" / "ontologies"
+REGISTRY_ROOT = Path(__file__).parent.parent.parent / "packages" / "ontologies"
 
 
 # ---------------------------------------------------------------------------
