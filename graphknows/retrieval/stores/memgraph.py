@@ -12,7 +12,7 @@ import logging
 import os
 from typing import Any
 
-from graphknows.schema import MEMGRAPH_INDEXES
+from graphknows.domain.schema import MEMGRAPH_INDEXES
 
 logger = logging.getLogger(__name__)
 

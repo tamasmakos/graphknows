@@ -58,7 +58,6 @@ build-backend = "hatchling.build"
 packages = ["graphknows"]
 
 [project.scripts]
-graphknows-memory = "graphknows.cli.memory:cli"
 graphknows-mcp = "graphknows.mcp.stdio_server:main"
 
 # ── Dev tooling ────────────────────────────────────────────────────────────────
@@ -90,7 +89,6 @@ disable_error_code = ["misc", "no-any-return", "arg-type", "union-attr", "attr-d
 
 [[tool.mypy.overrides]]
 module = [
-    "graphknows.models.*",
     "graphknows.config",
 ]
 disable_error_code = ["misc"]

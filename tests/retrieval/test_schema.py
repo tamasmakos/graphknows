@@ -6,7 +6,7 @@ import inspect
 from unittest.mock import MagicMock
 
 from graphknows.retrieval.stores.pgvector import PgVectorStore
-from graphknows.schema import apply_memgraph_schema, apply_schema
+from graphknows.domain.schema import apply_memgraph_schema, apply_schema
 
 # ---------------------------------------------------------------------------
 # Neo4j schema

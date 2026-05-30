@@ -331,7 +331,7 @@ def test_ltm_recall_distilled_outranks_raw():
 # ===========================================================================
 
 
-from graphknows.recall import (
+from graphknows.memory.recall import (
     RecallHit,
     _extract_query_tokens,
     recall_by_dialog,
@@ -734,7 +734,7 @@ import pytest
 
 def _make_forget(deleted: int = 5):
     """Return an LTMForget with a fully mocked Neo4j driver."""
-    from graphknows.forget import LTMForget
+    from graphknows.memory.forget import LTMForget
 
     mock_driver = MagicMock()
     mock_session = MagicMock()
@@ -766,7 +766,7 @@ class TestPruneDisconnected:
         assert "Entity" in cypher or "ENTITY" in cypher
 
     def test_handles_none_result(self):
-        from graphknows.forget import LTMForget
+        from graphknows.memory.forget import LTMForget
 
         mock_driver = MagicMock()
         mock_session = MagicMock()
@@ -808,7 +808,7 @@ class TestForgetBefore:
 class TestPrune:
     def _make_prune_forget(self, counts: list[int]):
         """counts = [docs, chunks, dialogs, utterances] (int per query)."""
-        from graphknows.forget import LTMForget
+        from graphknows.memory.forget import LTMForget
 
         mock_driver = MagicMock()
         mock_session = MagicMock()

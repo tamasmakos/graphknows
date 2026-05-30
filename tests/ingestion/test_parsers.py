@@ -226,7 +226,7 @@ import pytest
 
 class TestOntologyLabelExtractorInit:
     def test_init_sets_attributes(self):
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake_dir", namespace_filter="http://example.org/")
         assert str(ext.ontology_dir) == "/tmp/fake_dir"
@@ -234,7 +234,7 @@ class TestOntologyLabelExtractorInit:
         assert ext._loaded is False
 
     def test_init_without_filter(self):
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake_dir")
         assert ext.namespace_filter is None
@@ -242,14 +242,14 @@ class TestOntologyLabelExtractorInit:
 
 class TestOntologyLoadRdfFiles:
     def test_returns_zero_for_nonexistent_dir(self):
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/does_not_exist_xyz_abc")
         count = ext._load_rdf_files()
         assert count == 0
 
     def test_returns_zero_for_empty_dir(self):
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         with tempfile.TemporaryDirectory() as tmpdir:
             ext = OntologyLabelExtractor(tmpdir)
@@ -257,7 +257,7 @@ class TestOntologyLoadRdfFiles:
             assert count == 0
 
     def test_returns_zero_on_second_call_if_already_loaded(self):
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/does_not_exist_xyz")
         ext._loaded = True  # Manually mark as loaded
@@ -265,7 +265,7 @@ class TestOntologyLoadRdfFiles:
         assert count == 0
 
     def test_parses_valid_rdf_file(self):
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         rdf_content = textwrap.dedent("""
             <?xml version="1.0" encoding="utf-8"?>
@@ -291,7 +291,7 @@ class TestOntologyExtractLabels:
     def test_extract_labels_from_in_memory_graph(self):
         from rdflib import Graph, URIRef, Literal
         from rdflib.namespace import OWL, RDF, RDFS
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake")
         # Inject a real rdflib graph with a class
@@ -305,7 +305,7 @@ class TestOntologyExtractLabels:
         assert "Person" in labels
 
     def test_extract_labels_returns_list(self):
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/does_not_exist_xyz")
         labels = ext.extract_labels()
@@ -314,7 +314,7 @@ class TestOntologyExtractLabels:
     def test_namespace_filter_applied(self):
         from rdflib import Graph, URIRef, Literal
         from rdflib.namespace import OWL, RDF, RDFS
-        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
+        from graphknows.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake", namespace_filter="http://example.org/")
         ext.graph = Graph()

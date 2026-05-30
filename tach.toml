@@ -28,9 +28,8 @@
 #   graphknows.transports.mcp  depends_on = ["graphknows.builders", "graphknows.domain", "graphknows.config"]
 #   graphknows.transports.cli  depends_on = ["graphknows.builders", "graphknows.domain", "graphknows.config"]
 #
-# NOTE: graphknows.migrations is intentionally excluded from tach tracking (Wave 0
-# decision). Its dependency profile is infrastructure-level and not part of the
-# application graph. Revisit before any `tach sync` run in later waves.
+# NOTE: scripts/migrations/ contains standalone DB migration scripts and is
+# outside the application graph by design.
 
 source_roots = ["."]
 
@@ -39,7 +38,7 @@ source_roots = ["."]
 path = "graphknows.adapters"
 # Infra-only: concrete implementations of IGraphDb, ISessionDb, IVectorDb, IEmbedder, ILlm
 # Must NOT import graphknows.memory, graphknows.retrieval, graphknows.graphgen,
-# graphknows.mcp, or graphknows.cli
+# graphknows.mcp
 # NOTE: concrete adapters import from graphknows.retrieval.stores (the existing stores)
 # at TYPE_CHECKING time or at call time — this is the backward-compat bridge for Wave 2.
 # In Wave 5 the stores themselves move here and these retrieval imports are removed.
@@ -60,12 +59,6 @@ path = "graphknows.domain"
 depends_on = []
 
 # --- Existing modules (unchanged depends_on; TARGET and SMELL annotations added) ---
-
-[[modules]]
-path = "graphknows.models"
-# TARGET: split into graphknows.memory.models (shared DTOs) + graphknows.graphgen
-#         (pipeline-only DTOs); stale/dead models deleted — Wave 2
-depends_on = []
 
 [[modules]]
 path = "graphknows.ingestion"
@@ -176,14 +169,8 @@ depends_on = [
   "graphknows.memory.workflows",
   "graphknows.mcp",
   "graphknows.retrieval",
-  "graphknows.recall",
   "graphknows.memory.stm",
 ]
-
-[[modules]]
-path = "graphknows.cli"
-# TARGET: becomes graphknows.transports.cli in Wave 4
-depends_on = ["graphknows.memory", "graphknows.retrieval", "graphknows.builders", "graphknows.config", "graphknows.memory.stm"]
 
 [[modules]]
 path = "graphknows.memory.workflows"

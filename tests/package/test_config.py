@@ -1,77 +1,12 @@
 """Unit tests for the graphknows package public surface.
 
-Covers constants, entity labels, and settings without touching any
-external services (no DB, no network, no filesystem state).
+Covers settings without touching any external services
+(no DB, no network, no filesystem state).
 """
 
 from __future__ import annotations
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-
-class TestEmbeddingConstants:
-    """Constants declared in graphknows.models.constants."""
-
-    def test_embedding_model_is_bge_small(self):
-        from graphknows.models.constants import EMBEDDING_MODEL
-
-        assert EMBEDDING_MODEL == "BAAI/bge-small-en-v1.5"
-
-    def test_embedding_dim_is_384(self):
-        from graphknows.models.constants import EMBEDDING_DIM
-
-        assert EMBEDDING_DIM == 384
-
-
-# ---------------------------------------------------------------------------
-# EntityLabel enum
-# ---------------------------------------------------------------------------
-
-
-class TestEntityLabel:
-    """EntityLabel(StrEnum) values and membership."""
-
-    def test_person_value(self):
-        from graphknows.models.constants import EntityLabel
-
-        assert EntityLabel.PERSON == "Person"
-        assert str(EntityLabel.PERSON) == "Person"
-
-    def test_all_labels_are_strings(self):
-        from graphknows.models.constants import EntityLabel
-
-        for label in EntityLabel:
-            assert isinstance(label, str), f"{label!r} should be a str"
-
-    def test_expected_labels_present(self):
-        from graphknows.models.constants import EntityLabel
-
-        expected = {
-            "Person",
-            "Organization",
-            "Policy",
-            "Treaty",
-            "Legislation",
-            "Concept",
-            "Event",
-            "Place",
-            "Regulation",
-            "Topic",
-        }
-        assert {str(e) for e in EntityLabel} == expected
-
-    def test_membership_check(self):
-        from graphknows.models.constants import EntityLabel
-
-        # Use value iteration (compatible with Python 3.11 — EnumType.__contains__
-        # accepting raw strings requires Python 3.12+)
-        values = {e.value for e in EntityLabel}
-        assert "Person" in values
-        assert "NotALabel" not in values
 
 
 # ---------------------------------------------------------------------------

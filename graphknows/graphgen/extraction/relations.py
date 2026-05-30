@@ -20,7 +20,7 @@ from typing import Any
 import dspy
 from pydantic import BaseModel, Field
 
-from graphknows.graphgen.llm import (
+from graphknows.config.llm import (
     _get_openrouter_api_key,
     normalize_openrouter_model,
 )

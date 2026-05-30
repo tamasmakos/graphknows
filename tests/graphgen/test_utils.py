@@ -13,7 +13,7 @@ from graphknows.graphgen.diagnostics import (
     diagnostic_dir,
     diagnostics_enabled,
 )
-from graphknows.graphgen.labels import DEFAULT_LABELS, resolve_entity_labels
+from graphknows.ontology.labels import DEFAULT_LABELS, resolve_entity_labels
 from graphknows.graphgen.utils import (
     create_output_directory,
     merge_node_into,
@@ -439,22 +439,22 @@ class TestGetDefaultTaxonomy:
 
 class TestExtractSecret:
     def test_none_container_returns_none(self):
-        from graphknows.graphgen.llm import _extract_secret
+        from graphknows.config.llm import _extract_secret
 
         assert _extract_secret(None, "api_key") is None
 
     def test_dict_with_key(self):
-        from graphknows.graphgen.llm import _extract_secret
+        from graphknows.config.llm import _extract_secret
 
         assert _extract_secret({"api_key": "sk-abc"}, "api_key") == "sk-abc"
 
     def test_dict_missing_key(self):
-        from graphknows.graphgen.llm import _extract_secret
+        from graphknows.config.llm import _extract_secret
 
         assert _extract_secret({"other": "x"}, "api_key") is None
 
     def test_pydantic_secret_value(self):
-        from graphknows.graphgen.llm import _extract_secret
+        from graphknows.config.llm import _extract_secret
 
         mock = MagicMock()
         mock.api_key = MagicMock()
@@ -463,7 +463,7 @@ class TestExtractSecret:
         assert result == "real_key"
 
     def test_masked_secret_reads_from_env(self, monkeypatch):
-        from graphknows.graphgen.llm import _MASKED_SECRET, _extract_secret
+        from graphknows.config.llm import _MASKED_SECRET, _extract_secret
 
         monkeypatch.setenv("API_KEY", "env_value")
         mock = MagicMock()
@@ -474,31 +474,31 @@ class TestExtractSecret:
 
 class TestGetModelName:
     def test_no_llm_section_raises(self):
-        from graphknows.graphgen.llm import get_model_name
+        from graphknows.config.llm import get_model_name
 
         with pytest.raises(ValueError):
             get_model_name({})
 
     def test_extraction_purpose_uses_extraction_model(self):
-        from graphknows.graphgen.llm import get_model_name
+        from graphknows.config.llm import get_model_name
 
         cfg = {"llm": {"extraction_model": "model-ext", "base_model": "model-base"}}
         assert get_model_name(cfg, purpose="extraction") == "model-ext"
 
     def test_summarization_purpose(self):
-        from graphknows.graphgen.llm import get_model_name
+        from graphknows.config.llm import get_model_name
 
         cfg = {"llm": {"summarization_model": "model-sum"}}
         assert get_model_name(cfg, purpose="summarization") == "model-sum"
 
     def test_none_purpose_returns_base(self):
-        from graphknows.graphgen.llm import get_model_name
+        from graphknows.config.llm import get_model_name
 
         cfg = {"llm": {"base_model": "model-base"}}
         assert get_model_name(cfg) == "model-base"
 
     def test_fallback_to_default_model(self):
-        from graphknows.graphgen.llm import _DEFAULT_MODEL, get_model_name
+        from graphknows.config.llm import _DEFAULT_MODEL, get_model_name
 
         cfg = {"llm": {}}
         assert get_model_name(cfg) == _DEFAULT_MODEL
@@ -506,29 +506,29 @@ class TestGetModelName:
 
 class TestGetTemperature:
     def test_default_when_no_llm(self):
-        from graphknows.graphgen.llm import get_temperature
+        from graphknows.config.llm import get_temperature
 
         assert get_temperature({}) == 0.0
 
     def test_reads_temperature(self):
-        from graphknows.graphgen.llm import get_temperature
+        from graphknows.config.llm import get_temperature
 
         assert get_temperature({"llm": {"temperature": 0.7}}) == pytest.approx(0.7)
 
 
 class TestNormalizeOpenrouterModel:
     def test_adds_prefix(self):
-        from graphknows.graphgen.llm import normalize_openrouter_model
+        from graphknows.config.llm import normalize_openrouter_model
 
         assert normalize_openrouter_model("gpt-4") == "openrouter/gpt-4"
 
     def test_idempotent_when_already_prefixed(self):
-        from graphknows.graphgen.llm import normalize_openrouter_model
+        from graphknows.config.llm import normalize_openrouter_model
 
         assert normalize_openrouter_model("openrouter/gpt-4") == "openrouter/gpt-4"
 
     def test_none_returns_default(self):
-        from graphknows.graphgen.llm import _DEFAULT_MODEL, normalize_openrouter_model
+        from graphknows.config.llm import _DEFAULT_MODEL, normalize_openrouter_model
 
         result = normalize_openrouter_model(None)
         assert result == f"openrouter/{_DEFAULT_MODEL}"
@@ -639,7 +639,7 @@ class TestWriteDiagnosticJson:
 
 class TestResolveEntityLabels:
     def test_manual_labels_returned_and_standardized(self):
-        from graphknows.graphgen.labels import resolve_entity_labels
+        from graphknows.ontology.labels import resolve_entity_labels
 
         cfg = {"gliner_labels": ["Person", "organization"]}
         result = resolve_entity_labels(cfg)
@@ -648,14 +648,14 @@ class TestResolveEntityLabels:
         assert "ORGANIZATION" in result
 
     def test_defaults_when_empty_config(self):
-        from graphknows.graphgen.labels import DEFAULT_LABELS, resolve_entity_labels
+        from graphknows.ontology.labels import DEFAULT_LABELS, resolve_entity_labels
 
         result = resolve_entity_labels({})
         # Should contain standardized versions of DEFAULT_LABELS
         assert len(result) > 0
 
     def test_entity_labels_key_takes_priority(self):
-        from graphknows.graphgen.labels import resolve_entity_labels
+        from graphknows.ontology.labels import resolve_entity_labels
 
         cfg = {
             "entity_labels": ["Country"],
@@ -667,7 +667,7 @@ class TestResolveEntityLabels:
         assert "PERSON" not in result
 
     def test_ontology_disabled_uses_manual_only(self):
-        from graphknows.graphgen.labels import resolve_entity_labels
+        from graphknows.ontology.labels import resolve_entity_labels
 
         cfg = {
             "gliner_labels": ["Politician"],
@@ -677,7 +677,7 @@ class TestResolveEntityLabels:
         assert "POLITICIAN" in result
 
     def test_ontology_enabled_but_extraction_fails_falls_back(self):
-        from graphknows.graphgen.labels import resolve_entity_labels
+        from graphknows.ontology.labels import resolve_entity_labels
 
         cfg = {
             "gliner_labels": ["Person"],
@@ -688,7 +688,7 @@ class TestResolveEntityLabels:
         assert len(result) > 0
 
     def test_pydantic_model_input(self):
-        from graphknows.graphgen.labels import resolve_entity_labels
+        from graphknows.ontology.labels import resolve_entity_labels
 
         mock_cfg = MagicMock()
         mock_cfg.model_dump.return_value = {"gliner_labels": ["Doctor"]}
@@ -696,7 +696,7 @@ class TestResolveEntityLabels:
         assert "DOCTOR" in result
 
     def test_result_is_sorted_unique(self):
-        from graphknows.graphgen.labels import resolve_entity_labels
+        from graphknows.ontology.labels import resolve_entity_labels
 
         cfg = {"gliner_labels": ["person", "Person", "PERSON"]}
         result = resolve_entity_labels(cfg)

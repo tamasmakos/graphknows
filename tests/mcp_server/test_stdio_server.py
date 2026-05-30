@@ -1067,7 +1067,7 @@ def test_dspy_lm_num_retries_zero(monkeypatch):
 
 def test_get_openrouter_api_key_finds_key_under_infra():
     """_get_openrouter_api_key must find the key when placed under config['infra']."""
-    from graphknows.graphgen.llm import _get_openrouter_api_key
+    from graphknows.config.llm import _get_openrouter_api_key
 
     config = {
         "llm": {"model": "openai/gpt-4o"},

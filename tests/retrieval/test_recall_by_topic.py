@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from graphknows.recall import recall_by_topic
+from graphknows.memory.recall import recall_by_topic
 
 
 def _make_driver(rows: list[dict]) -> MagicMock:
