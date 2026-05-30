@@ -863,75 +863,6 @@ class TestMemoryFlushIdempotency:
         assert result.get("status") != "already_flushed"
 
 
-# ---------------------------------------------------------------------------
-# corpus_ingest — must NOT call graphgen.run_ingestion
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_corpus_ingest_does_not_call_graphgen_run_ingestion(monkeypatch) -> None:
-    """corpus_ingest tool must never call graphknows.graphgen.ingest.run_ingestion."""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    # Sentinel to detect if the old code path is invoked
-    graphgen_run_ingestion = MagicMock(side_effect=AssertionError("must not be called"))
-
-    monkeypatch.setattr(
-        "graphknows.graphgen.ingest.run_ingestion",
-        graphgen_run_ingestion,
-    )
-
-    # Build a fake CorpusIngestResult
-    fake_result = MagicMock()
-    fake_result.session_id = "test-session-abc"
-    fake_result.documents_processed = 1
-    fake_result.entities_extracted = 3
-    fake_result.chunks_written = 2
-    fake_result.nodes_written = 4
-    fake_result.edges_written = 3
-    fake_result.elapsed_s = 0.1
-    fake_result.errors = []
-
-    mock_workflow = MagicMock()
-    mock_workflow.run = AsyncMock(return_value=fake_result)
-    mock_workflow_cls = MagicMock(return_value=mock_workflow)
-
-    mock_extractor = MagicMock()
-    mock_extractor_cls = MagicMock(return_value=mock_extractor)
-
-    with (
-        patch(
-            "graphknows.memory.workflows.corpus_ingest.CorpusIngestWorkflow",
-            mock_workflow_cls,
-        ),
-        patch(
-            "graphknows.mcp.stdio_server.CorpusIngestWorkflow",
-            mock_workflow_cls,
-            create=True,
-        ),
-        patch(
-            "graphknows.mcp.stdio_server.GLiNER2EntityExtractor",
-            mock_extractor_cls,
-            create=True,
-        ),
-        patch("graphknows.mcp.stdio_server._get_mg", return_value=MagicMock()),
-        patch("graphknows.mcp.stdio_server._get_pg", new=AsyncMock(return_value=MagicMock())),
-        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
-        patch("graphknows.mcp.stdio_server._embed_fn", return_value=MagicMock()),
-        patch("graphknows.mcp.stdio_server._get_settings", return_value=MagicMock()),
-    ):
-        from graphknows.mcp import stdio_server as srv
-
-        result = await srv.corpus_ingest(
-            documents=[{"text": "Hello world.", "id": "d1", "title": "Test"}]
-        )
-
-    # The old graphgen path must never have been touched
-    graphgen_run_ingestion.assert_not_called()
-    assert "documents_processed" in result
-
-
-
 def test_memory_ingest_returns_no_warnings():
     """memory_ingest must not return rel_extractor_disabled warning — issue #113."""
     import asyncio
@@ -1126,7 +1057,7 @@ def test_dspy_lm_num_retries_zero(monkeypatch):
     monkeypatch.setattr(dspy.LM, "__init__", mock_init)
 
     try:
-        from graphknows.graphgen.pipeline.entity_relation.extractors import DSPyExtractor
+        from graphknows.graphgen.extraction.relations import DSPyExtractor
         DSPyExtractor(config={"openrouter_api_key": "fake", "model": "openai/gpt-4o"})
     except Exception:
         pass
@@ -1136,7 +1067,7 @@ def test_dspy_lm_num_retries_zero(monkeypatch):
 
 def test_get_openrouter_api_key_finds_key_under_infra():
     """_get_openrouter_api_key must find the key when placed under config['infra']."""
-    from graphknows.graphgen.config.llm import _get_openrouter_api_key
+    from graphknows.graphgen.llm import _get_openrouter_api_key
 
     config = {
         "llm": {"model": "openai/gpt-4o"},

@@ -85,7 +85,7 @@ class GLiNER2EntityExtractor:
         import sys
         import time
 
-        from graphknows.graphgen.pipeline.entity_relation.extraction import get_gliner2_model
+        from graphknows.graphgen.extraction.gliner import get_gliner2_model
 
         log.info("GLiNER2 model not loaded — loading now (first call, expect 15–30s)...")  # noqa: RUF001
         _t0 = time.monotonic()

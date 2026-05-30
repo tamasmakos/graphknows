@@ -70,3 +70,6 @@ research
 research
 llm-wiki
 .coverage*
+.import_linter_cache
+.grimp_cache
+.vscode

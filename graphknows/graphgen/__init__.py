@@ -1,20 +1,31 @@
-"""graphknows.graphgen — knowledge graph generation pipeline.
+"""graphknows.graphgen — graph-generation primitives.
 
-Absorbs the former top-level ``graphgen`` package.  The primary public entry
-points are:
+This package provides the extraction and chunking primitives shared by both
+the STM-ingest path and the LTM-flush promotion path.  No orchestration or
+legacy batch-pipeline code lives here.
 
-- :func:`run_ingestion` — async wrapper for the full pipeline (writes documents
-  to a temp dir and calls :func:`graphknows.graphgen.orchestrator.run_pipeline`
-  in a thread pool).
-- :class:`~graphknows.graphgen.orchestrator.KnowledgePipeline` — the pipeline
-  class itself, for programmatic use without HTTP.
+Public API::
 
-Example:
-    from graphknows.graphgen import run_ingestion
-
-    stats = await run_ingestion(documents=[{"text": "...", "id": "d1", "source": "web"}])
+    from graphknows.graphgen import (
+        chunk_text,
+        get_gliner2_model,
+        DSPyExtractor,
+        BaseExtractor,
+        build_top_level_label_space,
+    )
 """
 
-from graphknows.graphgen.ingest import run_ingestion
+from __future__ import annotations
 
-__all__ = ["run_ingestion"]
+from graphknows.graphgen.chunking import process_document_splitting as chunk_text
+from graphknows.graphgen.extraction.gliner import get_gliner2_model
+from graphknows.graphgen.extraction.ontology import build_top_level_label_space
+from graphknows.graphgen.extraction.relations import BaseExtractor, DSPyExtractor
+
+__all__ = [
+    "BaseExtractor",
+    "DSPyExtractor",
+    "build_top_level_label_space",
+    "chunk_text",
+    "get_gliner2_model",
+]

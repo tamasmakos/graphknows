@@ -720,9 +720,7 @@ class Neo4jStore:
         Returns:
             Total number of relation edges written.
         """
-        from graphknows.graphgen.pipeline.entity_relation.extractors import (
-            DSPyExtractor,
-        )
+        from graphknows.graphgen.extraction.relations import DSPyExtractor
 
         entity_by_name: dict[str, dict[str, Any]] = {
             e["name"]: e for e in stm_data.get("entities", [])

@@ -107,6 +107,20 @@ class GraphKnowsSettings(BaseSettings):
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     extraction_model: str = Field(default="moonshotai/kimi-k2", alias="EXTRACTION_MODEL")
 
+    # Chunking
+    chunk_size: int = Field(default=1200, alias="CHUNK_SIZE")
+    chunk_overlap: int = Field(default=100, alias="CHUNK_OVERLAP")
+
+    # Entity extraction
+    gliner_model: str = Field(default="fastino/gliner2-multi-v1", alias="GLINER_MODEL")
+    gliner_threshold: float = Field(default=0.5, alias="GLINER_THRESHOLD")
+
+    # Taxonomy / ontology
+    taxonomy_file: str | None = Field(default=None, alias="GRAPHKNOWS_TAXONOMY_FILE")
+
+    # Summarisation
+    summarization_model: str = Field(default="moonshotai/kimi-k2", alias="SUMMARISATION_MODEL")
+
     @model_validator(mode="after")
     def _populate_from_repo_env(self) -> GraphKnowsSettings:
         """Back-fill credentials from the repo-level .env when defaults are in use."""
