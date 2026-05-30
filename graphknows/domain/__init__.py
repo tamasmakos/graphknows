@@ -25,12 +25,6 @@ from graphknows.domain.schema import (
     REL_HAS_TURN,
     REL_RELATES_TO,
 )
-from graphknows.domain.taxonomy import (
-    EntityGroupConfig,
-    TaxonomyConfig,
-    get_default_taxonomy,
-    load_taxonomy,
-)
 
 __all__ = [
     "EntityGroupConfig",
