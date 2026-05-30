@@ -41,11 +41,7 @@ import logging
 logging.basicConfig(level=logging.WARNING, stream=__import__("sys").stderr)
 
 # --- Import tool modules (registers @app.tool() decorators) ---
-import graphknows.mcp.tools.admin  # noqa: E402
-import graphknows.mcp.tools.corpus  # noqa: E402
-import graphknows.mcp.tools.ltm  # noqa: E402
-import graphknows.mcp.tools.recall  # noqa: E402
-import graphknows.mcp.tools.stm  # noqa: F401, E402
+import graphknows.mcp.tools.stm  # noqa: E402
 import graphknows.mcp.tools.taxonomy  # noqa: F401, E402
 from graphknows.mcp._app import app  # noqa: E402
 

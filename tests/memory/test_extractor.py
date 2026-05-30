@@ -174,7 +174,7 @@ class TestEnsureModelLoaded:
 
         with (
             patch(
-                "graphknows.graphgen.pipeline.entity_relation.extraction.get_gliner2_model",
+                "graphknows.graphgen.extraction.gliner.get_gliner2_model",
                 return_value=None,
             ),
             pytest.raises(RuntimeError, match="GLiNER2 model failed to load"),
@@ -190,7 +190,7 @@ class TestEnsureModelLoaded:
         mock_model.create_schema.return_value = mock_schema
 
         with patch(
-            "graphknows.graphgen.pipeline.entity_relation.extraction.get_gliner2_model",
+            "graphknows.graphgen.extraction.gliner.get_gliner2_model",
             return_value=mock_model,
         ):
             extractor._ensure_model_loaded()

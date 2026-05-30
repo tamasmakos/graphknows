@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from typing import Any
+
+import numpy as np
+from sklearn.metrics import silhouette_score
 
 from graphknows.memory.models.gds import CentralityResult, CommunityResult, GDSResult
 
@@ -274,6 +279,66 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
 # ---------------------------------------------------------------------------
 # Public service class
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class FeatureEngineeringResult:
+    """Result of a feature engineering run."""
+
+    entity_count: int = 0
+    community_count: int = 0
+    runtime_ms: float = 0.0
+    top_entities: list[dict] = field(default_factory=list)
+    algorithm_used: str = ""
+    error: str = ""
+
+
+def _compute_silhouette(emb_rows: list) -> float | None:
+    """Compute silhouette score from embedding rows."""
+    if len(emb_rows) < 10:
+        return None
+    x_emb = np.array([r["emb"] for r in emb_rows], dtype=np.float32)
+    labels = np.array([r["cid"] for r in emb_rows])
+    counts = Counter(labels)
+    mask = np.array([counts[lbl] >= 2 for lbl in labels])
+    x_filt = x_emb[mask]
+    labels_filt = labels[mask]
+    try:
+        if len(np.unique(labels_filt)) >= 2 and len(x_filt) >= 4:
+            return float(silhouette_score(x_filt, labels_filt, metric="cosine", random_state=42))
+    except Exception as e_sil:
+        log.warning("Silhouette score failed (non-fatal): %s", e_sil)
+    return None
+
+
+def _compute_separation(emb_rows: list) -> tuple[float | None, float | None]:
+    """Compute global separation and overlap metrics."""
+    counts = Counter(r["cid"] for r in emb_rows)
+    comm_vecs: dict = defaultdict(list)
+    for r in emb_rows:
+        if counts[r["cid"]] >= 2:
+            comm_vecs[r["cid"]].append(np.array(r["emb"], dtype=np.float32))
+    if not comm_vecs:
+        return None, None
+    centroids = {cid: np.mean(vecs, axis=0) for cid, vecs in comm_vecs.items()}
+    cid_list = list(centroids.keys())
+    centroid_matrix = np.stack([centroids[c] for c in cid_list])
+    separated = 0
+    total = 0
+    for r in emb_rows:
+        cid = r["cid"]
+        if cid not in centroids:
+            continue
+        emb = np.array(r["emb"], dtype=np.float32)
+        norms = np.linalg.norm(centroid_matrix, axis=1) * np.linalg.norm(emb)
+        norms = np.where(norms == 0, 1e-9, norms)
+        sims = centroid_matrix @ emb / norms
+        own_idx = cid_list.index(cid)
+        if all(sims[own_idx] >= s_ for s_ in sims):
+            separated += 1
+        total += 1
+    sep = separated / total if total > 0 else None
+    return sep, (1.0 - sep if sep is not None else None)
 
 
 class LTMEnrichmentService:

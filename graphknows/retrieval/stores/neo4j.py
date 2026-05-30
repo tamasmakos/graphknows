@@ -720,9 +720,7 @@ class Neo4jStore:
         Returns:
             Total number of relation edges written.
         """
-        from graphknows.graphgen.pipeline.entity_relation.extractors import (
-            DSPyExtractor,
-        )
+        from graphknows.graphgen.extraction.relations import DSPyExtractor
 
         entity_by_name: dict[str, dict[str, Any]] = {
             e["name"]: e for e in stm_data.get("entities", [])
@@ -993,5 +991,59 @@ class Neo4jStore:
                ORDER BY s.ingested_at DESC
                LIMIT $limit""",
             limit=limit,
+        )
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # LTM entity / topic reads (used by MCP tools)
+    # ------------------------------------------------------------------
+
+    def get_entity_by_name(self, name: str) -> dict[str, Any] | None:
+        """Return properties of an ENTITY node by case-insensitive name match.
+
+        Also appends ``segment_count`` — the number of distinct Segment nodes
+        the entity has appeared in via APPEARED_IN edges.
+
+        Args:
+            name: Entity name (case-insensitive).
+
+        Returns:
+            Dict of entity properties with ``segment_count`` appended, or None
+            if no matching entity is found.
+        """
+        rows = self._run(
+            "MATCH (e:ENTITY) "
+            "WHERE toLower(e.name) = toLower($name) "
+            "OPTIONAL MATCH (e)-[:APPEARED_IN]->(seg:Segment) "
+            "RETURN properties(e) AS props, count(DISTINCT seg) AS segment_count",
+            name=name,
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        props = dict(row["props"])
+        props["segment_count"] = row["segment_count"]
+        return props
+
+    def list_topic_nodes(self, min_entities: int = 3) -> list[dict[str, Any]]:
+        """List TOPIC nodes whose entity_count meets the minimum threshold.
+
+        Results are ordered by entity_count descending.
+
+        Args:
+            min_entities: Minimum entity count threshold (inclusive).
+
+        Returns:
+            List of dicts with ``community_id``, ``summary``, and
+            ``entity_count`` keys.
+        """
+        rows = self._run(
+            "MATCH (t:TOPIC) "
+            "WHERE t.entity_count >= $min_entities "
+            "RETURN t.community_id AS community_id, "
+            "       t.summary AS summary, "
+            "       t.entity_count AS entity_count "
+            "ORDER BY t.entity_count DESC",
+            min_entities=min_entities,
         )
         return [dict(r) for r in rows]

@@ -285,23 +285,11 @@ async def test_stats_queries_pg_and_neo4j(mock_container):
     mock_conn.fetchval = AsyncMock(side_effect=[10, 5, 20, 15, 3])
     mock_conn.close = AsyncMock()
 
-    mock_neo_session = MagicMock()
-    mock_neo_session.run.side_effect = [
-        MagicMock(single=lambda: {"c": 42}),
-        MagicMock(single=lambda: {"c": 7}),
-    ]
-    mock_neo_session.__enter__ = MagicMock(return_value=mock_neo_session)
-    mock_neo_session.__exit__ = MagicMock(return_value=None)
-    mock_neo_driver = MagicMock()
-    mock_neo_driver.session = MagicMock(return_value=mock_neo_session)
+    mock_container.neo._arun = AsyncMock(
+        side_effect=[[{"c": 42}], [{"c": 7}]]
+    )
 
-    with (
-        patch("asyncpg.connect", new=AsyncMock(return_value=mock_conn)),
-        patch(
-            "neo4j.GraphDatabase.driver",
-            return_value=mock_neo_driver,
-        ),
-    ):
+    with patch("asyncpg.connect", new=AsyncMock(return_value=mock_conn)):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
         result = await adapter.stats()
 

@@ -226,7 +226,7 @@ import pytest
 
 class TestOntologyLabelExtractorInit:
     def test_init_sets_attributes(self):
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake_dir", namespace_filter="http://example.org/")
         assert str(ext.ontology_dir) == "/tmp/fake_dir"
@@ -234,7 +234,7 @@ class TestOntologyLabelExtractorInit:
         assert ext._loaded is False
 
     def test_init_without_filter(self):
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake_dir")
         assert ext.namespace_filter is None
@@ -242,14 +242,14 @@ class TestOntologyLabelExtractorInit:
 
 class TestOntologyLoadRdfFiles:
     def test_returns_zero_for_nonexistent_dir(self):
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/does_not_exist_xyz_abc")
         count = ext._load_rdf_files()
         assert count == 0
 
     def test_returns_zero_for_empty_dir(self):
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         with tempfile.TemporaryDirectory() as tmpdir:
             ext = OntologyLabelExtractor(tmpdir)
@@ -257,7 +257,7 @@ class TestOntologyLoadRdfFiles:
             assert count == 0
 
     def test_returns_zero_on_second_call_if_already_loaded(self):
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/does_not_exist_xyz")
         ext._loaded = True  # Manually mark as loaded
@@ -265,7 +265,7 @@ class TestOntologyLoadRdfFiles:
         assert count == 0
 
     def test_parses_valid_rdf_file(self):
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         rdf_content = textwrap.dedent("""
             <?xml version="1.0" encoding="utf-8"?>
@@ -291,7 +291,7 @@ class TestOntologyExtractLabels:
     def test_extract_labels_from_in_memory_graph(self):
         from rdflib import Graph, URIRef, Literal
         from rdflib.namespace import OWL, RDF, RDFS
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake")
         # Inject a real rdflib graph with a class
@@ -305,7 +305,7 @@ class TestOntologyExtractLabels:
         assert "Person" in labels
 
     def test_extract_labels_returns_list(self):
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/does_not_exist_xyz")
         labels = ext.extract_labels()
@@ -314,7 +314,7 @@ class TestOntologyExtractLabels:
     def test_namespace_filter_applied(self):
         from rdflib import Graph, URIRef, Literal
         from rdflib.namespace import OWL, RDF, RDFS
-        from graphknows.graphgen.utils.ontology_parser import OntologyLabelExtractor
+        from graphknows.graphgen.ontology_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake", namespace_filter="http://example.org/")
         ext.graph = Graph()
@@ -335,166 +335,3 @@ class TestOntologyExtractLabels:
         assert "Thing" not in labels
 
 
-# ---------------------------------------------------------------------------
-# parsers/life.py — LifeLogParser
-# ---------------------------------------------------------------------------
-
-
-class TestLifeLogParser:
-    def test_can_instantiate(self):
-        from graphknows.graphgen.utils.parsers.life import LifeLogParser
-
-        parser = LifeLogParser()
-        assert parser is not None
-
-    def test_parse_empty_content_returns_empty(self):
-        from graphknows.graphgen.utils.parsers.life import LifeLogParser
-        from datetime import date as date_type
-
-        parser = LifeLogParser()
-        result = parser.parse("", filename="test.md", doc_date=date_type(2024, 1, 15))
-        assert isinstance(result, list)
-
-    def test_parse_returns_structured_data(self):
-        from graphknows.graphgen.utils.parsers.life import LifeLogParser
-        from datetime import date as date_type
-
-        parser = LifeLogParser()
-        content = "2024-01-15 Meeting with Alice about EU policy\n"
-        result = parser.parse(content, filename="diary.md", doc_date=date_type(2024, 1, 15))
-        assert result is not None
-
-
-# ---------------------------------------------------------------------------
-# extractors.py — get_extractor factory
-# ---------------------------------------------------------------------------
-
-
-class TestGetExtractor:
-    def test_returns_none_for_no_config(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import get_extractor
-
-        result = get_extractor({})
-        # With empty config and no API key, extractor should be None or raise gracefully
-        assert result is None or True  # may return None
-
-    def test_get_extractor_with_mock_config(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import get_extractor
-
-        # If provider not configured, should return None rather than raising
-        config = {"extraction": {"extractor_type": "none"}}
-        try:
-            result = get_extractor(config)
-            assert result is None or True
-        except Exception:
-            pass  # Acceptable if provider not available
-
-
-class TestBaseExtractor:
-    def test_base_extractor_abstract(self):
-        from graphknows.graphgen.pipeline.entity_relation.extractors import BaseExtractor
-
-        # BaseExtractor is abstract — it has extract_relations as abstract method
-        # It cannot be instantiated — this is enforced by ABC
-        assert hasattr(BaseExtractor, "extract_relations")
-
-
-# ---------------------------------------------------------------------------
-# graphgen/utils/vector_embedder/rag.py — import check + guard paths
-# ---------------------------------------------------------------------------
-
-
-class TestRagEmbedder:
-    def test_module_importable(self):
-        from graphknows.graphgen.utils.vector_embedder import rag
-
-        assert rag is not None
-
-    def test_generate_rag_embeddings_guard_empty_entities(self):
-        """generate_rag_embeddings should handle empty input gracefully."""
-        from graphknows.graphgen.utils.vector_embedder.rag import generate_rag_embeddings
-        import networkx as nx
-
-        G = nx.DiGraph()
-        # Should not raise on empty graph
-        try:
-            result = generate_rag_embeddings(G)
-            assert isinstance(result, dict)
-        except Exception as e:
-            # Acceptable: may fail if model not loaded, but not a crash
-            assert isinstance(e, Exception)
-
-
-# ---------------------------------------------------------------------------
-# graphgen/patch/phases/gliner2_fallback.py
-# ---------------------------------------------------------------------------
-
-
-class TestGliner2FallbackPhase:
-    def test_module_importable(self):
-        from graphknows.graphgen.patch.phases import gliner2_fallback
-
-        assert gliner2_fallback is not None
-
-    def test_has_apply_or_run_function(self):
-        from graphknows.graphgen.patch.phases import gliner2_fallback
-
-        # Should have at least one callable for phase execution
-        callables = [
-            name
-            for name in dir(gliner2_fallback)
-            if not name.startswith("_") and callable(getattr(gliner2_fallback, name))
-        ]
-        assert len(callables) > 0
-
-
-# ---------------------------------------------------------------------------
-# graphgen/patch/phases/unknown.py
-# ---------------------------------------------------------------------------
-
-
-class TestUnknownPhaseAdvanced:
-    def test_has_apply_or_run(self):
-        from graphknows.graphgen.patch.phases import unknown
-
-        callables = [
-            name
-            for name in dir(unknown)
-            if not name.startswith("_") and callable(getattr(unknown, name))
-        ]
-        assert len(callables) > 0
-
-
-# ---------------------------------------------------------------------------
-# graphgen/patch/phases/structural.py
-# ---------------------------------------------------------------------------
-
-
-class TestStructuralPhaseAdvanced:
-    def test_has_apply_or_run(self):
-        from graphknows.graphgen.patch.phases import structural
-
-        callables = [
-            name
-            for name in dir(structural)
-            if not name.startswith("_") and callable(getattr(structural, name))
-        ]
-        assert len(callables) > 0
-
-
-# ---------------------------------------------------------------------------
-# graphgen/pipeline/summarization/summarizer.py
-# ---------------------------------------------------------------------------
-
-
-class TestCommunitySummarizerAdvanced:
-    def test_can_inspect_module_exports(self):
-        from graphknows.graphgen.pipeline.summarization import summarizer
-
-        public = [n for n in dir(summarizer) if not n.startswith("_")]
-        assert len(public) > 0
-
-    def test_community_summarizer_class_exists(self):
-        from graphknows.graphgen.pipeline.summarization import summarizer
-
-        assert hasattr(summarizer, "CommunitySummarizer") or len(dir(summarizer)) > 2

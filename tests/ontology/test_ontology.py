@@ -304,7 +304,7 @@ def _make_taxonomy(entity_groups=None):
 
 class TestBuildGliner2Schema:
     def test_returns_entity_dict_without_taxonomy(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import build_gliner2_schema
+        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
 
         labels = ["PERSON", "ORGANIZATION", "LOCATION"]
         result = build_gliner2_schema(labels)
@@ -313,21 +313,21 @@ class TestBuildGliner2Schema:
         assert "organization" in result["entities"]
 
     def test_custom_label_descriptions_override_defaults(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import build_gliner2_schema
+        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
 
         labels = ["PERSON"]
         result = build_gliner2_schema(labels, label_descriptions={"PERSON": "My custom desc"})
         assert result["entities"]["person"] == "My custom desc"
 
     def test_unknown_label_falls_back_to_lowercase(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import build_gliner2_schema
+        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
 
         labels = ["CUSTOM_TYPE"]
         result = build_gliner2_schema(labels)
         assert result["entities"]["custom_type"] == "custom_type"
 
     def test_with_taxonomy_merges_descriptions(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import build_gliner2_schema
+        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
 
         group = MagicMock()
         group.description = "A real person."
@@ -339,7 +339,7 @@ class TestBuildGliner2Schema:
 
 class TestSelectCandidateLabels:
     def test_returns_top_k_labels(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import select_candidate_labels
+        from graphknows.graphgen.extraction.ontology import select_candidate_labels
 
         label_space = {
             "PERSON": {"aliases": ["president"], "children": []},
@@ -355,7 +355,7 @@ class TestSelectCandidateLabels:
         assert "PERSON" in result
 
     def test_returns_top_k_even_with_no_matches(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import select_candidate_labels
+        from graphknows.graphgen.extraction.ontology import select_candidate_labels
 
         label_space = {
             "TYPE_A": {"aliases": [], "children": []},
@@ -366,7 +366,7 @@ class TestSelectCandidateLabels:
         assert len(result) == 2  # fallback to first 2
 
     def test_scores_alias_matches_higher(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import select_candidate_labels
+        from graphknows.graphgen.extraction.ontology import select_candidate_labels
 
         label_space = {
             "PERSON": {"aliases": ["prime minister"], "children": []},
@@ -376,7 +376,7 @@ class TestSelectCandidateLabels:
         assert result[0] == "PERSON"
 
     def test_child_token_scoring(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import select_candidate_labels
+        from graphknows.graphgen.extraction.ontology import select_candidate_labels
 
         label_space = {
             "LOCATION": {"aliases": [], "children": ["COUNTRY", "CITY"]},
@@ -388,7 +388,7 @@ class TestSelectCandidateLabels:
 
 class TestRefineEntitiesWithOntology:
     def test_returns_entities_with_ontology_label(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+        from graphknows.graphgen.extraction.ontology import (
             refine_entities_with_ontology,
         )
 
@@ -401,7 +401,7 @@ class TestRefineEntitiesWithOntology:
         assert "ontology_label" in result[0]
 
     def test_empty_entities_returns_empty(self):
-        from graphknows.graphgen.pipeline.entity_relation.ontology import (
+        from graphknows.graphgen.extraction.ontology import (
             refine_entities_with_ontology,
         )
 

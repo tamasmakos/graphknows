@@ -193,18 +193,6 @@ depends_on = [
 ]
 
 [[modules]]
-path = "graphknows.memory.workflows"
-depends_on = [
-  "graphknows.domain",
-  "graphknows.config",
-  "graphknows.memory",
-  "graphknows.memory.stm",
-  "graphknows.memory.ltm",
-  "graphknows.memory.models",
-  "graphknows.retrieval",
-]
-
-[[modules]]
 path = "graphknows.builders"
 # TARGET: composition root — Tier 3
 depends_on = ["graphknows.config", "graphknows.memory", "graphknows.memory.workflows", "graphknows.retrieval", "graphknows.adapters"]

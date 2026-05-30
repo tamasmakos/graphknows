@@ -829,54 +829,54 @@ class TestGetEntityNeighbors:
 
 class TestEscapeCypherIdentifier:
     def test_simple_identifier_unchanged(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         assert _escape_cypher_identifier("MyLabel") == "MyLabel"
 
     def test_underscore_identifier_unchanged(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         assert _escape_cypher_identifier("my_label") == "my_label"
 
     def test_empty_string_returned_unchanged(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         assert _escape_cypher_identifier("") == ""
 
     def test_identifier_with_space_is_escaped(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("My Label")
         assert result == "`My Label`"
 
     def test_identifier_with_dash_is_escaped(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("my-label")
         assert result == "`my-label`"
 
     def test_identifier_starting_with_digit_is_escaped(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("1node")
         assert result.startswith("`")
         assert result.endswith("`")
 
     def test_backtick_in_identifier_is_doubled(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("My`Label")
         assert "``" in result
         assert result.startswith("`")
 
     def test_special_chars_require_escaping(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("label.with.dots")
         assert result.startswith("`")
 
     def test_pure_alphanum_no_escaping(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("RELATES_TO")
         assert result == "RELATES_TO"
@@ -889,14 +889,14 @@ class TestEscapeCypherIdentifier:
 
 class TestCleanPropsForNeo4j:
     def test_removes_none_values(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"a": None, "b": "value"})
         assert "a" not in result
         assert result["b"] == "value"
 
     def test_preserves_primitives(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"s": "text", "i": 42, "f": 3.14, "b": True})
         assert result["s"] == "text"
@@ -905,25 +905,25 @@ class TestCleanPropsForNeo4j:
         assert result["b"] is True
 
     def test_homogeneous_list_of_strings(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"tags": ["a", "b", "c"]})
         assert result["tags"] == ["a", "b", "c"]
 
     def test_homogeneous_list_of_ints(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"counts": [1, 2, 3]})
         assert result["counts"] == [1, 2, 3]
 
     def test_empty_list_excluded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"empty": []})
         assert "empty" not in result
 
     def test_mixed_type_list_json_encoded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"mixed": [1, "two", 3.0]})
         assert isinstance(result["mixed"], str)
@@ -931,14 +931,14 @@ class TestCleanPropsForNeo4j:
         assert parsed[1] == "two"
 
     def test_dict_value_json_encoded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"meta": {"key": "value"}})
         assert isinstance(result["meta"], str)
         assert json.loads(result["meta"]) == {"key": "value"}
 
     def test_complex_object_str_fallback(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         class Unserializable:
             def __repr__(self):
@@ -948,539 +948,22 @@ class TestCleanPropsForNeo4j:
         assert isinstance(result["obj"], str)
 
     def test_tuple_treated_as_list(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"coords": (1.0, 2.0)})
         assert "coords" in result
 
     def test_empty_dict_returns_empty(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({})
         assert result == {}
 
     def test_list_of_dicts_json_encoded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"items": [{"k": "v"}, {"k": "v2"}]})
         assert isinstance(result["items"], str)
-
-
-# ---------------------------------------------------------------------------
-# pgvector_adapter import (from test_wave3_neo4j_adapter.py)
-# ---------------------------------------------------------------------------
-
-
-class TestPgvectorAdapterImport:
-    def test_module_importable(self):
-        from graphknows.graphgen.utils.graphdb import pgvector_adapter
-
-        assert pgvector_adapter is not None
-
-    def test_has_adapter_class_or_function(self):
-        from graphknows.graphgen.utils.graphdb import pgvector_adapter
-
-        public = [n for n in dir(pgvector_adapter) if not n.startswith("_")]
-        assert len(public) > 0
-
-
-# ---------------------------------------------------------------------------
-# Neo4jGraphUploader (from test_wave3_neo4j_adapter_uploader.py)
-# ---------------------------------------------------------------------------
-
-
-def _make_uploader():
-    """Create a Neo4jGraphUploader with mocked driver."""
-    from graphknows.graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
-
-    uploader = Neo4jGraphUploader.__new__(Neo4jGraphUploader)
-    uploader.uri = "bolt://localhost:7687"
-    uploader.auth = ("neo4j", "password")
-    uploader.database = "neo4j"
-    uploader.driver = MagicMock()
-    return uploader
-
-
-class TestNeo4jGraphUploaderConnect:
-    def test_connect_returns_true_on_success(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
-
-        uploader = Neo4jGraphUploader.__new__(Neo4jGraphUploader)
-        uploader.uri = "bolt://localhost:7687"
-        uploader.auth = ("neo4j", "pass")
-        uploader.database = "neo4j"
-        uploader.driver = None
-
-        with patch("graphknows.graphgen.utils.graphdb.neo4j_adapter.GraphDatabase") as MockGDB:
-            MockGDB.driver.return_value = MagicMock()
-            result = uploader.connect()
-        assert result is True
-
-    def test_connect_returns_false_on_exception(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
-
-        uploader = Neo4jGraphUploader.__new__(Neo4jGraphUploader)
-        uploader.uri = "bolt://invalid:9999"
-        uploader.auth = ("neo4j", "wrong")
-        uploader.database = "neo4j"
-        uploader.driver = None
-
-        with patch("graphknows.graphgen.utils.graphdb.neo4j_adapter.GraphDatabase") as MockGDB:
-            MockGDB.driver.side_effect = Exception("Connection refused")
-            result = uploader.connect()
-        assert result is False
-
-
-class TestNeo4jGraphUploaderClose:
-    def test_close_calls_driver_close(self):
-        uploader = _make_uploader()
-        uploader.close()
-        uploader.driver.close.assert_called_once()
-
-    def test_close_does_nothing_when_driver_is_none(self):
-        uploader = _make_uploader()
-        uploader.driver = None
-        uploader.close()
-
-
-class TestCreateVectorIndex:
-    def test_creates_index_with_correct_cypher(self):
-        uploader = _make_uploader()
-        mock_session = MagicMock()
-        uploader.driver.session.return_value.__enter__.return_value = mock_session
-        uploader.driver.session.return_value.__exit__.return_value = None
-
-        uploader._create_vector_index("ENTITY", "embedding", 768)
-
-        assert mock_session.run.called
-        cypher = mock_session.run.call_args[0][0]
-        assert "ENTITY" in cypher or "entity" in cypher.lower()
-        assert "768" in cypher
-        assert "vector" in cypher.lower()
-
-
-class TestEnsureConstraints:
-    def test_creates_constraint_for_each_label(self):
-        uploader = _make_uploader()
-        mock_session = MagicMock()
-        uploader.driver.session.return_value.__enter__.return_value = mock_session
-        uploader.driver.session.return_value.__exit__.return_value = None
-
-        uploader._ensure_constraints(["ENTITY", "CHUNK"])
-
-        assert mock_session.run.call_count == 2
-
-
-class TestClearDatabase:
-    def test_clear_database_runs_detach_delete(self):
-        uploader = _make_uploader()
-        mock_session = MagicMock()
-        uploader.driver.session.return_value.__enter__.return_value = mock_session
-        uploader.driver.session.return_value.__exit__.return_value = None
-
-        uploader.clear_database()
-
-        assert mock_session.run.called
-        cypher = mock_session.run.call_args[0][0]
-        assert "DETACH DELETE" in cypher
-
-
-# ===========================================================================
-# Neo4j advanced: evidence graph, interaction graph, community
-# ===========================================================================
-
-
-import asyncio
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_neo4j_store():
-    """Return a Neo4jStore with a mocked driver (no real DB)."""
-    from graphknows.retrieval.stores.neo4j import Neo4jStore
-
-    store = Neo4jStore.__new__(Neo4jStore)
-    mock_driver = MagicMock()
-    mock_session = MagicMock()
-    mock_driver.session.return_value.__enter__.return_value = mock_session
-    store._driver = mock_driver
-    store._db = "neo4j"
-    return store, mock_driver, mock_session
-
-
-def _make_run_result(rows: list[dict]):
-    """Build a mock that looks like a neo4j result with .data()."""
-    mock = MagicMock()
-    mock.data.return_value = rows
-    mock.__iter__ = lambda self: iter(rows)
-    return mock
-
-
-# ---------------------------------------------------------------------------
-# _compute_silhouette
-# ---------------------------------------------------------------------------
-
-
-class TestComputeSilhouette:
-    def test_returns_none_for_single_community(self):
-        from graphknows.retrieval.stores.neo4j import _compute_silhouette
-
-        # All nodes in same community → < 2 distinct labels → None
-        result = _compute_silhouette(
-            names=["A", "B"],
-            name_idx={"A": 0, "B": 1},
-            communities={0: ["A", "B"]},
-            rows=[],
-            weights=[],
-        )
-        assert result is None
-
-    def test_returns_none_for_empty_names(self):
-        from graphknows.retrieval.stores.neo4j import _compute_silhouette
-
-        result = _compute_silhouette(
-            names=[],
-            name_idx={},
-            communities={},
-            rows=[],
-            weights=[],
-        )
-        assert result is None
-
-    def test_returns_float_or_none_for_two_communities(self):
-        from graphknows.retrieval.stores.neo4j import _compute_silhouette
-
-        result = _compute_silhouette(
-            names=["A", "B"],
-            name_idx={"A": 0, "B": 1},
-            communities={0: ["A"], 1: ["B"]},
-            rows=[{"a": "A", "b": "B"}],
-            weights=[1.0],
-        )
-        # Depends on sklearn presence — either float or None
-        assert result is None or isinstance(result, float)
-
-
-# ---------------------------------------------------------------------------
-# _write_evidence_graph
-# ---------------------------------------------------------------------------
-
-
-class TestWriteEvidenceGraph:
-    def _call(self, stm_data: dict):
-        from graphknows.retrieval.stores.neo4j import _write_evidence_graph
-
-        mock_session = MagicMock()
-        nodes, edges, chunk_to_ents = _write_evidence_graph(
-            s=mock_session,
-            session_id="sess-1",
-            stm_data=stm_data,
-            entity_by_name={
-                "ALICE": {"type": "PERSON", "confidence": 0.9},
-            },
-            now="2024-01-01T00:00:00",
-        )
-        return mock_session, nodes, edges, chunk_to_ents
-
-    def test_empty_stm_data_writes_session_only(self):
-        session, nodes, edges, chunk_to_ents = self._call({})
-        # MERGE session node
-        assert any(
-            "MERGE" in str(c) and "SESSION" in str(c)
-            for c in [str(call) for call in session.run.call_args_list]
-        )
-        assert nodes >= 1
-        assert edges == 0
-        assert chunk_to_ents == {}
-
-    def test_file_nodes_increment_counts(self):
-        stm = {
-            "files": [{"id": "f1", "title": "Doc 1", "parser_name": "text", "source_hint": "web"}]
-        }
-        session, nodes, edges, chunk_to_ents = self._call(stm)
-        assert nodes >= 2  # session + file
-        assert edges >= 1  # IN_SESSION edge
-
-    def test_chunk_nodes_written(self):
-        stm = {
-            "files": [{"id": "f1", "title": "T", "parser_name": "p", "source_hint": ""}],
-            "chunks": [
-                {
-                    "id": "c1",
-                    "text": "hello",
-                    "heading_path": "/h",
-                    "chunk_index": 0,
-                    "file_id": "f1",
-                }
-            ],
-        }
-        session, nodes, edges, _ = self._call(stm)
-        cypher_calls = [str(call) for call in session.run.call_args_list]
-        assert any("CHUNK" in c for c in cypher_calls)
-
-    def test_entity_edges_populate_chunk_to_ents(self):
-        stm = {
-            "chunk_entity_edges": [{"entity_name": "ALICE", "chunk_id": "c1"}],
-        }
-        session, nodes, edges, chunk_to_ents = self._call(stm)
-        assert "c1" in chunk_to_ents
-        assert "ALICE" in chunk_to_ents["c1"]
-
-    def test_entity_only_written_once(self):
-        stm = {
-            "chunk_entity_edges": [
-                {"entity_name": "ALICE", "chunk_id": "c1"},
-                {"entity_name": "ALICE", "chunk_id": "c2"},
-            ]
-        }
-        session, _, _, chunk_to_ents = self._call(stm)
-        # ALICE should be MERGE'd once; HAS_ENTITY edges twice
-        merge_entity_calls = [
-            str(c) for c in session.run.call_args_list if "MERGE (e:ENTITY" in str(c)
-        ]
-        assert len(merge_entity_calls) == 1
-
-
-# ---------------------------------------------------------------------------
-# _write_interaction_graph
-# ---------------------------------------------------------------------------
-
-
-class TestWriteInteractionGraph:
-    def _call(self, stm_data: dict):
-        from graphknows.retrieval.stores.neo4j import _write_interaction_graph
-
-        mock_session = MagicMock()
-        nodes, edges = _write_interaction_graph(
-            s=mock_session,
-            session_id="sess-1",
-            stm_data=stm_data,
-            entity_by_name={"BOB": {"type": "PERSON", "confidence": 0.95}},
-            base_written=set(),
-        )
-        return mock_session, nodes, edges
-
-    def test_empty_data_returns_zeros(self):
-        _, nodes, edges = self._call({})
-        assert nodes == 0
-        assert edges == 0
-
-    def test_dialog_creates_node_and_edge(self):
-        stm = {
-            "dialogs": [{"id": "d1", "started_at": "2024-01-01"}],
-        }
-        _, nodes, edges = self._call(stm)
-        assert nodes >= 1
-        assert edges >= 1
-
-    def test_turn_creates_node_and_edge(self):
-        stm = {
-            "dialogs": [],
-            "turns": [
-                {
-                    "id": "t1",
-                    "dialog_id": "d1",
-                    "turn_index": 0,
-                    "role": "user",
-                    "text": "hello",
-                }
-            ],
-        }
-        _, nodes, edges = self._call(stm)
-        assert nodes >= 1
-
-    def test_next_edge_written(self):
-        stm = {
-            "next_edges": [{"from_turn_id": "t1", "to_turn_id": "t2"}],
-        }
-        session, _, edges = self._call(stm)
-        assert edges >= 1
-        cypher_calls = [str(c) for c in session.run.call_args_list]
-        assert any("NEXT" in c for c in cypher_calls)
-
-    def test_turn_entity_edge_written_once_per_entity(self):
-        stm = {
-            "turn_entity_edges": [
-                {"entity_name": "BOB", "turn_id": "t1"},
-                {"entity_name": "BOB", "turn_id": "t2"},
-            ]
-        }
-        session, _, _ = self._call(stm)
-        merge_entity_calls = [
-            str(c) for c in session.run.call_args_list if "MERGE (e:ENTITY" in str(c)
-        ]
-        assert len(merge_entity_calls) == 1
-
-    def test_base_written_prevents_duplicate_entity_merge(self):
-        stm = {
-            "turn_entity_edges": [{"entity_name": "BOB", "turn_id": "t1"}],
-        }
-        from graphknows.retrieval.stores.neo4j import _write_interaction_graph
-
-        mock_session = MagicMock()
-        _write_interaction_graph(
-            s=mock_session,
-            session_id="s1",
-            stm_data=stm,
-            entity_by_name={},
-            base_written={"BOB"},  # already written
-        )
-        merge_calls = [
-            str(c) for c in mock_session.run.call_args_list if "MERGE (e:ENTITY" in str(c)
-        ]
-        assert len(merge_calls) == 0
-
-
-# ---------------------------------------------------------------------------
-# Neo4jStore.merge_session_entities_to_corpus
-# ---------------------------------------------------------------------------
-
-
-class TestMergeSessionEntitiesToCorpus:
-    def test_merges_valid_nodes_and_edges(self):
-        store, _, _ = _make_neo4j_store()
-
-        # Patch _run so no real DB call happens
-        store._run = MagicMock(return_value=[])
-
-        nodes = [{"name": "alice", "type": "PERSON"}]
-        edges = [{"from": "alice", "to": "bob", "rel_type": "KNOWS"}]
-
-        result = asyncio.run(store.merge_session_entities_to_corpus("s1", nodes, edges))
-        merged_nodes, merged_edges = result
-        assert merged_nodes == 1
-        assert merged_edges == 1
-
-    def test_skips_empty_names(self):
-        store, _, _ = _make_neo4j_store()
-        store._run = MagicMock(return_value=[])
-
-        nodes = [{"name": "", "type": "PERSON"}, {"name": "   ", "type": "ORG"}]
-        result = asyncio.run(store.merge_session_entities_to_corpus("s1", nodes, []))
-        merged_nodes, merged_edges = result
-        assert merged_nodes == 0
-
-    def test_skips_edges_with_missing_endpoints(self):
-        store, _, _ = _make_neo4j_store()
-        store._run = MagicMock(return_value=[])
-
-        edges = [{"from": "", "to": "BOB", "rel_type": "KNOWS"}]
-        result = asyncio.run(store.merge_session_entities_to_corpus("s1", [], edges))
-        _, merged_edges = result
-        assert merged_edges == 0
-
-
-# ---------------------------------------------------------------------------
-# Neo4jStore.preview_session_merge
-# ---------------------------------------------------------------------------
-
-
-class TestPreviewSessionMerge:
-    def test_returns_expected_keys(self):
-        store, _, _ = _make_neo4j_store()
-
-        count_row = {"c": 2}
-        store._run = MagicMock(return_value=[count_row])
-
-        nodes = [{"name": "alice"}, {"name": "bob"}]
-        result = asyncio.run(store.preview_session_merge("s1", nodes, [{"from": "a", "to": "b"}]))
-
-        assert result["session_id"] == "s1"
-        assert result["node_count"] == 2
-        assert result["edge_count"] == 1
-        assert "existing_overlap_count" in result
-        assert "sample_nodes" in result
-
-    def test_empty_nodes_skips_db_query(self):
-        store, _, _ = _make_neo4j_store()
-        store._run = MagicMock(return_value=[])
-        result = asyncio.run(store.preview_session_merge("s1", [], []))
-        assert result["node_count"] == 0
-        assert result["existing_overlap_count"] == 0
-
-
-# ---------------------------------------------------------------------------
-# Neo4jStore.get_chunk_entities
-# ---------------------------------------------------------------------------
-
-
-class TestGetChunkEntities:
-    def test_returns_entities(self):
-        store, _, _ = _make_neo4j_store()
-
-        row1 = {"name": "Alice", "label": "PERSON"}
-        row2 = {"name": "EU", "label": None}
-        store._run = MagicMock(return_value=[row1, row2])
-
-        result = asyncio.run(store.get_chunk_entities("chunk-1"))
-        assert len(result) == 2
-        assert result[0]["name"] == "Alice"
-        assert result[1]["label"] == "Entity"  # None → "Entity"
-
-    def test_returns_empty_for_unknown_chunk(self):
-        store, _, _ = _make_neo4j_store()
-        store._run = MagicMock(return_value=[])
-        result = asyncio.run(store.get_chunk_entities("nonexistent"))
-        assert result == []
-
-
-# ---------------------------------------------------------------------------
-# Neo4jStore.get_entity_neighbors — validation logic
-# ---------------------------------------------------------------------------
-
-
-class TestGetEntityNeighbors:
-    def test_filters_invalid_relationship_types(self):
-        """Relationship types with special chars must be filtered out."""
-        store, _, _ = _make_neo4j_store()
-
-        row_data = [{"name": "Bob", "node_label": "PERSON", "rel_path": ["KNOWS"]}]
-        store._run = MagicMock(return_value=row_data)
-
-        result = asyncio.run(
-            store.get_entity_neighbors(
-                "alice",
-                depth=2,
-                relationship_types=["KNOWS", "DROP TABLE", "VALID_TYPE"],
-            )
-        )
-
-        # Only safe types in result; "DROP TABLE" has a space → should be excluded
-        assert isinstance(result, dict)
-
-    def test_depth_is_capped_at_3(self):
-        store, _, _ = _make_neo4j_store()
-
-        cypher_sent = []
-        original_run = store._run
-
-        def capture_run(cypher, **kwargs):
-            cypher_sent.append(cypher)
-            return []
-
-        store._run = capture_run
-
-        asyncio.run(store.get_entity_neighbors("alice", depth=99))
-
-        # Depth of 99 should be capped to 3
-        assert any("3" in c for c in cypher_sent)
-
-
-# ===========================================================================
-# Neo4j adapter: escape, clean props, pgvector import
-# ===========================================================================
-
-
-import json
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # _escape_cypher_identifier
@@ -1489,41 +972,41 @@ import pytest
 
 class TestEscapeCypherIdentifier:
     def test_simple_identifier_unchanged(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         assert _escape_cypher_identifier("MyLabel") == "MyLabel"
 
     def test_underscore_identifier_unchanged(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         assert _escape_cypher_identifier("my_label") == "my_label"
 
     def test_empty_string_returned_unchanged(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         assert _escape_cypher_identifier("") == ""
 
     def test_identifier_with_space_is_escaped(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("My Label")
         assert result == "`My Label`"
 
     def test_identifier_with_dash_is_escaped(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("my-label")
         assert result == "`my-label`"
 
     def test_identifier_starting_with_digit_is_escaped(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("1node")
         assert result.startswith("`")
         assert result.endswith("`")
 
     def test_backtick_in_identifier_is_doubled(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("My`Label")
         # Inner backtick must be doubled: `My``Label`
@@ -1531,13 +1014,13 @@ class TestEscapeCypherIdentifier:
         assert result.startswith("`")
 
     def test_special_chars_require_escaping(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("label.with.dots")
         assert result.startswith("`")
 
     def test_pure_alphanum_no_escaping(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _escape_cypher_identifier
+        from graphknows.retrieval.stores._cypher_utils import _escape_cypher_identifier
 
         result = _escape_cypher_identifier("RELATES_TO")
         assert result == "RELATES_TO"
@@ -1550,14 +1033,14 @@ class TestEscapeCypherIdentifier:
 
 class TestCleanPropsForNeo4j:
     def test_removes_none_values(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"a": None, "b": "value"})
         assert "a" not in result
         assert result["b"] == "value"
 
     def test_preserves_primitives(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"s": "text", "i": 42, "f": 3.14, "b": True})
         assert result["s"] == "text"
@@ -1566,25 +1049,25 @@ class TestCleanPropsForNeo4j:
         assert result["b"] is True
 
     def test_homogeneous_list_of_strings(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"tags": ["a", "b", "c"]})
         assert result["tags"] == ["a", "b", "c"]
 
     def test_homogeneous_list_of_ints(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"counts": [1, 2, 3]})
         assert result["counts"] == [1, 2, 3]
 
     def test_empty_list_excluded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"empty": []})
         assert "empty" not in result
 
     def test_mixed_type_list_json_encoded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"mixed": [1, "two", 3.0]})
         # Mixed list → JSON string
@@ -1593,14 +1076,14 @@ class TestCleanPropsForNeo4j:
         assert parsed[1] == "two"
 
     def test_dict_value_json_encoded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"meta": {"key": "value"}})
         assert isinstance(result["meta"], str)
         assert json.loads(result["meta"]) == {"key": "value"}
 
     def test_complex_object_str_fallback(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         # An object that can't be JSON-encoded should fall back to str()
         class Unserializable:
@@ -1611,151 +1094,24 @@ class TestCleanPropsForNeo4j:
         assert isinstance(result["obj"], str)
 
     def test_tuple_treated_as_list(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({"coords": (1.0, 2.0)})
         # Tuples should be handled like lists
         assert "coords" in result
 
     def test_empty_dict_returns_empty(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         result = _clean_props_for_neo4j({})
         assert result == {}
 
     def test_list_of_dicts_json_encoded(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import _clean_props_for_neo4j
+        from graphknows.retrieval.stores._cypher_utils import _clean_props_for_neo4j
 
         # List of dicts → first element is dict → complex list → JSON string
         result = _clean_props_for_neo4j({"items": [{"k": "v"}, {"k": "v2"}]})
         assert isinstance(result["items"], str)
-
-
-# ---------------------------------------------------------------------------
-# pgvector_adapter.py — module-level test
-# ---------------------------------------------------------------------------
-
-
-class TestPgvectorAdapterImport:
-    def test_module_importable(self):
-        from graphknows.graphgen.utils.graphdb import pgvector_adapter
-
-        assert pgvector_adapter is not None
-
-    def test_has_adapter_class_or_function(self):
-        from graphknows.graphgen.utils.graphdb import pgvector_adapter
-
-        public = [n for n in dir(pgvector_adapter) if not n.startswith("_")]
-        assert len(public) > 0
-
-
-# ===========================================================================
-# Neo4j uploader: connect, close, index, constraints, clear
-# ===========================================================================
-
-
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-
-def _make_uploader():
-    """Create a Neo4jGraphUploader with mocked driver."""
-    from graphknows.graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
-
-    uploader = Neo4jGraphUploader.__new__(Neo4jGraphUploader)
-    uploader.uri = "bolt://localhost:7687"
-    uploader.auth = ("neo4j", "password")
-    uploader.database = "neo4j"
-    uploader.driver = MagicMock()
-    return uploader
-
-
-class TestNeo4jGraphUploaderConnect:
-    def test_connect_returns_true_on_success(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
-
-        uploader = Neo4jGraphUploader.__new__(Neo4jGraphUploader)
-        uploader.uri = "bolt://localhost:7687"
-        uploader.auth = ("neo4j", "pass")
-        uploader.database = "neo4j"
-        uploader.driver = None
-
-        with patch("graphknows.graphgen.utils.graphdb.neo4j_adapter.GraphDatabase") as MockGDB:
-            MockGDB.driver.return_value = MagicMock()
-            result = uploader.connect()
-        assert result is True
-
-    def test_connect_returns_false_on_exception(self):
-        from graphknows.graphgen.utils.graphdb.neo4j_adapter import Neo4jGraphUploader
-
-        uploader = Neo4jGraphUploader.__new__(Neo4jGraphUploader)
-        uploader.uri = "bolt://invalid:9999"
-        uploader.auth = ("neo4j", "wrong")
-        uploader.database = "neo4j"
-        uploader.driver = None
-
-        with patch("graphknows.graphgen.utils.graphdb.neo4j_adapter.GraphDatabase") as MockGDB:
-            MockGDB.driver.side_effect = Exception("Connection refused")
-            result = uploader.connect()
-        assert result is False
-
-
-class TestNeo4jGraphUploaderClose:
-    def test_close_calls_driver_close(self):
-        uploader = _make_uploader()
-        uploader.close()
-        uploader.driver.close.assert_called_once()
-
-    def test_close_does_nothing_when_driver_is_none(self):
-        uploader = _make_uploader()
-        uploader.driver = None
-        # Should not raise
-        uploader.close()
-
-
-class TestCreateVectorIndex:
-    def test_creates_index_with_correct_cypher(self):
-        uploader = _make_uploader()
-        mock_session = MagicMock()
-        uploader.driver.session.return_value.__enter__.return_value = mock_session
-        uploader.driver.session.return_value.__exit__.return_value = None
-
-        uploader._create_vector_index("ENTITY", "embedding", 768)
-
-        # Verify session.run was called
-        assert mock_session.run.called
-        cypher = mock_session.run.call_args[0][0]
-        assert "ENTITY" in cypher or "entity" in cypher.lower()
-        assert "768" in cypher
-        assert "vector" in cypher.lower()
-
-
-class TestEnsureConstraints:
-    def test_creates_constraint_for_each_label(self):
-        uploader = _make_uploader()
-        mock_session = MagicMock()
-        uploader.driver.session.return_value.__enter__.return_value = mock_session
-        uploader.driver.session.return_value.__exit__.return_value = None
-
-        uploader._ensure_constraints(["ENTITY", "CHUNK"])
-
-        # Should be called once per label
-        assert mock_session.run.call_count == 2
-
-
-class TestClearDatabase:
-    def test_clear_database_runs_detach_delete(self):
-        uploader = _make_uploader()
-        mock_session = MagicMock()
-        uploader.driver.session.return_value.__enter__.return_value = mock_session
-        uploader.driver.session.return_value.__exit__.return_value = None
-
-        uploader.clear_database()
-
-        assert mock_session.run.called
-        cypher = mock_session.run.call_args[0][0]
-        assert "DETACH DELETE" in cypher
 
 
 # ===========================================================================
