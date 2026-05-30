@@ -94,10 +94,24 @@ def test_recall_respects_top_k():
     assert len(results) <= 3
 
 
-def test_recall_uses_default_embed_fn_fallback():
-    """recall_short_term should not crash when embed_fn is None (uses embed_one lazily)."""
+def test_recall_uses_default_embed_fn_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """recall_short_term should reach embed_one when embed_fn is None."""
+    import sys
+    import types
+
+    called: list[str] = []
+
+    # Intercept the lazy import inside recall_short_term by replacing the module
+    fake_embedder = types.ModuleType("graphknows.retrieval.stores.embedder")
+
+    def fake_embed_one(text: str) -> list[float]:
+        called.append(text)
+        return [0.0] * 3
+
+    fake_embedder.embed_one = fake_embed_one  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "graphknows.retrieval.stores.embedder", fake_embedder)
+
     mg = _make_mg()
     pg = _make_pg()
-    with pytest.raises(Exception):
-        # Will raise connection error trying to call real embed_one — confirms code path reached
-        recall_short_term(mg, pg, query="hello", session_id="s1", embed_fn=None)
+    recall_short_term(mg, pg, query="hello", session_id="s1", embed_fn=None)
+    assert called, "embed_one was not called — default embed_fn path not reached"

@@ -15,6 +15,7 @@ Example:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import Field, model_validator
@@ -144,6 +145,11 @@ class GraphKnowsSettings(BaseSettings):
             self.openrouter_api_key = env.get("OPENROUTER_API_KEY") or env.get(
                 "OPEN_ROUTER_API", ""
             )
+
+        # Push credentials into os.environ so downstream code that reads os.environ
+        # directly (e.g. embedder.py) picks them up without requiring dotenv at call-site.
+        if self.openrouter_api_key and not os.environ.get("OPENROUTER_API_KEY"):
+            os.environ["OPENROUTER_API_KEY"] = self.openrouter_api_key
 
         return self
 
