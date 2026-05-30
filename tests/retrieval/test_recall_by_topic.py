@@ -1,4 +1,4 @@
-"""Test recall_by_topic uses the correct IN_TOPIC relationship."""
+"""Focused tests for topic recall ranking/filtering behavior."""
 
 from __future__ import annotations
 
@@ -73,6 +73,50 @@ def test_recall_by_topic_returns_hits() -> None:
     assert hits[0].text == "Test topic"
     assert hits[0].entity_names == ["entity_a"]
     assert hits[0].score == 1.0
+
+
+def test_recall_by_topic_filters_unrelated_zero_score_rows() -> None:
+    """Unrelated topics with no entity or text overlap should be dropped."""
+    rows = [
+        {"topic_id": 1, "summary": "Monetary policy overview", "entities": [], "score": 0},
+    ]
+    driver = _make_driver(rows)
+
+    hits = recall_by_topic(driver, "volcano geology", top_k=5)
+
+    assert hits == []
+
+
+def test_recall_by_topic_returns_summary_text_match_without_entity_overlap() -> None:
+    """Summary/label text overlap alone should produce a relevant hit."""
+    rows = [
+        {
+            "topic_id": 7,
+            "summary": "Climate adaptation and emissions planning",
+            "label": "environment policy",
+            "entities": [],
+            "score": 0,
+        },
+    ]
+    driver = _make_driver(rows)
+
+    hits = recall_by_topic(driver, "climate emissions", top_k=5)
+
+    assert len(hits) == 1
+    assert hits[0].text == "Climate adaptation and emissions planning"
+    assert hits[0].entity_names == []
+    assert hits[0].score > 0
+
+
+def test_recall_by_topic_top_k_clamped_to_twenty() -> None:
+    """Top-k should be clamped to the public API maximum."""
+    driver = _make_driver([])
+
+    recall_by_topic(driver, "climate policy topic", top_k=999)
+
+    assert (
+        driver.session.return_value.__enter__.return_value.run.call_args.kwargs["top_k"] == 20
+    )
 
 
 def test_recall_by_topic_empty_tokens_returns_empty() -> None:
