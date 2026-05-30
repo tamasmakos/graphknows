@@ -1,7 +1,4 @@
-"""LTMEnrichmentService — single GDS enrichment API backed by feature_engineering helpers.
-
-This module is the canonical home for GDS enrichment.
-graphknows.feature_engineering is deprecated and delegates here.
+"""LTMEnrichmentService — canonical GDS enrichment API.
 
 # TODO(Wave 3): replace neo4j driver direct usage with IGraphDb adapter once #37 merges.
 """
@@ -22,7 +19,7 @@ from graphknows.memory.models.gds import CentralityResult, CommunityResult, GDSR
 log = logging.getLogger("graphknows.memory.ltm.enrichment")
 
 # ---------------------------------------------------------------------------
-# Private helpers (migrated from graphknows.feature_engineering)
+# Private helpers
 # ---------------------------------------------------------------------------
 
 PROJECTED_GRAPH_NAME = "ltm-entities"

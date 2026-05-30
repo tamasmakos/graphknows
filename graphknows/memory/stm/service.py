@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from graphknows.memory.stm.config import STMConfig
+from graphknows.memory.config import STMConfig
 
 if TYPE_CHECKING:
     from graphknows.memory.models.ingest import IngestResult
