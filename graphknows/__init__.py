@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from graphknows.config import GraphKnowsSettings
 from graphknows.container import GraphKnowsContainer
-from graphknows.models.tools import GraphKnowsTool
+from graphknows.mcp.tool import GraphKnowsTool
 from graphknows.retrieval import HybridRetriever, RetrievalContext
 from graphknows.retrieval.stores.embedder import embed, embed_one, get_embedder
 from graphknows.retrieval.stores.memgraph import MemgraphStore

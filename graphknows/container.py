@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.models.tools import GraphKnowsTool
+from graphknows.mcp.tool import GraphKnowsTool
 from graphknows.retrieval.retriever import HybridRetriever
 from graphknows.retrieval.stores.embedder import embed
 from graphknows.retrieval.stores.memgraph import MemgraphStore
