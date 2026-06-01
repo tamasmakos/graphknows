@@ -1,0 +1,54 @@
+# Dockerfile.web — Memory Mirror web UI
+# Serves the GraphKnows frontend (static SPA) + a thin Starlette API
+# that queries Neo4j and Memgraph to render graphs.
+#
+# Build:  docker compose build web
+# Run:    docker compose up -d web
+
+# ─── builder stage ─────────────────────────────────────────────────────────────
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir uv
+
+# Copy only the manifests first to maximise layer caching.
+COPY pyproject.toml ./
+
+# uv needs a lock file when available; copy it if it exists.
+COPY uv.lock* ./
+
+# Install production dependencies into an isolated venv.
+# The web server needs the full graphknows package (neo4j, memgraph, pgvector).
+RUN uv venv /opt/venv && \
+    uv pip install --python /opt/venv/bin/python --no-cache -e .
+
+# ─── runtime stage ─────────────────────────────────────────────────────────────
+FROM python:3.13-slim AS runtime
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+# Source package
+COPY graphknows/ ./graphknows/
+# Static frontend files served by the Starlette app
+COPY frontend/ ./frontend/
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # Bind to all interfaces so Docker can route traffic to this container.
+    GRAPHKNOWS_WEB_HOST="0.0.0.0" \
+    GRAPHKNOWS_WEB_PORT="8800" \
+    # Tell the server where to find the static files inside the image.
+    GRAPHKNOWS_FRONTEND_DIR="/app/frontend"
+
+RUN useradd -m -u 1000 graphknows
+USER graphknows
+
+EXPOSE 8800
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8800/api/health')" || exit 1
+
+CMD ["graphknows-web"]

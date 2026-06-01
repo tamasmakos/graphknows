@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GraphKnows Memory Mirror</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">GraphKnows</p>
+          <h1>Memory Mirror</h1>
+        </div>
+        <div id="health" class="health" aria-live="polite">Checking</div>
+      </header>
+
+      <main class="workspace">
+        <section class="graph-panel" aria-label="Memory graph">
+          <div class="controls" aria-label="Graph controls">
+            <label>
+              <span>Session</span>
+              <input id="sessionInput" list="sessions" placeholder="optional for LTM" autocomplete="off" />
+              <datalist id="sessions"></datalist>
+            </label>
+
+            <fieldset class="segmented" aria-label="Scope">
+              <legend>Scope</legend>
+              <label><input type="radio" name="scope" value="ltm" checked /> <span>LTM</span></label>
+              <label><input type="radio" name="scope" value="stm" /> <span>STM</span></label>
+            </fieldset>
+
+            <label class="limit-control">
+              <span>Nodes</span>
+              <input id="limitInput" type="number" min="10" max="1000" step="10" value="200" />
+            </label>
+
+            <button id="refreshButton" type="button">Refresh</button>
+          </div>
+
+          <div class="canvas-wrap">
+            <canvas id="graphCanvas" aria-label="Interactive graph canvas"></canvas>
+            <div id="emptyState" class="empty-state" hidden>No graph data yet</div>
+          </div>
+        </section>
+
+        <aside class="side-panel" aria-label="Search and graph details">
+          <section class="search-block">
+            <form id="searchForm" class="search-form">
+              <label for="queryInput">Recall</label>
+              <div class="search-row">
+                <input id="queryInput" name="q" placeholder="Search memory" autocomplete="off" />
+                <button type="submit">Search</button>
+              </div>
+            </form>
+            <div id="results" class="results" aria-live="polite"></div>
+          </section>
+
+          <section class="details-block">
+            <h2>Graph</h2>
+            <dl class="stats-grid">
+              <div><dt>Nodes</dt><dd id="nodeCount">0</dd></div>
+              <div><dt>Edges</dt><dd id="edgeCount">0</dd></div>
+              <div><dt>STM chunks</dt><dd id="stmChunks">0</dd></div>
+              <div><dt>LTM topics</dt><dd id="ltmTopics">0</dd></div>
+            </dl>
+            <div id="selection" class="selection">Select a node</div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

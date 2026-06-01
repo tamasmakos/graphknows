@@ -1,0 +1,219 @@
+# Generic domain-agnostic taxonomy
+# ---------------------------------------------------------------------------
+# All entity type names, aliases, classification rules, confidence thresholds,
+# and relation types for a domain-agnostic knowledge graph pipeline.
+#
+# Schema: graphgen/config/taxonomy.py -> TaxonomyConfig
+# ---------------------------------------------------------------------------
+
+name: generic
+version: "1.0"
+
+# ---------------------------------------------------------------------------
+# Entity groups
+# Each top-level key is a canonical entity class.
+# children   -- sub-labels recognised by GLiNER2 and grouped under this class
+# aliases    -- text hints used by select_candidate_labels() for schema ranking
+# description -- free-text description passed to GLiNER2 schema-guided NER
+# classification_tokens -- UPPER_SNAKE tokens matched by rule-based classifier
+# classification_patterns -- regex patterns (applied to UPPER_SNAKE form)
+# min_ner_confidence -- minimum GLiNER2 score for relation-eligibility gate
+# ---------------------------------------------------------------------------
+
+entity_groups:
+
+  PERSON:
+    children:
+      - PERSON
+    aliases:
+      - person
+      - individual
+      - people
+    description: >
+      A named person or individual.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  ORGANIZATION:
+    children:
+      - ORGANIZATION
+    aliases:
+      - organization
+      - company
+      - institution
+      - agency
+    description: >
+      A named organization, company, institution, or agency.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  LOCATION:
+    children:
+      - LOCATION
+    aliases:
+      - location
+      - place
+      - area
+      - region
+    description: >
+      A named location, place, area, or region.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  EVENT:
+    children:
+      - EVENT
+    aliases:
+      - event
+      - occasion
+      - incident
+    description: >
+      A named event, occasion, or incident.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  CONCEPT:
+    children:
+      - CONCEPT
+    aliases:
+      - concept
+      - idea
+      - topic
+      - theme
+    description: >
+      An abstract concept, idea, topic, or theme.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  PRODUCT:
+    children:
+      - PRODUCT
+    aliases:
+      - product
+      - service
+      - tool
+      - technology
+    description: >
+      A named product, service, tool, or technology.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  DATE:
+    children:
+      - DATE
+    aliases:
+      - date
+      - time
+      - period
+      - year
+    description: >
+      A specific date, time period, or temporal reference.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  QUANTITY:
+    children:
+      - QUANTITY
+    aliases:
+      - quantity
+      - amount
+      - number
+      - measurement
+    description: >
+      A numeric quantity, amount, measurement, or statistical value.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+# ---------------------------------------------------------------------------
+# Hard overrides -- bypass scoring; map normalised entity name -> canonical label
+# ---------------------------------------------------------------------------
+
+overrides: {}
+
+# ---------------------------------------------------------------------------
+# Relation types -- used by DSPy relation extractor as allowed relation labels
+# ---------------------------------------------------------------------------
+
+relation_types:
+  - PART_OF
+  - RELATED_TO
+  - CAUSES
+  - LOCATED_IN
+  - AFFILIATED_WITH
+  - PRECEDED_BY
+  - SUCCEEDED_BY
+  - PRODUCED_BY
+  - DESCRIBED_BY
+  - CONTRASTS_WITH
+
+# ---------------------------------------------------------------------------
+# Graph hierarchy -- informational; consumed by schema.py and segment builder
+# Top-level nodes listed in order from container -> leaf
+# ---------------------------------------------------------------------------
+
+hierarchy:
+  SEGMENT:
+    edges:
+      - CONTAINS_DOC
+    properties:
+      - segment_id
+      - ingested_at
+      - run_id
+      - git_revision
+      - config_hash
+      - pipeline_version
+      - source_count
+      - input_dir
+      - taxonomy_name
+  DOC:
+    edges:
+      - HAS_PASSAGE
+    properties:
+      - id
+      - name
+      - node_type
+      - ontology_class
+  PASSAGE:
+    edges:
+      - HAS_CHUNK
+    properties:
+      - id
+      - doc_id
+      - passage_idx
+      - content
+  CHUNK:
+    edges:
+      - MENTIONS
+    properties:
+      - id
+      - doc_id
+      - text
+      - length
+  ENTITY:
+    edges:
+      - IN_COMMUNITY
+      - RELATION
+      - CO_OCCURS
+    properties:
+      - id
+      - name
+      - label
+      - ontology_class
+      - ingested_at
+      - contributing_session_id
+      - merged_session_count
+  TOPIC:
+    edges: []
+    properties:
+      - id
+      - label
+      - summary
+      - community_id

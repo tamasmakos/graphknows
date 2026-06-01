@@ -1,0 +1,68 @@
+# See https://pre-commit.com for more information
+# Install: uv run pre-commit install
+repos:
+  # ─── standard file hygiene ────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: debug-statements        # catch leftover breakpoint() / pdb calls
+      - id: check-case-conflict
+
+  # ─── ruff: lint (Google style, complexity, imports, naming) ──────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.12
+    hooks:
+      - id: ruff
+        args:
+          - "--config=ruff.toml"
+          - "--fix"
+          - "--exit-non-zero-on-fix"
+        types_or: [python, pyi]
+      - id: ruff-format
+        args:
+          - "--config=ruff.toml"
+        types_or: [python, pyi]
+
+  # ─── mypy: strict type checking scoped to the graphknows package ─────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.16.0
+    hooks:
+      - id: mypy
+        name: mypy (graphknows)
+        files: ^services/graphknows/graphknows/(?!graphgen)
+        args:
+          - "--strict"
+          - "--ignore-missing-imports"
+          - "--allow-untyped-decorators"
+          - "--no-warn-unused-ignores"
+        additional_dependencies:
+          - "pydantic>=2.7.0"
+          - "pydantic-settings>=2.2.0"
+          - "python-dotenv>=1.0.0"
+
+  # ─── bandit: OWASP security scanning ─────────────────────────────────────────
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        name: bandit (security scan)
+        args: ["-r", "services/graphknows/graphknows/", "--skip", "B101"]
+        # graphgen contains research code; scan the primary service package only
+        exclude: "services/graphknows/graphknows/graphgen/"
+
+  # ─── import validator: catch undeclared deps before they hit CI ───────────────
+  - repo: local
+    hooks:
+      - id: check-imports
+        name: check undeclared service imports
+        language: python
+        entry: python3 scripts/check_imports.py
+        pass_filenames: false
+        always_run: true

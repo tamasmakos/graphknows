@@ -1,0 +1,75 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+.venv
+__pycache__
+*.py[cod]
+*.pyo
+*.egg-info
+dist/
+build/
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov/
+coverage.xml
+
+# ─── Node / pnpm ──────────────────────────────────────────────────────────────
+node_modules
+.pnpm-store
+pnpm-debug.log*
+
+# ─── Next.js ──────────────────────────────────────────────────────────────────
+apps/**/.next
+apps/**/out
+apps/**/dist
+
+# ─── Turborepo ────────────────────────────────────────────────────────────────
+.turbo
+
+# ─── TypeScript ───────────────────────────────────────────────────────────────
+*.tsbuildinfo
+packages/**/dist
+
+# ─── Secrets / environment ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Data / generated output ─────────────────────────────────────────────────
+output/
+dogfood-output/
+input/
+data/raw/
+demo_ingest.py
+demo_*.py
+three_pass_benchmark.py
+scripts/demo_*.py
+
+# ─── Editor / OS ──────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea
+*.DS_Store
+Thumbs.db
+
+# ─── Backup / temp files ─────────────────────────────────────────────────────
+*.bak
+.pre_surgical*
+
+# ─── Legacy / removed ─────────────────────────────────────────────────────────
+langfuse/
+.gemini
+.gemini*.log
+.geminiignore
+lib/
+
+
+research
+.briefs
+.github
+.opencode
+.hermes
+research
+llm-wiki
+.coverage*
+.import_linter_cache
+.grimp_cache
+.vscode
