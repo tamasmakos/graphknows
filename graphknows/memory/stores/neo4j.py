@@ -397,12 +397,14 @@ class Neo4jStore:
                     """MERGE (tp:TOPIC {id:$id})
                        SET tp.label=$label, tp.summary=$summary,
                            tp.community_id=$community_id,
+                           tp.community_hash=$community_hash,
                            tp.modularity=$modularity,
                            tp.silhouette=$silhouette""",
                     id=t["id"],
                     label=t.get("label", ""),
                     summary=t.get("summary", ""),
                     community_id=t.get("community_id"),
+                    community_hash=t.get("community_hash"),
                     modularity=t.get("modularity"),
                     silhouette=t.get("silhouette"),
                 )
@@ -831,7 +833,19 @@ class Neo4jStore:
         llm_model: str = "meta-llama/llama-3.1-8b-instruct",
         pg_store: Any = None,
     ) -> int:
-        """Detect entity communities via Leiden, optionally summarize with LLM, write TOPICs.
+        """Detect entity communities via Leiden on the typed relation graph.
+
+        Summarizes new communities with LLM and writes TOPIC nodes.
+
+        Community detection runs on the ENTITY→ENTITY typed relation graph (edges written by
+        GLiNER2 or llm_assisted extraction).  Only communities whose member-set has changed
+        since the last flush (detected via SHA-1 hash stored on the TOPIC node) are
+        re-summarized — avoiding redundant LLM calls.
+
+        Chunk evidence is a random sample capped at 100 rows to prevent prompt bloat.
+
+        The Leiden modularity score is written to every TOPIC node so downstream consumers
+        can rank communities by structural quality.
 
         Args:
             session_id: The session to summarize.
@@ -840,63 +854,91 @@ class Neo4jStore:
             pg_store: Optional PGVectorStore — if provided, writes ltm_topics rows.
 
         Returns:
-            Number of topics created.
+            Number of topics created or updated.
         """
+        import hashlib
         import json
         import uuid as _uuid
 
         import igraph as ig
         import leidenalg
 
-        # Step 1: fetch co-occurrence pairs from Neo4j
-        rows = await self._arun(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)"
-            "-[:HAS_CHUNK]->(c:CHUNK)-[:HAS_ENTITY]->(e1:ENTITY) "
-            "MATCH (c)-[:HAS_ENTITY]->(e2:ENTITY) "
-            "WHERE e1.name < e2.name "
-            "RETURN e1.name AS a, e2.name AS b, count(c) AS weight",
-            sid=session_id,
+        # ── Step 1: build Leiden graph from typed ENTITY→ENTITY relation edges ──────
+        # Use the relation graph (not co-occurrence through chunks) so the algorithm
+        # reflects actual extracted knowledge rather than lexical proximity.
+        rel_rows = await self._arun(
+            "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+            "WHERE type(r) <> 'CO_OCCURS' "
+            "RETURN a.name AS a, b.name AS b, coalesce(r.weight, 1.0) AS weight",
         )
-        if not rows:
+        if not rel_rows:
+            logger.info("summarize_topics %s: no typed relation edges found; skipping", session_id)
             return 0
 
-        # Step 2: build igraph + run Leiden
-        names: list[str] = sorted({r["a"] for r in rows} | {r["b"] for r in rows})
+        names: list[str] = sorted({r["a"] for r in rel_rows} | {r["b"] for r in rel_rows})
         name_idx = {n: i for i, n in enumerate(names)}
-        g = ig.Graph(n=len(names))
+        g = ig.Graph(n=len(names), directed=False)
         g.vs["name"] = names
-        g.add_edges([(name_idx[r["a"]], name_idx[r["b"]]) for r in rows])
-        weights = [float(r["weight"]) for r in rows]
+        edges: list[tuple[int, int]] = []
+        weights: list[float] = []
+        for r in rel_rows:
+            ai, bi = name_idx[r["a"]], name_idx[r["b"]]
+            if ai != bi:
+                edges.append((ai, bi))
+                weights.append(float(r["weight"]))
+        g.add_edges(edges)
+
         partition = leidenalg.find_partition(
             g, leidenalg.ModularityVertexPartition, weights=weights
         )
-        communities = {i: [g.vs[vi]["name"] for vi in partition[i]] for i in range(len(partition))}
+        communities: dict[int, list[str]] = {
+            i: [g.vs[vi]["name"] for vi in partition[i]] for i in range(len(partition))
+        }
 
-        # Quality metrics — computed once for the full partition
+        # Quality metrics computed once for the full partition
         modularity: float = partition.quality()
-        # Silhouette score requires ≥2 communities (optional deps: sklearn, numpy)
-        silhouette: float | None = _compute_silhouette(names, name_idx, communities, rows, weights)
+        silhouette: float | None = _compute_silhouette(names, name_idx, communities, rel_rows, weights)
+
+        # ── Step 2: load existing community hashes from TOPIC nodes ─────────────────
+        existing_hashes: dict[int, str] = {}
+        try:
+            hash_rows = await self._arun(
+                "MATCH (t:TOPIC) "
+                "WHERE t.community_id IS NOT NULL AND t.community_hash IS NOT NULL "
+                "RETURN t.community_id AS cid, t.community_hash AS h"
+            )
+            existing_hashes = {int(r["cid"]): r["h"] for r in hash_rows}
+        except Exception as exc:
+            logger.warning("summarize_topics: could not load existing hashes: %s", exc)
 
         topics_created = 0
         for comm_id, members in communities.items():
             if len(members) < 2:
                 continue  # skip singletons
 
-            # Step 3: gather evidence chunks
+            # ── Step 3: skip unchanged communities ──────────────────────────────────
+            comm_hash = hashlib.sha1(
+                "|".join(sorted(members)).encode(), usedforsecurity=False
+            ).hexdigest()
+            if existing_hashes.get(comm_id) == comm_hash:
+                logger.debug("summarize_topics: community %d unchanged — skipping", comm_id)
+                continue
+
+            # ── Step 4: gather evidence chunks (random sample, max 100) ─────────────
             evidence_rows = await self._arun(
-                "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)"
-                "-[:HAS_CHUNK]->(c:CHUNK)-[:HAS_ENTITY]->(e:ENTITY) "
+                "MATCH (c:CHUNK)-[:HAS_ENTITY]->(e:ENTITY) "
                 "WHERE e.name IN $members "
-                "RETURN DISTINCT c.text AS text, c.heading_path AS hp "
-                "LIMIT 5",
-                sid=session_id,
+                "WITH DISTINCT c "
+                "RETURN c.text AS text, c.heading_path AS hp "
+                "ORDER BY rand() LIMIT 100",
                 members=members,
             )
             passages = "\n\n".join(
-                (f"[{r['hp']}] " if r["hp"] else "") + (r["text"] or "") for r in evidence_rows
+                (f"[{r['hp']}] " if r.get("hp") else "") + (r.get("text") or "")
+                for r in evidence_rows
             )
 
-            # Step 4: LLM summarization
+            # ── Step 5: LLM summarization ────────────────────────────────────────────
             title = ", ".join(members[:5])
             summary = ""
             if openrouter_key:
@@ -941,7 +983,7 @@ class Neo4jStore:
                         "LLM topic summarization failed for community %d: %s", comm_id, exc
                     )
 
-            # Step 5: upsert TOPIC to Neo4j
+            # ── Step 6: upsert TOPIC to Neo4j (with modularity + community_hash) ────
             topic_id = str(_uuid.uuid5(_GK_NS, f"topic:{session_id}:{comm_id}"))
             topic = {
                 "id": topic_id,
@@ -949,6 +991,7 @@ class Neo4jStore:
                 "label": title,
                 "summary": summary,
                 "community_id": comm_id,
+                "community_hash": comm_hash,
                 "entity_count": len(members),
                 "entity_names": members,
                 "session_ids": [session_id],
@@ -958,7 +1001,7 @@ class Neo4jStore:
             }
             await self.upsert_topics([topic])
 
-            # IN_TOPIC edges (new schema label)
+            # IN_TOPIC edges
             def _link_topic(tid: str, mbs: list[str]) -> None:
                 with self._driver.session() as s:
                     for name in mbs:
