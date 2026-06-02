@@ -39,6 +39,9 @@ output/
 dogfood-output/
 input/
 data/raw/
+evaluation/results/
+evaluation/data/
+evaluation/external/
 demo_ingest.py
 demo_*.py
 three_pass_benchmark.py

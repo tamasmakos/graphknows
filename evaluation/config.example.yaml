@@ -1,0 +1,33 @@
+# Graphknows MCP evaluation example configuration.
+
+mcp:
+  command: graphknows-mcp
+  initialize: true
+  request_timeout_s: 120
+
+native:
+  scope: both
+  top_k: 5
+  cleanup: true
+  output_dir: evaluation/results/native
+
+longmemeval:
+  tier: small
+  domains: [web, enterprise]
+  session_id: eval-longmemeval
+  top_k: 5
+  max_context_chars: 8000
+  output_root: evaluation/results/longmemeval
+
+memoryarena:
+  domains:
+    - bundled_shopping
+    - progressive_search
+    - group_travel_planner
+    - formal_reasoning_math
+    - formal_reasoning_phys
+  limit_per_domain: 2
+  session_prefix: eval-memoryarena
+  top_k: 5
+  output_root: evaluation/results/memoryarena
+
