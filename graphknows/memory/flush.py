@@ -18,7 +18,7 @@ log = logging.getLogger("graphknows.memory.flush")
 class FlushOptions:
     """Options controlling flush behavior."""
 
-    summarize_topics: bool = True
+    summarize_topics: bool = True  # Deprecated: topic summarization always runs.
     run_gds: bool = True
     clear_stm: bool = True
     merge_entities: bool = True
@@ -36,6 +36,10 @@ class FlushResult:
     turns_promoted: int = 0
     topics_created: int = 0
     merged_entities: int = 0
+    # GDS community-detection stats (populated when run_gds=True)
+    community_count: int = 0
+    modularity: float = 0.0
+    ran_iterations: int = 0
     elapsed_s: float = 0.0
     errors: list[str] = field(default_factory=list)
 
@@ -112,16 +116,18 @@ class SessionFlusher:
         except Exception as exc:
             result.errors.append(f"promote_to_ltm: {exc}")
 
-        if opts.summarize_topics:
-            try:
-                result.topics_created = await self._summarize_topics(session_id)
-            except Exception as exc:
-                result.errors.append(f"topics: {exc}")
-                log.warning("Topic summarization failed: %s", exc)
+        try:
+            result.topics_created = await self._summarize_topics(session_id)
+        except Exception as exc:
+            result.errors.append(f"topics: {exc}")
+            log.warning("Topic summarization failed: %s", exc)
 
         if opts.run_gds:
             try:
-                await self._run_gds(session_id)
+                gds_result = await self._run_gds()
+                result.community_count = gds_result.community_count
+                result.modularity = gds_result.modularity
+                result.ran_iterations = gds_result.ran_iterations
             except Exception as exc:
                 result.errors.append(f"gds: {exc}")
                 log.warning("GDS enrichment failed: %s", exc)
@@ -202,14 +208,16 @@ class SessionFlusher:
             llm_model=self._llm_model,
         )
 
-    async def _run_gds(self, session_id: str) -> None:
-        """Run GDS enrichment via LTMEnrichmentService."""
+    async def _run_gds(self) -> Any:
+        """Run GDS enrichment via LTMEnrichmentService. Returns GDSResult."""
+        from graphknows.memory.models.gds import GDSResult
+
         svc = LTMEnrichmentService()
         driver = getattr(self._neo, "_driver", None)
         if driver is None:
             log.warning("GDS enrichment skipped: neo_store has no _driver attribute")
-            return
-        await svc.run_gds_async(driver)
+            return GDSResult()
+        return await svc.run_gds_async(driver)
 
     async def _clear_stm(self, session_id: str) -> None:
         """Delete all STM data for session from Memgraph and stm_* pgvector tables."""

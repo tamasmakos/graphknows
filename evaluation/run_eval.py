@@ -19,6 +19,7 @@ from evaluation.benchmarks.memoryarena import (
     run_memoryarena_small,
 )
 from evaluation.benchmarks.native import NativeConfig, run_native_evaluation
+from evaluation.benchmarks.research_memory import ResearchMemoryOptions, run_research_memory
 from evaluation.core.client import GraphknowsMCPClient
 from evaluation.core.reporting import write_benchmark_report, write_report
 from evaluation.core.stm_inspection import derive_inspect_command, inspect_session
@@ -98,6 +99,29 @@ def build_parser() -> argparse.ArgumentParser:
     hotpotqa.add_argument("--max-chars-per-doc", type=int, default=2500)
     hotpotqa.add_argument("--inspect-stm", action="store_true")
     hotpotqa.add_argument("--inspect-command", default="")
+
+    research = subparsers.add_parser(
+        "research-memory",
+        help="Run deterministic retrieval-only memory experiments with mandatory LTM topics.",
+    )
+    research.add_argument("--command", default="docker compose exec -T mcp graphknows-mcp")
+    research.add_argument("--run-id", default=f"eval-research-memory-{int(time.time())}")
+    research.add_argument("--output-dir", default="evaluation/results/research-memory")
+    research.add_argument("--suite", choices=["hotpotqa", "longmemeval", "memoryarena"], default="hotpotqa")
+    research.add_argument("--top-k", type=int, default=5)
+    research.add_argument("--taxonomy-file", default="taxonomy.generic.yaml")
+    research.add_argument("--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2")
+    research.add_argument("--offset", type=int, default=0)
+    research.add_argument("--limit", type=int, default=1)
+    research.add_argument("--domain", choices=sorted(DOMAIN_CONFIGS), default="bundled_shopping")
+    research.add_argument("--subtask-index", type=int, default=1)
+    research.add_argument("--data-root", default="evaluation/data/longmemeval-v2")
+    research.add_argument("--question-id", default="")
+    research.add_argument("--max-trajectories", type=int, default=5)
+    research.add_argument("--max-states", type=int, default=8)
+    research.add_argument("--max-chars-per-trajectory", type=int, default=4000)
+    research.add_argument("--max-docs", type=int, default=10)
+    research.add_argument("--max-chars-per-doc", type=int, default=2500)
 
     return parser
 
@@ -266,6 +290,54 @@ async def _run_hotpotqa(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_research_memory(args: argparse.Namespace) -> int:
+    async with GraphknowsMCPClient(
+        args.command,
+        request_timeout_s=1200,
+        env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
+    ) as client:
+        options = ResearchMemoryOptions(
+            suite=args.suite,
+            run_id=args.run_id,
+            top_k=args.top_k,
+            taxonomy_file=args.taxonomy_file or None,
+            offset=args.offset,
+            limit=args.limit,
+            domain=args.domain,
+            subtask_index=args.subtask_index,
+            data_root=Path(args.data_root),
+            question_id=args.question_id or None,
+            max_trajectories=args.max_trajectories,
+            max_states=args.max_states,
+            max_chars_per_trajectory=args.max_chars_per_trajectory,
+            max_docs=args.max_docs,
+            max_chars_per_doc=args.max_chars_per_doc,
+        )
+        cases = await run_research_memory(client, options)
+    paths = write_benchmark_report(
+        benchmark=f"research-memory-{args.suite}",
+        run_id=args.run_id,
+        output_dir=args.output_dir,
+        cases=[case.to_record() for case in cases],
+        metadata={
+            "suite": args.suite,
+            "taxonomy_file": args.taxonomy_file or "taxonomy.generic.yaml",
+            "relation_extraction_mode": args.relation_extraction_mode,
+            "isolation": "per_case_pre_and_post_purge",
+            "agentic_workflow": False,
+            "topic_summarization": "mandatory",
+            "headline_scores": [
+                "answer_support_score",
+                "evidence_recall_score",
+                "topic_entity_score",
+            ],
+        },
+    )
+    print(paths.json_path)
+    print(paths.markdown_path)
+    return 0
+
+
 async def _run_native(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     if args.output_dir:
@@ -299,6 +371,8 @@ async def amain(argv: list[str] | None = None) -> int:
         return await _run_memoryarena(args)
     if args.benchmark == "longmemeval":
         return await _run_longmemeval(args)
+    if args.benchmark == "research-memory":
+        return await _run_research_memory(args)
     return await _run_hotpotqa(args)
 
 

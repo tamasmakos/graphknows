@@ -146,7 +146,8 @@ class PromoteOptions:
     Attributes:
         session_id: Session to promote.
         run_gds: Run GDS enrichment after promotion.
-        run_topics: Run Louvain topic summarization.
+        run_topics: Deprecated compatibility flag; promotion always runs topic
+            summarization.
     """
 
     session_id: str

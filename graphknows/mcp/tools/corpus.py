@@ -17,9 +17,8 @@ async def corpus_ingest(
     r"""Ingest a corpus of documents into the long-term knowledge graph.
 
     Runs the STM-first corpus pipeline via `CorpusIngestWorkflow`: document ingest
-    into short-term memory, then promotion into the long-term graph. In the MCP
-    path, topic summarization and GDS enrichment are skipped by default for speed;
-    use the CLI workflow for heavier enrichment jobs.
+    into short-term memory, then promotion into the long-term graph. Topic
+    summarization and GDS enrichment always run so LTM topics stay available.
 
     Args:
         documents: List of document dicts. Each must have:
@@ -49,7 +48,7 @@ async def corpus_ingest(
             documents=documents,
             taxonomy_file=taxonomy_file,
             session_id=session_id,
-            summarize_topics=False,
+            summarize_topics=True,
             run_gds=True,
         )
         result = await workflow.run(request)

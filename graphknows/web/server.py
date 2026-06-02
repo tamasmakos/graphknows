@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import os
 from pathlib import Path
 from typing import Any
@@ -16,7 +15,11 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.config.builders.stores import build_memgraph_store, build_neo4j_store
+from graphknows.config.builders.stores import (
+    build_memgraph_store,
+    build_neo4j_store,
+    build_pgvector_store,
+)
 from graphknows.config.health import check_backends, get_memory_stats
 from graphknows.web.links import DEFAULT_PORT
 
@@ -49,6 +52,11 @@ def get_mg_store() -> Any:
 def get_neo_store() -> Any:
     """Build a Neo4j store using current web server settings."""
     return build_neo4j_store(get_settings())
+
+
+def get_pg_store() -> Any:
+    """Build a PgVector store using current web server settings."""
+    return build_pgvector_store(get_settings())
 
 
 def _error_payload(exc: Exception) -> dict[str, Any]:
@@ -310,6 +318,79 @@ async def graph(request: Request) -> JSONResponse:
         return JSONResponse(_error_payload(exc), status_code=503)
 
 
+def _normalise_hits(hits: list[Any], weight: float) -> None:
+    """Min-max normalise hit scores in place, then apply weight factor."""
+    if not hits:
+        return
+    scores = [h.score for h in hits]
+    mn, mx = min(scores), max(scores)
+    rng = mx - mn
+    for h in hits:
+        h.score = weight * ((h.score - mn) / rng if rng else 1.0)
+
+
+def _run_recall(
+    scope: str,
+    query: str,
+    session_id: str,
+    top_k: int,
+) -> dict[str, Any]:
+    """Synchronous recall across STM/LTM stores. Returns serialisable hits dict."""
+    import re
+
+    from graphknows.memory.stores.embedder import embed_one
+    from graphknows.memory.stm._async_bridge import _run as _bg_run
+
+    def _clean(text: str) -> str:
+        return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
+
+    def _fmt(results: list[Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                "score": round(r.score, 6),
+                "cosine_score": round(getattr(r, "cosine_score", r.score), 6),
+                "type": r.source_type,
+                "text": _clean(r.text),
+                "session_id": r.provenance.get("session_id", session_id),
+                "entities": list(r.entity_names or []),
+            }
+            for r in results
+        ]
+
+    stm_hits: list[Any] = []
+    ltm_hits: list[Any] = []
+
+    if scope in ("stm", "both"):
+        from graphknows.memory.stm.recall import recall_short_term
+
+        mg = get_mg_store()
+        pg = get_pg_store()
+        _bg_run(pg.connect())
+        stm_hits = recall_short_term(
+            mg, pg, query, session_id=session_id, top_k=top_k, embed_fn=embed_one
+        )
+        mg.close()
+
+    if scope in ("ltm", "both"):
+        from graphknows.memory.query.recall_ltm import recall_long_term
+
+        pg2 = get_pg_store()
+        neo = get_neo_store()
+        _bg_run(pg2.connect())
+        ltm_hits = recall_long_term(
+            neo, pg2, query, top_k=top_k, session_filter=session_id or None, embed_fn=embed_one
+        )
+        neo.close()
+
+    if scope == "both":
+        _normalise_hits(stm_hits, 0.6)
+        _normalise_hits(ltm_hits, 0.4)
+        combined = sorted(stm_hits + ltm_hits, key=lambda h: h.score, reverse=True)
+        return {"hits": _fmt(combined[:top_k])}
+
+    return {"hits": _fmt(stm_hits if scope == "stm" else ltm_hits)}
+
+
 async def recall(request: Request) -> JSONResponse:
     """Return ranked recall hits for a query."""
     query = request.query_params.get("q", "").strip()
@@ -323,12 +404,103 @@ async def recall(request: Request) -> JSONResponse:
             {"error": "session_id_required", "message": "STM recall requires a session_id."},
             status_code=400,
         )
+    try:
+        result = await asyncio.to_thread(_run_recall, scope, query, session_id, top_k)
+        return JSONResponse(result)
+    except Exception as exc:
+        return JSONResponse(_error_payload(exc), status_code=503)
+
+
+async def ingest(request: Request) -> JSONResponse:
+    """Ingest a markdown/text file into STM via multipart form upload."""
+    try:
+        form = await request.form()
+    except Exception as exc:
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    session_id = str(form.get("session_id", "")).strip()
+    if not session_id:
+        return JSONResponse(
+            {"error": "session_id_required", "message": "session_id is required to ingest."},
+            status_code=400,
+        )
+
+    file_field = form.get("file")
+    if file_field is None:
+        return JSONResponse(
+            {"error": "file_required", "message": "A file field is required."},
+            status_code=400,
+        )
+
+    title = str(form.get("title", "")).strip()
+    try:
+        raw_bytes = await file_field.read()  # type: ignore[union-attr]
+        text = raw_bytes.decode("utf-8", errors="replace")
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "read_error", "message": f"Could not read file: {exc}"}, status_code=400
+        )
 
     try:
-        memory_recall = importlib.import_module("graphknows.mcp.tools.stm").memory_recall
+        from graphknows.config.builders.stores import build_memory_ingestor
 
+        ingestor = await asyncio.to_thread(build_memory_ingestor, get_settings())
+        result = await asyncio.to_thread(ingestor.ingest_text, text, session_id, title)
         return JSONResponse(
-            await memory_recall(query, session_id=session_id, top_k=top_k, scope=scope)
+            {
+                "file_id": result.file_id,
+                "chunk_count": result.chunk_count,
+                "entity_count": result.entity_count,
+                "elapsed_s": round(result.elapsed_s, 3),
+                "errors": list(result.errors),
+            }
+        )
+    except Exception as exc:
+        return JSONResponse(_error_payload(exc), status_code=503)
+
+
+async def flush_session(request: Request) -> JSONResponse:
+    """Promote a session's STM to LTM and return flush statistics."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    session_id = str(body.get("session_id", "")).strip()
+    if not session_id:
+        return JSONResponse(
+            {"error": "session_id_required", "message": "session_id is required to flush."},
+            status_code=400,
+        )
+
+    opts_raw = body.get("options", {}) or {}
+
+    try:
+        from graphknows.config.builders.stores import build_session_flusher
+        from graphknows.memory.flush import FlushOptions
+
+        opts = FlushOptions(
+            clear_stm=bool(opts_raw.get("clear_stm", True)),
+            run_gds=bool(opts_raw.get("run_gds", True)),
+            merge_entities=bool(opts_raw.get("merge_entities", True)),
+        )
+        flusher = await asyncio.to_thread(build_session_flusher, get_settings())
+        result = await flusher.flush(session_id, opts)
+        return JSONResponse(
+            {
+                "session_id": result.session_id,
+                "nodes_written": result.nodes_written,
+                "edges_written": result.edges_written,
+                "chunks_promoted": result.chunks_promoted,
+                "turns_promoted": result.turns_promoted,
+                "merged_entities": result.merged_entities,
+                "community_count": result.community_count,
+                "modularity": round(result.modularity, 4),
+                "ran_iterations": result.ran_iterations,
+                "topics_created": result.topics_created,
+                "elapsed_s": round(result.elapsed_s, 2),
+                "errors": result.errors,
+            }
         )
     except Exception as exc:
         return JSONResponse(_error_payload(exc), status_code=503)
@@ -342,6 +514,8 @@ def _routes() -> list[Any]:
         Route("/api/sessions", sessions),
         Route("/api/graph", graph),
         Route("/api/recall", recall),
+        Route("/api/ingest", ingest, methods=["POST"]),
+        Route("/api/flush", flush_session, methods=["POST"]),
     ]
     if frontend_dir.exists():
         routes.append(

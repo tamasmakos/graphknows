@@ -54,10 +54,10 @@ async def test_flush_default_options_calls_all_steps():
 
 
 @pytest.mark.asyncio
-async def test_flush_no_topics_skips_summarize():
+async def test_flush_always_summarizes_topics():
     flusher, mg, pg, neo = _make_flusher()
     await flusher.flush("s1", FlushOptions(summarize_topics=False))
-    neo.summarize_topics.assert_not_called()
+    neo.summarize_topics.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -12,16 +12,15 @@ WORKDIR /build
 
 RUN pip install --no-cache-dir uv
 
-# Copy only the manifests first to maximise layer caching.
+# Copy manifests first (layer caching), then source so uv can build the package.
 COPY pyproject.toml ./
-
-# uv needs a lock file when available; copy it if it exists.
 COPY uv.lock* ./
+COPY graphknows/ ./graphknows/
 
-# Install production dependencies into an isolated venv.
-# The web server needs the full graphknows package (neo4j, memgraph, pgvector).
+# Install only the minimal web extras — avoids pulling in ML/CUDA packages
+# (torch, spacy, gliner, etc.) that the UI server does not need.
 RUN uv venv /opt/venv && \
-    uv pip install --python /opt/venv/bin/python --no-cache -e .
+    uv pip install --python /opt/venv/bin/python --no-cache ".[web]"
 
 # ─── runtime stage ─────────────────────────────────────────────────────────────
 FROM python:3.13-slim AS runtime
@@ -29,8 +28,6 @@ FROM python:3.13-slim AS runtime
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
-# Source package
-COPY graphknows/ ./graphknows/
 # Static frontend files served by the Starlette app
 COPY frontend/ ./frontend/
 
