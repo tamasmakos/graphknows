@@ -147,11 +147,9 @@ pipeline {
                 stage('Test Python 3.11') {
                     steps {
                         sh '''
-                            UV_PROJECT_ENVIRONMENT=.venv-311 \
+                            UV_PROJECT_ENVIRONMENT=/tmp/graphknows-venv-311 \
                             uv sync --all-packages --group dev --python 3.11
-                            UV_PROJECT_ENVIRONMENT=.venv-311 \
-                            uv build --package graphknows --out-dir dist/
-                            UV_PROJECT_ENVIRONMENT=.venv-311 \
+                            UV_PROJECT_ENVIRONMENT=/tmp/graphknows-venv-311 \
                             uv run --python 3.11 pytest \
                                 tests/ \
                                 -v --tb=short \
@@ -176,11 +174,9 @@ pipeline {
                 stage('Test Python 3.13') {
                     steps {
                         sh '''
-                            UV_PROJECT_ENVIRONMENT=.venv-313 \
+                            UV_PROJECT_ENVIRONMENT=/tmp/graphknows-venv-313 \
                             uv sync --all-packages --group dev --python 3.13
-                            UV_PROJECT_ENVIRONMENT=.venv-313 \
-                            uv build --package graphknows --out-dir dist/
-                            UV_PROJECT_ENVIRONMENT=.venv-313 \
+                            UV_PROJECT_ENVIRONMENT=/tmp/graphknows-venv-313 \
                             uv run --python 3.13 pytest \
                                 tests/ \
                                 -v --tb=short \
