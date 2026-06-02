@@ -10,22 +10,21 @@ depends_on = []
 
 [[modules]]
 path = "graphknows.config"
-depends_on = ["graphknows.ingestion.domain"]
+depends_on = []
 
 [[modules]]
 path = "graphknows.config.adapters"
-depends_on = ["graphknows.config", "graphknows.ingestion.domain", "graphknows.graphgen"]
+depends_on = [ "graphknows.graphgen", "graphknows.memory.stores"]
 
 [[modules]]
 path = "graphknows.ingestion.ontology"
 depends_on = [
-  "graphknows.config.adapters",
   "graphknows.ingestion.domain",
 ]
 
 [[modules]]
 path = "graphknows.ingestion"
-depends_on = ["graphknows.ingestion.domain", "graphknows.ingestion.ontology"]
+depends_on = []
 
 [[modules]]
 path = "graphknows.graphgen"
@@ -36,12 +35,11 @@ depends_on = [
 
 [[modules]]
 path = "graphknows.memory.models"
-depends_on = ["graphknows.ingestion.domain"]
+depends_on = ["graphknows.memory"]
 
 [[modules]]
 path = "graphknows.memory.stores"
 depends_on = [
-  "graphknows.config.adapters",
   "graphknows.ingestion.domain",
   "graphknows.memory.ltm",
 ]
@@ -57,40 +55,30 @@ depends_on = [
 [[modules]]
 path = "graphknows.memory.services"
 depends_on = [
-  "graphknows.config",
   "graphknows.config.adapters",
-  "graphknows.ingestion.domain",
 ]
 
 [[modules]]
 path = "graphknows.memory.stm"
 depends_on = [
-  "graphknows.config",
   "graphknows.ingestion",
-  "graphknows.ingestion.domain",
   "graphknows.memory.models",
-  "graphknows.memory.stores",
+  "graphknows.memory.stores", "graphknows.memory.query", "graphknows.memory",
 ]
 
 [[modules]]
 path = "graphknows.memory.ltm"
 depends_on = [
-  "graphknows.config",
-  "graphknows.ingestion.domain",
   "graphknows.memory.models",
 ]
 
 [[modules]]
 path = "graphknows.memory.workflows"
 depends_on = [
-  "graphknows.config",
   "graphknows.ingestion.domain",
   "graphknows.ingestion.ontology",
   "graphknows.memory",
-  "graphknows.memory.ltm",
-  "graphknows.memory.models",
-  "graphknows.memory.stm",
-  "graphknows.memory.stores",
+  "graphknows.memory.stm", "graphknows.config.builders", "graphknows.mcp",
 ]
 
 [[modules]]
@@ -102,10 +90,8 @@ depends_on = [
   "graphknows.memory.ltm",
   "graphknows.memory.models",
   "graphknows.memory.query",
-  "graphknows.memory.services",
   "graphknows.memory.stm",
   "graphknows.memory.stores",
-  "graphknows.memory.workflows",
 ]
 
 [[modules]]
@@ -124,11 +110,7 @@ path = "graphknows.mcp"
 depends_on = [
   "graphknows.config",
   "graphknows.config.builders",
-  "graphknows.ingestion.domain",
-  "graphknows.web",
-  "graphknows.memory",
-  "graphknows.memory.query",
-  "graphknows.memory.stores",
+  "graphknows.memory.stores", "graphknows.memory.stm", "graphknows.mcp.tools",
 ]
 
 [[modules]]
@@ -151,5 +133,4 @@ path = "graphknows.web"
 depends_on = [
   "graphknows.config",
   "graphknows.config.builders",
-  "graphknows.memory.stores",
 ]
