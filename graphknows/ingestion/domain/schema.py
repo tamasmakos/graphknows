@@ -311,7 +311,6 @@ def get_default_schema() -> GraphSchema:
     )
 
 
-
 # ============================================================================
 # DDL — Neo4j (LTM) constraints/indexes and Memgraph (STM) indexes
 # (moved from graphknows.schema)

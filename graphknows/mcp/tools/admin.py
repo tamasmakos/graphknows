@@ -154,7 +154,9 @@ async def _purge_ltm(session_id: str, errors: list[str]) -> None:
                 if has_legacy_chunks:
                     await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
             else:
-                await conn.execute("TRUNCATE TABLE ltm_chunks, ltm_turns, ltm_topics, chunks, chunk_entities, entities")
+                await conn.execute(
+                    "TRUNCATE TABLE ltm_chunks, ltm_turns, ltm_topics, chunks, chunk_entities, entities"
+                )
     except Exception as exc:
         errors.append(f"pgvector ltm: {exc}")
 

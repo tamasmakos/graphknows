@@ -37,9 +37,7 @@ def _repo_env_key() -> str:
         candidate = parent / ".env"
         if candidate.exists():
             values = dotenv_values(candidate)
-            return _clean_secret(
-                values.get("OPENROUTER_API_KEY") or values.get("OPEN_ROUTER_API")
-            )
+            return _clean_secret(values.get("OPENROUTER_API_KEY") or values.get("OPEN_ROUTER_API"))
     return ""
 
 

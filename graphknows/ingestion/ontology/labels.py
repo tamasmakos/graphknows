@@ -72,9 +72,7 @@ def resolve_entity_labels(extraction_config: dict[str, Any]) -> list[str]:
                 result = ontology_labels
 
     if not result:
-        logger.warning(
-            f"No entity labels resolved; using {len(DEFAULT_LABELS)} default labels."
-        )
+        logger.warning(f"No entity labels resolved; using {len(DEFAULT_LABELS)} default labels.")
         result = DEFAULT_LABELS
 
     result = [standardize_label(label) for label in result]

@@ -62,7 +62,9 @@ class OntologyRouter:
                 )
                 self._desc_embeddings = None
         else:
-            log.info("OntologyRouter ready in keyword-only mode with %d ontologies", len(self._manifests))
+            log.info(
+                "OntologyRouter ready in keyword-only mode with %d ontologies", len(self._manifests)
+            )
         self._ready = True
 
     def _keyword_scores(self, text: str) -> list[float]:

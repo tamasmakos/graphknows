@@ -100,5 +100,5 @@ def normalize_openrouter_model(model: str | None) -> str:
         return f"openrouter/{_DEFAULT_MODEL}"
     clean = str(model)
     if clean.startswith("openrouter/"):
-        clean = clean[len("openrouter/"):]
+        clean = clean[len("openrouter/") :]
     return f"openrouter/{clean}"

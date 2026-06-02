@@ -16,10 +16,7 @@ def mirror_url(session_id: str = "", scope: str = "ltm") -> str:
     )
     # GRAPHKNOWS_WEB_PUBLIC_PORT lets operators set the externally visible port
     # (e.g. 80 via a reverse proxy) independently from the internal bind port.
-    port_str = (
-        os.environ.get("GRAPHKNOWS_WEB_PUBLIC_PORT")
-        or os.environ.get("GRAPHKNOWS_WEB_PORT")
-    )
+    port_str = os.environ.get("GRAPHKNOWS_WEB_PUBLIC_PORT") or os.environ.get("GRAPHKNOWS_WEB_PORT")
     port = int(port_str) if port_str else DEFAULT_PORT
     params = {"scope": scope or "ltm"}
     if session_id:

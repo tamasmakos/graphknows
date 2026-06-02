@@ -143,9 +143,7 @@ def resolve_extraction_coreferences(
                 continue
             cleaned_list.append((cs, r, ct, props))
 
-        debug_log.append(
-            f"normalized_entities={len(entity_mappings)} reps={len(representatives)}"
-        )
+        debug_log.append(f"normalized_entities={len(entity_mappings)} reps={len(representatives)}")
 
         return {
             "cleaned_relations": cleaned_list,
