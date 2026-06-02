@@ -47,6 +47,8 @@ dependencies = [
     "urllib3>=2.7.0",
     "python-multipart>=0.0.27",
     "starlette>=1.0.1",
+    # Security: pin pyjwt to avoid CVEs PYSEC-2026-175/177/178/179 (fixed in 2.13.0)
+    "pyjwt>=2.13.0",
 ]
 
 [build-system]
