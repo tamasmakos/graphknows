@@ -103,25 +103,32 @@ for rel in _ALL_RELS:
     assert rel.isupper(), f"Relationship {rel} must be uppercase"
 
 __all__ = [
+    # DDL
+    "CONSTRAINTS",
+    "EdgeSchema",
+    "GraphSchema",
+    "INDEXES",
+    # Node labels
     "LABEL_CHUNK",
     "LABEL_DIALOG",
     "LABEL_DOC",
     "LABEL_ENTITY",
     "LABEL_FILE",
-    # Node labels
     "LABEL_PASSAGE",
     "LABEL_SEGMENT",
     "LABEL_SESSION",
     "LABEL_SUBTOPIC",
     "LABEL_TOPIC",
     "LABEL_TURN",
+    "MEMGRAPH_INDEXES",
+    "NodeSchema",
+    # Relationship types
     "REL_BELONGS_TO",
     "REL_CO_OCCURS",
     "REL_CONTAINS_DOC",
     "REL_HAS_CHUNK",
     "REL_HAS_DIALOG",
     "REL_HAS_ENTITY",
-    # Relationship types
     "REL_HAS_FILE",
     "REL_HAS_PASSAGE",
     "REL_HAS_TURN",
@@ -130,16 +137,9 @@ __all__ = [
     "REL_RELATES_TO",
     "REL_RELATION",
     # Schema models
-    "EdgeSchema",
-    "GraphSchema",
-    "NodeSchema",
-    "get_default_schema",
-    # DDL
-    "CONSTRAINTS",
-    "INDEXES",
-    "MEMGRAPH_INDEXES",
-    "apply_schema",
     "apply_memgraph_schema",
+    "apply_schema",
+    "get_default_schema",
 ]
 
 

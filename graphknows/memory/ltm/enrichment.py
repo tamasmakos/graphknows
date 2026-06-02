@@ -488,6 +488,7 @@ class LTMEnrichmentService:
         is executed via the internal helpers.
 
         Args:
+            session_id: The session ID to summarize topics for.
             driver: Neo4jStore instance (preferred) or bare Neo4j driver.
             pg_store: PgVectorStore for ltm_topics write-back.
             llm_key: OpenRouter API key.

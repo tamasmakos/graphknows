@@ -18,7 +18,7 @@ from starlette.staticfiles import StaticFiles
 from graphknows.config import GraphKnowsSettings
 from graphknows.config.builders.stores import build_memgraph_store, build_neo4j_store
 from graphknows.config.health import check_backends, get_memory_stats
-from graphknows.web.links import DEFAULT_HOST, DEFAULT_PORT
+from graphknows.web.links import DEFAULT_PORT
 
 _settings: GraphKnowsSettings | None = None
 

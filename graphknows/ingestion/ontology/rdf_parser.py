@@ -1,5 +1,4 @@
-"""
-Ontology Label Extractor.
+"""Ontology Label Extractor.
 
 Parses RDF/OWL ontology files to extract class labels for use as
 GLiNER entity extraction labels. This enables domain-specific entity
@@ -12,20 +11,18 @@ Usage:
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Set
 
 try:
-    from rdflib import Graph, URIRef, Literal
+    from rdflib import Graph, Literal, URIRef
     from rdflib.namespace import OWL, RDF, RDFS
-except ImportError:
-    raise ImportError("rdflib is required. Install with: pip install rdflib")
+except ImportError as exc:
+    raise ImportError("rdflib is required. Install with: pip install rdflib") from exc
 
 logger = logging.getLogger(__name__)
 
 
 class OntologyLabelExtractor:
-    """
-    Extracts class labels from RDF/OWL ontology files.
+    """Extracts class labels from RDF/OWL ontology files.
 
     This class parses RDF files from a specified directory and extracts
     rdfs:label values from OWL Classes and RDFS Classes. The extracted
@@ -37,9 +34,8 @@ class OntologyLabelExtractor:
         graph: RDFLib graph containing loaded ontology triples.
     """
 
-    def __init__(self, ontology_dir: str, namespace_filter: Optional[str] = None):
-        """
-        Initialize the extractor.
+    def __init__(self, ontology_dir: str, namespace_filter: str | None = None):
+        """Initialize the extractor.
 
         Args:
             ontology_dir: Path to directory containing RDF/OWL files.
@@ -52,8 +48,7 @@ class OntologyLabelExtractor:
         self._loaded = False
 
     def _load_rdf_files(self) -> int:
-        """
-        Load all RDF files from the ontology directory.
+        """Load all RDF files from the ontology directory.
 
         Returns:
             Number of files successfully loaded.
@@ -82,9 +77,8 @@ class OntologyLabelExtractor:
         logger.info(f"Loaded {loaded_count} RDF files with {len(self.graph)} triples")
         return loaded_count
 
-    def _get_label(self, uri: URIRef) -> Optional[str]:
-        """
-        Get the rdfs:label for a URI, preferring English labels.
+    def _get_label(self, uri: URIRef) -> str | None:
+        """Get the rdfs:label for a URI, preferring English labels.
 
         Args:
             uri: The URI to get the label for.
@@ -98,16 +92,14 @@ class OntologyLabelExtractor:
 
         # Prefer English labels
         for label in labels:
-            if isinstance(label, Literal):
-                if label.language == "en" or not label.language:
-                    return str(label)
+            if isinstance(label, Literal) and (label.language == "en" or not label.language):
+                return str(label)
 
         # Fallback to first available label
         return str(labels[0])
 
     def _extract_local_name(self, uri: str) -> str:
-        """
-        Extract the local name from a URI.
+        """Extract the local name from a URI.
 
         Args:
             uri: Full URI string.
@@ -121,9 +113,8 @@ class OntologyLabelExtractor:
 
     def extract_labels(
         self, include_local_names: bool = True, top_level_only: bool = True, min_subclasses: int = 0
-    ) -> List[str]:
-        """
-        Extract class labels from the loaded ontology with hierarchical filtering.
+    ) -> list[str]:
+        """Extract class labels from the loaded ontology with hierarchical filtering.
 
         Args:
             include_local_names: If True, use URI local names as fallback.
@@ -135,7 +126,7 @@ class OntologyLabelExtractor:
         """
         self._load_rdf_files()
 
-        labels: Set[str] = set()
+        labels: set[str] = set()
 
         # Get all OWL and RDFS Classes
         all_classes = set(self.graph.subjects(RDF.type, OWL.Class)).union(
@@ -204,8 +195,7 @@ class OntologyLabelExtractor:
         return result
 
     def _format_local_name(self, name: str) -> str:
-        """
-        Format a local name into a readable label.
+        """Format a local name into a readable label.
 
         Converts camelCase, snake_case, and hyphen-case to space-separated words.
         """
@@ -223,8 +213,7 @@ class OntologyLabelExtractor:
         return name
 
     def get_statistics(self) -> dict:
-        """
-        Get statistics about the loaded ontology.
+        """Get statistics about the loaded ontology.
 
         Returns:
             Dictionary with ontology statistics.
@@ -245,10 +234,9 @@ class OntologyLabelExtractor:
 
 
 def extract_ontology_labels(
-    ontology_dir: str, namespace_filter: Optional[str] = None, include_local_names: bool = True
-) -> List[str]:
-    """
-    Convenience function to extract labels from an ontology directory.
+    ontology_dir: str, namespace_filter: str | None = None, include_local_names: bool = True
+) -> list[str]:
+    """Convenience function to extract labels from an ontology directory.
 
     Args:
         ontology_dir: Path to directory containing RDF/OWL files.

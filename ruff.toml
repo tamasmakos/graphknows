@@ -42,6 +42,8 @@ ignore = [
 "**/migrations/001_ltm8_schema.py" = ["D103"]
 "**/recall.py" = ["D101"]
 "**/topic_summarizer.py" = ["D101"]
+"**/rdf_parser.py" = ["C901"]
+"**/_cypher_utils.py" = ["C901"]
 
 [lint.pydocstyle]
 convention = "google"

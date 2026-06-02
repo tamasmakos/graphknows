@@ -105,8 +105,9 @@ def _extract_ontology_labels(ontology_config: dict[str, Any]) -> list[str]:
             min_subclasses=min_subclasses,
         )
         logger.info(f"Extracted {len(labels)} labels from ontology")
-        return labels
 
     except Exception as e:
         logger.error(f"Failed to extract ontology labels: {e}", exc_info=True)
         return []
+    else:
+        return labels
