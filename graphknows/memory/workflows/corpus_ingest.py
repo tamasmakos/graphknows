@@ -104,7 +104,7 @@ class CorpusIngestWorkflow:
                 resolved_extractor = GLiNER2EntityExtractor(taxonomy_path=taxonomy_path)
                 # Build a relation dict from taxonomy relation_types for the rel extractor
                 rel_ontology = {rt: rt.replace("_", " ").lower() for rt in taxonomy.relation_types}
-                resolved_rel_extractor = OntologyRelExtractor(taxonomy_ontology=rel_ontology)
+                resolved_rel_extractor = OntologyRelExtractor(relation_schema=rel_ontology)
             except Exception as exc:
                 err = f"Failed to load taxonomy '{request.taxonomy_file}': {exc}"
                 result.errors.append(err)
