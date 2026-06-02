@@ -44,6 +44,7 @@ ignore = [
 "**/topic_summarizer.py" = ["D101"]
 "**/rdf_parser.py" = ["C901"]
 "**/_cypher_utils.py" = ["C901"]
+"**/ingestion/domain/schema.py" = ["RUF022"]  # __all__ is grouped by category intentionally
 
 [lint.pydocstyle]
 convention = "google"
