@@ -139,8 +139,8 @@ class CorpusIngestWorkflow:
                     source_hint=source_hint,
                 )
                 result.documents_processed += 1
-                result.entities_extracted += getattr(ingest_result, "entities", 0)
-                result.chunks_written += getattr(ingest_result, "chunks", 0)
+                result.entities_extracted += getattr(ingest_result, "entity_count", 0)
+                result.chunks_written += getattr(ingest_result, "chunk_count", 0)
                 log.debug(
                     "Ingested doc id=%s into session=%s", doc.get("id", "<unknown>"), session_id
                 )

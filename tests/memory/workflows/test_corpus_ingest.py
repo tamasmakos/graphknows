@@ -26,8 +26,8 @@ def _make_workflow() -> CorpusIngestWorkflow:
 
 def _make_ingest_result(entities: int = 3, chunks: int = 2) -> MagicMock:
     r = MagicMock()
-    r.entities = entities
-    r.chunks = chunks
+    r.entity_count = entities
+    r.chunk_count = chunks
     return r
 
 
@@ -70,6 +70,8 @@ async def test_workflow_calls_stm_then_flush() -> None:
     assert mock_stm.ingest.call_count == 2
     assert mock_flusher.flush.call_count == 1
     assert result.documents_processed == 2
+    assert result.entities_extracted == 6
+    assert result.chunks_written == 4
     assert result.nodes_written == 5
     assert result.errors == []
 

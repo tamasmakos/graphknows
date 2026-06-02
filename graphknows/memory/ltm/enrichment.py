@@ -26,6 +26,34 @@ PROJECTED_GRAPH_NAME = "ltm-entities"
 _DROP_GRAPH_CQL = "CALL gds.graph.drop($name, false) YIELD graphName"
 
 
+def _is_missing_gds(exc: Exception) -> bool:
+    text = str(exc)
+    return "gds." in text and (
+        "ProcedureNotFound" in text
+        or "There is no procedure with the name" in text
+        or "Unknown procedure" in text
+    )
+
+
+def _gds_available(s: Any) -> bool:
+    """Return whether Neo4j Graph Data Science procedures are installed."""
+    try:
+        row = s.run(
+            """
+            SHOW PROCEDURES
+            YIELD name
+            WHERE name STARTS WITH 'gds.'
+            RETURN count(name) AS c
+            """
+        ).single()
+    except Exception as exc:
+        if _is_missing_gds(exc):
+            return False
+        log.warning("Could not inspect GDS procedures; attempting enrichment anyway: %s", exc)
+        return True
+    return bool(row and row["c"] > 0)
+
+
 def _project_initial_graph(s: Any, ec: int, edge_count: int) -> None:
     s.run(_DROP_GRAPH_CQL, name=PROJECTED_GRAPH_NAME)
     s.run("""
@@ -209,6 +237,11 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
         edge_count = edge_row["c"] if edge_row else 0
         result["edge_count"] = edge_count
 
+        if not _gds_available(s):
+            result["error"] = "gds_unavailable"
+            log.info("Neo4j GDS procedures are not installed; skipping enrichment")
+            return result
+
         try:
             _project_initial_graph(s, ec, edge_count)
             _run_node2vec(s)
@@ -385,6 +418,9 @@ class LTMEnrichmentService:
             if ec < 3:
                 result.error = f"too_small:{ec}"
                 return result
+            if not _gds_available(s):
+                result.error = "gds_unavailable"
+                return result
             edge_row = s.run("MATCH (a:ENTITY)-[r]->(b:ENTITY) RETURN count(r) as c").single()
             result.edge_count = edge_row["c"] if edge_row else 0
             try:
@@ -420,6 +456,9 @@ class LTMEnrichmentService:
             if ec < 3:
                 result.error = f"too_small:{ec}"
                 return result
+            if not _gds_available(s):
+                result.error = "gds_unavailable"
+                return result
             edge_row = s.run("MATCH (a:ENTITY)-[r]->(b:ENTITY) RETURN count(r) as c").single()
             result.edge_count = edge_row["c"] if edge_row else 0
             try:
@@ -434,6 +473,7 @@ class LTMEnrichmentService:
 
     async def run_topic_summarization(
         self,
+        session_id: str,
         driver: Any,
         pg_store: Any,
         llm_key: str,
@@ -459,7 +499,7 @@ class LTMEnrichmentService:
         if hasattr(driver, "summarize_topics"):
             # driver is actually a Neo4jStore (or compatible) — delegate directly
             return await driver.summarize_topics(  # type: ignore[return-value, no-any-return]
-                session_id="",
+                session_id=session_id,
                 openrouter_key=llm_key,
                 llm_model=llm_model,
                 pg_store=pg_store,

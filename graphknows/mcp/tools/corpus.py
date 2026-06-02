@@ -12,6 +12,7 @@ from graphknows.mcp._state import get_settings
 async def corpus_ingest(
     documents: list[dict[str, Any]],
     taxonomy_file: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     r"""Ingest a corpus of documents into the long-term knowledge graph.
 
@@ -29,6 +30,7 @@ async def corpus_ingest(
         taxonomy_file: Optional path or name of taxonomy YAML to use.
             Defaults to taxonomy.generic.yaml. Pass
             \"taxonomy.eu-politics.yaml\" for EU political domain.
+        session_id: Optional session identifier for idempotent retries and cleanup.
 
     Returns:
         Dict with pipeline statistics: documents_processed,
@@ -46,6 +48,7 @@ async def corpus_ingest(
         request = CorpusIngestRequest(
             documents=documents,
             taxonomy_file=taxonomy_file,
+            session_id=session_id,
             summarize_topics=False,
             run_gds=True,
         )

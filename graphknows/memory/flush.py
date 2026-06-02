@@ -192,6 +192,7 @@ class SessionFlusher:
         """Run topic summarization via LTMEnrichmentService."""
         svc = LTMEnrichmentService()
         return await svc.run_topic_summarization(
+            session_id=session_id,
             driver=self._neo,
             pg_store=self._pg,
             llm_key=self._openrouter_key,

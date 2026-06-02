@@ -7,7 +7,13 @@ from typing import Any
 
 from graphknows.config.builders.stores import build_pgvector_store
 from graphknows.mcp._app import app
-from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get_settings
+from graphknows.mcp._state import (
+    get_mg_store,
+    get_neo_store,
+    get_pg_store,
+    get_pg_store_bridge,
+    get_settings,
+)
 from graphknows.memory.stm._async_bridge import _run as _bg_run
 
 
@@ -164,10 +170,10 @@ async def memory_recall(
     if scope in ("ltm", "both"):
         from graphknows.memory.query.recall_ltm import recall_long_term
 
-        pg2 = await get_pg_store()
+        pg2 = get_pg_store_bridge()
         neo = get_neo_store()
         ltm_hits = recall_long_term(
-            neo, pg2, query, top_k=top_k, session_filter=None, embed_fn=embed
+            neo, pg2, query, top_k=top_k, session_filter=session_id, embed_fn=embed
         )
         neo.close()
     else:

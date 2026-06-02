@@ -68,6 +68,33 @@ def test_run_gds_returns_gds_result() -> None:
     assert result.did_converge is True
 
 
+def test_run_gds_skips_when_gds_plugin_is_unavailable() -> None:
+    driver = MagicMock()
+    session = MagicMock()
+    driver.session.return_value.__enter__ = MagicMock(return_value=session)
+    driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+    def run_side_effect(query: str, **_kwargs: object) -> MagicMock:
+        result = MagicMock()
+        row = MagicMock()
+        if "count(e)" in query:
+            row.__getitem__ = MagicMock(return_value=5)
+        elif "count(r)" in query:
+            row.__getitem__ = MagicMock(return_value=3)
+        elif "SHOW PROCEDURES" in query:
+            row.__getitem__ = MagicMock(return_value=0)
+        result.single.return_value = row
+        return result
+
+    session.run.side_effect = run_side_effect
+
+    result = LTMEnrichmentService().run_gds(driver)
+
+    assert result.error == "gds_unavailable"
+    assert result.entity_count == 5
+    assert result.edge_count == 3
+
+
 def test_run_community_detection_too_small() -> None:
     driver = _make_driver(entity_count=1)
     svc = LTMEnrichmentService()
@@ -88,15 +115,22 @@ def test_run_centrality_too_small() -> None:
 async def test_run_topic_summarization_with_store() -> None:
     neo_store = MagicMock()
     neo_store.summarize_topics = AsyncMock(return_value=3)
+    fake_pg = MagicMock()
     svc = LTMEnrichmentService()
     count = await svc.run_topic_summarization(
+        session_id="sess-1",
         driver=neo_store,
-        pg_store=MagicMock(),
+        pg_store=fake_pg,
         llm_key="key",
         llm_model="model",
     )
     assert count == 3
-    neo_store.summarize_topics.assert_called_once()
+    neo_store.summarize_topics.assert_called_once_with(
+        session_id="sess-1",
+        openrouter_key="key",
+        llm_model="model",
+        pg_store=fake_pg,
+    )
 
 
 @pytest.mark.asyncio
@@ -105,6 +139,7 @@ async def test_run_topic_summarization_bare_driver_returns_zero() -> None:
     driver.summarize_topics = AsyncMock(return_value=0)
     svc = LTMEnrichmentService()
     count = await svc.run_topic_summarization(
+        session_id="sess-2",
         driver=driver,
         pg_store=MagicMock(),
         llm_key="key",

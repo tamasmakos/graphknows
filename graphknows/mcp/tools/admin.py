@@ -56,7 +56,7 @@ async def _purge_stm(session_id: str, errors: list[str]) -> None:
         errors.append(f"memgraph stm: {exc}")
 
     try:
-        pg_store = get_pg_store()
+        pg_store = await get_pg_store()
         if session_id:
             await pg_store.clear_stm(session_id)
         else:
@@ -76,8 +76,54 @@ async def _purge_ltm(session_id: str, errors: list[str]) -> None:
             def _neo_delete() -> None:
                 with neo_store._driver.session(database=neo_store._db) as s:
                     s.run(
-                        "MATCH (n {session_id: $sid}) DETACH DELETE n",
+                        """
+                        MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)
+                        OPTIONAL MATCH (f)-[:HAS_CHUNK]->(c:CHUNK)
+                        WITH f, collect(DISTINCT c) AS chunks
+                        FOREACH (chunk IN chunks | DETACH DELETE chunk)
+                        DETACH DELETE f
+                        """,
                         sid=session_id,
+                    )
+                    s.run(
+                        """
+                        MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(d:DIALOG)
+                        OPTIONAL MATCH (d)-[:HAS_TURN]->(t:TURN)
+                        WITH d, collect(DISTINCT t) AS turns
+                        FOREACH (turn IN turns | DETACH DELETE turn)
+                        DETACH DELETE d
+                        """,
+                        sid=session_id,
+                    )
+                    s.run(
+                        """
+                        MATCH (sess:SESSION {id: $sid})
+                        DETACH DELETE sess
+                        """,
+                        sid=session_id,
+                    )
+                    s.run(
+                        "MATCH (n:SessionEntity {session_id: $sid}) DETACH DELETE n",
+                        sid=session_id,
+                    )
+                    s.run(
+                        "MATCH ()-[r {session_id: $sid}]-() DELETE r",
+                        sid=session_id,
+                    )
+                    s.run(
+                        """
+                        MATCH (e:ENTITY)
+                        WHERE NOT (e)--()
+                        DETACH DELETE e
+                        """
+                    )
+                    s.run(
+                        """
+                        MATCH (t:TOPIC)
+                        WHERE NOT (t)<-[:IN_TOPIC]-(:ENTITY)
+                          AND NOT (t)<-[:IN_COMMUNITY]-(:ENTITY)
+                        DETACH DELETE t
+                        """
                     )
 
             await asyncio.to_thread(_neo_delete)
@@ -92,12 +138,21 @@ async def _purge_ltm(session_id: str, errors: list[str]) -> None:
         errors.append(f"neo4j ltm: {exc}")
 
     try:
-        pg_store = get_pg_store()
+        pg_store = await get_pg_store()
         pool = pg_store._pool_or_raise()
         async with pool.acquire() as conn:
             if session_id:
                 await conn.execute("DELETE FROM ltm_chunks WHERE session_id = $1", session_id)
                 await conn.execute("DELETE FROM ltm_turns WHERE session_id = $1", session_id)
+                await conn.execute(
+                    "DELETE FROM ltm_topics WHERE $1 = ANY(COALESCE(session_ids, ARRAY[]::text[]))",
+                    session_id,
+                )
+                has_legacy_chunks = await conn.fetchval(
+                    "SELECT to_regclass('public.chunks') IS NOT NULL"
+                )
+                if has_legacy_chunks:
+                    await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
             else:
                 await conn.execute("TRUNCATE TABLE ltm_chunks, ltm_turns, ltm_topics, chunks, chunk_entities, entities")
     except Exception as exc:

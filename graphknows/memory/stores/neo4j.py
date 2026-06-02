@@ -949,6 +949,9 @@ class Neo4jStore:
                 "label": title,
                 "summary": summary,
                 "community_id": comm_id,
+                "entity_count": len(members),
+                "entity_names": members,
+                "session_ids": [session_id],
                 "members": members,
                 "modularity": modularity,
                 "silhouette": silhouette,
@@ -1107,11 +1110,23 @@ class Neo4jStore:
         """
         rows = self._run(
             "MATCH (t:TOPIC) "
-            "WHERE t.entity_count >= $min_entities "
-            "RETURN t.community_id AS community_id, "
-            "       t.summary AS summary, "
-            "       t.entity_count AS entity_count "
-            "ORDER BY t.entity_count DESC",
-            min_entities=min_entities,
+            "OPTIONAL MATCH (e)-[:IN_TOPIC]->(t) "
+            "WITH t, count(DISTINCT e) AS computed_entity_count "
+            "RETURN properties(t) AS props, computed_entity_count"
         )
-        return [dict(r) for r in rows]
+        topics = []
+        for row in rows:
+            props = dict(row.get("props") or {})
+            entity_count = int(props.get("entity_count") or row.get("computed_entity_count") or 0)
+            if entity_count < min_entities:
+                continue
+            topics.append(
+                {
+                    "topic_id": props.get("id"),
+                    "label": props.get("label"),
+                    "community_id": props.get("community_id"),
+                    "summary": props.get("summary"),
+                    "entity_count": entity_count,
+                }
+            )
+        return sorted(topics, key=lambda t: t["entity_count"], reverse=True)

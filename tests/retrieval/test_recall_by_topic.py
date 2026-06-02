@@ -63,7 +63,13 @@ def test_recall_by_topic_entity_concept_returns_nonempty_entities() -> None:
 def test_recall_by_topic_returns_hits() -> None:
     """recall_by_topic returns RecallHit objects from driver results."""
     rows = [
-        {"topic_id": 1, "summary": "Test topic", "entities": ["entity_a"], "score": 1},
+        {
+            "topic_id": "topic-1",
+            "label": "Entity A topic",
+            "summary": "Test topic",
+            "entities": ["entity_a"],
+            "score": 1,
+        },
     ]
     driver = _make_driver(rows)
 
@@ -73,6 +79,20 @@ def test_recall_by_topic_returns_hits() -> None:
     assert hits[0].text == "Test topic"
     assert hits[0].entity_names == ["entity_a"]
     assert hits[0].score == 1.0
+    assert hits[0].provenance["topic_id"] == "topic-1"
+
+
+def test_recall_by_topic_uses_label_when_summary_missing() -> None:
+    """Topic label should be returned when summary is blank."""
+    rows = [
+        {"topic_id": "topic-2", "label": "OpenAI and Microsoft", "summary": "", "entities": [], "score": 0},
+    ]
+    driver = _make_driver(rows)
+
+    hits = recall_by_topic(driver, "OpenAI Microsoft", top_k=5)
+
+    assert len(hits) == 1
+    assert hits[0].text == "OpenAI and Microsoft"
 
 
 def test_recall_by_topic_filters_unrelated_zero_score_rows() -> None:

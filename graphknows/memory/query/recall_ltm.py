@@ -103,10 +103,14 @@ def _entity_traversal(
             """
             params: dict[str, Any] = {"words": words, "top_k": top_k}
             if session_filter:
-                base_cypher = base_cypher.replace(
-                    "MATCH (e:ENTITY)",
-                    "MATCH (e:ENTITY {session_id: $sid})",
-                )
+                base_cypher = """
+                    MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->()-[*0..]->(c:CHUNK)
+                    MATCH (c)-[:HAS_ENTITY]->(e:ENTITY)
+                    WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                    WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
+                    ORDER BY mc DESC LIMIT $top_k
+                    RETURN c.id AS chunk_id, c.text AS text, entities
+                """
                 params["sid"] = session_filter
             rows = s.run(base_cypher, **params).data()
             for rank, row in enumerate(rows):

@@ -242,8 +242,8 @@ def test_memory_recall_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_ltm_recall_uses_session_filter_none():
-    """LTM recall must pass session_filter=None regardless of session_id."""
+def test_ltm_recall_uses_session_filter():
+    """LTM recall must scope results to the requested session_id."""
     import asyncio
 
     from graphknows.mcp.stdio_server import memory_recall
@@ -257,7 +257,7 @@ def test_ltm_recall_uses_session_filter_none():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch(
             "graphknows.memory.query.recall_ltm.recall_long_term", return_value=[hit]
@@ -267,8 +267,8 @@ def test_ltm_recall_uses_session_filter_none():
 
     mock_recall_ltm.assert_called_once()
     _kwargs = mock_recall_ltm.call_args.kwargs
-    assert _kwargs.get("session_filter") is None, (
-        f"Expected session_filter=None, got {_kwargs.get('session_filter')}"
+    assert _kwargs.get("session_filter") == "current-session", (
+        f"Expected session_filter='current-session', got {_kwargs.get('session_filter')}"
     )
     assert len(result["hits"]) == 1
 
@@ -449,7 +449,7 @@ def test_scope_ltm_unchanged():
 
     with (
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.memory.query.recall_ltm.recall_long_term", return_value=[hit]),
     ):
@@ -486,6 +486,7 @@ def test_scope_both_normalises_cross_scope_scores():
         patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm._bg_run"),
+        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
         patch("graphknows.memory.stm.recall.recall_short_term", return_value=[stm_hit]),
         patch("graphknows.memory.query.recall_ltm.recall_long_term", return_value=[ltm_hit]),
@@ -617,12 +618,15 @@ def test_corpus_ingest_calls_run_ingestion():
         result = asyncio.run(
             corpus_ingest(
                 documents=[{"text": "test", "title": "t", "id": "1"}],
+                session_id="sess-abc",
             )
         )
 
     assert result["documents_processed"] == 1
     assert result["nodes_written"] == 5
     assert "session_id" in result
+    request = mock_workflow.run.await_args.args[0]
+    assert request.session_id == "sess-abc"
 
 
 def test_corpus_ingest_empty_documents():

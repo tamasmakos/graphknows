@@ -214,7 +214,8 @@ def recall_by_topic(
          count(DISTINCT e2) AS overlap
     ORDER BY overlap DESC, t.entity_count DESC
     LIMIT $top_k
-    RETURN t.community_id AS topic_id,
+    RETURN t.id AS topic_id,
+           t.label AS label,
            t.summary AS summary,
            matched_entities AS entities,
            overlap AS score
