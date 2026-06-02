@@ -1,0 +1,11 @@
+git
+workflow-aggregator
+pipeline-stage-view
+credentials-binding
+blueocean
+docker-workflow
+json-path-api
+junit
+htmlpublisher
+timestamper
+ansicolor
