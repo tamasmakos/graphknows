@@ -77,10 +77,3 @@ llm-wiki
 .import_linter_cache
 .grimp_cache
 .vscode
-
-!research/
-research/*
-!research/longmemeval_ingest_lab.py
-!research/relation_extraction_compare.py
-!research/relation_quality_cases.jsonl
-jenkins

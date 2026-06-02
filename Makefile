@@ -15,15 +15,15 @@ SVC            ?=   # optional: set to limit logs/restart/shell to one service
 
 # ── Lifecycle ──────────────────────────────────────────────────────
 up: ## Start all services (production images)
-	$(COMPOSE) up -d
+	$(COMPOSE) up -d --remove-orphans
 	@echo ""
 	@$(MAKE) --no-print-directory status
 
 down: ## Stop and remove containers (data volumes preserved)
-	$(COMPOSE) down
+	$(COMPOSE) down --remove-orphans
 
 dev: ## Start all services with source-mount hot-reload
-	$(COMPOSE_DEV) up -d
+	$(COMPOSE_DEV) up -d --remove-orphans
 	@echo ""
 	@$(MAKE) --no-print-directory status
 
