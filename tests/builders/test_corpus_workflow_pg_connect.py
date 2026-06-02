@@ -28,6 +28,8 @@ def test_build_corpus_workflow_does_not_connect_pg() -> None:
 
         settings = MagicMock(spec=GraphKnowsSettings)
         settings.openrouter_api_key = None
+        settings.relation_extraction_mode = "gliner2"
+        settings.taxonomy_file = None
 
         build_corpus_workflow(settings)
 

@@ -45,6 +45,6 @@ def test_invalid_relation_extraction_mode_rejected(monkeypatch):
     try:
         GraphKnowsSettings()
     except ValidationError as exc:
-        assert "relation_extraction_mode" in str(exc)
+        assert "RELATION_EXTRACTION_MODE" in str(exc) or "relation_extraction_mode" in str(exc)
     else:
         raise AssertionError("invalid relation extraction mode was accepted")
