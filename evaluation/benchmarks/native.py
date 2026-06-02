@@ -2,25 +2,20 @@
 
 from __future__ import annotations
 
-import argparse
-import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from evaluation.graphknows_mcp_client import GraphknowsMCPClient
-from evaluation.metrics import ExpectedEvidence, ToolObservation
-from evaluation.report import write_report
+from evaluation.core.metrics import ExpectedEvidence, ToolObservation
 
 
 class MCPToolClient(Protocol):
     """Protocol implemented by real and fake MCP clients."""
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        """Call a named MCP tool."""
         ...
 
 
@@ -47,7 +42,6 @@ class NativeEvaluationRun:
     eval_sessions: set[str] = field(default_factory=set)
 
     def session_id(self, case: str) -> str:
-        """Return and track a scoped eval session ID."""
         session_id = f"{self.run_id}-{case}"
         self.eval_sessions.add(session_id)
         return session_id
@@ -62,7 +56,6 @@ async def measured_call(
     expected: ExpectedEvidence | None = None,
     cold_start: bool = False,
 ) -> ToolObservation:
-    """Call a tool, measure latency, and record the observation."""
     start = time.perf_counter()
     try:
         result = await client.call_tool(tool_name, arguments or {})
@@ -107,14 +100,12 @@ async def cleanup_eval_sessions(client: MCPToolClient, run: NativeEvaluationRun)
 
 
 async def scenario_health(client: MCPToolClient, run: NativeEvaluationRun) -> None:
-    """Evaluate basic MCP health tools."""
     await measured_call(client, run, "health", "memory_doctor", cold_start=True)
     await measured_call(client, run, "health", "memory_stats", {"session_id": ""})
     await measured_call(client, run, "taxonomy", "list_taxonomies")
 
 
 async def scenario_stm_recall(client: MCPToolClient, run: NativeEvaluationRun) -> None:
-    """Evaluate STM ingest and recall behavior."""
     session_id = run.session_id("stm")
     text = (
         "Graphknows evaluation seed: Project Aurora stores retry budgets in pgvector, "
@@ -144,7 +135,6 @@ async def scenario_stm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
 
 
 async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -> None:
-    """Evaluate flush, LTM recall, and topic/entity tools."""
     session_id = run.session_id("ltm")
     text = (
         "The Long Memory Council approved the Helios migration. "
@@ -159,13 +149,7 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
         {"text": text, "session_id": session_id, "title": "native-ltm-seed"},
     )
     await measured_call(client, run, "ltm-flush", "memory_flush", {"session_id": session_id})
-    await measured_call(
-        client,
-        run,
-        "ltm-flush-idempotent",
-        "memory_flush",
-        {"session_id": session_id},
-    )
+    await measured_call(client, run, "ltm-flush-idempotent", "memory_flush", {"session_id": session_id})
     expected = ExpectedEvidence(terms=("helios", "neo4j"), entities=("long memory council",))
     await measured_call(
         client,
@@ -196,13 +180,7 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
     await measured_call(client, run, "ltm-query", "ltm_query", {"query": "Helios", "top_k": 5})
     await measured_call(client, run, "ltm-entity", "ltm_entity", {"name": "Neo4j"})
     await measured_call(client, run, "ltm-topics", "ltm_topics", {"min_entities": 1})
-    await measured_call(
-        client,
-        run,
-        "recall-document",
-        "recall_by_document",
-        {"query": "Helios Neo4j", "top_k": 5},
-    )
+    await measured_call(client, run, "recall-document", "recall_by_document", {"query": "Helios Neo4j", "top_k": 5})
     await measured_call(
         client,
         run,
@@ -210,17 +188,10 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
         "recall_by_dialog",
         {"query": "Helios Neo4j", "top_k": 5, "session_filter": session_id},
     )
-    await measured_call(
-        client,
-        run,
-        "recall-topic",
-        "recall_by_topic",
-        {"query": "Helios Neo4j", "top_k": 5},
-    )
+    await measured_call(client, run, "recall-topic", "recall_by_topic", {"query": "Helios Neo4j", "top_k": 5})
 
 
 async def scenario_corpus(client: MCPToolClient, run: NativeEvaluationRun) -> None:
-    """Evaluate corpus ingestion through MCP."""
     session_id = run.session_id("corpus")
     documents = [
         {
@@ -255,7 +226,6 @@ async def run_native_evaluation(
     config: NativeConfig | None = None,
     run_id: str | None = None,
 ) -> NativeEvaluationRun:
-    """Run native MCP evaluation scenarios."""
     cfg = config or NativeConfig()
     rid = run_id or f"eval-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     run = NativeEvaluationRun(run_id=rid, config=cfg)
@@ -266,67 +236,3 @@ async def run_native_evaluation(
         if cfg.cleanup:
             await cleanup_eval_sessions(client, run)
     return run
-
-
-def load_config(path: str | Path | None) -> NativeConfig:
-    """Load native evaluation configuration from YAML."""
-    if path is None:
-        return NativeConfig()
-    try:
-        import yaml
-    except ImportError as exc:
-        raise RuntimeError("Install PyYAML or use --config only in the project environment.") from exc
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    mcp = data.get("mcp", {})
-    native = data.get("native", {})
-    return NativeConfig(
-        command=mcp.get("command", "graphknows-mcp"),
-        initialize=bool(mcp.get("initialize", True)),
-        request_timeout_s=float(mcp.get("request_timeout_s", 120)),
-        output_dir=Path(native.get("output_dir", "evaluation/results/native")),
-        top_k=int(native.get("top_k", 5)),
-        scope=str(native.get("scope", "both")),
-        cleanup=bool(native.get("cleanup", True)),
-    )
-
-
-async def amain(argv: list[str] | None = None) -> int:
-    """CLI entry point."""
-    parser = argparse.ArgumentParser(description="Evaluate graphknows MCP tools.")
-    parser.add_argument("--config", default="evaluation/config.example.yaml")
-    parser.add_argument("--output-dir", default=None)
-    parser.add_argument("--no-cleanup", action="store_true")
-    args = parser.parse_args(argv)
-
-    config = load_config(args.config)
-    if args.output_dir:
-        config = replace(config, output_dir=Path(args.output_dir))
-    if args.no_cleanup:
-        config = replace(config, cleanup=False)
-
-    async with GraphknowsMCPClient(
-        command=config.command,
-        initialize=config.initialize,
-        request_timeout_s=config.request_timeout_s,
-    ) as client:
-        run = await run_native_evaluation(client, config=config)
-
-    paths = write_report(
-        run.observations,
-        output_dir=config.output_dir,
-        run_id=run.run_id,
-        top_k=config.top_k,
-        metadata={"scope": config.scope, "cleanup": config.cleanup},
-    )
-    print(f"Wrote {paths.json_path}")
-    print(f"Wrote {paths.markdown_path}")
-    return 0
-
-
-def main() -> None:
-    """Run the native evaluation CLI."""
-    raise SystemExit(asyncio.run(amain()))
-
-
-if __name__ == "__main__":
-    main()

@@ -83,3 +83,4 @@ research/*
 !research/longmemeval_ingest_lab.py
 !research/relation_extraction_compare.py
 !research/relation_quality_cases.jsonl
+jenkins

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from statistics import median
 from typing import Any
 
@@ -41,7 +41,6 @@ class ToolObservation:
 
 
 def _percentile(values: list[float], percentile: float) -> float:
-    """Return a nearest-rank percentile for a non-empty list."""
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -50,7 +49,6 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 
 def _extract_texts(payload: Any) -> list[str]:
-    """Extract candidate text strings from common graphknows MCP result shapes."""
     if not isinstance(payload, dict):
         return []
     rows = payload.get("hits") or payload.get("results") or payload.get("topics") or []
@@ -66,7 +64,6 @@ def _extract_texts(payload: Any) -> list[str]:
 
 
 def _extract_entities(payload: Any) -> list[str]:
-    """Extract entity strings from common graphknows MCP result shapes."""
     if not isinstance(payload, dict):
         return []
     rows = payload.get("hits") or payload.get("results") or payload.get("topics") or []
@@ -82,7 +79,6 @@ def _extract_entities(payload: Any) -> list[str]:
 
 
 def validate_result_shape(tool_name: str, payload: Any) -> tuple[bool, str]:
-    """Validate the minimum expected result shape for each graphknows MCP tool."""
     if not isinstance(payload, dict):
         return False, "payload is not an object"
     required_by_tool = {
@@ -108,7 +104,6 @@ def validate_result_shape(tool_name: str, payload: Any) -> tuple[bool, str]:
 
 
 def score_observation(observation: ToolObservation, top_k: int = 5) -> dict[str, float | bool]:
-    """Score quality metrics for a single observation."""
     expected = observation.expected
     if expected is None or not observation.success:
         return {
@@ -149,10 +144,7 @@ def score_observation(observation: ToolObservation, top_k: int = 5) -> dict[str,
     }
 
 
-def aggregate_observations(
-    observations: list[ToolObservation], top_k: int = 5
-) -> dict[str, Any]:
-    """Aggregate operational and quality metrics across observations."""
+def aggregate_observations(observations: list[ToolObservation], top_k: int = 5) -> dict[str, Any]:
     by_tool: dict[str, list[ToolObservation]] = defaultdict(list)
     for observation in observations:
         by_tool[observation.tool_name].append(observation)
@@ -175,9 +167,7 @@ def aggregate_observations(
                     (row.latency_ms for row in rows if row.cold_start), None
                 ),
                 "avg_recall_at_k": (
-                    sum(float(q["recall_at_k"]) for q in quality) / len(quality)
-                    if quality
-                    else None
+                    sum(float(q["recall_at_k"]) for q in quality) / len(quality) if quality else None
                 ),
                 "avg_precision_at_k": (
                     sum(float(q["precision_at_k"]) for q in quality) / len(quality)
@@ -214,7 +204,6 @@ def aggregate_observations(
 
 
 def observation_to_record(observation: ToolObservation, top_k: int = 5) -> dict[str, Any]:
-    """Serialize one observation into a JSON-compatible report record."""
     shape_ok, shape_error = validate_result_shape(observation.tool_name, observation.result)
     return {
         "case_id": observation.case_id,

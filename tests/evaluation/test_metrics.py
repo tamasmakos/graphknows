@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evaluation.metrics import (
+from evaluation.core.metrics import (
     ExpectedEvidence,
     ToolObservation,
     aggregate_observations,
@@ -48,4 +48,3 @@ def test_observation_scores_expected_evidence() -> None:
     assert record["quality"]["expected_text_found"] is True
     assert record["quality"]["expected_entity_found"] is True
     assert record["quality"]["answer_support_hit"] is True
-

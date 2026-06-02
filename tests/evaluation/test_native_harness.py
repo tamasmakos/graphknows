@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from evaluation.native_harness import NativeConfig, NativeEvaluationRun, cleanup_eval_sessions
+from evaluation.benchmarks.native import NativeConfig, NativeEvaluationRun, cleanup_eval_sessions
 
 
 class FakeClient:
@@ -38,4 +38,3 @@ async def test_cleanup_uses_scoped_memory_purge() -> None:
     assert client.calls == [
         ("memory_purge", {"scope": "both", "session_id": "eval-test-stm"})
     ]
-

@@ -92,9 +92,7 @@ class GraphknowsMCPClient:
         self._write_payload(proc, payload)
 
         while True:
-            line = await asyncio.wait_for(
-                proc.stdout.readline(), timeout=self.request_timeout_s
-            )
+            line = await asyncio.wait_for(proc.stdout.readline(), timeout=self.request_timeout_s)
             if not line:
                 stderr = await self._read_stderr_tail(proc)
                 raise MCPClientError(f"MCP server closed stdout. stderr: {stderr}")
@@ -159,4 +157,3 @@ def normalize_tool_result(result: Any) -> Any:
             except json.JSONDecodeError:
                 return {"text": text}
     return result
-
