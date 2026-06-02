@@ -29,6 +29,7 @@ class LTMWriter:
         neo_store: Any,
         errors: list[str] | None = None,
         openrouter_key: str = "",
+        relation_extraction_mode: str = "gliner2",
     ) -> dict[str, int]:
         """MERGE all STM nodes/edges into Neo4j LTM.
 
@@ -40,6 +41,8 @@ class LTMWriter:
             errors: Optional mutable list; non-fatal errors are appended here.
             openrouter_key: API key for relation extraction LLM. If empty, relation
                 extraction is skipped to avoid LLM retry storms (empty-key guard).
+            relation_extraction_mode: ``llm_assisted`` enables the optional LLM
+                relation pass. ``gliner2`` and ``off`` skip it.
 
         Returns:
             dict with ``nodes`` and ``edges`` counts.
@@ -54,6 +57,15 @@ class LTMWriter:
             log.warning("LTMWriter.write %s: %s", session_id, exc)
             if errors is not None:
                 errors.append(f"write_ltm_graph: {exc}")
+
+        if relation_extraction_mode != "llm_assisted":
+            log.info(
+                "LTMWriter.write %s: relation_extraction_mode=%s; skipping "
+                "extract_and_write_relations (rel_edges=0)",
+                session_id,
+                relation_extraction_mode,
+            )
+            return {"nodes": nodes, "edges": edges}
 
         # Relation extraction: skip when no key is available to avoid LLM retry storms.
         if not (openrouter_key or "").strip():

@@ -67,12 +67,14 @@ class SessionFlusher:
         neo_store: Any,
         openrouter_key: str = "",
         llm_model: str = "meta-llama/llama-3.1-8b-instruct",
+        relation_extraction_mode: str = "gliner2",
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
         self._neo = neo_store
         self._openrouter_key = openrouter_key
         self._llm_model = llm_model
+        self._relation_extraction_mode = relation_extraction_mode
 
     async def flush(self, session_id: str, options: FlushOptions | None = None) -> FlushResult:
         """Run the full STM→LTM promotion pipeline.
@@ -186,6 +188,7 @@ class SessionFlusher:
             neo_store=self._neo,
             errors=errors,
             openrouter_key=self._openrouter_key,
+            relation_extraction_mode=self._relation_extraction_mode,
         )
 
     async def _summarize_topics(self, session_id: str) -> int:

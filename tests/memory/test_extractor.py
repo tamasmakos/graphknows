@@ -195,6 +195,9 @@ class TestEnsureModelLoaded:
         assert extractor._gliner is mock_model
         assert extractor._gliner_schema is mock_schema
         mock_schema.entities.assert_called_once()
+        mock_schema.relations.assert_called_once_with(
+            {"KNOWS": "knows", "WORKS_FOR": "works for"}
+        )
 
 
 class TestExtract:

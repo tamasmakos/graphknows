@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -119,6 +120,10 @@ class GraphKnowsSettings(BaseSettings):
     # Entity extraction
     gliner_model: str = Field(default="fastino/gliner2-multi-v1", alias="GLINER_MODEL")
     gliner_threshold: float = Field(default=0.5, alias="GLINER_THRESHOLD")
+    relation_extraction_mode: Literal["gliner2", "llm_assisted", "off"] = Field(
+        default="gliner2",
+        alias="RELATION_EXTRACTION_MODE",
+    )
 
     # Taxonomy / ontology
     taxonomy_file: str | None = Field(default=None, alias="GRAPHKNOWS_TAXONOMY_FILE")

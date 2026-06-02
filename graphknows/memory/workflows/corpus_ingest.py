@@ -55,6 +55,7 @@ class CorpusIngestWorkflow:
         embed_fn: Any,
         openrouter_key: str = "",
         rel_extractor: Any = None,
+        relation_extraction_mode: str = "gliner2",
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
@@ -63,6 +64,7 @@ class CorpusIngestWorkflow:
         self._embed_fn = embed_fn
         self._openrouter_key = openrouter_key
         self._rel_extractor = rel_extractor
+        self._relation_extraction_mode = relation_extraction_mode
 
     async def run(self, request: CorpusIngestRequest) -> CorpusIngestResult:
         """Execute the STM-first corpus ingestion pipeline.
@@ -92,19 +94,23 @@ class CorpusIngestWorkflow:
         resolved_rel_extractor = self._rel_extractor
         if request.taxonomy_file is not None:
             try:
-                from graphknows.ingestion.domain.taxonomy import (
-                    load_taxonomy,
-                    resolve_taxonomy_path,
-                )
+                from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
                 from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
                 from graphknows.memory.extractor import GLiNER2EntityExtractor
 
-                taxonomy_path = resolve_taxonomy_path(request.taxonomy_file)
-                taxonomy = load_taxonomy(taxonomy_path)
-                resolved_extractor = GLiNER2EntityExtractor(taxonomy_path=taxonomy_path)
-                # Build a relation dict from taxonomy relation_types for the rel extractor
-                rel_ontology = {rt: rt.replace("_", " ").lower() for rt in taxonomy.relation_types}
-                resolved_rel_extractor = OntologyRelExtractor(relation_schema=rel_ontology)
+                taxonomy = load_taxonomy_artifacts(request.taxonomy_file)
+                resolved_extractor = (
+                    None
+                    if self._relation_extraction_mode == "off"
+                    else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
+                )
+                if self._relation_extraction_mode == "llm_assisted":
+                    resolved_rel_extractor = OntologyRelExtractor(
+                        taxonomy_file=taxonomy.taxonomy_path,
+                        relation_schema=taxonomy.relation_schema,
+                    )
+                else:
+                    resolved_rel_extractor = None
             except Exception as exc:
                 err = f"Failed to load taxonomy '{request.taxonomy_file}': {exc}"
                 result.errors.append(err)
@@ -161,6 +167,7 @@ class CorpusIngestWorkflow:
             pg_store=flush_pg,
             neo_store=self._neo,
             openrouter_key=self._openrouter_key,
+            relation_extraction_mode=self._relation_extraction_mode,
         )
         flush_opts = FlushOptions(
             summarize_topics=request.summarize_topics,

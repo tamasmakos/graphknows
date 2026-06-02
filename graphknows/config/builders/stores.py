@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.config.adapters.dspy_relation_extractor import DspyRelationExtractorAdapter
 from graphknows.config.adapters.embedder_adapter import EmbedderAdapter
 from graphknows.config.adapters.memgraph_adapter import MemgraphAdapter
 from graphknows.config.adapters.neo4j_adapter import Neo4jAdapter
@@ -26,6 +25,8 @@ from graphknows.memory.stores.pgvector import PgVectorStore
 
 def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor:
     """Build the relation extractor used by graph stores."""
+    from graphknows.config.adapters.dspy_relation_extractor import DspyRelationExtractorAdapter
+
     return DspyRelationExtractorAdapter(
         config={
             "llm": {"model": settings.extraction_model or settings.llm_model},
@@ -36,12 +37,17 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
 
 def build_neo4j_store(settings: GraphKnowsSettings) -> Neo4jStore:
     """Build a Neo4jStore from settings (backward-compat)."""
+    relation_extractor = (
+        build_relation_extractor(settings)
+        if settings.relation_extraction_mode == "llm_assisted"
+        else None
+    )
     return Neo4jStore(
         uri=settings.neo4j_uri,
         user=settings.neo4j_user,
         password=settings.neo4j_password,
         database=settings.neo4j_database,
-        relation_extractor=build_relation_extractor(settings),
+        relation_extractor=relation_extractor,
     )
 
 
@@ -82,7 +88,8 @@ def build_embedder(model_name: str = "openai/text-embedding-3-small") -> IEmbedd
 
 
 def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
-    """Build a MemoryIngestor from settings with DSPy relation extractor."""
+    """Build a MemoryIngestor from settings with explicit relation mode."""
+    from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
     from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
     from graphknows.memory.extractor import GLiNER2EntityExtractor
     from graphknows.memory.ingestor import MemoryIngestor, _run
@@ -92,8 +99,21 @@ def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
     pg = build_pgvector_store(settings)
     _run(pg.connect())
 
-    extractor = GLiNER2EntityExtractor()
-    rel_extractor = OntologyRelExtractor()
+    mode = settings.relation_extraction_mode
+    taxonomy = load_taxonomy_artifacts(settings.taxonomy_file)
+    extractor = (
+        None
+        if mode == "off"
+        else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
+    )
+    rel_extractor = (
+        OntologyRelExtractor(
+            taxonomy_file=taxonomy.taxonomy_path,
+            relation_schema=taxonomy.relation_schema,
+        )
+        if mode == "llm_assisted"
+        else None
+    )
     return MemoryIngestor(mg, pg, extractor, embed_fn=embed_one, rel_extractor=rel_extractor)
 
 
@@ -105,11 +125,18 @@ def build_session_flusher(settings: GraphKnowsSettings) -> Any:
     pg = build_pgvector_store(settings)
     neo = build_neo4j_store(settings)
     key = settings.openrouter_api_key or ""
-    return SessionFlusher(mg, pg, neo, openrouter_key=key)
+    return SessionFlusher(
+        mg,
+        pg,
+        neo,
+        openrouter_key=key,
+        relation_extraction_mode=settings.relation_extraction_mode,
+    )
 
 
 def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     """Build a CorpusIngestWorkflow from settings."""
+    from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
     from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
     from graphknows.memory.extractor import GLiNER2EntityExtractor
     from graphknows.memory.stores.embedder import embed_one
@@ -118,8 +145,21 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     mg = build_memgraph_store(settings)
     pg = build_pgvector_store(settings)
     neo = build_neo4j_store(settings)
-    extractor = GLiNER2EntityExtractor()
-    rel_extractor = OntologyRelExtractor()
+    mode = settings.relation_extraction_mode
+    taxonomy = load_taxonomy_artifacts(settings.taxonomy_file)
+    extractor = (
+        None
+        if mode == "off"
+        else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
+    )
+    rel_extractor = (
+        OntologyRelExtractor(
+            taxonomy_file=taxonomy.taxonomy_path,
+            relation_schema=taxonomy.relation_schema,
+        )
+        if mode == "llm_assisted"
+        else None
+    )
     key = settings.openrouter_api_key or ""
     return CorpusIngestWorkflow(
         mg_store=mg,
@@ -129,4 +169,5 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
         embed_fn=embed_one,
         openrouter_key=key,
         rel_extractor=rel_extractor,
+        relation_extraction_mode=mode,
     )

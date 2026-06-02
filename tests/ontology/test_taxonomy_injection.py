@@ -7,7 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from graphknows.ingestion.domain.taxonomy import (
+    build_relation_schema,
     list_bundled_taxonomies,
+    load_taxonomy_artifacts,
     load_taxonomy,
     resolve_taxonomy_path,
 )
@@ -81,34 +83,58 @@ class TestResolveTaxonomyPath:
             Path(tmp).unlink(missing_ok=True)
 
 
+class TestTaxonomyArtifacts:
+    def test_build_relation_schema_uses_relation_types(self) -> None:
+        taxonomy = load_taxonomy(resolve_taxonomy_path("taxonomy.generic.yaml"))
+        relation_schema = build_relation_schema(taxonomy)
+        assert relation_schema["PART_OF"] == "part of"
+        assert relation_schema["RELATED_TO"] == "related to"
+
+    def test_load_taxonomy_artifacts_returns_path_and_relation_schema(self) -> None:
+        artifacts = load_taxonomy_artifacts("taxonomy.eu-politics.yaml")
+        assert artifacts.taxonomy_path is not None
+        assert "OPPOSES" in artifacts.relation_schema
+        assert "PERSON" in artifacts.entity_labels
+
+
 # ---------------------------------------------------------------------------
-# OntologyRelExtractor — taxonomy_ontology wiring
+# OntologyRelExtractor — injected relation schema wiring
 # ---------------------------------------------------------------------------
 
 
-class TestOntologyRelExtractorTaxonomyOntology:
-    def test_taxonomy_ontology_overrides_default_routing(self) -> None:
+class TestOntologyRelExtractorRelationSchema:
+    def test_relation_schema_overrides_default_routing(self) -> None:
         from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
 
         custom = {"SUPPORTS": "entity A supports entity B", "OPPOSES": "entity A opposes entity B"}
-        extractor = OntologyRelExtractor(taxonomy_ontology=custom)
-        # _resolve_ontology with None schema should return taxonomy ontology
+        extractor = OntologyRelExtractor(relation_schema=custom)
         resolved = extractor._resolve_ontology("some text about politics", None)
         assert resolved == custom
+
+    def test_taxonomy_file_loads_same_relation_schema(self) -> None:
+        from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
+
+        artifacts = load_taxonomy_artifacts("taxonomy.generic.yaml")
+        extractor = OntologyRelExtractor(taxonomy_file="taxonomy.generic.yaml")
+        resolved = extractor._resolve_ontology("some text", None)
+        assert resolved == artifacts.relation_schema
 
     def test_explicit_schema_still_overrides_taxonomy(self) -> None:
         from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
 
         custom_taxonomy = {"SUPPORTS": "support relation"}
-        extractor = OntologyRelExtractor(taxonomy_ontology=custom_taxonomy)
+        extractor = OntologyRelExtractor(relation_schema=custom_taxonomy)
         explicit = {"causes": "cause relation"}
         resolved = extractor._resolve_ontology("text", explicit)
         assert resolved == explicit
 
     def test_no_taxonomy_falls_through_to_domain_routing(self) -> None:
-        from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor, DOMAIN_GK_ONTOLOGY
+        from graphknows.ingestion.ontology.rel_extractor import (
+            DOMAIN_GK_ONTOLOGY,
+            OntologyRelExtractor,
+        )
 
-        extractor = OntologyRelExtractor(taxonomy_ontology=None)
+        extractor = OntologyRelExtractor()
         # graphknows-flavoured text should route to DOMAIN_GK_ONTOLOGY
         resolved = extractor._resolve_ontology("memgraph neo4j pgvector stm ltm", None)
         assert resolved == DOMAIN_GK_ONTOLOGY
@@ -155,7 +181,10 @@ class TestCorpusIngestWorkflowTaxonomyWiring:
 
         with (
             patch("graphknows.memory.extractor.GLiNER2EntityExtractor", FakeExtractor),
-            patch("graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor", MagicMock(return_value=MagicMock())),
+            patch(
+                "graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor",
+                MagicMock(return_value=MagicMock()),
+            ),
             patch("graphknows.memory.stm._async_bridge._run"),
             patch("graphknows.memory.stm.service.STMService", return_value=mock_stm),
             patch("graphknows.memory.flush.SessionFlusher", return_value=mock_flusher),
@@ -165,7 +194,9 @@ class TestCorpusIngestWorkflowTaxonomyWiring:
             from graphknows.memory.workflows.corpus_ingest import CorpusIngestRequest
 
             req = CorpusIngestRequest(
-                documents=[{"text": "The council supports the directive.", "title": "Test", "id": "d1"}],
+                documents=[
+                    {"text": "The council supports the directive.", "title": "Test", "id": "d1"}
+                ],
                 taxonomy_file="taxonomy.generic.yaml",
             )
             result = await workflow.run(req)

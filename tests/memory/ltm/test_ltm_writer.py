@@ -23,7 +23,8 @@ async def test_write_returns_correct_counts() -> None:
         session_id="sess-1",
         stm_data={"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []},
         neo_store=store,
-        openrouter_key="test-key",  # key required to trigger relation extraction
+        openrouter_key="test-key",
+        relation_extraction_mode="llm_assisted",
     )
     assert result["nodes"] == 5
     assert result["edges"] == 6  # 4 + 2 rel edges
@@ -62,3 +63,17 @@ async def test_write_passes_session_id() -> None:
     store = _make_neo_store()
     await LTMWriter.write("my-session", stm_data={}, neo_store=store)
     store.write_session_subgraph.assert_called_once_with("my-session", {})
+
+
+@pytest.mark.asyncio
+async def test_write_does_not_run_llm_relations_by_default() -> None:
+    store = _make_neo_store(nodes=5, edges=4, rel_edges=2)
+    result = await LTMWriter.write(
+        session_id="sess-default",
+        stm_data={},
+        neo_store=store,
+        openrouter_key="test-key",
+    )
+    assert result["nodes"] == 5
+    assert result["edges"] == 4
+    store.extract_and_write_relations.assert_not_called()

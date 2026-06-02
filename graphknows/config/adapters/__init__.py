@@ -1,10 +1,9 @@
-"""graphknows adapters — port interfaces and concrete infrastructure adapters.
+"""graphknows adapters: ports and infrastructure adapters.
 
-Ports (protocols) define the boundary between application and infrastructure.
-Concrete adapters implement the ports by wrapping the existing store classes.
+Imports stay lazy so the baseline GLiNER2 ingest path does not import the
+DSPy/LiteLLM stack unless an LLM-assisted relation adapter is explicitly used.
 """
 
-from graphknows.config.adapters.dspy_relation_extractor import DspyRelationExtractorAdapter
 from graphknows.config.adapters.ports.embedder import IEmbedder
 from graphknows.config.adapters.ports.extractor import IEntityExtractor
 from graphknows.config.adapters.ports.graph_db import IGraphDb
@@ -23,3 +22,11 @@ __all__ = [
     "ISessionDb",
     "IVectorDb",
 ]
+
+
+def __getattr__(name: str):
+    if name == "DspyRelationExtractorAdapter":
+        from graphknows.config.adapters.dspy_relation_extractor import DspyRelationExtractorAdapter
+
+        return DspyRelationExtractorAdapter
+    raise AttributeError(name)

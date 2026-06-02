@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,16 @@ class TaxonomyConfig(BaseModel):
         return list(self.entity_groups.keys())
 
 
+@dataclass(frozen=True)
+class TaxonomyArtifacts:
+    """Resolved taxonomy plus derived schemas used by relation extraction."""
+
+    taxonomy: TaxonomyConfig
+    taxonomy_path: str | None
+    entity_labels: list[str]
+    relation_schema: dict[str, str]
+
+
 # ---------------------------------------------------------------------------
 # Loaders
 # ---------------------------------------------------------------------------
@@ -111,6 +122,32 @@ def get_default_taxonomy() -> TaxonomyConfig:
     else:
         yaml_path = Path(__file__).parent / "taxonomy.generic.yaml"
     return load_taxonomy(str(yaml_path))
+
+
+def build_relation_schema(taxonomy: TaxonomyConfig) -> dict[str, str]:
+    """Return a predicate-to-description schema derived from a taxonomy."""
+    return {rel: rel.replace("_", " ").lower() for rel in taxonomy.relation_types}
+
+
+def load_taxonomy_artifacts(taxonomy_file: str | None = None) -> TaxonomyArtifacts:
+    """Load one taxonomy and derive the shared extraction artifacts from it.
+
+    When *taxonomy_file* is ``None``, this uses the active default taxonomy
+    resolution path, including ``GRAPHKNOWS_TAXONOMY_FILE`` when present.
+    """
+    if taxonomy_file is None:
+        taxonomy = get_default_taxonomy()
+        env_path = os.environ.get("GRAPHKNOWS_TAXONOMY_FILE")
+        taxonomy_path = str(Path(env_path)) if env_path else None
+    else:
+        taxonomy_path = resolve_taxonomy_path(taxonomy_file)
+        taxonomy = load_taxonomy(taxonomy_path)
+    return TaxonomyArtifacts(
+        taxonomy=taxonomy,
+        taxonomy_path=taxonomy_path,
+        entity_labels=taxonomy.entity_label_keys(),
+        relation_schema=build_relation_schema(taxonomy),
+    )
 
 
 # ---------------------------------------------------------------------------
