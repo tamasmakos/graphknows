@@ -31,7 +31,7 @@ class DspyRelationExtractorAdapter:
         candidate_relations: list[dict[str, Any]] | None = None,
     ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
         """Extract relation triplets by delegating to graphgen's DSPy extractor."""
-        return await self._get_delegate().extract_relations(
+        return await self._get_delegate().extract_relations(  # type: ignore[return-value]
             text=text,
             keywords=keywords,
             entities=entities,

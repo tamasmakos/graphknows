@@ -98,9 +98,9 @@ def _extract_ontology_labels(ontology_config: dict[str, Any]) -> list[str]:
         extractor = OntologyLabelExtractor(
             ontology_dir=ontology_dir,
             namespace_filter=namespace_filter,
-            include_local_names=include_local_names,
         )
         labels = extractor.extract_labels(
+            include_local_names=include_local_names,
             top_level_only=top_level_only,
             min_subclasses=min_subclasses,
         )

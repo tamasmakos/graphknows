@@ -318,12 +318,12 @@ class FeatureEngineeringResult:
     entity_count: int = 0
     community_count: int = 0
     runtime_ms: float = 0.0
-    top_entities: list[dict] = field(default_factory=list)
+    top_entities: list[dict[str, Any]] = field(default_factory=list)
     algorithm_used: str = ""
     error: str = ""
 
 
-def _compute_silhouette(emb_rows: list) -> float | None:
+def _compute_silhouette(emb_rows: list[Any]) -> float | None:
     """Compute silhouette score from embedding rows."""
     if len(emb_rows) < 10:
         return None
@@ -341,10 +341,10 @@ def _compute_silhouette(emb_rows: list) -> float | None:
     return None
 
 
-def _compute_separation(emb_rows: list) -> tuple[float | None, float | None]:
+def _compute_separation(emb_rows: list[Any]) -> tuple[float | None, float | None]:
     """Compute global separation and overlap metrics."""
     counts = Counter(r["cid"] for r in emb_rows)
-    comm_vecs: dict = defaultdict(list)
+    comm_vecs: dict[Any, list[Any]] = defaultdict(list)
     for r in emb_rows:
         if counts[r["cid"]] >= 2:
             comm_vecs[r["cid"]].append(np.array(r["emb"], dtype=np.float32))

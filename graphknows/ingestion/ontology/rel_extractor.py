@@ -180,7 +180,7 @@ def _make_extractor() -> Any:
     """Build a DSPy ChainOfThought module with a typed Signature."""
     import dspy  # type: ignore
 
-    class OntologyExtractionSignature(dspy.Signature):
+    class OntologyExtractionSignature(dspy.Signature):  # type: ignore[misc]
         """Extract knowledge graph triples from the source text.
 
         You are a precise knowledge graph extractor.  Your job is to identify
@@ -224,32 +224,39 @@ def _make_extractor() -> Any:
 
 
 class OntologyRelExtractor:
-    """Extract typed relations from text guided by an ontology schema.
+    """Extract typed relations from text guided by an injected relation schema.
 
     Uses DSPy ChainOfThought with DeepSeek v4 Flash via OpenRouter.
-    Domain routing selects the appropriate ontology per chunk.
+    Built-in domain routing is only used when no explicit relation schema is
+    injected.
     Co-occurrence warm-start boosts recall 2-3x vs cold extraction.
 
     Args:
         lm: Pre-configured DSPy LM instance.  If None, auto-configured from
             ``OPENROUTER_API_KEY`` and ``EXTRACTION_MODEL`` env vars.
         confidence_threshold: Minimum confidence to keep a triple (default 0.5).
-        taxonomy_ontology: Optional dict mapping predicate → description loaded
-            from a :class:`~graphknows.ingestion.domain.taxonomy.TaxonomyConfig`.  When
-            provided this overrides the built-in domain routing heuristic so that
-            corpus-ingest runs use the user-supplied taxonomy relation types.
+        taxonomy_file: Optional taxonomy file or bundled taxonomy short name.
+        relation_schema: Optional predicate-to-description mapping.
     """
 
     def __init__(
         self,
         lm: Any | None = None,
         confidence_threshold: float = 0.5,
-        taxonomy_ontology: dict[str, str] | None = None,
+        taxonomy_file: str | None = None,
+        relation_schema: dict[str, str] | None = None,
     ) -> None:
         self._available: bool = False
         self._extractor: Any = None
         self._threshold = confidence_threshold
-        self._taxonomy_ontology: dict[str, str] | None = taxonomy_ontology
+        self._relation_schema: dict[str, str] | None = None
+
+        if relation_schema is not None:
+            self._relation_schema = relation_schema
+        elif taxonomy_file is not None:
+            from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
+
+            self._relation_schema = load_taxonomy_artifacts(taxonomy_file).relation_schema
 
         try:
             import dspy  # type: ignore
@@ -293,9 +300,8 @@ class OntologyRelExtractor:
     ) -> dict[str, str]:
         """Resolve the ontology to a predicate->description dict."""
         if ontology_schema is None:
-            # Taxonomy-level override takes priority over built-in domain routing
-            if self._taxonomy_ontology:
-                return self._taxonomy_ontology
+            if self._relation_schema:
+                return self._relation_schema
             return self.get_domain_ontology(text)
         if isinstance(ontology_schema, dict):
             return ontology_schema

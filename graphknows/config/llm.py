@@ -36,10 +36,10 @@ def _extract_secret(container: Any, key: str) -> str | None:
     if not value:
         return None
     if hasattr(value, "get_secret_value"):
-        return value.get_secret_value()
+        return value.get_secret_value()  # type: ignore[no-any-return]
     if isinstance(value, str) and value == _MASKED_SECRET:
         return os.environ.get(key.upper())
-    return str(value)
+    return str(value)  # type: ignore[return-value]
 
 
 def _get_openrouter_api_key(config: dict[str, Any] | None = None) -> str:

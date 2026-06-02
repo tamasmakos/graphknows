@@ -17,6 +17,8 @@ constants to ensure consistency.
 
 from __future__ import annotations
 
+from typing import Any
+
 # ============================================================================
 # Node Labels (STM + LTM)
 # ============================================================================
@@ -349,7 +351,7 @@ MEMGRAPH_INDEXES: list[str] = [
 ]
 
 
-def apply_schema(session) -> dict:
+def apply_schema(session: Any) -> dict:  # type: ignore[type-arg]
     """Apply Neo4j constraints and indexes. Idempotent. Returns counts."""
     applied: dict = {"constraints": 0, "indexes": 0, "errors": []}
     for stmt in CONSTRAINTS:
@@ -373,7 +375,7 @@ def apply_schema(session) -> dict:
     return applied
 
 
-def apply_memgraph_schema(session) -> dict:
+def apply_memgraph_schema(session: Any) -> dict:  # type: ignore[type-arg]
     """Apply Memgraph indexes. Idempotent (best-effort). Returns counts."""
     applied: dict = {"indexes": 0, "errors": []}
     for stmt in MEMGRAPH_INDEXES:
