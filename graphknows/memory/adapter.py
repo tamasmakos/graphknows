@@ -247,7 +247,7 @@ class GraphknowsAdapter:
             self.neo_store,
         )
         flush_options = FlushOptions(
-            summarize_topics=options.run_topics,
+            summarize_topics=True,
             run_gds=options.run_gds,
         )
         result = await flusher.flush(
@@ -257,7 +257,7 @@ class GraphknowsAdapter:
         summary = {
             "session_id": options.session_id,
             "run_gds": options.run_gds,
-            "run_topics": options.run_topics,
+            "run_topics": True,
         }
         if hasattr(result, "nodes_written"):
             summary["nodes_written"] = result.nodes_written

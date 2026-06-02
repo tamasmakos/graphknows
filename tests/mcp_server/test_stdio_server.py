@@ -627,6 +627,7 @@ def test_corpus_ingest_calls_run_ingestion():
     assert "session_id" in result
     request = mock_workflow.run.await_args.args[0]
     assert request.session_id == "sess-abc"
+    assert request.summarize_topics is True
 
 
 def test_corpus_ingest_empty_documents():
@@ -910,8 +911,8 @@ def test_memory_ingest_returns_no_warnings():
         assert "rel_extractor_disabled" not in result["warnings"]
 
 
-def test_memory_flush_does_not_summarize_topics():
-    """memory_flush must use summarize_topics=False — never block on LLM call (issue #114)."""
+def test_memory_flush_summarizes_topics():
+    """memory_flush must always request topic summarization."""
     import asyncio
     from graphknows.mcp.stdio_server import memory_flush
 
@@ -943,8 +944,8 @@ def test_memory_flush_does_not_summarize_topics():
         mock_flusher.flush = fake_flush
         mock_build.return_value = mock_flusher
         asyncio.run(memory_flush("test-session"))
-        assert captured_opts.get("summarize_topics") is False, \
-            "memory_flush must pass summarize_topics=False to FlushOptions"
+        assert captured_opts.get("summarize_topics") is True, \
+            "memory_flush must pass summarize_topics=True to FlushOptions"
 
 
 # ---------------------------------------------------------------------------

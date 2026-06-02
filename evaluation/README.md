@@ -22,6 +22,9 @@ python -m evaluation --help
 - `memoryarena`: memory retrieval slices and optional prediction-backed scoring
 - `longmemeval`: official LongMemEval-V2 haystack retrieval slices with capsule ingestion support
 - `hotpotqa`: support-retrieval evaluation over HotpotQA distractor contexts
+- `research-memory`: deterministic retrieval-only experiments with per-case isolation,
+  taxonomy injection, mandatory LTM promotion, mandatory topic summarization, and
+  three headline scores
 
 ## Examples
 
@@ -70,6 +73,25 @@ python -m evaluation.run_eval hotpotqa \
   --max-docs 10 \
   --relation-extraction-mode gliner2
 ```
+
+Research-grade retrieval-only memory experiment:
+
+```bash
+python -m evaluation.run_eval research-memory \
+  --suite hotpotqa \
+  --offset 0 \
+  --limit 3 \
+  --taxonomy-file taxonomy.generic.yaml \
+  --relation-extraction-mode gliner2
+```
+
+The research-memory command does not use an agentic answering workflow. Each
+case is purged before and after measurement, ingested through `corpus_ingest`,
+promoted to LTM with topic summarization, and scored on:
+
+- `answer_support_score`
+- `evidence_recall_score`
+- `topic_entity_score`
 
 Any benchmark slice can also capture the live STM footprint before cleanup:
 

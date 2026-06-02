@@ -1,10 +1,11 @@
-const canvas = document.querySelector("#graphCanvas");
+﻿const canvas = document.querySelector("#graphCanvas");
 const ctx = canvas.getContext("2d");
 const emptyState = document.querySelector("#emptyState");
 const sessionInput = document.querySelector("#sessionInput");
 const sessionsList = document.querySelector("#sessions");
 const limitInput = document.querySelector("#limitInput");
 const refreshButton = document.querySelector("#refreshButton");
+const flushButton = document.querySelector("#flushButton");
 const searchForm = document.querySelector("#searchForm");
 const queryInput = document.querySelector("#queryInput");
 const resultsEl = document.querySelector("#results");
@@ -14,6 +15,12 @@ const edgeCountEl = document.querySelector("#edgeCount");
 const stmChunksEl = document.querySelector("#stmChunks");
 const ltmTopicsEl = document.querySelector("#ltmTopics");
 const selectionEl = document.querySelector("#selection");
+const dropZone = document.querySelector("#dropZone");
+const ingestStatus = document.querySelector("#ingestStatus");
+const flushStatsSection = document.querySelector("#flushStatsSection");
+const flushStatsGrid = document.querySelector("#flushStatsGrid");
+const flushErrors = document.querySelector("#flushErrors");
+const opLogEl = document.querySelector("#opLog");
 
 const palette = ["#56c5b6", "#8ea7ff", "#f2c86d", "#f18f9b", "#7bd88f", "#c993ff", "#79c7ff", "#f5a96f"];
 const state = {
@@ -34,6 +41,27 @@ const state = {
   animating: false,
 };
 
+// â”€â”€ Op log (last 5 entries) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const opLog = [];
+
+function pushOpLog(type, summary, ok = true) {
+  const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  opLog.unshift({ ts, type, summary, ok });
+  if (opLog.length > 5) opLog.pop();
+  renderOpLog();
+}
+
+function renderOpLog() {
+  opLogEl.innerHTML = "";
+  for (const entry of opLog) {
+    const li = document.createElement("li");
+    li.className = `op-entry ${entry.ok ? "op-ok" : "op-err"}`;
+    li.innerHTML = `<span class="op-ts">${escapeHtml(entry.ts)}</span><span class="op-type">${escapeHtml(entry.type)}</span><span class="op-summary">${escapeHtml(entry.summary)}</span>`;
+    opLogEl.append(li);
+  }
+}
+
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function currentScope() {
   return document.querySelector("input[name='scope']:checked").value;
 }
@@ -48,8 +76,12 @@ function setHealth(ok, label) {
   healthEl.classList.toggle("bad", !ok);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
+}
+
+async function fetchJson(url, init) {
+  const response = await fetch(url, { headers: { Accept: "application/json" }, ...init });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.message || data.error || `Request failed: ${response.status}`);
@@ -57,6 +89,13 @@ async function fetchJson(url) {
   return data;
 }
 
+function updateFlushButton() {
+  const stm = currentScope() === "stm";
+  const hasSession = sessionInput.value.trim().length > 0;
+  flushButton.disabled = !(stm && hasSession);
+}
+
+// â”€â”€ Graph simulation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function resize() {
   const rect = canvas.parentElement.getBoundingClientRect();
   state.dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -275,20 +314,17 @@ function showSelection(node) {
     draw();
     return;
   }
-  selectionEl.innerHTML = `<strong>${escapeHtml(node.label || node.id)}</strong><br>${escapeHtml(node.type || "Entity")} ${node.topic ? `- topic ${escapeHtml(node.topic)}` : ""}`;
+  selectionEl.innerHTML = `<strong>${escapeHtml(node.label || node.id)}</strong><br>${escapeHtml(node.type || "Entity")} ${node.topic ? `â€” topic ${escapeHtml(node.topic)}` : ""}${node.pagerank ? `<br><small>PageRank: ${Number(node.pagerank).toFixed(4)}</small>` : ""}`;
   draw();
 }
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
-}
-
+// â”€â”€ API calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function loadHealth() {
   try {
     const data = await fetchJson("/api/health");
     const ok = Object.entries(data).filter(([key]) => key.endsWith("connected")).every(([, value]) => Boolean(value));
     setHealth(ok, ok ? "Online" : "Partial");
-  } catch (error) {
+  } catch {
     setHealth(false, "Offline");
   }
 }
@@ -300,7 +336,7 @@ async function loadStats() {
     const data = await fetchJson(`/api/stats?${params}`);
     setText(stmChunksEl, data.stm?.chunks ?? data.stm?.chunk_count ?? 0);
     setText(ltmTopicsEl, data.ltm?.topics ?? data.ltm?.topic_count ?? 0);
-  } catch (error) {
+  } catch {
     setText(stmChunksEl, "-");
     setText(ltmTopicsEl, "-");
   }
@@ -315,16 +351,27 @@ async function loadSessions() {
       option.value = sessionId;
       sessionsList.append(option);
     }
-  } catch (error) {
+  } catch {
     sessionsList.innerHTML = "";
   }
 }
 
 async function loadGraph() {
-  const params = new URLSearchParams({ scope: currentScope(), limit: limitInput.value || "200" });
-  if (sessionInput.value.trim()) params.set("session_id", sessionInput.value.trim());
+  const scope = currentScope();
+  const session = sessionInput.value.trim();
+
+  // Client-side guard: STM graph requires a session ID
+  if (scope === "stm" && !session) {
+    prepareGraph({ nodes: [], links: [] });
+    selectionEl.textContent = "Enter a session ID to view the STM graph.";
+    loadStats();
+    return;
+  }
+
+  const params = new URLSearchParams({ scope, limit: limitInput.value || "200" });
+  if (session) params.set("session_id", session);
   resultsEl.innerHTML = "";
-  selectionEl.textContent = "Loading graph";
+  selectionEl.textContent = "Loading graphâ€¦";
   try {
     const data = await fetchJson(`/api/graph?${params}`);
     prepareGraph(data);
@@ -346,7 +393,7 @@ function renderResults(hits) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "result-item";
-    button.innerHTML = `<small>${escapeHtml(hit.type || "hit")} - score ${escapeHtml(hit.score ?? "")}</small><span class="result-text">${escapeHtml(hit.text || "")}</span>`;
+    button.innerHTML = `<small>${escapeHtml(hit.type || "hit")} Â· score ${escapeHtml(Number(hit.score ?? 0).toFixed(4))}</small><span class="result-text">${escapeHtml(hit.text || "")}</span>`;
     button.addEventListener("click", () => {
       state.highlighted = new Set((hit.entities || []).map(String));
       const first = [...state.highlighted].map((id) => state.nodeById.get(id)).find(Boolean);
@@ -361,18 +408,178 @@ async function search(event) {
   event.preventDefault();
   const query = queryInput.value.trim();
   if (!query) return;
-  const scope = currentScope() === "stm" ? "stm" : sessionInput.value.trim() ? "both" : "ltm";
-  const params = new URLSearchParams({ q: query, scope, top_k: "8" });
+
+  const scope = currentScope();
+
+  // Client-side guard: STM recall requires a session
+  if (scope === "stm" && !sessionInput.value.trim()) {
+    resultsEl.textContent = "Enter a session ID to recall from STM.";
+    return;
+  }
+
+  const effectiveScope = scope === "stm" ? "stm" : sessionInput.value.trim() ? "both" : "ltm";
+  const params = new URLSearchParams({ q: query, scope: effectiveScope, top_k: "8" });
   if (sessionInput.value.trim()) params.set("session_id", sessionInput.value.trim());
-  resultsEl.textContent = "Searching";
+  resultsEl.textContent = "Searchingâ€¦";
   try {
     const data = await fetchJson(`/api/recall?${params}`);
     renderResults(data.hits || []);
+    pushOpLog("recall", `${(data.hits || []).length} hits for "${query.slice(0, 40)}"`);
   } catch (error) {
     resultsEl.textContent = error.message;
+    pushOpLog("recall", error.message, false);
   }
 }
 
+// â”€â”€ Ingest drop-zone â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function setDropState(cls, text) {
+  dropZone.className = `drop-zone ${cls}`;
+  const label = dropZone.querySelector(".drop-label");
+  if (label) label.textContent = text;
+}
+
+function resetDropZone() {
+  setDropState("", "Drop .md / .txt file to ingest into STM");
+}
+
+async function ingestFile(file) {
+  const sessionId = sessionInput.value.trim();
+  if (!sessionId) {
+    setDropState("err", "Set a session ID first");
+    ingestStatus.textContent = "Enter a session ID in the Session field above, then drop a file.";
+    ingestStatus.className = "ingest-status err";
+    setTimeout(resetDropZone, 5000);
+    return;
+  }
+
+  setDropState("loading", "Ingestingâ€¦");
+  ingestStatus.textContent = "";
+
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  formData.append("session_id", sessionId);
+  formData.append("title", file.name.replace(/\.[^.]+$/, ""));
+
+  try {
+    const data = await fetchJson("/api/ingest", { method: "POST", body: formData });
+    const summary = `${data.chunk_count} chunks Â· ${data.entity_count} entities`;
+    setDropState("ok", `âś“ ${summary}`);
+    ingestStatus.textContent = `Ingested in ${data.elapsed_s}s`;
+    ingestStatus.className = "ingest-status ok";
+    pushOpLog("ingest", `${escapeHtml(file.name)}: ${summary}`);
+    // Refresh graph if we're on STM scope
+    if (currentScope() === "stm") loadGraph();
+    else loadStats();
+    // Reset drop zone after a moment
+    setTimeout(resetDropZone, 4000);
+  } catch (error) {
+    setDropState("err", "âś— Ingest failed");
+    ingestStatus.textContent = error.message;
+    ingestStatus.className = "ingest-status err";
+    pushOpLog("ingest", error.message, false);
+    setTimeout(resetDropZone, 4000);
+  }
+}
+
+dropZone.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  if (dropZone.className.includes("loading")) return;
+  setDropState("hover", "Drop to ingestâ€¦");
+});
+
+dropZone.addEventListener("dragleave", () => {
+  if (dropZone.className.includes("loading")) return;
+  resetDropZone();
+});
+
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (dropZone.className.includes("loading")) return;
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  ingestFile(file);
+});
+
+dropZone.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".md,.txt,text/markdown,text/plain";
+    input.addEventListener("change", () => { if (input.files?.[0]) ingestFile(input.files[0]); });
+    input.click();
+  }
+});
+
+// â”€â”€ Flush â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function renderFlushStats(data) {
+  flushStatsSection.hidden = false;
+
+  const rows = [
+    ["Entities merged", data.merged_entities],
+    ["Nodes â†’ LTM", data.nodes_written],
+    ["Edges â†’ LTM", data.edges_written],
+    ["Chunks promoted", data.chunks_promoted],
+    ["Turns promoted", data.turns_promoted],
+    ["Louvain communities", data.community_count],
+    ["Modularity", typeof data.modularity === "number" ? data.modularity.toFixed(4) : "â€”"],
+    ["Louvain iterations", data.ran_iterations],
+    ["New topics", data.topics_created],
+    ["Time", `${data.elapsed_s}s`],
+  ];
+
+  flushStatsGrid.innerHTML = rows
+    .map(([label, value]) => `<div><dt>${escapeHtml(String(label))}</dt><dd>${escapeHtml(String(value ?? "â€”"))}</dd></div>`)
+    .join("");
+
+  if (data.errors && data.errors.length > 0) {
+    flushErrors.hidden = false;
+    flushErrors.innerHTML = `<strong>Warnings</strong><ul>${data.errors.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`;
+  } else {
+    flushErrors.hidden = true;
+  }
+}
+
+async function flushSession() {
+  const sessionId = sessionInput.value.trim();
+  if (!sessionId) return;
+
+  flushButton.disabled = true;
+  flushButton.textContent = "Flushingâ€¦";
+  flushStatsSection.hidden = true;
+
+  try {
+    const data = await fetchJson("/api/flush", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        options: { clear_stm: true, run_gds: true, merge_entities: true },
+      }),
+    });
+
+    renderFlushStats(data);
+    pushOpLog("flush", `${data.topics_created} topics Â· ${data.community_count} communities Â· ${data.merged_entities} merged`);
+
+    // Switch to LTM and reload to show result
+    const ltmRadio = document.querySelector("input[name='scope'][value='ltm']");
+    if (ltmRadio) { ltmRadio.checked = true; updateFlushButton(); }
+    loadGraph();
+    loadSessions();
+  } catch (error) {
+    flushStatsSection.hidden = false;
+    flushStatsGrid.innerHTML = "";
+    flushErrors.hidden = false;
+    flushErrors.innerHTML = `<strong>Flush failed</strong><p>${escapeHtml(error.message)}</p>`;
+    pushOpLog("flush", error.message, false);
+  } finally {
+    flushButton.textContent = "Flush â†’ LTM";
+    updateFlushButton();
+  }
+}
+
+flushButton.addEventListener("click", flushSession);
+
+// â”€â”€ Canvas interactions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
   const node = pickNode(event.clientX, event.clientY);
@@ -424,14 +631,19 @@ canvas.addEventListener("wheel", (event) => {
   draw();
 }, { passive: false });
 
+// â”€â”€ Event wiring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 refreshButton.addEventListener("click", loadGraph);
 searchForm.addEventListener("submit", search);
+
+sessionInput.addEventListener("input", () => { updateFlushButton(); });
 sessionInput.addEventListener("change", loadGraph);
 limitInput.addEventListener("change", loadGraph);
+
 for (const input of document.querySelectorAll("input[name='scope']")) {
-  input.addEventListener("change", loadGraph);
+  input.addEventListener("change", () => { updateFlushButton(); loadGraph(); });
 }
 
+// â”€â”€ Bootstrap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get("session_id")) sessionInput.value = urlParams.get("session_id");
 if (urlParams.get("scope")) {
@@ -441,6 +653,7 @@ if (urlParams.get("scope")) {
 
 window.addEventListener("resize", resize);
 resize();
+updateFlushButton();
 loadHealth();
 loadSessions();
 loadGraph();

@@ -194,7 +194,8 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
     """Flush a session from short-term memory into long-term memory.
 
     Promotes Memgraph STM nodes → Neo4j LTM with entity merging.
-    GDS enrichment (Node2Vec, Louvain, PageRank, betweenness) always runs.
+    Topic summarization and GDS enrichment (Node2Vec, Louvain, PageRank,
+    betweenness) always run.
 
     Args:
         session_id: Session to promote from STM to LTM.
@@ -236,7 +237,7 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
 
     flusher = build_session_flusher(s)
     opts = FlushOptions(
-        summarize_topics=False,  # Never block MCP flush on LLM call; pipeline must stay <60s
+        summarize_topics=True,
         run_gds=True,
         clear_stm=True,
         merge_entities=True,

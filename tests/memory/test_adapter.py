@@ -559,6 +559,7 @@ async def test_promote_calls_session_flusher(
     mock_flusher.return_value.flush.assert_awaited_once()
     args, kwargs = mock_flusher.return_value.flush.call_args
     assert args[0] == "s1"
+    assert kwargs["options"].summarize_topics is True
     assert result["session_id"] == "s1"
     assert result["run_gds"] is True
     assert result["run_topics"] is True
@@ -570,6 +571,40 @@ async def test_promote_calls_session_flusher(
     assert result["merged_entities"] == 0
     assert result["elapsed_s"] == 1.5
     assert result["errors"] == []
+
+
+@patch("graphknows.memory.adapter.SessionFlusher")
+@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.DialogCapture")
+@pytest.mark.asyncio
+async def test_promote_always_summarizes_topics(
+    mock_dialog_writer,
+    mock_ingestor,
+    mock_flusher,
+):
+    adapter = _make_adapter()
+    mock_flusher.return_value.flush = AsyncMock(
+        return_value=MagicMock(
+            nodes_written=1,
+            edges_written=1,
+            chunks_promoted=1,
+            turns_promoted=0,
+            topics_created=1,
+            merged_entities=0,
+            elapsed_s=0.1,
+            errors=[],
+        )
+    )
+    options = PromoteOptions(
+        session_id="s1",
+        run_gds=False,
+        run_topics=False,
+    )
+    result = await adapter.promote(options)
+
+    _, kwargs = mock_flusher.return_value.flush.call_args
+    assert kwargs["options"].summarize_topics is True
+    assert result["run_topics"] is True
 
 
 # ===========================================================================

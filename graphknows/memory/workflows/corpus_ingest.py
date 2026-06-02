@@ -22,7 +22,7 @@ class CorpusIngestRequest:
     session_id: str | None = None  # auto-generated if None; supply for idempotent retry
     run_gds: bool = True
     clear_stm: bool = True
-    summarize_topics: bool = True
+    summarize_topics: bool = True  # Deprecated: topic summarization always runs.
 
 
 @dataclass
@@ -170,7 +170,7 @@ class CorpusIngestWorkflow:
             relation_extraction_mode=self._relation_extraction_mode,
         )
         flush_opts = FlushOptions(
-            summarize_topics=request.summarize_topics,
+            summarize_topics=True,
             run_gds=request.run_gds,
             clear_stm=request.clear_stm,
         )

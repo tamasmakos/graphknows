@@ -19,24 +19,25 @@
       <main class="workspace">
         <section class="graph-panel" aria-label="Memory graph">
           <div class="controls" aria-label="Graph controls">
-            <label>
+            <label title="Session ID scopes STM operations. Required for STM graph, recall, ingest and flush.">
               <span>Session</span>
-              <input id="sessionInput" list="sessions" placeholder="optional for LTM" autocomplete="off" />
+              <input id="sessionInput" list="sessions" placeholder="required for STM" autocomplete="off" />
               <datalist id="sessions"></datalist>
             </label>
 
             <fieldset class="segmented" aria-label="Scope">
               <legend>Scope</legend>
-              <label><input type="radio" name="scope" value="ltm" checked /> <span>LTM</span></label>
-              <label><input type="radio" name="scope" value="stm" /> <span>STM</span></label>
+              <label title="Long-term memory: persistent knowledge graph"><input type="radio" name="scope" value="ltm" checked /> <span>LTM</span></label>
+              <label title="Short-term memory: session evidence graph (session ID required)"><input type="radio" name="scope" value="stm" /> <span>STM</span></label>
             </fieldset>
 
-            <label class="limit-control">
+            <label class="limit-control" title="Maximum number of nodes to display">
               <span>Nodes</span>
               <input id="limitInput" type="number" min="10" max="1000" step="10" value="200" />
             </label>
 
-            <button id="refreshButton" type="button">Refresh</button>
+            <button id="refreshButton" type="button" title="Reload graph from backend">Refresh</button>
+            <button id="flushButton" type="button" class="flush-btn" title="Promote this STM session into long-term memory" disabled>Flush → LTM</button>
           </div>
 
           <div class="canvas-wrap">
@@ -45,18 +46,45 @@
           </div>
         </section>
 
-        <aside class="side-panel" aria-label="Search and graph details">
+        <aside class="side-panel" aria-label="Operations and graph details">
+
+          <!-- Recall -->
           <section class="search-block">
             <form id="searchForm" class="search-form">
               <label for="queryInput">Recall</label>
               <div class="search-row">
-                <input id="queryInput" name="q" placeholder="Search memory" autocomplete="off" />
+                <input id="queryInput" name="q" placeholder="Search memory…" autocomplete="off" />
                 <button type="submit">Search</button>
               </div>
             </form>
             <div id="results" class="results" aria-live="polite"></div>
           </section>
 
+          <!-- Ingest -->
+          <section class="ingest-block">
+            <h2>Ingest</h2>
+            <div
+              id="dropZone"
+              class="drop-zone"
+              role="button"
+              tabindex="0"
+              aria-label="Drop a markdown or text file here to ingest into STM"
+              title="Drag and drop a .md or .txt file to ingest it into the current STM session"
+            >
+              <span class="drop-icon">📄</span>
+              <span class="drop-label">Drop .md / .txt file to ingest into STM</span>
+            </div>
+            <div id="ingestStatus" class="ingest-status" aria-live="polite"></div>
+          </section>
+
+          <!-- Flush stats -->
+          <section id="flushStatsSection" class="flush-stats-section" hidden>
+            <h2>Flush result</h2>
+            <dl class="flush-stats-grid" id="flushStatsGrid"></dl>
+            <div id="flushErrors" class="flush-errors" hidden></div>
+          </section>
+
+          <!-- Graph stats -->
           <section class="details-block">
             <h2>Graph</h2>
             <dl class="stats-grid">
@@ -67,6 +95,13 @@
             </dl>
             <div id="selection" class="selection">Select a node</div>
           </section>
+
+          <!-- Operation log -->
+          <section class="oplog-block">
+            <h2>Recent operations</h2>
+            <ul id="opLog" class="op-log" aria-live="polite"></ul>
+          </section>
+
         </aside>
       </main>
     </div>
