@@ -165,6 +165,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Memory Mirror web UI ────────────────────────────────────────────────────
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "${WEB_PORT:-8800}:8800"
+    environment:
+      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
+      NEO4J_HOST: "${NEO4J_HOST:-neo4j}"
+      NEO4J_PORT: "${NEO4J_PORT:-7687}"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
+      NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
+      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
+      MEMGRAPH_USER: "${MEMGRAPH_USER:-}"
+      MEMGRAPH_PASSWORD: "${MEMGRAPH_PASSWORD:-}"
+      GRAPHKNOWS_WEB_HOST: "0.0.0.0"
+      GRAPHKNOWS_WEB_PORT: "8800"
+      GRAPHKNOWS_FRONTEND_DIR: "/app/frontend"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      memgraph:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ── Observability (optional profile) ────────────────────────────────────────
 
   langfuse:
