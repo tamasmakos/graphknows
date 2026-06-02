@@ -27,6 +27,11 @@ _agent_path = str(Path(__file__).parent.parent / "services" / "agent")
 if _agent_path not in sys.path:
     sys.path.insert(0, _agent_path)
 
+# Ensure project root is in sys.path (belt-and-suspenders alongside pytest.ini pythonpath)
+_project_root = str(Path(__file__).parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 
 _STUB_KEYS = (
     "langgraph.prebuilt",
