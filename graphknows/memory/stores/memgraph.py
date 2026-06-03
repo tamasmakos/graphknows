@@ -795,6 +795,22 @@ class MemgraphStore:
                         sid=session_id,
                     )
                 ]
+                relation_edges = [
+                    {
+                        "source": r["source"],
+                        "relation": r["relation"],
+                        "target": r["target"],
+                        "confidence": r["confidence"],
+                    }
+                    for r in s.run(
+                        "MATCH (a:ENTITY {session_id: $sid})"
+                        "-[r:REL {session_id: $sid, is_current: true}]->"
+                        "(b:ENTITY {session_id: $sid}) "
+                        "RETURN a.name AS source, r.name AS relation, b.name AS target, "
+                        "r.confidence AS confidence",
+                        sid=session_id,
+                    )
+                ]
             return {
                 "entities": entities,
                 "files": files,
@@ -804,6 +820,7 @@ class MemgraphStore:
                 "chunk_entity_edges": chunk_entity_edges,
                 "turn_entity_edges": turn_entity_edges,
                 "next_edges": next_edges,
+                "relation_edges": relation_edges,
                 "_merge_count": 0,
             }
 
