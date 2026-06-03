@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evaluation.core.metrics import (
+from evaluation.core.reporting.metrics import (
     ExpectedEvidence,
     ToolObservation,
     aggregate_observations,

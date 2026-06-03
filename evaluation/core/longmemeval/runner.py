@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from evaluation.benchmarks.huggingface import download_if_missing
-from evaluation.benchmarks.types import BenchmarkCaseResult
+from evaluation.core.data import download_if_missing
+from evaluation.core.models import BenchmarkCaseResult
 from evaluation.core.client import GraphknowsMCPClient
 
 LONGMEMEVAL_DATASET = "xiaowu0162/longmemeval-v2"

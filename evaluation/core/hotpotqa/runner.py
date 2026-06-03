@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from evaluation.benchmarks.huggingface import fetch_dataset_rows
-from evaluation.benchmarks.types import BenchmarkCaseResult
+from evaluation.core.data import fetch_dataset_rows
+from evaluation.core.models import BenchmarkCaseResult
 from evaluation.core.client import GraphknowsMCPClient
 
 HOTPOTQA_DATASET = "hotpotqa/hotpot_qa"

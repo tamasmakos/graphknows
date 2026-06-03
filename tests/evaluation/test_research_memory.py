@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evaluation.benchmarks.research_memory import (
+from evaluation.core.research.harness import (
     ResearchCase,
     ResearchMemoryOptions,
     _score_case,
@@ -54,7 +54,7 @@ async def test_run_research_memory_uses_fixed_operation_sequence(monkeypatch) ->
     async def fake_build_cases(options):
         return [case]
 
-    import evaluation.benchmarks.research_memory as mod
+    import evaluation.core.research as mod
 
     monkeypatch.setattr(mod, "build_research_cases", fake_build_cases)
 

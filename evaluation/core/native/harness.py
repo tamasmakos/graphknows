@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from evaluation.core.metrics import ExpectedEvidence, ToolObservation
+from evaluation.core.reporting.metrics import ExpectedEvidence, ToolObservation
 
 
 class MCPToolClient(Protocol):

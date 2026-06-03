@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evaluation.benchmarks.hotpotqa import score_hotpotqa_support
+from evaluation.core.hotpotqa import score_hotpotqa_support
 
 
 def test_score_hotpotqa_support_matches_titles_and_answer() -> None:

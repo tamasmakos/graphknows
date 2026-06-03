@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from evaluation.benchmarks.native import NativeConfig, NativeEvaluationRun, cleanup_eval_sessions
+from evaluation.core.native.harness import (
+    NativeConfig,
+    NativeEvaluationRun,
+    cleanup_eval_sessions,
+)
 
 
 class FakeClient:
