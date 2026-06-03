@@ -271,6 +271,7 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
 
 async def _ingest_turn_async(mg, pg, extractor, embed_fn, session_id, dialog_id, turn):
     """Helper coroutine that writes a single turn through DialogCapture."""
+    import asyncio
     import time
 
     from graphknows.memory.stm.dialog import DialogCapture
@@ -283,7 +284,12 @@ async def _ingest_turn_async(mg, pg, extractor, embed_fn, session_id, dialog_id,
         dialog_id=dialog_id,
         started_at=str(time.time()),
     )
-    result = dc.write_turn(session_id=session_id, dialog_id=dialog_id, turn=turn)
+    # write_turn is sync (uses _BG_LOOP internally) — run in executor to avoid blocking MCP loop
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: dc.write_turn(session_id=session_id, dialog_id=dialog_id, turn=turn),
+    )
     elapsed = time.perf_counter() - t0
     return {
         "dialog_id": result.dialog_id,
@@ -322,14 +328,13 @@ async def memory_ingest_turn(
 
     from graphknows.config.builders.stores import build_pgvector_store
     from graphknows.memory.extractor import GLiNER2EntityExtractor
-    from graphknows.memory.stm._async_bridge import _run as _bg_run
     from graphknows.memory.stm.dialog import Turn
     from graphknows.memory.stores.embedder import embed_one
 
     s = get_settings()
     mg = get_mg_store()
     pg = build_pgvector_store(s)
-    _bg_run(pg.connect())
+    await pg.connect()
 
     if not dialog_id:
         dialog_id = f"dialog-{session_id}"
@@ -343,13 +348,8 @@ async def memory_ingest_turn(
         timestamp=time.time(),
     )
 
-    extractor = GLiNER2EntityExtractor()
-
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: _bg_run(
-            _ingest_turn_async(mg, pg, extractor, embed_one, session_id, dialog_id, turn)
-        ),
-    )
+    extractor = await loop.run_in_executor(None, GLiNER2EntityExtractor)
+
+    result = await _ingest_turn_async(mg, pg, extractor, embed_one, session_id, dialog_id, turn)
     return result
