@@ -732,7 +732,17 @@ class Neo4jStore:
                 )
                 written: set[str] = {e["name"] for e in stm_data.get("entities", [])}
                 n2, e2 = _write_interaction_graph(s, session_id, stm_data, entity_by_name, written)
-            return {"nodes": n1 + n2, "edges": e1 + e2}
+                relation_edges = stm_data.get("relation_edges", [])
+                e3 = 0
+                if relation_edges:
+                    triplets = [
+                        (r["source"], r["relation"], r["target"])
+                        for r in relation_edges
+                        if r.get("source") and r.get("relation") and r.get("target")
+                    ]
+                    if triplets:
+                        e3 = _write_relation_edges(s, triplets, entity_by_name)
+            return {"nodes": n1 + n2, "edges": e1 + e2 + e3}
 
         return await asyncio.to_thread(_sync)
 
