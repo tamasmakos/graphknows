@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evaluation.core.metrics import ToolObservation
+from evaluation.core.reporting.metrics import ToolObservation
 from evaluation.core.reporting import write_benchmark_report, write_report
 
 

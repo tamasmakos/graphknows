@@ -6,47 +6,23 @@ import argparse
 import asyncio
 import json
 import time
+from datetime import UTC, datetime
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from evaluation.benchmarks.hotpotqa import run_hotpotqa_small
-from evaluation.benchmarks.longmemeval import run_longmemeval_small
-from evaluation.benchmarks.memoryarena import (
+from evaluation.core.hotpotqa import run_hotpotqa_small
+from evaluation.core.longmemeval import run_longmemeval_small
+from evaluation.core.memoryarena import (
     DOMAIN_CONFIGS,
     evaluate_domain_with_predictions,
     fetch_memoryarena_rows,
     run_memoryarena_small,
 )
-from evaluation.benchmarks.native import NativeConfig, run_native_evaluation
-from evaluation.benchmarks.research_memory import ResearchMemoryOptions, run_research_memory
+from evaluation.core.native import NativeConfig, run_native_evaluation
+from evaluation.core.research import ResearchMemoryOptions, run_research_memory
 from evaluation.core.client import GraphknowsMCPClient
 from evaluation.core.reporting import write_benchmark_report, write_report
-from evaluation.core.stm_inspection import derive_inspect_command, inspect_session
-
-
-def load_config(path: str | Path | None) -> NativeConfig:
-    """Load native evaluation configuration from YAML."""
-    if path is None:
-        return NativeConfig()
-    try:
-        import yaml
-    except ImportError as exc:
-        raise RuntimeError(
-            "Install PyYAML or use --config only in the project environment."
-        ) from exc
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    mcp = data.get("mcp", {})
-    native = data.get("native", {})
-    return NativeConfig(
-        command=mcp.get("command", "graphknows-mcp"),
-        initialize=bool(mcp.get("initialize", True)),
-        request_timeout_s=float(mcp.get("request_timeout_s", 120)),
-        output_dir=Path(native.get("output_dir", "evaluation/results/native")),
-        top_k=int(native.get("top_k", 5)),
-        scope=str(native.get("scope", "both")),
-        cleanup=bool(native.get("cleanup", True)),
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,13 +30,20 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="benchmark", required=True)
 
     native = subparsers.add_parser("native", help="Run the native MCP harness.")
-    native.add_argument("--config", default="evaluation/config.example.yaml")
-    native.add_argument("--output-dir", default=None)
+    native.add_argument("--command", default="graphknows-mcp")
+    native.add_argument(
+        "--run-id", default=f"eval-native-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    )
+    native.add_argument("--output-dir", default="evaluation/results/native")
+    native.add_argument("--top-k", type=int, default=5)
     native.add_argument("--no-cleanup", action="store_true")
+    native.add_argument("--scope", choices=["stm", "ltm", "both"], default="both")
 
     memoryarena = subparsers.add_parser("memoryarena", help="Run a MemoryArena evaluation slice.")
     memoryarena.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
-    memoryarena.add_argument("--run-id", default=f"eval-memoryarena-{int(time.time())}")
+    memoryarena.add_argument(
+        "--run-id", default=f"eval-memoryarena-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    )
     memoryarena.add_argument("--output-dir", default="evaluation/results/memoryarena")
     memoryarena.add_argument("--top-k", type=int, default=5)
     memoryarena.add_argument(
@@ -72,12 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
     memoryarena.add_argument("--subtask-index", type=int, default=1)
     memoryarena.add_argument("--predictions-json", default="")
     memoryarena.add_argument("--session-prefix", default="eval-memoryarena")
-    memoryarena.add_argument("--inspect-stm", action="store_true")
-    memoryarena.add_argument("--inspect-command", default="")
 
     longmemeval = subparsers.add_parser("longmemeval", help="Run a LongMemEval evaluation slice.")
     longmemeval.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
-    longmemeval.add_argument("--run-id", default=f"eval-longmemeval-{int(time.time())}")
+    longmemeval.add_argument(
+        "--run-id", default=f"eval-longmemeval-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    )
     longmemeval.add_argument("--output-dir", default="evaluation/results/longmemeval")
     longmemeval.add_argument("--top-k", type=int, default=5)
     longmemeval.add_argument(
@@ -94,12 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["raw", "trajectory_capsules", "batched_capsules"],
         default="batched_capsules",
     )
-    longmemeval.add_argument("--inspect-stm", action="store_true")
-    longmemeval.add_argument("--inspect-command", default="")
 
     hotpotqa = subparsers.add_parser("hotpotqa", help="Run a HotpotQA support-retrieval slice.")
     hotpotqa.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
-    hotpotqa.add_argument("--run-id", default=f"eval-hotpotqa-{int(time.time())}")
+    hotpotqa.add_argument(
+        "--run-id", default=f"eval-hotpotqa-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    )
     hotpotqa.add_argument("--output-dir", default="evaluation/results/hotpotqa")
     hotpotqa.add_argument("--top-k", type=int, default=5)
     hotpotqa.add_argument(
@@ -109,15 +92,15 @@ def build_parser() -> argparse.ArgumentParser:
     hotpotqa.add_argument("--limit", type=int, default=3)
     hotpotqa.add_argument("--max-docs", type=int, default=10)
     hotpotqa.add_argument("--max-chars-per-doc", type=int, default=2500)
-    hotpotqa.add_argument("--inspect-stm", action="store_true")
-    hotpotqa.add_argument("--inspect-command", default="")
 
     research = subparsers.add_parser(
         "research-memory",
         help="Run deterministic retrieval-only memory experiments with mandatory LTM topics.",
     )
     research.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
-    research.add_argument("--run-id", default=f"eval-research-memory-{int(time.time())}")
+    research.add_argument(
+        "--run-id", default=f"eval-research-memory-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    )
     research.add_argument("--output-dir", default="evaluation/results/research-memory")
     research.add_argument(
         "--suite", choices=["hotpotqa", "longmemeval", "memoryarena"], default="hotpotqa"
@@ -140,36 +123,6 @@ def build_parser() -> argparse.ArgumentParser:
     research.add_argument("--max-chars-per-doc", type=int, default=2500)
 
     return parser
-
-
-def _resolve_inspect_command(command: str, explicit: str) -> str:
-    if explicit:
-        return explicit
-    derived = derive_inspect_command(command)
-    if not derived:
-        raise RuntimeError(
-            "Could not derive --inspect-command from --command; please pass --inspect-command explicitly."
-        )
-    return derived
-
-
-async def _annotate_cases_with_stm_snapshot(
-    client: GraphknowsMCPClient,
-    cases: list[Any],
-    *,
-    inspect_command: str,
-) -> list[Any]:
-    for case in cases:
-        session_id = str(case.metadata.get("session_id", "")).strip()
-        if not session_id:
-            continue
-        snapshot = await inspect_session(inspect_command, session_id)
-        case.metadata["stm_snapshot"] = snapshot
-        case.metrics["distinct_entity_nodes"] = int(snapshot.get("distinct_entity_nodes", 0))
-        case.metrics["relation_edges_total"] = int(snapshot.get("relation_edges_total", 0))
-        case.metrics["total_stm_nodes"] = int(snapshot.get("total_stm_nodes", 0))
-        await client.call_tool("memory_purge", {"scope": "both", "session_id": session_id})
-    return cases
 
 
 async def _run_memoryarena(args: argparse.Namespace) -> int:
@@ -221,14 +174,8 @@ async def _run_memoryarena(args: argparse.Namespace) -> int:
                 subtask_index=args.subtask_index,
                 run_id=args.run_id,
                 top_k=args.top_k,
-                purge=not args.inspect_stm,
+                purge=True,
             )
-            if args.inspect_stm:
-                cases = await _annotate_cases_with_stm_snapshot(
-                    client,
-                    cases,
-                    inspect_command=_resolve_inspect_command(args.command, args.inspect_command),
-                )
             paths = write_benchmark_report(
                 benchmark="memoryarena",
                 run_id=args.run_id,
@@ -237,7 +184,6 @@ async def _run_memoryarena(args: argparse.Namespace) -> int:
                 metadata={"domain": args.domain, "mode": "memory_retrieval"},
             )
     print(paths.json_path)
-    print(paths.markdown_path)
     return 0
 
 
@@ -258,14 +204,8 @@ async def _run_longmemeval(args: argparse.Namespace) -> int:
             max_states=args.max_states,
             max_chars_per_trajectory=args.max_chars_per_trajectory,
             ingest_strategy=args.ingest_strategy,
-            purge=not args.inspect_stm,
+            purge=True,
         )
-        if args.inspect_stm:
-            cases = await _annotate_cases_with_stm_snapshot(
-                client,
-                cases,
-                inspect_command=_resolve_inspect_command(args.command, args.inspect_command),
-            )
     paths = write_benchmark_report(
         benchmark="longmemeval",
         run_id=args.run_id,
@@ -274,7 +214,6 @@ async def _run_longmemeval(args: argparse.Namespace) -> int:
         metadata={"ingest_strategy": args.ingest_strategy},
     )
     print(paths.json_path)
-    print(paths.markdown_path)
     return 0
 
 
@@ -292,14 +231,8 @@ async def _run_hotpotqa(args: argparse.Namespace) -> int:
             top_k=args.top_k,
             max_docs=args.max_docs,
             max_chars_per_doc=args.max_chars_per_doc,
-            purge=not args.inspect_stm,
+            purge=True,
         )
-        if args.inspect_stm:
-            cases = await _annotate_cases_with_stm_snapshot(
-                client,
-                cases,
-                inspect_command=_resolve_inspect_command(args.command, args.inspect_command),
-            )
     paths = write_benchmark_report(
         benchmark="hotpotqa",
         run_id=args.run_id,
@@ -308,7 +241,6 @@ async def _run_hotpotqa(args: argparse.Namespace) -> int:
         metadata={"limit": args.limit, "offset": args.offset},
     )
     print(paths.json_path)
-    print(paths.markdown_path)
     return 0
 
 
@@ -356,22 +288,23 @@ async def _run_research_memory(args: argparse.Namespace) -> int:
         },
     )
     print(paths.json_path)
-    print(paths.markdown_path)
     return 0
 
 
 async def _run_native(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
-    if args.output_dir:
-        config = replace(config, output_dir=Path(args.output_dir))
-    if args.no_cleanup:
-        config = replace(config, cleanup=False)
+    config = NativeConfig(
+        command=args.command,
+        output_dir=Path(args.output_dir),
+        top_k=args.top_k,
+        scope=args.scope,
+        cleanup=not args.no_cleanup,
+    )
     async with GraphknowsMCPClient(
         command=config.command,
         initialize=config.initialize,
         request_timeout_s=config.request_timeout_s,
     ) as client:
-        run = await run_native_evaluation(client, config=config)
+        run = await run_native_evaluation(client, config=config, run_id=args.run_id)
     paths = write_report(
         run.observations,
         output_dir=config.output_dir,
@@ -380,7 +313,6 @@ async def _run_native(args: argparse.Namespace) -> int:
         metadata={"scope": config.scope, "cleanup": config.cleanup},
     )
     print(paths.json_path)
-    print(paths.markdown_path)
     return 0
 
 

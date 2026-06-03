@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from evaluation.benchmarks.longmemeval import (
+from evaluation.core.longmemeval import (
     CapsuleOptions,
     build_trajectory_capsule,
     capsule_documents,

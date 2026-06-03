@@ -37,7 +37,7 @@ make infra-up
 Native MCP harness:
 
 ```bash
-python -m evaluation.run_eval native --config evaluation/config.example.yaml
+python -m evaluation.run_eval native --command "graphknows-mcp"
 ```
 
 MemoryArena retrieval slice:
@@ -92,25 +92,6 @@ promoted to LTM with topic summarization, and scored on:
 - `answer_support_score`
 - `evidence_recall_score`
 - `topic_entity_score`
-
-Any benchmark slice can also capture the live STM footprint before cleanup:
-
-```bash
-python -m evaluation.run_eval hotpotqa \
-  --offset 0 \
-  --limit 1 \
-  --relation-extraction-mode gliner2 \
-  --inspect-stm
-```
-
-When inspection is enabled, each case artifact includes:
-
-- per-ingest `chunks` and `entities` counts returned by `memory_ingest`
-- Memgraph STM node counts by label
-- pgvector `stm_chunks` / `stm_turns` counts
-- distinct STM entity node count
-- STM relation edge count
-- sampled entities and relations
 
 Prediction-backed MemoryArena scoring:
 

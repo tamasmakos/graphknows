@@ -135,7 +135,6 @@ def get_embedder(model_name: str = EMBED_MODEL) -> Any:
         def encode(
             self,
             texts: list[str] | str,
-            batch_size: int = 32,
         ) -> np.ndarray:
             if isinstance(texts, str):
                 texts = [texts]

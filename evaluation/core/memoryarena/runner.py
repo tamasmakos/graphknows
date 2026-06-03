@@ -6,8 +6,8 @@ import json
 import re
 from typing import Any
 
-from evaluation.benchmarks.huggingface import fetch_dataset_rows
-from evaluation.benchmarks.types import BenchmarkCaseResult
+from evaluation.core.data import fetch_dataset_rows
+from evaluation.core.models import BenchmarkCaseResult
 from evaluation.core.client import GraphknowsMCPClient
 
 MEMORYARENA_DATASET = "ZexueHe/memoryarena"
