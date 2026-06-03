@@ -110,8 +110,7 @@ def _score_case(
     retrievals: dict[str, Any],
 ) -> dict[str, Any]:
     evidence_text = "\n".join(
-        _result_text(retrievals.get(name))
-        for name in ("memory_recall_ltm", "recall_by_document")
+        _result_text(retrievals.get(name)) for name in ("memory_recall_ltm", "recall_by_document")
     )
     topic_entity_text = "\n".join(
         _result_text(retrievals.get(name))
@@ -225,7 +224,9 @@ async def _build_longmemeval_cases(options: ResearchMemoryOptions) -> list[Resea
     cases: list[ResearchCase] = []
     capsule_options = CapsuleOptions(
         max_states=options.max_states,
-        max_chars_per_state=max(500, options.max_chars_per_trajectory // max(options.max_states, 1)),
+        max_chars_per_state=max(
+            500, options.max_chars_per_trajectory // max(options.max_states, 1)
+        ),
         max_chars_per_capsule=options.max_chars_per_trajectory,
     )
     for question in selected:
@@ -352,7 +353,8 @@ async def run_research_memory(
                 "chunks_written": int(ingest.get("chunks_written", 0)),
                 "nodes_written": int(ingest.get("nodes_written", 0)),
                 "edges_written": int(ingest.get("edges_written", 0)),
-                "ingest_errors": len(ingest.get("errors", []) or []),
+                "ingest_errors": len(ingest.get("errors", []) or [])
+                + (1 if ingest.get("error") else 0),
                 "topics_available": len(
                     retrievals.get("ltm_topics", {}).get("topics", [])
                     if isinstance(retrievals.get("ltm_topics"), dict)

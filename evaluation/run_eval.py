@@ -32,7 +32,9 @@ def load_config(path: str | Path | None) -> NativeConfig:
     try:
         import yaml
     except ImportError as exc:
-        raise RuntimeError("Install PyYAML or use --config only in the project environment.") from exc
+        raise RuntimeError(
+            "Install PyYAML or use --config only in the project environment."
+        ) from exc
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     mcp = data.get("mcp", {})
     native = data.get("native", {})
@@ -57,11 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--no-cleanup", action="store_true")
 
     memoryarena = subparsers.add_parser("memoryarena", help="Run a MemoryArena evaluation slice.")
-    memoryarena.add_argument("--command", default="docker compose exec -T mcp graphknows-mcp")
+    memoryarena.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
     memoryarena.add_argument("--run-id", default=f"eval-memoryarena-{int(time.time())}")
     memoryarena.add_argument("--output-dir", default="evaluation/results/memoryarena")
     memoryarena.add_argument("--top-k", type=int, default=5)
-    memoryarena.add_argument("--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2")
+    memoryarena.add_argument(
+        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
+    )
     memoryarena.add_argument("--domain", choices=sorted(DOMAIN_CONFIGS), default="bundled_shopping")
     memoryarena.add_argument("--offset", type=int, default=0)
     memoryarena.add_argument("--limit", type=int, default=1)
@@ -72,27 +76,35 @@ def build_parser() -> argparse.ArgumentParser:
     memoryarena.add_argument("--inspect-command", default="")
 
     longmemeval = subparsers.add_parser("longmemeval", help="Run a LongMemEval evaluation slice.")
-    longmemeval.add_argument("--command", default="docker compose exec -T mcp graphknows-mcp")
+    longmemeval.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
     longmemeval.add_argument("--run-id", default=f"eval-longmemeval-{int(time.time())}")
     longmemeval.add_argument("--output-dir", default="evaluation/results/longmemeval")
     longmemeval.add_argument("--top-k", type=int, default=5)
-    longmemeval.add_argument("--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2")
+    longmemeval.add_argument(
+        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
+    )
     longmemeval.add_argument("--data-root", default="evaluation/data/longmemeval-v2")
     longmemeval.add_argument("--question-id", default="")
     longmemeval.add_argument("--max-questions", type=int, default=1)
     longmemeval.add_argument("--max-trajectories", type=int, default=5)
     longmemeval.add_argument("--max-states", type=int, default=8)
     longmemeval.add_argument("--max-chars-per-trajectory", type=int, default=4000)
-    longmemeval.add_argument("--ingest-strategy", choices=["raw", "trajectory_capsules", "batched_capsules"], default="batched_capsules")
+    longmemeval.add_argument(
+        "--ingest-strategy",
+        choices=["raw", "trajectory_capsules", "batched_capsules"],
+        default="batched_capsules",
+    )
     longmemeval.add_argument("--inspect-stm", action="store_true")
     longmemeval.add_argument("--inspect-command", default="")
 
     hotpotqa = subparsers.add_parser("hotpotqa", help="Run a HotpotQA support-retrieval slice.")
-    hotpotqa.add_argument("--command", default="docker compose exec -T mcp graphknows-mcp")
+    hotpotqa.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
     hotpotqa.add_argument("--run-id", default=f"eval-hotpotqa-{int(time.time())}")
     hotpotqa.add_argument("--output-dir", default="evaluation/results/hotpotqa")
     hotpotqa.add_argument("--top-k", type=int, default=5)
-    hotpotqa.add_argument("--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2")
+    hotpotqa.add_argument(
+        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
+    )
     hotpotqa.add_argument("--offset", type=int, default=0)
     hotpotqa.add_argument("--limit", type=int, default=3)
     hotpotqa.add_argument("--max-docs", type=int, default=10)
@@ -104,13 +116,17 @@ def build_parser() -> argparse.ArgumentParser:
         "research-memory",
         help="Run deterministic retrieval-only memory experiments with mandatory LTM topics.",
     )
-    research.add_argument("--command", default="docker compose exec -T mcp graphknows-mcp")
+    research.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
     research.add_argument("--run-id", default=f"eval-research-memory-{int(time.time())}")
     research.add_argument("--output-dir", default="evaluation/results/research-memory")
-    research.add_argument("--suite", choices=["hotpotqa", "longmemeval", "memoryarena"], default="hotpotqa")
+    research.add_argument(
+        "--suite", choices=["hotpotqa", "longmemeval", "memoryarena"], default="hotpotqa"
+    )
     research.add_argument("--top-k", type=int, default=5)
     research.add_argument("--taxonomy-file", default="taxonomy.generic.yaml")
-    research.add_argument("--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2")
+    research.add_argument(
+        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
+    )
     research.add_argument("--offset", type=int, default=0)
     research.add_argument("--limit", type=int, default=1)
     research.add_argument("--domain", choices=sorted(DOMAIN_CONFIGS), default="bundled_shopping")
@@ -131,7 +147,9 @@ def _resolve_inspect_command(command: str, explicit: str) -> str:
         return explicit
     derived = derive_inspect_command(command)
     if not derived:
-        raise RuntimeError("Could not derive --inspect-command from --command; please pass --inspect-command explicitly.")
+        raise RuntimeError(
+            "Could not derive --inspect-command from --command; please pass --inspect-command explicitly."
+        )
     return derived
 
 
@@ -188,7 +206,11 @@ async def _run_memoryarena(args: argparse.Namespace) -> int:
                 run_id=args.run_id,
                 output_dir=args.output_dir,
                 cases=cases,
-                metadata={"domain": args.domain, "official_rows": total_rows, "mode": "predictions"},
+                metadata={
+                    "domain": args.domain,
+                    "official_rows": total_rows,
+                    "mode": "predictions",
+                },
             )
         else:
             cases = await run_memoryarena_small(
