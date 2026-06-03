@@ -57,13 +57,11 @@ async def test_write_relation_edge_generates_correct_cypher():
     assert mock_session.run.called
     cypher, params = mock_session.run.call_args[0][0], mock_session.run.call_args[1]
     assert "MERGE" in cypher
-    assert ":REL" in cypher
-    assert "$name" in cypher or "name" in cypher
+    assert ":OPPOSES" in cypher
     assert "$fact" in cypher or "fact" in cypher
     assert params["session_id"] == "s1"
     assert params["subject"] == "Viktor Orbán"
     assert params["object"] == "Ukraine EU membership"
-    assert params["name"] == "OPPOSES"
     assert params["fact"] == "Viktor Orbán opposes Ukraine EU membership"
     assert params["confidence"] == 1.0
 

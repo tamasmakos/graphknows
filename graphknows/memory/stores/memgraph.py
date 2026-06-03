@@ -10,9 +10,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import Any
 
 from graphknows.ingestion.domain.schema import MEMGRAPH_INDEXES
+
+
+def _safe_rel_label(raw: str) -> str:
+    """Convert a relation string to a valid Cypher relationship type label.
+
+    Uppercases, replaces spaces/hyphens with underscores, strips non-word chars.
+    Returns empty string if nothing valid remains.
+    """
+    label = raw.upper().replace("-", "_").replace(" ", "_")
+    label = re.sub(r"[^\w]", "", label)
+    return label
+
 
 logger = logging.getLogger(__name__)
 
@@ -562,28 +575,37 @@ class MemgraphStore:
 
         now = datetime.datetime.utcnow().isoformat()
 
+        safe = _safe_rel_label(relation_name)
+        if not safe:
+            return
+
         def _sync() -> None:
             with self._driver.session() as s:
-                # Invalidation: tombstone existing current edges for single-valued types
+                # Invalidation: tombstone existing current edges for single-valued types.
+                # Match all typed edges from subject with is_current=true pointing at a
+                # different object — we use a generic MATCH on any rel type here since
+                # Memgraph does not support dynamic labels in MATCH without f-strings, and
+                # the session_id + is_current filter is sufficient for correctness.
                 if relation_name in self._SINGLE_VALUED_RELATIONS:
                     s.run(
-                        """MATCH (a:ENTITY {name: $subject, session_id: $session_id})
-                               -[r:REL {name: $name, session_id: $session_id, is_current: true}]
+                        f"""MATCH (a:ENTITY {{name: $subject, session_id: $session_id}})
+                               -[r:{safe} {{session_id: $session_id, is_current: true}}]
                                ->(b:ENTITY)
                            WHERE toLower(b.name) <> toLower($object)
                            SET r.is_current = false, r.valid_to = $now""",
                         subject=subject_name,
-                        name=relation_name,
                         session_id=session_id,
                         object=object_name,
                         now=now,
                     )
 
-                # Write new edge with bi-temporal fields
+                # Write new edge with typed label and bi-temporal fields.
+                # MERGE cannot use dynamic labels, so we CREATE if not exists via
+                # MATCH + MERGE pattern with a discriminating property set.
                 s.run(
-                    """MATCH (a:ENTITY {name: $subject, session_id: $session_id})
-                       MATCH (b:ENTITY {name: $object, session_id: $session_id})
-                       MERGE (a)-[r:REL {name: $name, session_id: $session_id}]->(b)
+                    f"""MATCH (a:ENTITY {{name: $subject, session_id: $session_id}})
+                       MATCH (b:ENTITY {{name: $object, session_id: $session_id}})
+                       MERGE (a)-[r:{safe} {{session_id: $session_id}}]->(b)
                        SET r.fact        = $fact,
                            r.confidence  = $confidence,
                            r.valid_from  = coalesce(r.valid_from, $now),
@@ -592,7 +614,6 @@ class MemgraphStore:
                            r.created_at  = coalesce(r.created_at, $now)""",
                     subject=subject_name,
                     object=object_name,
-                    name=relation_name,
                     session_id=session_id,
                     fact=fact,
                     confidence=confidence,
@@ -804,9 +825,10 @@ class MemgraphStore:
                     }
                     for r in s.run(
                         "MATCH (a:ENTITY {session_id: $sid})"
-                        "-[r:REL {session_id: $sid, is_current: true}]->"
+                        "-[r {session_id: $sid, is_current: true}]->"
                         "(b:ENTITY {session_id: $sid}) "
-                        "RETURN a.name AS source, r.name AS relation, b.name AS target, "
+                        "WHERE type(r) <> 'REL' "
+                        "RETURN a.name AS source, type(r) AS relation, b.name AS target, "
                         "r.confidence AS confidence",
                         sid=session_id,
                     )
