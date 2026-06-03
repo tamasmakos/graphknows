@@ -102,9 +102,7 @@ def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
     mode = settings.relation_extraction_mode
     taxonomy = load_taxonomy_artifacts(settings.taxonomy_file)
     extractor = (
-        None
-        if mode == "off"
-        else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
+        None if mode == "off" else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
     )
     rel_extractor = (
         OntologyRelExtractor(
@@ -148,9 +146,7 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     mode = settings.relation_extraction_mode
     taxonomy = load_taxonomy_artifacts(settings.taxonomy_file)
     extractor = (
-        None
-        if mode == "off"
-        else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
+        None if mode == "off" else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
     )
     rel_extractor = (
         OntologyRelExtractor(

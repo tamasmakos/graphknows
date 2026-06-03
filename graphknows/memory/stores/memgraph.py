@@ -430,40 +430,6 @@ class MemgraphStore:
 
         await asyncio.to_thread(_sync)
 
-    async def write_tool_call_node(
-        self,
-        turn_id: str,
-        name: str,
-        args_hash: str,
-        latency_ms: int,
-    ) -> None:
-        """Upsert a TOOL_CALL node linked to a TURN.
-
-        Args:
-            turn_id: Parent turn identifier.
-            name: Tool name.
-            args_hash: Hash of the tool arguments for deduplication.
-            latency_ms: Execution latency in milliseconds.
-        """
-
-        def _sync() -> None:
-            with self._driver.session() as s:
-                s.run(
-                    """
-                    MERGE (tc:TOOL_CALL {turn_id: $tid, args_hash: $hash})
-                    SET tc.name = $name, tc.latency_ms = $latency_ms
-                    WITH tc
-                    MATCH (t:TURN {id: $tid})
-                    MERGE (t)-[:CALLED]->(tc)
-                    """,
-                    tid=turn_id,
-                    hash=args_hash,
-                    name=name,
-                    latency_ms=latency_ms,
-                ).consume()
-
-        await asyncio.to_thread(_sync)
-
     # ------------------------------------------------------------------
     # Deprecated — kept for backward compatibility, do not use in new code
     # ------------------------------------------------------------------

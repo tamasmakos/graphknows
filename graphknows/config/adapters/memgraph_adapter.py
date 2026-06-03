@@ -112,15 +112,6 @@ class MemgraphAdapter:
             turn_id, entity_name, session_id, confidence
         )
 
-    async def write_tool_call_node(
-        self,
-        turn_id: str,
-        name: str,
-        args_hash: str,
-        latency_ms: int,
-    ) -> None:
-        return await self._store.write_tool_call_node(turn_id, name, args_hash, latency_ms)
-
     async def query_entity_chunks(
         self,
         session_id: str,

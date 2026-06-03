@@ -8,10 +8,8 @@ from graphknows.memory.adapter_types import (
     AdapterCapabilities,
     ArtifactRecord,
     MemoryClass,
-    ParticipantRecord,
     PromoteOptions,
     RecallRequest,
-    ToolCallRecord,
     TurnRecord,
 )
 
@@ -84,63 +82,6 @@ class TestArtifactRecord:
             record.artifact_id = "a2"
 
 
-class TestToolCallRecord:
-    """Tests for ToolCallRecord construction and invariants."""
-
-    def test_construct_with_required_fields(self) -> None:
-        """ToolCallRecord can be constructed with only required fields."""
-        record = ToolCallRecord(
-            tool_id="tc1",
-            tool_name="terminal",
-            input_summary="ls -la",
-            output_summary="file listing",
-        )
-
-        assert record.tool_id == "tc1"
-        assert record.tool_name == "terminal"
-        assert record.input_summary == "ls -la"
-        assert record.output_summary == "file listing"
-
-    def test_defaults_are_applied(self) -> None:
-        """Default values are set when optional fields are omitted."""
-        record = ToolCallRecord(
-            tool_id="tc1",
-            tool_name="terminal",
-            input_summary="ls -la",
-            output_summary="file listing",
-        )
-
-        assert record.exit_code is None
-        assert record.error is None
-        assert record.memory_class == MemoryClass.raw_evidence
-        assert record.metadata == {}
-
-    def test_memory_class_is_enum_value(self) -> None:
-        """The memory_class field must be a MemoryClass enum value."""
-        record = ToolCallRecord(
-            tool_id="tc1",
-            tool_name="terminal",
-            input_summary="ls -la",
-            output_summary="file listing",
-            memory_class=MemoryClass.fact,
-        )
-
-        assert isinstance(record.memory_class, MemoryClass)
-        assert record.memory_class == MemoryClass.fact
-
-    def test_frozen_prevents_mutation(self) -> None:
-        """Frozen dataclass must raise when mutation is attempted."""
-        record = ToolCallRecord(
-            tool_id="tc1",
-            tool_name="terminal",
-            input_summary="ls -la",
-            output_summary="file listing",
-        )
-
-        with pytest.raises(AttributeError, match="cannot assign to field"):
-            record.tool_id = "tc2"
-
-
 class TestTurnRecord:
     """Tests for TurnRecord construction and invariants."""
 
@@ -167,7 +108,6 @@ class TestTurnRecord:
             content="Hello!",
         )
 
-        assert record.tool_calls == []
         assert record.memory_class == MemoryClass.raw_evidence
         assert record.metadata == {}
 
@@ -195,52 +135,6 @@ class TestTurnRecord:
 
         with pytest.raises(AttributeError, match="cannot assign to field"):
             record.turn_id = "t2"
-
-    def test_empty_tool_calls_list(self) -> None:
-        """TurnRecord accepts an explicitly empty tool_calls list."""
-        record = TurnRecord(
-            turn_id="t1",
-            session_id="s1",
-            role="assistant",
-            content="Hello!",
-            tool_calls=[],
-        )
-
-        assert record.tool_calls == []
-
-
-class TestParticipantRecord:
-    """Tests for ParticipantRecord construction and invariants."""
-
-    def test_construct_with_required_fields(self) -> None:
-        """ParticipantRecord can be constructed with only required fields."""
-        record = ParticipantRecord(
-            participant_id="p1",
-            role="user",
-        )
-
-        assert record.participant_id == "p1"
-        assert record.role == "user"
-
-    def test_defaults_are_applied(self) -> None:
-        """Default values are set when optional fields are omitted."""
-        record = ParticipantRecord(
-            participant_id="p1",
-            role="user",
-        )
-
-        assert record.display_name is None
-        assert record.metadata == {}
-
-    def test_frozen_prevents_mutation(self) -> None:
-        """Frozen dataclass must raise when mutation is attempted."""
-        record = ParticipantRecord(
-            participant_id="p1",
-            role="user",
-        )
-
-        with pytest.raises(AttributeError, match="cannot assign to field"):
-            record.participant_id = "p2"
 
 
 class TestRecallRequest:

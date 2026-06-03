@@ -22,7 +22,6 @@ def _make_service(extractor=None, embed_fn=None):
         "write_turn_node",
         "write_turn_sequence",
         "write_turn_entity_edge",
-        "write_tool_call_node",
     ]:
         setattr(mg, attr, AsyncMock(return_value=None))
     pg.write_stm_chunk = AsyncMock(return_value=None)

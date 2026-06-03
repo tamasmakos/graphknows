@@ -5,25 +5,23 @@ Tests the canonical DialogCapture class in graphknows.memory.stm.dialog.
 
 from __future__ import annotations
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from graphknows.memory.stm.dialog import DialogCapture, Participant, ToolCall, Turn
 from graphknows.memory.extractor import ExtractionResult
+from graphknows.memory.stm.dialog import DialogCapture, Turn
+from graphknows.memory.stores.memgraph import MemgraphStore
 
 
 def _make_writer(extractor=None, embed_fn=None):
     mg = MagicMock()
     pg = MagicMock()
-    # All Memgraph and pgvector store methods are async — mock them as coroutines
     for attr in [
         "write_dialog_node",
         "write_entity_node",
         "write_turn_node",
         "write_turn_sequence",
         "write_turn_entity_edge",
-        "write_tool_call_node",
         "write_chunk_node",
         "write_chunk_entity_edge",
         "write_session_metadata",
@@ -39,14 +37,6 @@ def _turn(index: int = 0, role: str = "user", text: str = "Hello") -> Turn:
     return Turn(id=f"t{index}", index=index, role=role, text=text)
 
 
-def test_start_dialog_calls_write_dialog_node():
-    writer, mg, pg, _ = _make_writer()
-    writer.start_dialog("s1", "d1", [Participant("u1", "user")])
-    mg.write_dialog_node.assert_called_once()
-    # participants now written as entity nodes (write_participant_node removed)
-    mg.write_entity_node.assert_called_once()
-
-
 def test_write_turn_calls_write_turn_node():
     writer, mg, pg, _ = _make_writer()
     writer.write_turn("s1", "d1", _turn(0, "user", "Hi"))
@@ -59,7 +49,6 @@ def test_write_turn_calls_next_edge_on_second_turn():
     writer, mg, pg, _ = _make_writer()
     writer.write_turn("s1", "d1", _turn(0))
     writer.write_turn("s1", "d1", _turn(1))
-    # write_turn_sequence replaced write_turn_next_edge
     mg.write_turn_sequence.assert_called_once_with(prev_turn_id="t0", next_turn_id="t1")
 
 
@@ -93,19 +82,6 @@ def test_write_turn_calls_write_entity_for_each_entity():
     result = writer.write_turn("s1", "d1", _turn(0, text="EU and France"))
     assert result.entity_count == 2
     assert mg.write_entity_node.call_count == 2
-
-
-def test_write_turn_calls_write_tool_call_node():
-    writer, mg, pg, _ = _make_writer()
-    turn = Turn(
-        id="t0",
-        index=0,
-        role="agent",
-        text="Using search tool.",
-        tool_calls=[ToolCall(name="search_eu", latency_ms=120.0)],
-    )
-    writer.write_turn("s1", "d1", turn)
-    mg.write_tool_call_node.assert_called_once()
 
 
 def test_write_turn_calls_write_stm_turn():
@@ -148,11 +124,7 @@ def test_prev_turn_ids_updated_after_write():
     mg.write_turn_sequence.assert_called_once_with(prev_turn_id="t0", next_turn_id="t1")
 
 
-# --- Cypher-level regression tests for critical bug fixes ---
-
-import inspect
-
-from graphknows.memory.stores.memgraph import MemgraphStore
+# --- Cypher-level regression tests ---
 
 
 def test_write_entity_node_sets_type_not_entity_type():

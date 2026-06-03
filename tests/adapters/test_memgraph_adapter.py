@@ -26,7 +26,6 @@ def mock_store() -> MagicMock:
     store.write_turn_node = AsyncMock()
     store.write_turn_sequence = AsyncMock()
     store.write_turn_entity_edge = AsyncMock()
-    store.write_tool_call_node = AsyncMock()
     store.query_entity_chunks = AsyncMock(return_value=[{"chunk_id": "c1", "text": "hi"}])
     store.delete_session = AsyncMock()
     store.get_session_nodes = AsyncMock(return_value=[{"name": "Alice"}])

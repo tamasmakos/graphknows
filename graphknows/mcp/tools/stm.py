@@ -267,3 +267,89 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
         "elapsed_s": round(result.elapsed_s, 3),
         "errors": list(result.errors),
     }
+
+
+async def _ingest_turn_async(mg, pg, extractor, embed_fn, session_id, dialog_id, turn):
+    """Helper coroutine that writes a single turn through DialogCapture."""
+    import time
+
+    from graphknows.memory.stm.dialog import DialogCapture
+
+    t0 = time.perf_counter()
+    dc = DialogCapture(mg_store=mg, pg_store=pg, extractor=extractor, embed_fn=embed_fn)
+    # Ensure DIALOG node exists
+    await mg.write_dialog_node(
+        session_id=session_id,
+        dialog_id=dialog_id,
+        started_at=str(time.time()),
+    )
+    result = dc.write_turn(session_id=session_id, dialog_id=dialog_id, turn=turn)
+    elapsed = time.perf_counter() - t0
+    return {
+        "dialog_id": result.dialog_id,
+        "turn_id": result.turn_id,
+        "entity_count": result.entity_count,
+        "elapsed_s": round(elapsed, 3),
+        "errors": result.errors,
+    }
+
+
+@app.tool()
+async def memory_ingest_turn(
+    text: str,
+    role: str,
+    session_id: str,
+    dialog_id: str = "",
+    turn_index: int = 0,
+) -> dict:
+    """Ingest a conversation turn into graphknows short-term memory.
+
+    Writes a DIALOG → TURN node in Memgraph, extracts entities with GLiNER2,
+    creates TURN→ENTITY MENTIONS edges, and embeds turn text into pgvector stm_turns.
+
+    Args:
+        text: Turn text content (user message, assistant response, etc.).
+        role: Speaker role — 'user', 'assistant', or 'system'.
+        session_id: Session namespace for scoping.
+        dialog_id: Dialog identifier. Auto-generated as 'dialog-<session_id>' if empty.
+        turn_index: Ordinal position within the dialog (0-based).
+
+    Returns:
+        Dict with dialog_id, turn_id, entity_count, elapsed_s, errors.
+    """
+    import time
+    import uuid
+
+    from graphknows.config.builders.stores import build_pgvector_store
+    from graphknows.memory.extractor import GLiNER2EntityExtractor
+    from graphknows.memory.stm._async_bridge import _run as _bg_run
+    from graphknows.memory.stm.dialog import Turn
+    from graphknows.memory.stores.embedder import embed_one
+
+    s = get_settings()
+    mg = get_mg_store()
+    pg = build_pgvector_store(s)
+    _bg_run(pg.connect())
+
+    if not dialog_id:
+        dialog_id = f"dialog-{session_id}"
+
+    turn_id = str(uuid.uuid4())
+    turn = Turn(
+        id=turn_id,
+        index=turn_index,
+        role=role,
+        text=text,
+        timestamp=time.time(),
+    )
+
+    extractor = GLiNER2EntityExtractor()
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: _bg_run(
+            _ingest_turn_async(mg, pg, extractor, embed_one, session_id, dialog_id, turn)
+        ),
+    )
+    return result
