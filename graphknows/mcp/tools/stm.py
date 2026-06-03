@@ -328,13 +328,15 @@ async def memory_ingest_turn(
 
     from graphknows.config.builders.stores import build_pgvector_store
     from graphknows.memory.extractor import GLiNER2EntityExtractor
+    from graphknows.memory.stm._async_bridge import _run as _bg_run
     from graphknows.memory.stm.dialog import Turn
     from graphknows.memory.stores.embedder import embed_one
 
     s = get_settings()
     mg = get_mg_store()
     pg = build_pgvector_store(s)
-    await pg.connect()
+    # Pool must be created on _BG_LOOP since write_stm_turn runs there via _run()
+    _bg_run(pg.connect())
 
     if not dialog_id:
         dialog_id = f"dialog-{session_id}"
