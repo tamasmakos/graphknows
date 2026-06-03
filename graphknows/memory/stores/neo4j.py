@@ -887,6 +887,8 @@ class Neo4jStore:
                 edges.append((ai, bi))
                 weights.append(float(r["weight"]))
         g.add_edges(edges)
+        # leidenalg rejects negative weights — clamp to zero
+        weights = [max(0.0, w) for w in weights]
 
         partition = leidenalg.find_partition(
             g, leidenalg.ModularityVertexPartition, weights=weights
@@ -897,7 +899,9 @@ class Neo4jStore:
 
         # Quality metrics computed once for the full partition
         modularity: float = partition.quality()
-        silhouette: float | None = _compute_silhouette(names, name_idx, communities, rel_rows, weights)
+        silhouette: float | None = _compute_silhouette(
+            names, name_idx, communities, rel_rows, weights
+        )
 
         # ── Step 2: load existing community hashes from TOPIC nodes ─────────────────
         existing_hashes: dict[int, str] = {}
