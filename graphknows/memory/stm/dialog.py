@@ -5,7 +5,6 @@ Migrated from graphknows.memory.dialog (DialogWriter).
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -14,23 +13,6 @@ from typing import Any
 from graphknows.memory.stm._async_bridge import _run
 
 log = logging.getLogger("graphknows.memory.stm.dialog")
-
-
-@dataclass
-class ToolCall:
-    """A tool invocation recorded within a turn.
-
-    Attributes:
-        name: Tool function name.
-        args: Raw arguments dict — stored as hash for privacy.
-        result_summary: Short summary of result.
-        latency_ms: Execution latency in milliseconds.
-    """
-
-    name: str
-    args: dict[str, Any] = field(default_factory=dict)
-    result_summary: str = ""
-    latency_ms: float = 0.0
 
 
 @dataclass
@@ -43,7 +25,6 @@ class Turn:
         role: One of 'user', 'agent', 'system'.
         text: Full turn text.
         timestamp: Unix timestamp float.
-        tool_calls: Tool calls made during this turn (agent turns only).
     """
 
     id: str
@@ -51,22 +32,6 @@ class Turn:
     role: str
     text: str
     timestamp: float = field(default_factory=time.time)
-    tool_calls: list[ToolCall] = field(default_factory=list)
-
-
-@dataclass
-class Participant:
-    """A dialog participant.
-
-    Attributes:
-        id: Unique participant identifier.
-        role: 'user' | 'agent' | 'system'.
-        display_name: Optional human-readable name.
-    """
-
-    id: str
-    role: str
-    display_name: str = ""
 
 
 @dataclass
@@ -82,8 +47,8 @@ class DialogResult:
 class DialogCapture:
     """Write conversation turns into the STM interaction graph.
 
-    Creates and maintains DIALOG → TURN → PARTICIPANT + ENTITY + TOOL_CALL
-    nodes in Memgraph and embeds turn text into pgvector stm_turns.
+    Creates and maintains DIALOG → TURN → ENTITY nodes in Memgraph
+    and embeds turn text into pgvector stm_turns.
 
     # TODO(Wave 3): replace direct store references with IGraphDb adapter.
 
@@ -112,39 +77,6 @@ class DialogCapture:
 
             self._embed_fn = embed_one
         self._prev_turn_ids: dict[str, str] = {}
-
-    def start_dialog(
-        self,
-        session_id: str,
-        dialog_id: str,
-        participants: list[Participant],
-    ) -> None:
-        """Initialize a DIALOG node and register participants.
-
-        Args:
-            session_id: Parent session namespace.
-            dialog_id: Unique dialog identifier.
-            participants: List of participants (user, agent, system).
-        """
-        try:
-            _run(
-                self._mg.write_dialog_node(
-                    session_id=session_id,
-                    dialog_id=dialog_id,
-                    started_at=str(time.time()),
-                )
-            )
-            for p in participants:
-                _run(
-                    self._mg.write_entity_node(
-                        session_id=session_id,
-                        entity_name=p.display_name or p.id,
-                        entity_type=f"PARTICIPANT_{p.role.upper()}",
-                        confidence=1.0,
-                    )
-                )
-        except Exception as exc:
-            log.warning("start_dialog %s: %s", dialog_id, exc)
 
     def write_turn(
         self,
@@ -209,21 +141,6 @@ class DialogCapture:
                     entity_count += 1
             except Exception as exc:
                 errors.append(f"entity_extract: {exc}")
-
-        # Tool calls
-        for tc in turn.tool_calls:
-            try:
-                args_hash = hashlib.sha256(str(tc.args).encode()).hexdigest()[:8]
-                _run(
-                    self._mg.write_tool_call_node(
-                        turn_id=turn.id,
-                        name=tc.name,
-                        args_hash=args_hash,
-                        latency_ms=int(tc.latency_ms),
-                    )
-                )
-            except Exception as exc:
-                errors.append(f"tool_call {tc.name}: {exc}")
 
         # Embed turn text → stm_turns
         try:

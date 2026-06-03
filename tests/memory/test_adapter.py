@@ -325,10 +325,8 @@ from graphknows.memory.adapter_types import (
     AdapterCapabilities,
     ArtifactRecord,
     MemoryClass,
-    ParticipantRecord,
     PromoteOptions,
     RecallRequest,
-    ToolCallRecord,
     TurnRecord,
 )
 from graphknows.memory.models.recall import RecallResult
@@ -352,70 +350,6 @@ def test_open_session_sets_active_session_id(
     adapter = _make_adapter()
     adapter.open_session("s1")
     assert adapter._active_session_id == "s1"
-
-
-@patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogCapture")
-def test_start_dialog_delegates_to_dialog_writer(
-    mock_dialog_writer,
-    mock_ingestor,
-):
-    adapter = _make_adapter()
-    participants = [
-        ParticipantRecord(
-            participant_id="p1",
-            role="user",
-            display_name="Alice",
-        )
-    ]
-    adapter.start_dialog("s1", "d1", participants)
-
-    assert adapter._active_dialog_id == "d1"
-    mock_dialog_writer.return_value.start_dialog.assert_called_once()
-    args, kwargs = mock_dialog_writer.return_value.start_dialog.call_args
-    assert args[0] == "s1"
-    assert args[1] == "d1"
-    mapped_participants = args[2]
-    assert len(mapped_participants) == 1
-    assert mapped_participants[0].id == "p1"
-    assert mapped_participants[0].role == "user"
-    assert mapped_participants[0].display_name == "Alice"
-
-
-@patch("graphknows.memory.adapter.MemoryIngestor")
-@patch("graphknows.memory.adapter.DialogCapture")
-def test_write_turn_delegates_to_dialog_writer(
-    mock_dialog_writer,
-    mock_ingestor,
-):
-    adapter = _make_adapter()
-    adapter._active_dialog_id = "d1"
-    turn = TurnRecord(
-        turn_id="t1",
-        session_id="s1",
-        role="user",
-        content="Hello",
-        tool_calls=[
-            ToolCallRecord(
-                tool_id="tc1",
-                tool_name="search",
-                input_summary="query",
-                output_summary="result",
-            )
-        ],
-    )
-    adapter.write_turn(turn)
-
-    mock_dialog_writer.return_value.write_turn.assert_called_once()
-    args, kwargs = mock_dialog_writer.return_value.write_turn.call_args
-    assert args[0] == "s1"
-    assert args[1] == "d1"
-    mapped_turn = args[2]
-    assert mapped_turn.role == "user"
-    assert mapped_turn.text == "Hello"
-    assert len(mapped_turn.tool_calls) == 1
-    assert mapped_turn.tool_calls[0].name == "search"
-    assert mapped_turn.tool_calls[0].result_summary == "result"
 
 
 @patch("graphknows.memory.adapter.MemoryIngestor")
@@ -621,8 +555,6 @@ from graphknows.memory.adapter_types import AdapterCapabilities, RecallRequest
 from graphknows.memory.models.recall import RecallResult
 from tests.fixtures.synthetic_host_session import (
     ARTIFACTS,
-    DIALOG_ID,
-    PARTICIPANTS,
     PROMOTE_OPTIONS,
     RECALL_REQUEST,
     SESSION_ID,
@@ -651,9 +583,6 @@ class TestAdapterLifecycle:
         adapter.open_session(SESSION_ID)
         assert adapter._active_session_id == SESSION_ID
 
-        adapter.start_dialog(SESSION_ID, DIALOG_ID, PARTICIPANTS)
-        mock_dw_cls.return_value.start_dialog.assert_called_once()
-
         for turn in TURNS:
             adapter.write_turn(turn)
         assert mock_dw_cls.return_value.write_turn.call_count == len(TURNS)
@@ -677,7 +606,6 @@ class TestAdapterLifecycle:
         ]
         adapter = _make_adapter()
         adapter.open_session(SESSION_ID)
-        adapter.start_dialog(SESSION_ID, DIALOG_ID, PARTICIPANTS)
         for turn in TURNS:
             adapter.write_turn(turn)
 
@@ -718,21 +646,6 @@ class TestAdapterLifecycle:
         assert caps.supports_artifact_ingest is True
         assert caps.supports_recall is True
         assert caps.supports_promote is True
-
-    @patch("graphknows.memory.adapter.MemoryIngestor")
-    @patch("graphknows.memory.adapter.DialogCapture")
-    def test_turn_with_tool_calls_maps_correctly(self, mock_dw_cls, mock_ing_cls):
-        adapter = _make_adapter()
-        adapter.open_session(SESSION_ID)
-        adapter.start_dialog(SESSION_ID, DIALOG_ID, PARTICIPANTS)
-        turn_with_tool = TURNS[1]  # has one tool_call
-        adapter.write_turn(turn_with_tool)
-
-        call_args = mock_dw_cls.return_value.write_turn.call_args
-        # positional args: (session_id, dialog_id, Turn)
-        written_turn = call_args[0][2]
-        assert len(written_turn.tool_calls) == 1
-        assert written_turn.tool_calls[0].name == "web_search"
 
     @patch("graphknows.memory.adapter.MemoryIngestor")
     @patch("graphknows.memory.adapter.DialogCapture")

@@ -338,8 +338,8 @@ def _run_recall(
     """Synchronous recall across STM/LTM stores. Returns serialisable hits dict."""
     import re
 
-    from graphknows.memory.stores.embedder import embed_one
     from graphknows.memory.stm._async_bridge import _run as _bg_run
+    from graphknows.memory.stores.embedder import embed_one
 
     def _clean(text: str) -> str:
         return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()

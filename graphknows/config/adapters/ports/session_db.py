@@ -103,16 +103,6 @@ class ISessionDb(Protocol):
         """Create a MENTIONS edge from TURN to ENTITY."""
         ...
 
-    async def write_tool_call_node(
-        self,
-        turn_id: str,
-        name: str,
-        args_hash: str,
-        latency_ms: int,
-    ) -> None:
-        """Upsert a TOOL_CALL node linked to a TURN."""
-        ...
-
     async def query_entity_chunks(
         self,
         session_id: str,

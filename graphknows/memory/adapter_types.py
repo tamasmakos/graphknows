@@ -45,33 +45,6 @@ class ArtifactRecord:
 
 
 @dataclass(frozen=True)
-class ToolCallRecord:
-    """Represents one tool invocation during an agent turn.
-
-    Attributes:
-        tool_id: Unique call identifier.
-        tool_name: Tool name, e.g. "terminal", "read_file", "web_search".
-        input_summary: Human-readable summary of the input.
-        output_summary: Human-readable summary of the output.
-        exit_code: Exit code for shell/process tools; ``None`` for non-shell
-            tools.
-        error: First meaningful error line; ``None`` on success.
-        memory_class: Semantic classification. Defaults to
-            :attr:`MemoryClass.raw_evidence`.
-        metadata: Optional caller-provided metadata.
-    """
-
-    tool_id: str
-    tool_name: str
-    input_summary: str
-    output_summary: str
-    exit_code: int | None = None
-    error: str | None = None
-    memory_class: MemoryClass = MemoryClass.raw_evidence
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class TurnRecord:
     """Represents one complete agent conversation turn.
 
@@ -80,7 +53,6 @@ class TurnRecord:
         session_id: Parent session identifier.
         role: Turn role, e.g. "user", "assistant", "system", "tool".
         content: Cleaned text content without raw tool outputs inline.
-        tool_calls: Tool calls made in this turn.
         memory_class: Semantic classification. Defaults to
             :attr:`MemoryClass.raw_evidence`.
         metadata: Optional caller-provided metadata.
@@ -90,25 +62,7 @@ class TurnRecord:
     session_id: str
     role: str
     content: str
-    tool_calls: list[ToolCallRecord] = field(default_factory=list)
     memory_class: MemoryClass = MemoryClass.raw_evidence
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ParticipantRecord:
-    """Represents a participant in a dialog.
-
-    Attributes:
-        participant_id: Unique participant identifier.
-        role: Participant role, e.g. "user", "assistant", "system".
-        display_name: Optional display name.
-        metadata: Optional caller-provided metadata.
-    """
-
-    participant_id: str
-    role: str
-    display_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

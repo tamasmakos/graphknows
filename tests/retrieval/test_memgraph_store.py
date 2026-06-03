@@ -300,25 +300,6 @@ async def test_write_turn_entity_edge_cypher():
 
 
 # ---------------------------------------------------------------------------
-# write_tool_call_node
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_write_tool_call_node_cypher():
-    store, _, mock_session = _make_store()
-    await store.write_tool_call_node("t1", "search_web", "abc123", 250)
-    cypher = mock_session.run.call_args[0][0]
-    kwargs = mock_session.run.call_args[1]
-    assert "TOOL_CALL" in cypher
-    assert "CALLED" in cypher
-    assert kwargs["tid"] == "t1"
-    assert kwargs["hash"] == "abc123"
-    assert kwargs["name"] == "search_web"
-    assert kwargs["latency_ms"] == 250
-
-
-# ---------------------------------------------------------------------------
 # delete_session
 # ---------------------------------------------------------------------------
 
@@ -833,25 +814,6 @@ async def test_write_turn_entity_edge_cypher():
     assert kwargs["name"] == "Alice"
     assert kwargs["sid"] == "s1"
     assert kwargs["conf"] == 0.85
-
-
-# ---------------------------------------------------------------------------
-# write_tool_call_node
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_write_tool_call_node_cypher():
-    store, _, mock_session = _make_store()
-    await store.write_tool_call_node("t1", "search_web", "abc123", 250)
-    cypher = mock_session.run.call_args[0][0]
-    kwargs = mock_session.run.call_args[1]
-    assert "TOOL_CALL" in cypher
-    assert "CALLED" in cypher
-    assert kwargs["tid"] == "t1"
-    assert kwargs["hash"] == "abc123"
-    assert kwargs["name"] == "search_web"
-    assert kwargs["latency_ms"] == 250
 
 
 # ---------------------------------------------------------------------------

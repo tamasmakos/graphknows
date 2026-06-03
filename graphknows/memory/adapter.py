@@ -14,7 +14,6 @@ from typing import Any, Protocol, runtime_checkable
 from graphknows.memory.adapter_types import (
     AdapterCapabilities,
     ArtifactRecord,
-    ParticipantRecord,
     PromoteOptions,
     RecallRequest,
     TurnRecord,
@@ -25,7 +24,7 @@ from graphknows.memory.stm import STMService
 
 # Compat re-exports so existing tests can mock graphknows.memory.adapter.MemoryIngestor
 from graphknows.memory.stm.dialog import DialogCapture as DialogCapture
-from graphknows.memory.stm.dialog import Participant, ToolCall, Turn
+from graphknows.memory.stm.dialog import Turn
 
 
 def _build_stm_service(
@@ -112,58 +111,19 @@ class GraphknowsAdapter:
 
             _run(self.mg_store.write_session_metadata(session_id, metadata))
 
-    def start_dialog(
-        self,
-        session_id: str,
-        dialog_id: str,
-        participants: list[ParticipantRecord],
-    ) -> None:
-        """Initialize a dialog and register participants.
-
-        Args:
-            session_id: Parent session namespace.
-            dialog_id: Unique dialog identifier.
-            participants: List of participants in the dialog.
-        """
-        self._active_dialog_id = dialog_id
-        mapped_participants = [
-            Participant(
-                id=p.participant_id,
-                role=p.role,
-                display_name=p.display_name or "",
-            )
-            for p in participants
-        ]
-        dw = DialogCapture(  # type: ignore[no-untyped-call]
-            mg_store=self.mg_store,
-            pg_store=self.pg_store,
-            extractor=self.extractor,
-            embed_fn=self.embed_fn,
-        )
-        dw.start_dialog(session_id, dialog_id, mapped_participants)
-        self._dialog_writer = dw
-
     def write_turn(self, turn: TurnRecord) -> None:
         """Write a single conversation turn into the interaction graph.
 
         Args:
-            turn: Turn data including text, role, and tool calls.
+            turn: Turn data including text and role.
         """
         dialog_id = self._active_dialog_id or ""
-        mapped_tool_calls = [
-            ToolCall(
-                name=tc.tool_name,
-                result_summary=tc.output_summary,
-            )
-            for tc in turn.tool_calls
-        ]
         mapped_turn = Turn(
             id=turn.turn_id,
             index=0,
             role=turn.role,
             text=turn.content,
             timestamp=time.time(),
-            tool_calls=mapped_tool_calls,
         )
         dw = getattr(self, "_dialog_writer", None) or DialogCapture(  # type: ignore[no-untyped-call]
             mg_store=self.mg_store,
