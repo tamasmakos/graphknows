@@ -1,32 +1,9 @@
-"""DSPy-based ontology-guided relation extractor.
+"""Lightweight DSPy ontology-guided relation extractor.
 
-Architecture
-============
-Three-pass hybrid relation extraction pipeline:
-
-Pass 1 — Doc-type classifier
-    Keyword-count heuristic routes each chunk to the most appropriate
-    ontology: the graphknows-domain ontology (technical text) or the
-    Schema.org general ontology (prose).
-
-Pass 2 — Co-occurrence warm-start
-    For every pair of extracted entities in the same sentence, a CO_OCCURS
-    candidate triple is generated and passed to the LLM as a warm-start.
-    Validated in the three-pass benchmark (2026-05-28): 2-3x recall gain.
-
-Pass 3 — DSPy ChainOfThought extraction
-    A typed DSPy Signature sends the text, entity list, ontology schema,
-    and candidate triples to the configured LM (default:
-    ``deepseek/deepseek-v4-flash`` via OpenRouter, temperature=0.6,
-    max_tokens=3000).
-
-Post-processing
-    Self-loops dropped.  Triples below confidence threshold filtered.
-    (subject, object) pairs deduplicated; highest-confidence triple wins.
-
-Configuration
-    Set ``EXTRACTION_MODEL`` in .env (default: ``deepseek/deepseek-v4-flash``).
-    If ``OPENROUTER_API_KEY`` is absent the extractor disables itself gracefully.
+The extractor is intentionally small: GLiNER2 provides entity candidates, the
+active taxonomy provides allowed node/relation labels, and DSPy predicts only
+typed relation triples.  There are no domain routers, prompt warm-starts, or
+empty-list fallbacks on model failure.
 """
 
 from __future__ import annotations
@@ -35,208 +12,134 @@ import json
 import logging
 import os
 import re
+from ast import literal_eval
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
 
-# ── Built-in domain ontologies ────────────────────────────────────────────────
 
-DOMAIN_GK_ONTOLOGY: dict[str, str] = {
-    "component_of": "software component or module X is part of larger system Y",
-    "depends_on": "X requires Y to function; removing Y breaks X",
-    "implements": "X is a concrete implementation of abstract interface or pattern Y",
-    "wraps": "X provides a thin adapter layer around underlying system Y",
-    "stores_in": "agent or pipeline X persists data into storage system Y",
-    "reads_from": "agent or pipeline X retrieves data from storage system Y",
-    "exposes_tool": "MCP server or service X exposes tool or API endpoint Y",
-    "calls_tool": "agent or system X invokes tool, function, or API Y",
-    "returns": "function or tool X returns value, object, or result type Y",
-    "supersedes": "X makes Y obsolete; X is the current valid fact, Y is tombstoned",
-    "valid_at": "fact or relation X was valid at time or date Y",
-    "causes": "condition or bug X directly causes failure, error, or symptom Y",
-    "fixes": "code change or patch X resolves bug, error, or issue Y",
-    "diagnosed_as": "failure or anomaly X is classified under root cause Y",
-    "triggers": "event or condition X triggers or initiates process or pipeline Y",
-    "evaluated_by": "system or output X is assessed by agent role or method Y",
-    "achieves_score": "system or method X achieves metric value or benchmark score Y",
-    "outperforms": "approach X produces better results than baseline or alternative Y",
-    "contrasts_with": "design X and design Y differ in approach or trade-off",
-    "stored_in_stm": "entity or fact X is held in short-term memory store Y",
-    "promoted_to_ltm": "entity or session X was flushed and promoted into long-term memory Y",
-    "recalled_by": "fact or chunk X is retrieved by recall query Y",
-    "entity_type": "extracted entity X is classified under ontology label or type Y",
-    "extracted_from": "entity, relation, or chunk X was extracted from source document Y",
-    "chunked_into": "document X was split into chunk Y by the ingest pipeline",
-    "embedded_as": "text X was encoded and stored as vector embedding in Y",
-    "designed_as": "system or component X was intentionally architected as approach Y",
-    "replaces": "design decision or component X replaces previous approach Y",
-    "validates": "test, assertion, or metric X confirms correctness of component Y",
-    "extends": "X adds functionality on top of base class or interface Y",
-    "preceded_by": "fact or component X was preceded or replaced by earlier version Y",
-}
+class RelationTriple(BaseModel):
+    """Typed relation triple predicted by DSPy."""
 
-SCHEMA_ORG_ONTOLOGY: dict[str, str] = {
-    "memberOf": "a group or organization that an agent belongs to",
-    "member": "a member of an organization, group, or network",
-    "founder": "a person who founded or created an organization",
-    "employee": "a person who is employed by an organization",
-    "affiliation": "an organization that a person is affiliated with",
-    "subOrganization": "a division that is part of a larger organization",
-    "parentOrganization": "the larger organization that a subsidiary belongs to",
-    "knowsAbout": "a topic that an agent has knowledge or expertise about",
-    "colleague": "a person who is a professional peer of another",
-    "author": "the person or organization who wrote a creative work",
-    "creator": "the person or entity who originally created something",
-    "contributor": "a person or organization that contributed to a project",
-    "publisher": "the organization responsible for publishing a work",
-    "mentions": "something that is mentioned or discussed in a work",
-    "about": "the subject or main theme of a creative work",
-    "citation": "a citation or reference to another publication",
-    "isBasedOn": "a work that this work is derived from",
-    "hasPart": "a component included within a larger work",
-    "isPartOf": "a larger collection that this item belongs to",
-    "organizer": "the person or organization who organized an event",
-    "performer": "a person or entity who performed at an event",
-    "sponsor": "a person or organization that supports an event or person",
-    "attendee": "a person who attended or participated in an event",
-    "location": "the place or venue where an event took place",
-    "result": "the outcome or output produced by an action or event",
-    "instrument": "a tool, software, or method used to perform an action",
-    "agent": "the person, organization, or agent that performed an action",
-    "manufacturer": "the organization that manufactured or produced a product",
-    "brand": "the brand or trademark associated with a product",
-    "isRelatedTo": "a product, concept, or entity that is related to this one",
-    "isSimilarTo": "a product or entity that is similar or comparable",
-    "softwareRequirements": "software or libraries required to run this application",
-    "applicationCategory": "the category or type that a software application belongs to",
-    "teaches": "the skill or competency that a course or resource teaches",
-    "assesses": "the skill or competency assessed by this resource",
-    "inLanguage": "the natural language a creative work is written in",
-    "containsPlace": "a location geographically contained within another place",
-    "containedInPlace": "the larger geographic area this place is situated within",
-    "category": "the category or classification that an entity belongs to",
-    "sameAs": "a URL pointing to an equivalent entity in another KB",
-    "subjectOf": "a creative work that this entity is the subject of",
-}
-
-# ── Doc-type classifier ───────────────────────────────────────────────────────
-
-_GK_KEYWORDS: set[str] = {
-    "memgraph",
-    "neo4j",
-    "pgvector",
-    "graphknows",
-    "gliner",
-    "memory_ingest",
-    "memory_recall",
-    "ltm_query",
-    "stm",
-    "ltm",
-    "mcp",
-    "session_id",
-    "chunk",
-    "entity_extraction",
-    "relation_extraction",
-    "ingest",
-    "flush",
-    "cosine_score",
-    "bi-temporal",
-    "tombstone",
-    "valid_from",
-    "valid_to",
-    "is_current",
-}
+    head: str = Field(description="Entity name for the relation head.")
+    relation: str = Field(description="Allowed relation label from the taxonomy.")
+    tail: str = Field(description="Entity name for the relation tail.")
+    confidence: float = Field(default=0.5, description="Confidence score from 0.0 to 1.0.")
 
 
-def _classify_doc_type(text: str) -> str:
-    """Return 'graphknows' if >= 2 domain keywords found, else 'general'."""
-    tl = text.lower()
-    hits = sum(1 for kw in _GK_KEYWORDS if kw in tl)
-    return "graphknows" if hits >= 2 else "general"
+def _normalise_label(value: Any) -> str:
+    return str(value or "").strip().upper()
 
 
-# ── Co-occurrence warm-start ──────────────────────────────────────────────────
+def _normalise_entity(entity: dict[str, Any]) -> dict[str, Any] | None:
+    name = str(entity.get("name") or entity.get("text") or "").strip()
+    if not name:
+        return None
+    etype = str(entity.get("type") or entity.get("label") or "ENTITY").strip()
+    score = float(entity.get("score", entity.get("confidence", 1.0)) or 0.0)
+    return {"name": name, "type": etype, "score": score}
 
 
-def _build_cooccurrence_candidates(text: str, entities: list[str]) -> list[dict[str, Any]]:
-    """Emit CO_OCCURS candidates for entity pairs appearing in the same sentence."""
-    candidates: list[dict[str, Any]] = []
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    for sent in sentences:
-        sent_lower = sent.lower()
-        sent_ents = [e for e in entities if e.lower() in sent_lower]
-        for i, e1 in enumerate(sent_ents):
-            for e2 in sent_ents[i + 1 :]:
-                candidates.append(
-                    {"subject": e1, "predicate": "CO_OCCURS", "object": e2, "confidence": 0.4}
-                )
-    return candidates
+def _coerce_relations(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("DSPy returned relations as invalid JSON") from exc
+        if not isinstance(parsed, list):
+            raise ValueError("DSPy returned relations JSON that is not a list")
+        return parsed
+    if isinstance(value, list):
+        return value
+    raise ValueError(f"DSPy returned unsupported relations type: {type(value).__name__}")
 
 
-# ── DSPy Signature ────────────────────────────────────────────────────────────
+def _json_from_text(value: str) -> Any:
+    """Decode the first JSON object/array embedded in *value*."""
+    decoder = json.JSONDecoder()
+    starts = [idx for idx in (value.find('{"relations"'), value.find("[")) if idx >= 0]
+    for start in sorted(starts):
+        try:
+            parsed, _ = decoder.raw_decode(value[start:])
+            return parsed
+        except json.JSONDecodeError:
+            continue
+    raise ValueError("No valid relations JSON found in LM response")
+
+
+def _recover_relations_from_exception(exc: Exception) -> list[Any]:
+    """Recover relation JSON from provider reasoning_content when DSPy parsing fails."""
+    message = str(exc)
+    for match in re.finditer(r"LM Response:\s*(\{.*?\})\s*Expected", message, flags=re.DOTALL):
+        try:
+            response = literal_eval(match.group(1))
+        except (SyntaxError, ValueError):
+            continue
+        for field in ("text", "reasoning_content"):
+            content = response.get(field)
+            if not isinstance(content, str) or not content.strip():
+                continue
+            try:
+                parsed = _json_from_text(content)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict) and "relations" in parsed:
+                return _coerce_relations(parsed["relations"])
+            return _coerce_relations(parsed)
+    parsed = _json_from_text(message)
+    if isinstance(parsed, dict) and "relations" in parsed:
+        return _coerce_relations(parsed["relations"])
+    return _coerce_relations(parsed)
 
 
 def _make_extractor() -> Any:
-    """Build a DSPy ChainOfThought module with a typed Signature."""
+    """Build a typed DSPy Predict module."""
     import dspy  # type: ignore
 
-    class OntologyExtractionSignature(dspy.Signature):  # type: ignore[misc]
-        """Extract knowledge graph triples from the source text.
-
-        You are a precise knowledge graph extractor.  Your job is to identify
-        typed (subject, predicate, object) triples supported by the text.
+    class OntologyRelationSignature(dspy.Signature):  # type: ignore[misc]
+        """Extract relations grounded in the supplied text and entity list.
 
         Rules:
-        - Use ONLY predicates from the provided ontology_schema.
-        - Extract relations that are clearly stated OR strongly implied.
-        - Be generous: include all plausible relations supported by the text.
-        - Aim for at least one triple per pair of co-occurring named entities.
-        - Set confidence >= 0.6 for well-supported relations.
-        - Set confidence 0.4-0.6 for implied but plausible relations.
-        - NEVER invent facts not grounded in the text.
-        - Use the candidate_relations as a warm-start — refine and extend them.
-        - Deduplicate: keep all distinct predicates for the same (subject, object).
-        - Output ONLY a valid JSON array.  No markdown fences, no preamble.
-        - Each element: {"subject": str, "predicate": str, "object": str,
-          "confidence": float, "rationale": str}
+        - Use only entity names from entities for head and tail.
+        - Use only labels from allowed_relation_types for relation.
+        - Use allowed_node_types only to understand entity categories.
+        - Return an empty list when no grounded relation is present.
         """
 
-        text: str = dspy.InputField(  # type: ignore[assignment]
-            desc="Source text to extract relations from (<=2000 chars)"
+        text: str = dspy.InputField(desc="Source text to extract relations from.")
+        allowed_node_types: list[str] = dspy.InputField(
+            desc="Allowed taxonomy entity type labels."
         )
-        entities_json: str = dspy.InputField(  # type: ignore[assignment]
-            desc="JSON array of entity names found in the text"
+        allowed_relation_types: list[str] = dspy.InputField(
+            desc="Allowed taxonomy relation labels."
         )
-        ontology_schema: str = dspy.InputField(  # type: ignore[assignment]
-            desc="JSON dict mapping predicate -> description; only these predicates are valid"
+        entities: list[dict[str, Any]] = dspy.InputField(
+            desc="Pre-extracted GLiNER2 entities with name, type, and score."
         )
-        candidate_relations: str = dspy.InputField(  # type: ignore[assignment]
-            desc="JSON array of warm-start CO_OCCURS candidates (subject, predicate, object)"
-        )
-        relations_json: str = dspy.OutputField(  # type: ignore[assignment]
-            desc="JSON array of extracted triples: [{subject, predicate, object, confidence, rationale}]"
+        relations: list[RelationTriple] = dspy.OutputField(
+            desc="Grounded relation triples using only supplied entities and relation labels."
         )
 
-    return dspy.ChainOfThought(OntologyExtractionSignature)
-
-
-# ── Main extractor class ──────────────────────────────────────────────────────
+    return dspy.Predict(OntologyRelationSignature)
 
 
 class OntologyRelExtractor:
-    """Extract typed relations from text guided by an injected relation schema.
-
-    Uses DSPy ChainOfThought with DeepSeek v4 Flash via OpenRouter.
-    Built-in domain routing is only used when no explicit relation schema is
-    injected.
-    Co-occurrence warm-start boosts recall 2-3x vs cold extraction.
+    """Extract taxonomy-guided relations from text and GLiNER2 entities.
 
     Args:
-        lm: Pre-configured DSPy LM instance.  If None, auto-configured from
-            ``OPENROUTER_API_KEY`` and ``EXTRACTION_MODEL`` env vars.
-        confidence_threshold: Minimum confidence to keep a triple (default 0.5).
-        taxonomy_file: Optional taxonomy file or bundled taxonomy short name.
-        relation_schema: Optional predicate-to-description mapping.
+        lm: Optional pre-configured DSPy LM.  When omitted, an OpenRouter LM is
+            built from ``OPENROUTER_API_KEY`` and ``EXTRACTION_MODEL``.
+        confidence_threshold: Minimum confidence to keep a returned triple.
+        taxonomy_file: Optional taxonomy file or bundled short name.
+        relation_schema: Optional relation label -> description mapping.
+        entity_labels: Optional allowed entity type labels.
+
+    Raises:
+        RuntimeError: If DSPy or OpenRouter configuration is missing.
     """
 
     def __init__(
@@ -245,122 +148,113 @@ class OntologyRelExtractor:
         confidence_threshold: float = 0.5,
         taxonomy_file: str | None = None,
         relation_schema: dict[str, str] | None = None,
+        entity_labels: list[str] | None = None,
     ) -> None:
-        self._available: bool = False
-        self._extractor: Any = None
-        self._threshold = confidence_threshold
-        self._relation_schema: dict[str, str] | None = None
-
-        if relation_schema is not None:
-            self._relation_schema = relation_schema
-        elif taxonomy_file is not None:
-            from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
-
-            self._relation_schema = load_taxonomy_artifacts(taxonomy_file).relation_schema
-
         try:
             import dspy  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError("OntologyRelExtractor requires DSPy to be installed") from exc
 
-            if lm is not None:
-                dspy.configure(lm=lm)
-                self._extractor = _make_extractor()
-                self._available = True
-                log.info("OntologyRelExtractor: DSPy ready (external LM)")
-            elif os.environ.get("OPENROUTER_API_KEY"):
-                model_name = os.environ.get("EXTRACTION_MODEL", "deepseek/deepseek-v4-flash")
-                _lm = dspy.LM(
-                    model=f"openrouter/{model_name}",
-                    api_key=os.environ["OPENROUTER_API_KEY"],
-                    temperature=0.6,
-                    max_tokens=3000,
+        if relation_schema is None or entity_labels is None:
+            from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
+
+            artifacts = load_taxonomy_artifacts(taxonomy_file)
+            relation_schema = relation_schema or artifacts.relation_schema
+            entity_labels = entity_labels or artifacts.entity_labels
+
+        if not relation_schema:
+            raise RuntimeError("OntologyRelExtractor requires at least one allowed relation type")
+        if not entity_labels:
+            raise RuntimeError("OntologyRelExtractor requires at least one allowed node type")
+
+        self._threshold = confidence_threshold
+        self._relation_schema = dict(relation_schema)
+        self._entity_labels = list(entity_labels)
+        self._allowed_relations = {_normalise_label(r): r for r in self._relation_schema}
+        self._allowed_node_types = [_normalise_label(t) for t in self._entity_labels]
+
+        if lm is None:
+            api_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+            if not api_key:
+                raise RuntimeError(
+                    "OntologyRelExtractor requires OPENROUTER_API_KEY in llm_assisted mode"
                 )
-                dspy.configure(lm=_lm)
-                self._extractor = _make_extractor()
-                self._available = True
-                log.info("OntologyRelExtractor: DSPy ready (model=%s)", model_name)
+            model_name = os.environ.get("EXTRACTION_MODEL", "moonshotai/kimi-k2")
+            self._lm = dspy.LM(
+                model=f"openrouter/{model_name}",
+                api_key=api_key,
+                api_base="https://openrouter.ai/api/v1",
+                temperature=0.0,
+                max_tokens=1200,
+                num_retries=0,
+            )
+            log.info("OntologyRelExtractor: DSPy ready (model=%s)", model_name)
+        else:
+            self._lm = lm
+            log.info("OntologyRelExtractor: DSPy ready (external LM)")
+
+        self._extractor = _make_extractor()
+
+    @property
+    def allowed_relation_types(self) -> list[str]:
+        """Return the configured relation labels."""
+        return list(self._relation_schema.keys())
+
+    @property
+    def allowed_node_types(self) -> list[str]:
+        """Return the configured entity type labels."""
+        return list(self._entity_labels)
+
+    def _validate_relations(
+        self,
+        relations: list[Any],
+        entities: list[dict[str, Any]],
+        threshold: float,
+    ) -> list[dict[str, Any]]:
+        by_name = {e["name"].casefold(): e["name"] for e in entities}
+        validated: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        for item in relations:
+            if isinstance(item, BaseModel):
+                data = item.model_dump()
+            elif isinstance(item, dict):
+                data = item
             else:
-                log.warning("OntologyRelExtractor: OPENROUTER_API_KEY not set — disabled")
-        except ImportError:
-            log.warning("OntologyRelExtractor: DSPy not installed — disabled")
-        except Exception as exc:
-            log.warning("OntologyRelExtractor: init failed — %s", exc)
+                raise ValueError(f"DSPy returned unsupported relation item: {type(item).__name__}")
 
-    # ── Routing helpers ───────────────────────────────────────────────────────
-
-    @staticmethod
-    def get_domain_ontology(text: str) -> dict[str, str]:
-        """Return the appropriate ontology dict for the given text."""
-        doc_type = _classify_doc_type(text)
-        return DOMAIN_GK_ONTOLOGY if doc_type == "graphknows" else SCHEMA_ORG_ONTOLOGY
-
-    # ── Private helpers ───────────────────────────────────────────────────────
-
-    def _resolve_ontology(
-        self, text: str, ontology_schema: str | dict[str, str] | None
-    ) -> dict[str, str]:
-        """Resolve the ontology to a predicate->description dict."""
-        if ontology_schema is None:
-            if self._relation_schema:
-                return self._relation_schema
-            return self.get_domain_ontology(text)
-        if isinstance(ontology_schema, dict):
-            return ontology_schema
-        try:
-            parsed = json.loads(ontology_schema)
-            if isinstance(parsed, dict) and "properties" in parsed:
-                props = parsed["properties"][:40]
-                return {p: "" for p in props}
-            if isinstance(parsed, dict):
-                return parsed
-        except Exception:
-            pass
-        return self.get_domain_ontology(text)
-
-    @staticmethod
-    def _strip_fences(raw: str) -> str:
-        """Strip markdown code fences and skip to first JSON structure."""
-        raw = raw.strip()
-        for fence in ("```json", "```"):
-            if raw.startswith(fence):
-                raw = raw[len(fence) :]
-                break
-        raw = raw.removesuffix("```").strip()
-        if raw and raw[0] not in ("[", "{"):
-            for ch in ("[", "{"):
-                idx = raw.find(ch)
-                if idx >= 0:
-                    raw = raw[idx:]
-                    break
-        return raw
-
-    def _validate_relations(self, relations: list[Any], threshold: float) -> list[dict[str, Any]]:
-        """Validate, filter, and deduplicate a raw relations list."""
-        seen: dict[tuple[str, str], dict[str, Any]] = {}
-        for r in relations:
-            if not isinstance(r, dict):
+            head = str(data.get("head") or data.get("subject") or "").strip()
+            rel = str(data.get("relation") or data.get("predicate") or "").strip()
+            tail = str(data.get("tail") or data.get("object") or "").strip()
+            if not head or not rel or not tail:
                 continue
-            subj = str(r.get("subject", "")).strip()
-            pred_name = str(r.get("predicate", "")).strip()
-            obj = str(r.get("object", "")).strip()
-            if not subj or not pred_name or not obj:
+            if head.casefold() == tail.casefold():
                 continue
-            if subj.lower() == obj.lower():
+
+            head_name = by_name.get(head.casefold())
+            tail_name = by_name.get(tail.casefold())
+            rel_name = self._allowed_relations.get(_normalise_label(rel))
+            if head_name is None or tail_name is None or rel_name is None:
                 continue
-            conf = float(r.get("confidence", 0.5))
-            if conf < threshold:
+
+            confidence = float(data.get("confidence", 0.5) or 0.0)
+            if confidence < threshold:
                 continue
-            key = (subj.lower(), obj.lower())
-            if key not in seen or seen[key]["confidence"] < conf:
-                seen[key] = {
-                    "subject": subj,
-                    "predicate": pred_name,
-                    "object": obj,
-                    "confidence": conf,
-                    "rationale": str(r.get("rationale", ""))[:300],
+
+            key = (head_name.casefold(), rel_name, tail_name.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            validated.append(
+                {
+                    "subject": head_name,
+                    "predicate": rel_name,
+                    "object": tail_name,
+                    "confidence": confidence,
                 }
-        return list(seen.values())
+            )
 
-    # ── Main extraction entry point ───────────────────────────────────────────
+        return validated
 
     def extract(
         self,
@@ -370,70 +264,53 @@ class OntologyRelExtractor:
         ontology_id: str = "auto",
         confidence_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Extract ontology-typed relations from text using DSPy + DeepSeek.
+        """Extract ontology-typed relations from text.
 
-        Args:
-            text: Source document text (first 2000 chars used).
-            entities: List of entity dicts with at minimum a ``name`` key.
-            ontology_schema: Optional override.  May be a JSON string (legacy
-                API compat), a ``dict[predicate, description]`` mapping, or None
-                for auto-routing by doc type.
-            ontology_id: Identifier for logging.
-            confidence_threshold: Override instance-level threshold.
+        ``ontology_schema`` is retained for call-site compatibility and is not
+        used; the extractor is configured from taxonomy artifacts at creation.
 
-        Returns:
-            List of dicts: ``{subject, predicate, object, confidence, rationale}``.
-            Empty list on failure or when extractor is unavailable.
+        Raises:
+            RuntimeError: If the DSPy call fails or returns malformed output.
         """
-        if not self._available or self._extractor is None:
-            return []
-        if not entities:
-            return []
-
-        threshold = (
-            confidence_threshold
-            if confidence_threshold is not None
-            else getattr(self, "_threshold", 0.5)
-        )
-        ont_dict = self._resolve_ontology(text, ontology_schema)
-        schema_compact = json.dumps(ont_dict, ensure_ascii=False)[:3000]
-
-        entity_names = [e.get("name", "") for e in entities if e.get("name")]
-        if not entity_names:
+        del ontology_schema
+        normalised_entities = [
+            item for item in (_normalise_entity(e) for e in entities) if item is not None
+        ]
+        if len(normalised_entities) < 2:
             return []
 
-        candidates = _build_cooccurrence_candidates(text[:2000], entity_names[:30])
+        threshold = confidence_threshold if confidence_threshold is not None else self._threshold
         try:
-            pred = self._extractor(
-                text=text[:2000],
-                entities_json=json.dumps(entity_names[:30]),
-                ontology_schema=schema_compact,
-                candidate_relations=json.dumps(candidates[:40]),
-            )
+            import dspy  # type: ignore
+
+            with dspy.settings.context(lm=self._lm):
+                prediction = self._extractor(
+                    text=text,
+                    allowed_node_types=self._allowed_node_types,
+                    allowed_relation_types=list(self._relation_schema.keys()),
+                    entities=normalised_entities,
+                )
+            raw_relations = _coerce_relations(getattr(prediction, "relations", None))
         except Exception as exc:
-            log.warning("OntologyRelExtractor DSPy call failed [%s]: %s", ontology_id, exc)
-            return []
-
-        raw = self._strip_fences(getattr(pred, "relations_json", "") or "")
-        try:
-            relations = json.loads(raw)
-        except json.JSONDecodeError:
-            log.debug(
-                "OntologyRelExtractor [%s]: JSON parse failed — raw=%r",
+            try:
+                raw_relations = _recover_relations_from_exception(exc)
+            except Exception as recover_exc:
+                raise RuntimeError(
+                    f"OntologyRelExtractor DSPy extraction failed [{ontology_id}]: {exc}"
+                ) from exc
+            log.warning(
+                "OntologyRelExtractor [%s]: recovered relations from LM reasoning_content "
+                "after DSPy adapter parse failure: %s",
                 ontology_id,
-                raw[:200],
+                type(exc).__name__,
             )
-            return []
 
-        if not isinstance(relations, list):
-            return []
+        validated = self._validate_relations(raw_relations, normalised_entities, threshold)
 
-        validated = self._validate_relations(relations, threshold)
         log.info(
-            "OntologyRelExtractor [%s]: %d triples from %d entities (doc_type=%s)",
+            "OntologyRelExtractor [%s]: %d triples from %d entities",
             ontology_id,
             len(validated),
-            len(entity_names),
-            _classify_doc_type(text),
+            len(normalised_entities),
         )
         return validated

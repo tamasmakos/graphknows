@@ -108,7 +108,10 @@ class CorpusIngestWorkflow:
                     resolved_rel_extractor = OntologyRelExtractor(
                         taxonomy_file=taxonomy.taxonomy_path,
                         relation_schema=taxonomy.relation_schema,
+                        entity_labels=taxonomy.entity_labels,
                     )
+                    if hasattr(self._neo, "_allowed_relation_types"):
+                        self._neo._allowed_relation_types = list(taxonomy.relation_schema)
                 else:
                     resolved_rel_extractor = None
             except Exception as exc:

@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--scope", choices=["stm", "ltm", "both"], default="both")
 
     memoryarena = subparsers.add_parser("memoryarena", help="Run a MemoryArena evaluation slice.")
-    memoryarena.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
+    memoryarena.add_argument("--command", default="graphknows-mcp")
     memoryarena.add_argument(
         "--run-id", default=f"eval-memoryarena-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     )
@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     memoryarena.add_argument("--session-prefix", default="eval-memoryarena")
 
     longmemeval = subparsers.add_parser("longmemeval", help="Run a LongMemEval evaluation slice.")
-    longmemeval.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
+    longmemeval.add_argument("--command", default="graphknows-mcp")
     longmemeval.add_argument(
         "--run-id", default=f"eval-longmemeval-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     )
@@ -79,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     hotpotqa = subparsers.add_parser("hotpotqa", help="Run a HotpotQA support-retrieval slice.")
-    hotpotqa.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
+    hotpotqa.add_argument("--command", default="graphknows-mcp")
     hotpotqa.add_argument(
         "--run-id", default=f"eval-hotpotqa-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     )
@@ -97,7 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
         "research-memory",
         help="Run deterministic retrieval-only memory experiments with mandatory LTM topics.",
     )
-    research.add_argument("--command", default="/root/graphknows/.venv/bin/graphknows-mcp")
+    research.add_argument("--command", default="graphknows-mcp")
     research.add_argument(
         "--run-id", default=f"eval-research-memory-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     )

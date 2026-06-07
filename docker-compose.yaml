@@ -126,9 +126,12 @@ services:
       start_period: 30s
 
   mcp:
+    container_name: graphknows-mcp
     build:
       context: .
       dockerfile: Dockerfile
+    volumes:
+      - .:/app
     command: graphknows-mcp
     environment:
       NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
@@ -188,6 +191,47 @@ services:
       GRAPHKNOWS_FRONTEND_DIR: "/app/frontend"
     depends_on:
       neo4j:
+        condition: service_healthy
+      memgraph:
+        condition: service_healthy
+    restart: unless-stopped
+
+  workspace:
+    container_name: graphknows-workspace
+    image: graphknows-workspace:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: root
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
+      NEO4J_HOST: "${NEO4J_HOST:-neo4j}"
+      NEO4J_PORT: "${NEO4J_PORT:-7687}"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
+      NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
+      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
+      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
+      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
+      PGVECTOR_DB: "${PGVECTOR_DB:-graphknows}"
+      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
+      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
+      PGVECTOR_DSN: "${PGVECTOR_DSN:-postgresql://postgres:changeme@pgvector:5432/graphknows}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
+      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
+      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
+      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
+      PYTHONPATH: /app
+    tty: true
+    stdin_open: true
+    command: /bin/bash
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      pgvector:
         condition: service_healthy
       memgraph:
         condition: service_healthy

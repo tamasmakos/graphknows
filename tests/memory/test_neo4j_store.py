@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -113,3 +113,60 @@ def test_write_session_subgraph_no_relation_edges_ok():
 
     assert "nodes" in result
     assert "edges" in result
+
+
+@pytest.mark.asyncio
+async def test_extract_and_write_relations_uses_configured_relation_types():
+    """LLM relation extraction must use taxonomy labels injected into the store."""
+    from graphknows.memory.stores.neo4j import Neo4jStore
+
+    stm_data = {
+        "entities": [
+            {"name": "Alice", "type": "PERSON", "confidence": 0.9},
+            {"name": "Bob", "type": "PERSON", "confidence": 0.9},
+        ],
+        "chunks": [{"id": "c1", "text": "Alice supports Bob."}],
+        "chunk_entity_edges": [
+            {"chunk_id": "c1", "entity_name": "Alice"},
+            {"chunk_id": "c1", "entity_name": "Bob"},
+        ],
+    }
+    extractor = MagicMock()
+    extractor.extract_relations = AsyncMock(
+        return_value=([("Alice", "SUPPORTS", "Bob", {"confidence": 0.9})], [], {})
+    )
+    mock_driver, _mock_session = _make_mock_neo4j_session()
+    store = Neo4jStore.__new__(Neo4jStore)
+    store._driver = mock_driver
+    store._relation_extractor = extractor
+    store._allowed_relation_types = ["SUPPORTS", "OPPOSES"]
+
+    with patch("graphknows.memory.stores.neo4j._write_relation_edges", return_value=1):
+        result = await store.extract_and_write_relations(stm_data, "key")
+
+    assert result == 1
+    extractor.extract_relations.assert_awaited_once()
+    assert extractor.extract_relations.await_args.kwargs["allowed_relation_types"] == [
+        "SUPPORTS",
+        "OPPOSES",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_extract_and_write_relations_skips_without_relation_types():
+    """No taxonomy-backed relation labels means the LTM LLM pass is skipped."""
+    from graphknows.memory.stores.neo4j import Neo4jStore
+
+    extractor = MagicMock()
+    extractor.extract_relations = AsyncMock()
+    store = Neo4jStore.__new__(Neo4jStore)
+    store._relation_extractor = extractor
+    store._allowed_relation_types = []
+
+    result = await store.extract_and_write_relations(
+        {"entities": [], "chunks": [], "chunk_entity_edges": []},
+        "key",
+    )
+
+    assert result == 0
+    extractor.extract_relations.assert_not_called()
