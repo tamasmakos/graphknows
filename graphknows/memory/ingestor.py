@@ -257,37 +257,29 @@ class MemoryIngestor:
 
             # DSPy ontology-guided relation extraction (Pass 3).
             if self._rel_extractor is not None and len(entities) >= 2:
-                try:
-                    dspy_rels = self._rel_extractor.extract(
-                        text=clean_text,
-                        entities=entities,
-                        ontology_schema=None,
-                        ontology_id=f"{session_id}:{chunk_id[:8]}",
-                    )
-                    for drel in dspy_rels:
-                        try:
-                            _run(
-                                self._mg.write_relation_edge(
-                                    session_id=session_id,
-                                    subject_name=drel["subject"],
-                                    relation_name=drel["predicate"],
-                                    object_name=drel["object"],
-                                    confidence=drel.get("confidence", 0.5),
-                                )
+                dspy_rels = self._rel_extractor.extract(
+                    text=clean_text,
+                    entities=entities,
+                    ontology_schema=None,
+                    ontology_id=f"{session_id}:{chunk_id[:8]}",
+                )
+                for drel in dspy_rels:
+                    try:
+                        _run(
+                            self._mg.write_relation_edge(
+                                session_id=session_id,
+                                subject_name=drel["subject"],
+                                relation_name=drel["predicate"],
+                                object_name=drel["object"],
+                                confidence=drel.get("confidence", 0.5),
                             )
-                        except Exception as exc:
-                            log.warning(
-                                "DSPy write_relation_edge failed session=%s: %s",
-                                session_id,
-                                exc,
-                            )
-                except Exception as exc:
-                    log.warning(
-                        "DSPy rel_extractor failed session=%s chunk=%s: %s",
-                        session_id,
-                        chunk_id[:8],
-                        exc,
-                    )
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "DSPy write_relation_edge failed session=%s: %s",
+                            session_id,
+                            exc,
+                        )
 
             # Write to pgvector STM
             entity_names_list = [e["name"] for e in entities]

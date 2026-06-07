@@ -37,7 +37,11 @@ make infra-up
 Native MCP harness:
 
 ```bash
+# Inside the workspace container or local venv:
 python -m evaluation.run_eval native --command "graphknows-mcp"
+
+# From the host machine (recommended for singleton reuse):
+python -m evaluation.run_eval native --command "docker exec -i graphknows-mcp graphknows-mcp"
 ```
 
 MemoryArena retrieval slice:
@@ -92,6 +96,17 @@ promoted to LTM with topic summarization, and scored on:
 - `answer_support_score`
 - `evidence_recall_score`
 - `topic_entity_score`
+
+## The Singleton MCP
+
+To ensure consistency and avoid container multiplicity, the stack is configured to run a single `graphknows-mcp` instance. When running evaluations from your host machine, always connect to the existing container using `docker exec`:
+
+```bash
+# Recommended for host-side evaluation (singleton reuse)
+python -m evaluation.run_eval native --command "docker exec -i graphknows-mcp graphknows-mcp"
+```
+
+If you must use `docker run`, the evaluation client will automatically inject the `--rm` flag to prevent container leakage, but `exec` is preferred to maintain a single hot instance.
 
 Prediction-backed MemoryArena scoring:
 

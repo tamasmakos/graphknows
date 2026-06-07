@@ -77,3 +77,4 @@ llm-wiki
 .import_linter_cache
 .grimp_cache
 .vscode
+.venv

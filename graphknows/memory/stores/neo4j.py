@@ -285,12 +285,14 @@ class Neo4jStore:
         password: str,
         database: str = "neo4j",
         relation_extractor: IRelationExtractor | None = None,
+        allowed_relation_types: list[str] | None = None,
     ) -> None:
         from neo4j import GraphDatabase
 
         self._driver = GraphDatabase.driver(uri, auth=(user, password))
         self._db = database
         self._relation_extractor = relation_extractor
+        self._allowed_relation_types = list(allowed_relation_types or [])
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -780,35 +782,15 @@ class Neo4jStore:
                 f"(llm_model={llm_model}, openrouter_key_configured={bool(openrouter_key)})"
             )
 
-        all_triplets: list[tuple[str, str, str]] = []
-        # Load default allowed relation types from taxonomy so the LLM has guidance.
-        # Without this the DSPy module receives an empty list and returns no triplets.
-        try:
-            from pathlib import Path
-
-            import yaml
-
-            _taxonomy_path = (
-                Path(__file__).parent.parent.parent
-                / "ingestion"
-                / "domain"
-                / "taxonomy.generic.yaml"
+        allowed_relation_types = list(getattr(self, "_allowed_relation_types", []) or [])
+        if not allowed_relation_types:
+            logger.warning(
+                "Neo4jStore.extract_and_write_relations skipped: no taxonomy-backed "
+                "allowed_relation_types configured"
             )
-            _taxonomy = yaml.safe_load(_taxonomy_path.read_text())
-            _default_relation_types: list[str] = _taxonomy.get("relation_types", [])
-        except Exception:
-            _default_relation_types = [
-                "PART_OF",
-                "RELATED_TO",
-                "CAUSES",
-                "LOCATED_IN",
-                "AFFILIATED_WITH",
-                "PRECEDED_BY",
-                "SUCCEEDED_BY",
-                "PRODUCED_BY",
-                "DESCRIBED_BY",
-                "CONTRASTS_WITH",
-            ]
+            return 0
+
+        all_triplets: list[tuple[str, str, str]] = []
 
         for chunk in stm_data.get("chunks", []):
             ents = chunk_to_ents.get(chunk["id"], [])
@@ -819,7 +801,7 @@ class Neo4jStore:
                 text=chunk["text"],
                 keywords=ents,
                 entities=ents,
-                allowed_relation_types=_default_relation_types,
+                allowed_relation_types=allowed_relation_types,
             )
             for item in relations:
                 # item is a tuple: (source, relation, target, metadata_dict)

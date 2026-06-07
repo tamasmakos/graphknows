@@ -37,6 +37,11 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
 
 def build_neo4j_store(settings: GraphKnowsSettings) -> Neo4jStore:
     """Build a Neo4jStore from settings (backward-compat)."""
+    relation_types: list[str] | None = None
+    if settings.relation_extraction_mode == "llm_assisted":
+        from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
+
+        relation_types = list(load_taxonomy_artifacts(settings.taxonomy_file).relation_schema)
     relation_extractor = (
         build_relation_extractor(settings)
         if settings.relation_extraction_mode == "llm_assisted"
@@ -48,6 +53,7 @@ def build_neo4j_store(settings: GraphKnowsSettings) -> Neo4jStore:
         password=settings.neo4j_password,
         database=settings.neo4j_database,
         relation_extractor=relation_extractor,
+        allowed_relation_types=relation_types,
     )
 
 
@@ -108,6 +114,7 @@ def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
         OntologyRelExtractor(
             taxonomy_file=taxonomy.taxonomy_path,
             relation_schema=taxonomy.relation_schema,
+            entity_labels=taxonomy.entity_labels,
         )
         if mode == "llm_assisted"
         else None
@@ -152,6 +159,7 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
         OntologyRelExtractor(
             taxonomy_file=taxonomy.taxonomy_path,
             relation_schema=taxonomy.relation_schema,
+            entity_labels=taxonomy.entity_labels,
         )
         if mode == "llm_assisted"
         else None

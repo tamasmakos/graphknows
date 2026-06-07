@@ -11,15 +11,25 @@ COPY pyproject.toml uv.lock ./
 COPY graphknows ./graphknows
 COPY frontend ./frontend
 
-# Install all production deps into an isolated venv
+# Install all production deps + dev/eval groups into an isolated venv
 RUN uv venv /opt/venv && \
     uv pip install --python /opt/venv/bin/python --no-cache \
-        .
+        .[web] \
+        --group dev \
+        --group eval \
+        jupyterlab
 
 # ─── runtime stage ─────────────────────────────────────────────────────────────
 FROM python:3.13-slim AS runtime
 
 WORKDIR /app
+
+# Install uv in the runtime so it's available in the workspace
+RUN pip install --no-cache-dir uv
+
+# User requested spacy installation and model download at the compose/docker layer
+RUN pip install spacy && \
+    python -m spacy download en_core_web_lg
 
 # Bring in only the venv and the application source
 COPY --from=builder /opt/venv /opt/venv
@@ -28,7 +38,8 @@ COPY --from=builder /build/frontend ./frontend
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_PYTHON_CONTROL=manual
 
 # Non-root user for container security
 RUN useradd -m -u 1000 graphknows

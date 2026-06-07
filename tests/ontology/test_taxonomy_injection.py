@@ -107,37 +107,29 @@ class TestOntologyRelExtractorRelationSchema:
         from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
 
         custom = {"SUPPORTS": "entity A supports entity B", "OPPOSES": "entity A opposes entity B"}
-        extractor = OntologyRelExtractor(relation_schema=custom)
-        resolved = extractor._resolve_ontology("some text about politics", None)
-        assert resolved == custom
+        extractor = OntologyRelExtractor.__new__(OntologyRelExtractor)
+        extractor._relation_schema = custom
+        assert extractor.allowed_relation_types == list(custom)
 
     def test_taxonomy_file_loads_same_relation_schema(self) -> None:
         from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
 
         artifacts = load_taxonomy_artifacts("taxonomy.generic.yaml")
-        extractor = OntologyRelExtractor(taxonomy_file="taxonomy.generic.yaml")
-        resolved = extractor._resolve_ontology("some text", None)
-        assert resolved == artifacts.relation_schema
+        extractor = OntologyRelExtractor.__new__(OntologyRelExtractor)
+        extractor._relation_schema = artifacts.relation_schema
+        extractor._entity_labels = artifacts.entity_labels
+        assert extractor.allowed_relation_types == list(artifacts.relation_schema)
+        assert extractor.allowed_node_types == artifacts.entity_labels
 
-    def test_explicit_schema_still_overrides_taxonomy(self) -> None:
+    def test_missing_openrouter_key_is_not_silently_disabled(self, monkeypatch) -> None:
         from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
 
-        custom_taxonomy = {"SUPPORTS": "support relation"}
-        extractor = OntologyRelExtractor(relation_schema=custom_taxonomy)
-        explicit = {"causes": "cause relation"}
-        resolved = extractor._resolve_ontology("text", explicit)
-        assert resolved == explicit
-
-    def test_no_taxonomy_falls_through_to_domain_routing(self) -> None:
-        from graphknows.ingestion.ontology.rel_extractor import (
-            DOMAIN_GK_ONTOLOGY,
-            OntologyRelExtractor,
-        )
-
-        extractor = OntologyRelExtractor()
-        # graphknows-flavoured text should route to DOMAIN_GK_ONTOLOGY
-        resolved = extractor._resolve_ontology("memgraph neo4j pgvector stm ltm", None)
-        assert resolved == DOMAIN_GK_ONTOLOGY
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+            OntologyRelExtractor(
+                relation_schema={"SUPPORTS": "support relation"},
+                entity_labels=["PERSON"],
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -151,13 +143,16 @@ class TestCorpusIngestWorkflowTaxonomyWiring:
     def _make_workflow(self) -> "Any":  # type: ignore[name-defined]  # noqa: F821
         from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
 
+        neo = MagicMock()
+        neo._allowed_relation_types = []
         return CorpusIngestWorkflow(
             mg_store=MagicMock(),
             pg_store=MagicMock(),
-            neo_store=MagicMock(),
+            neo_store=neo,
             extractor=MagicMock(),
             embed_fn=MagicMock(),
             rel_extractor=MagicMock(),
+            relation_extraction_mode="llm_assisted",
         )
 
     @pytest.mark.asyncio
@@ -184,7 +179,7 @@ class TestCorpusIngestWorkflowTaxonomyWiring:
             patch(
                 "graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor",
                 MagicMock(return_value=MagicMock()),
-            ),
+            ) as mock_rel,
             patch("graphknows.memory.stm._async_bridge._run"),
             patch("graphknows.memory.stm.service.STMService", return_value=mock_stm),
             patch("graphknows.memory.flush.SessionFlusher", return_value=mock_flusher),
@@ -203,6 +198,9 @@ class TestCorpusIngestWorkflowTaxonomyWiring:
             assert len(created_extractors) >= 1
             assert created_extractors[0] is not None
             assert "generic" in created_extractors[0]
+            assert "PERSON" in mock_rel.call_args.kwargs["entity_labels"]
+            assert "PART_OF" in mock_rel.call_args.kwargs["relation_schema"]
+            assert "PART_OF" in workflow._neo._allowed_relation_types
             # The fresh extractor should be used — not the default one
             assert result.documents_processed == 1
 

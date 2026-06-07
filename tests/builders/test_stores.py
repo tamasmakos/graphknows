@@ -34,6 +34,7 @@ def test_build_neo4j_store_llm_assisted_wires_relation_extractor(monkeypatch):
         store = build_neo4j_store(settings)
 
     assert store._relation_extractor is mock_build_rel.return_value
+    assert "PART_OF" in store._allowed_relation_types
     mock_build_rel.assert_called_once_with(settings)
 
 
@@ -120,6 +121,7 @@ def test_memory_ingestor_llm_assisted_shares_active_taxonomy(monkeypatch):
     assert "taxonomy.eu-politics.yaml" in str(mock_gliner.call_args.kwargs["taxonomy_path"])
     assert "taxonomy.eu-politics.yaml" in str(mock_rel.call_args.kwargs["taxonomy_file"])
     assert "OPPOSES" in mock_rel.call_args.kwargs["relation_schema"]
+    assert "PERSON" in mock_rel.call_args.kwargs["entity_labels"]
 
 
 def test_memory_ingestor_off_disables_extraction(monkeypatch):

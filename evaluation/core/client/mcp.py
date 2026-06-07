@@ -39,6 +39,17 @@ class GraphknowsMCPClient:
         if self._proc is not None:
             return
         args = shlex.split(self.command) if isinstance(self.command, str) else list(self.command)
+
+        # Safety for Docker: ensure --rm is present for 'docker run' to avoid container leaks,
+        # and prefer 'docker exec' if targeting the singleton container.
+        if len(args) > 1 and args[0] == "docker":
+            if args[1] == "run" and "--rm" not in args:
+                # Insert --rm after 'run'
+                args.insert(2, "--rm")
+            elif args[1] == "exec" and "-i" not in args and "-it" not in args:
+                # Ensure interactive mode for stdio
+                args.insert(2, "-i")
+
         env = {**os.environ, **self.env}
         self._proc = await asyncio.create_subprocess_exec(
             *args,
