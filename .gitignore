@@ -78,3 +78,6 @@ llm-wiki
 .grimp_cache
 .vscode
 .venv
+.agents
+skills-lock.json
+.claude
