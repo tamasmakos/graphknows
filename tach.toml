@@ -55,7 +55,7 @@ depends_on = [
 [[modules]]
 path = "graphknows.memory.services"
 depends_on = [
-  "graphknows.config.adapters",
+  "graphknows.memory.ltm",
 ]
 
 [[modules]]
@@ -69,6 +69,7 @@ depends_on = [
 [[modules]]
 path = "graphknows.memory.ltm"
 depends_on = [
+  "graphknows.config",
   "graphknows.memory.models",
 ]
 

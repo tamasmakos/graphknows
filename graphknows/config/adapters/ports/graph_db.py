@@ -87,29 +87,6 @@ class IGraphDb(Protocol):
         """MERGE a full STM subgraph into Neo4j LTM."""
         ...
 
-    async def extract_and_write_relations(
-        self,
-        stm_data: dict[str, Any],
-        openrouter_key: str,
-        llm_model: str = "openrouter/meta-llama/llama-3.1-8b-instruct",
-    ) -> int:
-        """Run DSPyExtractor per chunk; write dynamic typed ENTITY→ENTITY edges."""
-        ...
-
-    async def summarize_topics(
-        self,
-        session_id: str,
-        openrouter_key: str,
-        llm_model: str = "meta-llama/llama-3.1-8b-instruct",
-        pg_store: Any = None,
-    ) -> int:
-        """Detect entity communities, summarize with LLM, write TOPICs."""
-        ...
-
-    async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
-        """Run full GDS feature enrichment."""
-        ...
-
     async def count_nodes(self) -> dict[str, int]:
         """Return counts of key node types."""
         ...

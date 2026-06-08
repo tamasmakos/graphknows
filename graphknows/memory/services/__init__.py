@@ -1,11 +1,5 @@
-"""graphknows.memory.services — service orchestration layer.
+"""graphknows.memory.services — DSPy summarization utilities."""
 
-Services accept injected port interfaces (IGraphDb, ILlm) and encapsulate
-business logic extracted from Neo4jStore.
-"""
+from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
 
-from graphknows.memory.services.enrichment_service import EnrichmentService
-from graphknows.memory.services.relation_service import RelationService
-from graphknows.memory.services.topic_service import TopicService
-
-__all__ = ["EnrichmentService", "RelationService", "TopicService"]
+__all__ = ["TopicSummarizer"]
