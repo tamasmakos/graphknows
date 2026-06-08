@@ -876,7 +876,7 @@ class Neo4jStore:
 
         summarizer = None
         if openrouter_key:
-            from graphknows.memory.services.topic_summarizer import TopicSummarizer
+            from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
 
             summarizer = TopicSummarizer(openrouter_key, llm_model)
         topics_created = 0
@@ -1045,24 +1045,6 @@ class Neo4jStore:
             gds_modularity=gds_modularity,
             community_algorithm=community_algorithm,
         )
-
-    async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
-        """Run full GDS feature enrichment via LTMEnrichmentService.
-
-        Args:
-            session_id: Used to scope projection (session entities only).
-
-        Returns:
-            Dict with entity_count, edge_count, community_count, modularity, etc.
-
-        Raises:
-            Exception: Propagates any GDS or Neo4j failure.
-        """
-        from graphknows.memory.ltm.enrichment import LTMEnrichmentService
-
-        svc = LTMEnrichmentService()
-        result = await asyncio.to_thread(svc.run_gds, self._driver)
-        return result.model_dump()
 
     async def count_nodes(self) -> dict[str, int]:
         """Return counts of key node types."""

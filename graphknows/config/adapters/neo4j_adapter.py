@@ -89,26 +89,6 @@ class Neo4jAdapter:
     ) -> dict[str, int]:
         return await self._store.write_session_subgraph(session_id, stm_data)
 
-    async def extract_and_write_relations(
-        self,
-        stm_data: dict[str, Any],
-        openrouter_key: str,
-        llm_model: str = "openrouter/meta-llama/llama-3.1-8b-instruct",
-    ) -> int:
-        return await self._store.extract_and_write_relations(stm_data, openrouter_key, llm_model)
-
-    async def summarize_topics(
-        self,
-        session_id: str,
-        openrouter_key: str,
-        llm_model: str = "meta-llama/llama-3.1-8b-instruct",
-        pg_store: Any = None,
-    ) -> int:
-        return await self._store.summarize_topics(session_id, openrouter_key, llm_model, pg_store)
-
-    async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
-        return await self._store.run_gds_enrichment(session_id)
-
     async def count_nodes(self) -> dict[str, int]:
         return await self._store.count_nodes()
 

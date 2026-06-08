@@ -29,9 +29,6 @@ def mock_store() -> MagicMock:
     store.get_chunks_for_entity = AsyncMock(return_value=[])
     store.get_entity_community = AsyncMock(return_value=None)
     store.write_session_subgraph = AsyncMock(return_value={"nodes": 1, "edges": 0})
-    store.extract_and_write_relations = AsyncMock(return_value=4)
-    store.summarize_topics = AsyncMock(return_value=2)
-    store.run_gds_enrichment = AsyncMock(return_value={"entity_count": 10})
     store.count_nodes = AsyncMock(return_value={"chunks": 1, "entities": 2})
     store.get_segment_info = AsyncMock(return_value=None)
     store.list_segments = AsyncMock(return_value=[])
@@ -74,13 +71,3 @@ async def test_get_chunk_entities(adapter: Neo4jAdapter, mock_store: MagicMock) 
     assert result == [{"name": "Alice", "label": "PERSON"}]
 
 
-@pytest.mark.asyncio
-async def test_run_gds_enrichment(adapter: Neo4jAdapter, mock_store: MagicMock) -> None:
-    result = await adapter.run_gds_enrichment("sess-1")
-    assert result["entity_count"] == 10
-
-
-@pytest.mark.asyncio
-async def test_extract_and_write_relations(adapter: Neo4jAdapter, mock_store: MagicMock) -> None:
-    result = await adapter.extract_and_write_relations({"chunks": []}, "key-xxx")
-    assert result == 4

@@ -208,7 +208,7 @@ async def test_summarize_topics_writes_topic_embedding_from_summary(monkeypatch)
     """write_ltm_topic receives an embedding generated from the LLM summary."""
     from graphknows.memory.stores import embedder as embedder_module
     from graphknows.memory.stores.neo4j import Neo4jStore
-    from graphknows.memory.services.topic_summarizer import TopicSummarizer
+    from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
 
     store = Neo4jStore.__new__(Neo4jStore)
     store._driver = MagicMock()
@@ -254,7 +254,7 @@ async def test_summarize_topics_falls_back_to_title_for_embedding(monkeypatch):
     """If summary is empty, write_ltm_topic receives an embedding from the topic label."""
     from graphknows.memory.stores import embedder as embedder_module
     from graphknows.memory.stores.neo4j import Neo4jStore
-    from graphknows.memory.services.topic_summarizer import TopicSummarizer
+    from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
 
     store = Neo4jStore.__new__(Neo4jStore)
     store._driver = MagicMock()
