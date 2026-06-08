@@ -104,25 +104,14 @@ def _run_cosine_weights(s: Any) -> None:
 
 def _project_undirected(s: Any, _ec: int = 0, _edge_count: int = 0) -> None:
     s.run(_DROP_GRAPH_CQL, name=PROJECTED_GRAPH_NAME)
-    try:
-        s.run("""
-            CALL gds.graph.project(
-                'ltm-entities',
-                'Entity',
-                {RELATES: {orientation: 'UNDIRECTED', properties: {weight: {defaultValue: 1.0}}}}
-            )
-            YIELD graphName
-        """)
-    except Exception as exc:
-        log.warning("Native undirected project failed, falling back to cypher: %s", exc)
-        s.run("""
-            CALL gds.graph.project.cypher(
-                'ltm-entities',
-                'MATCH (n:ENTITY) RETURN id(n) AS id',
-                'MATCH (a:ENTITY)-[r]->(b:ENTITY) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
-            )
-            YIELD graphName
-        """)
+    s.run("""
+        CALL gds.graph.project.cypher(
+            'ltm-entities',
+            'MATCH (n:ENTITY) RETURN id(n) AS id',
+            'MATCH (a:ENTITY)-[r]->(b:ENTITY) RETURN id(a) AS source, id(b) AS target, coalesce(r.weight, 1.0) AS weight'
+        )
+        YIELD graphName
+    """)
 
 
 def _run_pagerank(s: Any) -> None:
@@ -176,25 +165,47 @@ def _run_betweenness(s: Any, ec: int) -> None:
 
 def _run_community_detection(s: Any) -> tuple[Any, str]:
     comm_result = None
-    algorithm_used = "louvain"
+    algorithm_used = "leiden"
     try:
         comm_result = s.run("""
-            CALL gds.louvain.write('ltm-entities', {
+            CALL gds.leiden.write('ltm-entities', {
                 writeProperty: 'community_id',
                 relationshipWeightProperty: 'weight'
             })
             YIELD communityCount, modularity, modularities, ranLevels
         """).single()
     except Exception as exc:
-        log.warning("Weighted Louvain failed (%s) — trying unweighted", exc)
+        log.warning("Weighted Leiden failed (%s); trying unweighted Leiden", exc)
         try:
             comm_result = s.run("""
-                CALL gds.louvain.write('ltm-entities', {writeProperty: 'community_id'})
+                CALL gds.leiden.write('ltm-entities', {writeProperty: 'community_id'})
                 YIELD communityCount, modularity, modularities, ranLevels
             """).single()
-            algorithm_used = "louvain_unweighted"
-        except Exception:
-            log.exception("Community detection failed")
+            algorithm_used = "leiden_unweighted"
+        except Exception as leiden_unweighted_exc:
+            log.warning(
+                "Unweighted Leiden failed (%s); trying Louvain fallback",
+                leiden_unweighted_exc,
+            )
+            algorithm_used = "louvain"
+            try:
+                comm_result = s.run("""
+                    CALL gds.louvain.write('ltm-entities', {
+                        writeProperty: 'community_id',
+                        relationshipWeightProperty: 'weight'
+                    })
+                    YIELD communityCount, modularity, modularities, ranLevels
+                """).single()
+            except Exception as louvain_exc:
+                log.warning("Weighted Louvain failed (%s); trying unweighted Louvain", louvain_exc)
+                try:
+                    comm_result = s.run("""
+                        CALL gds.louvain.write('ltm-entities', {writeProperty: 'community_id'})
+                        YIELD communityCount, modularity, modularities, ranLevels
+                    """).single()
+                    algorithm_used = "louvain_unweighted"
+                except Exception:
+                    log.exception("Community detection failed")
     return comm_result, algorithm_used
 
 
@@ -221,6 +232,7 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
         "modularities": [],
         "ran_iterations": 0,
         "did_converge": False,
+        "algorithm_used": "",
         "changed_community_ids": [],
         "error": "",
     }
@@ -250,7 +262,7 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
             _run_pagerank(s)
             _run_degree_centrality(s)
             _run_betweenness(s, ec)
-            comm_result, _algorithm_used = _run_community_detection(s)
+            comm_result, algorithm_used = _run_community_detection(s)
             if comm_result:
                 community_count = comm_result["communityCount"]
                 modularity = comm_result["modularity"] or 0.0
@@ -263,6 +275,15 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
                 result["modularities"] = modularities
                 result["ran_iterations"] = ran_levels
                 result["did_converge"] = True
+                result["algorithm_used"] = algorithm_used
+                s.run(
+                    "MATCH (t:TOPIC) "
+                    "SET t.modularity = $modularity, "
+                    "    t.gds_modularity = $modularity, "
+                    "    t.community_algorithm = $algorithm",
+                    modularity=modularity,
+                    algorithm=algorithm_used,
+                )
                 # Community change detection
                 try:
                     rows = s.run(
@@ -397,6 +418,7 @@ class LTMEnrichmentService:
             ran_iterations=raw.get("ran_iterations", 0),
             did_converge=raw.get("did_converge", False),
             changed_community_ids=raw.get("changed_community_ids", []),
+            algorithm_used=raw.get("algorithm_used", ""),
             error=raw.get("error", ""),
         )
 
@@ -478,6 +500,7 @@ class LTMEnrichmentService:
         pg_store: Any,
         llm_key: str,
         llm_model: str,
+        gds_result: Any | None = None,
     ) -> int:
         """Run Louvain + LLM topic summarization and write TOPIC nodes.
 
@@ -504,6 +527,8 @@ class LTMEnrichmentService:
                 openrouter_key=llm_key,
                 llm_model=llm_model,
                 pg_store=pg_store,
+                gds_modularity=getattr(gds_result, "modularity", None),
+                community_algorithm=getattr(gds_result, "algorithm_used", None),
             )
         # Bare driver — no topic summarization available without a store wrapper
         log.warning("run_topic_summarization: bare driver passed; skipping LLM summarization")

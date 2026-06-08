@@ -106,7 +106,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--suite", choices=["hotpotqa", "longmemeval", "memoryarena"], default="hotpotqa"
     )
     research.add_argument("--top-k", type=int, default=5)
-    research.add_argument("--taxonomy-file", default="taxonomy.generic.yaml")
     research.add_argument(
         "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
     )
@@ -254,7 +253,6 @@ async def _run_research_memory(args: argparse.Namespace) -> int:
             suite=args.suite,
             run_id=args.run_id,
             top_k=args.top_k,
-            taxonomy_file=args.taxonomy_file or None,
             offset=args.offset,
             limit=args.limit,
             domain=args.domain,
@@ -275,7 +273,6 @@ async def _run_research_memory(args: argparse.Namespace) -> int:
         cases=[case.to_record() for case in cases],
         metadata={
             "suite": args.suite,
-            "taxonomy_file": args.taxonomy_file or "taxonomy.generic.yaml",
             "relation_extraction_mode": args.relation_extraction_mode,
             "isolation": "per_case_pre_and_post_purge",
             "agentic_workflow": False,

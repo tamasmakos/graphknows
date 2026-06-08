@@ -95,7 +95,6 @@ def validate_result_shape(tool_name: str, payload: Any) -> tuple[bool, str]:
         "recall_by_dialog": ("results",),
         "recall_by_topic": ("results",),
         "corpus_ingest": ("documents_processed",),
-        "list_taxonomies": ("bundled_taxonomies",),
     }
     missing = [key for key in required_by_tool.get(tool_name, ()) if key not in payload]
     if missing:

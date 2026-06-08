@@ -77,25 +77,13 @@ def get_max_concurrent(config: dict[str, Any], default: int = 8) -> int:
 async def extract_relations_with_llm_async(
     text: str,
     extractor: Any,
-    keywords: list[str] | None = None,
-    entities: list[str] | None = None,
-    ontology_classes: list[str] | None = None,
-    allowed_relation_types: list[str] | None = None,
-    candidate_relations: list[dict[str, Any]] | None = None,
 ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
     """Extract relations using the configured DSPy extractor."""
     if not extractor or not text:
         return [], [], {}
 
     try:
-        result = await extractor.extract_relations(
-            text=text,
-            keywords=keywords,
-            entities=entities,
-            ontology_classes=ontology_classes,
-            allowed_relation_types=allowed_relation_types,
-            candidate_relations=candidate_relations,
-        )
+        result = await extractor.extract_relations(text=text)
         if isinstance(result, tuple):
             if len(result) == 3:
                 relations, nodes, diagnostics = result

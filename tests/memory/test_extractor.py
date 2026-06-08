@@ -1,317 +1,185 @@
-"""Unit tests for GLiNER2EntityExtractor and ExtractionResult."""
+"""Unit tests for the dynamic spaCy-hinted GLiNER2 extractor."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
-from graphknows.memory.extractor import ExtractionResult, GLiNER2EntityExtractor
+from graphknows.memory.extractor import ExtractionResult, GLiNER2EntityExtractor, _SpacySchemaMiner
 
-# ---------------------------------------------------------------------------
-# Standalone tests (test_extractor.py)
-# ---------------------------------------------------------------------------
+
+class _Tok:
+    def __init__(
+        self,
+        idx: int,
+        text: str,
+        lemma: str,
+        pos: str,
+        ancestors: list["_Tok"] | None = None,
+    ) -> None:
+        self.i = idx
+        self.text = text
+        self.lemma_ = lemma
+        self.pos_ = pos
+        self._ancestors = ancestors or []
+
+    @property
+    def ancestors(self) -> list["_Tok"]:
+        return self._ancestors
 
 
 def test_extraction_result_has_entities_and_relations_fields():
     result = ExtractionResult(
-        entities=[{"name": "EU", "type": "ORG", "score": 0.9}],
+        entities=[{"name": "OpenAI", "type": "ORG", "score": 0.9}],
         relations=[
             {
-                "head": "EU",
+                "head": "OpenAI",
                 "head_type": "ORG",
-                "relation": "REGULATES",
-                "tail": "ECB",
-                "tail_type": "ORG",
+                "relation": "build",
+                "tail": "ChatGPT",
+                "tail_type": "PRODUCT",
                 "score": 1.0,
             }
         ],
     )
-    assert len(result.entities) == 1
-    assert result.entities[0]["name"] == "EU"
-    assert len(result.relations) == 1
-    assert result.relations[0]["relation"] == "REGULATES"
+
+    assert result.entities[0]["name"] == "OpenAI"
+    assert result.relations[0]["relation"] == "build"
 
 
-def test_extract_returns_extraction_result_with_entities_and_relations():
+def test_spacy_schema_miner_builds_entity_and_relation_specs_from_doc():
+    root = _Tok(1, "built", "build", "VERB")
+    left = _Tok(0, "OpenAI", "OpenAI", "PROPN", [root])
+    right = _Tok(2, "ChatGPT", "ChatGPT", "PROPN", [root])
+    sent = SimpleNamespace(start=0)
+    doc = SimpleNamespace(
+        ents=[
+            SimpleNamespace(text="OpenAI", label_="ORG", root=left, sent=sent),
+            SimpleNamespace(text="ChatGPT", label_="PRODUCT", root=right, sent=sent),
+        ]
+    )
+    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc)
+
+    schema = miner.build("OpenAI built ChatGPT.")
+
+    assert schema.entity_spec["org"]["description"]
+    assert schema.entity_spec["product"]["threshold"] == pytest.approx(0.35)
+    assert schema.label_to_type == {"org": "ORG", "product": "PRODUCT"}
+    assert "build" in schema.relation_spec
+    assert "ORG" not in schema.relation_spec["build"]
+    assert "OpenAI -> build -> ChatGPT" in schema.relation_spec["build"]
+    assert "avoid selecting whole clauses" in schema.relation_spec["build"]
+
+
+def test_spacy_schema_miner_skips_prepositions_adjectives_and_parent_verbs():
+    said = _Tok(1, "said", "say", "VERB")
+    support = _Tok(2, "supports", "support", "VERB", [said])
+    german = _Tok(4, "German", "german", "ADJ", [support, said])
+    in_token = _Tok(3, "in", "in", "ADP", [german, support, said])
+    left = _Tok(0, "Commission", "Commission", "PROPN", [said])
+    right = _Tok(5, "Green Deal", "Green Deal", "PROPN", [in_token, german, support, said])
+    sent = SimpleNamespace(start=0)
+    doc = SimpleNamespace(
+        ents=[
+            SimpleNamespace(text="Commission", label_="ORG", root=left, sent=sent),
+            SimpleNamespace(text="Green Deal", label_="PRODUCT", root=right, sent=sent),
+        ]
+    )
+    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc)
+
+    schema = miner.build("The Commission said it supports the Green Deal.")
+
+    assert "support" in schema.relation_spec
+    assert "Commission -> support -> Green Deal" in schema.relation_spec["support"]
+    assert "dependency path:" in schema.relation_spec["support"]
+    assert "say" not in schema.relation_spec
+    assert "in" not in schema.relation_spec
+    assert "german" not in schema.relation_spec
+
+
+def test_extract_builds_fresh_schema_and_parses_entities_and_relations():
+    schema = SimpleNamespace(
+        entity_spec={"org": {"description": "dynamic org", "threshold": 0.35}},
+        relation_spec={"build": "dynamic relation"},
+        label_to_type={"org": "ORG"},
+    )
+    schema_miner = MagicMock()
+    schema_miner.build.return_value = schema
+
+    mock_schema = MagicMock()
     mock_model = MagicMock()
+    mock_model.create_schema.return_value = mock_schema
     mock_model.extract.return_value = {
-        "entities": {
-            "PERSON": [{"text": "Viktor Orbán", "label": "PERSON", "confidence": 0.95}],
-        },
+        "entities": {"org": [{"text": "OpenAI", "confidence": 0.95}]},
         "relation_extraction": {
-            "OPPOSES": [
+            "build": [
                 {
-                    "head": {"text": "Viktor Orbán", "confidence": 1.0},
-                    "tail": {"text": "Ukraine EU membership", "confidence": 1.0},
+                    "head": {"text": "OpenAI", "confidence": 0.9},
+                    "tail": {"text": "ChatGPT", "confidence": 0.8},
                 }
             ]
         },
     }
+    extractor = GLiNER2EntityExtractor(
+        model_loader=lambda: mock_model,
+        schema_miner=schema_miner,
+    )
 
-    with (
-        patch.object(GLiNER2EntityExtractor, "_ensure_model_loaded"),
-        patch.object(GLiNER2EntityExtractor, "_child_to_group", {"person": "PERSON"}, create=True),
-        patch.object(GLiNER2EntityExtractor, "_taxonomy", create=True) as mock_taxonomy,
-    ):
-        mock_taxonomy.get_min_ner_confidence.return_value = 0.0
-        mock_taxonomy.entity_groups = {}
-        extractor = GLiNER2EntityExtractor.__new__(GLiNER2EntityExtractor)
-        extractor._gliner = mock_model
-        extractor._gliner_schema = MagicMock()
-        result = extractor.extract("Viktor Orbán opposes Ukraine EU membership.")
+    result = extractor.extract("OpenAI built ChatGPT.")
 
-    assert isinstance(result, ExtractionResult)
-    assert len(result.entities) == 1
-    assert result.entities[0]["name"] == "Viktor Orbán"
-    assert result.entities[0]["type"] == "PERSON"
-    assert len(result.relations) == 1
-    assert result.relations[0]["head"] == "Viktor Orbán"
-    assert result.relations[0]["relation"] == "OPPOSES"
-    assert result.relations[0]["tail"] == "Ukraine EU membership"
+    mock_schema.entities.assert_called_once_with(schema.entity_spec)
+    mock_schema.relations.assert_called_once_with(schema.relation_spec)
+    mock_model.extract.assert_called_once()
+    assert result.entities == [{"name": "OpenAI", "type": "ORG", "score": 0.95}]
+    assert result.relations[0]["head"] == "OpenAI"
+    assert result.relations[0]["tail"] == "ChatGPT"
+    assert result.relations[0]["score"] == pytest.approx(0.8)
 
 
-# ---------------------------------------------------------------------------
-# Class-based tests (test_wave3_extractor.py)
-# ---------------------------------------------------------------------------
+def test_extract_returns_empty_when_spacy_mines_no_entity_schema():
+    schema = SimpleNamespace(entity_spec={}, relation_spec={}, label_to_type={})
+    schema_miner = MagicMock()
+    schema_miner.build.return_value = schema
+    mock_model = MagicMock()
+    extractor = GLiNER2EntityExtractor(model_loader=lambda: mock_model, schema_miner=schema_miner)
+
+    result = extractor.extract("No named entities here.")
+
+    assert result == ExtractionResult()
+    mock_model.extract.assert_not_called()
 
 
-class TestExtractionResult:
-    def test_defaults_empty_lists(self):
-        r = ExtractionResult()
-        assert r.entities == []
-        assert r.relations == []
+def test_extract_filters_low_confidence_and_blank_entities():
+    schema = SimpleNamespace(
+        entity_spec={"person": {"description": "dynamic person", "threshold": 0.35}},
+        relation_spec={},
+        label_to_type={"person": "PERSON"},
+    )
+    schema_miner = MagicMock()
+    schema_miner.build.return_value = schema
+    mock_model = MagicMock()
+    mock_model.create_schema.return_value = MagicMock()
+    mock_model.extract.return_value = {
+        "entities": {
+            "person": [
+                {"text": "Alice", "confidence": 0.9},
+                {"text": "Bob", "confidence": 0.2},
+                {"text": " ", "confidence": 0.9},
+            ]
+        },
+        "relation_extraction": {},
+    }
+    extractor = GLiNER2EntityExtractor(model_loader=lambda: mock_model, schema_miner=schema_miner)
 
-    def test_accepts_data(self):
-        r = ExtractionResult(
-            entities=[{"name": "Alice", "type": "PERSON", "score": 0.9}],
-            relations=[{"head": "Alice", "relation": "KNOWS", "tail": "Bob", "score": 0.8}],
-        )
-        assert len(r.entities) == 1
-        assert len(r.relations) == 1
+    result = extractor.extract("Alice met Bob.")
 
-
-def _make_extractor():
-    """Create GLiNER2EntityExtractor with a mocked taxonomy (no file I/O)."""
-    # Build a minimal mock taxonomy
-    mock_taxonomy = MagicMock()
-    mock_taxonomy.name = "test"
-    mock_taxonomy.relation_types = ["KNOWS", "WORKS_FOR"]
-    mock_group_person = MagicMock()
-    mock_group_person.min_ner_confidence = 0.5
-    mock_group_person.description = "A person"
-    mock_group_person.children = []
-    mock_taxonomy.entity_groups = {"PERSON": mock_group_person}
-    mock_taxonomy.get_min_ner_confidence.return_value = 0.35
-
-    with patch(
-        "graphknows.memory.extractor.GLiNER2EntityExtractor.__init__",
-        lambda self, taxonomy_path=None: None,
-    ):
-        extractor = GLiNER2EntityExtractor.__new__(GLiNER2EntityExtractor)
-
-    extractor._taxonomy = mock_taxonomy
-    extractor._gliner = None
-    extractor._gliner_schema = None
-    extractor._child_to_group = {"person": "PERSON"}
-    extractor._entity_spec = {"person": {"description": "A person", "threshold": 0.5}}
-    extractor._rel_descs = {"KNOWS": "knows", "WORKS_FOR": "works for"}
-    return extractor
+    assert result.entities == [{"name": "Alice", "type": "PERSON", "score": 0.9}]
 
 
-class TestGLiNER2EntityExtractorInit:
-    def test_builds_entity_spec_from_taxonomy(self):
-        """Ensure entity_spec excludes groups with empty descriptions."""
-        mock_taxonomy = MagicMock()
-        mock_taxonomy.name = "test"
-        mock_taxonomy.relation_types = []
-        grp_has_desc = MagicMock()
-        grp_has_desc.min_ner_confidence = 0.5
-        grp_has_desc.description = "  A person  "
-        grp_has_desc.children = []
-        grp_no_desc = MagicMock()
-        grp_no_desc.min_ner_confidence = 0.5
-        grp_no_desc.description = ""  # empty — should be excluded
-        grp_no_desc.children = []
-        mock_taxonomy.entity_groups = {"PERSON": grp_has_desc, "NOTYPE": grp_no_desc}
+def test_ensure_model_loaded_raises_if_model_loader_returns_none():
+    extractor = GLiNER2EntityExtractor(model_loader=lambda: None, schema_miner=MagicMock())
 
-        with patch(
-            "graphknows.ingestion.domain.taxonomy.get_default_taxonomy",
-            return_value=mock_taxonomy,
-        ):
-            extractor = GLiNER2EntityExtractor()
-
-        assert "person" in extractor._entity_spec
-        assert "notype" not in extractor._entity_spec
-
-    def test_rel_descs_built_from_taxonomy(self):
-        mock_taxonomy = MagicMock()
-        mock_taxonomy.name = "t"
-        mock_taxonomy.relation_types = ["KNOWS_OF", "WORKS_AT"]
-        mock_taxonomy.entity_groups = {}
-
-        with patch(
-            "graphknows.ingestion.domain.taxonomy.get_default_taxonomy",
-            return_value=mock_taxonomy,
-        ):
-            extractor = GLiNER2EntityExtractor()
-
-        assert "KNOWS_OF" in extractor._rel_descs
-        assert extractor._rel_descs["KNOWS_OF"] == "knows of"
-
-
-class TestEnsureModelLoaded:
-    def test_no_op_when_already_loaded(self):
-        extractor = _make_extractor()
-        mock_model = MagicMock()
-        extractor._gliner = mock_model
+    with pytest.raises(RuntimeError, match="GLiNER2 model failed to load"):
         extractor._ensure_model_loaded()
-        assert extractor._gliner is mock_model
-
-    def test_raises_if_model_returns_none(self):
-        extractor = _make_extractor()
-        extractor._gliner = None
-
-        with (
-            patch(
-                "graphknows.memory.extractor.load_gliner2_model",
-                return_value=None,
-            ),
-            pytest.raises(RuntimeError, match="GLiNER2 model failed to load"),
-        ):
-            extractor._ensure_model_loaded()
-
-    def test_loads_model_and_sets_attrs(self):
-        extractor = _make_extractor()
-        extractor._gliner = None
-
-        mock_model = MagicMock()
-        mock_schema = MagicMock()
-        mock_model.create_schema.return_value = mock_schema
-
-        with patch("graphknows.memory.extractor.load_gliner2_model", return_value=mock_model):
-            extractor._ensure_model_loaded()
-
-        assert extractor._gliner is mock_model
-        assert extractor._gliner_schema is mock_schema
-        mock_schema.entities.assert_called_once()
-        mock_schema.relations.assert_called_once_with(
-            {"KNOWS": "knows", "WORKS_FOR": "works for"}
-        )
-
-
-class TestExtract:
-    def _make_ready(self, raw_output: dict):
-        """Extractor with model already loaded returning raw_output."""
-        extractor = _make_extractor()
-        mock_model = MagicMock()
-        mock_model.extract.return_value = raw_output
-        extractor._gliner = mock_model
-        extractor._gliner_schema = MagicMock()
-        return extractor
-
-    def test_empty_raw_returns_empty_result(self):
-        extractor = self._make_ready({"entities": {}, "relation_extraction": {}})
-        result = extractor.extract("some text")
-        assert result.entities == []
-        assert result.relations == []
-
-    def test_parses_entities_above_threshold(self):
-        raw = {
-            "entities": {
-                "person": [
-                    {"text": "Alice", "confidence": 0.9},
-                    {"text": "Bob", "confidence": 0.2},  # below _BASE_THRESHOLD 0.35
-                ]
-            },
-            "relation_extraction": {},
-        }
-        extractor = self._make_ready(raw)
-        extractor._child_to_group = {"person": "PERSON"}
-        extractor._taxonomy.get_min_ner_confidence.return_value = 0.35
-
-        result = extractor.extract("Alice meets Bob")
-        names = [e["name"] for e in result.entities]
-        assert "Alice" in names
-        assert "Bob" not in names
-
-    def test_skips_empty_entity_text(self):
-        raw = {
-            "entities": {
-                "person": [
-                    {"text": "  ", "confidence": 0.9},  # blank text
-                    {"text": "Alice", "confidence": 0.8},
-                ]
-            },
-            "relation_extraction": {},
-        }
-        extractor = self._make_ready(raw)
-        extractor._taxonomy.get_min_ner_confidence.return_value = 0.35
-
-        result = extractor.extract("Alice")
-        assert len(result.entities) == 1
-        assert result.entities[0]["name"] == "Alice"
-
-    def test_parses_relations(self):
-        raw = {
-            "entities": {},
-            "relation_extraction": {
-                "KNOWS": [
-                    {
-                        "head": {"text": "Alice", "confidence": 0.85},
-                        "tail": {"text": "Bob", "confidence": 0.80},
-                    }
-                ]
-            },
-        }
-        extractor = self._make_ready(raw)
-        result = extractor.extract("Alice knows Bob")
-        assert len(result.relations) == 1
-        rel = result.relations[0]
-        assert rel["head"] == "Alice"
-        assert rel["tail"] == "Bob"
-        assert rel["relation"] == "KNOWS"
-
-    def test_skips_relations_with_empty_head_or_tail(self):
-        raw = {
-            "entities": {},
-            "relation_extraction": {
-                "KNOWS": [
-                    {
-                        "head": {"text": "", "confidence": 0.9},
-                        "tail": {"text": "Bob", "confidence": 0.9},
-                    },
-                ]
-            },
-        }
-        extractor = self._make_ready(raw)
-        result = extractor.extract("test")
-        assert result.relations == []
-
-    def test_relation_score_is_minimum_of_head_tail(self):
-        raw = {
-            "entities": {},
-            "relation_extraction": {
-                "KNOWS": [
-                    {
-                        "head": {"text": "Alice", "confidence": 0.9},
-                        "tail": {"text": "Bob", "confidence": 0.6},
-                    }
-                ]
-            },
-        }
-        extractor = self._make_ready(raw)
-        result = extractor.extract("test")
-        assert result.relations[0]["score"] == pytest.approx(0.6)
-
-    def test_entity_type_canonical_mapped_via_child_to_group(self):
-        raw = {
-            "entities": {"politician": [{"text": "Macron", "confidence": 0.88}]},
-            "relation_extraction": {},
-        }
-        extractor = self._make_ready(raw)
-        extractor._child_to_group = {"politician": "PERSON"}  # child→canonical
-        extractor._taxonomy.get_min_ner_confidence.return_value = 0.35
-
-        result = extractor.extract("Macron is a politician")
-        assert result.entities[0]["type"] == "PERSON"

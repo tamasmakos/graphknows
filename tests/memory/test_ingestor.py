@@ -338,7 +338,7 @@ def test_rel_extractor_called_and_writes_edge_per_relation():
 
     ingestor.ingest_parsed(parsed, session_id="s1")
 
-    # write_relation_edge must be called once per relation above threshold (0.5)
+    # write_relation_edge must be called once per relation accepted by GLiNER2.
     assert mg.write_relation_edge.call_count == 2
 
     # Verify first call used the right kwargs
@@ -361,14 +361,14 @@ def test_rel_extractor_none_does_not_call_write_relation_edge():
     mg.write_relation_edge.assert_not_called()
 
 
-def test_rel_extractor_skipped_when_fewer_than_two_entities():
-    """Relations below confidence threshold (0.5) are not written."""
+def test_rel_extractor_writes_every_returned_relation():
+    """Ingestion must not apply a second relation confidence threshold."""
     relation_list = [
         {
             "head": "Entity0",
             "relation": "RELATED_TO",
             "tail": "Entity1",
-            "score": 0.3,  # below threshold
+            "score": 0.0,
         },
     ]
     ext = _make_extractor_with_relations(n_entities=2, relations=relation_list)
@@ -377,7 +377,7 @@ def test_rel_extractor_skipped_when_fewer_than_two_entities():
 
     ingestor.ingest_parsed(parsed, session_id="s3")
 
-    mg.write_relation_edge.assert_not_called()
+    mg.write_relation_edge.assert_called_once()
 
 
 def test_rel_extractor_exception_does_not_abort_ingest():

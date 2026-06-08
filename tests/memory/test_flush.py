@@ -171,7 +171,9 @@ async def test_summarize_topics_no_key_skips_llm(monkeypatch):
     # _arun returns: co-occur pairs → evidence rows for community 0
     store._arun = AsyncMock(
         side_effect=[
+            [],
             [{"a": "EU", "b": "France", "weight": 3}],
+            [],
             [],  # evidence for community 0
         ]
     )
@@ -204,10 +206,9 @@ async def test_summarize_topics_skips_singletons():
 @pytest.mark.asyncio
 async def test_summarize_topics_writes_topic_embedding_from_summary(monkeypatch):
     """write_ltm_topic receives an embedding generated from the LLM summary."""
-    import httpx
-
     from graphknows.memory.stores import embedder as embedder_module
     from graphknows.memory.stores.neo4j import Neo4jStore
+    from graphknows.memory.services.topic_summarizer import TopicSummarizer
 
     store = Neo4jStore.__new__(Neo4jStore)
     store._driver = MagicMock()
@@ -218,7 +219,9 @@ async def test_summarize_topics_writes_topic_embedding_from_summary(monkeypatch)
     store.upsert_topics = AsyncMock(return_value=None)
     store._arun = AsyncMock(
         side_effect=[
+            [],
             [{"a": "EU", "b": "France", "weight": 3}],
+            [],
             [{"text": "EU and France coordinate policy.", "hp": "doc > sec"}],
         ]
     )
@@ -229,36 +232,14 @@ async def test_summarize_topics_writes_topic_embedding_from_summary(monkeypatch)
         embedded_inputs.append(text)
         return [0.1, 0.2, 0.3]
 
-    class _Resp:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"title": "EU policy", "summary": "France and the EU coordinate policy."}'
-                        }
-                    }
-                ]
-            }
-
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return _Resp()
-
     pg_store = MagicMock()
     pg_store.write_ltm_topic = AsyncMock(return_value=None)
 
+    async def fake_summarize(self, *, members, passages, fallback_title):
+        return "EU policy", "France and the EU coordinate policy."
+
     monkeypatch.setattr(embedder_module, "embed_one", fake_embed_one)
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: _Client())
+    monkeypatch.setattr(TopicSummarizer, "summarize", fake_summarize)
 
     count = await store.summarize_topics("sess-embed", openrouter_key="sk-test", pg_store=pg_store)
 
@@ -271,10 +252,9 @@ async def test_summarize_topics_writes_topic_embedding_from_summary(monkeypatch)
 @pytest.mark.asyncio
 async def test_summarize_topics_falls_back_to_title_for_embedding(monkeypatch):
     """If summary is empty, write_ltm_topic receives an embedding from the topic label."""
-    import httpx
-
     from graphknows.memory.stores import embedder as embedder_module
     from graphknows.memory.stores.neo4j import Neo4jStore
+    from graphknows.memory.services.topic_summarizer import TopicSummarizer
 
     store = Neo4jStore.__new__(Neo4jStore)
     store._driver = MagicMock()
@@ -285,7 +265,9 @@ async def test_summarize_topics_falls_back_to_title_for_embedding(monkeypatch):
     store.upsert_topics = AsyncMock(return_value=None)
     store._arun = AsyncMock(
         side_effect=[
+            [],
             [{"a": "EU", "b": "France", "weight": 3}],
+            [],
             [],
         ]
     )
@@ -296,36 +278,14 @@ async def test_summarize_topics_falls_back_to_title_for_embedding(monkeypatch):
         embedded_inputs.append(text)
         return [0.4, 0.5, 0.6]
 
-    class _Resp:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"title": "European coordination", "summary": ""}'
-                        }
-                    }
-                ]
-            }
-
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return _Resp()
-
     pg_store = MagicMock()
     pg_store.write_ltm_topic = AsyncMock(return_value=None)
 
+    async def fake_summarize(self, *, members, passages, fallback_title):
+        return "European coordination", ""
+
     monkeypatch.setattr(embedder_module, "embed_one", fake_embed_one)
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: _Client())
+    monkeypatch.setattr(TopicSummarizer, "summarize", fake_summarize)
 
     count = await store.summarize_topics("sess-fallback", openrouter_key="sk-test", pg_store=pg_store)
 
@@ -339,6 +299,7 @@ async def test_summarize_topics_falls_back_to_title_for_embedding(monkeypatch):
 async def test_flush_calls_extract_and_write_relations():
     """flush() must call extract_and_write_relations on the Neo4j store."""
     flusher, mg, pg, neo = _make_flusher()
+    flusher._relation_extraction_mode = "llm_assisted"
     neo.extract_and_write_relations = AsyncMock(return_value=5)
     result = await flusher.flush("s1")
     neo.extract_and_write_relations.assert_awaited_once()
@@ -353,6 +314,7 @@ async def test_flush_propagates_extraction_error():
     neo.extract_and_write_relations = AsyncMock(side_effect=RuntimeError("LLM failed"))
     # Provide a non-empty key so extraction is attempted
     flusher._openrouter_key = "test-key"
+    flusher._relation_extraction_mode = "llm_assisted"
     result = await flusher.flush("s1")
     # Flush must NOT raise — errors are captured, not propagated
     assert any("extract_and_write_relations" in e for e in result.errors)

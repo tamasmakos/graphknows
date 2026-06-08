@@ -116,8 +116,8 @@ def test_write_session_subgraph_no_relation_edges_ok():
 
 
 @pytest.mark.asyncio
-async def test_extract_and_write_relations_uses_configured_relation_types():
-    """LLM relation extraction must use taxonomy labels injected into the store."""
+async def test_extract_and_write_relations_delegates_text_only_to_dspy():
+    """DSPy owns RDF ontology inputs; Neo4j passes only chunk text."""
     from graphknows.memory.stores.neo4j import Neo4jStore
 
     stm_data = {
@@ -139,29 +139,72 @@ async def test_extract_and_write_relations_uses_configured_relation_types():
     store = Neo4jStore.__new__(Neo4jStore)
     store._driver = mock_driver
     store._relation_extractor = extractor
-    store._allowed_relation_types = ["SUPPORTS", "OPPOSES"]
 
     with patch("graphknows.memory.stores.neo4j._write_relation_edges", return_value=1):
         result = await store.extract_and_write_relations(stm_data, "key")
 
     assert result == 1
     extractor.extract_relations.assert_awaited_once()
-    assert extractor.extract_relations.await_args.kwargs["allowed_relation_types"] == [
-        "SUPPORTS",
-        "OPPOSES",
-    ]
+    assert extractor.extract_relations.await_args.kwargs == {"text": "Alice supports Bob."}
 
 
 @pytest.mark.asyncio
-async def test_extract_and_write_relations_skips_without_relation_types():
-    """No taxonomy-backed relation labels means the LTM LLM pass is skipped."""
+async def test_extract_and_write_relations_preserves_relation_metadata():
+    """DSPy relation metadata must reach graph edge writes."""
+    from graphknows.memory.stores.neo4j import Neo4jStore
+
+    stm_data = {
+        "entities": [
+            {"name": "Alice", "type": "PERSON", "confidence": 0.9},
+            {"name": "Bob", "type": "PERSON", "confidence": 0.9},
+        ],
+        "chunks": [{"id": "c1", "text": "Alice supports Bob."}],
+        "chunk_entity_edges": [
+            {"chunk_id": "c1", "entity_name": "Alice"},
+            {"chunk_id": "c1", "entity_name": "Bob"},
+        ],
+    }
+    props = {
+        "confidence": 0.9,
+        "evidence": "Alice supports Bob.",
+        "reasoning": "The sentence explicitly states support.",
+        "source_type": "PERSON",
+        "target_type": "PERSON",
+    }
+    extractor = MagicMock()
+    extractor.extract_relations = AsyncMock(
+        return_value=([("Alice", "SUPPORTS", "Bob", props)], [], {})
+    )
+    mock_driver, _mock_session = _make_mock_neo4j_session()
+    store = Neo4jStore.__new__(Neo4jStore)
+    store._driver = mock_driver
+    store._relation_extractor = extractor
+
+    written_triplets = []
+
+    def fake_write_relation_edges(s, triplets, entity_by_name):
+        written_triplets.extend(triplets)
+        return len(triplets)
+
+    with patch(
+        "graphknows.memory.stores.neo4j._write_relation_edges",
+        side_effect=fake_write_relation_edges,
+    ):
+        result = await store.extract_and_write_relations(stm_data, "key")
+
+    assert result == 1
+    assert written_triplets == [("Alice", "SUPPORTS", "Bob", props)]
+
+
+@pytest.mark.asyncio
+async def test_extract_and_write_relations_skips_when_no_chunks():
+    """No chunks means there is no text to send to DSPy."""
     from graphknows.memory.stores.neo4j import Neo4jStore
 
     extractor = MagicMock()
     extractor.extract_relations = AsyncMock()
     store = Neo4jStore.__new__(Neo4jStore)
     store._relation_extractor = extractor
-    store._allowed_relation_types = []
 
     result = await store.extract_and_write_relations(
         {"entities": [], "chunks": [], "chunk_entity_edges": []},

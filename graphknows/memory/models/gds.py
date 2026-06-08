@@ -42,6 +42,7 @@ class GDSResult(BaseModel):
     ran_iterations: int = 0
     did_converge: bool = False
     changed_community_ids: list[int] = Field(default_factory=list)
+    algorithm_used: str = ""
     silhouette_cosine: float | None = None
     global_separation: float | None = None
     global_overlap: float | None = None

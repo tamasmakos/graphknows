@@ -1,7 +1,6 @@
 """Smoke tests for graphknows.config.builders store factories."""
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from graphknows.config import GraphKnowsSettings
@@ -22,9 +21,10 @@ def test_build_neo4j_store_smoke():
         assert store._relation_extractor is None
 
 
-def test_build_neo4j_store_llm_assisted_wires_relation_extractor(monkeypatch):
+def test_build_neo4j_store_llm_assisted_wires_rdf_relation_extractor(monkeypatch):
     monkeypatch.setenv("RELATION_EXTRACTION_MODE", "llm_assisted")
     settings = GraphKnowsSettings()
+    settings.ontology_file = "graphknows/ingestion/ontology/assets/politics/prov-o.ttl"
     with (
         patch("neo4j.GraphDatabase.driver") as mock_driver,
         patch("graphknows.config.builders.stores.build_relation_extractor") as mock_build_rel,
@@ -34,12 +34,12 @@ def test_build_neo4j_store_llm_assisted_wires_relation_extractor(monkeypatch):
         store = build_neo4j_store(settings)
 
     assert store._relation_extractor is mock_build_rel.return_value
-    assert "PART_OF" in store._allowed_relation_types
     mock_build_rel.assert_called_once_with(settings)
 
 
 def test_build_relation_extractor_imports_dspy_adapter_lazily():
     settings = GraphKnowsSettings()
+    settings.ontology_file = "ontology.ttl"
     with patch(
         "graphknows.config.adapters.dspy_relation_extractor.DspyRelationExtractorAdapter"
     ) as mock_adapter:
@@ -47,6 +47,7 @@ def test_build_relation_extractor_imports_dspy_adapter_lazily():
         extractor = build_relation_extractor(settings)
 
     assert extractor is mock_adapter.return_value
+    assert mock_adapter.call_args.kwargs["config"]["ontology"]["file"] == "ontology.ttl"
 
 
 def test_build_pgvector_store_smoke():
@@ -80,7 +81,7 @@ def test_memory_ingestor_default_uses_gliner2_without_llm_rel_extractor():
     mock_rel.assert_not_called()
 
 
-def test_memory_ingestor_llm_assisted_adds_rel_extractor(monkeypatch):
+def test_memory_ingestor_llm_assisted_keeps_dynamic_gliner2_only(monkeypatch):
     monkeypatch.setenv("RELATION_EXTRACTION_MODE", "llm_assisted")
     settings = GraphKnowsSettings()
     with (
@@ -93,35 +94,8 @@ def test_memory_ingestor_llm_assisted_adds_rel_extractor(monkeypatch):
         ingestor = build_memory_ingestor(settings)
 
     assert ingestor._extractor is mock_gliner.return_value
-    assert ingestor._rel_extractor is mock_rel.return_value
-    mock_rel.assert_called_once()
-
-
-def test_memory_ingestor_llm_assisted_shares_active_taxonomy(monkeypatch):
-    monkeypatch.setenv("RELATION_EXTRACTION_MODE", "llm_assisted")
-    monkeypatch.setenv(
-        "GRAPHKNOWS_TAXONOMY_FILE",
-        str(
-            Path(
-                "C:/Users/User/Documents/dev/graphknows/graphknows/ingestion/domain/"
-                "taxonomy.eu-politics.yaml"
-            )
-        ),
-    )
-    settings = GraphKnowsSettings()
-    with (
-        patch("graphknows.config.builders.stores.build_memgraph_store", return_value=MagicMock()),
-        patch("graphknows.config.builders.stores.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.memory.ingestor._run"),
-        patch("graphknows.memory.extractor.GLiNER2EntityExtractor") as mock_gliner,
-        patch("graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor") as mock_rel,
-    ):
-        build_memory_ingestor(settings)
-
-    assert "taxonomy.eu-politics.yaml" in str(mock_gliner.call_args.kwargs["taxonomy_path"])
-    assert "taxonomy.eu-politics.yaml" in str(mock_rel.call_args.kwargs["taxonomy_file"])
-    assert "OPPOSES" in mock_rel.call_args.kwargs["relation_schema"]
-    assert "PERSON" in mock_rel.call_args.kwargs["entity_labels"]
+    assert ingestor._rel_extractor is None
+    mock_rel.assert_not_called()
 
 
 def test_memory_ingestor_off_disables_extraction(monkeypatch):

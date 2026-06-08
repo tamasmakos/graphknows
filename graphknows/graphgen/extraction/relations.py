@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -25,6 +24,7 @@ from graphknows.config.llm import (
     normalize_openrouter_model,
 )
 from graphknows.graphgen.utils import standardize_label
+from graphknows.ingestion.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
 
 logger = logging.getLogger(__name__)
 
@@ -41,149 +41,74 @@ class Triplet(BaseModel):
     target_type: str = Field(description="The ontology class of the target entity")
     confidence: float = Field(description="Confidence score (0.0-1.0) of this extraction")
     evidence: str = Field(description="Verbatim text snippet that supports this relation")
+    reasoning: str = Field(
+        default="",
+        description="Short explanation of how the evidence supports this relation.",
+    )
 
 
 class EntityRelation(dspy.Signature):
-    """Extract knowledge graph triplets (source, relation, target) from text.
+    """Extract RDF-constrained relation triplets from text.
 
     Rules:
-    - Extract relations that are clearly stated or strongly implied by the text.
-    - The *relation* field MUST be chosen from allowed_relation_types.
+    - The *relation* field MUST be chosen from ontology_relation_types.
       Do NOT invent new relation labels.
-    - Use entity_hints as the preferred surface forms for source/target.
-    - Use candidate_relations as a starting point; verify them and add new ones.
     - Be generous: include all plausible relations supported by the text.
-    - Aim to produce at least one triplet per pair of co-occurring named entities.
     - Set confidence >= 0.5 for relations clearly supported by the text.
     """
 
     text: str = dspy.InputField(desc="Input text to analyse.")
+    ontology_context: str = dspy.InputField(
+        desc="Compact JSON context parsed directly from the configured RDF/OWL ontology file."
+    )
     ontology_classes: list[str] = dspy.InputField(
-        desc="Allowed entity type labels for source/target classification."
+        desc="Allowed entity class labels parsed directly from the RDF/OWL ontology file."
     )
-    entity_hints: list[str] = dspy.InputField(
-        desc="Pre-identified entities (canonical surface forms) to guide extraction."
-    )
-    allowed_relation_types: list[str] = dspy.InputField(
+    ontology_relation_types: list[str] = dspy.InputField(
         desc=(
-            "Exhaustive list of permitted relation labels. "
+            "Exhaustive list of permitted relation labels parsed from RDF/OWL properties. "
             "The relation field in every output triplet MUST be one of these."
         )
     )
-    candidate_relations: list[dict[str, Any]] = dspy.InputField(
-        desc=(
-            "Candidate (source, relation, target) triplets produced by the fast "
-            "GLiNER2 pass.  Verify these and include confirmed ones in the output."
-        )
-    )
     triplets: list[Triplet] = dspy.OutputField(
-        desc="Verified and enriched list of triplets. relation must be from allowed_relation_types."
+        desc=(
+            "Verified relation triplets grounded in the text and RDF/OWL ontology. "
+            "Every triplet relation must be one of ontology_relation_types."
+        )
     )
 
 
 class GraphExtractorModule(dspy.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.extract = dspy.ChainOfThought(EntityRelation)
+        self.extract = dspy.Predict(EntityRelation)
 
     def forward(
         self,
         text: str,
+        ontology_context: str,
         ontology_classes: list[str],
-        entity_hints: list[str],
-        allowed_relation_types: list[str] | None = None,
-        candidate_relations: list[dict[str, Any]] | None = None,
+        ontology_relation_types: list[str],
     ):
         return self.extract(
             text=text,
+            ontology_context=ontology_context,
             ontology_classes=ontology_classes,
-            entity_hints=entity_hints,
-            allowed_relation_types=allowed_relation_types or [],
-            candidate_relations=candidate_relations or [],
+            ontology_relation_types=ontology_relation_types,
         )
 
 
-# ---------------------------------------------------------------------------
-# Grounding helpers (used by DSPyExtractor)
-# ---------------------------------------------------------------------------
+def _model_or_mapping_get(item: Any, key: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
 
 
-def _normalize_relation_candidate(value: Any) -> str:
-    return standardize_label(value) if value else ""
-
-
-def _candidate_grounded_in_evidence(candidate: str, evidence: str) -> bool:
-    candidate_norm = _normalize_relation_candidate(candidate)
-    evidence_norm = _normalize_relation_candidate(evidence)
-    if not candidate_norm or not evidence_norm:
-        return False
-    return f"_{candidate_norm}_" in f"_{evidence_norm}_"
-
-
-def _endpoint_matches_hint(endpoint: str, entity_hints: list[str]) -> bool:
-    endpoint_norm = _normalize_relation_candidate(endpoint)
-    if not endpoint_norm:
-        return False
-
-    endpoint_tokens = {token for token in endpoint_norm.split("_") if len(token) > 2}
-    for hint in entity_hints or []:
-        hint_norm = _normalize_relation_candidate(hint)
-        if not hint_norm:
-            continue
-        if endpoint_norm == hint_norm:
-            return True
-        if hint_norm in endpoint_norm or endpoint_norm in hint_norm:
-            return True
-        hint_tokens = {token for token in hint_norm.split("_") if len(token) > 2}
-        overlap = endpoint_tokens & hint_tokens
-        if overlap and (len(overlap) >= 2 or len(endpoint_tokens) == 1 or len(hint_tokens) == 1):
-            return True
-
-    return False
-
-
-def _is_grounded_relation_endpoint(
-    endpoint: str,
-    entity_hints: list[str],
-    ontology_classes: list[str],
-    evidence: str,
-) -> bool:
-    endpoint_norm = _normalize_relation_candidate(endpoint)
-    if not endpoint_norm:
-        return False
-
-    if _endpoint_matches_hint(endpoint, entity_hints):
-        return True
-
-    if _candidate_grounded_in_evidence(endpoint, evidence):
-        return True
-
-    ontology_set = {
-        _normalize_relation_candidate(item) for item in (ontology_classes or []) if item
-    }
-    if endpoint_norm in ontology_set:
-        return False
-
-    return False
-
-
-def _is_ungrounded_relation_triplet(
-    source: str,
-    target: str,
-    entity_hints: list[str],
-    ontology_classes: list[str],
-    evidence: str,
-) -> bool:
-    return not (
-        _is_grounded_relation_endpoint(source, entity_hints, ontology_classes, evidence)
-        and _is_grounded_relation_endpoint(target, entity_hints, ontology_classes, evidence)
-    )
-
-
-def _relation_endpoints_in_hints(source: str, target: str, entity_hints: list[str]) -> bool:
-    return _endpoint_matches_hint(source, entity_hints) and _endpoint_matches_hint(
-        target, entity_hints
-    )
+def _coerce_triplets(prediction: Any) -> list[Any]:
+    triplets = getattr(prediction, "triplets", None)
+    if triplets is None:
+        raise ValueError("DSPy prediction did not include triplets")
+    return triplets or []
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +123,6 @@ class BaseExtractor(ABC):
     async def extract_relations(
         self,
         text: str,
-        keywords: list[str] | None = None,
-        entities: list[str] | None = None,
-        ontology_classes: list[str] | None = None,
-        allowed_relation_types: list[str] | None = None,
-        candidate_relations: list[dict[str, Any]] | None = None,
     ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
         """Extract (source, relation, target, props) triplets from *text*."""
 
@@ -224,6 +144,22 @@ class DSPyExtractor(BaseExtractor):
         llm_config = config.get("llm", {})
         if hasattr(llm_config, "model_dump"):
             llm_config = llm_config.model_dump()
+        ontology_config = config.get("ontology", {})
+        if hasattr(ontology_config, "model_dump"):
+            ontology_config = ontology_config.model_dump()
+        ontology_file = str(ontology_config.get("file") or "").strip()
+        if not ontology_file:
+            raise ValueError(
+                "DSPyExtractor requires GRAPHKNOWS_ONTOLOGY_FILE / config['ontology']['file'] "
+                "pointing to one RDF/OWL ontology file."
+            )
+        self._ontology: RdfOntologyManifest = load_rdf_ontology_file(ontology_file)
+        self._ontology_classes = [standardize_label(label) for label in self._ontology.class_labels]
+        self._ontology_relation_types = [
+            standardize_label(label) for label in self._ontology.property_labels
+        ]
+        if not self._ontology_classes or not self._ontology_relation_types:
+            raise ValueError(f"RDF ontology file produced no DSPy labels: {ontology_file}")
 
         model = (
             llm_config.get("extraction_model")
@@ -262,17 +198,10 @@ class DSPyExtractor(BaseExtractor):
     async def extract_relations(
         self,
         text: str,
-        keywords: list[str] | None = None,
-        entities: list[str] | None = None,
-        ontology_classes: list[str] | None = None,
-        allowed_relation_types: list[str] | None = None,
-        candidate_relations: list[dict[str, Any]] | None = None,
     ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
         """Extract relations using DSPy."""
-        ontology_classes = ontology_classes or []
-        entity_hints = entities or []
-        _allowed = allowed_relation_types or []
-        _candidates = candidate_relations or []
+        ontology_classes = self._ontology_classes
+        ontology_relation_types = self._ontology_relation_types
 
         try:
             lm = self._lm
@@ -281,14 +210,14 @@ class DSPyExtractor(BaseExtractor):
                 with dspy.settings.context(lm=lm):
                     prediction = self.module(
                         text=text,
+                        ontology_context=self._ontology.context,
                         ontology_classes=ontology_classes,
-                        entity_hints=entity_hints,
-                        allowed_relation_types=_allowed,
-                        candidate_relations=_candidates,
+                        ontology_relation_types=ontology_relation_types,
                     )
-                return prediction.triplets
+                return prediction
 
-            triplets = await asyncio.to_thread(_extract_sync)
+            prediction = await asyncio.to_thread(_extract_sync)
+            triplets = _coerce_triplets(prediction)
 
             relations: list[tuple[str, str, str, dict[str, Any]]] = []
             nodes_data: list[dict[str, Any]] = []
@@ -298,22 +227,12 @@ class DSPyExtractor(BaseExtractor):
 
             if triplets:
                 for triplet in triplets:
-                    if isinstance(triplet, dict):
-                        source = triplet.get("source")
-                        relation = triplet.get("relation")
-                        target = triplet.get("target")
-                        source_type = triplet.get("source_type")
-                        target_type = triplet.get("target_type")
-                        confidence = triplet.get("confidence", 1.0)
-                        evidence = triplet.get("evidence", "")
-                    else:
-                        source = getattr(triplet, "source", None)
-                        relation = getattr(triplet, "relation", None)
-                        target = getattr(triplet, "target", None)
-                        source_type = getattr(triplet, "source_type", None)
-                        target_type = getattr(triplet, "target_type", None)
-                        confidence = getattr(triplet, "confidence", 1.0)
-                        evidence = getattr(triplet, "evidence", "")
+                    source = _model_or_mapping_get(triplet, "source")
+                    relation = _model_or_mapping_get(triplet, "relation")
+                    target = _model_or_mapping_get(triplet, "target")
+                    source_type = _model_or_mapping_get(triplet, "source_type")
+                    target_type = _model_or_mapping_get(triplet, "target_type")
+                    evidence = _model_or_mapping_get(triplet, "evidence", "")
 
                     raw_triplet: dict[str, Any] = {
                         "source": source,
@@ -321,7 +240,6 @@ class DSPyExtractor(BaseExtractor):
                         "target": target,
                         "source_type": source_type,
                         "target_type": target_type,
-                        "confidence": confidence,
                         "evidence": evidence,
                     }
                     raw_triplets.append(raw_triplet)
@@ -332,14 +250,6 @@ class DSPyExtractor(BaseExtractor):
                                 **raw_triplet,
                                 "kept": False,
                                 "drop_reason": "missing_triplet_field",
-                                "source_matches_hint": _endpoint_matches_hint(source, entity_hints),
-                                "target_matches_hint": _endpoint_matches_hint(target, entity_hints),
-                                "source_grounded": _is_grounded_relation_endpoint(
-                                    source, entity_hints, ontology_classes, evidence
-                                ),
-                                "target_grounded": _is_grounded_relation_endpoint(
-                                    target, entity_hints, ontology_classes, evidence
-                                ),
                             }
                         )
                         continue
@@ -348,35 +258,12 @@ class DSPyExtractor(BaseExtractor):
                         **raw_triplet,
                         "kept": False,
                         "drop_reason": None,
-                        "source_matches_hint": _endpoint_matches_hint(source, entity_hints),
-                        "target_matches_hint": _endpoint_matches_hint(target, entity_hints),
-                        "source_grounded": _is_grounded_relation_endpoint(
-                            source, entity_hints, ontology_classes, evidence
-                        ),
-                        "target_grounded": _is_grounded_relation_endpoint(
-                            target, entity_hints, ontology_classes, evidence
-                        ),
                     }
 
-                    if _allowed:
-                        rel_norm = standardize_label(relation)
-                        allowed_norm = {standardize_label(r) for r in _allowed}
-                        if rel_norm not in allowed_norm:
-                            decision["drop_reason"] = "relation_type_not_in_taxonomy"
-                            triplet_decisions.append(decision)
-                            continue
-
-                    if entity_hints and not _relation_endpoints_in_hints(
-                        source, target, entity_hints
-                    ):
-                        decision["drop_reason"] = "endpoint_not_grounded_in_hints"
-                        triplet_decisions.append(decision)
-                        continue
-
-                    if _is_ungrounded_relation_triplet(
-                        source, target, entity_hints, ontology_classes, evidence
-                    ):
-                        decision["drop_reason"] = "endpoint_not_grounded_after_evidence_check"
+                    rel_norm = standardize_label(relation)
+                    allowed_norm = set(ontology_relation_types)
+                    if rel_norm not in allowed_norm:
+                        decision["drop_reason"] = "relation_type_not_in_rdf_ontology"
                         triplet_decisions.append(decision)
                         continue
 
@@ -389,7 +276,10 @@ class DSPyExtractor(BaseExtractor):
                     source_type = standardize_label(source_type) if source_type else "ENTITY"
                     target_type = standardize_label(target_type) if target_type else "ENTITY"
 
-                    props = {"confidence": confidence, "evidence": evidence}
+                    props = {
+                        "evidence": evidence,
+                        "source_type": source_type,
+                        "target_type": target_type,                    }
                     relations.append((source, relation, target, props))
 
                     if source not in seen_nodes:
@@ -405,6 +295,8 @@ class DSPyExtractor(BaseExtractor):
                 {
                     "raw_triplets": raw_triplets,
                     "triplet_decisions": triplet_decisions,
+                    "ontology_classes": ontology_classes,
+                    "ontology_relation_types": ontology_relation_types,
                 },
             )
 

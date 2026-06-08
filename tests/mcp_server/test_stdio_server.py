@@ -52,7 +52,6 @@ def test_all_tools_registered():
         "recall_by_dialog",
         "recall_by_topic",
         "corpus_ingest",
-        "list_taxonomies",
     }
     assert expected == tool_names, f"Missing tools: {expected - tool_names}"
 
