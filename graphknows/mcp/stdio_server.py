@@ -24,7 +24,6 @@ LTM tools:
 
 Corpus:
   corpus_ingest   — batch document ingestion into LTM knowledge graph
-  list_taxonomies — discover available ontology taxonomy configurations
 
 Usage (stdio probe)::
 
@@ -43,7 +42,6 @@ logging.basicConfig(level=logging.WARNING, stream=__import__("sys").stderr)
 
 # --- Import tool modules (registers @app.tool() decorators) ---
 import graphknows.mcp.tools.stm  # noqa: E402
-import graphknows.mcp.tools.taxonomy  # noqa: E402
 import graphknows.mcp.tools.web  # noqa: F401, E402
 from graphknows.mcp._app import app  # noqa: E402
 

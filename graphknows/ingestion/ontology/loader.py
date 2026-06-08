@@ -28,6 +28,81 @@ class OntologyManifest:
     summary_jsonld: str  # compact JSON-LD string for LLM context
 
 
+@dataclass(frozen=True)
+class RdfOntologyManifest:
+    """Strict RDF/OWL ontology view for DSPy relation extraction."""
+
+    file_path: str
+    class_labels: list[str]
+    property_labels: list[str]
+    context: str
+
+
+def _rdf_label(graph: object, node: object) -> str:
+    from rdflib import RDFS  # type: ignore
+
+    label = graph.value(node, RDFS.label)  # type: ignore[attr-defined]
+    if label:
+        return str(label)
+    text = str(node)
+    if "#" in text:
+        return text.rsplit("#", 1)[-1]
+    if "/" in text:
+        return text.rstrip("/").rsplit("/", 1)[-1]
+    return text
+
+
+def load_rdf_ontology_file(path: str | Path) -> RdfOntologyManifest:
+    """Load labels from one explicit RDF/OWL ontology file.
+
+    This function is intentionally strict for LLM-assisted DSPy extraction:
+    callers must provide an RDF/OWL file, and missing labels are errors rather
+    than reasons to fall back to taxonomy YAML or generated defaults.
+    """
+    import rdflib  # type: ignore
+    from rdflib import OWL, RDF, RDFS  # type: ignore
+
+    resolved = Path(path)
+    if not resolved.exists():
+        raise FileNotFoundError(f"RDF ontology file not found: {resolved}")
+    if not resolved.is_file():
+        raise ValueError(f"RDF ontology path is not a file: {resolved}")
+
+    graph = rdflib.Graph()
+    graph.parse(str(resolved))
+
+    class_nodes = set(graph.subjects(RDF.type, OWL.Class)) | set(
+        graph.subjects(RDF.type, RDFS.Class)
+    )
+    property_nodes = (
+        set(graph.subjects(RDF.type, OWL.ObjectProperty))
+        | set(graph.subjects(RDF.type, OWL.DatatypeProperty))
+        | set(graph.subjects(RDF.type, RDF.Property))
+    )
+
+    classes = sorted({_rdf_label(graph, node) for node in class_nodes if _rdf_label(graph, node)})
+    properties = sorted(
+        {_rdf_label(graph, node) for node in property_nodes if _rdf_label(graph, node)}
+    )
+
+    if not classes:
+        raise ValueError(f"RDF ontology file has no owl:Class/rdfs:Class labels: {resolved}")
+    if not properties:
+        raise ValueError(f"RDF ontology file has no RDF/OWL property labels: {resolved}")
+
+    context = {
+        "file": str(resolved),
+        "classes": classes,
+        "properties": properties,
+    }
+    return RdfOntologyManifest(
+        file_path=str(resolved),
+        class_labels=classes,
+        property_labels=properties,
+        context=json.dumps(context, ensure_ascii=False),
+    )
+
+
 def _load_jsonld_manifest(summary_path: Path, meta: dict) -> OntologyManifest:
     """Build manifest from a JSON-LD summary file."""
     text = summary_path.read_text(encoding="utf-8")

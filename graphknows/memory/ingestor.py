@@ -231,12 +231,8 @@ class MemoryIngestor:
                 )
                 entity_count += 1
 
-            # Write GLiNER2 relations — bi-temporal edges with invalidation.
-            # Minimum confidence threshold filters noisy low-score pairs.
-            _rel_threshold = 0.5
+            # Write GLiNER2 relations as typed bi-temporal edges with invalidation.
             for rel in extraction.relations:
-                if rel.get("score", 0.0) < _rel_threshold:
-                    continue
                 try:
                     _run(
                         self._mg.write_relation_edge(

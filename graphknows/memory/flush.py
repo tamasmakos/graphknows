@@ -116,11 +116,7 @@ class SessionFlusher:
         except Exception as exc:
             result.errors.append(f"promote_to_ltm: {exc}")
 
-        try:
-            result.topics_created = await self._summarize_topics(session_id)
-        except Exception as exc:
-            result.errors.append(f"topics: {exc}")
-            log.warning("Topic summarization failed: %s", exc)
+        gds_result = None
 
         if opts.run_gds:
             try:
@@ -131,6 +127,12 @@ class SessionFlusher:
             except Exception as exc:
                 result.errors.append(f"gds: {exc}")
                 log.warning("GDS enrichment failed: %s", exc)
+
+        try:
+            result.topics_created = await self._summarize_topics(session_id, gds_result)
+        except Exception as exc:
+            result.errors.append(f"topics: {exc}")
+            log.warning("Topic summarization failed: %s", exc)
 
         if opts.clear_stm:
             try:
@@ -194,10 +196,10 @@ class SessionFlusher:
             neo_store=self._neo,
             errors=errors,
             openrouter_key=self._openrouter_key,
-            relation_extraction_mode=self._relation_extraction_mode,
+            relation_extraction_mode=getattr(self, "_relation_extraction_mode", "gliner2"),
         )
 
-    async def _summarize_topics(self, session_id: str) -> int:
+    async def _summarize_topics(self, session_id: str, gds_result: Any | None = None) -> int:
         """Run topic summarization via LTMEnrichmentService."""
         svc = LTMEnrichmentService()
         return await svc.run_topic_summarization(
@@ -206,6 +208,7 @@ class SessionFlusher:
             pg_store=self._pg,
             llm_key=self._openrouter_key,
             llm_model=self._llm_model,
+            gds_result=gds_result,
         )
 
     async def _run_gds(self) -> Any:

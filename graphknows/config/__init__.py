@@ -124,9 +124,7 @@ class GraphKnowsSettings(BaseSettings):
         default="gliner2",
         alias="RELATION_EXTRACTION_MODE",
     )
-
-    # Taxonomy / ontology
-    taxonomy_file: str | None = Field(default=None, alias="GRAPHKNOWS_TAXONOMY_FILE")
+    ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
     # Summarisation
     summarization_model: str = Field(default="moonshotai/kimi-k2", alias="SUMMARISATION_MODEL")

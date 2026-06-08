@@ -24,20 +24,10 @@ class DspyRelationExtractorAdapter:
     async def extract_relations(
         self,
         text: str,
-        keywords: list[str] | None = None,
-        entities: list[str] | None = None,
-        ontology_classes: list[str] | None = None,
-        allowed_relation_types: list[str] | None = None,
-        candidate_relations: list[dict[str, Any]] | None = None,
     ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
         """Extract relation triplets by delegating to graphgen's DSPy extractor."""
         return await self._get_delegate().extract_relations(  # type: ignore[no-any-return]
             text=text,
-            keywords=keywords,
-            entities=entities,
-            ontology_classes=ontology_classes,
-            allowed_relation_types=allowed_relation_types,
-            candidate_relations=candidate_relations,
         )
 
 

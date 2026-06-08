@@ -123,6 +123,7 @@ async def test_run_topic_summarization_with_store() -> None:
         pg_store=fake_pg,
         llm_key="key",
         llm_model="model",
+        gds_result=GDSResult(modularity=0.42, algorithm_used="leiden"),
     )
     assert count == 3
     neo_store.summarize_topics.assert_called_once_with(
@@ -130,6 +131,8 @@ async def test_run_topic_summarization_with_store() -> None:
         openrouter_key="key",
         llm_model="model",
         pg_store=fake_pg,
+        gds_modularity=0.42,
+        community_algorithm="leiden",
     )
 
 

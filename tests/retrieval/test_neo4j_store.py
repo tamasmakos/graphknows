@@ -305,13 +305,13 @@ class TestWriteRelationEdges:
         assert "REGULATES" in call_str
         assert "FUNDS" in call_str
 
-    def test_unknown_endpoint_skipped(self) -> None:
+    def test_unknown_endpoint_is_merged(self) -> None:
         s = _mock_session()
         eb = {"EU": {}}
         triplets = [("EU", "REGULATES", "GHOST")]
         count = _write_relation_edges(s, triplets, eb)
-        assert count == 0
-        s.run.assert_not_called()
+        assert count == 1
+        assert s.run.called
 
     def test_empty_relation_label_skipped(self) -> None:
         s = _mock_session()
@@ -343,12 +343,12 @@ class TestWriteRelationEdges:
         assert "KNOWS" in cypher
         assert "MERGE" in cypher
 
-    def test_skips_unknown_endpoints(self):
+    def test_merges_unknown_endpoints(self):
         s = self._make_mock_session()
         entity_by_name = {"Alice": {}}
         count = _write_relation_edges(s, [("Alice", "KNOWS", "Unknown")], entity_by_name)
-        assert count == 0
-        s.run.assert_not_called()
+        assert count == 1
+        assert s.run.called
 
     def test_skips_empty_relation_label(self):
         s = self._make_mock_session()
@@ -1215,12 +1215,12 @@ class TestWriteRelationEdges:
         assert "KNOWS" in cypher
         assert "MERGE" in cypher
 
-    def test_skips_unknown_endpoints(self):
+    def test_merges_unknown_endpoints(self):
         s = self._make_mock_session()
         entity_by_name = {"Alice": {}}
         count = _write_relation_edges(s, [("Alice", "KNOWS", "Unknown")], entity_by_name)
-        assert count == 0
-        s.run.assert_not_called()
+        assert count == 1
+        assert s.run.called
 
     def test_skips_empty_relation_label(self):
         s = self._make_mock_session()

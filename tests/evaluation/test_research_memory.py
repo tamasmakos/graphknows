@@ -90,7 +90,6 @@ async def test_run_research_memory_uses_fixed_operation_sequence(monkeypatch) ->
         suite="hotpotqa",
         run_id="run",
         top_k=5,
-        taxonomy_file="taxonomy.generic.yaml",
     )
 
     results = await run_research_memory(client, options)  # type: ignore[arg-type]
@@ -106,6 +105,7 @@ async def test_run_research_memory_uses_fixed_operation_sequence(monkeypatch) ->
         "ltm_topics",
         "memory_purge",
     ]
-    assert client.calls[1][1]["taxonomy_file"] == "taxonomy.generic.yaml"
+    old_schema_arg = "taxonomy" + "_file"
+    assert old_schema_arg not in client.calls[1][1]
     assert client.calls[3][1]["scope"] == "ltm"
     assert results[0].metrics["answer_support_score"] == 1.0

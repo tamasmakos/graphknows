@@ -18,7 +18,6 @@ class CorpusIngestRequest:
     """Request parameters for batch corpus ingestion."""
 
     documents: list[dict[str, Any]]
-    taxonomy_file: str | None = None  # short name or path; None = bundled generic taxonomy
     session_id: str | None = None  # auto-generated if None; supply for idempotent retry
     run_gds: bool = True
     clear_stm: bool = True
@@ -87,38 +86,8 @@ class CorpusIngestWorkflow:
         session_id = request.session_id or f"corpus-{uuid.uuid4().hex}"
         result = CorpusIngestResult(session_id=session_id)
 
-        # Resolve taxonomy — None means default bundled generic taxonomy.
-        # When a taxonomy_file is specified, build fresh per-run extractors so that
-        # entity types and relation types both come from the same YAML.
         resolved_extractor = self._extractor
         resolved_rel_extractor = self._rel_extractor
-        if request.taxonomy_file is not None:
-            try:
-                from graphknows.ingestion.domain.taxonomy import load_taxonomy_artifacts
-                from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
-                from graphknows.memory.extractor import GLiNER2EntityExtractor
-
-                taxonomy = load_taxonomy_artifacts(request.taxonomy_file)
-                resolved_extractor = (
-                    None
-                    if self._relation_extraction_mode == "off"
-                    else GLiNER2EntityExtractor(taxonomy_path=taxonomy.taxonomy_path)
-                )
-                if self._relation_extraction_mode == "llm_assisted":
-                    resolved_rel_extractor = OntologyRelExtractor(
-                        taxonomy_file=taxonomy.taxonomy_path,
-                        relation_schema=taxonomy.relation_schema,
-                        entity_labels=taxonomy.entity_labels,
-                    )
-                    if hasattr(self._neo, "_allowed_relation_types"):
-                        self._neo._allowed_relation_types = list(taxonomy.relation_schema)
-                else:
-                    resolved_rel_extractor = None
-            except Exception as exc:
-                err = f"Failed to load taxonomy '{request.taxonomy_file}': {exc}"
-                result.errors.append(err)
-                log.warning(err)
-
         stm = STMService(
             mg_store=self._mg,
             pg_store=self._pg,

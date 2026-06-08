@@ -102,7 +102,6 @@ async def cleanup_eval_sessions(client: MCPToolClient, run: NativeEvaluationRun)
 async def scenario_health(client: MCPToolClient, run: NativeEvaluationRun) -> None:
     await measured_call(client, run, "health", "memory_doctor", cold_start=True)
     await measured_call(client, run, "health", "memory_stats", {"session_id": ""})
-    await measured_call(client, run, "taxonomy", "list_taxonomies")
 
 
 async def scenario_stm_recall(client: MCPToolClient, run: NativeEvaluationRun) -> None:

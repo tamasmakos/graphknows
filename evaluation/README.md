@@ -23,7 +23,7 @@ python -m evaluation --help
 - `longmemeval`: official LongMemEval-V2 haystack retrieval slices with capsule ingestion support
 - `hotpotqa`: support-retrieval evaluation over HotpotQA distractor contexts
 - `research-memory`: deterministic retrieval-only experiments with per-case isolation,
-  taxonomy injection, mandatory LTM promotion, mandatory topic summarization, and
+  dynamic schema extraction, mandatory LTM promotion, mandatory topic summarization, and
   three headline scores
 
 ## Examples
@@ -85,7 +85,6 @@ python -m evaluation.run_eval research-memory \
   --suite hotpotqa \
   --offset 0 \
   --limit 3 \
-  --taxonomy-file taxonomy.generic.yaml \
   --relation-extraction-mode gliner2
 ```
 

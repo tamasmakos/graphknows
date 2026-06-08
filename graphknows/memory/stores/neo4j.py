@@ -46,7 +46,7 @@ def _safe_rel_label(raw: str) -> str:
 
 def _write_relation_edges(
     s: Any,
-    triplets: list[tuple[str, str, str]],
+    triplets: list[tuple[str, str, str] | tuple[str, str, str, dict[str, Any]]],
     entity_by_name: dict[str, dict[str, Any]],
 ) -> int:
     """Write typed directed edges between ENTITY nodes using dynamic Cypher labels.
@@ -65,20 +65,33 @@ def _write_relation_edges(
     canonical: dict[str, str] = {k.upper(): k for k in entity_by_name}
 
     edges = 0
-    for src, rel, tgt in triplets:
-        src_canon = canonical.get(src.upper())
-        tgt_canon = canonical.get(tgt.upper())
-        if src_canon is None or tgt_canon is None:
-            continue
+    for item in triplets:
+        src, rel, tgt = item[0], item[1], item[2]
+        metadata = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
+        src_canon = canonical.get(src.upper(), src)
+        tgt_canon = canonical.get(tgt.upper(), tgt)
         safe = _safe_rel_label(rel)
         if not safe:
             continue
+        src_type = metadata.get("source_type") or entity_by_name.get(src_canon, {}).get("type", "ENTITY")
+        tgt_type = metadata.get("target_type") or entity_by_name.get(tgt_canon, {}).get("type", "ENTITY")
         s.run(
-            f"MATCH (e1:ENTITY {{name: $src}}), (e2:ENTITY {{name: $tgt}}) "
+            "MERGE (e1:ENTITY {name: $src}) "
+            "SET e1.type = coalesce(e1.type, $src_type) "
+            "MERGE (e2:ENTITY {name: $tgt}) "
+            "SET e2.type = coalesce(e2.type, $tgt_type) "
             f"MERGE (e1)-[r:{safe}]->(e2) "
-            f"SET r.weight = coalesce(r.weight, 0) + 1",
+            "SET r.weight = coalesce(r.weight, 0) + 1, "
+            "r.confidence = coalesce($confidence, r.confidence), "
+            "r.evidence = coalesce($evidence, r.evidence), "
+            "r.reasoning = coalesce($reasoning, r.reasoning)",
             src=src_canon,
             tgt=tgt_canon,
+            src_type=src_type,
+            tgt_type=tgt_type,
+            confidence=metadata.get("confidence"),
+            evidence=metadata.get("evidence"),
+            reasoning=metadata.get("reasoning"),
         )
         edges += 1
     return edges
@@ -285,14 +298,12 @@ class Neo4jStore:
         password: str,
         database: str = "neo4j",
         relation_extractor: IRelationExtractor | None = None,
-        allowed_relation_types: list[str] | None = None,
     ) -> None:
         from neo4j import GraphDatabase
 
         self._driver = GraphDatabase.driver(uri, auth=(user, password))
         self._db = database
         self._relation_extractor = relation_extractor
-        self._allowed_relation_types = list(allowed_relation_types or [])
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -401,6 +412,8 @@ class Neo4jStore:
                            tp.community_id=$community_id,
                            tp.community_hash=$community_hash,
                            tp.modularity=$modularity,
+                           tp.gds_modularity=$gds_modularity,
+                           tp.community_algorithm=$community_algorithm,
                            tp.silhouette=$silhouette""",
                     id=t["id"],
                     label=t.get("label", ""),
@@ -408,6 +421,8 @@ class Neo4jStore:
                     community_id=t.get("community_id"),
                     community_hash=t.get("community_hash"),
                     modularity=t.get("modularity"),
+                    gds_modularity=t.get("gds_modularity", t.get("modularity")),
+                    community_algorithm=t.get("community_algorithm", ""),
                     silhouette=t.get("silhouette"),
                 )
                 for name in t.get("members", []):
@@ -701,10 +716,19 @@ class Neo4jStore:
         name_upper = entity_name.strip().upper()
         eid = entity_node_id(name_upper)
         rows = await self._arun(
-            """MATCH (e:ENTITY {id:$eid})-[:IN_COMMUNITY]->(tp:TOPIC)
-               RETURN tp.id AS id, tp.label AS label, tp.summary AS summary
+            """MATCH (e:ENTITY)
+               WHERE e.id = $eid OR toLower(e.name) = toLower($name)
+               MATCH (e)-[:IN_TOPIC|IN_COMMUNITY]->(tp:TOPIC)
+               RETURN tp.id AS id, tp.label AS label, tp.summary AS summary,
+                      tp.community_id AS community_id,
+                      tp.modularity AS modularity,
+                      tp.gds_modularity AS gds_modularity,
+                      tp.community_algorithm AS community_algorithm,
+                      tp.entity_names AS entity_names,
+                      tp.entity_count AS entity_count
                LIMIT 1""",
             eid=eid,
+            name=entity_name.strip(),
         )
         return dict(rows[0]) if rows else None
 
@@ -756,10 +780,9 @@ class Neo4jStore:
     ) -> int:
         """Run DSPyExtractor per chunk; write dynamic typed ENTITY→ENTITY edges.
 
-        Each chunk's entity list is used as hints for the DSPy module. The extractor
-        returns (source, relation_label, target) triplets where relation_label is a
-        taxonomy-driven semantic type (e.g. REGULATES, FUNDS, APPOINTS). These become
-        actual Cypher relationship types via _write_relation_edges.
+        Each chunk's text is passed to the DSPy module. The extractor loads its RDF
+        ontology file and returns ontology-constrained (source, relation_label, target)
+        triplets. These become actual Cypher relationship types via _write_relation_edges.
 
         Raises:
             Any exception from DSPyExtractor.extract_relations propagates immediately.
@@ -771,10 +794,6 @@ class Neo4jStore:
         entity_by_name: dict[str, dict[str, Any]] = {
             e["name"]: e for e in stm_data.get("entities", [])
         }
-        chunk_to_ents: dict[str, list[str]] = defaultdict(list)
-        for ce in stm_data.get("chunk_entity_edges", []):
-            chunk_to_ents[ce["chunk_id"]].append(ce["entity_name"])
-
         extractor = self._relation_extractor
         if extractor is None:
             raise RuntimeError(
@@ -782,32 +801,27 @@ class Neo4jStore:
                 f"(llm_model={llm_model}, openrouter_key_configured={bool(openrouter_key)})"
             )
 
-        allowed_relation_types = list(getattr(self, "_allowed_relation_types", []) or [])
-        if not allowed_relation_types:
-            logger.warning(
-                "Neo4jStore.extract_and_write_relations skipped: no taxonomy-backed "
-                "allowed_relation_types configured"
-            )
-            return 0
-
-        all_triplets: list[tuple[str, str, str]] = []
+        all_triplets: list[tuple[str, str, str, dict[str, Any]]] = []
 
         for chunk in stm_data.get("chunks", []):
-            ents = chunk_to_ents.get(chunk["id"], [])
-            if len(ents) < 2:
-                continue  # need at least 2 entities to form a relation
             # extract_relations returns (relations_list, nodes_data_list, audit_dict)
-            relations, _, _audit = await extractor.extract_relations(
+            relations, nodes_data, _audit = await extractor.extract_relations(
                 text=chunk["text"],
-                keywords=ents,
-                entities=ents,
-                allowed_relation_types=allowed_relation_types,
             )
+            for node in nodes_data:
+                node_id = str(node.get("id") or "").strip()
+                if node_id and node_id not in entity_by_name:
+                    entity_by_name[node_id] = {
+                        "name": node_id,
+                        "type": node.get("type") or "ENTITY",
+                        "confidence": 1.0,
+                    }
             for item in relations:
                 # item is a tuple: (source, relation, target, metadata_dict)
                 src, rel, tgt = item[0], item[1], item[2]
+                props = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
                 if src and rel and tgt:
-                    all_triplets.append((src, rel, tgt))
+                    all_triplets.append((src, rel, tgt, props))
 
         if not all_triplets:
             return 0
@@ -824,78 +838,31 @@ class Neo4jStore:
         openrouter_key: str,
         llm_model: str = "meta-llama/llama-3.1-8b-instruct",
         pg_store: Any = None,
+        gds_modularity: float | None = None,
+        community_algorithm: str | None = None,
     ) -> int:
-        """Detect entity communities via Leiden on the typed relation graph.
+        """Summarize graph communities and write TOPIC nodes.
 
-        Summarizes new communities with LLM and writes TOPIC nodes.
+        GDS-owned communities are preferred: if ``ENTITY.community_id`` exists,
+        those yielded communities define topics. If GDS has not run, a local
+        Leiden fallback is used and the fallback community IDs are written back
+        to entities for notebook and UI inspection.
 
-        Community detection runs on the ENTITY→ENTITY typed relation graph (edges written by
-        GLiNER2 or llm_assisted extraction).  Only communities whose member-set has changed
-        since the last flush (detected via SHA-1 hash stored on the TOPIC node) are
-        re-summarized — avoiding redundant LLM calls.
-
-        Chunk evidence is a random sample capped at 100 rows to prevent prompt bloat.
-
-        The Leiden modularity score is written to every TOPIC node so downstream consumers
-        can rank communities by structural quality.
-
-        Args:
-            session_id: The session to summarize.
-            openrouter_key: OpenRouter API key. If empty, LLM step is skipped.
-            llm_model: Model identifier passed to OpenRouter.
-            pg_store: Optional PGVectorStore — if provided, writes ltm_topics rows.
-
-        Returns:
-            Number of topics created or updated.
+        Only communities whose member set changed since the previous flush are
+        re-summarized. Topic nodes always receive the available modularity and
+        community algorithm metadata.
         """
         import hashlib
-        import json
         import uuid as _uuid
 
-        import igraph as ig
-        import leidenalg
-
-        # ── Step 1: build Leiden graph from typed ENTITY→ENTITY relation edges ──────
-        # Use the relation graph (not co-occurrence through chunks) so the algorithm
-        # reflects actual extracted knowledge rather than lexical proximity.
-        rel_rows = await self._arun(
-            "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
-            "WHERE type(r) <> 'CO_OCCURS' "
-            "RETURN a.name AS a, b.name AS b, coalesce(r.weight, 1.0) AS weight",
-        )
-        if not rel_rows:
-            logger.info("summarize_topics %s: no typed relation edges found; skipping", session_id)
+        communities, local_modularity, silhouette, algorithm = await self._topic_communities()
+        if not communities:
+            logger.info("summarize_topics %s: no communities found; skipping", session_id)
             return 0
 
-        names: list[str] = sorted({r["a"] for r in rel_rows} | {r["b"] for r in rel_rows})
-        name_idx = {n: i for i, n in enumerate(names)}
-        g = ig.Graph(n=len(names), directed=False)
-        g.vs["name"] = names
-        edges: list[tuple[int, int]] = []
-        weights: list[float] = []
-        for r in rel_rows:
-            ai, bi = name_idx[r["a"]], name_idx[r["b"]]
-            if ai != bi:
-                edges.append((ai, bi))
-                weights.append(float(r["weight"]))
-        g.add_edges(edges)
-        # leidenalg rejects negative weights — clamp to zero
-        weights = [max(0.0, w) for w in weights]
+        modularity = gds_modularity if gds_modularity is not None else local_modularity
+        algorithm = (community_algorithm or "").strip() or algorithm
 
-        partition = leidenalg.find_partition(
-            g, leidenalg.ModularityVertexPartition, weights=weights
-        )
-        communities: dict[int, list[str]] = {
-            i: [g.vs[vi]["name"] for vi in partition[i]] for i in range(len(partition))
-        }
-
-        # Quality metrics computed once for the full partition
-        modularity: float = partition.quality()
-        silhouette: float | None = _compute_silhouette(
-            names, name_idx, communities, rel_rows, weights
-        )
-
-        # ── Step 2: load existing community hashes from TOPIC nodes ─────────────────
         existing_hashes: dict[int, str] = {}
         try:
             hash_rows = await self._arun(
@@ -907,20 +874,29 @@ class Neo4jStore:
         except Exception as exc:
             logger.warning("summarize_topics: could not load existing hashes: %s", exc)
 
+        summarizer = None
+        if openrouter_key:
+            from graphknows.memory.services.topic_summarizer import TopicSummarizer
+
+            summarizer = TopicSummarizer(openrouter_key, llm_model)
         topics_created = 0
         for comm_id, members in communities.items():
             if len(members) < 2:
-                continue  # skip singletons
+                continue
 
-            # ── Step 3: skip unchanged communities ──────────────────────────────────
             comm_hash = hashlib.sha1(
                 "|".join(sorted(members)).encode(), usedforsecurity=False
             ).hexdigest()
             if existing_hashes.get(comm_id) == comm_hash:
-                logger.debug("summarize_topics: community %d unchanged — skipping", comm_id)
+                logger.debug("summarize_topics: community %d unchanged; refreshing metadata", comm_id)
+                await self._refresh_topic_metadata(
+                    comm_id=comm_id,
+                    modularity=modularity,
+                    gds_modularity=gds_modularity,
+                    community_algorithm=algorithm,
+                )
                 continue
 
-            # ── Step 4: gather evidence chunks (random sample, max 100) ─────────────
             evidence_rows = await self._arun(
                 "MATCH (c:CHUNK)-[:HAS_ENTITY]->(e:ENTITY) "
                 "WHERE e.name IN $members "
@@ -934,52 +910,15 @@ class Neo4jStore:
                 for r in evidence_rows
             )
 
-            # ── Step 5: LLM summarization ────────────────────────────────────────────
-            title = ", ".join(members[:5])
-            summary = ""
-            if openrouter_key:
-                try:
-                    import httpx
+            fallback_title = ", ".join(members[:5])
+            title, summary = fallback_title, ""
+            if summarizer is not None:
+                title, summary = await summarizer.summarize(
+                    members=members,
+                    passages=passages,
+                    fallback_title=fallback_title,
+                )
 
-                    payload = {
-                        "model": llm_model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You are a knowledge graph analyst. Given a set of entities "
-                                    "and text passages, produce a short topic title and a 2-3 "
-                                    "sentence summary."
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": (
-                                    f"Entities: {', '.join(members)}\n\n"
-                                    f"Passages:\n{passages}\n\n"
-                                    'Output JSON: {"title": "...", "summary": "..."}'
-                                ),
-                            },
-                        ],
-                        "response_format": {"type": "json_object"},
-                    }
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        resp = await client.post(
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            headers={"Authorization": f"Bearer {openrouter_key}"},
-                            json=payload,
-                        )
-                    resp.raise_for_status()
-                    content = resp.json()["choices"][0]["message"]["content"]
-                    parsed = json.loads(content)
-                    title = parsed.get("title", title)
-                    summary = parsed.get("summary", "")
-                except Exception as exc:
-                    logger.warning(
-                        "LLM topic summarization failed for community %d: %s", comm_id, exc
-                    )
-
-            # ── Step 6: upsert TOPIC to Neo4j (with modularity + community_hash) ────
             topic_id = str(_uuid.uuid5(_GK_NS, f"topic:{session_id}:{comm_id}"))
             topic = {
                 "id": topic_id,
@@ -993,11 +932,12 @@ class Neo4jStore:
                 "session_ids": [session_id],
                 "members": members,
                 "modularity": modularity,
+                "gds_modularity": gds_modularity,
+                "community_algorithm": algorithm,
                 "silhouette": silhouette,
             }
             await self.upsert_topics([topic])
 
-            # IN_TOPIC edges
             def _link_topic(tid: str, mbs: list[str]) -> None:
                 with self._driver.session() as s:
                     for name in mbs:
@@ -1010,7 +950,6 @@ class Neo4jStore:
 
             await asyncio.to_thread(_link_topic, topic_id, members)
 
-            # Write pgvector ltm_topics if store provided
             if pg_store is not None:
                 await _write_pgvector_topic(
                     pg_store,
@@ -1023,6 +962,89 @@ class Neo4jStore:
             topics_created += 1
 
         return topics_created
+
+    async def _topic_communities(self) -> tuple[dict[int, list[str]], float | None, float | None, str]:
+        """Return topic communities from GDS, or local Leiden fallback."""
+        gds_rows = await self._arun(
+            "MATCH (e:ENTITY) "
+            "WHERE e.community_id IS NOT NULL "
+            "RETURN e.community_id AS cid, collect(DISTINCT e.name) AS members"
+        )
+        gds_communities: dict[int, list[str]] = {}
+        for r in gds_rows:
+            cid = r.get("cid") if hasattr(r, "get") else r["cid"]
+            members = r.get("members", []) if hasattr(r, "get") else r["members"]
+            if cid is not None:
+                gds_communities[int(cid)] = sorted(n for n in members if n)
+        if any(len(members) >= 2 for members in gds_communities.values()):
+            return gds_communities, None, None, "gds_leiden"
+
+        import igraph as ig
+        import leidenalg
+
+        rel_rows = await self._arun(
+            "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+            "WHERE type(r) <> 'CO_OCCURS' "
+            "RETURN a.name AS a, b.name AS b, coalesce(r.weight, 1.0) AS weight",
+        )
+        if not rel_rows:
+            return {}, None, None, "leidenalg"
+        algorithm = "leidenalg"
+
+        names: list[str] = sorted({r["a"] for r in rel_rows} | {r["b"] for r in rel_rows})
+        name_idx = {n: i for i, n in enumerate(names)}
+        g = ig.Graph(n=len(names), directed=False)
+        g.vs["name"] = names
+        edges: list[tuple[int, int]] = []
+        weights: list[float] = []
+        for r in rel_rows:
+            ai, bi = name_idx[r["a"]], name_idx[r["b"]]
+            if ai != bi:
+                edges.append((ai, bi))
+                weights.append(max(0.0, float(r["weight"])))
+        g.add_edges(edges)
+
+        partition = leidenalg.find_partition(
+            g, leidenalg.ModularityVertexPartition, weights=weights
+        )
+        communities: dict[int, list[str]] = {
+            i: sorted(g.vs[vi]["name"] for vi in partition[i]) for i in range(len(partition))
+        }
+        modularity = float(partition.quality())
+        silhouette = _compute_silhouette(names, name_idx, communities, rel_rows, weights)
+
+        def _write_entity_communities() -> None:
+            with self._driver.session() as s:
+                for cid, members in communities.items():
+                    for name in members:
+                        s.run(
+                            "MATCH (e:ENTITY {name: $name}) SET e.community_id = $cid",
+                            name=name,
+                            cid=cid,
+                        )
+
+        await asyncio.to_thread(_write_entity_communities)
+        return communities, modularity, silhouette, algorithm
+
+    async def _refresh_topic_metadata(
+        self,
+        *,
+        comm_id: int,
+        modularity: float | None,
+        gds_modularity: float | None,
+        community_algorithm: str,
+    ) -> None:
+        """Keep unchanged topic nodes aligned with the latest GDS metrics."""
+        await self._arun(
+            "MATCH (t:TOPIC {community_id: $comm_id}) "
+            "SET t.modularity = $modularity, "
+            "    t.gds_modularity = $gds_modularity, "
+            "    t.community_algorithm = $community_algorithm",
+            comm_id=comm_id,
+            modularity=modularity,
+            gds_modularity=gds_modularity,
+            community_algorithm=community_algorithm,
+        )
 
     async def run_gds_enrichment(self, session_id: str) -> dict[str, Any]:
         """Run full GDS feature enrichment via LTMEnrichmentService.
@@ -1166,6 +1188,12 @@ class Neo4jStore:
                     "community_id": props.get("community_id"),
                     "summary": props.get("summary"),
                     "entity_count": entity_count,
+                    "entity_names": props.get("entity_names") or [],
+                    "community_hash": props.get("community_hash"),
+                    "modularity": props.get("modularity"),
+                    "gds_modularity": props.get("gds_modularity"),
+                    "community_algorithm": props.get("community_algorithm"),
+                    "silhouette": props.get("silhouette"),
                 }
             )
         return sorted(topics, key=lambda t: t["entity_count"], reverse=True)

@@ -27,6 +27,12 @@ WORKDIR /app
 # Install uv in the runtime so it's available in the workspace
 RUN pip install --no-cache-dir uv
 
+# Ensure `git` is available inside runtime containers (workspace, mcp, etc.)
+# Keep apt lists cleaned to reduce image size.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # User requested spacy installation and model download at the compose/docker layer
 RUN pip install spacy && \
     python -m spacy download en_core_web_lg

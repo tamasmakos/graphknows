@@ -11,7 +11,6 @@ from graphknows.mcp._state import get_settings
 @app.tool()
 async def corpus_ingest(
     documents: list[dict[str, Any]],
-    taxonomy_file: str | None = None,
     session_id: str | None = None,
 ) -> dict[str, Any]:
     r"""Ingest a corpus of documents into the long-term knowledge graph.
@@ -26,9 +25,6 @@ async def corpus_ingest(
             - title (str): human-readable title
             - id (str): unique document identifier
             - source (str, optional): provenance URL or label
-        taxonomy_file: Optional path or name of taxonomy YAML to use.
-            Defaults to taxonomy.generic.yaml. Pass
-            \"taxonomy.eu-politics.yaml\" for EU political domain.
         session_id: Optional session identifier for idempotent retries and cleanup.
 
     Returns:
@@ -46,7 +42,6 @@ async def corpus_ingest(
         workflow = build_corpus_workflow(s)
         request = CorpusIngestRequest(
             documents=documents,
-            taxonomy_file=taxonomy_file,
             session_id=session_id,
             summarize_topics=True,
             run_gds=True,
