@@ -1,6 +1,6 @@
 """Host-agnostic facade over the graphknows memory backend.
 
-Composes STMService, SessionFlusher, and recall functions behind a stable
+Composes STMService, LTMPromotionPipeline, and recall functions behind a stable
 generic contract. Host-specific parsing and normalization stay outside this class.
 """
 
@@ -57,7 +57,7 @@ def _build_stm_service(
 class GraphknowsAdapter:
     """Host-agnostic facade over the graphknows memory backend.
 
-    Composes STMService, SessionFlusher, and recall functions behind a
+    Composes STMService, LTMPromotionPipeline, and recall functions behind a
     stable generic contract. Host-specific parsing and normalization stay
     outside this class.
 
@@ -341,7 +341,7 @@ class AgentMemoryAdapter(Protocol):
 class GraphknowsMemoryAdapter:
     """Concrete AgentMemoryAdapter backed by the Graphknows memory stack.
 
-    Delegates to MemoryIngestor, STM/LTM recall, SessionFlusher, and
+    Delegates to STMService, LTMPromotionPipeline, recall functions, and
     pgvector/Neo4j queries for stats.
     """
 

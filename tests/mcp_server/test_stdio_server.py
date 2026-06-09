@@ -816,27 +816,21 @@ class TestMemoryFlushIdempotency:
         mock_record.__getitem__ = lambda self, k: 1
         mock_neo_session.run.return_value = [mock_record]
 
-        mock_flusher_cls = MagicMock()
-
         with (
             patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
-            patch.dict(
-                "sys.modules",
-                {
-                    "graphknows.memory.flush": MagicMock(
-                        FlushOptions=MagicMock(), SessionFlusher=mock_flusher_cls
-                    ),
-                },
-            ),
+            patch(
+                "graphknows.config.builders.stores.build_promotion_pipeline"
+            ) as mock_build_pipeline,
         ):
             result = await stm_mod.memory_flush("session-already-flushed")
 
         assert result["status"] == "already_flushed"
         assert result["session_id"] == "session-already-flushed"
-        assert result["nodes_written"] == 0
+        assert result["nodes"] == 0
+        assert result["chunks"] == 0
         assert result["errors"] == []
-        # Flusher should NOT have been instantiated
-        mock_flusher_cls.assert_not_called()
+        # Pipeline should NOT have been built
+        mock_build_pipeline.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_new_session_calls_flusher(self):
@@ -986,7 +980,7 @@ def test_stm_recall_hit_entity_only_has_cosine_score_zero():
     assert hits[0]["cosine_score"] == 0.0
 
 
-class TestLTMWriterRelationExtractionGuard:
+class TestLTMPromotionPipelineRelationExtractionGuard:
     """LTMPromotionPipeline._write_ltm_graph must skip/survive relation extraction failures."""
 
     @pytest.mark.asyncio

@@ -183,6 +183,7 @@ class LTMPromotionPipeline:
             rel_edges = await self._neo.extract_and_write_relations(
                 stm_data=stm_data,
                 openrouter_key=self._openrouter_key,
+                session_id=session_id,
             )
         except Exception as exc:
             log.warning(

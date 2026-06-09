@@ -48,6 +48,7 @@ def _write_relation_edges(
     s: Any,
     triplets: list[tuple[str, str, str] | tuple[str, str, str, dict[str, Any]]],
     entity_by_name: dict[str, dict[str, Any]],
+    session_id: str = "",
 ) -> int:
     """Write typed directed edges between ENTITY nodes using dynamic Cypher labels.
 
@@ -62,14 +63,16 @@ def _write_relation_edges(
         Number of edges written.
     """
     # Build a case-insensitive index so we can resolve canonical names.
-    canonical: dict[str, str] = {k.upper(): k for k in entity_by_name}
+    # Normalize underscores to spaces so DSPy labels like "NEXUS_FOUNDATION"
+    # match GLiNER2-extracted names like "Nexus Foundation".
+    canonical: dict[str, str] = {k.upper().replace("_", " "): k for k in entity_by_name}
 
     edges = 0
     for item in triplets:
         src, rel, tgt = item[0], item[1], item[2]
         metadata = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
-        src_canon = canonical.get(src.upper(), src)
-        tgt_canon = canonical.get(tgt.upper(), tgt)
+        src_canon = canonical.get(src.upper().replace("_", " "), src)
+        tgt_canon = canonical.get(tgt.upper().replace("_", " "), tgt)
         safe = _safe_rel_label(rel)
         if not safe:
             continue
@@ -82,6 +85,7 @@ def _write_relation_edges(
             "SET e2.type = coalesce(e2.type, $tgt_type) "
             f"MERGE (e1)-[r:{safe}]->(e2) "
             "SET r.weight = coalesce(r.weight, 0) + 1, "
+            "r.session_id = $session_id, "
             "r.confidence = coalesce($confidence, r.confidence), "
             "r.evidence = coalesce($evidence, r.evidence), "
             "r.reasoning = coalesce($reasoning, r.reasoning)",
@@ -89,6 +93,7 @@ def _write_relation_edges(
             tgt=tgt_canon,
             src_type=src_type,
             tgt_type=tgt_type,
+            session_id=session_id,
             confidence=metadata.get("confidence"),
             evidence=metadata.get("evidence"),
             reasoning=metadata.get("reasoning"),
@@ -128,7 +133,7 @@ def _compute_silhouette(
             adj[j][i] = d
             adj[i][i] = 0.0
             adj[j][j] = 0.0
-        return float(silhouette_score(np.array(adj), labels, metric="precomputed"))
+        return float(silhouette_score(np.array(adj), labels, metric="precomputed", random_state=42))
     except Exception as exc:
         logger.warning("Silhouette computation skipped: %s", exc)
         return None
@@ -752,7 +757,9 @@ class Neo4jStore:
         }
 
         def _sync() -> dict[str, int]:
-            with self._driver.session() as s:
+            _db = getattr(self, "_db", None)
+            _sess_kwargs: dict[str, Any] = {"database": _db} if _db else {}
+            with self._driver.session(**_sess_kwargs) as s:
                 n1, e1, _chunk_to_ents = _write_evidence_graph(
                     s, session_id, stm_data, entity_by_name, now
                 )
@@ -767,16 +774,68 @@ class Neo4jStore:
                         if r.get("source") and r.get("relation") and r.get("target")
                     ]
                     if triplets:
-                        e3 = _write_relation_edges(s, triplets, entity_by_name)
+                        e3 = _write_relation_edges(s, triplets, entity_by_name, session_id=session_id)
             return {"nodes": n1 + n2, "edges": e1 + e2 + e3}
 
         return await asyncio.to_thread(_sync)
+
+    def _add_node_to_entities(
+        self,
+        node: dict[str, Any],
+        entity_by_name: dict[str, dict[str, Any]],
+    ) -> None:
+        """Add a new node to entity_by_name if not already present.
+
+        Skip if an existing entry matches case-insensitively (after underscore→space
+        normalization) to preserve GLiNER2 canonical names over DSPy uppercase ones.
+        """
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            return
+        normalized = node_id.upper().replace("_", " ")
+        for existing in entity_by_name:
+            if existing.upper().replace("_", " ") == normalized:
+                return
+        entity_by_name[node_id] = {
+            "name": node_id,
+            "type": node.get("type") or "ENTITY",
+            "confidence": 1.0,
+        }
+
+    def _extract_triplet_from_relation(
+        self, item: tuple[Any, ...]
+    ) -> tuple[str, str, str, dict[str, Any]] | None:
+        """Extract and validate triplet from relation item."""
+        src, rel, tgt = item[0], item[1], item[2]
+        props = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
+        return (src, rel, tgt, props) if src and rel and tgt else None
+
+    async def _process_chunks(
+        self,
+        stm_data: dict[str, Any],
+        extractor: Any,
+        entity_by_name: dict[str, dict[str, Any]],
+    ) -> list[tuple[str, str, str, dict[str, Any]]]:
+        """Process all chunks and extract triplets."""
+        all_triplets: list[tuple[str, str, str, dict[str, Any]]] = []
+        for chunk in stm_data.get("chunks", []):
+            relations, nodes_data, _audit = await extractor.extract_relations(
+                text=chunk["text"],
+            )
+            for node in nodes_data:
+                self._add_node_to_entities(node, entity_by_name)
+            for item in relations:
+                triplet = self._extract_triplet_from_relation(item)
+                if triplet:
+                    all_triplets.append(triplet)
+        return all_triplets
 
     async def extract_and_write_relations(
         self,
         stm_data: dict[str, Any],
         openrouter_key: str,
         llm_model: str = "openrouter/meta-llama/llama-3.1-8b-instruct",
+        session_id: str = "",
     ) -> int:
         """Run DSPyExtractor per chunk; write dynamic typed ENTITY→ENTITY edges.
 
@@ -801,34 +860,16 @@ class Neo4jStore:
                 f"(llm_model={llm_model}, openrouter_key_configured={bool(openrouter_key)})"
             )
 
-        all_triplets: list[tuple[str, str, str, dict[str, Any]]] = []
-
-        for chunk in stm_data.get("chunks", []):
-            # extract_relations returns (relations_list, nodes_data_list, audit_dict)
-            relations, nodes_data, _audit = await extractor.extract_relations(
-                text=chunk["text"],
-            )
-            for node in nodes_data:
-                node_id = str(node.get("id") or "").strip()
-                if node_id and node_id not in entity_by_name:
-                    entity_by_name[node_id] = {
-                        "name": node_id,
-                        "type": node.get("type") or "ENTITY",
-                        "confidence": 1.0,
-                    }
-            for item in relations:
-                # item is a tuple: (source, relation, target, metadata_dict)
-                src, rel, tgt = item[0], item[1], item[2]
-                props = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
-                if src and rel and tgt:
-                    all_triplets.append((src, rel, tgt, props))
+        all_triplets = await self._process_chunks(stm_data, extractor, entity_by_name)
 
         if not all_triplets:
             return 0
 
         def _sync_write() -> int:
-            with self._driver.session() as s:
-                return _write_relation_edges(s, all_triplets, entity_by_name)
+            _db = getattr(self, "_db", None)
+            _sk: dict[str, Any] = {"database": _db} if _db else {}
+            with self._driver.session(**_sk) as s:
+                return _write_relation_edges(s, all_triplets, entity_by_name, session_id=session_id)
 
         return await asyncio.to_thread(_sync_write)
 
@@ -939,7 +980,9 @@ class Neo4jStore:
             await self.upsert_topics([topic])
 
             def _link_topic(tid: str, mbs: list[str]) -> None:
-                with self._driver.session() as s:
+                _db2 = getattr(self, "_db", None)
+                _sk: dict[str, Any] = {"database": _db2} if _db2 else {}
+                with self._driver.session(**_sk) as s:
                     for name in mbs:
                         s.run(
                             "MATCH (tp:TOPIC {id: $tid}), (e:ENTITY {name: $name}) "
@@ -1014,7 +1057,9 @@ class Neo4jStore:
         silhouette = _compute_silhouette(names, name_idx, communities, rel_rows, weights)
 
         def _write_entity_communities() -> None:
-            with self._driver.session() as s:
+            _db3 = getattr(self, "_db", None)
+            _sk: dict[str, Any] = {"database": _db3} if _db3 else {}
+            with self._driver.session(**_sk) as s:
                 for cid, members in communities.items():
                     for name in members:
                         s.run(

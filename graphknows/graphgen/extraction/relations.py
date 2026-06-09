@@ -148,18 +148,35 @@ class DSPyExtractor(BaseExtractor):
         if hasattr(ontology_config, "model_dump"):
             ontology_config = ontology_config.model_dump()
         ontology_file = str(ontology_config.get("file") or "").strip()
-        if not ontology_file:
-            raise ValueError(
-                "DSPyExtractor requires GRAPHKNOWS_ONTOLOGY_FILE / config['ontology']['file'] "
-                "pointing to one RDF/OWL ontology file."
-            )
-        self._ontology: RdfOntologyManifest = load_rdf_ontology_file(ontology_file)
-        self._ontology_classes = [standardize_label(label) for label in self._ontology.class_labels]
-        self._ontology_relation_types = [
-            standardize_label(label) for label in self._ontology.property_labels
-        ]
-        if not self._ontology_classes or not self._ontology_relation_types:
-            raise ValueError(f"RDF ontology file produced no DSPy labels: {ontology_file}")
+        if ontology_file:
+            self._ontology: RdfOntologyManifest | None = load_rdf_ontology_file(ontology_file)
+            self._ontology_classes = [standardize_label(label) for label in self._ontology.class_labels]
+            self._ontology_relation_types = [
+                standardize_label(label) for label in self._ontology.property_labels
+            ]
+            if not self._ontology_classes or not self._ontology_relation_types:
+                raise ValueError(f"RDF ontology file produced no DSPy labels: {ontology_file}")
+        else:
+            # No ontology — use a broad open-domain set of semantic relation types.
+            self._ontology = None
+            self._ontology_classes = [
+                "PERSON", "ORGANIZATION", "PROJECT", "SYSTEM", "TEAM", "LOCATION",
+                "PRODUCT", "SERVICE", "TECHNOLOGY", "CONCEPT", "EVENT", "DOCUMENT",
+            ]
+            self._ontology_relation_types = [
+                "WORKS_AT", "WORKS_FOR", "EMPLOYED_BY", "MEMBER_OF", "JOINED",
+                "MANAGES", "MANAGED_BY", "REPORTS_TO", "LEADS", "LED_BY",
+                "OWNS", "OWNED_BY", "OPERATED_BY", "OPERATES",
+                "FUNDS", "FUNDED_BY", "SPONSORS", "SPONSORED_BY",
+                "PART_OF", "CONTAINS", "BELONGS_TO", "LOCATED_IN",
+                "CREATED_BY", "DEVELOPED_BY", "AUTHORED_BY",
+                "USES", "USED_BY", "DEPENDS_ON", "SUPPORTS",
+                "SUBMITTED_TO", "APPROVED_BY", "REVIEWED_BY",
+                "ASSOCIATED_WITH", "RELATED_TO", "CONNECTED_TO",
+                "SUPPLIES", "SUPPLIED_BY", "CONTRACTED_WITH",
+                "ASSIGNED_TO", "RESPONSIBLE_FOR",
+            ]
+            logger.info("DSPyExtractor: no ontology file — using open-domain relation types")
 
         model = (
             llm_config.get("extraction_model")
@@ -206,11 +223,13 @@ class DSPyExtractor(BaseExtractor):
         try:
             lm = self._lm
 
+            ontology_context = self._ontology.context if self._ontology is not None else ""
+
             def _extract_sync() -> Any:
                 with dspy.settings.context(lm=lm):
                     prediction = self.module(
                         text=text,
-                        ontology_context=self._ontology.context,
+                        ontology_context=ontology_context,
                         ontology_classes=ontology_classes,
                         ontology_relation_types=ontology_relation_types,
                     )

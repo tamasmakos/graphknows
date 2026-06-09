@@ -214,6 +214,8 @@ async def run_longmemeval_case(
     max_states: int,
     max_chars_per_trajectory: int,
     ingest_strategy: str,
+    recall_scope: str = "stm",
+    promote_to_ltm: bool = False,
     capsule_options: CapsuleOptions | None = None,
     purge: bool = True,
 ) -> BenchmarkCaseResult:
@@ -230,6 +232,7 @@ async def run_longmemeval_case(
     )
     recall: list[dict[str, Any]] = []
     ingest_results: list[dict[str, Any]] = []
+    flush_result: dict[str, Any] = {}
     try:
         if ingest_strategy in {"trajectory_capsules", "batched_capsules"}:
             docs = capsule_documents(trajectories, str(question["question"]), options)
@@ -265,13 +268,16 @@ async def run_longmemeval_case(
                     },
                 )
                 ingest_results.append(result if isinstance(result, dict) else {"result": result})
+        if promote_to_ltm:
+            result = await client.call_tool("memory_flush", {"session_id": session_id})
+            flush_result = result if isinstance(result, dict) else {"result": result}
         result = await client.call_tool(
             "memory_recall",
             {
                 "query": str(question["question"]),
                 "session_id": session_id,
                 "top_k": top_k,
-                "scope": "stm",
+                "scope": recall_scope,
             },
         )
         recall = list(result.get("hits", []))
@@ -297,6 +303,7 @@ async def run_longmemeval_case(
             "session_id": session_id,
             "ingest_documents": len(trajectories) if ingest_strategy != "raw" else len(trajectories),
             "ingest_results": ingest_results,
+            "flush_result": flush_result or None,
         },
         metrics={
             "recall_hit_count": len(recall),
@@ -304,6 +311,11 @@ async def run_longmemeval_case(
             "ingest_calls": len(ingest_results),
             "ingested_chunks": sum(int(result.get("chunks", 0)) for result in ingest_results),
             "ingested_entities": sum(int(result.get("entities", 0)) for result in ingest_results),
+            "flush_nodes": int(flush_result.get("nodes", 0)) if flush_result else 0,
+            "flush_edges": int(flush_result.get("edges", 0)) if flush_result else 0,
+            "flush_chunks": int(flush_result.get("chunks", 0)) if flush_result else 0,
+            "flush_topics": int(flush_result.get("topics_created", 0)) if flush_result else 0,
+            "flush_error_count": len(flush_result.get("errors", [])) if flush_result else 0,
         },
     )
 
@@ -320,6 +332,8 @@ async def run_longmemeval_small(
     max_states: int,
     max_chars_per_trajectory: int,
     ingest_strategy: str,
+    recall_scope: str = "stm",
+    promote_to_ltm: bool = False,
     purge: bool = True,
 ) -> list[BenchmarkCaseResult]:
     questions, haystack = load_lme_metadata(data_root)
@@ -342,6 +356,8 @@ async def run_longmemeval_small(
                 max_states=max_states,
                 max_chars_per_trajectory=max_chars_per_trajectory,
                 ingest_strategy=ingest_strategy,
+                recall_scope=recall_scope,
+                promote_to_ltm=promote_to_ltm,
                 purge=purge,
             )
         )

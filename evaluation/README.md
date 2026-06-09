@@ -84,6 +84,11 @@ Defaults:
 - BEAM 1M: `evaluation/data/beam/1m/questions.jsonl`
 - BEAM 10M: `evaluation/data/beam/10m/questions.jsonl`
 
+If those full local exports are not present, the CLI falls back to tracked smoke
+fixtures under `evaluation/fixtures/`. These fixtures are intentionally tiny and
+only prove the evaluation framework launches and emits comparable artifacts;
+they are not substitutes for official benchmark scores.
+
 Each row may be JSONL or part of a JSON array. The runner accepts these common
 fields:
 
@@ -135,8 +140,14 @@ All runnable commands accept:
 --limit
 --recall-scope stm|ltm|both
 --relation-extraction-mode gliner2|llm_assisted|off
+--promote-to-ltm
 --no-purge
 ```
+
+Use `--promote-to-ltm --recall-scope ltm` when comparing `gliner2` with
+`llm_assisted`. The LLM-assisted relation extractor runs during STM-to-LTM
+promotion, so STM-only runs prove launch health but do not measure assisted
+relation extraction.
 
 ## Outputs
 
