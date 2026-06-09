@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 
 from evaluation.core.file_backed import FileBackedBenchmarkOptions, run_file_backed_benchmark
 
@@ -20,7 +21,7 @@ class FakeClient:
         return {"errors": []}
 
 
-async def test_file_backed_runner_ingests_sessions_and_scores_answer(tmp_path) -> None:
+def test_file_backed_runner_ingests_sessions_and_scores_answer(tmp_path) -> None:
     data_root = tmp_path / "locomo"
     data_root.mkdir()
     row = {
@@ -41,14 +42,16 @@ async def test_file_backed_runner_ingests_sessions_and_scores_answer(tmp_path) -
     (data_root / "questions.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
     client = FakeClient()
 
-    cases = await run_file_backed_benchmark(
-        client,  # type: ignore[arg-type]
-        FileBackedBenchmarkOptions(
-            benchmark="locomo",
-            data_root=data_root,
-            questions_file="questions.jsonl",
-            run_id="run",
-        ),
+    cases = asyncio.run(
+        run_file_backed_benchmark(
+            client,  # type: ignore[arg-type]
+            FileBackedBenchmarkOptions(
+                benchmark="locomo",
+                data_root=data_root,
+                questions_file="questions.jsonl",
+                run_id="run",
+            ),
+        )
     )
 
     assert [name for name, _args in client.calls] == [

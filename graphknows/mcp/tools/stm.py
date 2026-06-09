@@ -225,10 +225,10 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
         return {
             "session_id": session_id,
             "status": "already_flushed",
-            "nodes_written": 0,
-            "edges_written": 0,
-            "chunks_promoted": 0,
-            "turns_promoted": 0,
+            "nodes": 0,
+            "edges": 0,
+            "chunks": 0,
+            "turns": 0,
             "topics_created": 0,
             "merged_entities": 0,
             "elapsed_s": 0.0,
@@ -264,6 +264,8 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
         "edges": result.edges_written,
         "chunks": result.chunks_promoted,
         "turns": result.turns_promoted,
+        "topics_created": result.topics_created,
+        "merged_entities": result.merged_entities,
         "elapsed_s": round(result.elapsed_s, 3),
         "errors": list(result.errors),
     }

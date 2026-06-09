@@ -92,6 +92,12 @@ def _ann_turns(
     return turn_results
 
 
+_STRUCTURAL_REL_TYPES = frozenset({
+    "HAS_ENTITY", "HAS_CHUNK", "IN_SESSION", "IN_TOPIC", "IN_COMMUNITY",
+    "HAS_TURN", "IN_DIALOG", "PART_OF",
+})
+
+
 def _entity_traversal(
     neo_store: Any,
     words: list[str],
@@ -99,34 +105,44 @@ def _entity_traversal(
     session_filter: str | None,
     existing: dict[str, tuple[float, RecallResult]],
 ) -> dict[str, tuple[float, RecallResult]]:
-    """Entity-first traversal in Neo4j; RRF-merges into existing chunk results dict."""
+    """Entity-first traversal in Neo4j; RRF-merges into existing chunk results dict.
+
+    Two passes:
+    1. Direct: query words → matched ENTITY → CHUNK (weight 1.0).
+    2. Relation-expanded: matched ENTITY → semantic RELATION edge → neighbor ENTITY
+       → CHUNK (weight 0.5). Uses edges written by llm_assisted extraction.
+    """
     if not words:
         return existing
     results = dict(existing)
     try:
         driver = getattr(neo_store, "_driver", neo_store)
-        with driver.session() as s:
-            base_cypher = """
-                MATCH (e:ENTITY)
-                WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                MATCH (c:CHUNK)-[:HAS_ENTITY]->(e)
-                WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
-                ORDER BY mc DESC LIMIT $top_k
-                RETURN c.id AS chunk_id, c.text AS text, entities
-            """
-            params: dict[str, Any] = {"words": words, "top_k": top_k}
+        _db = getattr(neo_store, "_db", None)
+        _session_kwargs: dict[str, Any] = {"database": _db} if _db else {}
+        with driver.session(**_session_kwargs) as s:
+            # Pass 1 — direct entity match → chunk
             if session_filter:
-                base_cypher = """
-                    MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->()-[*0..]->(c:CHUNK)
+                direct_cypher = """
+                    MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)
                     MATCH (c)-[:HAS_ENTITY]->(e:ENTITY)
                     WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
                     WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
                     ORDER BY mc DESC LIMIT $top_k
                     RETURN c.id AS chunk_id, c.text AS text, entities
                 """
-                params["sid"] = session_filter
-            rows = s.run(base_cypher, **params).data()
-            for rank, row in enumerate(rows):
+                params: dict[str, Any] = {"words": words, "top_k": top_k, "sid": session_filter}
+            else:
+                direct_cypher = """
+                    MATCH (e:ENTITY)
+                    WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                    MATCH (c:CHUNK)-[:HAS_ENTITY]->(e)
+                    WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
+                    ORDER BY mc DESC LIMIT $top_k
+                    RETURN c.id AS chunk_id, c.text AS text, entities
+                """
+                params = {"words": words, "top_k": top_k}
+
+            for rank, row in enumerate(s.run(direct_cypher, **params).data()):
                 rrf = 1.0 / (RRF_K + rank + 1)
                 cid = row["chunk_id"]
                 if cid in results:
@@ -148,6 +164,66 @@ def _entity_traversal(
                             metadata=row.get("metadata", {}),
                         ),
                     )
+
+            # Pass 2 — relation-expanded: matched entity → semantic relation → neighbor → chunk
+            # Only fires when llm_assisted relation edges exist (no-op for gliner2).
+            try:
+                if session_filter:
+                    rel_cypher = """
+                        MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c0:CHUNK)
+                        MATCH (c0)-[:HAS_ENTITY]->(e:ENTITY)
+                        WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                        MATCH (e)-[r]-(e2:ENTITY)
+                        WHERE NOT type(r) IN $skip_types
+                        MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:HAS_ENTITY]->(e2)
+                        WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
+                        ORDER BY mc DESC LIMIT $top_k
+                        RETURN c.id AS chunk_id, c.text AS text, ents AS entities
+                    """
+                    rel_params: dict[str, Any] = {
+                        "words": words,
+                        "top_k": top_k,
+                        "sid": session_filter,
+                        "skip_types": list(_STRUCTURAL_REL_TYPES),
+                    }
+                else:
+                    rel_cypher = """
+                        MATCH (e:ENTITY)
+                        WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                        MATCH (e)-[r]-(e2:ENTITY)
+                        WHERE NOT type(r) IN $skip_types
+                        MATCH (c:CHUNK)-[:HAS_ENTITY]->(e2)
+                        WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
+                        ORDER BY mc DESC LIMIT $top_k
+                        RETURN c.id AS chunk_id, c.text AS text, ents AS entities
+                    """
+                    rel_params = {
+                        "words": words,
+                        "top_k": top_k,
+                        "skip_types": list(_STRUCTURAL_REL_TYPES),
+                    }
+                for rank, row in enumerate(s.run(rel_cypher, **rel_params).data()):
+                    rrf = 1.5 / (RRF_K + rank + 1)  # boosted weight for relation-traversal results
+                    cid = row["chunk_id"]
+                    if cid in results:
+                        old_score, old_result = results[cid]
+                        results[cid] = (old_score + rrf, old_result)
+                    else:
+                        results[cid] = (
+                            rrf,
+                            RecallResult(
+                                text=row["text"],
+                                source_type="chunk",
+                                scope="long_term",
+                                score=rrf,
+                                entity_names=row["entities"],
+                                provenance={},
+                                metadata=row.get("metadata", {}),
+                            ),
+                        )
+            except Exception as rel_exc:
+                log.debug("relation-expanded traversal skipped: %s", rel_exc)
+
     except Exception as exc:
         log.warning("Neo4j entity traversal failed: %s", exc)
     return results

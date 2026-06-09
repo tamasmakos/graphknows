@@ -32,6 +32,11 @@ def _add_common_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-purge", action="store_true")
     parser.add_argument("--recall-scope", choices=["stm", "ltm", "both"], default="stm")
     parser.add_argument(
+        "--promote-to-ltm",
+        action="store_true",
+        help="Flush each case from STM to LTM before recall; required to exercise llm_assisted relation extraction.",
+    )
+    parser.add_argument(
         "--relation-extraction-mode",
         choices=["gliner2", "llm_assisted", "off"],
         default="gliner2",
@@ -108,17 +113,50 @@ def _benchmark_output_dir(base_output_dir: str, benchmark: str) -> Path:
     return Path(base_output_dir) / benchmark
 
 
+def _evaluation_env(relation_extraction_mode: str) -> dict[str, str]:
+    env = {"RELATION_EXTRACTION_MODE": relation_extraction_mode}
+    # Propagate GRAPHKNOWS_ONTOLOGY_FILE only if already set in the environment.
+    # When unset, DSPyExtractor uses its open-domain relation type defaults.
+    import os as _os
+    if _os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE"):
+        env["GRAPHKNOWS_ONTOLOGY_FILE"] = _os.environ["GRAPHKNOWS_ONTOLOGY_FILE"]
+    return env
+
+
+def _resolve_file_backed_root(
+    data_root: str,
+    questions_file: str,
+    fixture_root: str,
+) -> tuple[Path, str]:
+    root = Path(data_root)
+    if (root / questions_file).exists():
+        return root, "local_data"
+    fallback = Path(fixture_root)
+    if (fallback / questions_file).exists():
+        print(
+            f"{root / questions_file} not found; using smoke fixture "
+            f"{fallback / questions_file}"
+        )
+        return fallback, "smoke_fixture"
+    return root, "missing"
+
+
 async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkReportPaths:
+    data_root, data_source = _resolve_file_backed_root(
+        args.locomo_data_root,
+        args.locomo_questions,
+        "evaluation/fixtures/locomo",
+    )
     async with GraphknowsMCPClient(
         args.command,
         request_timeout_s=900,
-        env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
+        env=_evaluation_env(args.relation_extraction_mode),
     ) as client:
         cases = await run_file_backed_benchmark(
             client,
             FileBackedBenchmarkOptions(
                 benchmark="locomo",
-                data_root=Path(args.locomo_data_root),
+                data_root=data_root,
                 questions_file=args.locomo_questions,
                 run_id=run_id,
                 top_k=args.top_k,
@@ -127,6 +165,7 @@ async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkRepo
                 max_documents=args.locomo_max_documents,
                 max_chars_per_document=args.locomo_max_chars_per_document,
                 recall_scope=args.recall_scope,
+                promote_to_ltm=args.promote_to_ltm,
                 session_prefix="eval-locomo",
                 purge=not args.no_purge,
             ),
@@ -139,33 +178,103 @@ async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkRepo
         metadata={
             "benchmark": SUPPORTED_BENCHMARKS["locomo"].display_name,
             "categories": list(SUPPORTED_BENCHMARKS["locomo"].categories),
-            "data_root": args.locomo_data_root,
+            "data_root": str(data_root),
+            "data_source": data_source,
             "questions_file": args.locomo_questions,
             "recall_scope": args.recall_scope,
+            "promote_to_ltm": args.promote_to_ltm,
             "relation_extraction_mode": args.relation_extraction_mode,
         },
     )
 
 
+_LME_QUESTION_TYPES = frozenset({
+    "single_session_user",
+    "single_session_assistant",
+    "single_session_preference",
+    "knowledge_update",
+    "temporal_reasoning",
+    "multi_session",
+})
+
+
+def _lme_data_is_valid(data_root: Path) -> bool:
+    """Return True only when data_root contains proper LME conversational-memory questions."""
+    import json as _json
+    questions_path = data_root / "questions.jsonl"
+    haystacks_path = data_root / "haystacks" / "lme_v2_small.json"
+    if not questions_path.exists() or not haystacks_path.exists():
+        return False
+    try:
+        first_line = next(
+            (line for line in questions_path.read_text(encoding="utf-8").splitlines() if line.strip()),
+            None,
+        )
+        if not first_line:
+            return False
+        row = _json.loads(first_line)
+        return str(row.get("question_type", "")).lower() in _LME_QUESTION_TYPES
+    except Exception:
+        return False
+
+
 async def _run_longmemeval(args: argparse.Namespace, *, run_id: str) -> BenchmarkReportPaths:
+    data_root = Path(args.longmemeval_data_root)
+    use_lme_runner = _lme_data_is_valid(data_root)
+    if not use_lme_runner:
+        fixture_root = Path("evaluation/fixtures/longmemeval")
+        if fixture_root.exists() and (fixture_root / "questions.jsonl").exists():
+            print(
+                f"{data_root} does not contain valid LME conversational-memory data; "
+                f"using smoke fixture {fixture_root / 'questions.jsonl'}"
+            )
+            data_root = fixture_root
+        else:
+            print(
+                f"WARNING: {data_root} does not contain valid LME data "
+                f"and no fixture found at {fixture_root}"
+            )
+
     async with GraphknowsMCPClient(
         args.command,
         request_timeout_s=900,
-        env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
+        env=_evaluation_env(args.relation_extraction_mode),
     ) as client:
-        cases = await run_longmemeval_small(
-            client,
-            data_root=Path(args.longmemeval_data_root),
-            question_id=args.longmemeval_question_id or None,
-            max_questions=args.longmemeval_max_questions,
-            run_id=run_id,
-            top_k=args.top_k,
-            max_trajectories=args.longmemeval_max_trajectories,
-            max_states=args.longmemeval_max_states,
-            max_chars_per_trajectory=args.longmemeval_max_chars_per_trajectory,
-            ingest_strategy=args.longmemeval_ingest_strategy,
-            purge=not args.no_purge,
-        )
+        if use_lme_runner:
+            cases = await run_longmemeval_small(
+                client,
+                data_root=data_root,
+                question_id=args.longmemeval_question_id or None,
+                max_questions=args.longmemeval_max_questions,
+                run_id=run_id,
+                top_k=args.top_k,
+                max_trajectories=args.longmemeval_max_trajectories,
+                max_states=args.longmemeval_max_states,
+                max_chars_per_trajectory=args.longmemeval_max_chars_per_trajectory,
+                ingest_strategy=args.longmemeval_ingest_strategy,
+                recall_scope=args.recall_scope,
+                promote_to_ltm=args.promote_to_ltm,
+                purge=not args.no_purge,
+            )
+        else:
+            cases = await run_file_backed_benchmark(
+                client,
+                FileBackedBenchmarkOptions(
+                    benchmark="longmemeval",
+                    data_root=data_root,
+                    questions_file="questions.jsonl",
+                    run_id=run_id,
+                    top_k=args.top_k,
+                    offset=args.offset,
+                    limit=args.longmemeval_max_questions,
+                    max_documents=args.longmemeval_max_trajectories,
+                    max_chars_per_document=args.longmemeval_max_chars_per_trajectory,
+                    recall_scope=args.recall_scope,
+                    promote_to_ltm=args.promote_to_ltm,
+                    session_prefix="eval-longmemeval",
+                    purge=not args.no_purge,
+                ),
+            )
     return write_benchmark_report(
         benchmark="longmemeval",
         run_id=run_id,
@@ -174,19 +283,25 @@ async def _run_longmemeval(args: argparse.Namespace, *, run_id: str) -> Benchmar
         metadata={
             "benchmark": SUPPORTED_BENCHMARKS["longmemeval"].display_name,
             "categories": list(SUPPORTED_BENCHMARKS["longmemeval"].categories),
-            "data_root": args.longmemeval_data_root,
+            "data_root": str(data_root),
             "ingest_strategy": args.longmemeval_ingest_strategy,
+            "recall_scope": args.recall_scope,
+            "promote_to_ltm": args.promote_to_ltm,
             "relation_extraction_mode": args.relation_extraction_mode,
         },
     )
 
 
 async def _run_beam(args: argparse.Namespace, *, run_id: str) -> BenchmarkReportPaths:
-    data_root = Path(args.beam_data_root) / args.beam_scale
+    data_root, data_source = _resolve_file_backed_root(
+        str(Path(args.beam_data_root) / args.beam_scale),
+        args.beam_questions,
+        f"evaluation/fixtures/beam/{args.beam_scale}",
+    )
     async with GraphknowsMCPClient(
         args.command,
         request_timeout_s=1800,
-        env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
+        env=_evaluation_env(args.relation_extraction_mode),
     ) as client:
         cases = await run_file_backed_benchmark(
             client,
@@ -201,6 +316,7 @@ async def _run_beam(args: argparse.Namespace, *, run_id: str) -> BenchmarkReport
                 max_documents=args.beam_max_documents,
                 max_chars_per_document=args.beam_max_chars_per_document,
                 recall_scope=args.recall_scope,
+                promote_to_ltm=args.promote_to_ltm,
                 session_prefix=f"eval-beam-{args.beam_scale}",
                 purge=not args.no_purge,
             ),
@@ -215,8 +331,10 @@ async def _run_beam(args: argparse.Namespace, *, run_id: str) -> BenchmarkReport
             "categories": list(SUPPORTED_BENCHMARKS["beam"].categories),
             "scale": args.beam_scale,
             "data_root": str(data_root),
+            "data_source": data_source,
             "questions_file": args.beam_questions,
             "recall_scope": args.recall_scope,
+            "promote_to_ltm": args.promote_to_ltm,
             "relation_extraction_mode": args.relation_extraction_mode,
         },
     )

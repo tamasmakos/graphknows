@@ -44,7 +44,7 @@ def test_write_session_subgraph_consumes_relation_edges():
 
     written_triplets: list = []
 
-    def fake_write_relation_edges(s, triplets, entity_by_name):
+    def fake_write_relation_edges(s, triplets, entity_by_name, session_id=""):
         written_triplets.extend(triplets)
         return len(triplets)
 
@@ -182,7 +182,7 @@ async def test_extract_and_write_relations_preserves_relation_metadata():
 
     written_triplets = []
 
-    def fake_write_relation_edges(s, triplets, entity_by_name):
+    def fake_write_relation_edges(s, triplets, entity_by_name, session_id=""):
         written_triplets.extend(triplets)
         return len(triplets)
 

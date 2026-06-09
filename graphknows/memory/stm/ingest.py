@@ -136,7 +136,7 @@ class _STMIngestHandler:
         # 2. Per-segment: extract entities, embed, write CHUNK + ENTITY nodes
         for seg in parsed.segments:
             chunk_id = hashlib.sha256(
-                f"{parsed.source_id}::{seg.char_offset}".encode()
+                f"{session_id}:{parsed.source_id}::{seg.char_offset}".encode()
             ).hexdigest()[:16]
 
             # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.

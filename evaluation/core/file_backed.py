@@ -26,6 +26,7 @@ class FileBackedBenchmarkOptions:
     max_documents: int = 25
     max_chars_per_document: int = 4000
     recall_scope: str = "stm"
+    promote_to_ltm: bool = False
     session_prefix: str = "eval"
     purge: bool = True
 
@@ -172,6 +173,7 @@ async def run_file_backed_benchmark(
             max_chars=options.max_chars_per_document,
         )
         ingest_results: list[dict[str, Any]] = []
+        flush_result: dict[str, Any] = {}
         recall: list[dict[str, Any]] = []
         try:
             for index, document in enumerate(documents):
@@ -184,6 +186,9 @@ async def run_file_backed_benchmark(
                     },
                 )
                 ingest_results.append(result if isinstance(result, dict) else {"result": result})
+            if options.promote_to_ltm:
+                result = await client.call_tool("memory_flush", {"session_id": session_id})
+                flush_result = result if isinstance(result, dict) else {"result": result}
             result = await client.call_tool(
                 "memory_recall",
                 {
@@ -212,6 +217,7 @@ async def run_file_backed_benchmark(
                     "source_file": str(options.data_root / options.questions_file),
                     "ingest_documents": len(documents),
                     "ingest_results": ingest_results,
+                    "flush_result": flush_result or None,
                 },
                 metrics={
                     "recall_hit_count": len(recall),
@@ -220,6 +226,11 @@ async def run_file_backed_benchmark(
                     "ingest_calls": len(ingest_results),
                     "ingested_chunks": sum(int(result.get("chunks", 0)) for result in ingest_results),
                     "ingested_entities": sum(int(result.get("entities", 0)) for result in ingest_results),
+                    "flush_nodes": int(flush_result.get("nodes", 0)) if flush_result else 0,
+                    "flush_edges": int(flush_result.get("edges", 0)) if flush_result else 0,
+                    "flush_chunks": int(flush_result.get("chunks", 0)) if flush_result else 0,
+                    "flush_topics": int(flush_result.get("topics_created", 0)) if flush_result else 0,
+                    "flush_error_count": len(flush_result.get("errors", [])) if flush_result else 0,
                 },
                 score=answer_score,
             )
