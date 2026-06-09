@@ -95,11 +95,6 @@ def test_memory_doctor_all_ok():
     drv.session.return_value.run.return_value.single.return_value = [1]
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch(
-            "graphknows.mcp.stdio_server._neo4j_creds",
-            return_value=("bolt://localhost:7687", "neo4j", "pw"),
-        ),
         patch("neo4j.GraphDatabase.driver", return_value=drv),
         patch("asyncpg.connect", side_effect=_fake_connect),
     ):
@@ -138,11 +133,6 @@ def test_memory_doctor_memgraph_down():
         return drv
 
     with (
-        patch("graphknows.mcp.stdio_server._mg_uri", return_value="bolt://localhost:17687"),
-        patch(
-            "graphknows.mcp.stdio_server._neo4j_creds",
-            return_value=("bolt://localhost:7687", "neo4j", "pw"),
-        ),
         patch("neo4j.GraphDatabase.driver", side_effect=_driver_factory),
         patch("asyncpg.connect", side_effect=_fake_connect),
     ):
@@ -551,13 +541,7 @@ def test_ltm_entity_not_found():
     drv.session.return_value.__exit__ = MagicMock(return_value=False)
     drv.session.return_value.run.return_value.single.return_value = None
 
-    with (
-        patch(
-            "graphknows.mcp.stdio_server._neo4j_creds",
-            return_value=("bolt://localhost:7687", "neo4j", "pw"),
-        ),
-        patch("neo4j.GraphDatabase.driver", return_value=drv),
-    ):
+    with patch("neo4j.GraphDatabase.driver", return_value=drv):
         result = ltm_entity(name="NonExistent")
 
     assert "error" in result
@@ -642,136 +626,10 @@ def test_corpus_ingest_empty_documents():
     assert result["documents_processed"] == 0
 
 
-# ===========================================================================
-# MCP helpers: mg_uri, pg_dsn, neo4j_creds
-# ===========================================================================
-
-
 import asyncio
 import os
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# _mg_uri / _pg_dsn / _neo4j_creds — env var readers
-# ---------------------------------------------------------------------------
-
-
-class TestMgUri:
-    def test_returns_default_when_env_not_set(self):
-        import graphknows.mcp.stdio_server as srv
-
-        env = {k: v for k, v in os.environ.items() if k != "MEMGRAPH_URI"}
-        with patch.dict(os.environ, env, clear=True):
-            result = srv._mg_uri()
-        assert "bolt://" in result
-
-    def test_returns_env_value_when_set(self):
-        import graphknows.mcp.stdio_server as srv
-
-        with patch.dict(os.environ, {"MEMGRAPH_URI": "bolt://myhost:1234"}):
-            result = srv._mg_uri()
-        assert result == "bolt://myhost:1234"
-
-
-class TestPgDsn:
-    def test_returns_default_postgresql_dsn(self):
-        import graphknows.mcp.stdio_server as srv
-
-        env = {k: v for k, v in os.environ.items() if k != "PGVECTOR_DSN"}
-        with patch.dict(os.environ, env, clear=True):
-            result = srv._pg_dsn()
-        assert result.startswith("postgresql://")
-
-    def test_returns_env_value_when_set(self):
-        import graphknows.mcp.stdio_server as srv
-
-        custom = "postgresql://user:pass@db:5432/mydb"
-        with patch.dict(os.environ, {"PGVECTOR_DSN": custom}):
-            result = srv._pg_dsn()
-        assert result == custom
-
-
-class TestNeo4jCreds:
-    def test_returns_tuple_of_three(self):
-        import graphknows.mcp.stdio_server as srv
-
-        uri, user, pw = srv._neo4j_creds()
-        assert isinstance(uri, str)
-        assert isinstance(user, str)
-        assert isinstance(pw, str)
-
-    def test_returns_env_values_when_set(self):
-        import graphknows.mcp.stdio_server as srv
-
-        with patch.dict(
-            os.environ,
-            {
-                "NEO4J_URI": "bolt://neo4j-host:7687",
-                "NEO4J_USER": "admin",
-                "NEO4J_PASSWORD": "secret",
-            },
-        ):
-            uri, user, pw = srv._neo4j_creds()
-        assert uri == "bolt://neo4j-host:7687"
-        assert user == "admin"
-        assert pw == "secret"
-
-    def test_returns_defaults_without_env(self):
-        import graphknows.mcp.stdio_server as srv
-
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD")
-        }
-        with patch.dict(os.environ, env, clear=True):
-            uri, user, pw = srv._neo4j_creds()
-        assert "bolt://" in uri
-        assert user == "neo4j"
-
-
-# ---------------------------------------------------------------------------
-# _get_mg — lazy singleton
-# ---------------------------------------------------------------------------
-
-
-class TestGetMg:
-    def test_caches_instance_on_second_call(self):
-        import graphknows.mcp.stdio_server as srv
-
-        # Pre-set singleton
-        fake_instance = MagicMock()
-        srv._mg = fake_instance
-        result = srv._get_mg()
-        assert result is fake_instance
-        # Restore
-        srv._mg = None
-
-
-# ---------------------------------------------------------------------------
-# _get_pg — async lazy singleton
-# ---------------------------------------------------------------------------
-
-
-class TestGetPg:
-    def test_caches_instance_when_already_connected(self):
-        import graphknows.mcp.stdio_server as srv
-
-        fake_pg = MagicMock()
-        srv._pg = fake_pg
-        srv._pg_connected = True
-
-        async def run():
-            result = await srv._get_pg()
-            return result
-
-        result = asyncio.run(run())
-        assert result is fake_pg
-        # Restore
-        srv._pg = None
-        srv._pg_connected = False
-
 
 # ---------------------------------------------------------------------------
 # Module-level constants sanity

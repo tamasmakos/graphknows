@@ -204,28 +204,19 @@ class GraphknowsAdapter:
                 run_gds=options.run_gds,
             )
         )
-        summary = {
+        return {
             "session_id": options.session_id,
             "run_gds": options.run_gds,
             "run_topics": True,
+            "nodes_written": result.nodes_written,
+            "edges_written": result.edges_written,
+            "chunks_promoted": result.chunks_promoted,
+            "turns_promoted": result.turns_promoted,
+            "topics_created": result.topics_created,
+            "merged_entities": result.merged_entities,
+            "elapsed_s": result.elapsed_s,
+            "errors": result.errors,
         }
-        if hasattr(result, "nodes_written"):
-            summary["nodes_written"] = result.nodes_written
-        if hasattr(result, "edges_written"):
-            summary["edges_written"] = result.edges_written
-        if hasattr(result, "chunks_promoted"):
-            summary["chunks_promoted"] = result.chunks_promoted
-        if hasattr(result, "turns_promoted"):
-            summary["turns_promoted"] = result.turns_promoted
-        if hasattr(result, "topics_created"):
-            summary["topics_created"] = result.topics_created
-        if hasattr(result, "merged_entities"):
-            summary["merged_entities"] = result.merged_entities
-        if hasattr(result, "elapsed_s"):
-            summary["elapsed_s"] = result.elapsed_s
-        if hasattr(result, "errors"):
-            summary["errors"] = result.errors
-        return summary
 
     def capabilities(self) -> AdapterCapabilities:
         """Return the adapter capability flags.
@@ -364,17 +355,18 @@ class GraphknowsMemoryAdapter:
         from graphknows.memory.stores.neo4j import Neo4jStore
         from graphknows.memory.stores.pgvector import PgVectorStore
 
-        mg = MemgraphStore(os.environ.get("MEMGRAPH_URI", "bolt://172.18.0.1:17687"))
-        pg = PgVectorStore(
-            os.environ.get(
-                "PGVECTOR_DSN",
-                "postgresql://postgres:***@172.18.0.1:5432/graphknows",
-            )
-        )
+        def _require_env(key: str) -> str:
+            v = os.environ.get(key)
+            if not v:
+                raise EnvironmentError(f"{key} is not set")
+            return v
+
+        mg = MemgraphStore(_require_env("MEMGRAPH_URI"))
+        pg = PgVectorStore(_require_env("PGVECTOR_DSN"))
         neo = Neo4jStore(
-            uri=os.environ.get("NEO4J_URI", "bolt://172.18.0.1:7687"),
+            uri=_require_env("NEO4J_URI"),
             user=os.environ.get("NEO4J_USER", "neo4j"),
-            password=os.environ.get("NEO4J_PASSWORD", "testpassword123"),
+            password=_require_env("NEO4J_PASSWORD"),
         )
         return mg, pg, neo, embed_one
 
@@ -535,10 +527,7 @@ class GraphknowsMemoryAdapter:
         if not pg_dsn:
             import os
 
-            pg_dsn = os.environ.get(
-                "PGVECTOR_DSN",
-                "postgresql://postgres:testpassword123@172.18.0.1:5432/graphknows",
-            )
+            pg_dsn = os.environ.get("PGVECTOR_DSN", "")
 
         stm: dict[str, Any] = {}
         ltm: dict[str, Any] = {}
