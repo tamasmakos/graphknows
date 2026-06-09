@@ -98,10 +98,10 @@ async def memory_ingest(
     Returns:
         Dict with file_id, chunks, entities, elapsed_s, errors.
     """
-    from graphknows.config.builders.stores import build_memory_ingestor
+    from graphknows.config.builders.stores import build_stm_service
 
-    ingestor = build_memory_ingestor(get_settings())
-    result = ingestor.ingest_text(text, session_id=session_id, title=title)
+    service = build_stm_service(get_settings())
+    result = service.ingest(text, session_id=session_id, title=title)
 
     return {
         "file_id": result.file_id,

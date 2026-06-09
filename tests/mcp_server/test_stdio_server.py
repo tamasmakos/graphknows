@@ -889,11 +889,11 @@ def test_memory_ingest_returns_no_warnings():
     mock_result.errors = []
 
     with (
-        patch("graphknows.config.builders.stores.build_memory_ingestor") as mock_build,
+        patch("graphknows.config.builders.stores.build_stm_service") as mock_build,
         patch("graphknows.mcp.tools.stm.get_settings"),
     ):
         mock_ingestor = MagicMock()
-        mock_ingestor.ingest_text.return_value = mock_result
+        mock_ingestor.ingest.return_value = mock_result
         mock_build.return_value = mock_ingestor
         result = asyncio.run(memory_ingest("some text", session_id="test", title="t"))
         assert result["warnings"] == [], f"Expected no warnings, got: {result['warnings']}"

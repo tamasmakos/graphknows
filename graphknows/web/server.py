@@ -442,10 +442,10 @@ async def ingest(request: Request) -> JSONResponse:
         )
 
     try:
-        from graphknows.config.builders.stores import build_memory_ingestor
+        from graphknows.config.builders.stores import build_stm_service
 
-        ingestor = await asyncio.to_thread(build_memory_ingestor, get_settings())
-        result = await asyncio.to_thread(ingestor.ingest_text, text, session_id, title)
+        service = await asyncio.to_thread(build_stm_service, get_settings())
+        result = await asyncio.to_thread(service.ingest, text, session_id, title)
         return JSONResponse(
             {
                 "file_id": result.file_id,

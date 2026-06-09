@@ -20,10 +20,7 @@ from graphknows.memory.adapter_types import (
 )
 from graphknows.memory.flush import LTMPromotionPipeline
 from graphknows.memory.models.promotion import PromotionRequest
-from graphknows.memory.ingestor import MemoryIngestor as MemoryIngestor
 from graphknows.memory.stm import STMService
-
-# Compat re-exports so existing tests can mock graphknows.memory.adapter.MemoryIngestor
 from graphknows.memory.stm.dialog import DialogCapture as DialogCapture
 from graphknows.memory.stm.dialog import Turn
 
@@ -150,13 +147,7 @@ class GraphknowsAdapter:
             "memory_class": artifact.memory_class.value,
             "artifact_id": artifact.artifact_id,
         }
-        ingestor = MemoryIngestor(
-            mg_store=self.mg_store,
-            pg_store=self.pg_store,
-            extractor=self.extractor,
-            embed_fn=self.embed_fn,
-        )
-        ingestor.ingest_text(
+        self._stm_service.ingest(
             artifact.content,
             session_id=session_id,
             title=artifact.path,
@@ -412,15 +403,16 @@ class GraphknowsMemoryAdapter:
         else:
             mg, pg, _, embed_fn = self._lazy_stores()
 
-        from graphknows.memory.ingestor import MemoryIngestor
+        from graphknows.memory.stm._async_bridge import _run as _stm_run
 
         extractor = self._get_extractor()
-        ingestor = MemoryIngestor(mg, pg, extractor, embed_fn=embed_fn)
+        _stm_run(pg.connect())
+        svc = STMService(mg, pg, extractor, embed_fn=embed_fn)
 
         import asyncio
 
         internal = await asyncio.to_thread(
-            ingestor.ingest_text,
+            svc.ingest,
             text,
             session_id=session_id,
             title=title,

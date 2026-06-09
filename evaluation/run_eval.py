@@ -142,6 +142,7 @@ async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkRepo
             "data_root": args.locomo_data_root,
             "questions_file": args.locomo_questions,
             "recall_scope": args.recall_scope,
+            "relation_extraction_mode": args.relation_extraction_mode,
         },
     )
 
@@ -175,6 +176,7 @@ async def _run_longmemeval(args: argparse.Namespace, *, run_id: str) -> Benchmar
             "categories": list(SUPPORTED_BENCHMARKS["longmemeval"].categories),
             "data_root": args.longmemeval_data_root,
             "ingest_strategy": args.longmemeval_ingest_strategy,
+            "relation_extraction_mode": args.relation_extraction_mode,
         },
     )
 
@@ -215,6 +217,7 @@ async def _run_beam(args: argparse.Namespace, *, run_id: str) -> BenchmarkReport
             "data_root": str(data_root),
             "questions_file": args.beam_questions,
             "recall_scope": args.recall_scope,
+            "relation_extraction_mode": args.relation_extraction_mode,
         },
     )
 

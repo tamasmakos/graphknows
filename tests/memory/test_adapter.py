@@ -122,8 +122,8 @@ async def test_ingest_delegates_to_memory_ingestor(mock_container):
     internal_result.elapsed_s = 1.2
     internal_result.errors = []
 
-    mock_ingestor = MagicMock()
-    mock_ingestor.ingest_text = MagicMock(return_value=internal_result)
+    mock_svc = MagicMock()
+    mock_svc.ingest = MagicMock(return_value=internal_result)
 
     with (
         patch(
@@ -131,13 +131,14 @@ async def test_ingest_delegates_to_memory_ingestor(mock_container):
             return_value=MagicMock(),
         ),
         patch(
-            "graphknows.memory.ingestor.MemoryIngestor",
-            return_value=mock_ingestor,
+            "graphknows.memory.adapter.STMService",
+            return_value=mock_svc,
         ),
         patch(
             "graphknows.memory.adapter.asyncio.to_thread",
             new=_sync_to_thread,
         ),
+        patch("graphknows.memory.stm._async_bridge._run"),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
         result = await adapter.ingest(
@@ -341,7 +342,7 @@ def _make_adapter():
     return GraphknowsAdapter(mg, pg, neo, extractor, embed_fn)
 
 
-@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.STMService")
 @patch("graphknows.memory.adapter.DialogCapture")
 def test_open_session_sets_active_session_id(
     mock_dialog_writer,
@@ -352,11 +353,11 @@ def test_open_session_sets_active_session_id(
     assert adapter._active_session_id == "s1"
 
 
-@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.STMService")
 @patch("graphknows.memory.adapter.DialogCapture")
 def test_ingest_artifact_delegates_to_ingestor(
     mock_dialog_writer,
-    mock_ingestor,
+    mock_stm_cls,
 ):
     adapter = _make_adapter()
     artifact = ArtifactRecord(
@@ -368,8 +369,8 @@ def test_ingest_artifact_delegates_to_ingestor(
     )
     adapter.ingest_artifact(artifact, "s1")
 
-    mock_ingestor.return_value.ingest_text.assert_called_once()
-    args, kwargs = mock_ingestor.return_value.ingest_text.call_args
+    mock_stm_cls.return_value.ingest.assert_called_once()
+    args, kwargs = mock_stm_cls.return_value.ingest.call_args
     assert args[0] == "print('hello')"
     assert kwargs.get("session_id") == "s1"
     assert kwargs.get("title") == "/tmp/test.py"
@@ -380,7 +381,7 @@ def test_ingest_artifact_delegates_to_ingestor(
 
 
 @patch("graphknows.memory.stm.recall.recall_short_term")
-@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.STMService")
 @patch("graphknows.memory.adapter.DialogCapture")
 def test_recall_returns_hits_as_dicts(
     mock_dialog_writer,
@@ -407,7 +408,7 @@ def test_recall_returns_hits_as_dicts(
 
 
 @patch("graphknows.memory.stm.recall.recall_short_term")
-@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.STMService")
 @patch("graphknows.memory.adapter.DialogCapture")
 def test_recall_filters_raw_evidence_when_include_raw_false(
     mock_dialog_writer,
@@ -443,7 +444,7 @@ def test_recall_filters_raw_evidence_when_include_raw_false(
     assert result[0]["text"] == "summary"
 
 
-@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.STMService")
 @patch("graphknows.memory.adapter.DialogCapture")
 def test_capabilities_returns_all_true(
     mock_dialog_writer,
@@ -462,7 +463,7 @@ def test_capabilities_returns_all_true(
 
 
 @patch("graphknows.memory.adapter.LTMPromotionPipeline")
-@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.STMService")
 @patch("graphknows.memory.adapter.DialogCapture")
 @pytest.mark.asyncio
 async def test_promote_calls_session_flusher(
@@ -508,7 +509,7 @@ async def test_promote_calls_session_flusher(
 
 
 @patch("graphknows.memory.adapter.LTMPromotionPipeline")
-@patch("graphknows.memory.adapter.MemoryIngestor")
+@patch("graphknows.memory.adapter.STMService")
 @patch("graphknows.memory.adapter.DialogCapture")
 @pytest.mark.asyncio
 async def test_promote_always_summarizes_topics(
@@ -576,7 +577,7 @@ def _make_adapter():
 class TestAdapterLifecycle:
     """Conformance tests for full adapter lifecycle sequences."""
 
-    @patch("graphknows.memory.adapter.MemoryIngestor")
+    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
     def test_full_session_write_sequence(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
@@ -589,10 +590,10 @@ class TestAdapterLifecycle:
 
         for artifact in ARTIFACTS:
             adapter.ingest_artifact(artifact, SESSION_ID)
-        assert mock_ing_cls.return_value.ingest_text.call_count == len(ARTIFACTS)
+        assert mock_ing_cls.return_value.ingest.call_count == len(ARTIFACTS)
 
     @patch("graphknows.memory.stm.recall.recall_short_term")
-    @patch("graphknows.memory.adapter.MemoryIngestor")
+    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
     def test_recall_after_write(self, mock_dw_cls, mock_ing_cls, mock_recall):
         mock_recall.return_value = [
@@ -616,7 +617,7 @@ class TestAdapterLifecycle:
         assert "source_type" in result[0]
 
     @patch("graphknows.memory.adapter.LTMPromotionPipeline")
-    @patch("graphknows.memory.adapter.MemoryIngestor")
+    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
     @pytest.mark.asyncio
     async def test_promote_after_write(self, mock_dw_cls, mock_ing_cls, mock_pipeline_cls):
@@ -634,7 +635,7 @@ class TestAdapterLifecycle:
         assert request.session_id == SESSION_ID
         assert isinstance(result, dict)
 
-    @patch("graphknows.memory.adapter.MemoryIngestor")
+    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
     def test_capabilities_contract(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
@@ -647,16 +648,16 @@ class TestAdapterLifecycle:
         assert caps.supports_recall is True
         assert caps.supports_promote is True
 
-    @patch("graphknows.memory.adapter.MemoryIngestor")
+    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
     def test_artifact_metadata_includes_memory_class(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
         adapter.ingest_artifact(ARTIFACTS[0], SESSION_ID)
 
-        call_kwargs = mock_ing_cls.return_value.ingest_text.call_args[1]
+        call_kwargs = mock_ing_cls.return_value.ingest.call_args[1]
         assert call_kwargs["metadata"]["memory_class"] == "raw_evidence"
 
-    @patch("graphknows.memory.adapter.MemoryIngestor")
+    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
     def test_open_session_idempotent(self, mock_dw_cls, mock_ing_cls):
         adapter = _make_adapter()
@@ -665,7 +666,7 @@ class TestAdapterLifecycle:
         assert adapter._active_session_id == SESSION_ID
 
     @patch("graphknows.memory.stm.recall.recall_short_term")
-    @patch("graphknows.memory.adapter.MemoryIngestor")
+    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
     def test_recall_include_raw_false_filters(self, mock_dw_cls, mock_ing_cls, mock_recall):
         mock_recall.return_value = [
