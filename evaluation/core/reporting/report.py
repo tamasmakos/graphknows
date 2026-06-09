@@ -17,6 +17,7 @@ class ReportPaths:
 
     output_dir: Path
     json_path: Path
+    markdown_path: Path
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class BenchmarkReportPaths:
 
     output_dir: Path
     json_path: Path
+    markdown_path: Path
 
 
 def _format_optional(value: Any) -> str:
@@ -134,8 +136,10 @@ def write_report(
         "observations": [observation_to_record(obs, top_k=top_k) for obs in observations],
     }
     json_path = out / f"{run_id}.json"
+    markdown_path = out / f"{run_id}.md"
     json_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    return ReportPaths(output_dir=out, json_path=json_path)
+    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    return ReportPaths(output_dir=out, json_path=json_path, markdown_path=markdown_path)
 
 
 def write_benchmark_report(
@@ -163,5 +167,7 @@ def write_benchmark_report(
         "cases": cases,
     }
     json_path = out / f"{run_id}-{benchmark}.json"
+    markdown_path = out / f"{run_id}-{benchmark}.md"
     json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-    return BenchmarkReportPaths(output_dir=out, json_path=json_path)
+    markdown_path.write_text(render_benchmark_markdown(report), encoding="utf-8")
+    return BenchmarkReportPaths(output_dir=out, json_path=json_path, markdown_path=markdown_path)

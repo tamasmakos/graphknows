@@ -31,7 +31,7 @@ def _make_ingest_result(entities: int = 3, chunks: int = 2) -> MagicMock:
     return r
 
 
-def _make_flush_result() -> MagicMock:
+def _make_promote_result() -> MagicMock:
     r = MagicMock()
     r.nodes_written = 5
     r.edges_written = 4
@@ -41,7 +41,7 @@ def _make_flush_result() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_workflow_calls_stm_then_flush() -> None:
-    """STMService.ingest called once per doc; SessionFlusher.flush called once."""
+    """STMService.ingest called once per doc; LTMPromotionPipeline.promote called once."""
     docs = [
         {"id": "d1", "text": "Document one text.", "title": "Doc 1"},
         {"id": "d2", "text": "Document two text.", "title": "Doc 2"},
@@ -52,8 +52,8 @@ async def test_workflow_calls_stm_then_flush() -> None:
     mock_stm = MagicMock()
     mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(return_value=_make_flush_result())
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
 
     with (
         patch(
@@ -61,14 +61,14 @@ async def test_workflow_calls_stm_then_flush() -> None:
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.SessionFlusher",
-            return_value=mock_flusher,
+            "graphknows.memory.flush.LTMPromotionPipeline",
+            return_value=mock_pipeline,
         ),
     ):
         result = await wf.run(request)
 
     assert mock_stm.ingest.call_count == 2
-    assert mock_flusher.flush.call_count == 1
+    assert mock_pipeline.promote.call_count == 1
     assert result.documents_processed == 2
     assert result.entities_extracted == 6
     assert result.chunks_written == 4
@@ -89,8 +89,8 @@ async def test_workflow_skips_docs_without_text() -> None:
     mock_stm = MagicMock()
     mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(return_value=_make_flush_result())
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
 
     with (
         patch(
@@ -98,8 +98,8 @@ async def test_workflow_skips_docs_without_text() -> None:
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.SessionFlusher",
-            return_value=mock_flusher,
+            "graphknows.memory.flush.LTMPromotionPipeline",
+            return_value=mock_pipeline,
         ),
     ):
         result = await wf.run(request)
@@ -120,8 +120,8 @@ async def test_workflow_stm_failure_collected_in_errors() -> None:
     mock_stm = MagicMock()
     mock_stm.ingest = MagicMock(side_effect=RuntimeError("memgraph down"))
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(return_value=_make_flush_result())
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
 
     with (
         patch(
@@ -129,20 +129,20 @@ async def test_workflow_stm_failure_collected_in_errors() -> None:
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.SessionFlusher",
-            return_value=mock_flusher,
+            "graphknows.memory.flush.LTMPromotionPipeline",
+            return_value=mock_pipeline,
         ),
     ):
         result = await wf.run(request)
 
     assert result.documents_processed == 0
     assert any("memgraph down" in e for e in result.errors)
-    assert mock_flusher.flush.call_count == 1
+    assert mock_pipeline.promote.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_workflow_flush_failure_collected_in_errors() -> None:
-    """Flush raise → error recorded in result."""
+    """Promote raise → error recorded in result."""
     docs = [{"id": "d1", "text": "Some text."}]
     request = CorpusIngestRequest(documents=docs)
     wf = _make_workflow()
@@ -150,8 +150,8 @@ async def test_workflow_flush_failure_collected_in_errors() -> None:
     mock_stm = MagicMock()
     mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(side_effect=RuntimeError("neo4j unavailable"))
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(side_effect=RuntimeError("neo4j unavailable"))
 
     with (
         patch(
@@ -159,8 +159,8 @@ async def test_workflow_flush_failure_collected_in_errors() -> None:
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.SessionFlusher",
-            return_value=mock_flusher,
+            "graphknows.memory.flush.LTMPromotionPipeline",
+            return_value=mock_pipeline,
         ),
     ):
         result = await wf.run(request)
@@ -179,8 +179,8 @@ async def test_workflow_accepts_explicit_session_id() -> None:
     mock_stm = MagicMock()
     mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(return_value=_make_flush_result())
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
 
     with (
         patch(
@@ -188,16 +188,15 @@ async def test_workflow_accepts_explicit_session_id() -> None:
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.SessionFlusher",
-            return_value=mock_flusher,
+            "graphknows.memory.flush.LTMPromotionPipeline",
+            return_value=mock_pipeline,
         ),
     ):
         result = await wf.run(request)
 
     assert result.session_id == explicit_sid
-    # Verify flush was called with the explicit session_id
-    call_args = mock_flusher.flush.call_args
-    assert call_args[0][0] == explicit_sid or call_args.args[0] == explicit_sid
+    (promotion_request,), _ = mock_pipeline.promote.call_args
+    assert promotion_request.session_id == explicit_sid
 
 
 @pytest.mark.asyncio
@@ -209,13 +208,13 @@ async def test_corpus_ingest_connects_pg_on_bg_loop() -> None:
     mock_stm = MagicMock()
     mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(return_value=_make_flush_result())
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
 
     with (
         patch("graphknows.memory.workflows.corpus_ingest._stm_run") as mock_run,
         patch("graphknows.memory.stm.service.STMService", return_value=mock_stm),
-        patch("graphknows.memory.flush.SessionFlusher", return_value=mock_flusher),
+        patch("graphknows.memory.flush.LTMPromotionPipeline", return_value=mock_pipeline),
     ):
         request = CorpusIngestRequest(documents=[{"id": "d1", "text": "Test text."}])
         await wf.run(request)

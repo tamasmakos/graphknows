@@ -534,13 +534,17 @@ class LTMEnrichmentService:
         log.warning("run_topic_summarization: bare driver passed; skipping LLM summarization")
         return 0
 
-    async def run_gds_async(self, driver: Any) -> GDSResult:
+    async def run_gds_async(self, neo_store: Any) -> GDSResult:
         """Async wrapper for run_gds.
 
+        Accepts a Neo4jStore (preferred) or a bare Neo4j driver.  When a store
+        is passed, the raw driver is extracted from its ``_driver`` attribute.
+
         Args:
-            driver: Neo4j driver.
+            neo_store: Neo4jStore instance or bare Neo4j driver.
 
         Returns:
             GDSResult.
         """
+        driver = getattr(neo_store, "_driver", neo_store)
         return await asyncio.to_thread(self.run_gds, driver)

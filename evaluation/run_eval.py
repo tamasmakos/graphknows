@@ -1,192 +1,152 @@
-"""Unified production entrypoint for graphknows evaluation benchmarks."""
+"""Unified entrypoint for the supported graphknows memory benchmarks."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import time
 from datetime import UTC, datetime
-from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
-from evaluation.core.hotpotqa import run_hotpotqa_small
-from evaluation.core.longmemeval import run_longmemeval_small
-from evaluation.core.memoryarena import (
-    DOMAIN_CONFIGS,
-    evaluate_domain_with_predictions,
-    fetch_memoryarena_rows,
-    run_memoryarena_small,
+from evaluation.core.benchmark_registry import (
+    BENCHMARK_ORDER,
+    SUPPORTED_BENCHMARKS,
+    expand_benchmark_selection,
 )
-from evaluation.core.native import NativeConfig, run_native_evaluation
-from evaluation.core.research import ResearchMemoryOptions, run_research_memory
 from evaluation.core.client import GraphknowsMCPClient
-from evaluation.core.reporting import write_benchmark_report, write_report
+from evaluation.core.file_backed import FileBackedBenchmarkOptions, run_file_backed_benchmark
+from evaluation.core.longmemeval import run_longmemeval_small
+from evaluation.core.reporting import BenchmarkReportPaths, write_benchmark_report
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="benchmark", required=True)
+def _timestamp() -> str:
+    return datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 
-    native = subparsers.add_parser("native", help="Run the native MCP harness.")
-    native.add_argument("--command", default="graphknows-mcp")
-    native.add_argument(
-        "--run-id", default=f"eval-native-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-    )
-    native.add_argument("--output-dir", default="evaluation/results/native")
-    native.add_argument("--top-k", type=int, default=5)
-    native.add_argument("--no-cleanup", action="store_true")
-    native.add_argument("--scope", choices=["stm", "ltm", "both"], default="both")
 
-    memoryarena = subparsers.add_parser("memoryarena", help="Run a MemoryArena evaluation slice.")
-    memoryarena.add_argument("--command", default="graphknows-mcp")
-    memoryarena.add_argument(
-        "--run-id", default=f"eval-memoryarena-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+def _add_common_run_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--command", default="graphknows-mcp")
+    parser.add_argument("--run-id", default=f"eval-{_timestamp()}")
+    parser.add_argument("--output-dir", default="evaluation/results")
+    parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--limit", type=int, default=1)
+    parser.add_argument("--no-purge", action="store_true")
+    parser.add_argument("--recall-scope", choices=["stm", "ltm", "both"], default="stm")
+    parser.add_argument(
+        "--relation-extraction-mode",
+        choices=["gliner2", "llm_assisted", "off"],
+        default="gliner2",
     )
-    memoryarena.add_argument("--output-dir", default="evaluation/results/memoryarena")
-    memoryarena.add_argument("--top-k", type=int, default=5)
-    memoryarena.add_argument(
-        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
-    )
-    memoryarena.add_argument("--domain", choices=sorted(DOMAIN_CONFIGS), default="bundled_shopping")
-    memoryarena.add_argument("--offset", type=int, default=0)
-    memoryarena.add_argument("--limit", type=int, default=1)
-    memoryarena.add_argument("--subtask-index", type=int, default=1)
-    memoryarena.add_argument("--predictions-json", default="")
-    memoryarena.add_argument("--session-prefix", default="eval-memoryarena")
 
-    longmemeval = subparsers.add_parser("longmemeval", help="Run a LongMemEval evaluation slice.")
-    longmemeval.add_argument("--command", default="graphknows-mcp")
-    longmemeval.add_argument(
-        "--run-id", default=f"eval-longmemeval-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-    )
-    longmemeval.add_argument("--output-dir", default="evaluation/results/longmemeval")
-    longmemeval.add_argument("--top-k", type=int, default=5)
-    longmemeval.add_argument(
-        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
-    )
-    longmemeval.add_argument("--data-root", default="evaluation/data/longmemeval-v2")
-    longmemeval.add_argument("--question-id", default="")
-    longmemeval.add_argument("--max-questions", type=int, default=1)
-    longmemeval.add_argument("--max-trajectories", type=int, default=5)
-    longmemeval.add_argument("--max-states", type=int, default=8)
-    longmemeval.add_argument("--max-chars-per-trajectory", type=int, default=4000)
-    longmemeval.add_argument(
-        "--ingest-strategy",
+    parser.add_argument("--locomo-data-root", default="evaluation/data/locomo")
+    parser.add_argument("--locomo-questions", default="questions.jsonl")
+    parser.add_argument("--locomo-max-documents", type=int, default=50)
+    parser.add_argument("--locomo-max-chars-per-document", type=int, default=4000)
+
+    parser.add_argument("--longmemeval-data-root", default="evaluation/data/longmemeval-v2")
+    parser.add_argument("--longmemeval-question-id", default="")
+    parser.add_argument("--longmemeval-max-questions", type=int, default=1)
+    parser.add_argument("--longmemeval-max-trajectories", type=int, default=5)
+    parser.add_argument("--longmemeval-max-states", type=int, default=8)
+    parser.add_argument("--longmemeval-max-chars-per-trajectory", type=int, default=4000)
+    parser.add_argument(
+        "--longmemeval-ingest-strategy",
         choices=["raw", "trajectory_capsules", "batched_capsules"],
         default="batched_capsules",
     )
 
-    hotpotqa = subparsers.add_parser("hotpotqa", help="Run a HotpotQA support-retrieval slice.")
-    hotpotqa.add_argument("--command", default="graphknows-mcp")
-    hotpotqa.add_argument(
-        "--run-id", default=f"eval-hotpotqa-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-    )
-    hotpotqa.add_argument("--output-dir", default="evaluation/results/hotpotqa")
-    hotpotqa.add_argument("--top-k", type=int, default=5)
-    hotpotqa.add_argument(
-        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
-    )
-    hotpotqa.add_argument("--offset", type=int, default=0)
-    hotpotqa.add_argument("--limit", type=int, default=3)
-    hotpotqa.add_argument("--max-docs", type=int, default=10)
-    hotpotqa.add_argument("--max-chars-per-doc", type=int, default=2500)
+    parser.add_argument("--beam-data-root", default="evaluation/data/beam")
+    parser.add_argument("--beam-scale", choices=["1m", "10m"], default="1m")
+    parser.add_argument("--beam-questions", default="questions.jsonl")
+    parser.add_argument("--beam-max-documents", type=int, default=200)
+    parser.add_argument("--beam-max-chars-per-document", type=int, default=8000)
 
-    research = subparsers.add_parser(
-        "research-memory",
-        help="Run deterministic retrieval-only memory experiments with mandatory LTM topics.",
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="action", required=True)
+
+    subparsers.add_parser("list", help="List supported benchmarks.")
+
+    run = subparsers.add_parser("run", help="Run one or more supported benchmarks.")
+    run.add_argument(
+        "benchmarks",
+        nargs="+",
+        choices=[*BENCHMARK_ORDER, "all"],
+        help="Benchmarks to run; use 'all' for LoCoMo, LongMemEval, and BEAM.",
     )
-    research.add_argument("--command", default="graphknows-mcp")
-    research.add_argument(
-        "--run-id", default=f"eval-research-memory-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-    )
-    research.add_argument("--output-dir", default="evaluation/results/research-memory")
-    research.add_argument(
-        "--suite", choices=["hotpotqa", "longmemeval", "memoryarena"], default="hotpotqa"
-    )
-    research.add_argument("--top-k", type=int, default=5)
-    research.add_argument(
-        "--relation-extraction-mode", choices=["gliner2", "llm_assisted", "off"], default="gliner2"
-    )
-    research.add_argument("--offset", type=int, default=0)
-    research.add_argument("--limit", type=int, default=1)
-    research.add_argument("--domain", choices=sorted(DOMAIN_CONFIGS), default="bundled_shopping")
-    research.add_argument("--subtask-index", type=int, default=1)
-    research.add_argument("--data-root", default="evaluation/data/longmemeval-v2")
-    research.add_argument("--question-id", default="")
-    research.add_argument("--max-trajectories", type=int, default=5)
-    research.add_argument("--max-states", type=int, default=8)
-    research.add_argument("--max-chars-per-trajectory", type=int, default=4000)
-    research.add_argument("--max-docs", type=int, default=10)
-    research.add_argument("--max-chars-per-doc", type=int, default=2500)
+    _add_common_run_options(run)
+
+    for name in BENCHMARK_ORDER:
+        single = subparsers.add_parser(name, help=f"Run only {SUPPORTED_BENCHMARKS[name].display_name}.")
+        single.set_defaults(benchmarks=[name])
+        _add_common_run_options(single)
+
+    all_parser = subparsers.add_parser("all", help="Run LoCoMo, LongMemEval, and BEAM.")
+    all_parser.set_defaults(benchmarks=["all"])
+    _add_common_run_options(all_parser)
 
     return parser
 
 
-async def _run_memoryarena(args: argparse.Namespace) -> int:
+def _print_supported_benchmarks() -> None:
+    for name in BENCHMARK_ORDER:
+        spec = SUPPORTED_BENCHMARKS[name]
+        categories = ", ".join(spec.categories)
+        print(f"{spec.name}: {spec.display_name} ({spec.question_count})")
+        print(f"  {spec.description}")
+        print(f"  Categories: {categories}")
+        print(f"  Data: {spec.data_requirement}")
+
+
+def _benchmark_run_id(base_run_id: str, benchmark: str, multi: bool) -> str:
+    if multi and not base_run_id.endswith(f"-{benchmark}"):
+        return f"{base_run_id}-{benchmark}"
+    return base_run_id
+
+
+def _benchmark_output_dir(base_output_dir: str, benchmark: str) -> Path:
+    return Path(base_output_dir) / benchmark
+
+
+async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkReportPaths:
     async with GraphknowsMCPClient(
         args.command,
-        request_timeout_s=600,
+        request_timeout_s=900,
         env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
     ) as client:
-        if args.predictions_json:
-            rows, total_rows = await fetch_memoryarena_rows(args.domain, args.offset, args.limit)
-            predictions = json.loads(Path(args.predictions_json).read_text(encoding="utf-8"))
-            result = await evaluate_domain_with_predictions(
-                client,
-                args.domain,
-                rows,
-                predictions,
-                session_prefix=args.session_prefix,
+        cases = await run_file_backed_benchmark(
+            client,
+            FileBackedBenchmarkOptions(
+                benchmark="locomo",
+                data_root=Path(args.locomo_data_root),
+                questions_file=args.locomo_questions,
+                run_id=run_id,
                 top_k=args.top_k,
-            )
-            cases = [
-                {
-                    "case_id": str(task["task_id"]),
-                    "question": "MemoryArena prediction-backed task",
-                    "gold": None,
-                    "memory_context": [],
-                    "metrics": {"sr": task["sr"], "ps": task["ps"]},
-                    "score": float(task["ps"]),
-                    "metadata": {"subtasks": task.get("subtasks", [])},
-                }
-                for task in result["tasks"]
-            ]
-            paths = write_benchmark_report(
-                benchmark="memoryarena",
-                run_id=args.run_id,
-                output_dir=args.output_dir,
-                cases=cases,
-                metadata={
-                    "domain": args.domain,
-                    "official_rows": total_rows,
-                    "mode": "predictions",
-                },
-            )
-        else:
-            cases = await run_memoryarena_small(
-                client,
-                domain=args.domain,
                 offset=args.offset,
                 limit=args.limit,
-                subtask_index=args.subtask_index,
-                run_id=args.run_id,
-                top_k=args.top_k,
-                purge=True,
-            )
-            paths = write_benchmark_report(
-                benchmark="memoryarena",
-                run_id=args.run_id,
-                output_dir=args.output_dir,
-                cases=[case.to_record() for case in cases],
-                metadata={"domain": args.domain, "mode": "memory_retrieval"},
-            )
-    print(paths.json_path)
-    return 0
+                max_documents=args.locomo_max_documents,
+                max_chars_per_document=args.locomo_max_chars_per_document,
+                recall_scope=args.recall_scope,
+                session_prefix="eval-locomo",
+                purge=not args.no_purge,
+            ),
+        )
+    return write_benchmark_report(
+        benchmark="locomo",
+        run_id=run_id,
+        output_dir=_benchmark_output_dir(args.output_dir, "locomo"),
+        cases=[case.to_record() for case in cases],
+        metadata={
+            "benchmark": SUPPORTED_BENCHMARKS["locomo"].display_name,
+            "categories": list(SUPPORTED_BENCHMARKS["locomo"].categories),
+            "data_root": args.locomo_data_root,
+            "questions_file": args.locomo_questions,
+            "recall_scope": args.recall_scope,
+        },
+    )
 
 
-async def _run_longmemeval(args: argparse.Namespace) -> int:
+async def _run_longmemeval(args: argparse.Namespace, *, run_id: str) -> BenchmarkReportPaths:
     async with GraphknowsMCPClient(
         args.command,
         request_timeout_s=900,
@@ -194,137 +154,98 @@ async def _run_longmemeval(args: argparse.Namespace) -> int:
     ) as client:
         cases = await run_longmemeval_small(
             client,
-            data_root=Path(args.data_root),
-            question_id=args.question_id or None,
-            max_questions=args.max_questions,
-            run_id=args.run_id,
+            data_root=Path(args.longmemeval_data_root),
+            question_id=args.longmemeval_question_id or None,
+            max_questions=args.longmemeval_max_questions,
+            run_id=run_id,
             top_k=args.top_k,
-            max_trajectories=args.max_trajectories,
-            max_states=args.max_states,
-            max_chars_per_trajectory=args.max_chars_per_trajectory,
-            ingest_strategy=args.ingest_strategy,
-            purge=True,
+            max_trajectories=args.longmemeval_max_trajectories,
+            max_states=args.longmemeval_max_states,
+            max_chars_per_trajectory=args.longmemeval_max_chars_per_trajectory,
+            ingest_strategy=args.longmemeval_ingest_strategy,
+            purge=not args.no_purge,
         )
-    paths = write_benchmark_report(
+    return write_benchmark_report(
         benchmark="longmemeval",
-        run_id=args.run_id,
-        output_dir=args.output_dir,
-        cases=[case.to_record() for case in cases],
-        metadata={"ingest_strategy": args.ingest_strategy},
-    )
-    print(paths.json_path)
-    return 0
-
-
-async def _run_hotpotqa(args: argparse.Namespace) -> int:
-    async with GraphknowsMCPClient(
-        args.command,
-        request_timeout_s=600,
-        env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
-    ) as client:
-        cases = await run_hotpotqa_small(
-            client,
-            offset=args.offset,
-            limit=args.limit,
-            run_id=args.run_id,
-            top_k=args.top_k,
-            max_docs=args.max_docs,
-            max_chars_per_doc=args.max_chars_per_doc,
-            purge=True,
-        )
-    paths = write_benchmark_report(
-        benchmark="hotpotqa",
-        run_id=args.run_id,
-        output_dir=args.output_dir,
-        cases=[case.to_record() for case in cases],
-        metadata={"limit": args.limit, "offset": args.offset},
-    )
-    print(paths.json_path)
-    return 0
-
-
-async def _run_research_memory(args: argparse.Namespace) -> int:
-    async with GraphknowsMCPClient(
-        args.command,
-        request_timeout_s=1200,
-        env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
-    ) as client:
-        options = ResearchMemoryOptions(
-            suite=args.suite,
-            run_id=args.run_id,
-            top_k=args.top_k,
-            offset=args.offset,
-            limit=args.limit,
-            domain=args.domain,
-            subtask_index=args.subtask_index,
-            data_root=Path(args.data_root),
-            question_id=args.question_id or None,
-            max_trajectories=args.max_trajectories,
-            max_states=args.max_states,
-            max_chars_per_trajectory=args.max_chars_per_trajectory,
-            max_docs=args.max_docs,
-            max_chars_per_doc=args.max_chars_per_doc,
-        )
-        cases = await run_research_memory(client, options)
-    paths = write_benchmark_report(
-        benchmark=f"research-memory-{args.suite}",
-        run_id=args.run_id,
-        output_dir=args.output_dir,
+        run_id=run_id,
+        output_dir=_benchmark_output_dir(args.output_dir, "longmemeval"),
         cases=[case.to_record() for case in cases],
         metadata={
-            "suite": args.suite,
-            "relation_extraction_mode": args.relation_extraction_mode,
-            "isolation": "per_case_pre_and_post_purge",
-            "agentic_workflow": False,
-            "topic_summarization": "mandatory",
-            "headline_scores": [
-                "answer_support_score",
-                "evidence_recall_score",
-                "topic_entity_score",
-            ],
+            "benchmark": SUPPORTED_BENCHMARKS["longmemeval"].display_name,
+            "categories": list(SUPPORTED_BENCHMARKS["longmemeval"].categories),
+            "data_root": args.longmemeval_data_root,
+            "ingest_strategy": args.longmemeval_ingest_strategy,
         },
     )
-    print(paths.json_path)
-    return 0
 
 
-async def _run_native(args: argparse.Namespace) -> int:
-    config = NativeConfig(
-        command=args.command,
-        output_dir=Path(args.output_dir),
-        top_k=args.top_k,
-        scope=args.scope,
-        cleanup=not args.no_cleanup,
-    )
+async def _run_beam(args: argparse.Namespace, *, run_id: str) -> BenchmarkReportPaths:
+    data_root = Path(args.beam_data_root) / args.beam_scale
     async with GraphknowsMCPClient(
-        command=config.command,
-        initialize=config.initialize,
-        request_timeout_s=config.request_timeout_s,
+        args.command,
+        request_timeout_s=1800,
+        env={"RELATION_EXTRACTION_MODE": args.relation_extraction_mode},
     ) as client:
-        run = await run_native_evaluation(client, config=config, run_id=args.run_id)
-    paths = write_report(
-        run.observations,
-        output_dir=config.output_dir,
-        run_id=run.run_id,
-        top_k=config.top_k,
-        metadata={"scope": config.scope, "cleanup": config.cleanup},
+        cases = await run_file_backed_benchmark(
+            client,
+            FileBackedBenchmarkOptions(
+                benchmark="beam",
+                data_root=data_root,
+                questions_file=args.beam_questions,
+                run_id=run_id,
+                top_k=args.top_k,
+                offset=args.offset,
+                limit=args.limit,
+                max_documents=args.beam_max_documents,
+                max_chars_per_document=args.beam_max_chars_per_document,
+                recall_scope=args.recall_scope,
+                session_prefix=f"eval-beam-{args.beam_scale}",
+                purge=not args.no_purge,
+            ),
+        )
+    return write_benchmark_report(
+        benchmark="beam",
+        run_id=run_id,
+        output_dir=_benchmark_output_dir(args.output_dir, "beam"),
+        cases=[case.to_record() for case in cases],
+        metadata={
+            "benchmark": SUPPORTED_BENCHMARKS["beam"].display_name,
+            "categories": list(SUPPORTED_BENCHMARKS["beam"].categories),
+            "scale": args.beam_scale,
+            "data_root": str(data_root),
+            "questions_file": args.beam_questions,
+            "recall_scope": args.recall_scope,
+        },
     )
-    print(paths.json_path)
+
+
+async def _run_one(name: str, args: argparse.Namespace, *, run_id: str) -> BenchmarkReportPaths:
+    if name == "locomo":
+        return await _run_locomo(args, run_id=run_id)
+    if name == "longmemeval":
+        return await _run_longmemeval(args, run_id=run_id)
+    if name == "beam":
+        return await _run_beam(args, run_id=run_id)
+    raise ValueError(f"unsupported benchmark: {name}")
+
+
+async def _run_selected(args: argparse.Namespace) -> int:
+    selected = expand_benchmark_selection(list(args.benchmarks))
+    multi = len(selected) > 1
+    for name in selected:
+        run_id = _benchmark_run_id(args.run_id, name, multi=multi)
+        paths = await _run_one(name, args, run_id=run_id)
+        print(paths.json_path)
     return 0
 
 
 async def amain(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.benchmark == "native":
-        return await _run_native(args)
-    if args.benchmark == "memoryarena":
-        return await _run_memoryarena(args)
-    if args.benchmark == "longmemeval":
-        return await _run_longmemeval(args)
-    if args.benchmark == "research-memory":
-        return await _run_research_memory(args)
-    return await _run_hotpotqa(args)
+    if args.action == "list":
+        _print_supported_benchmarks()
+        return 0
+    return await _run_selected(args)
 
 
 def main() -> None:

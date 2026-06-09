@@ -18,7 +18,8 @@ from graphknows.memory.adapter_types import (
     RecallRequest,
     TurnRecord,
 )
-from graphknows.memory.flush import FlushOptions, SessionFlusher
+from graphknows.memory.flush import LTMPromotionPipeline
+from graphknows.memory.models.promotion import PromotionRequest
 from graphknows.memory.ingestor import MemoryIngestor as MemoryIngestor
 from graphknows.memory.stm import STMService
 
@@ -201,18 +202,16 @@ class GraphknowsAdapter:
         Returns:
             Summary dictionary with promotion results.
         """
-        flusher = SessionFlusher(
+        pipeline = LTMPromotionPipeline(
             self.mg_store,
             self.pg_store,
             self.neo_store,
         )
-        flush_options = FlushOptions(
-            summarize_topics=True,
-            run_gds=options.run_gds,
-        )
-        result = await flusher.flush(
-            options.session_id,
-            options=flush_options,
+        result = await pipeline.promote(
+            PromotionRequest(
+                session_id=options.session_id,
+                run_gds=options.run_gds,
+            )
         )
         summary = {
             "session_id": options.session_id,
@@ -512,10 +511,11 @@ class GraphknowsMemoryAdapter:
 
             await _asyncio.to_thread(pg.connect)
 
-        from graphknows.memory.flush import SessionFlusher
+        from graphknows.memory.flush import LTMPromotionPipeline
+        from graphknows.memory.models.promotion import PromotionRequest
 
-        flusher = SessionFlusher(mg, pg, neo)
-        internal = await flusher.flush(session_id)
+        pipeline = LTMPromotionPipeline(mg, pg, neo)
+        internal = await pipeline.promote(PromotionRequest(session_id=session_id))
         return FlushResult(
             nodes=internal.nodes_written,
             edges=internal.edges_written,
