@@ -93,10 +93,11 @@ def build_embedder(model_name: str = "openai/text-embedding-3-small") -> IEmbedd
 # --- Service factories (MCP transport layer) ---
 
 
-def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
-    """Build a MemoryIngestor from settings with explicit relation mode."""
+def build_stm_service(settings: GraphKnowsSettings) -> Any:
+    """Build an STMService from settings."""
     from graphknows.memory.extractor import GLiNER2EntityExtractor
-    from graphknows.memory.ingestor import MemoryIngestor, _run
+    from graphknows.memory.stm._async_bridge import _run
+    from graphknows.memory.stm.service import STMService
     from graphknows.memory.stores.embedder import embed_one
 
     mg = build_memgraph_store(settings)
@@ -105,8 +106,7 @@ def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
 
     mode = settings.relation_extraction_mode
     extractor = None if mode == "off" else GLiNER2EntityExtractor()
-    rel_extractor = None
-    return MemoryIngestor(mg, pg, extractor, embed_fn=embed_one, rel_extractor=rel_extractor)
+    return STMService(mg, pg, extractor, embed_fn=embed_one)
 
 
 def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:

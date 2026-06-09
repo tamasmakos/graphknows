@@ -9,8 +9,21 @@ import logging
 from typing import Any
 
 from graphknows.memory.models.recall import RecallResult
-from graphknows.memory.query.scoring import RRF_K, _shape_score
 from graphknows.memory.stm._async_bridge import _run
+
+RRF_K: int = 60
+
+_SHAPE_FACTORS: dict[str | None, float] = {
+    "fact": 1.5,
+    "state": 1.4,
+    "episode": 1.3,
+    "summary": 1.2,
+    "raw_evidence": 0.6,
+}
+
+
+def _shape_score(score: float, memory_class: str | None) -> float:
+    return score * _SHAPE_FACTORS.get(memory_class, 1.0)
 
 log = logging.getLogger("graphknows.memory.stm.recall")
 

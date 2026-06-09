@@ -7,8 +7,8 @@ from graphknows.config import GraphKnowsSettings
 from graphknows.config.builders import build_memgraph_store, build_neo4j_store, build_pgvector_store
 from graphknows.config.builders.stores import (
     build_corpus_workflow,
-    build_memory_ingestor,
     build_relation_extractor,
+    build_stm_service,
 )
 
 
@@ -65,53 +65,52 @@ def test_build_memgraph_store_smoke():
         assert store is not None
 
 
-def test_memory_ingestor_default_uses_gliner2_without_llm_rel_extractor():
+def test_build_stm_service_default_uses_gliner2():
     settings = GraphKnowsSettings()
     with (
         patch("graphknows.config.builders.stores.build_memgraph_store", return_value=MagicMock()),
         patch("graphknows.config.builders.stores.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.memory.ingestor._run"),
+        patch("graphknows.memory.stm._async_bridge._run"),
         patch("graphknows.memory.extractor.GLiNER2EntityExtractor") as mock_gliner,
         patch("graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor") as mock_rel,
     ):
-        ingestor = build_memory_ingestor(settings)
+        service = build_stm_service(settings)
 
-    assert ingestor._extractor is mock_gliner.return_value
-    assert ingestor._rel_extractor is None
+    assert service._extractor is mock_gliner.return_value
+    assert service._rel_extractor is None
     mock_rel.assert_not_called()
 
 
-def test_memory_ingestor_llm_assisted_keeps_dynamic_gliner2_only(monkeypatch):
+def test_build_stm_service_llm_assisted_uses_gliner2_only(monkeypatch):
     monkeypatch.setenv("RELATION_EXTRACTION_MODE", "llm_assisted")
     settings = GraphKnowsSettings()
     with (
         patch("graphknows.config.builders.stores.build_memgraph_store", return_value=MagicMock()),
         patch("graphknows.config.builders.stores.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.memory.ingestor._run"),
+        patch("graphknows.memory.stm._async_bridge._run"),
         patch("graphknows.memory.extractor.GLiNER2EntityExtractor") as mock_gliner,
         patch("graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor") as mock_rel,
     ):
-        ingestor = build_memory_ingestor(settings)
+        service = build_stm_service(settings)
 
-    assert ingestor._extractor is mock_gliner.return_value
-    assert ingestor._rel_extractor is None
+    assert service._extractor is mock_gliner.return_value
+    assert service._rel_extractor is None
     mock_rel.assert_not_called()
 
 
-def test_memory_ingestor_off_disables_extraction(monkeypatch):
+def test_build_stm_service_off_disables_extraction(monkeypatch):
     monkeypatch.setenv("RELATION_EXTRACTION_MODE", "off")
     settings = GraphKnowsSettings()
     with (
         patch("graphknows.config.builders.stores.build_memgraph_store", return_value=MagicMock()),
         patch("graphknows.config.builders.stores.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.memory.ingestor._run"),
+        patch("graphknows.memory.stm._async_bridge._run"),
         patch("graphknows.memory.extractor.GLiNER2EntityExtractor") as mock_gliner,
         patch("graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor") as mock_rel,
     ):
-        ingestor = build_memory_ingestor(settings)
+        service = build_stm_service(settings)
 
-    assert ingestor._extractor is None
-    assert ingestor._rel_extractor is None
+    assert service._extractor is None
     mock_gliner.assert_not_called()
     mock_rel.assert_not_called()
 
