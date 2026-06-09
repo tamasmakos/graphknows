@@ -861,28 +861,17 @@ class TestMemoryFlushIdempotency:
         mock_result.elapsed_s = 0.5
         mock_result.errors = []
 
-        mock_flusher_instance = AsyncMock()
-        mock_flusher_instance.flush = AsyncMock(return_value=mock_result)
-        mock_flusher_cls = MagicMock(return_value=mock_flusher_instance)
-
-        flush_mod = MagicMock()
-        flush_mod.FlushOptions = MagicMock(return_value=MagicMock())
-        flush_mod.SessionFlusher = mock_flusher_cls
+        mock_pipeline_instance = AsyncMock()
+        mock_pipeline_instance.promote = AsyncMock(return_value=mock_result)
 
         with (
             patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
-            patch.dict(
-                "sys.modules",
-                {
-                    "graphknows.memory.flush": flush_mod,
-                },
-            ),
-            patch("graphknows.config.builders.stores.build_session_flusher", return_value=mock_flusher_instance),
+            patch("graphknows.config.builders.stores.build_promotion_pipeline", return_value=mock_pipeline_instance),
         ):
             result = await stm_mod.memory_flush("session-new")
 
-        # Flusher MUST have been called
-        mock_flusher_instance.flush.assert_awaited_once()
+        # Pipeline MUST have been called
+        mock_pipeline_instance.promote.assert_awaited_once()
         # Result should NOT have already_flushed status
         assert result.get("status") != "already_flushed"
 
@@ -912,14 +901,14 @@ def test_memory_ingest_returns_no_warnings():
 
 
 def test_memory_flush_summarizes_topics():
-    """memory_flush must always request topic summarization."""
+    """memory_flush must always request topic summarization (run_topics=True by default)."""
     import asyncio
     from graphknows.mcp.stdio_server import memory_flush
 
-    captured_opts = {}
+    captured_request = {}
 
-    async def fake_flush(session_id, opts):
-        captured_opts["summarize_topics"] = opts.summarize_topics
+    async def fake_promote(request):
+        captured_request["run_topics"] = request.run_topics
         m = MagicMock()
         m.nodes_written = 1
         m.edges_written = 1
@@ -936,16 +925,16 @@ def test_memory_flush_summarizes_topics():
     mock_neo._driver.session.return_value.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("graphknows.config.builders.stores.build_session_flusher") as mock_build,
+        patch("graphknows.config.builders.stores.build_promotion_pipeline") as mock_build,
         patch("graphknows.mcp.tools.stm.get_settings"),
         patch("graphknows.mcp.tools.stm.get_neo_store", return_value=mock_neo),
     ):
-        mock_flusher = MagicMock()
-        mock_flusher.flush = fake_flush
-        mock_build.return_value = mock_flusher
+        mock_pipeline = MagicMock()
+        mock_pipeline.promote = fake_promote
+        mock_build.return_value = mock_pipeline
         asyncio.run(memory_flush("test-session"))
-        assert captured_opts.get("summarize_topics") is True, \
-            "memory_flush must pass summarize_topics=True to FlushOptions"
+        assert captured_request.get("run_topics") is True, \
+            "memory_flush must use run_topics=True (PromotionRequest default)"
 
 
 # ---------------------------------------------------------------------------
@@ -998,14 +987,14 @@ def test_stm_recall_hit_entity_only_has_cosine_score_zero():
 
 
 class TestLTMWriterRelationExtractionGuard:
-    """LTMWriter must skip/survive relation extraction failures (issue: memory_flush timeout)."""
+    """LTMPromotionPipeline._write_ltm_graph must skip/survive relation extraction failures."""
 
     @pytest.mark.asyncio
     async def test_write_skips_extraction_when_key_empty(self) -> None:
         """Empty or whitespace-only openrouter_key → extract_and_write_relations is never called."""
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
 
-        from graphknows.memory.ltm.writer import LTMWriter
+        from graphknows.memory.flush import LTMPromotionPipeline
 
         for empty_key in ("", "   ", "\t"):
             mock_neo = AsyncMock()
@@ -1013,12 +1002,15 @@ class TestLTMWriterRelationExtractionGuard:
             stm_data: dict = {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
             errors: list[str] = []
 
-            result = await LTMWriter.write(
+            pipeline = LTMPromotionPipeline.__new__(LTMPromotionPipeline)
+            pipeline._neo = mock_neo
+            pipeline._openrouter_key = empty_key
+            pipeline._relation_extraction_mode = "llm_assisted"
+
+            result = await pipeline._write_ltm_graph(
                 session_id="test-no-key",
                 stm_data=stm_data,
-                neo_store=mock_neo,
                 errors=errors,
-                openrouter_key=empty_key,
             )
 
             assert result == {"nodes": 2, "edges": 1}
@@ -1027,10 +1019,10 @@ class TestLTMWriterRelationExtractionGuard:
 
     @pytest.mark.asyncio
     async def test_write_survives_auth_error_when_key_present(self) -> None:
-        """Auth failure in extraction is caught; flush returns graph counts and appends error."""
+        """Auth failure in extraction is caught; promote returns graph counts and appends error."""
         from unittest.mock import AsyncMock
 
-        from graphknows.memory.ltm.writer import LTMWriter
+        from graphknows.memory.flush import LTMPromotionPipeline
 
         mock_neo = AsyncMock()
         mock_neo.write_session_subgraph.return_value = {"nodes": 3, "edges": 2}
@@ -1040,12 +1032,15 @@ class TestLTMWriterRelationExtractionGuard:
         stm_data: dict = {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
         errors: list[str] = []
 
-        result = await LTMWriter.write(
+        pipeline = LTMPromotionPipeline.__new__(LTMPromotionPipeline)
+        pipeline._neo = mock_neo
+        pipeline._openrouter_key = "bad-key-xyz"
+        pipeline._relation_extraction_mode = "llm_assisted"
+
+        result = await pipeline._write_ltm_graph(
             session_id="test-bad-key",
             stm_data=stm_data,
-            neo_store=mock_neo,
             errors=errors,
-            openrouter_key="bad-key-xyz",
         )
 
         assert result["nodes"] == 3

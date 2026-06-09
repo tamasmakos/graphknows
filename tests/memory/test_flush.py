@@ -1,16 +1,17 @@
-"""Unit tests for SessionFlusher."""
+"""Unit tests for LTMPromotionPipeline."""
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from graphknows.memory.flush import FlushOptions, SessionFlusher
+from graphknows.memory.flush import LTMPromotionPipeline
+from graphknows.memory.models.promotion import PromotionRecord, PromotionRequest
 
 
-def _make_flusher():
+def _make_pipeline(**kwargs):
     mg = MagicMock()
     mg.read_session_subgraph = AsyncMock(
         return_value={
@@ -34,95 +35,94 @@ def _make_flusher():
     neo = MagicMock()
     neo.write_session_subgraph = AsyncMock(return_value={"nodes": 10, "edges": 20})
     neo.summarize_topics = AsyncMock(return_value=3)
-    neo.run_gds_enrichment = AsyncMock(return_value=None)
     neo.extract_and_write_relations = AsyncMock(return_value=0)
+    neo._driver = MagicMock()
 
-    flusher = SessionFlusher(mg, pg, neo, openrouter_key="test_key")
-    return flusher, mg, pg, neo
+    enrichment = MagicMock()
+    from graphknows.memory.models.gds import GDSResult
+    enrichment.run_gds_async = AsyncMock(return_value=GDSResult())
+    enrichment.run_topic_summarization = AsyncMock(return_value=3)
+
+    pipeline = LTMPromotionPipeline(
+        mg, pg, neo, openrouter_key="test_key", enrichment_service=enrichment, **kwargs
+    )
+    return pipeline, mg, pg, neo, enrichment
 
 
 @pytest.mark.asyncio
-async def test_flush_default_options_calls_all_steps():
-    flusher, mg, pg, neo = _make_flusher()
-    result = await flusher.flush("s1")
+async def test_promote_default_request_calls_all_steps():
+    pipeline, mg, pg, neo, enrichment = _make_pipeline()
+    result = await pipeline.promote(PromotionRequest(session_id="s1"))
     mg.read_session_subgraph.assert_called_once_with("s1")
     neo.write_session_subgraph.assert_called_once()
     pg.promote_to_ltm.assert_called_once_with("s1")
-    neo.summarize_topics.assert_called_once()
+    enrichment.run_topic_summarization.assert_called_once()
     mg.delete_session.assert_called_once_with("s1")
     pg.clear_stm.assert_called_once_with("s1")
 
 
 @pytest.mark.asyncio
-async def test_flush_always_summarizes_topics():
-    flusher, mg, pg, neo = _make_flusher()
-    await flusher.flush("s1", FlushOptions(summarize_topics=False))
-    neo.summarize_topics.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_flush_no_clear_skips_clear_stm():
-    flusher, mg, pg, neo = _make_flusher()
-    await flusher.flush("s1", FlushOptions(clear_stm=False))
+async def test_promote_no_clear_skips_clear_stm():
+    pipeline, mg, pg, neo, enrichment = _make_pipeline()
+    await pipeline.promote(PromotionRequest(session_id="s1", clear_stm=False))
     mg.delete_session.assert_not_called()
     pg.clear_stm.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_flush_no_merge_skips_resolve_entities():
-    flusher, mg, pg, neo = _make_flusher()
-    # When merge_entities=False, all entities passed through unchanged
-    result = await flusher.flush("s1", FlushOptions(merge_entities=False))
+async def test_promote_no_merge_skips_resolve_entities():
+    pipeline, mg, pg, neo, enrichment = _make_pipeline()
+    result = await pipeline.promote(PromotionRequest(session_id="s1", merge_entities=False))
     assert result.merged_entities == 0
 
 
 def test_resolve_entities_merges_by_lowercase_keeps_highest_confidence():
-    flusher, _, _, _ = _make_flusher()
+    pipeline, _, _, _, _ = _make_pipeline()
     entities = [
         {"name": "EU", "type": "ORG", "confidence": 0.9},
         {"name": "eu", "type": "ORG", "confidence": 0.7},
         {"name": "France", "type": "LOC", "confidence": 0.8},
     ]
-    resolved, merge_count = flusher._resolve_entities(entities)
+    resolved, merge_count = pipeline._resolve_entities(entities)
     names_lower = {e["name"].lower() for e in resolved}
     assert "eu" in names_lower
     assert "france" in names_lower
-    assert len(resolved) == 2  # eu+EU merged into 1
+    assert len(resolved) == 2
     assert merge_count == 1
     eu_ent = next(e for e in resolved if e["name"].lower() == "eu")
-    assert eu_ent["confidence"] == 0.9  # highest kept
+    assert eu_ent["confidence"] == 0.9
 
 
 def test_resolve_entities_preserves_unique_names():
-    flusher, _, _, _ = _make_flusher()
+    pipeline, _, _, _, _ = _make_pipeline()
     entities = [
         {"name": "Germany", "type": "LOC", "confidence": 0.95},
         {"name": "France", "type": "LOC", "confidence": 0.85},
     ]
-    resolved, _ = flusher._resolve_entities(entities)
+    resolved, _ = pipeline._resolve_entities(entities)
     assert len(resolved) == 2
 
 
 @pytest.mark.asyncio
 async def test_topic_summarization_failure_adds_to_errors():
-    flusher, mg, pg, neo = _make_flusher()
-    neo.summarize_topics = AsyncMock(side_effect=RuntimeError("LLM timeout"))
-    result = await flusher.flush("s1", FlushOptions(run_gds=False))
+    pipeline, mg, pg, neo, enrichment = _make_pipeline()
+    enrichment.run_topic_summarization = AsyncMock(side_effect=RuntimeError("LLM timeout"))
+    result = await pipeline.promote(PromotionRequest(session_id="s1", run_gds=False))
     assert any("topics" in e for e in result.errors)
 
 
 @pytest.mark.asyncio
 async def test_clear_stm_failure_adds_to_errors():
-    flusher, mg, pg, neo = _make_flusher()
+    pipeline, mg, pg, neo, enrichment = _make_pipeline()
     mg.delete_session = AsyncMock(side_effect=RuntimeError("Memgraph down"))
-    result = await flusher.flush("s1", FlushOptions(summarize_topics=False))
+    result = await pipeline.promote(PromotionRequest(session_id="s1"))
     assert any("clear_stm" in e for e in result.errors)
 
 
 @pytest.mark.asyncio
-async def test_flush_result_has_correct_counts():
-    flusher, mg, pg, neo = _make_flusher()
-    result = await flusher.flush("s1", FlushOptions(run_gds=False))
+async def test_promote_result_has_correct_counts():
+    pipeline, mg, pg, neo, enrichment = _make_pipeline()
+    result = await pipeline.promote(PromotionRequest(session_id="s1", run_gds=False))
     assert result.session_id == "s1"
     assert result.nodes_written == 10
     assert result.edges_written == 20
@@ -132,7 +132,7 @@ async def test_flush_result_has_correct_counts():
 
 
 # ---------------------------------------------------------------------------
-# FLUSH-003: summarize_topics unit tests
+# FLUSH-003: summarize_topics unit tests (unchanged — test Neo4jStore directly)
 # ---------------------------------------------------------------------------
 
 
@@ -168,7 +168,6 @@ async def test_summarize_topics_no_key_skips_llm(monkeypatch):
     store._driver.session.return_value.__exit__ = MagicMock(return_value=False)
     store.upsert_topics = AsyncMock(return_value=None)
 
-    # _arun returns: co-occur pairs → evidence rows for community 0
     store._arun = AsyncMock(
         side_effect=[
             [],
@@ -195,8 +194,7 @@ async def test_summarize_topics_skips_singletons():
     store = Neo4jStore.__new__(Neo4jStore)
     store._driver = MagicMock()
     store.upsert_topics = AsyncMock(return_value=None)
-    # Only one entity — Leiden will produce a singleton community, which is skipped
-    store._arun = AsyncMock(return_value=[])  # no co-occur pairs → returns 0 immediately
+    store._arun = AsyncMock(return_value=[])
 
     count = await store.summarize_topics("sess-2", openrouter_key="", pg_store=None)
     assert count == 0
@@ -296,57 +294,49 @@ async def test_summarize_topics_falls_back_to_title_for_embedding(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_flush_calls_extract_and_write_relations():
-    """flush() must call extract_and_write_relations on the Neo4j store."""
-    flusher, mg, pg, neo = _make_flusher()
-    flusher._relation_extraction_mode = "llm_assisted"
+async def test_promote_calls_extract_and_write_relations():
+    """promote() must call extract_and_write_relations when mode is llm_assisted."""
+    pipeline, mg, pg, neo, enrichment = _make_pipeline(relation_extraction_mode="llm_assisted")
     neo.extract_and_write_relations = AsyncMock(return_value=5)
-    result = await flusher.flush("s1")
+    result = await pipeline.promote(PromotionRequest(session_id="s1"))
     neo.extract_and_write_relations.assert_awaited_once()
-    # edges in result should include the 5 relation edges
     assert result.edges_written >= 5
 
 
 @pytest.mark.asyncio
-async def test_flush_propagates_extraction_error():
-    """If extract_and_write_relations raises with a valid key, flush degrades gracefully and records error."""
-    flusher, mg, pg, neo = _make_flusher()
+async def test_promote_propagates_extraction_error():
+    """If extract_and_write_relations raises, promote degrades gracefully and records error."""
+    pipeline, mg, pg, neo, enrichment = _make_pipeline(relation_extraction_mode="llm_assisted")
     neo.extract_and_write_relations = AsyncMock(side_effect=RuntimeError("LLM failed"))
-    # Provide a non-empty key so extraction is attempted
-    flusher._openrouter_key = "test-key"
-    flusher._relation_extraction_mode = "llm_assisted"
-    result = await flusher.flush("s1")
-    # Flush must NOT raise — errors are captured, not propagated
+    result = await pipeline.promote(PromotionRequest(session_id="s1"))
     assert any("extract_and_write_relations" in e for e in result.errors)
 
 
-class TestFlushSurfacesNeo4jError:
+class TestPromoteSurfacesNeo4jError:
     @pytest.mark.asyncio
-    async def test_neo4j_write_error_appears_in_flush_result_errors(self):
-        """When write_session_subgraph raises, FlushResult.errors must contain the error."""
+    async def test_neo4j_write_error_appears_in_record_errors(self):
+        """When write_session_subgraph raises, PromotionRecord.errors must contain the error."""
         mg = MagicMock()
         pg = MagicMock()
         neo = AsyncMock()
 
-        # Force Neo4j write to raise
         neo.write_session_subgraph = AsyncMock(side_effect=RuntimeError("neo4j connection refused"))
         neo.extract_and_write_relations = AsyncMock(return_value=0)
 
-        flusher = SessionFlusher.__new__(SessionFlusher)
-        flusher._mg = mg
-        flusher._pg = pg
-        flusher._neo = neo
-        flusher._openrouter_key = None
+        pipeline = LTMPromotionPipeline.__new__(LTMPromotionPipeline)
+        pipeline._mg = mg
+        pipeline._pg = pg
+        pipeline._neo = neo
+        pipeline._openrouter_key = None
+        pipeline._relation_extraction_mode = "gliner2"
 
-        # Call the private helper directly
         errors: list[str] = []
-        result = await flusher._write_ltm_graph(
+        result = await pipeline._write_ltm_graph(
             session_id="test-session",
             stm_data={"entities": [], "chunks": [], "turns": []},
             errors=errors,
         )
 
-        # The error must be surfaced
         assert errors, "errors list must be populated when Neo4j raises"
         assert any("neo4j" in e.lower() or "connection refused" in e.lower() for e in errors), (
             f"Expected Neo4j error in errors list, got: {errors}"

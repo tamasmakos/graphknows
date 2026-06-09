@@ -79,6 +79,7 @@ depends_on = [
   "graphknows.ingestion.domain",
   "graphknows.ingestion.ontology",
   "graphknows.memory",
+  "graphknows.memory.models",
   "graphknows.memory.stm", "graphknows.config.builders", "graphknows.mcp",
 ]
 
@@ -123,6 +124,7 @@ depends_on = [
   "graphknows.mcp",
   "graphknows.web",
   "graphknows.memory",
+  "graphknows.memory.models",
   "graphknows.memory.query",
   "graphknows.memory.stm",
   "graphknows.memory.stores",
@@ -134,4 +136,5 @@ path = "graphknows.web"
 depends_on = [
   "graphknows.config",
   "graphknows.config.builders",
+  "graphknows.memory.models",
 ]

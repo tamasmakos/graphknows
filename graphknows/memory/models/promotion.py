@@ -13,8 +13,8 @@ class PromotionRequest(BaseModel, frozen=True):
     session_id: str
     run_gds: bool = True
     run_topics: bool = True
-    clear_stm: bool = False
-    merge_entities: bool = False
+    clear_stm: bool = True
+    merge_entities: bool = True
 
 
 class PromotionRecord(BaseModel):

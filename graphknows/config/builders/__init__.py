@@ -8,8 +8,8 @@ from graphknows.config.builders.stores import (
     build_memory_ingestor,
     build_neo4j_store,
     build_pgvector_store,
+    build_promotion_pipeline,
     build_relation_extractor,
-    build_session_flusher,
 )
 
 __all__ = [
@@ -18,6 +18,6 @@ __all__ = [
     "build_memory_ingestor",
     "build_neo4j_store",
     "build_pgvector_store",
+    "build_promotion_pipeline",
     "build_relation_extractor",
-    "build_session_flusher",
 ]

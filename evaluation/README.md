@@ -1,125 +1,150 @@
 # Graphknows Evaluation
 
-This package is the production evaluation surface for graphknows. It is organized around one official entrypoint, `run_eval.py`, with benchmark-specific modules underneath it.
+This package is the production evaluation surface for graphknows memory systems.
+It intentionally exposes only the three benchmarks that define the current
+measurement landscape:
+
+- `locomo`: LoCoMo, 1,540 questions across single-hop, multi-hop, open-domain,
+  and temporal memory recall.
+- `longmemeval`: LongMemEval, 500 questions across single-session user recall,
+  single-session assistant recall, single-session preference recall, knowledge
+  update, temporal reasoning, and multi-session recall.
+- `beam`: BEAM at 1M and 10M token scales across preference following,
+  instruction following, information extraction, knowledge update,
+  multi-session reasoning, summarization, temporal reasoning, event ordering,
+  abstention, and contradiction resolution.
+
+The launcher is designed so these can be run together or separately.
 
 ## Entry Points
 
-Run the unified CLI with either:
-
 ```bash
-python -m evaluation.run_eval --help
+python -m evaluation list
+python -m evaluation run locomo
+python -m evaluation run longmemeval
+python -m evaluation run beam
+python -m evaluation run all
 ```
 
-or:
+The individual benchmark names are shorthand for `run`:
 
 ```bash
-python -m evaluation --help
+python -m evaluation locomo
+python -m evaluation longmemeval
+python -m evaluation beam
+python -m evaluation all
 ```
 
-## Supported Evaluation Suites
+Multiple benchmarks can be selected explicitly:
 
-- `native`: direct MCP contract and health validation
-- `memoryarena`: memory retrieval slices and optional prediction-backed scoring
-- `longmemeval`: official LongMemEval-V2 haystack retrieval slices with capsule ingestion support
-- `hotpotqa`: support-retrieval evaluation over HotpotQA distractor contexts
-- `research-memory`: deterministic retrieval-only experiments with per-case isolation,
-  dynamic schema extraction, mandatory LTM promotion, mandatory topic summarization, and
-  three headline scores
+```bash
+python -m evaluation run locomo beam
+```
 
-## Examples
+## Infrastructure
 
-Start the graphknows infrastructure first:
+Start graphknows first:
 
 ```bash
 make infra-up
 ```
 
-Native MCP harness:
+From the host machine, prefer connecting to the singleton MCP container:
 
 ```bash
-# Inside the workspace container or local venv:
-python -m evaluation.run_eval native --command "graphknows-mcp"
-
-# From the host machine (recommended for singleton reuse):
-python -m evaluation.run_eval native --command "docker exec -i graphknows-mcp graphknows-mcp"
+python -m evaluation run longmemeval \
+  --command "docker exec -i graphknows-mcp graphknows-mcp"
 ```
 
-MemoryArena retrieval slice:
+The default command is `graphknows-mcp`, which is convenient inside a local venv
+or workspace container.
+
+## LongMemEval
+
+LongMemEval uses the existing LongMemEval-V2 adapter. Missing official files are
+downloaded into `evaluation/data/longmemeval-v2`.
 
 ```bash
-python -m evaluation.run_eval memoryarena \
-  --domain bundled_shopping \
-  --offset 0 \
-  --limit 2 \
-  --subtask-index 1 \
-  --relation-extraction-mode gliner2
+python -m evaluation longmemeval \
+  --longmemeval-max-questions 1 \
+  --longmemeval-max-trajectories 25 \
+  --longmemeval-max-states 4 \
+  --longmemeval-max-chars-per-trajectory 4000 \
+  --longmemeval-ingest-strategy batched_capsules
 ```
 
-LongMemEval capsule slice:
+## LoCoMo And BEAM Local Data
 
-```bash
-python -m evaluation.run_eval longmemeval \
-  --question-id 00aa905a \
-  --max-questions 1 \
-  --max-trajectories 25 \
-  --max-states 4 \
-  --max-chars-per-trajectory 4000 \
-  --ingest-strategy batched_capsules \
-  --relation-extraction-mode gliner2
+LoCoMo and BEAM are file-backed adapters so local benchmark exports can be
+plugged in without locking this repo to one external distribution format.
+
+Defaults:
+
+- LoCoMo: `evaluation/data/locomo/questions.jsonl`
+- BEAM 1M: `evaluation/data/beam/1m/questions.jsonl`
+- BEAM 10M: `evaluation/data/beam/10m/questions.jsonl`
+
+Each row may be JSONL or part of a JSON array. The runner accepts these common
+fields:
+
+- Identity: `id`, `question_id`, or `case_id`
+- Prompt: `question`, `query`, or `prompt`
+- Gold answer: `answer`, `gold`, or `target`
+- Category: `category`, `type`, `task_type`, or `question_type`
+- Memory context: `sessions`, `messages`, `turns`, `conversation`,
+  `documents`, `contexts`, `evidence`, `memories`, `haystack`, `context`,
+  `memory`, or `transcript`
+
+Example LoCoMo row:
+
+```json
+{
+  "id": "locomo-dev-001",
+  "category": "temporal memory recall",
+  "question": "Which city did Alex visit after the Berlin conference?",
+  "answer": "Prague",
+  "sessions": [
+    {
+      "session_id": "s1",
+      "messages": [
+        {"role": "user", "content": "I am flying to Berlin for the conference."},
+        {"role": "user", "content": "After Berlin I will spend two days in Prague."}
+      ]
+    }
+  ]
+}
 ```
 
-HotpotQA support retrieval slice:
+Example BEAM commands:
 
 ```bash
-python -m evaluation.run_eval hotpotqa \
-  --offset 0 \
-  --limit 3 \
-  --max-docs 10 \
-  --relation-extraction-mode gliner2
+python -m evaluation beam --beam-scale 1m --limit 1
+python -m evaluation beam --beam-scale 10m --beam-max-documents 500 --limit 1
 ```
 
-Research-grade retrieval-only memory experiment:
+## Shared Controls
+
+All runnable commands accept:
 
 ```bash
-python -m evaluation.run_eval research-memory \
-  --suite hotpotqa \
-  --offset 0 \
-  --limit 3 \
-  --relation-extraction-mode gliner2
-```
-
-The research-memory command does not use an agentic answering workflow. Each
-case is purged before and after measurement, ingested through `corpus_ingest`,
-promoted to LTM with topic summarization, and scored on:
-
-- `answer_support_score`
-- `evidence_recall_score`
-- `topic_entity_score`
-
-## The Singleton MCP
-
-To ensure consistency and avoid container multiplicity, the stack is configured to run a single `graphknows-mcp` instance. When running evaluations from your host machine, always connect to the existing container using `docker exec`:
-
-```bash
-# Recommended for host-side evaluation (singleton reuse)
-python -m evaluation.run_eval native --command "docker exec -i graphknows-mcp graphknows-mcp"
-```
-
-If you must use `docker run`, the evaluation client will automatically inject the `--rm` flag to prevent container leakage, but `exec` is preferred to maintain a single hot instance.
-
-Prediction-backed MemoryArena scoring:
-
-```bash
-python -m evaluation.run_eval memoryarena \
-  --domain bundled_shopping \
-  --limit 2 \
-  --predictions-json predictions.json \
-  --relation-extraction-mode gliner2
+--command
+--run-id
+--output-dir
+--top-k
+--offset
+--limit
+--recall-scope stm|ltm|both
+--relation-extraction-mode gliner2|llm_assisted|off
+--no-purge
 ```
 
 ## Outputs
 
-Each run writes JSON and Markdown artifacts into the benchmark-specific output directory. Native runs report tool-level latency and MCP quality metrics. Benchmark runs report per-case memory context, benchmark metadata, and aggregated retrieval metrics.
+Each run writes JSON and Markdown artifacts into:
+
+```text
+evaluation/results/<benchmark>/
+```
 
 Large benchmark data and outputs are intentionally ignored by git under:
 

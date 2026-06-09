@@ -205,8 +205,8 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
     """
     import logging
 
-    from graphknows.config.builders.stores import build_session_flusher
-    from graphknows.memory.flush import FlushOptions
+    from graphknows.config.builders.stores import build_promotion_pipeline
+    from graphknows.memory.models.promotion import PromotionRequest
 
     logger = logging.getLogger("graphknows.mcp.tools.stm")
     s = get_settings()
@@ -235,9 +235,9 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
             "errors": [],
         }
 
-    flusher = build_session_flusher(s)
-    opts = FlushOptions(
-        summarize_topics=True,
+    pipeline = build_promotion_pipeline(s)
+    request = PromotionRequest(
+        session_id=session_id,
         run_gds=True,
         clear_stm=True,
         merge_entities=True,
@@ -246,7 +246,7 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: _bg_run(flusher.flush(session_id, opts)),
+        lambda: _bg_run(pipeline.promote(request)),
     )
 
     # Sync all Neo4j TOPIC nodes to pgvector ltm_topics (embed summary → ANN index).

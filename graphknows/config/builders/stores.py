@@ -109,15 +109,15 @@ def build_memory_ingestor(settings: GraphKnowsSettings) -> Any:
     return MemoryIngestor(mg, pg, extractor, embed_fn=embed_one, rel_extractor=rel_extractor)
 
 
-def build_session_flusher(settings: GraphKnowsSettings) -> Any:
-    """Build a SessionFlusher from settings."""
-    from graphknows.memory.flush import SessionFlusher
+def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
+    """Build an LTMPromotionPipeline from settings."""
+    from graphknows.memory.flush import LTMPromotionPipeline
 
     mg = build_memgraph_store(settings)
     pg = build_pgvector_store(settings)
     neo = build_neo4j_store(settings)
     key = settings.openrouter_api_key or ""
-    return SessionFlusher(
+    return LTMPromotionPipeline(
         mg,
         pg,
         neo,

@@ -70,16 +70,16 @@ async def test_workflow_run_connects_pg() -> None:
     mock_flush_result.edges_written = 0
     mock_flush_result.errors = []
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(return_value=mock_flush_result)
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(return_value=mock_flush_result)
 
     request = CorpusIngestRequest(documents=[])
 
     with (
         patch("graphknows.memory.stm.service.STMService", return_value=mock_stm),
         patch(
-            "graphknows.memory.flush.SessionFlusher",
-            return_value=mock_flusher,
+            "graphknows.memory.flush.LTMPromotionPipeline",
+            return_value=mock_pipeline,
         ),
     ):
         await workflow.run(request)

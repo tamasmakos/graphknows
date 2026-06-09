@@ -256,12 +256,12 @@ async def test_flush_calls_session_flusher(mock_container):
     internal.elapsed_s = 1.5
     internal.errors = []
 
-    mock_flusher = MagicMock()
-    mock_flusher.flush = AsyncMock(return_value=internal)
+    mock_pipeline = MagicMock()
+    mock_pipeline.promote = AsyncMock(return_value=internal)
 
     with patch(
-        "graphknows.memory.flush.SessionFlusher",
-        return_value=mock_flusher,
+        "graphknows.memory.flush.LTMPromotionPipeline",
+        return_value=mock_pipeline,
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
         result = await adapter.flush(session_id="s1")
@@ -461,17 +461,17 @@ def test_capabilities_returns_all_true(
     assert caps.supports_promote is True
 
 
-@patch("graphknows.memory.adapter.SessionFlusher")
+@patch("graphknows.memory.adapter.LTMPromotionPipeline")
 @patch("graphknows.memory.adapter.MemoryIngestor")
 @patch("graphknows.memory.adapter.DialogCapture")
 @pytest.mark.asyncio
 async def test_promote_calls_session_flusher(
     mock_dialog_writer,
     mock_ingestor,
-    mock_flusher,
+    mock_pipeline,
 ):
     adapter = _make_adapter()
-    mock_flusher.return_value.flush = AsyncMock(
+    mock_pipeline.return_value.promote = AsyncMock(
         return_value=MagicMock(
             nodes_written=10,
             edges_written=5,
@@ -490,10 +490,10 @@ async def test_promote_calls_session_flusher(
     )
     result = await adapter.promote(options)
 
-    mock_flusher.return_value.flush.assert_awaited_once()
-    args, kwargs = mock_flusher.return_value.flush.call_args
-    assert args[0] == "s1"
-    assert kwargs["options"].summarize_topics is True
+    mock_pipeline.return_value.promote.assert_awaited_once()
+    (request,), _ = mock_pipeline.return_value.promote.call_args
+    assert request.session_id == "s1"
+    assert request.run_gds is True
     assert result["session_id"] == "s1"
     assert result["run_gds"] is True
     assert result["run_topics"] is True
@@ -507,17 +507,17 @@ async def test_promote_calls_session_flusher(
     assert result["errors"] == []
 
 
-@patch("graphknows.memory.adapter.SessionFlusher")
+@patch("graphknows.memory.adapter.LTMPromotionPipeline")
 @patch("graphknows.memory.adapter.MemoryIngestor")
 @patch("graphknows.memory.adapter.DialogCapture")
 @pytest.mark.asyncio
 async def test_promote_always_summarizes_topics(
     mock_dialog_writer,
     mock_ingestor,
-    mock_flusher,
+    mock_pipeline,
 ):
     adapter = _make_adapter()
-    mock_flusher.return_value.flush = AsyncMock(
+    mock_pipeline.return_value.promote = AsyncMock(
         return_value=MagicMock(
             nodes_written=1,
             edges_written=1,
@@ -536,8 +536,8 @@ async def test_promote_always_summarizes_topics(
     )
     result = await adapter.promote(options)
 
-    _, kwargs = mock_flusher.return_value.flush.call_args
-    assert kwargs["options"].summarize_topics is True
+    (request,), _ = mock_pipeline.return_value.promote.call_args
+    assert request.run_gds is False
     assert result["run_topics"] is True
 
 
@@ -615,23 +615,23 @@ class TestAdapterLifecycle:
         assert result[0]["text"] == "EU AI Act fact"
         assert "source_type" in result[0]
 
-    @patch("graphknows.memory.adapter.SessionFlusher")
+    @patch("graphknows.memory.adapter.LTMPromotionPipeline")
     @patch("graphknows.memory.adapter.MemoryIngestor")
     @patch("graphknows.memory.adapter.DialogCapture")
     @pytest.mark.asyncio
-    async def test_promote_after_write(self, mock_dw_cls, mock_ing_cls, mock_flusher_cls):
-        mock_flush_result = MagicMock()
-        mock_flush_result.__dict__ = {"session_id": SESSION_ID}
-        mock_flusher_cls.return_value.flush = AsyncMock(return_value=mock_flush_result)
+    async def test_promote_after_write(self, mock_dw_cls, mock_ing_cls, mock_pipeline_cls):
+        mock_promote_result = MagicMock()
+        mock_promote_result.__dict__ = {"session_id": SESSION_ID}
+        mock_pipeline_cls.return_value.promote = AsyncMock(return_value=mock_promote_result)
 
         adapter = _make_adapter()
         adapter.open_session(SESSION_ID)
         adapter.write_turn(TURNS[0])
 
         result = await adapter.promote(PROMOTE_OPTIONS)
-        mock_flusher_cls.return_value.flush.assert_called_once()
-        call_session_id = mock_flusher_cls.return_value.flush.call_args[0][0]
-        assert call_session_id == SESSION_ID
+        mock_pipeline_cls.return_value.promote.assert_called_once()
+        (request,), _ = mock_pipeline_cls.return_value.promote.call_args
+        assert request.session_id == SESSION_ID
         assert isinstance(result, dict)
 
     @patch("graphknows.memory.adapter.MemoryIngestor")

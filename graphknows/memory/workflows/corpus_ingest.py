@@ -79,7 +79,8 @@ class CorpusIngestWorkflow:
         if not getattr(self._pg, "_pool", None):
             _stm_run(self._pg.connect())
 
-        from graphknows.memory.flush import FlushOptions, SessionFlusher
+        from graphknows.memory.flush import LTMPromotionPipeline
+        from graphknows.memory.models.promotion import PromotionRequest
         from graphknows.memory.stm.service import STMService
 
         t0 = time.monotonic()
@@ -134,25 +135,26 @@ class CorpusIngestWorkflow:
         from graphknows.mcp._state import get_settings
 
         flush_pg = build_pgvector_store(get_settings())
-        flusher = SessionFlusher(
+        pipeline = LTMPromotionPipeline(
             mg_store=self._mg,
             pg_store=flush_pg,
             neo_store=self._neo,
             openrouter_key=self._openrouter_key,
             relation_extraction_mode=self._relation_extraction_mode,
         )
-        flush_opts = FlushOptions(
-            summarize_topics=True,
-            run_gds=request.run_gds,
-            clear_stm=request.clear_stm,
-        )
         try:
-            flush_result = await flusher.flush(session_id, options=flush_opts)
+            flush_result = await pipeline.promote(
+                PromotionRequest(
+                    session_id=session_id,
+                    run_gds=request.run_gds,
+                    clear_stm=request.clear_stm,
+                )
+            )
             result.nodes_written = flush_result.nodes_written
             result.edges_written = flush_result.edges_written
             result.errors.extend(flush_result.errors)
         except Exception as exc:
-            err = f"SessionFlusher.flush failed: {exc}"
+            err = f"LTMPromotionPipeline.promote failed: {exc}"
             result.errors.append(err)
             log.exception(err)
 

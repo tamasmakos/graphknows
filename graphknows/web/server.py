@@ -476,16 +476,18 @@ async def flush_session(request: Request) -> JSONResponse:
     opts_raw = body.get("options", {}) or {}
 
     try:
-        from graphknows.config.builders.stores import build_session_flusher
-        from graphknows.memory.flush import FlushOptions
+        from graphknows.config.builders.stores import build_promotion_pipeline
+        from graphknows.memory.models.promotion import PromotionRequest
 
-        opts = FlushOptions(
+        request = PromotionRequest(
+            session_id=session_id,
             clear_stm=bool(opts_raw.get("clear_stm", True)),
             run_gds=bool(opts_raw.get("run_gds", True)),
             merge_entities=bool(opts_raw.get("merge_entities", True)),
         )
-        flusher = await asyncio.to_thread(build_session_flusher, get_settings())
-        result = await flusher.flush(session_id, opts)
+        pipeline = await asyncio.to_thread(build_promotion_pipeline, get_settings())
+        result = await pipeline.promote(request)
+        gds = result.gds_result
         return JSONResponse(
             {
                 "session_id": result.session_id,
@@ -494,9 +496,9 @@ async def flush_session(request: Request) -> JSONResponse:
                 "chunks_promoted": result.chunks_promoted,
                 "turns_promoted": result.turns_promoted,
                 "merged_entities": result.merged_entities,
-                "community_count": result.community_count,
-                "modularity": round(result.modularity, 4),
-                "ran_iterations": result.ran_iterations,
+                "community_count": gds.community_count if gds else 0,
+                "modularity": round(gds.modularity, 4) if gds else 0.0,
+                "ran_iterations": gds.ran_iterations if gds else 0,
                 "topics_created": result.topics_created,
                 "elapsed_s": round(result.elapsed_s, 2),
                 "errors": result.errors,
