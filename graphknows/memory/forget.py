@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -64,8 +63,10 @@ class LTMForget:
             finally:
                 await conn.close()
 
-        with contextlib.suppress(RuntimeError):
+        try:
             asyncio.get_event_loop().run_until_complete(_pg_delete())
+        except RuntimeError as exc:
+            log.warning("forget_community pg_delete failed: %s", exc)
 
         log.info("forget_community %d: deleted %d entities + topic node", community_id, deleted)
         return {"community_id": community_id, "deleted_entities": deleted}

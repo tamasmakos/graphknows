@@ -621,8 +621,9 @@ class TestAdapterLifecycle:
     @patch("graphknows.memory.adapter.DialogCapture")
     @pytest.mark.asyncio
     async def test_promote_after_write(self, mock_dw_cls, mock_ing_cls, mock_pipeline_cls):
-        mock_promote_result = MagicMock()
-        mock_promote_result.__dict__ = {"session_id": SESSION_ID}
+        from graphknows.memory.models.promotion import PromotionRecord
+
+        mock_promote_result = PromotionRecord(session_id=SESSION_ID)
         mock_pipeline_cls.return_value.promote = AsyncMock(return_value=mock_promote_result)
 
         adapter = _make_adapter()

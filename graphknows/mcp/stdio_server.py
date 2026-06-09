@@ -57,74 +57,7 @@ from graphknows.mcp.tools.recall import (  # noqa: F401, E402
 from graphknows.mcp.tools.stm import memory_flush, memory_ingest, memory_recall  # noqa: F401, E402
 from graphknows.mcp.tools.web import memory_mirror  # noqa: F401, E402
 
-# ---------------------------------------------------------------------------
-# Backward-compat shims — kept for existing test patches
-# ---------------------------------------------------------------------------
-_mg: object = None
-_pg: object = None
-_pg_connected: bool = False
-
-
-def _get_settings() -> object:  # type: ignore[return]
-    from graphknows.mcp._state import get_settings
-
-    return get_settings()
-
-
-def _mg_uri() -> str:
-    import os
-
-    return os.environ.get("MEMGRAPH_URI", "bolt://localhost:17687")
-
-
-def _pg_dsn() -> str:
-    import os
-
-    return os.environ.get("PGVECTOR_DSN", "postgresql://localhost:5432/graphknows")
-
-
-def _neo4j_creds() -> tuple[str, str, str]:
-    import os
-
-    return (
-        os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
-        os.environ.get("NEO4J_USER", "neo4j"),
-        os.environ.get("NEO4J_PASSWORD", ""),
-    )
-
-
-def _embed_fn() -> object:
-    from graphknows.memory.stores.embedder import embed_one
-
-    return embed_one
-
-
-def _get_mg() -> object:
-    global _mg
-    if _mg is None:
-        from graphknows.mcp._state import get_mg_store
-
-        _mg = get_mg_store()
-    return _mg
-
-
-async def _get_pg() -> object:
-    global _pg, _pg_connected
-    if _pg is None or not _pg_connected:
-        from graphknows.mcp._state import get_pg_store
-
-        _pg = await get_pg_store()
-        _pg_connected = True
-    return _pg
-
-
-def _get_neo() -> object:
-    from graphknows.mcp._state import get_neo_store
-
-    return get_neo_store()
-
-
-# Keep private helper accessible for tests that import it
+# Re-export private helper so tests can import it from this module
 from graphknows.mcp.tools.stm import _normalise_and_weight  # noqa: F401, E402
 
 

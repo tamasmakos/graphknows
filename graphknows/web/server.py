@@ -14,16 +14,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from graphknows.config import GraphKnowsSettings
-from graphknows.config.builders.stores import (
-    build_memgraph_store,
-    build_neo4j_store,
-    build_pgvector_store,
-)
 from graphknows.config.health import check_backends, get_memory_stats
+from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get_settings
 from graphknows.web.links import DEFAULT_PORT
-
-_settings: GraphKnowsSettings | None = None
 
 
 def _frontend_dir() -> Path:
@@ -34,29 +27,6 @@ def _frontend_dir() -> Path:
     if source_tree.exists():
         return source_tree
     return Path.cwd() / "frontend"
-
-
-def get_settings() -> GraphKnowsSettings:
-    """Return singleton settings for the web server."""
-    global _settings
-    if _settings is None:
-        _settings = GraphKnowsSettings()
-    return _settings
-
-
-def get_mg_store() -> Any:
-    """Build a Memgraph store using current web server settings."""
-    return build_memgraph_store(get_settings())
-
-
-def get_neo_store() -> Any:
-    """Build a Neo4j store using current web server settings."""
-    return build_neo4j_store(get_settings())
-
-
-def get_pg_store() -> Any:
-    """Build a PgVector store using current web server settings."""
-    return build_pgvector_store(get_settings())
 
 
 def _error_payload(exc: Exception) -> dict[str, Any]:
