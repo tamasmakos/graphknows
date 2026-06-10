@@ -79,30 +79,103 @@ def _normalise_and_weight(hits: list[Any], weight: float) -> None:
 
 @app.tool()
 async def memory_ingest(
-    text: str,
-    session_id: str,
+    messages: "str | list[dict]" = "",
+    session_id: str = "",
+    user_id: str = "",
+    agent_id: str = "",
+    run_id: str = "",
     title: str = "",
+    infer: bool = True,
+    memory_class: str = "raw_evidence",
+    metadata: "dict[str, Any]" = {},
+    text: str = "",
 ) -> dict[str, Any]:
-    """Ingest text into graphknows short-term memory (Memgraph + pgvector STM).
+    """Ingest text or a conversation thread into graphknows short-term memory.
 
-    GLiNER2 entity extraction runs on the text; extracted entities are stored
-    as nodes in Memgraph.  The text is chunked and embedded into pgvector stm_*.
+    Accepts a plain string OR a list of message dicts for batch conversation ingestion.
+    Scope must include at least one of user_id, agent_id, run_id (or session_id as
+    a backward-compat shorthand that maps to run_id).
+
+    When messages is a list, all turns are ingested under a single dialog determined
+    by the scope — enabling a full exchange to be stored in one call.
+
+    Set infer=False to skip NER and graph entity extraction (embed-only, faster).
 
     Note: First call takes ~15s while GLiNER2 model loads.
 
     Args:
-        text: The text content to ingest.
-        session_id: Session namespace for the STM graph.
-        title: Optional document title for provenance.
+        messages: Plain text string, OR list of {role, content} dicts.
+        session_id: Backward-compat shorthand → run_id (ignored if run_id is set).
+        user_id: Human participant identifier.
+        agent_id: Agent or model identifier.
+        run_id: Conversation run / session identifier.
+        title: Document title (used when messages is a plain text document).
+        infer: Run NER entity extraction (default True).
+        memory_class: Semantic class — raw_evidence, summary, fact, episode, state.
+        metadata: Extra key/value pairs stored with each record.
+        text: Deprecated alias for messages (backward compat).
 
     Returns:
         Dict with file_id, chunks, entities, elapsed_s, errors.
     """
+    # Backward compat: old callers pass text= instead of messages=
+    if text and not messages:
+        messages = text
+
+    from graphknows.memory.adapter_types import MemoryClass
+    from graphknows.memory.models.ingest_options import IngestOptions
+    from graphknows.memory.models.message import normalize_messages
+    from graphknows.memory.models.scope import MemoryScope
+
+    # Build scope — session_id maps to run_id for backward compat.
+    # MemoryScope(run_id=x).to_session_id() returns x when run_id is the only
+    # component, so old-style session_id strings are preserved as-is in storage.
+    scope = MemoryScope(
+        user_id=user_id or None,
+        agent_id=agent_id or None,
+        run_id=run_id or session_id or None,
+    )
+
+    # Dispatch: list[dict] or str with role-like content → dialog path
+    #           plain str with title → document/artifact path (chunked)
+    is_conversation = isinstance(messages, list) or (
+        isinstance(messages, dict) and "role" in messages
+    )
+
+    if is_conversation or (isinstance(messages, str) and not title):
+        from graphknows.config.builders.stores import build_stm_service
+
+        try:
+            mc = MemoryClass(memory_class)
+        except ValueError:
+            mc = MemoryClass.raw_evidence
+
+        options = IngestOptions(
+            scope=scope,
+            metadata=metadata,
+            infer=infer,
+            memory_class=mc,
+        )
+        msgs = normalize_messages(messages)
+        service = build_stm_service(get_settings())
+        result = service.ingest_messages(msgs, options)
+        return {
+            "file_id": result.file_id,
+            "chunks": result.chunk_count,
+            "entities": result.entity_count,
+            "elapsed_s": round(result.elapsed_s, 3),
+            "errors": list(result.errors),
+        }
+
+    # Document / artifact path (plain text + title) — chunked via _STMIngestHandler
     from graphknows.config.builders.stores import build_stm_service
 
     service = build_stm_service(get_settings())
-    result = service.ingest(text, session_id=session_id, title=title)
-
+    result = service.ingest(
+        messages,  # type: ignore[arg-type]
+        session_id=scope.to_session_id(),
+        title=title,
+    )
     return {
         "file_id": result.file_id,
         "chunks": result.chunk_count,
@@ -310,50 +383,40 @@ async def memory_ingest_turn(
     dialog_id: str = "",
     turn_index: int = 0,
 ) -> dict:
-    """Ingest a conversation turn into graphknows short-term memory.
+    """Ingest a single conversation turn into graphknows short-term memory.
 
-    Writes a DIALOG → TURN node in Memgraph, extracts entities with GLiNER2,
-    creates TURN→ENTITY MENTIONS edges, and embeds turn text into pgvector stm_turns.
+    Deprecated: use memory_ingest with a list of message dicts instead.
+    This tool is kept for backward compatibility and will be removed in a future release.
 
     Args:
         text: Turn text content (user message, assistant response, etc.).
         role: Speaker role — 'user', 'assistant', or 'system'.
         session_id: Session namespace for scoping.
-        dialog_id: Dialog identifier. Auto-generated as 'dialog-<session_id>' if empty.
+        dialog_id: Unused (dialog is derived from scope). Kept for compat.
         turn_index: Ordinal position within the dialog (0-based).
 
     Returns:
         Dict with dialog_id, turn_id, entity_count, elapsed_s, errors.
     """
     import time
-    import uuid
 
-    from graphknows.config.builders.stores import build_pgvector_store
-    from graphknows.memory.extractor import GLiNER2EntityExtractor
-    from graphknows.memory.stm._async_bridge import _run as _bg_run
-    from graphknows.memory.stm.dialog import Turn
-    from graphknows.memory.stores.embedder import embed_one
+    from graphknows.memory.models.ingest_options import IngestOptions
+    from graphknows.memory.models.scope import MemoryScope
 
-    s = get_settings()
-    mg = get_mg_store()
-    pg = build_pgvector_store(s)
-    # Pool must be created on _BG_LOOP since write_stm_turn runs there via _run()
-    _bg_run(pg.connect())
+    scope = MemoryScope(run_id=session_id)
+    options = IngestOptions(scope=scope, turn_index_offset=turn_index)
+    msg = {"role": role, "content": text}
 
-    if not dialog_id:
-        dialog_id = f"dialog-{session_id}"
+    t0 = time.perf_counter()
+    result = await memory_ingest(messages=[msg], run_id=session_id, infer=True)
 
-    turn_id = str(uuid.uuid4())
-    turn = Turn(
-        id=turn_id,
-        index=turn_index,
-        role=role,
-        text=text,
-        timestamp=time.time(),
-    )
-
-    loop = asyncio.get_running_loop()
-    extractor = await loop.run_in_executor(None, GLiNER2EntityExtractor)
-
-    result = await _ingest_turn_async(mg, pg, extractor, embed_one, session_id, dialog_id, turn)
-    return result
+    # Translate response to the legacy format callers expect
+    turns = result.get("turns", result.get("chunks", 0))
+    d_id = result.get("dialog_id", scope.to_dialog_id())
+    return {
+        "dialog_id": d_id,
+        "turn_id": "",  # not tracked individually in the new path
+        "entity_count": result.get("entities", 0),
+        "elapsed_s": result.get("elapsed_s", round(time.perf_counter() - t0, 3)),
+        "errors": result.get("errors", []),
+    }

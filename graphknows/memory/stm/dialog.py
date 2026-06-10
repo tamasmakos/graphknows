@@ -83,6 +83,7 @@ class DialogCapture:
         session_id: str,
         dialog_id: str,
         turn: Turn,
+        extra_metadata: dict | None = None,
     ) -> DialogResult:
         """Write a single turn into the interaction graph.
 
@@ -145,19 +146,18 @@ class DialogCapture:
         # Embed turn text → stm_turns
         try:
             embedding = self._embed_fn(turn.text) if turn.text.strip() else []
-            _run(
-                self._pg.write_stm_turn(
-                    {
-                        "id": turn.id,
-                        "session_id": session_id,
-                        "dialog_id": dialog_id,
-                        "turn_index": turn.index,
-                        "role": turn.role,
-                        "text": turn.text,
-                        "embedding": embedding,
-                    }
-                )
-            )
+            turn_record: dict = {
+                "id": turn.id,
+                "session_id": session_id,
+                "dialog_id": dialog_id,
+                "turn_index": turn.index,
+                "role": turn.role,
+                "text": turn.text,
+                "embedding": embedding,
+            }
+            if extra_metadata:
+                turn_record["metadata"] = extra_metadata
+            _run(self._pg.write_stm_turn(turn_record))
         except Exception as exc:
             errors.append(f"pg_stm_turn: {exc}")
 

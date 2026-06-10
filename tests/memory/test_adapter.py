@@ -11,10 +11,12 @@ from graphknows.memory.adapter import (
     AgentMemoryAdapter,
     FlushResult,
     GraphknowsMemoryAdapter,
-    IngestResult,
     MemoryStats,
     RecallHit,
 )
+from graphknows.memory.models.ingest import IngestResult
+from graphknows.memory.models.ingest_options import IngestOptions
+from graphknows.memory.models.scope import MemoryScope
 
 # ---------------------------------------------------------------------------
 # DTO tests
@@ -23,10 +25,10 @@ from graphknows.memory.adapter import (
 
 @pytest.mark.unit
 def test_ingest_result_dataclass():
-    r = IngestResult(file_id="f1", chunks=3, entities=5, elapsed_s=1.2)
+    r = IngestResult(session_id="s1", file_id="f1", title="", chunk_count=3, entity_count=5, elapsed_s=1.2)
     assert r.file_id == "f1"
-    assert r.chunks == 3
-    assert r.entities == 5
+    assert r.chunk_count == 3
+    assert r.entity_count == 5
     assert r.elapsed_s == 1.2
     assert r.errors == []
 
@@ -115,15 +117,13 @@ def mock_container():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_ingest_delegates_to_memory_ingestor(mock_container):
-    internal_result = MagicMock()
-    internal_result.file_id = "f1"
-    internal_result.chunk_count = 3
-    internal_result.entity_count = 5
-    internal_result.elapsed_s = 1.2
-    internal_result.errors = []
+    internal_result = IngestResult(
+        session_id="r:s1", file_id="dialog-r:s1", title="",
+        chunk_count=2, entity_count=5, elapsed_s=1.2,
+    )
 
     mock_svc = MagicMock()
-    mock_svc.ingest = MagicMock(return_value=internal_result)
+    mock_svc.ingest_messages = MagicMock(return_value=internal_result)
 
     with (
         patch(
@@ -141,16 +141,16 @@ async def test_ingest_delegates_to_memory_ingestor(mock_container):
         patch("graphknows.memory.stm._async_bridge._run"),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
+        options = IngestOptions(scope=MemoryScope(run_id="s1"))
         result = await adapter.ingest(
-            text="hello world",
-            session_id="s1",
-            title="doc1",
+            messages=[{"role": "user", "content": "hello world"}],
+            options=options,
         )
 
     assert isinstance(result, IngestResult)
-    assert result.file_id == "f1"
-    assert result.chunks == 3
-    assert result.entities == 5
+    assert result.file_id == "dialog-r:s1"
+    assert result.chunk_count == 2
+    assert result.entity_count == 5
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ async def test_recall_scope_stm(mock_container):
         ),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.recall(query="test", session_id="s1", top_k=5, scope="stm")
+        result = await adapter.recall(query="test", scope="s1", top_k=5, recall_scope="stm")
 
     assert len(result) == 1
     assert isinstance(result[0], RecallHit)
@@ -204,7 +204,7 @@ async def test_recall_scope_ltm(mock_container):
         ),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.recall(query="test", session_id="s1", top_k=5, scope="ltm")
+        result = await adapter.recall(query="test", scope="s1", top_k=5, recall_scope="ltm")
 
     assert len(result) == 1
     assert result[0].score == 0.8
@@ -234,7 +234,7 @@ async def test_recall_scope_both(mock_container):
         ),
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.recall(query="test", session_id="s1", top_k=5, scope="both")
+        result = await adapter.recall(query="test", scope="s1", top_k=5, recall_scope="both")
 
     assert len(result) == 2
     scores = [r.score for r in result]
@@ -265,7 +265,7 @@ async def test_flush_calls_session_flusher(mock_container):
         return_value=mock_pipeline,
     ):
         adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.flush(session_id="s1")
+        result = await adapter.flush(scope="s1")
 
     assert isinstance(result, FlushResult)
     assert result.nodes == 10
