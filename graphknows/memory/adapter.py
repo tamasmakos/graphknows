@@ -19,7 +19,11 @@ from graphknows.memory.adapter_types import (
     TurnRecord,
 )
 from graphknows.memory.flush import LTMPromotionPipeline
+from graphknows.memory.models.ingest import IngestResult
+from graphknows.memory.models.ingest_options import IngestOptions
+from graphknows.memory.models.message import Message, MessageInput, normalize_messages
 from graphknows.memory.models.promotion import PromotionRequest
+from graphknows.memory.models.scope import MemoryScope
 from graphknows.memory.stm import STMService
 from graphknows.memory.stm.dialog import DialogCapture as DialogCapture
 from graphknows.memory.stm.dialog import Turn
@@ -123,13 +127,14 @@ class GraphknowsAdapter:
             text=turn.content,
             timestamp=time.time(),
         )
+        extra_metadata = {"memory_class": turn.memory_class.value, **turn.metadata}
         dw = getattr(self, "_dialog_writer", None) or DialogCapture(  # type: ignore[no-untyped-call]
             mg_store=self.mg_store,
             pg_store=self.pg_store,
             extractor=self.extractor,
             embed_fn=self.embed_fn,
         )
-        dw.write_turn(turn.session_id, dialog_id, mapped_turn)
+        dw.write_turn(turn.session_id, dialog_id, mapped_turn, extra_metadata=extra_metadata)
 
     def ingest_artifact(
         self,
@@ -239,17 +244,7 @@ class GraphknowsAdapter:
 # ---------------------------------------------------------------------------
 # Data transfer objects
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class IngestResult:
-    """Result of a memory ingest operation."""
-
-    file_id: str
-    chunks: int
-    entities: int
-    elapsed_s: float
-    errors: list[str] = field(default_factory=list)
+# IngestResult is defined in graphknows.memory.models.ingest (imported above).
 
 
 @dataclass
@@ -298,28 +293,31 @@ class AgentMemoryAdapter(Protocol):
 
     async def ingest(
         self,
-        text: str,
-        session_id: str,
-        title: str = "",
+        messages: MessageInput,
+        options: IngestOptions,
     ) -> IngestResult:
-        """Ingest text into STM for the given session."""
+        """Ingest messages into STM.
+
+        messages accepts str, dict, or list[str | dict | Message].
+        All inputs are normalized via normalize_messages() before storage.
+        """
         ...
 
     async def recall(
         self,
         query: str,
-        session_id: str,
+        scope: MemoryScope,
         top_k: int = 5,
-        scope: str = "stm",
+        recall_scope: str = "stm",
     ) -> list[RecallHit]:
         """Recall relevant chunks from memory for the given query."""
         ...
 
-    async def flush(self, session_id: str) -> FlushResult:
+    async def flush(self, scope: MemoryScope) -> FlushResult:
         """Flush a session from STM to LTM."""
         ...
 
-    async def stats(self, session_id: str = "") -> MemoryStats:
+    async def stats(self, scope: MemoryScope | None = None) -> MemoryStats:
         """Return node/chunk counts for STM and LTM."""
         ...
 
@@ -381,14 +379,16 @@ class GraphknowsMemoryAdapter:
 
     async def ingest(
         self,
-        text: str,
-        session_id: str,
-        title: str = "",
+        messages: MessageInput,
+        options: IngestOptions,
     ) -> IngestResult:
-        """Ingest text into STM and return ingest statistics."""
+        """Ingest messages into STM.
+
+        messages accepts str, dict, or list[str | dict | Message].
+        options carries scope (user_id/agent_id/run_id), infer flag, and metadata.
+        """
         if self._container is not None:
             mg, pg, _ = self._stores_from_container()
-            embed_fn = getattr(self._container.settings, "embed_model", None)
             from graphknows.memory.stores.embedder import embed_one
 
             embed_fn = embed_one
@@ -401,20 +401,35 @@ class GraphknowsMemoryAdapter:
         _stm_run(pg.connect())
         svc = STMService(mg, pg, extractor, embed_fn=embed_fn)
 
-        import asyncio
+        msgs = normalize_messages(messages)
+        return await asyncio.to_thread(svc.ingest_messages, msgs, options)
 
-        internal = await asyncio.to_thread(
+    async def _ingest_text(
+        self,
+        text: str,
+        session_id: str,
+        title: str = "",
+    ) -> IngestResult:
+        """Ingest raw text as a document (artifact path, not dialog turns)."""
+        if self._container is not None:
+            mg, pg, _ = self._stores_from_container()
+            from graphknows.memory.stores.embedder import embed_one
+
+            embed_fn = embed_one
+        else:
+            mg, pg, _, embed_fn = self._lazy_stores()
+
+        from graphknows.memory.stm._async_bridge import _run as _stm_run
+
+        extractor = self._get_extractor()
+        _stm_run(pg.connect())
+        svc = STMService(mg, pg, extractor, embed_fn=embed_fn)
+
+        return await asyncio.to_thread(
             svc.ingest,
             text,
             session_id=session_id,
             title=title,
-        )
-        return IngestResult(
-            file_id=internal.file_id,
-            chunks=internal.chunk_count,
-            entities=internal.entity_count,
-            elapsed_s=internal.elapsed_s,
-            errors=list(internal.errors),
         )
 
     # ------------------------------------------------------------------
@@ -424,9 +439,9 @@ class GraphknowsMemoryAdapter:
     async def recall(
         self,
         query: str,
-        session_id: str,
+        scope: MemoryScope | str,
         top_k: int = 5,
-        scope: str = "stm",
+        recall_scope: str = "stm",
     ) -> list[RecallHit]:
         """Recall relevant chunks from STM, LTM, or both."""
         if self._container is not None:
@@ -439,10 +454,12 @@ class GraphknowsMemoryAdapter:
 
         from graphknows.memory.stm.recall import recall_short_term
 
+        session_id = scope.to_session_id() if isinstance(scope, MemoryScope) else scope
+
         stm_hits: list[Any] = []
         ltm_hits: list[Any] = []
 
-        if scope in ("stm", "both"):
+        if recall_scope in ("stm", "both"):
             stm_hits = await asyncio.to_thread(
                 recall_short_term,
                 mg,
@@ -453,7 +470,7 @@ class GraphknowsMemoryAdapter:
                 embed_fn=embed_fn,
             )
 
-        if scope in ("ltm", "both"):
+        if recall_scope in ("ltm", "both"):
             from graphknows.memory.query.recall_ltm import recall_long_term
 
             ltm_hits = await asyncio.to_thread(
@@ -485,7 +502,7 @@ class GraphknowsMemoryAdapter:
     # flush
     # ------------------------------------------------------------------
 
-    async def flush(self, session_id: str) -> FlushResult:
+    async def flush(self, scope: MemoryScope | str) -> FlushResult:
         """Flush a session from Memgraph STM to Neo4j LTM."""
         if self._container is not None:
             mg, pg, neo = self._stores_from_container()
@@ -498,6 +515,7 @@ class GraphknowsMemoryAdapter:
         from graphknows.memory.flush import LTMPromotionPipeline
         from graphknows.memory.models.promotion import PromotionRequest
 
+        session_id = scope.to_session_id() if isinstance(scope, MemoryScope) else scope
         pipeline = LTMPromotionPipeline(mg, pg, neo)
         internal = await pipeline.promote(PromotionRequest(session_id=session_id))
         return FlushResult(
@@ -513,7 +531,7 @@ class GraphknowsMemoryAdapter:
     # stats
     # ------------------------------------------------------------------
 
-    async def stats(self, session_id: str = "") -> MemoryStats:
+    async def stats(self, scope: MemoryScope | str | None = None) -> MemoryStats:
         """Return aggregate node/chunk counts for STM and LTM."""
         import asyncpg
 
