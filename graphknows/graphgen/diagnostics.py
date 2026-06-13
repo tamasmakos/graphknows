@@ -50,7 +50,7 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def write_diagnostic_json(config: Dict[str, Any], name: str, payload: Any) -> str | None:
+def write_diagnostic_json(config: dict[str, Any], name: str, payload: Any) -> str | None:
     if not diagnostics_enabled(config):
         return None
 

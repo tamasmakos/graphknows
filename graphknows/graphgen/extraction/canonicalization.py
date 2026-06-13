@@ -48,6 +48,9 @@ OPPOSING_TERM_PAIRS = {
     ("DEPENDENCE", "INDEPENDENCE"),
 }
 
+_ALIAS_SIMILARITY_THRESHOLD: float = 0.92
+_MIN_PLURAL_STRIP_LENGTH: int = 3
+
 DEMONYM_SUFFIXES = (
     "AN",
     "IAN",
@@ -68,7 +71,7 @@ def normalize_surface_form(text: str) -> str:
 
 
 def _strip_plural_suffix(token: str) -> str:
-    if token.endswith("S") and len(token) > 3:
+    if token.endswith("S") and len(token) > _MIN_PLURAL_STRIP_LENGTH:
         return token[:-1]
     return token
 
@@ -170,7 +173,7 @@ def are_potential_aliases(a: str, b: str) -> bool:
         return False
 
     ratio = SequenceMatcher(None, norm_a.replace("_", " "), norm_b.replace("_", " ")).ratio()
-    if ratio >= 0.92:
+    if ratio >= _ALIAS_SIMILARITY_THRESHOLD:
         return True
 
     tokens_a = set(norm_a.split("_"))

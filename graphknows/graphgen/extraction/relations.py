@@ -134,6 +134,25 @@ class BaseExtractor(ABC):
 # DSPy implementation
 # ---------------------------------------------------------------------------
 
+_OPEN_DOMAIN_CLASSES = [
+    "PERSON", "ORGANIZATION", "PROJECT", "SYSTEM", "TEAM", "LOCATION",
+    "PRODUCT", "SERVICE", "TECHNOLOGY", "CONCEPT", "EVENT", "DOCUMENT",
+]
+
+_OPEN_DOMAIN_RELATION_TYPES = [
+    "WORKS_AT", "WORKS_FOR", "EMPLOYED_BY", "MEMBER_OF", "JOINED",
+    "MANAGES", "MANAGED_BY", "REPORTS_TO", "LEADS", "LED_BY",
+    "OWNS", "OWNED_BY", "OPERATED_BY", "OPERATES",
+    "FUNDS", "FUNDED_BY", "SPONSORS", "SPONSORED_BY",
+    "PART_OF", "CONTAINS", "BELONGS_TO", "LOCATED_IN",
+    "CREATED_BY", "DEVELOPED_BY", "AUTHORED_BY",
+    "USES", "USED_BY", "DEPENDS_ON", "SUPPORTS",
+    "SUBMITTED_TO", "APPROVED_BY", "REVIEWED_BY",
+    "ASSOCIATED_WITH", "RELATED_TO", "CONNECTED_TO",
+    "SUPPLIES", "SUPPLIED_BY", "CONTRACTED_WITH",
+    "ASSIGNED_TO", "RESPONSIBLE_FOR",
+]
+
 
 class DSPyExtractor(BaseExtractor):
     """DSPy + OpenRouter relation extractor."""
@@ -147,36 +166,8 @@ class DSPyExtractor(BaseExtractor):
         ontology_config = config.get("ontology", {})
         if hasattr(ontology_config, "model_dump"):
             ontology_config = ontology_config.model_dump()
-        ontology_file = str(ontology_config.get("file") or "").strip()
-        if ontology_file:
-            self._ontology: RdfOntologyManifest | None = load_rdf_ontology_file(ontology_file)
-            self._ontology_classes = [standardize_label(label) for label in self._ontology.class_labels]
-            self._ontology_relation_types = [
-                standardize_label(label) for label in self._ontology.property_labels
-            ]
-            if not self._ontology_classes or not self._ontology_relation_types:
-                raise ValueError(f"RDF ontology file produced no DSPy labels: {ontology_file}")
-        else:
-            # No ontology — use a broad open-domain set of semantic relation types.
-            self._ontology = None
-            self._ontology_classes = [
-                "PERSON", "ORGANIZATION", "PROJECT", "SYSTEM", "TEAM", "LOCATION",
-                "PRODUCT", "SERVICE", "TECHNOLOGY", "CONCEPT", "EVENT", "DOCUMENT",
-            ]
-            self._ontology_relation_types = [
-                "WORKS_AT", "WORKS_FOR", "EMPLOYED_BY", "MEMBER_OF", "JOINED",
-                "MANAGES", "MANAGED_BY", "REPORTS_TO", "LEADS", "LED_BY",
-                "OWNS", "OWNED_BY", "OPERATED_BY", "OPERATES",
-                "FUNDS", "FUNDED_BY", "SPONSORS", "SPONSORED_BY",
-                "PART_OF", "CONTAINS", "BELONGS_TO", "LOCATED_IN",
-                "CREATED_BY", "DEVELOPED_BY", "AUTHORED_BY",
-                "USES", "USED_BY", "DEPENDS_ON", "SUPPORTS",
-                "SUBMITTED_TO", "APPROVED_BY", "REVIEWED_BY",
-                "ASSOCIATED_WITH", "RELATED_TO", "CONNECTED_TO",
-                "SUPPLIES", "SUPPLIED_BY", "CONTRACTED_WITH",
-                "ASSIGNED_TO", "RESPONSIBLE_FOR",
-            ]
-            log.info("DSPyExtractor: no ontology file — using open-domain relation types")
+
+        self._load_ontology(ontology_config)
 
         model = (
             llm_config.get("extraction_model")
@@ -193,14 +184,38 @@ class DSPyExtractor(BaseExtractor):
                 "Current value is empty — check /root/graphknows/.env."
             )
 
+        self._configure_lm(api_key, model)
+
+    def _load_ontology(self, ontology_config: dict[str, Any]) -> None:
+        """Load RDF ontology labels, falling back to open-domain defaults."""
+        ontology_file = str(ontology_config.get("file") or "").strip()
+        if ontology_file:
+            self._ontology: RdfOntologyManifest | None = load_rdf_ontology_file(ontology_file)
+            self._ontology_classes = [
+                standardize_label(label) for label in self._ontology.class_labels
+            ]
+            self._ontology_relation_types = [
+                standardize_label(label) for label in self._ontology.property_labels
+            ]
+            if not self._ontology_classes or not self._ontology_relation_types:
+                raise ValueError(
+                    f"RDF ontology file produced no DSPy labels: {ontology_file}"
+                )
+        else:
+            self._ontology = None
+            self._ontology_classes = _OPEN_DOMAIN_CLASSES
+            self._ontology_relation_types = _OPEN_DOMAIN_RELATION_TYPES
+            log.info("DSPyExtractor: no ontology file — using open-domain relation types")
+
+    def _configure_lm(self, api_key: str, model: str) -> None:
+        """Build the DSPy LM instance and module.
+
+        Uses dspy.settings.context(lm=self._lm) inside _extract_sync instead of
+        dspy.configure() to avoid mutating the global thread-local from a different
+        thread than the one that will actually execute the module call.
+        """
         or_model = normalize_openrouter_model(model)
         log.info("Configuring DSPy LM for OpenRouter with model %s", or_model)
-        # Store the LM instance on self — do NOT call dspy.configure() here.
-        # dspy.configure() mutates a global thread-local and will raise
-        # "dspy.settings can only be changed by the thread that initially configured it"
-        # when extract_relations runs _extract_sync in asyncio.to_thread (a different thread).
-        # Instead we use dspy.settings.context(lm=self._lm) inside _extract_sync so the
-        # LM is scoped to whichever thread actually executes the module call.
         self._lm = dspy.LM(
             model=or_model,
             api_key=api_key,
@@ -212,6 +227,43 @@ class DSPyExtractor(BaseExtractor):
         self.module = GraphExtractorModule()
         log.info("Initialized DSPy extractor with model %s", or_model)
 
+    def _extract_triplet_fields(self, triplet: Any) -> dict[str, Any]:
+        """Pull raw fields from a DSPy Triplet object or dict."""
+        return {
+            "source": _model_or_mapping_get(triplet, "source"),
+            "relation": _model_or_mapping_get(triplet, "relation"),
+            "target": _model_or_mapping_get(triplet, "target"),
+            "source_type": _model_or_mapping_get(triplet, "source_type"),
+            "target_type": _model_or_mapping_get(triplet, "target_type"),
+            "evidence": _model_or_mapping_get(triplet, "evidence", ""),
+        }
+
+    def _triplet_is_valid(
+        self, raw: dict[str, Any], allowed_relations: set[str]
+    ) -> tuple[bool, str | None]:
+        """Return (is_valid, drop_reason). Pure predicate, no side effects."""
+        if not (raw.get("source") and raw.get("relation") and raw.get("target")):
+            return False, "missing_triplet_field"
+        if standardize_label(raw["relation"]) not in allowed_relations:
+            return False, "relation_type_not_in_rdf_ontology"
+        return True, None
+
+    def _normalize_triplet(
+        self, raw: dict[str, Any]
+    ) -> tuple[str, str, str, str, str, dict[str, Any]]:
+        """Standardize labels and build the props dict for a valid triplet."""
+        source = standardize_label(raw["source"])
+        relation = standardize_label(raw["relation"])
+        target = standardize_label(raw["target"])
+        source_type = standardize_label(raw.get("source_type") or "") or "ENTITY"
+        target_type = standardize_label(raw.get("target_type") or "") or "ENTITY"
+        props = {
+            "evidence": raw.get("evidence", ""),
+            "source_type": source_type,
+            "target_type": target_type,
+        }
+        return source, relation, target, source_type, target_type, props
+
     async def extract_relations(
         self,
         text: str,
@@ -222,18 +274,16 @@ class DSPyExtractor(BaseExtractor):
 
         try:
             lm = self._lm
-
             ontology_context = self._ontology.context if self._ontology is not None else ""
 
             def _extract_sync() -> Any:
                 with dspy.settings.context(lm=lm):
-                    prediction = self.module(
+                    return self.module(
                         text=text,
                         ontology_context=ontology_context,
                         ontology_classes=ontology_classes,
                         ontology_relation_types=ontology_relation_types,
                     )
-                return prediction
 
             prediction = await asyncio.to_thread(_extract_sync)
             triplets = _coerce_triplets(prediction)
@@ -243,71 +293,29 @@ class DSPyExtractor(BaseExtractor):
             seen_nodes: set[str] = set()
             raw_triplets: list[dict[str, Any]] = []
             triplet_decisions: list[dict[str, Any]] = []
+            allowed_norm = set(ontology_relation_types)
 
-            if triplets:
-                for triplet in triplets:
-                    source = _model_or_mapping_get(triplet, "source")
-                    relation = _model_or_mapping_get(triplet, "relation")
-                    target = _model_or_mapping_get(triplet, "target")
-                    source_type = _model_or_mapping_get(triplet, "source_type")
-                    target_type = _model_or_mapping_get(triplet, "target_type")
-                    evidence = _model_or_mapping_get(triplet, "evidence", "")
+            for triplet in triplets:
+                raw = self._extract_triplet_fields(triplet)
+                raw_triplets.append(raw)
 
-                    raw_triplet: dict[str, Any] = {
-                        "source": source,
-                        "relation": relation,
-                        "target": target,
-                        "source_type": source_type,
-                        "target_type": target_type,
-                        "evidence": evidence,
-                    }
-                    raw_triplets.append(raw_triplet)
+                valid, drop_reason = self._triplet_is_valid(raw, allowed_norm)
+                if not valid:
+                    triplet_decisions.append({**raw, "kept": False, "drop_reason": drop_reason})
+                    continue
 
-                    if not (source and relation and target):
-                        triplet_decisions.append(
-                            {
-                                **raw_triplet,
-                                "kept": False,
-                                "drop_reason": "missing_triplet_field",
-                            }
-                        )
-                        continue
+                triplet_decisions.append({**raw, "kept": True, "drop_reason": None})
+                source, relation, target, source_type, target_type, props = (
+                    self._normalize_triplet(raw)
+                )
+                relations.append((source, relation, target, props))
 
-                    decision: dict[str, Any] = {
-                        **raw_triplet,
-                        "kept": False,
-                        "drop_reason": None,
-                    }
-
-                    rel_norm = standardize_label(relation)
-                    allowed_norm = set(ontology_relation_types)
-                    if rel_norm not in allowed_norm:
-                        decision["drop_reason"] = "relation_type_not_in_rdf_ontology"
-                        triplet_decisions.append(decision)
-                        continue
-
-                    decision["kept"] = True
-                    triplet_decisions.append(decision)
-
-                    source = standardize_label(source)
-                    target = standardize_label(target)
-                    relation = standardize_label(relation)
-                    source_type = standardize_label(source_type) if source_type else "ENTITY"
-                    target_type = standardize_label(target_type) if target_type else "ENTITY"
-
-                    props = {
-                        "evidence": evidence,
-                        "source_type": source_type,
-                        "target_type": target_type,
-                    }
-                    relations.append((source, relation, target, props))
-
-                    if source not in seen_nodes:
-                        nodes_data.append({"id": source, "type": source_type, "properties": {}})
-                        seen_nodes.add(source)
-                    if target not in seen_nodes:
-                        nodes_data.append({"id": target, "type": target_type, "properties": {}})
-                        seen_nodes.add(target)
+                if source not in seen_nodes:
+                    nodes_data.append({"id": source, "type": source_type, "properties": {}})
+                    seen_nodes.add(source)
+                if target not in seen_nodes:
+                    nodes_data.append({"id": target, "type": target_type, "properties": {}})
+                    seen_nodes.add(target)
 
             return (
                 relations,

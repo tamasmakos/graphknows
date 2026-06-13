@@ -41,7 +41,6 @@ def test_all_tools_registered():
         "memory_stats",
         "memory_purge",
         "memory_ingest",
-        "memory_ingest_turn",
         "memory_recall",
         "memory_flush",
         "memory_mirror",

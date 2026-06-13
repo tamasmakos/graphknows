@@ -51,6 +51,98 @@ def _are_coreferent(a: str, b: str, threshold: float) -> bool:
     return False
 
 
+def _collect_surface_forms(
+    relations: list[tuple[str, str, str, dict[str, Any]]],
+    entities: list[str],
+) -> set[str]:
+    """Collect all unique entity surface forms from relations and entity list."""
+    originals: set[str] = set()
+    for item in relations or []:
+        if len(item) >= 3:
+            s, _, t = item[0], item[1], item[2]
+            if isinstance(s, str):
+                originals.add(s)
+            if isinstance(t, str):
+                originals.add(t)
+    for e in entities or []:
+        if isinstance(e, str):
+            originals.add(e)
+    return originals
+
+
+def _build_canonical_groups(
+    originals: set[str],
+    similarity_threshold: float,
+) -> tuple[dict[str, str], list[str], dict[str, str]]:
+    """Canonicalize surface forms and group coreferent variants.
+
+    Returns (orig_to_canon, representatives, rep_for).
+    """
+    orig_to_canon: dict[str, str] = {o: _canonicalize_entity_name(o) for o in originals}
+    canonicals: list[str] = sorted(set(orig_to_canon.values()))
+
+    rep_for: dict[str, str] = {}
+    representatives: list[str] = []
+
+    for c in canonicals:
+        placed = False
+        for r in representatives:
+            if _are_coreferent(c, r, similarity_threshold):
+                best = r if len(r) >= len(c) else c
+                if best != r:
+                    for k, v in list(rep_for.items()):
+                        if v == r:
+                            rep_for[k] = best
+                    representatives[representatives.index(r)] = best
+                rep_for[c] = representatives[representatives.index(best)]
+                placed = True
+                break
+        if not placed:
+            representatives.append(c)
+            rep_for[c] = c
+
+    return orig_to_canon, representatives, rep_for
+
+
+def _best_original_per_rep(
+    representatives: list[str],
+    orig_to_canon: dict[str, str],
+    rep_for: dict[str, str],
+) -> dict[str, str]:
+    """Map each canonical representative back to the best original surface form."""
+    canon_to_best_original: dict[str, str] = {}
+    for r in representatives:
+        candidates = [o for o, c in orig_to_canon.items() if rep_for.get(c) == r]
+        if candidates:
+            best_orig = sorted(
+                candidates,
+                key=lambda x: (len(x), sum(1 for ch in x if ch.isupper())),
+                reverse=True,
+            )[0]
+            canon_to_best_original[r] = best_orig
+    return canon_to_best_original
+
+
+def _remap_relations(
+    relations: list[tuple[str, str, str, dict[str, Any]]],
+    entity_mappings: dict[str, str],
+) -> list[tuple[str, str, str, dict[str, Any]]]:
+    """Apply entity_mappings to relation triplets, dropping self-loops."""
+    cleaned_list: list[tuple[str, str, str, dict[str, Any]]] = []
+    for item in relations or []:
+        if len(item) == 4:
+            s, r, t, props = item
+        else:
+            s, r, t = item[0], item[1], item[2]
+            props = {}
+        cs = entity_mappings.get(s, s)
+        ct = entity_mappings.get(t, t)
+        if not cs or not ct or cs == ct:
+            continue
+        cleaned_list.append((cs, r, ct, props))
+    return cleaned_list
+
+
 def resolve_extraction_coreferences(
     relations: list[tuple[str, str, str, dict[str, Any]]],
     entities: list[str],
@@ -70,57 +162,11 @@ def resolve_extraction_coreferences(
         ``{cleaned_relations, entity_mappings, debug_log}`` dict.
     """
     try:
-        debug_log: list[str] = []
-
-        # 1. Collect all surface forms
-        originals: set[str] = set()
-        for item in relations or []:
-            if len(item) >= 3:
-                s, _, t = item[0], item[1], item[2]
-                if isinstance(s, str):
-                    originals.add(s)
-                if isinstance(t, str):
-                    originals.add(t)
-        for e in entities or []:
-            if isinstance(e, str):
-                originals.add(e)
-
-        # 2. Initial canonicalization for grouping
-        orig_to_canon: dict[str, str] = {o: _canonicalize_entity_name(o) for o in originals}
-        canonicals: list[str] = sorted(set(orig_to_canon.values()))
-
-        # 3. Greedy grouping by similarity
-        rep_for: dict[str, str] = {}
-        representatives: list[str] = []
-
-        for c in canonicals:
-            placed = False
-            for r in representatives:
-                if _are_coreferent(c, r, similarity_threshold):
-                    best = r if len(r) >= len(c) else c
-                    if best != r:
-                        for k, v in list(rep_for.items()):
-                            if v == r:
-                                rep_for[k] = best
-                        representatives[representatives.index(r)] = best
-                    rep_for[c] = representatives[representatives.index(best)]
-                    placed = True
-                    break
-            if not placed:
-                representatives.append(c)
-                rep_for[c] = c
-
-        # 4. Map canonical representatives back to best original surface form
-        canon_to_best_original: dict[str, str] = {}
-        for r in representatives:
-            candidates = [o for o, c in orig_to_canon.items() if rep_for.get(c) == r]
-            if candidates:
-                best_orig = sorted(
-                    candidates,
-                    key=lambda x: (len(x), sum(1 for ch in x if ch.isupper())),
-                    reverse=True,
-                )[0]
-                canon_to_best_original[r] = best_orig
+        originals = _collect_surface_forms(relations, entities)
+        orig_to_canon, representatives, rep_for = _build_canonical_groups(
+            originals, similarity_threshold
+        )
+        canon_to_best_original = _best_original_per_rep(representatives, orig_to_canon, rep_for)
 
         entity_mappings: dict[str, str] = {}
         for o, c in orig_to_canon.items():
@@ -128,22 +174,8 @@ def resolve_extraction_coreferences(
             final_name = canon_to_best_original.get(rep_canon, o)
             entity_mappings[o] = final_name
 
-        # 5. Remap relations
-        cleaned_list: list[tuple[str, str, str, dict[str, Any]]] = []
-        for item in relations or []:
-            if len(item) == 4:
-                s, r, t, props = item
-            else:
-                s, r, t = item[0], item[1], item[2]
-                props = {}
-
-            cs = entity_mappings.get(s, s)
-            ct = entity_mappings.get(t, t)
-            if not cs or not ct or cs == ct:
-                continue
-            cleaned_list.append((cs, r, ct, props))
-
-        debug_log.append(f"normalized_entities={len(entity_mappings)} reps={len(representatives)}")
+        cleaned_list = _remap_relations(relations, entity_mappings)
+        debug_log = [f"normalized_entities={len(entity_mappings)} reps={len(representatives)}"]
 
         return {
             "cleaned_relations": cleaned_list,

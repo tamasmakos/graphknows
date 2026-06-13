@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+_DEFAULT_ALPHA: float = 0.4      # keyword vs. embedding weight; 1.0 = pure keywords
+_ROUTING_SNIPPET_CHARS: int = 2000
 
 
 class OntologyRouter:
@@ -89,7 +91,7 @@ class OntologyRouter:
             log.warning("Embedding score failed: %s", exc)
             return [0.0] * len(self._manifests)
 
-    def select(self, text: str, alpha: float = 0.4) -> OntologyManifest:
+    def select(self, text: str, alpha: float = _DEFAULT_ALPHA) -> OntologyManifest:
         """Select the best ontology for a document.
 
         Args:
@@ -104,7 +106,7 @@ class OntologyRouter:
         if not self._manifests:
             raise RuntimeError("No ontologies available for routing")
 
-        snippet = text[:2000]
+        snippet = text[:_ROUTING_SNIPPET_CHARS]
         kw_scores = self._keyword_scores(snippet)
         emb_scores = self._embedding_scores(snippet)
 
@@ -122,7 +124,7 @@ class OntologyRouter:
         )
         return best
 
-    def select_multi(self, text: str, top_k: int = 2, alpha: float = 0.4) -> list[OntologyManifest]:
+    def select_multi(self, text: str, top_k: int = 2, alpha: float = _DEFAULT_ALPHA) -> list[OntologyManifest]:
         """Select top-k ontologies for multi-domain documents.
 
         Args:
@@ -137,7 +139,7 @@ class OntologyRouter:
         if not self._manifests:
             return []
 
-        snippet = text[:2000]
+        snippet = text[:_ROUTING_SNIPPET_CHARS]
         kw_scores = self._keyword_scores(snippet)
         emb_scores = self._embedding_scores(snippet)
         combined = [

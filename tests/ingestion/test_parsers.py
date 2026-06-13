@@ -125,10 +125,10 @@ class TestCodeParser:
 class TestDocxParser:
     """Tests for DocxParser."""
 
-    def test_parse_raises_value_error(self):
-        """DocxParser.parse() should raise ValueError."""
+    def test_parse_raises_not_implemented(self):
+        """DocxParser.parse() should raise NotImplementedError (binary-only parser)."""
         parser = DocxParser()
-        with pytest.raises(ValueError, match="requires binary input"):
+        with pytest.raises(NotImplementedError, match="requires binary input"):
             parser.parse("some text")
 
     def test_parse_bytes_with_minimal_docx(self):
