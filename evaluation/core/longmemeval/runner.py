@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluation.core.data import download_if_missing
+from evaluation.core.file_backed import _parse_memory_query_hits
 from evaluation.core.models import BenchmarkCaseResult
 from evaluation.core.client import GraphknowsMCPClient
 
@@ -272,7 +273,7 @@ async def run_longmemeval_case(
             result = await client.call_tool("memory_flush", {"session_id": session_id})
             flush_result = result if isinstance(result, dict) else {"result": result}
         result = await client.call_tool(
-            "memory_recall",
+            "memory_query",
             {
                 "query": str(question["question"]),
                 "session_id": session_id,
@@ -280,7 +281,7 @@ async def run_longmemeval_case(
                 "scope": recall_scope,
             },
         )
-        recall = list(result.get("hits", []))
+        recall = _parse_memory_query_hits(result)
     finally:
         if purge:
             await client.call_tool("memory_purge", {"scope": "both", "session_id": session_id})

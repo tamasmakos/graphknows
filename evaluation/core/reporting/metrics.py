@@ -57,7 +57,7 @@ def _extract_texts(payload: Any) -> list[str]:
     texts: list[str] = []
     for row in rows:
         if isinstance(row, dict):
-            text = row.get("text") or row.get("summary") or row.get("topic_id")
+            text = row.get("text") or row.get("memory") or row.get("summary") or row.get("topic_id")
             if text:
                 texts.append(str(text))
     return texts
@@ -74,26 +74,28 @@ def _extract_entities(payload: Any) -> list[str]:
         if isinstance(row, dict):
             values = row.get("entities") or row.get("entity_names") or []
             if isinstance(values, list):
-                entities.extend(str(v) for v in values)
+                for v in values:
+                    name = v.get("name") if isinstance(v, dict) else str(v)
+                    if name:
+                        entities.append(name)
     return entities
 
 
 def validate_result_shape(tool_name: str, payload: Any) -> tuple[bool, str]:
+    # memory_query returns {"hits": [...], "total": int, "query": str, "scope": str}
+    if tool_name == "memory_query":
+        if isinstance(payload, dict) and isinstance(payload.get("hits"), list):
+            return True, ""
+        return False, "expected {hits: list, ...}"
     if not isinstance(payload, dict):
         return False, "payload is not an object"
     required_by_tool = {
         "memory_doctor": ("memgraph", "neo4j", "pgvector"),
         "memory_stats": ("stm", "ltm"),
         "memory_ingest": ("file_id", "chunks", "entities", "elapsed_s"),
-        "memory_recall": ("hits",),
         "memory_flush": ("elapsed_s", "errors"),
         "memory_purge": ("scope", "session_id", "errors"),
-        "ltm_query": ("results",),
-        "ltm_entity": (),
         "ltm_topics": ("topics",),
-        "recall_by_document": ("results",),
-        "recall_by_dialog": ("results",),
-        "recall_by_topic": ("results",),
         "corpus_ingest": ("documents_processed",),
     }
     missing = [key for key in required_by_tool.get(tool_name, ()) if key not in payload]
