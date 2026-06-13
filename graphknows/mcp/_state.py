@@ -11,6 +11,7 @@ _pg: Any = None
 _pg_connected: bool = False
 _pg_bridge: Any = None
 _pg_bridge_connected: bool = False
+_retriever: Any = None
 
 
 def get_settings() -> GraphKnowsSettings:
@@ -61,3 +62,27 @@ def get_neo_store() -> Any:
     from graphknows.config.builders.stores import build_neo4j_store
 
     return build_neo4j_store(get_settings())
+
+
+async def get_or_init_retriever() -> Any:
+    """Return the singleton retriever, initialising it on first call."""
+    global _retriever
+    if _retriever is not None:
+        return _retriever
+    s = get_settings()
+    pg = await get_pg_store()
+    neo = get_neo_store()
+    if s.retrieval_mode == "agentic":
+        from graphknows.memory.query.agentic import AgenticRetriever
+
+        _retriever = AgenticRetriever(
+            settings=s,
+            pg=pg,
+            neo=neo,
+            memgraph=get_mg_store(),
+        )
+    else:
+        from graphknows.memory.query.retriever import HybridRetriever
+
+        _retriever = HybridRetriever(pg=pg, neo=neo, embed_model=s.embed_model)
+    return _retriever

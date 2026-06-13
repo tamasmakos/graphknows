@@ -1,6 +1,6 @@
 r"""Standalone MCP stdio server for graphknows memory operations.
 
-Exposes 15 tools over JSON-RPC 2.0 via stdin/stdout so any MCP-aware client
+Exposes tools over JSON-RPC 2.0 via stdin/stdout so any MCP-aware client
 (Claude Desktop, Cursor, Zed, Hermes, OpenCode) can use graphknows memory
 without requiring the full agent service.
 
@@ -10,17 +10,14 @@ STM tools:
   memory_doctor   — connectivity check: memgraph, neo4j, pgvector
   memory_stats    — STM and LTM node/chunk counts
   memory_ingest   — ingest text into STM (Memgraph + pgvector)
-  memory_recall   — hybrid RRF recall from STM, LTM, or both
   memory_flush    — promote STM session → Neo4j LTM
-    memory_mirror   — return the local Memory Mirror browser URL
+  memory_mirror   — return the local Memory Mirror browser URL
 
 LTM tools:
-  ltm_query             — semantic topic search (pgvector)
-  ltm_entity            — named entity lookup in Neo4j LTM
-  ltm_topics            — list topics by entity threshold
-  recall_by_document    — document chunks by entity match
-  recall_by_dialog      — conversation utterances by entity match
-  recall_by_topic       — topic matching by entity relevance
+  ltm_topics      — list topics by entity threshold
+
+Retrieval:
+  memory_query    — unified retrieval (deterministic or agentic via RETRIEVAL_MODE)
 
 Corpus:
   corpus_ingest   — batch document ingestion into LTM knowledge graph
@@ -41,6 +38,7 @@ import logging
 logging.basicConfig(level=logging.WARNING, stream=__import__("sys").stderr)
 
 # --- Import tool modules (registers @app.tool() decorators) ---
+import graphknows.mcp.tools.query  # noqa: F401, E402
 import graphknows.mcp.tools.stm  # noqa: E402
 import graphknows.mcp.tools.web  # noqa: F401, E402
 from graphknows.mcp._app import app  # noqa: E402
@@ -48,13 +46,9 @@ from graphknows.mcp._app import app  # noqa: E402
 # Re-export tool functions so existing code/tests can reference them on this module
 from graphknows.mcp.tools.admin import memory_doctor, memory_stats  # noqa: F401, E402
 from graphknows.mcp.tools.corpus import corpus_ingest  # noqa: F401, E402
-from graphknows.mcp.tools.ltm import ltm_entity, ltm_query, ltm_topics  # noqa: F401, E402
-from graphknows.mcp.tools.recall import (  # noqa: F401, E402
-    recall_by_dialog,
-    recall_by_document,
-    recall_by_topic,
-)
-from graphknows.mcp.tools.stm import memory_flush, memory_ingest, memory_recall  # noqa: F401, E402
+from graphknows.mcp.tools.ltm import ltm_topics  # noqa: F401, E402
+from graphknows.mcp.tools.query import memory_query  # noqa: F401, E402
+from graphknows.mcp.tools.stm import memory_flush, memory_ingest  # noqa: F401, E402
 from graphknows.mcp.tools.web import memory_mirror  # noqa: F401, E402
 
 # Re-export private helper so tests can import it from this module
