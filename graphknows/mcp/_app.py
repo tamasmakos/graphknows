@@ -8,14 +8,13 @@ app = FastMCP(
     "graphknows-memory",
     instructions=(
         "graphknows-memory exposes short-term and long-term knowledge-graph "
-        "backed memory. Use memory_ingest to store content, memory_recall to "
-        "retrieve it, memory_flush to promote session memory to long-term, "
+        "backed memory. Use memory_ingest to store content, memory_query to "
+        "retrieve it (unified retrieval: deterministic or agentic via RETRIEVAL_MODE), "
+        "memory_flush to promote session memory to long-term, "
         "memory_doctor to verify backend connectivity, and memory_stats for counts. "
         "Use memory_mirror when the user asks for the Memory Mirror link or a browser "
         "URL for the local graph view. "
-        "For LTM exploration: ltm_query searches topics semantically, "
-        "ltm_entity looks up named entities, ltm_topics lists topics by threshold. "
-        "recall_by_document, recall_by_dialog, and recall_by_topic provide "
-        "entity-matched retrieval across documents, conversations, and topics."
+        "Use ltm_topics to browse topic clusters by entity threshold. "
+        "Use corpus_ingest for bulk document ingestion into the LTM knowledge graph."
     ),
 )

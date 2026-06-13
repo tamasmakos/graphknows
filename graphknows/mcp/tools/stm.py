@@ -1,17 +1,14 @@
-"""MCP tools: stm — memory_ingest, memory_recall, memory_flush."""
+"""MCP tools: stm — memory_ingest, memory_flush."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from graphknows.config.builders.stores import build_pgvector_store
 from graphknows.mcp._app import app
 from graphknows.mcp._state import (
-    get_mg_store,
     get_neo_store,
     get_pg_store,
-    get_pg_store_bridge,
     get_settings,
 )
 from graphknows.memory.stm._async_bridge import _run as _bg_run
@@ -20,7 +17,7 @@ from graphknows.memory.stm._async_bridge import _run as _bg_run
 async def _sync_topics_to_pgvector(neo_store: Any, pg_store: Any) -> int:
     """Read TOPIC nodes from Neo4j and upsert embeddings into pgvector ltm_topics.
 
-    Called after every memory_flush so ltm_query works without run_gds=True.
+    Called after every memory_flush so topic embeddings are available for memory_query.
 
     Args:
         neo_store: Open Neo4jStore instance (caller must close).
@@ -184,82 +181,6 @@ async def memory_ingest(
         "errors": list(result.errors),
         "warnings": [],
     }
-
-
-@app.tool()
-async def memory_recall(
-    query: str,
-    session_id: str,
-    top_k: int = 5,
-    scope: str = "stm",
-) -> dict[str, Any]:
-    """Recall from graphknows memory using hybrid RRF search.
-
-    Args:
-        query: Natural language query to recall against.
-        session_id: Session namespace to scope the search.
-        top_k: Maximum number of hits to return (default 5).
-        scope: ``"stm"`` for short-term, ``"ltm"`` for long-term,
-            ``"both"`` for RRF-merged results from both.
-
-    Returns:
-        Dict with ``hits`` list, each item having score, type, text,
-        session_id, and entities fields.
-    """
-    import re
-
-    from graphknows.memory.stm.recall import recall_short_term
-    from graphknows.memory.stores.embedder import embed_one
-
-    embed = embed_one
-
-    def _clean(text: str) -> str:
-        r"""Strip the '## Content\n' heading artifact inserted by the formatter."""
-        return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
-
-    def _fmt(results: list[Any]) -> list[dict[str, Any]]:
-        return [
-            {
-                "score": round(r.score, 6),
-                "cosine_score": round(getattr(r, "cosine_score", r.score), 6),
-                "type": r.source_type,
-                "text": _clean(r.text),
-                "session_id": r.provenance.get("session_id", session_id),
-                "entities": list(r.entity_names or []),
-            }
-            for r in results
-        ]
-
-    if scope in ("stm", "both"):
-        mg = get_mg_store()
-        pg = build_pgvector_store(get_settings())
-        _bg_run(pg.connect())  # pool created on _BG_LOOP where recall_short_term will use it
-        stm_hits = recall_short_term(
-            mg, pg, query, session_id=session_id, top_k=top_k, embed_fn=embed
-        )
-    else:
-        stm_hits = []
-
-    if scope in ("ltm", "both"):
-        from graphknows.memory.query.recall_ltm import recall_long_term
-
-        pg2 = get_pg_store_bridge()
-        neo = get_neo_store()
-        ltm_hits = recall_long_term(
-            neo, pg2, query, top_k=top_k, session_filter=session_id, embed_fn=embed
-        )
-        neo.close()
-    else:
-        ltm_hits = []
-
-    if scope == "both":
-        _normalise_and_weight(stm_hits, weight=0.6)
-        _normalise_and_weight(ltm_hits, weight=0.4)
-
-    all_hits = stm_hits + ltm_hits
-    all_hits.sort(key=lambda r: r.score, reverse=True)
-
-    return {"hits": _fmt(all_hits[:top_k])}
 
 
 @app.tool()
