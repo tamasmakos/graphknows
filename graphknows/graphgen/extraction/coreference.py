@@ -14,7 +14,7 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 def _canonicalize_entity_name(name: str) -> str:
@@ -151,7 +151,7 @@ def resolve_extraction_coreferences(
             "debug_log": debug_log,
         }
     except Exception as e:
-        logger.warning(f"Lightweight coreference normalization failed: {e}")
+        log.warning("Lightweight coreference normalization failed: %s", e)
         return {
             "cleaned_relations": relations,
             "entity_mappings": {},

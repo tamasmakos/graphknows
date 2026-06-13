@@ -16,7 +16,7 @@ import httpx
 import numpy as np
 from dotenv import dotenv_values
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 EMBED_MODEL: str = "openai/text-embedding-3-small"
 EMBED_DIM: int = 1536  # text-embedding-3-small output dimension

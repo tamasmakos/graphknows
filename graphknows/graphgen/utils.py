@@ -1,5 +1,7 @@
 """Shared utilities for graph handling and filesystem setup."""
 
+from __future__ import annotations
+
 import logging
 import os
 
@@ -7,14 +9,18 @@ import networkx as nx
 
 from graphknows.ingestion.domain.normalization import standardize_label
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 def create_output_directory(path: str) -> None:
     """Create directory if it doesn't exist."""
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
-        logger.info(f"Created directory: {path}")
+        log.info("Created directory: %s", path)
+
+
+def _merge_edge_weight(graph: nx.DiGraph, u: str, v: str, new_data: dict) -> None:
+    graph[u][v]["weight"] = max(graph[u][v].get("weight", 1.0), new_data.get("weight", 1.0))
 
 
 def merge_node_into(graph: nx.DiGraph, source_node: str, target_node: str) -> None:
@@ -39,14 +45,10 @@ def merge_node_into(graph: nx.DiGraph, source_node: str, target_node: str) -> No
                 graph.add_edge(target_node, target_node, **edge_data)
             continue
 
-        # If edge already exists, we might want to merge weights, but for now just ensure connectivity
         if not graph.has_edge(pred, target_node):
             graph.add_edge(pred, target_node, **edge_data)
         else:
-            # Update weight if applicable
-            current_weight = graph[pred][target_node].get("weight", 1.0)
-            new_weight = edge_data.get("weight", 1.0)
-            graph[pred][target_node]["weight"] = max(current_weight, new_weight)
+            _merge_edge_weight(graph, pred, target_node, edge_data)
 
     # 2. Outgoing edges
     for _, succ, edge_data in list(graph.out_edges(source_node, data=True)):
@@ -61,9 +63,7 @@ def merge_node_into(graph: nx.DiGraph, source_node: str, target_node: str) -> No
         if not graph.has_edge(target_node, succ):
             graph.add_edge(target_node, succ, **edge_data)
         else:
-            current_weight = graph[target_node][succ].get("weight", 1.0)
-            new_weight = edge_data.get("weight", 1.0)
-            graph[target_node][succ]["weight"] = max(current_weight, new_weight)
+            _merge_edge_weight(graph, target_node, succ, edge_data)
 
     # 3. Merge attributes (Aliases)
     source_data = graph.nodes[source_node]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import defaultdict
@@ -208,7 +209,6 @@ class LTMPromotionPipeline:
         Called after promote_to_ltm so the entity-graph path in HybridRetriever
         has live data to search. Non-fatal: errors are logged and appended to record.
         """
-        import asyncio
         from graphknows.memory.stores.embedder import embed
 
         entities: list[dict[str, Any]] = stm_data.get("entities", [])

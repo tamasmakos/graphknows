@@ -10,15 +10,16 @@ Usage:
 """
 
 import logging
+import re
 from pathlib import Path
 
 try:
-    from rdflib import Graph, Literal, URIRef
+    from rdflib import BNode, Graph, Literal, URIRef
     from rdflib.namespace import OWL, RDF, RDFS
 except ImportError as exc:
     raise ImportError("rdflib is required. Install with: pip install rdflib") from exc
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class OntologyLabelExtractor:
@@ -57,12 +58,12 @@ class OntologyLabelExtractor:
             return 0
 
         if not self.ontology_dir.exists():
-            logger.warning(f"Ontology directory not found: {self.ontology_dir}")
+            log.warning("Ontology directory not found: %s", self.ontology_dir)
             return 0
 
         rdf_files = list(self.ontology_dir.glob("*.rdf"))
         if not rdf_files:
-            logger.warning(f"No RDF files found in {self.ontology_dir}")
+            log.warning("No RDF files found in %s", self.ontology_dir)
             return 0
 
         loaded_count = 0
@@ -71,10 +72,10 @@ class OntologyLabelExtractor:
                 self.graph.parse(rdf_file, format="xml")
                 loaded_count += 1
             except Exception as e:
-                logger.warning(f"Could not parse {rdf_file.name}: {e}")
+                log.warning("Could not parse %s: %s", rdf_file.name, e)
 
         self._loaded = True
-        logger.info(f"Loaded {loaded_count} RDF files with {len(self.graph)} triples")
+        log.info("Loaded %d RDF files with %d triples", loaded_count, len(self.graph))
         return loaded_count
 
     def _get_label(self, uri: URIRef) -> str | None:
@@ -133,7 +134,7 @@ class OntologyLabelExtractor:
             set(self.graph.subjects(RDF.type, RDFS.Class))
         )
 
-        logger.info(f"Analyzing {len(all_classes)} classes in ontology")
+        log.info("Analyzing %d classes in ontology", len(all_classes))
 
         # Technical classes to exclude
         exclude_classes = {
@@ -146,9 +147,6 @@ class OntologyLabelExtractor:
         }
 
         for cls in all_classes:
-            # Skip blank nodes (complex OWL expressions)
-            from rdflib import BNode
-
             if isinstance(cls, BNode) or cls in exclude_classes:
                 continue
 
@@ -188,9 +186,12 @@ class OntologyLabelExtractor:
                     if any(c.isalpha() for c in readable):
                         labels.add(readable)
 
-        result = sorted(list(labels))
-        logger.info(
-            f"Extracted {len(result)} unique labels from ontology (top_level={top_level_only}, min_children={min_subclasses})"
+        result = sorted(labels)
+        log.info(
+            "Extracted %d unique labels from ontology (top_level=%s, min_children=%d)",
+            len(result),
+            top_level_only,
+            min_subclasses,
         )
         return result
 
@@ -199,8 +200,6 @@ class OntologyLabelExtractor:
 
         Converts camelCase, snake_case, and hyphen-case to space-separated words.
         """
-        import re
-
         # Replace underscores and hyphens with spaces
         name = name.replace("_", " ").replace("-", " ")
 

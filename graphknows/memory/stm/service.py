@@ -7,6 +7,8 @@ _STMIngestHandler, DialogCapture, and recall_short_term respectively.
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from graphknows.memory.config import STMConfig
@@ -156,9 +158,6 @@ class STMService:
         Returns:
             IngestResult with turn count, entity count, and any errors.
         """
-        import time
-        import uuid
-
         from graphknows.memory.models.ingest import IngestResult
         from graphknows.memory.stm._async_bridge import _run
         from graphknows.memory.stm.dialog import DialogCapture, Turn
