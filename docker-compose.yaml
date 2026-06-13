@@ -166,7 +166,7 @@ services:
         condition: service_healthy
       memgraph:
         condition: service_healthy
-    restart: unless-stopped
+    restart: "no"
 
   # ── Memory Mirror web UI ────────────────────────────────────────────────────
 
