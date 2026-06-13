@@ -118,11 +118,13 @@ class DialogCapture:
         except Exception as exc:
             errors.append(f"turn_node: {exc}")
 
-        # Entity extraction from turn text
+        # Entity and relation extraction from turn text.
+        # Extraction failure propagates; entity-write errors are captured; relation-write
+        # errors propagate (no fallback per design).
         if self._extractor and turn.text.strip():
+            extraction = self._extractor.extract(turn.text)
             try:
-                entities = self._extractor.extract(turn.text).entities
-                for ent in entities:
+                for ent in extraction.entities:
                     _run(
                         self._mg.write_entity_node(
                             session_id=session_id,
@@ -141,7 +143,17 @@ class DialogCapture:
                     )
                     entity_count += 1
             except Exception as exc:
-                errors.append(f"entity_extract: {exc}")
+                errors.append(f"entity_write: {exc}")
+            for rel in extraction.relations:
+                _run(
+                    self._mg.write_relation_edge(
+                        session_id=session_id,
+                        subject_name=rel["head"],
+                        relation_name=rel["relation"],
+                        object_name=rel["tail"],
+                        confidence=rel.get("score", 0.5),
+                    )
+                )
 
         # Embed turn text → stm_turns
         try:

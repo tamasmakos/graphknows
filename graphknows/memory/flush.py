@@ -78,6 +78,8 @@ class LTMPromotionPipeline:
         except Exception as exc:
             record.errors.append(f"promote_to_ltm: {exc}")
 
+        await self._index_entities(stm_data, record)
+
         gds_result = None
 
         if request.run_gds:
@@ -195,6 +197,55 @@ class LTMPromotionPipeline:
                 errors.append(f"extract_and_write_relations: {exc}")
         edges += rel_edges
         return {"nodes": nodes, "edges": edges}
+
+    async def _index_entities(
+        self,
+        stm_data: dict[str, Any],
+        record: Any,
+    ) -> None:
+        """Embed entity names and upsert into pgvector entities table.
+
+        Called after promote_to_ltm so the entity-graph path in HybridRetriever
+        has live data to search. Non-fatal: errors are logged and appended to record.
+        """
+        import asyncio
+        from graphknows.memory.stores.embedder import embed
+
+        entities: list[dict[str, Any]] = stm_data.get("entities", [])
+        if not entities:
+            return
+
+        # Build chunk_count per entity from chunk metadata.
+        chunk_entity_counts: dict[str, int] = {}
+        for chunk in stm_data.get("chunks", []):
+            meta = chunk.get("metadata", {}) or {}
+            for name in meta.get("entity_names", []):
+                if isinstance(name, str):
+                    chunk_entity_counts[name] = chunk_entity_counts.get(name, 0) + 1
+
+        names = [e["name"] for e in entities]
+        try:
+            emb_array = await asyncio.to_thread(embed, names)
+        except Exception as exc:
+            log.warning("_index_entities: embed failed: %s", exc)
+            record.errors.append(f"entity_embed: {exc}")
+            return
+
+        entity_records = [
+            {
+                "name": ent["name"],
+                "label": ent.get("type") or ent.get("label") or "Entity",
+                "embedding": emb_array[i].tolist(),
+                "chunk_count": chunk_entity_counts.get(ent["name"], 0),
+            }
+            for i, ent in enumerate(entities)
+        ]
+        try:
+            await self._pg.upsert_entities(entity_records)
+            log.info("_index_entities: upserted %d entity embeddings", len(entity_records))
+        except Exception as exc:
+            log.warning("_index_entities: upsert failed: %s", exc)
+            record.errors.append(f"entity_upsert: {exc}")
 
     async def _clear_stm(self, session_id: str) -> None:
         await self._mg.delete_session(session_id)
