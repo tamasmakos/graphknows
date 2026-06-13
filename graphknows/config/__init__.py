@@ -67,7 +67,7 @@ class GraphKnowsSettings(BaseSettings):
         pgvector_user: pgvector username.
         pgvector_password: pgvector password.
         memgraph_uri: Bolt URI for the optional Memgraph session store.
-        embed_model: HuggingFace sentence-transformer model name.
+        embed_model: OpenRouter embedding model name (e.g. openai/text-embedding-3-small).
         session_ttl_minutes: Minutes of session inactivity before auto-merge.
         llm_model: LLM model name for synthesis and extraction.
         llm_provider: LLM provider (``"openrouter"``).
@@ -102,7 +102,7 @@ class GraphKnowsSettings(BaseSettings):
     memgraph_uri: str = Field(default="bolt://memgraph:7687", alias="MEMGRAPH_URI")
 
     # Embeddings
-    embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="EMBED_MODEL")
+    embed_model: str = Field(default="openai/text-embedding-3-small", alias="EMBED_MODEL")
 
     # Session lifecycle
     session_ttl_minutes: int = Field(default=60, alias="SESSION_TTL_MINUTES")
@@ -123,6 +123,10 @@ class GraphKnowsSettings(BaseSettings):
     relation_extraction_mode: Literal["gliner2", "llm_assisted", "off"] = Field(
         default="gliner2",
         alias="RELATION_EXTRACTION_MODE",
+    )
+    retrieval_mode: Literal["deterministic", "agentic"] = Field(
+        default="deterministic",
+        alias="RETRIEVAL_MODE",
     )
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 

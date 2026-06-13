@@ -106,7 +106,8 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
 
     mode = settings.relation_extraction_mode
     extractor = None if mode == "off" else GLiNER2EntityExtractor()
-    return STMService(mg, pg, extractor, embed_fn=embed_one)
+    rel_extractor = build_relation_extractor(settings) if mode == "llm_assisted" else None
+    return STMService(mg, pg, extractor, embed_fn=embed_one, rel_extractor=rel_extractor)
 
 
 def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
