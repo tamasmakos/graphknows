@@ -12,7 +12,7 @@ from typing import Any
 
 from graphknows.ingestion.domain.normalization import standardize_label
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 DEFAULT_LABELS = [
     "Person",
@@ -50,29 +50,29 @@ def resolve_entity_labels(extraction_config: dict[str, Any]) -> list[str]:
 
     result: list[str] = []
     if not ontology_enabled:
-        logger.debug(f"Using {len(manual_labels)} manual GLiNER labels")
+        log.debug("Using %d manual GLiNER labels", len(manual_labels))
         result = manual_labels
     else:
         ontology_labels = _extract_ontology_labels(ontology_config)
         if not ontology_labels:
-            logger.warning(
-                "Ontology extraction enabled but no labels extracted, using manual labels"
-            )
+            log.warning("Ontology extraction enabled but no labels extracted, using manual labels")
             result = manual_labels
         else:
             if ontology_config.get("merge_with_manual", True):
                 combined = list(set(manual_labels + ontology_labels))
-                logger.info(
-                    f"Merged {len(manual_labels)} manual + {len(ontology_labels)} ontology"
-                    f" = {len(combined)} total labels"
+                log.info(
+                    "Merged %d manual + %d ontology = %d total labels",
+                    len(manual_labels),
+                    len(ontology_labels),
+                    len(combined),
                 )
                 result = sorted(combined)
             else:
-                logger.info(f"Using {len(ontology_labels)} ontology-derived labels")
+                log.info("Using %d ontology-derived labels", len(ontology_labels))
                 result = ontology_labels
 
     if not result:
-        logger.warning(f"No entity labels resolved; using {len(DEFAULT_LABELS)} default labels.")
+        log.warning("No entity labels resolved; using %d default labels.", len(DEFAULT_LABELS))
         result = DEFAULT_LABELS
 
     result = [standardize_label(label) for label in result]
@@ -90,9 +90,11 @@ def _extract_ontology_labels(ontology_config: dict[str, Any]) -> list[str]:
         top_level_only = ontology_config.get("top_level_only", True)
         min_subclasses = ontology_config.get("min_subclasses", 0)
 
-        logger.info(
-            f"Extracting labels from ontology: {ontology_dir}"
-            f" (top_level={top_level_only}, min_children={min_subclasses})"
+        log.info(
+            "Extracting labels from ontology: %s (top_level=%s, min_children=%s)",
+            ontology_dir,
+            top_level_only,
+            min_subclasses,
         )
 
         extractor = OntologyLabelExtractor(
@@ -104,10 +106,10 @@ def _extract_ontology_labels(ontology_config: dict[str, Any]) -> list[str]:
             top_level_only=top_level_only,
             min_subclasses=min_subclasses,
         )
-        logger.info(f"Extracted {len(labels)} labels from ontology")
+        log.info("Extracted %d labels from ontology", len(labels))
 
     except Exception as e:
-        logger.error(f"Failed to extract ontology labels: {e}", exc_info=True)
+        log.error("Failed to extract ontology labels: %s", e, exc_info=True)
         return []
     else:
         return labels

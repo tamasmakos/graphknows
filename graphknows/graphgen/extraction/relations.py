@@ -26,7 +26,7 @@ from graphknows.config.llm import (
 from graphknows.graphgen.utils import standardize_label
 from graphknows.ingestion.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # DSPy signature & module
@@ -176,7 +176,7 @@ class DSPyExtractor(BaseExtractor):
                 "SUPPLIES", "SUPPLIED_BY", "CONTRACTED_WITH",
                 "ASSIGNED_TO", "RESPONSIBLE_FOR",
             ]
-            logger.info("DSPyExtractor: no ontology file — using open-domain relation types")
+            log.info("DSPyExtractor: no ontology file — using open-domain relation types")
 
         model = (
             llm_config.get("extraction_model")
@@ -194,7 +194,7 @@ class DSPyExtractor(BaseExtractor):
             )
 
         or_model = normalize_openrouter_model(model)
-        logger.info(f"Configuring DSPy LM for OpenRouter with model {or_model}")
+        log.info("Configuring DSPy LM for OpenRouter with model %s", or_model)
         # Store the LM instance on self — do NOT call dspy.configure() here.
         # dspy.configure() mutates a global thread-local and will raise
         # "dspy.settings can only be changed by the thread that initially configured it"
@@ -210,7 +210,7 @@ class DSPyExtractor(BaseExtractor):
             num_retries=0,
         )
         self.module = GraphExtractorModule()
-        logger.info(f"Initialized DSPy extractor with model {or_model}")
+        log.info("Initialized DSPy extractor with model %s", or_model)
 
     async def extract_relations(
         self,
@@ -298,7 +298,8 @@ class DSPyExtractor(BaseExtractor):
                     props = {
                         "evidence": evidence,
                         "source_type": source_type,
-                        "target_type": target_type,                    }
+                        "target_type": target_type,
+                    }
                     relations.append((source, relation, target, props))
 
                     if source not in seen_nodes:

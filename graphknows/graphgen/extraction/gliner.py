@@ -26,9 +26,17 @@ from graphknows.graphgen.extraction.ontology import (
 from graphknows.graphgen.diagnostics import diagnostics_enabled, write_diagnostic_json
 from graphknows.graphgen.utils import standardize_label
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 GLINER2_MODEL = None
+
+
+def _get_extraction_cfg(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the normalized 'extraction' sub-dict from a pipeline config."""
+    cfg = (config or {}).get("extraction", {})
+    if hasattr(cfg, "model_dump"):
+        cfg = cfg.model_dump()
+    return cfg
 
 
 def get_gliner2_model(config: dict[str, Any] | None = None):
@@ -50,15 +58,12 @@ def get_gliner2_model(config: dict[str, Any] | None = None):
 
             model_name = "fastino/gliner2-base-v1"
             if config:
-                extraction_cfg = config.get("extraction", {})
-                if hasattr(extraction_cfg, "model_dump"):
-                    extraction_cfg = extraction_cfg.model_dump()
-                model_name = extraction_cfg.get("gliner_model", model_name)
-            logger.info(f"Loading GLiNER2 model ({model_name})...")
+                model_name = _get_extraction_cfg(config).get("gliner_model", model_name)
+            log.info("Loading GLiNER2 model (%s)...", model_name)
             GLINER2_MODEL = GLiNER2.from_pretrained(model_name)
-            logger.info("GLiNER2 model loaded.")
+            log.info("GLiNER2 model loaded.")
         except Exception as e:
-            logger.error(f"Failed to load GLiNER2: {e}")
+            log.error("Failed to load GLiNER2: %s", e)
             raise RuntimeError(
                 f"GLiNER2 model could not be loaded ({type(e).__name__}: {e}). "
                 "Check RAM availability — model requires ~2 GB. No silent fallback."
@@ -68,10 +73,7 @@ def get_gliner2_model(config: dict[str, Any] | None = None):
 
 def get_max_concurrent(config: dict[str, Any], default: int = 8) -> int:
     """Return max_concurrent_chunks from *config* with a fallback *default*."""
-    extraction_cfg = config.get("extraction", {})
-    if hasattr(extraction_cfg, "model_dump"):
-        extraction_cfg = extraction_cfg.model_dump()
-    return extraction_cfg.get("max_concurrent_chunks", default)
+    return _get_extraction_cfg(config).get("max_concurrent_chunks", default)
 
 
 async def extract_relations_with_llm_async(
@@ -91,10 +93,10 @@ async def extract_relations_with_llm_async(
             if len(result) == 2:
                 relations, nodes = result
                 return relations or [], nodes or [], {}
-        logger.warning("Extractor returned unexpected result shape; treating as empty extraction")
+        log.warning("Extractor returned unexpected result shape; treating as empty extraction")
         return [], [], {}
     except Exception as e:
-        logger.error(f"Extraction failed: {str(e)}", exc_info=True)
+        log.error("Extraction failed: %s", e, exc_info=True)
         raise RuntimeError(f"extract_relations_with_llm_async failed: {e}") from e
 
 
@@ -114,9 +116,7 @@ async def _extract_entities_for_chunk(
     The returned diagnostics dict always contains a ``candidate_relations`` key
     so callers can forward them to the DSPy verification pass.
     """
-    extraction_config = config.get("extraction", {})
-    if hasattr(extraction_config, "model_dump"):
-        extraction_config = extraction_config.model_dump()
+    extraction_config = _get_extraction_cfg(config)
 
     diagnostics: dict[str, Any] = {
         "backend": "gliner2",

@@ -35,16 +35,10 @@ def _extract_query_tokens(query: str) -> list[str]:
         query: Natural language query string.
 
     Returns:
-        List of lowercased, deduplicated word tokens (≥3 chars).
+        List of lowercased, deduplicated word tokens (≥3 chars), order-preserving.
     """
     tokens = re.findall(r"\b\w{3,}\b", query.lower())
-    seen: set[str] = set()
-    result: list[str] = []
-    for t in tokens:
-        if t not in seen:
-            seen.add(t)
-            result.append(t)
-    return result
+    return list(dict.fromkeys(tokens))
 
 
 def recall_by_document(

@@ -42,7 +42,7 @@ from graphknows.memory.stores.memgraph import MemgraphStore
 from graphknows.memory.stores.neo4j import Neo4jStore
 from graphknows.memory.stores.pgvector import PgVectorStore
 
-logger = logging.getLogger("graphknows.container")
+log = logging.getLogger("graphknows.container")
 
 
 class GraphKnowsContainer:
@@ -107,7 +107,7 @@ class GraphKnowsContainer:
                 neo=self._neo,
                 embed_model=cfg.embed_model,
             )
-        logger.info("GraphKnowsContainer ready (env=%s)", cfg.graphknows_env)
+        log.info("GraphKnowsContainer ready (env=%s)", cfg.graphknows_env)
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -115,17 +115,17 @@ class GraphKnowsContainer:
             if self._pg is not None:
                 await self._pg.close()
         except Exception:
-            logger.debug("Cleanup error ignored", exc_info=True)
+            log.debug("Cleanup error ignored", exc_info=True)
         try:
             if self._neo is not None:
                 self._neo.close()
         except Exception:
-            logger.debug("Cleanup error ignored", exc_info=True)
+            log.debug("Cleanup error ignored", exc_info=True)
         self._pg = None
         self._neo = None
         self._memgraph = None
         self._retriever = None
-        logger.info("GraphKnowsContainer closed")
+        log.info("GraphKnowsContainer closed")
 
     # ------------------------------------------------------------------
     # Store accessors (fail-fast if used outside context manager)
@@ -183,6 +183,12 @@ class GraphKnowsContainer:
 # ---------------------------------------------------------------------------
 
 
+async def _embed_one(text: str, model: str) -> list[float]:
+    """Embed a single string and return a plain float list."""
+    arr = await asyncio.to_thread(embed, [text], model)
+    return arr[0].tolist()
+
+
 def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901  # NOSONAR
     """Instantiate all 13 graphknows tools bound to container ``c``."""
 
@@ -201,8 +207,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
         k: int = 10,
         entity_types: list[str] | None = None,
     ) -> str:
-        emb_array = await asyncio.to_thread(embed, [query], c.settings.embed_model)
-        emb = emb_array[0].tolist()
+        emb = await _embed_one(query, c.settings.embed_model)
         results = await c.pg.search_entities(emb, k=k, entity_types=entity_types or None)
         return json.dumps(results, ensure_ascii=False)
 
@@ -243,8 +248,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
     ) -> str:
         full_text = f"{title}\n\n{content}" if title else content
         chunk_id = f"memo:{uuid.uuid4().hex}"
-        emb_array = await asyncio.to_thread(embed, [full_text], c.settings.embed_model)
-        emb = emb_array[0].tolist()
+        emb = await _embed_one(full_text, c.settings.embed_model)
         await c.pg.upsert_chunks(
             session_id=session_id,
             chunks=[
@@ -307,7 +311,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                     finished_at=datetime.now(UTC).isoformat(),
                 )
             except Exception as exc:
-                logger.exception("Ingest job %s failed", run_id)
+                log.exception("Ingest job %s failed", run_id)
                 c._jobs[run_id].update(
                     status="failed",
                     error=str(exc),
