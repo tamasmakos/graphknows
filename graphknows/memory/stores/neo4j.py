@@ -216,7 +216,7 @@ def _write_evidence_graph(
             nodes += 1
             written.add(ename)
         s.run(
-            "MATCH (c:CHUNK {id: $cid}), (e:ENTITY {name: $n}) MERGE (c)-[:HAS_ENTITY]->(e)",
+            "MATCH (c:CHUNK {id: $cid}), (e:ENTITY {name: $n}) MERGE (c)-[:MENTIONS]->(e)",
             cid=ce["chunk_id"],
             n=ename,
         )
@@ -661,7 +661,6 @@ class Neo4jStore:
         Returns:
             Dict with entity, depth, neighbor_count, and neighbors list.
         """
-        name_upper = entity_name.strip().upper()
         depth = max(1, min(depth, 3))  # cap at 3 hops to prevent runaway queries
 
         # Validate relationship type names — alphanumeric + underscore only
@@ -679,14 +678,15 @@ class Neo4jStore:
             rel_pattern = f"[r*1..{depth}]"
 
         rows = await self._arun(
-            f"""MATCH (start:ENTITY {{name: $name}})-{rel_pattern}-(neighbor)
-               WHERE neighbor:ENTITY OR neighbor:TOPIC
+            f"""MATCH (start:ENTITY)-{rel_pattern}-(neighbor)
+               WHERE toLower(start.name) = toLower($name)
+                 AND (neighbor:ENTITY OR neighbor:TOPIC)
                RETURN
                    neighbor.name AS name,
                    labels(neighbor)[0] AS node_label,
                    [rel IN r | type(rel)] AS rel_path
                LIMIT 100""",
-            name=name_upper,
+            name=entity_name.strip(),
         )
 
         nodes: list[dict] = []
@@ -705,13 +705,14 @@ class Neo4jStore:
         }
 
     async def get_chunks_for_entity(self, entity_name: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """Return Chunk nodes linked to *entity_name* via MENTIONS edges."""
-        name_upper = entity_name.strip().upper()
+        """Return Chunk nodes linked to *entity_name* via MENTIONS edges (case-insensitive)."""
         rows = await self._arun(
-            """MATCH (ch:CHUNK)-[:MENTIONS]->(e:ENTITY {name:$name})
-               RETURN ch.id AS chunk_id, ch.doc_id AS doc_id, ch.text AS text
+            """MATCH (ch:CHUNK)-[:MENTIONS]->(e:ENTITY)
+               WHERE toLower(e.name) = toLower($name)
+               OPTIONAL MATCH (f:FILE)-[:HAS_CHUNK]->(ch)
+               RETURN ch.id AS chunk_id, coalesce(ch.doc_id, f.id, '') AS doc_id, ch.text AS text
                LIMIT $k""",
-            name=name_upper,
+            name=entity_name.strip(),
             k=top_k,
         )
         return [dict(r) for r in rows]
@@ -939,7 +940,7 @@ class Neo4jStore:
                 continue
 
             evidence_rows = await self._arun(
-                "MATCH (c:CHUNK)-[:HAS_ENTITY]->(e:ENTITY) "
+                "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
                 "WHERE e.name IN $members "
                 "WITH DISTINCT c "
                 "RETURN c.text AS text, c.heading_path AS hp "
