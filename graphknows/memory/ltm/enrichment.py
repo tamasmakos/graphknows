@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import logging
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -219,10 +222,6 @@ def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]
     Returns:
         dict with entity_count, edge_count, community_count, etc.
     """
-    import contextlib
-    import hashlib
-    import time
-
     t0 = time.time()
     result: dict[str, Any] = {
         "entity_count": 0,
@@ -431,8 +430,6 @@ class LTMEnrichmentService:
         Returns:
             CommunityResult with community stats.
         """
-        import contextlib
-
         result = CommunityResult()
         with driver.session() as s:
             ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]
@@ -469,8 +466,6 @@ class LTMEnrichmentService:
         Returns:
             CentralityResult with entity/edge counts.
         """
-        import contextlib
-
         result = CentralityResult()
         with driver.session() as s:
             ec = s.run("MATCH (e:ENTITY) RETURN count(e) as c").single()["c"]

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import Any
 
 from graphknows.mcp._app import app
@@ -12,6 +14,8 @@ from graphknows.mcp._state import (
     get_settings,
 )
 from graphknows.memory.stm._async_bridge import _run as _bg_run
+
+log = logging.getLogger("graphknows.mcp.tools.stm")
 
 
 async def _sync_topics_to_pgvector(neo_store: Any, pg_store: Any) -> int:
@@ -139,9 +143,9 @@ async def memory_ingest(
         isinstance(messages, dict) and "role" in messages
     )
 
-    if is_conversation or (isinstance(messages, str) and not title):
-        from graphknows.config.builders.stores import build_stm_service
+    from graphknows.config.builders.stores import build_stm_service
 
+    if is_conversation or (isinstance(messages, str) and not title):
         try:
             mc = MemoryClass(memory_class)
         except ValueError:
@@ -165,8 +169,6 @@ async def memory_ingest(
         }
 
     # Document / artifact path (plain text + title) — chunked via _STMIngestHandler
-    from graphknows.config.builders.stores import build_stm_service
-
     service = build_stm_service(get_settings())
     result = service.ingest(
         messages,  # type: ignore[arg-type]
@@ -197,12 +199,9 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
     Returns:
         Dict with nodes, edges, chunks, turns, elapsed_s, errors.
     """
-    import logging
-
     from graphknows.config.builders.stores import build_promotion_pipeline
     from graphknows.memory.models.promotion import PromotionRequest
 
-    logger = logging.getLogger("graphknows.mcp.tools.stm")
     s = get_settings()
 
     # Idempotency guard
@@ -215,7 +214,7 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
             )
         )
     if rows and rows[0]["n"] > 0:
-        logger.info("Session %s already in LTM — skipping flush", session_id)
+        log.info("Session %s already in LTM — skipping flush", session_id)
         return {
             "session_id": session_id,
             "status": "already_flushed",
@@ -267,9 +266,6 @@ async def memory_flush(session_id: str) -> dict[str, Any]:
 
 async def _ingest_turn_async(mg, pg, extractor, embed_fn, session_id, dialog_id, turn):
     """Helper coroutine that writes a single turn through DialogCapture."""
-    import asyncio
-    import time
-
     from graphknows.memory.stm.dialog import DialogCapture
 
     t0 = time.perf_counter()
@@ -319,13 +315,9 @@ async def memory_ingest_turn(
     Returns:
         Dict with dialog_id, turn_id, entity_count, elapsed_s, errors.
     """
-    import time
-
-    from graphknows.memory.models.ingest_options import IngestOptions
     from graphknows.memory.models.scope import MemoryScope
 
     scope = MemoryScope(run_id=session_id)
-    options = IngestOptions(scope=scope, turn_index_offset=turn_index)
     msg = {"role": role, "content": text}
 
     t0 = time.perf_counter()
