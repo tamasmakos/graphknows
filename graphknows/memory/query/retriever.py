@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 
 from graphknows.memory.query.base import BaseGraphRetriever
@@ -29,7 +30,7 @@ from graphknows.memory.stores.embedder import embed
 from graphknows.memory.stores.neo4j import Neo4jStore
 from graphknows.memory.stores.pgvector import PgVectorStore
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 RRF_K: int = 60
 DEFAULT_K_ENTITY: int = 10
@@ -86,7 +87,7 @@ class HybridRetriever(BaseGraphRetriever):
         Returns:
             RetrievalContext with ranked fused_results.
         """
-        logger.debug(
+        log.debug(
             "retrieve START  query=%r  session=%s  scope=%s  k_entity=%d  k_semantic=%d  top_k=%d",
             query, session_id, scope, k_entity, k_semantic, top_k,
         )
@@ -103,7 +104,7 @@ class HybridRetriever(BaseGraphRetriever):
             self._search_chunks_by_scope(emb, session_id, scope, k_semantic)
         )
         entity_rows, sem_rows = await asyncio.gather(entity_rows_task, sem_rows_task)
-        logger.debug("ANN  entities=%d  chunks=%d", len(entity_rows), len(sem_rows))
+        log.debug("ANN  entities=%d  chunks=%d", len(entity_rows), len(sem_rows))
 
         # ── Step 3: entity → chunks via Neo4j MENTIONS (graph path) ───────
         graph_chunk_info: dict[str, dict] = {}
@@ -118,7 +119,7 @@ class HybridRetriever(BaseGraphRetriever):
 
             for i, (ent, neo_chunks) in enumerate(zip(entity_rows, neo_results, strict=False)):
                 if isinstance(neo_chunks, Exception):
-                    logger.warning("Neo4j lookup failed for %r: %s", ent["name"], neo_chunks)
+                    log.warning("Neo4j lookup failed for %r: %s", ent["name"], neo_chunks)
                     neo_chunks = []
                 entity_similarity = ent["score"]
                 chunk_matches: list[ChunkMatch] = []
@@ -169,7 +170,7 @@ class HybridRetriever(BaseGraphRetriever):
             sem_ids.add(cid)
 
         ranked = sorted(rrf_scores.items(), key=lambda x: -x[1])[:top_k]
-        logger.debug("RRF  unique=%d  returning=%d", len(rrf_scores), len(ranked))
+        log.debug("RRF  unique=%d  returning=%d", len(rrf_scores), len(ranked))
 
         # ── Step 6: bulk-fetch full text for fused chunk IDs ──────────────
         full_text_map = await self.pg.get_chunks_by_ids([cid for cid, _ in ranked])
@@ -198,7 +199,7 @@ class HybridRetriever(BaseGraphRetriever):
                 "entities": chunk_entities.get(cid, []),
             })
 
-        logger.debug("retrieve DONE  fused=%d", len(fused))
+        log.debug("retrieve DONE  fused=%d", len(fused))
         return RetrievalContext(
             query=query,
             session_id=session_id,
@@ -491,8 +492,6 @@ class HybridRetriever(BaseGraphRetriever):
                 or forbidden write keywords.
         """
         # Guard: reject f-string style interpolation markers
-        import re
-
         if re.search(r"\{[^}]+\}", cypher_template):
             raise ValueError(
                 "Cypher template must not contain {var} interpolation — "
@@ -538,8 +537,6 @@ class HybridRetriever(BaseGraphRetriever):
         Returns:
             RetrievalContext from the selected mode, with search_type set.
         """
-        import re
-
         cypher_pat = re.compile(r"\b(MATCH|RETURN|WHERE|WITH|UNWIND)\b", re.IGNORECASE)
         if cypher_pat.search(query):
             raise ValueError(

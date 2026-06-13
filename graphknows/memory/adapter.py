@@ -7,7 +7,10 @@ generic contract. Host-specific parsing and normalization stay outside this clas
 from __future__ import annotations
 
 import asyncio
+import os
 import time
+
+import asyncpg
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -346,8 +349,6 @@ class GraphknowsMemoryAdapter:
         return c.memgraph, c.pg, c.neo  # type: ignore[no-any-return]
 
     def _lazy_stores(self) -> tuple[Any, Any, Any, Any]:
-        import os
-
         from graphknows.memory.stores.embedder import embed_one
         from graphknows.memory.stores.memgraph import MemgraphStore
         from graphknows.memory.stores.neo4j import Neo4jStore
@@ -373,6 +374,19 @@ class GraphknowsMemoryAdapter:
 
         return GLiNER2EntityExtractor()
 
+    def _build_svc(self) -> tuple[Any, Any, STMService]:
+        from graphknows.memory.stm._async_bridge import _run as _stm_run
+
+        if self._container is not None:
+            mg, pg, _ = self._stores_from_container()
+            from graphknows.memory.stores.embedder import embed_one
+            embed_fn = embed_one
+        else:
+            mg, pg, _, embed_fn = self._lazy_stores()
+        extractor = self._get_extractor()
+        _stm_run(pg.connect())
+        return mg, pg, STMService(mg, pg, extractor, embed_fn=embed_fn)
+
     # ------------------------------------------------------------------
     # ingest
     # ------------------------------------------------------------------
@@ -387,20 +401,7 @@ class GraphknowsMemoryAdapter:
         messages accepts str, dict, or list[str | dict | Message].
         options carries scope (user_id/agent_id/run_id), infer flag, and metadata.
         """
-        if self._container is not None:
-            mg, pg, _ = self._stores_from_container()
-            from graphknows.memory.stores.embedder import embed_one
-
-            embed_fn = embed_one
-        else:
-            mg, pg, _, embed_fn = self._lazy_stores()
-
-        from graphknows.memory.stm._async_bridge import _run as _stm_run
-
-        extractor = self._get_extractor()
-        _stm_run(pg.connect())
-        svc = STMService(mg, pg, extractor, embed_fn=embed_fn)
-
+        _, _, svc = self._build_svc()
         msgs = normalize_messages(messages)
         return await asyncio.to_thread(svc.ingest_messages, msgs, options)
 
@@ -411,26 +412,8 @@ class GraphknowsMemoryAdapter:
         title: str = "",
     ) -> IngestResult:
         """Ingest raw text as a document (artifact path, not dialog turns)."""
-        if self._container is not None:
-            mg, pg, _ = self._stores_from_container()
-            from graphknows.memory.stores.embedder import embed_one
-
-            embed_fn = embed_one
-        else:
-            mg, pg, _, embed_fn = self._lazy_stores()
-
-        from graphknows.memory.stm._async_bridge import _run as _stm_run
-
-        extractor = self._get_extractor()
-        _stm_run(pg.connect())
-        svc = STMService(mg, pg, extractor, embed_fn=embed_fn)
-
-        return await asyncio.to_thread(
-            svc.ingest,
-            text,
-            session_id=session_id,
-            title=title,
-        )
+        _, _, svc = self._build_svc()
+        return await asyncio.to_thread(svc.ingest, text, session_id=session_id, title=title)
 
     # ------------------------------------------------------------------
     # recall
@@ -508,9 +491,7 @@ class GraphknowsMemoryAdapter:
             mg, pg, neo = self._stores_from_container()
         else:
             mg, pg, neo, _ = self._lazy_stores()
-            import asyncio as _asyncio
-
-            await _asyncio.to_thread(pg.connect)
+            await asyncio.to_thread(pg.connect)
 
         from graphknows.memory.flush import LTMPromotionPipeline
         from graphknows.memory.models.promotion import PromotionRequest
@@ -533,8 +514,6 @@ class GraphknowsMemoryAdapter:
 
     async def stats(self, scope: MemoryScope | str | None = None) -> MemoryStats:
         """Return aggregate node/chunk counts for STM and LTM."""
-        import asyncpg
-
         if self._container is not None:
             _, pg, neo = self._stores_from_container()
             pg_dsn = getattr(pg, "_dsn", "")
@@ -543,8 +522,6 @@ class GraphknowsMemoryAdapter:
             pg_dsn = ""
 
         if not pg_dsn:
-            import os
-
             pg_dsn = os.environ.get("PGVECTOR_DSN", "")
 
         stm: dict[str, Any] = {}

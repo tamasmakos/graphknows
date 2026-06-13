@@ -1,12 +1,15 @@
-import re
+from __future__ import annotations
+
 import logging
-from typing import List, Dict, Any, Optional
+import re
+from typing import Any
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
-def split_sentences(text: str) -> List[str]:
+def split_sentences(text: str) -> list[str]:
     """Split text into sentences using regex."""
     # Simple regex for sentence splitting
     sentence_endings = r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s"
@@ -15,8 +18,8 @@ def split_sentences(text: str) -> List[str]:
 
 
 async def process_document_splitting(
-    content: str, config: Dict[str, Any]
-) -> List[str]:  # Returns list of chunk strings
+    content: str, config: dict[str, Any]
+) -> list[str]:
     """Process text using LangChain splitter."""
 
     try:
@@ -31,10 +34,12 @@ async def process_document_splitting(
         # Ensure overlap is not larger than chunk_size
         if chunk_overlap >= chunk_size:
             chunk_overlap = max(20, chunk_size // 10)
-            logger.warning(f"chunk_overlap too large, adjusted to {chunk_overlap}")
+            log.warning("chunk_overlap too large, adjusted to %d", chunk_overlap)
 
-        logger.debug(
-            f"RecursiveCharacterTextSplitter configured: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}"
+        log.debug(
+            "RecursiveCharacterTextSplitter configured: chunk_size=%d, chunk_overlap=%d",
+            chunk_size,
+            chunk_overlap,
         )
 
         splitter = RecursiveCharacterTextSplitter(
@@ -45,5 +50,5 @@ async def process_document_splitting(
         return chunks
 
     except Exception as e:
-        logger.error(f"Error in splitting: {e}")
+        log.error("Error in splitting: %s", e)
         raise

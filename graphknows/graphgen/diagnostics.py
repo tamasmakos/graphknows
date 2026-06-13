@@ -5,28 +5,28 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
-def diagnostics_enabled(config: Dict[str, Any] | None) -> bool:
+def _section(config: dict[str, Any] | None, key: str) -> dict[str, Any]:
+    """Return a normalized config sub-dict (handles Pydantic models transparently)."""
+    cfg = (config or {}).get(key, {})
+    if hasattr(cfg, "model_dump"):
+        cfg = cfg.model_dump()
+    return cfg
+
+
+def diagnostics_enabled(config: dict[str, Any] | None) -> bool:
     if not config:
         return False
-    extraction_cfg = config.get("extraction", {})
-    if hasattr(extraction_cfg, "model_dump"):
-        extraction_cfg = extraction_cfg.model_dump()
-    return bool(extraction_cfg.get("diagnostic_mode", False))
+    return bool(_section(config, "extraction").get("diagnostic_mode", False))
 
 
-def diagnostic_dir(config: Dict[str, Any]) -> Path:
-    extraction_cfg = config.get("extraction", {})
-    infra_cfg = config.get("infra", {})
-    if hasattr(extraction_cfg, "model_dump"):
-        extraction_cfg = extraction_cfg.model_dump()
-    if hasattr(infra_cfg, "model_dump"):
-        infra_cfg = infra_cfg.model_dump()
-
-    output_dir = Path(infra_cfg.get("output_dir", "output"))
-    subdir = extraction_cfg.get("diagnostic_output_subdir", "diagnostics")
+def diagnostic_dir(config: dict[str, Any]) -> Path:
+    extraction = _section(config, "extraction")
+    infra = _section(config, "infra")
+    output_dir = Path(infra.get("output_dir", "output"))
+    subdir = extraction.get("diagnostic_output_subdir", "diagnostics")
     return output_dir / subdir
 
 

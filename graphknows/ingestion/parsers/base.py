@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -62,8 +63,6 @@ class BaseParser(ABC):
         """
 
     def _make_source_id(self, source_hint: str, text: str) -> str:
-        import hashlib
-
         return hashlib.sha256(f"{source_hint}::{text[:2000]}".encode()).hexdigest()[:16]
 
     def _chunk_by_headings(

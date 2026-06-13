@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from graphknows.config import GraphKnowsSettings
     from graphknows.memory.query.context import RetrievalContext
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class AgenticRetriever(BaseGraphRetriever):
@@ -207,7 +207,7 @@ class AgenticRetriever(BaseGraphRetriever):
         try:
             await asyncio.to_thread(_run_react)
         except Exception as exc:
-            logger.warning("DSPy ReAct retrieval failed: %s", exc)
+            log.warning("DSPy ReAct retrieval failed: %s", exc)
             react_failed = True
 
         # Dedup chunks gathered by ReAct tool calls, keeping highest cosine_score.
