@@ -80,7 +80,7 @@ def _ann_turns(
 
 
 _STRUCTURAL_REL_TYPES = frozenset({
-    "HAS_ENTITY", "HAS_CHUNK", "IN_SESSION", "IN_TOPIC", "IN_COMMUNITY",
+    "MENTIONS", "HAS_CHUNK", "IN_SESSION", "IN_TOPIC", "IN_COMMUNITY",
     "HAS_TURN", "IN_DIALOG", "PART_OF",
 })
 
@@ -111,7 +111,7 @@ def _entity_traversal(
             if session_filter:
                 direct_cypher = """
                     MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)
-                    MATCH (c)-[:HAS_ENTITY]->(e:ENTITY)
+                    MATCH (c)-[:MENTIONS]->(e:ENTITY)
                     WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
                     WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
                     ORDER BY mc DESC LIMIT $top_k
@@ -122,7 +122,7 @@ def _entity_traversal(
                 direct_cypher = """
                     MATCH (e:ENTITY)
                     WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                    MATCH (c:CHUNK)-[:HAS_ENTITY]->(e)
+                    MATCH (c:CHUNK)-[:MENTIONS]->(e)
                     WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
                     ORDER BY mc DESC LIMIT $top_k
                     RETURN c.id AS chunk_id, c.text AS text, entities
@@ -158,11 +158,11 @@ def _entity_traversal(
                 if session_filter:
                     rel_cypher = """
                         MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c0:CHUNK)
-                        MATCH (c0)-[:HAS_ENTITY]->(e:ENTITY)
+                        MATCH (c0)-[:MENTIONS]->(e:ENTITY)
                         WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
                         MATCH (e)-[r]-(e2:ENTITY)
                         WHERE NOT type(r) IN $skip_types
-                        MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:HAS_ENTITY]->(e2)
+                        MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e2)
                         WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
                         ORDER BY mc DESC LIMIT $top_k
                         RETURN c.id AS chunk_id, c.text AS text, ents AS entities
@@ -179,7 +179,7 @@ def _entity_traversal(
                         WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
                         MATCH (e)-[r]-(e2:ENTITY)
                         WHERE NOT type(r) IN $skip_types
-                        MATCH (c:CHUNK)-[:HAS_ENTITY]->(e2)
+                        MATCH (c:CHUNK)-[:MENTIONS]->(e2)
                         WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
                         ORDER BY mc DESC LIMIT $top_k
                         RETURN c.id AS chunk_id, c.text AS text, ents AS entities
