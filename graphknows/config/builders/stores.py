@@ -93,9 +93,17 @@ def build_embedder(model_name: str = "openai/text-embedding-3-small") -> IEmbedd
 # --- Service factories (MCP transport layer) ---
 
 
+def _build_entity_extractor(mode: str) -> Any:
+    """Return a GLiNER2EntityExtractor, or None when extraction is disabled."""
+    if mode == "off":
+        return None
+    from graphknows.memory.extractor import GLiNER2EntityExtractor
+
+    return GLiNER2EntityExtractor()
+
+
 def build_stm_service(settings: GraphKnowsSettings) -> Any:
     """Build an STMService from settings."""
-    from graphknows.memory.extractor import GLiNER2EntityExtractor
     from graphknows.memory.stm._async_bridge import _run
     from graphknows.memory.stm.service import STMService
     from graphknows.memory.stores.embedder import embed_one
@@ -105,7 +113,7 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     _run(pg.connect())
 
     mode = settings.relation_extraction_mode
-    extractor = None if mode == "off" else GLiNER2EntityExtractor()
+    extractor = _build_entity_extractor(mode)
     rel_extractor = build_relation_extractor(settings) if mode == "llm_assisted" else None
     return STMService(mg, pg, extractor, embed_fn=embed_one, rel_extractor=rel_extractor)
 
@@ -129,7 +137,6 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
 
 def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     """Build a CorpusIngestWorkflow from settings."""
-    from graphknows.memory.extractor import GLiNER2EntityExtractor
     from graphknows.memory.stores.embedder import embed_one
     from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
 
@@ -137,7 +144,7 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     pg = build_pgvector_store(settings)
     neo = build_neo4j_store(settings)
     mode = settings.relation_extraction_mode
-    extractor = None if mode == "off" else GLiNER2EntityExtractor()
+    extractor = _build_entity_extractor(mode)
     rel_extractor = None
     key = settings.openrouter_api_key or ""
     return CorpusIngestWorkflow(

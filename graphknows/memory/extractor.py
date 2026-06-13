@@ -8,8 +8,11 @@ entity spans.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
+import sys
+import time
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -249,10 +252,6 @@ class GLiNER2EntityExtractor:
         """Load GLiNER2 model on first extraction call."""
         if self._gliner is not None:
             return
-
-        import contextlib
-        import sys
-        import time
 
         log.info("GLiNER2 model not loaded; loading now (first call, expect 15-30s)...")
         start = time.monotonic()

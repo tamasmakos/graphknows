@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 def _escape_cypher_identifier(identifier: str) -> str:
@@ -51,19 +51,19 @@ def _clean_props_for_neo4j(props: dict[str, Any]) -> dict[str, Any]:
                     try:
                         cleaned[key] = json.dumps(value, ensure_ascii=False)
                     except (TypeError, ValueError) as exc:
-                        logger.debug("Failed to JSON-encode %s: %s", key, exc)
+                        log.debug("Failed to JSON-encode %s: %s", key, exc)
                         cleaned[key] = str(value)
             else:
                 try:
                     cleaned[key] = json.dumps(value, ensure_ascii=False)
                 except (TypeError, ValueError) as exc:
-                    logger.debug("Failed to JSON-encode %s: %s", key, exc)
+                    log.debug("Failed to JSON-encode %s: %s", key, exc)
                     cleaned[key] = str(value)
         elif isinstance(value, dict):
             try:
                 cleaned[key] = json.dumps(value, ensure_ascii=False)
             except (TypeError, ValueError) as exc:
-                logger.debug("Failed to JSON-encode %s: %s", key, exc)
+                log.debug("Failed to JSON-encode %s: %s", key, exc)
                 cleaned[key] = str(value)
         else:
             cleaned[key] = str(value)

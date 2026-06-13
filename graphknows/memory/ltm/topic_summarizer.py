@@ -10,7 +10,7 @@ import dspy
 
 from graphknows.config.llm import normalize_openrouter_model
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class TopicSummarySignature(dspy.Signature):
@@ -77,7 +77,7 @@ class TopicSummarizer:
         try:
             prediction = await asyncio.to_thread(_summarize_sync)
         except Exception as exc:
-            logger.warning("DSPy topic summarization failed: %s", exc)
+            log.warning("DSPy topic summarization failed: %s", exc)
             return fallback_title, ""
 
         title = str(getattr(prediction, "title", "") or fallback_title).strip()
