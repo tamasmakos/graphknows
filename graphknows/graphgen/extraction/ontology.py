@@ -12,15 +12,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
 from graphknows.graphgen.utils import standardize_label
 
 # TYPE_CHECKING guard avoids circular import at runtime
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from graphknows.ingestion.domain.taxonomy import TaxonomyConfig
 
@@ -89,6 +87,32 @@ TOP_LEVEL_ALIASES: dict[str, list[str]] = {
         "defense",
     ],
     "EVENT": ["event", "summit", "meeting", "election", "crisis", "war", "debate", "conference"],
+}
+
+# Fallback candidate-label hints used when no taxonomy is provided
+DEFAULT_CANDIDATE_HINTS: dict[str, list[str]] = {
+    "PERSON": ["prime minister", "president", "speaker", "leader"],
+    "ORGANIZATION": [
+        "kremlin",
+        "army",
+        "military",
+        "parliament",
+        "commission",
+        "bank",
+        "union",
+    ],
+    "LOCATION": ["ukraine", "italy", "mediterranean", "europe", "eurozone"],
+    "POLICY": [
+        "sanctions",
+        "aid",
+        "migration",
+        "climate",
+        "health",
+        "security",
+        "energy",
+        "policy",
+    ],
+    "EVENT": ["invasion", "conference", "debate", "crisis", "war"],
 }
 
 # Hard overrides that bypass the normal child-alias scoring
@@ -210,34 +234,11 @@ def select_candidate_labels(
     """
     lowered = text.lower()
 
-    # Build per-label hint lists from taxonomy or use hardcoded political hints
-    if taxonomy is not None:
-        _hints: dict[str, list[str]] = {k: v.aliases for k, v in taxonomy.entity_groups.items()}
-    else:
-        _hints = {
-            "PERSON": ["prime minister", "president", "speaker", "leader"],
-            "ORGANIZATION": [
-                "kremlin",
-                "army",
-                "military",
-                "parliament",
-                "commission",
-                "bank",
-                "union",
-            ],
-            "LOCATION": ["ukraine", "italy", "mediterranean", "europe", "eurozone"],
-            "POLICY": [
-                "sanctions",
-                "aid",
-                "migration",
-                "climate",
-                "health",
-                "security",
-                "energy",
-                "policy",
-            ],
-            "EVENT": ["invasion", "conference", "debate", "crisis", "war"],
-        }
+    _hints: dict[str, list[str]] = (
+        {k: v.aliases for k, v in taxonomy.entity_groups.items()}
+        if taxonomy is not None
+        else DEFAULT_CANDIDATE_HINTS
+    )
 
     scores: list[tuple[str, int]] = []
     for top_label, spec in label_space.items():
@@ -381,7 +382,7 @@ def export_graphml_and_cypher_artifacts(
                 "MATCH (a:ENTITY {{id: '{src}'}}), (b:ENTITY {{id: '{tgt}'}}) "
                 "MERGE (a)-[r:{rel_type}]->(b) "
                 "SET r.weight = coalesce(r.weight, 0) + 1;\\n".format(
-                    src=source, tgt=target, rel_type=standardize_label(relation["type"])
+                    src=source, tgt=target, rel_type=standardize_label(relation["relation"])
                 )
             )
 

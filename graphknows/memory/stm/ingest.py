@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import time
 from typing import Any
@@ -89,8 +90,6 @@ class _STMIngestHandler:
         Returns:
             IngestResult with counts and timing.
         """
-        import os
-
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read()
         parser = get_parser(path)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -306,8 +307,6 @@ def _run_recall(
     top_k: int,
 ) -> dict[str, Any]:
     """Synchronous recall across STM/LTM stores. Returns serialisable hits dict."""
-    import re
-
     from graphknows.memory.stm._async_bridge import _run as _bg_run
     from graphknows.memory.stores.embedder import embed_one
 

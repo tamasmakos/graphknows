@@ -141,9 +141,9 @@ class GraphKnowsSettings(BaseSettings):
         if self.neo4j_password == "testpassword123" and env.get("NEO4J_PASSWORD"):
             self.neo4j_password = env["NEO4J_PASSWORD"]
 
-        password = self.pgvector_password or env.get("PGVECTOR_PASSWORD", "")
-        if not self.pgvector_password and password:
-            self.pgvector_password = password
+        if not self.pgvector_password:
+            self.pgvector_password = env.get("PGVECTOR_PASSWORD", "")
+        password = self.pgvector_password
 
         if self.pgvector_dsn == _MASKED_PGVECTOR_DSN and password:
             host = env.get("PGVECTOR_HOST", self.pgvector_host)

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import asyncpg as _asyncpg
 
 log = logging.getLogger("graphknows.memory.forget")
 
@@ -42,10 +45,6 @@ class LTMForget:
 
     def forget_community(self, community_id: int) -> dict:
         """Delete all entities exclusively in this community + their Topic node."""
-        import asyncio
-
-        import asyncpg as _pg
-
         with self._driver.session() as s:
             result = s.run(
                 "MATCH (e:ENTITY {community_id: $cid}) "
@@ -57,7 +56,7 @@ class LTMForget:
             s.run("MATCH (t:TOPIC {community_id: $cid}) DETACH DELETE t", cid=community_id)
 
         async def _pg_delete():
-            conn = await _pg.connect(self._pg_dsn)
+            conn = await _asyncpg.connect(self._pg_dsn)
             try:
                 await conn.execute("DELETE FROM ltm_topics WHERE community_id=$1", community_id)
             finally:

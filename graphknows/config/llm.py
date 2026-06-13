@@ -14,10 +14,9 @@ import logging
 import os
 from typing import Any
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 _MASKED_SECRET = "**********"
-_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _DEFAULT_MODEL = "moonshotai/kimi-k2"
 
 
