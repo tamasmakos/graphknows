@@ -182,57 +182,42 @@ class _STMIngestHandler:
                 )
                 entity_count += 1
 
-            # Write GLiNER2 relations as typed bi-temporal edges with invalidation.
+            # Write GLiNER2 relations — no fallback; let failures propagate.
             for rel in extraction.relations:
-                try:
+                _run(
+                    self._mg.write_relation_edge(
+                        session_id=session_id,
+                        subject_name=rel["head"],
+                        relation_name=rel["relation"],
+                        object_name=rel["tail"],
+                        confidence=rel.get("score", 0.5),
+                    )
+                )
+
+            # DSPy ontology-guided relation extraction (llm_assisted mode only).
+            # extract_relations returns (triplets, nodes, diagnostics).
+            # Each triplet is (subject, relation, object, props_dict).
+            if self._rel_extractor is not None and len(entities) >= 2:
+                raw = _run(self._rel_extractor.extract_relations(text=clean_text))
+                dspy_triplets: list[tuple] = raw[0] if isinstance(raw, tuple) else []
+                for triplet in dspy_triplets:
+                    subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
+                    props = triplet[3] if len(triplet) > 3 else {}
+                    confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
                     _run(
                         self._mg.write_relation_edge(
                             session_id=session_id,
-                            subject_name=rel["head"],
-                            relation_name=rel["relation"],
-                            object_name=rel["tail"],
-                            confidence=rel.get("score", 0.5),
+                            subject_name=subj,
+                            relation_name=rel_name,
+                            object_name=obj,
+                            confidence=confidence,
                         )
                     )
-                except Exception as exc:
-                    log.warning(
-                        "write_relation_edge failed session=%s rel=%s: %s",
-                        session_id,
-                        rel.get("relation"),
-                        exc,
-                    )
-
-            # DSPy ontology-guided relation extraction.
-            # Runs after GLiNER2 and uses only taxonomy labels plus extracted entities.
-            if self._rel_extractor is not None and len(entities) >= 2:
-                dspy_rels = self._rel_extractor.extract(
-                    text=clean_text,
-                    entities=entities,
-                    ontology_schema=None,
-                    ontology_id=f"{session_id}:{chunk_id[:8]}",
-                )
-                for drel in dspy_rels:
-                    try:
-                        _run(
-                            self._mg.write_relation_edge(
-                                session_id=session_id,
-                                subject_name=drel["subject"],
-                                relation_name=drel["predicate"],
-                                object_name=drel["object"],
-                                confidence=drel.get("confidence", 0.5),
-                            )
-                        )
-                    except Exception as exc:
-                        log.warning(
-                            "DSPy write_relation_edge failed session=%s: %s",
-                            session_id,
-                            exc,
-                        )
                 log.debug(
                     "DSPy extraction session=%s chunk=%s: %d triples",
                     session_id,
                     chunk_id[:8],
-                    len(dspy_rels),
+                    len(dspy_triplets),
                 )
 
             # Write to pgvector STM
