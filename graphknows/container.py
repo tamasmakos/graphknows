@@ -35,6 +35,7 @@ from graphknows.config.builders import (
     build_pgvector_store,
 )
 from graphknows.mcp.tool import GraphKnowsTool
+from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.retriever import HybridRetriever
 from graphknows.memory.stores.embedder import embed
 from graphknows.memory.stores.memgraph import MemgraphStore
@@ -56,7 +57,7 @@ class GraphKnowsContainer:
         self._pg: PgVectorStore | None = None
         self._neo: Neo4jStore | None = None
         self._memgraph: MemgraphStore | None = None
-        self._retriever: HybridRetriever | None = None
+        self._retriever: BaseGraphRetriever | None = None
         self._jobs: dict[str, dict[str, Any]] = {}
         self._background_tasks: set[asyncio.Task] = set()
 
@@ -91,11 +92,21 @@ class GraphKnowsContainer:
             self._pg.ensure_schema(),
             self._neo.ensure_indexes(),
         )
-        self._retriever = HybridRetriever(
-            pg=self._pg,
-            neo=self._neo,
-            embed_model=cfg.embed_model,
-        )
+        if cfg.retrieval_mode == "agentic":
+            from graphknows.memory.query.agentic import AgenticRetriever
+
+            self._retriever = AgenticRetriever(
+                settings=cfg,
+                pg=self._pg,
+                neo=self._neo,
+                memgraph=self._memgraph,
+            )
+        else:
+            self._retriever = HybridRetriever(
+                pg=self._pg,
+                neo=self._neo,
+                embed_model=cfg.embed_model,
+            )
         logger.info("GraphKnowsContainer ready (env=%s)", cfg.graphknows_env)
         return self
 
@@ -121,8 +132,8 @@ class GraphKnowsContainer:
     # ------------------------------------------------------------------
 
     @property
-    def retriever(self) -> HybridRetriever:
-        """Return the hybrid retriever; raises if container is not entered."""
+    def retriever(self) -> BaseGraphRetriever:
+        """Return the active retriever; raises if container is not entered."""
         if self._retriever is None:
             raise RuntimeError(self._ERR_NOT_ENTERED)
         return self._retriever
@@ -179,29 +190,9 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
     async def _retrieve(
         query: str,
         session_id: str = "default",
-        search_type: str = "HYBRID",
-        k_entity: int = 10,
-        k_semantic: int = 20,
-        k_final: int = 10,
+        top_k: int = 10,
     ) -> str:
-        ret = c.retriever
-        mode = search_type.upper()
-        if mode == "SEMANTIC":
-            ctx = await ret.retrieve_semantic(query, session_id, k=k_semantic)
-        elif mode == "GRAPH_TRAVERSAL":
-            ctx = await ret.retrieve_graph_traversal(
-                query, session_id, k_entity=k_entity, depth=2, k_final=k_final
-            )
-        elif mode == "SUMMARIES":
-            ctx = await ret.retrieve_summaries(query, session_id, k_entity=k_entity)
-        elif mode == "FEELING_LUCKY":
-            ctx = await ret.retrieve_feeling_lucky(
-                query, session_id, k_entity=k_entity, k_semantic=k_semantic, k_final=k_final
-            )
-        else:
-            ctx = await ret.retrieve(
-                query, session_id, k_entity=k_entity, k_semantic=k_semantic, k_final=k_final
-            )
+        ctx = await c.retriever.retrieve(query, session_id, top_k=top_k)
         return ctx.to_xml()
 
     # ---- entity_search --------------------------------------------------
@@ -404,12 +395,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
     return [
         GraphKnowsTool(
             name="retrieve",
-            description=(
-                "Search the knowledge graph. "
-                "Modes: HYBRID (default, RRF fusion), SEMANTIC (vector only), "
-                "GRAPH_TRAVERSAL (entity hop expansion), SUMMARIES (topic overviews), "
-                "FEELING_LUCKY (auto-route). Returns XML <retrieval_context>."
-            ),
+            description="Search the knowledge graph. Returns XML <retrieval_context>.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -418,20 +404,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                         "description": "Natural-language research question.",
                     },
                     "session_id": {"type": "string", "default": "default"},
-                    "search_type": {
-                        "type": "string",
-                        "enum": [
-                            "HYBRID",
-                            "SEMANTIC",
-                            "GRAPH_TRAVERSAL",
-                            "SUMMARIES",
-                            "FEELING_LUCKY",
-                        ],
-                        "default": "HYBRID",
-                    },
-                    "k_entity": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
-                    "k_semantic": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
-                    "k_final": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
+                    "top_k": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
                 },
                 "required": ["query"],
             },
