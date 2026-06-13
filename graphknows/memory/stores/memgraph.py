@@ -20,10 +20,13 @@ def _safe_rel_label(raw: str) -> str:
     """Convert a relation string to a valid Cypher relationship type label.
 
     Uppercases, replaces spaces/hyphens with underscores, strips non-word chars.
-    Returns empty string if nothing valid remains.
+    Returns empty string if nothing valid remains or if the result starts with a digit
+    (Cypher relationship types must begin with a letter or underscore).
     """
     label = raw.upper().replace("-", "_").replace(" ", "_")
     label = re.sub(r"[^\w]", "", label)
+    if not label or label[0].isdigit():
+        return ""
     return label
 
 
@@ -565,12 +568,11 @@ class MemgraphStore:
                         now=now,
                     )
 
-                # Write new edge with typed label and bi-temporal fields.
-                # MERGE cannot use dynamic labels, so we CREATE if not exists via
-                # MATCH + MERGE pattern with a discriminating property set.
+                # MERGE both endpoint nodes so relation edges can be written even when
+                # the head/tail are noun phrases that weren't classified as primary entities.
                 s.run(
-                    f"""MATCH (a:ENTITY {{name: $subject, session_id: $session_id}})
-                       MATCH (b:ENTITY {{name: $object, session_id: $session_id}})
+                    f"""MERGE (a:ENTITY {{name: $subject, session_id: $session_id}})
+                       MERGE (b:ENTITY {{name: $object, session_id: $session_id}})
                        MERGE (a)-[r:{safe} {{session_id: $session_id}}]->(b)
                        SET r.fact        = $fact,
                            r.confidence  = $confidence,

@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS ltm_topics (
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ltm_topics_emb_idx ON ltm_topics USING hnsw (embedding vector_cosine_ops);
+
+-- Corpus-level entity embeddings for entity-first graph retrieval (HybridRetriever)
+CREATE TABLE IF NOT EXISTS entities (
+    name        TEXT PRIMARY KEY,
+    label       TEXT,
+    embedding   VECTOR(1536),
+    chunk_count INT  DEFAULT 0,
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS entities_emb_idx ON entities USING hnsw (embedding vector_cosine_ops);
 """
 
 
@@ -230,24 +240,39 @@ class PgVectorStore:
     ) -> list[dict[str, Any]]:
         """ANN search on chunks filtered to *session_id*.
 
+        Routes to stm_chunks when session_id is set; ltm_chunks when empty.
         Returns list of dicts: chunk_id, doc_id, text, metadata, cosine_score.
         """
         pool = self._pool_or_raise()
         emb_str = json.dumps(query_emb)
+        table = "stm_chunks" if session_id else "ltm_chunks"
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT id, doc_id, text, metadata,
-                       1 - (embedding <=> $1::vector) AS cosine_score
-                FROM chunks
-                WHERE session_id = $2
-                ORDER BY embedding <=> $1::vector
-                LIMIT $3
-                """,
-                emb_str,
-                session_id,
-                k,
-            )
+            if session_id:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT id, file_id AS doc_id, text, metadata,
+                           1 - (embedding <=> $1::vector) AS cosine_score
+                    FROM {table}
+                    WHERE session_id = $2
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $3
+                    """,
+                    emb_str,
+                    session_id,
+                    k,
+                )
+            else:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT id, file_id AS doc_id, text, metadata,
+                           1 - (embedding <=> $1::vector) AS cosine_score
+                    FROM {table}
+                    ORDER BY embedding <=> $1::vector
+                    LIMIT $2
+                    """,
+                    emb_str,
+                    k,
+                )
         return [
             {
                 "chunk_id": r["id"],
@@ -271,47 +296,54 @@ class PgVectorStore:
     ) -> list[dict[str, Any]]:
         """ANN search on entity embeddings (corpus-level, no session filter).
 
+        Queries the ``entities`` table when it exists; returns an empty list
+        otherwise so HybridRetriever degrades gracefully to semantic-only mode.
+
         Args:
             query_emb: Query embedding vector.
             k: Number of results to return.
-            entity_types: Optional list of label strings to filter by (e.g. ["ORG", "PERSON"]).
+            entity_types: Optional list of label strings to filter by.
 
         Returns:
             List of dicts: name, label, score.
         """
         pool = self._pool_or_raise()
         emb_str = json.dumps(query_emb)
-        async with pool.acquire() as conn:
-            if entity_types:
-                rows = await conn.fetch(
-                    """
-                    SELECT name, label,
-                           1 - (embedding <=> $1::vector) AS score
-                    FROM entities
-                    WHERE label = ANY($2::text[])
-                    ORDER BY embedding <=> $1::vector
-                    LIMIT $3
-                    """,
-                    emb_str,
-                    entity_types,
-                    k,
-                )
-            else:
-                rows = await conn.fetch(
-                    """
-                    SELECT name, label,
-                           1 - (embedding <=> $1::vector) AS score
-                    FROM entities
-                    ORDER BY embedding <=> $1::vector
-                    LIMIT $2
-                    """,
-                    emb_str,
-                    k,
-                )
-        return [
-            {"name": r["name"], "label": r["label"] or "Entity", "score": float(r["score"])}
-            for r in rows
-        ]
+        try:
+            async with pool.acquire() as conn:
+                if entity_types:
+                    rows = await conn.fetch(
+                        """
+                        SELECT name, label,
+                               1 - (embedding <=> $1::vector) AS score
+                        FROM entities
+                        WHERE label = ANY($2::text[])
+                        ORDER BY embedding <=> $1::vector
+                        LIMIT $3
+                        """,
+                        emb_str,
+                        entity_types,
+                        k,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT name, label,
+                               1 - (embedding <=> $1::vector) AS score
+                        FROM entities
+                        ORDER BY embedding <=> $1::vector
+                        LIMIT $2
+                        """,
+                        emb_str,
+                        k,
+                    )
+            return [
+                {"name": r["name"], "label": r["label"] or "Entity", "score": float(r["score"])}
+                for r in rows
+            ]
+        except Exception:
+            logger.debug("entities table not available; skipping entity-first retrieval path")
+            return []
 
     # ------------------------------------------------------------------
     # Bulk fetch by IDs
@@ -321,33 +353,37 @@ class PgVectorStore:
         self,
         chunk_ids: list[str],
     ) -> dict[str, dict[str, Any]]:
-        """Fetch full chunk records keyed by ID.
+        """Fetch full chunk records keyed by ID from stm_chunks and ltm_chunks.
 
         Returns dict[chunk_id -> {doc_id, text, metadata}].
         """
         if not chunk_ids:
             return {}
         pool = self._pool_or_raise()
+        result: dict[str, dict[str, Any]] = {}
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, doc_id, text, metadata FROM chunks WHERE id = ANY($1)",
-                chunk_ids,
-            )
-        return {
-            r["id"]: {
-                "doc_id": r["doc_id"] or "",
-                "text": r["text"],
-                "metadata": json.loads(r["metadata"] or "{}"),
-            }
-            for r in rows
-        }
+            for table in ("stm_chunks", "ltm_chunks"):
+                rows = await conn.fetch(
+                    f"SELECT id, file_id AS doc_id, text, metadata FROM {table} WHERE id = ANY($1)",
+                    chunk_ids,
+                )
+                for r in rows:
+                    if r["id"] not in result:
+                        result[r["id"]] = {
+                            "doc_id": r["doc_id"] or "",
+                            "text": r["text"],
+                            "metadata": json.loads(r["metadata"] or "{}"),
+                        }
+        return result
 
     async def delete_session(self, session_id: str) -> int:
-        """Delete all chunks for *session_id*. Returns deleted row count."""
+        """Delete all chunks for *session_id* from stm_chunks and ltm_chunks."""
         pool = self._pool_or_raise()
+        deleted = 0
         async with pool.acquire() as conn:
-            result = await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
-        deleted = int(result.split()[-1])
+            for table in ("stm_chunks", "ltm_chunks"):
+                result = await conn.execute(f"DELETE FROM {table} WHERE session_id = $1", session_id)
+                deleted += int(result.split()[-1])
         logger.info("Deleted %d chunks for session %s", deleted, session_id)  # NOSONAR
         return deleted
 
