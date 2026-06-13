@@ -23,6 +23,7 @@ import asyncio
 import logging
 from collections import defaultdict
 
+from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import ChunkMatch, EntityMatch, RetrievalContext
 from graphknows.memory.stores.embedder import embed
 from graphknows.memory.stores.neo4j import Neo4jStore
@@ -37,7 +38,7 @@ DEFAULT_K_FINAL: int = 10
 MAX_CHUNKS_PER_ENTITY: int = 5
 
 
-class HybridRetriever:
+class HybridRetriever(BaseGraphRetriever):
     """Stateless retriever: entity-graph traversal + dense vector search + RRF fusion.
 
     Attributes:
@@ -60,115 +61,90 @@ class HybridRetriever:
         self,
         query: str,
         session_id: str,
+        top_k: int = DEFAULT_K_FINAL,
+        scope: str = "both",
         k_entity: int = DEFAULT_K_ENTITY,
         k_semantic: int = DEFAULT_K_SEMANTIC,
-        k_final: int = DEFAULT_K_FINAL,
     ) -> RetrievalContext:
-        """Run the full hybrid retrieval pipeline.
+        """Run the hybrid retrieval pipeline.
+
+        Embeds the query once, then concurrently:
+        - Runs an ANN entity search (graph path, degrades gracefully if no entities table).
+        - Runs ANN chunk search on the tier(s) selected by *scope*.
+
+        Both result sets are merged via RRF and returned as a ranked flat list.
 
         Args:
             query: Natural-language query string.
-            session_id: Session namespace for pgvector chunk search.
-            k_entity: Number of top entities retrieved by cosine similarity.
-            k_semantic: Number of chunks retrieved by direct cosine similarity.
-            k_final: Maximum fused results to return.
+            session_id: Session namespace used when scope includes ``"stm"``.
+            top_k: Maximum fused results to return.
+            scope: Which memory tier(s) to search — ``"stm"`` (session chunks),
+                ``"ltm"`` (promoted chunks), or ``"both"`` (merge both, default).
+            k_entity: Candidate entity count for the graph path.
+            k_semantic: Candidate chunk count per tier for the semantic path.
 
         Returns:
-            RetrievalContext with all retrieval views serialisable to XML.
+            RetrievalContext with ranked fused_results.
         """
         logger.debug(
-            "retrieve START  query=%r  session=%s  k_entity=%d  k_semantic=%d  k_final=%d",
-            query,
-            session_id,
-            k_entity,
-            k_semantic,
-            k_final,
+            "retrieve START  query=%r  session=%s  scope=%s  k_entity=%d  k_semantic=%d  top_k=%d",
+            query, session_id, scope, k_entity, k_semantic, top_k,
         )
 
-        # ── Step 1: embed query ────────────────────────────────────────────
+        # ── Step 1: embed query once ───────────────────────────────────────
         emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
         emb = emb_array[0].tolist()
-        logger.debug("query embedded  dim=%d  model=%s", len(emb), self.embed_model)
 
-        # ── Step 2 & 3: run entity + semantic search concurrently ──────────
+        # ── Step 2: run entity + chunk searches concurrently ──────────────
+        # Entity search degrades to [] when the entities table is absent.
+        # Chunk search routes to stm_chunks / ltm_chunks / both based on scope.
         entity_rows_task = asyncio.create_task(self.pg.search_entities(emb, k=k_entity))
         sem_rows_task = asyncio.create_task(
-            self.pg.search_chunks(emb, session_id=session_id, k=k_semantic)
+            self._search_chunks_by_scope(emb, session_id, scope, k_semantic)
         )
         entity_rows, sem_rows = await asyncio.gather(entity_rows_task, sem_rows_task)
-        logger.debug(
-            "ANN results  entities=%d  semantic_chunks=%d",
-            len(entity_rows),
-            len(sem_rows),
-        )
-        for _i, _e in enumerate(entity_rows):
-            logger.debug(
-                "  entity[%d]  name=%r  label=%s  score=%.4f",
-                _i,
-                _e["name"],
-                _e.get("label", "?"),
-                _e["score"],
-            )
+        logger.debug("ANN  entities=%d  chunks=%d", len(entity_rows), len(sem_rows))
 
-        # ── Step 4: entity → chunks via Neo4j MENTIONS traversal ──────────
+        # ── Step 3: entity → chunks via Neo4j MENTIONS (graph path) ───────
         graph_chunk_info: dict[str, dict] = {}
         entity_matches: list[EntityMatch] = []
 
-        neo_tasks = [
-            self.neo.get_chunks_for_entity(ent["name"], top_k=MAX_CHUNKS_PER_ENTITY)
-            for ent in entity_rows
-        ]
-        neo_results = await asyncio.gather(*neo_tasks, return_exceptions=True)
+        if entity_rows:
+            neo_tasks = [
+                self.neo.get_chunks_for_entity(ent["name"], top_k=MAX_CHUNKS_PER_ENTITY)
+                for ent in entity_rows
+            ]
+            neo_results = await asyncio.gather(*neo_tasks, return_exceptions=True)
 
-        for i, (ent, neo_chunks) in enumerate(zip(entity_rows, neo_results, strict=False)):
-            if isinstance(neo_chunks, Exception):
-                logger.warning("Neo4j lookup failed for %r: %s", ent["name"], neo_chunks)
-                neo_chunks = []
-            else:
-                logger.debug(
-                    "  neo4j[%r]  %d chunks retrieved",
-                    ent["name"],
-                    len(neo_chunks),
-                )
-
-            entity_similarity = ent["score"]
-            chunk_matches: list[ChunkMatch] = []
-
-            for j, nc in enumerate(neo_chunks):
-                mention_weight = entity_similarity * (1.0 / (j + 1))
-                cid = nc["chunk_id"]
-
-                if (
-                    cid not in graph_chunk_info
-                    or mention_weight > graph_chunk_info[cid]["mention_weight"]
-                ):
-                    graph_chunk_info[cid] = {
-                        "entity_rank": i,
-                        "mention_weight": mention_weight,
-                        "doc_id": nc.get("doc_id", ""),
-                        "text": nc.get("text", ""),
-                    }
-
-                chunk_matches.append(
-                    ChunkMatch(
+            for i, (ent, neo_chunks) in enumerate(zip(entity_rows, neo_results, strict=False)):
+                if isinstance(neo_chunks, Exception):
+                    logger.warning("Neo4j lookup failed for %r: %s", ent["name"], neo_chunks)
+                    neo_chunks = []
+                entity_similarity = ent["score"]
+                chunk_matches: list[ChunkMatch] = []
+                for j, nc in enumerate(neo_chunks):
+                    mention_weight = entity_similarity * (1.0 / (j + 1))
+                    cid = nc["chunk_id"]
+                    if cid not in graph_chunk_info or mention_weight > graph_chunk_info[cid]["mention_weight"]:
+                        graph_chunk_info[cid] = {
+                            "entity_rank": i,
+                            "mention_weight": mention_weight,
+                            "doc_id": nc.get("doc_id", ""),
+                            "text": nc.get("text", ""),
+                        }
+                    chunk_matches.append(ChunkMatch(
                         chunk_id=cid,
                         doc_id=nc.get("doc_id", ""),
                         text=nc.get("text", ""),
                         metadata={"mention_weight": mention_weight},
                         entities=[{"name": ent["name"], "label": ent["label"]}],
-                    )
-                )
+                    ))
+                entity_matches.append(EntityMatch(
+                    name=ent["name"], label=ent["label"],
+                    similarity=entity_similarity, chunks=chunk_matches,
+                ))
 
-            entity_matches.append(
-                EntityMatch(
-                    name=ent["name"],
-                    label=ent["label"],
-                    similarity=entity_similarity,
-                    chunks=chunk_matches,
-                )
-            )
-
-        # ── Step 5: build semantic_matches list ────────────────────────────
+        # ── Step 4: semantic matches list ──────────────────────────────────
         semantic_matches: list[ChunkMatch] = [
             ChunkMatch(
                 chunk_id=r["chunk_id"],
@@ -180,7 +156,7 @@ class HybridRetriever:
             for r in sem_rows
         ]
 
-        # ── Step 6: RRF fusion ─────────────────────────────────────────────
+        # ── Step 5: RRF fusion ─────────────────────────────────────────────
         rrf_scores: dict[str, float] = defaultdict(float)
         sem_ids: set[str] = set()
 
@@ -192,20 +168,11 @@ class HybridRetriever:
             rrf_scores[cid] += 1.0 / (RRF_K + rank + 1)
             sem_ids.add(cid)
 
-        ranked = sorted(rrf_scores.items(), key=lambda x: -x[1])[:k_final]
-        logger.debug(
-            "RRF fusion  graph_chunks=%d  semantic_chunks=%d  unique_scored=%d  returning=%d",
-            len(graph_chunk_info),
-            len(sem_ids),
-            len(rrf_scores),
-            len(ranked),
-        )
-        for _rank, (_cid, _score) in enumerate(ranked):
-            logger.debug("  fused[%d]  chunk_id=%s  rrf=%.6f", _rank, _cid[:16], _score)
+        ranked = sorted(rrf_scores.items(), key=lambda x: -x[1])[:top_k]
+        logger.debug("RRF  unique=%d  returning=%d", len(rrf_scores), len(ranked))
 
-        # ── Step 7: fetch full text + metadata for fused chunks ────────────
-        all_ids = [cid for cid, _ in ranked]
-        full_text_map = await self.pg.get_chunks_by_ids(all_ids)
+        # ── Step 6: bulk-fetch full text for fused chunk IDs ──────────────
+        full_text_map = await self.pg.get_chunks_by_ids([cid for cid, _ in ranked])
 
         chunk_entities: dict[str, list[dict]] = defaultdict(list)
         for em in entity_matches:
@@ -220,26 +187,18 @@ class HybridRetriever:
                 sources.append("graph")
             if cid in sem_ids:
                 sources.append("semantic")
+            fused.append({
+                "chunk_id": cid,
+                "doc_id": fc.get("doc_id", graph_chunk_info.get(cid, {}).get("doc_id", "")),
+                "text": fc.get("text", graph_chunk_info.get(cid, {}).get("text", "")),
+                "metadata": fc.get("metadata", {}),
+                "rrf_score": round(rrf_score, 6),
+                "sources": ",".join(sources),
+                "rank": rank + 1,
+                "entities": chunk_entities.get(cid, []),
+            })
 
-            fused.append(
-                {
-                    "chunk_id": cid,
-                    "doc_id": fc.get("doc_id", graph_chunk_info.get(cid, {}).get("doc_id", "")),
-                    "text": fc.get("text", graph_chunk_info.get(cid, {}).get("text", "")),
-                    "metadata": fc.get("metadata", {}),
-                    "rrf_score": round(rrf_score, 6),
-                    "sources": ",".join(sources),
-                    "rank": rank + 1,
-                    "entities": chunk_entities.get(cid, []),
-                }
-            )
-
-        logger.debug(
-            "retrieve DONE  fused=%d  graph_matches=%d  semantic_matches=%d",
-            len(fused),
-            len(entity_matches),
-            len(semantic_matches),
-        )
+        logger.debug("retrieve DONE  fused=%d", len(fused))
         return RetrievalContext(
             query=query,
             session_id=session_id,
@@ -248,6 +207,43 @@ class HybridRetriever:
             fused_results=fused,
             search_type="HYBRID",
         )
+
+    async def _search_chunks_by_scope(
+        self,
+        emb: list[float],
+        session_id: str,
+        scope: str,
+        k: int,
+    ) -> list[dict]:
+        """Run ANN chunk search against the tier(s) selected by *scope*.
+
+        - ``"stm"``: stm_chunks scoped to session_id.
+        - ``"ltm"``: ltm_chunks (all sessions).
+        - ``"both"``: merge stm + ltm, deduplicate by chunk_id, sort by score.
+        """
+        if scope == "stm":
+            return await self.pg.search_chunks(emb, session_id=session_id, k=k)
+        if scope == "ltm":
+            return await self.pg.search_chunks(emb, session_id="", k=k)
+        # "both": query both tiers concurrently, merge by score
+        stm_task = asyncio.create_task(
+            self.pg.search_chunks(emb, session_id=session_id, k=k)
+        ) if session_id else None
+        ltm_task = asyncio.create_task(
+            self.pg.search_chunks(emb, session_id="", k=k)
+        )
+        tasks = [t for t in (stm_task, ltm_task) if t is not None]
+        results = await asyncio.gather(*tasks)
+        stm_rows = results[0] if stm_task else []
+        ltm_rows = results[-1]
+
+        merged: dict[str, dict] = {}
+        for r in stm_rows:
+            merged[r["chunk_id"]] = r
+        for r in ltm_rows:
+            if r["chunk_id"] not in merged:
+                merged[r["chunk_id"]] = r
+        return sorted(merged.values(), key=lambda x: -x.get("cosine_score", 0))[:k]
 
     # ------------------------------------------------------------------
     # SEMANTIC mode — pure pgvector ANN on session-scoped chunks
@@ -580,9 +576,16 @@ class HybridRetriever:
         ctx = await self.retrieve(
             query,
             session_id,
+            top_k=k_final,
             k_entity=k_entity,
             k_semantic=k_semantic,
-            k_final=k_final,
         )
         ctx.search_type = "FEELING_LUCKY→HYBRID"
         return ctx
+
+
+def _assert_base() -> None:
+    assert issubclass(HybridRetriever, BaseGraphRetriever)
+
+
+_assert_base()
