@@ -12,6 +12,17 @@ from evaluation.core.client import GraphknowsMCPClient
 from evaluation.core.models import BenchmarkCaseResult
 
 
+def _parse_memory_query_hits(result: Any) -> list[dict]:
+    """Extract hits from a memory_query response.
+
+    memory_query now returns ``{"hits": [...], ...}`` directly.  This helper
+    extracts the list so call-sites stay simple.
+    """
+    if isinstance(result, dict):
+        return list(result.get("hits", []))
+    return []
+
+
 @dataclass(frozen=True)
 class FileBackedBenchmarkOptions:
     """Options for benchmarks represented as local JSON or JSONL cases."""
@@ -190,7 +201,7 @@ async def run_file_backed_benchmark(
                 result = await client.call_tool("memory_flush", {"session_id": session_id})
                 flush_result = result if isinstance(result, dict) else {"result": result}
             result = await client.call_tool(
-                "memory_recall",
+                "memory_query",
                 {
                     "query": question,
                     "session_id": session_id,
@@ -198,7 +209,7 @@ async def run_file_backed_benchmark(
                     "scope": options.recall_scope,
                 },
             )
-            recall = list(result.get("hits", [])) if isinstance(result, dict) else []
+            recall = _parse_memory_query_hits(result)
         finally:
             if options.purge:
                 await client.call_tool("memory_purge", {"scope": "both", "session_id": session_id})

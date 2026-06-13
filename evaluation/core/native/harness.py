@@ -122,7 +122,7 @@ async def scenario_stm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
         client,
         run,
         "stm-recall",
-        "memory_recall",
+        "memory_query",
         {
             "query": "Which release codename is tied to Project Aurora?",
             "session_id": session_id,
@@ -154,7 +154,7 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
         client,
         run,
         "ltm-recall",
-        "memory_recall",
+        "memory_query",
         {
             "query": "Where are long term entity communities stored?",
             "session_id": session_id,
@@ -167,27 +167,16 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
         client,
         run,
         "both-recall",
-        "memory_recall",
+        "memory_query",
         {
             "query": "How does Helios split state across Memgraph pgvector and Neo4j?",
             "session_id": session_id,
             "top_k": run.config.top_k,
-            "scope": run.config.scope,
+            "scope": "both",
         },
         expected=expected,
     )
-    await measured_call(client, run, "ltm-query", "ltm_query", {"query": "Helios", "top_k": 5})
-    await measured_call(client, run, "ltm-entity", "ltm_entity", {"name": "Neo4j"})
     await measured_call(client, run, "ltm-topics", "ltm_topics", {"min_entities": 1})
-    await measured_call(client, run, "recall-document", "recall_by_document", {"query": "Helios Neo4j", "top_k": 5})
-    await measured_call(
-        client,
-        run,
-        "recall-dialog",
-        "recall_by_dialog",
-        {"query": "Helios Neo4j", "top_k": 5, "session_filter": session_id},
-    )
-    await measured_call(client, run, "recall-topic", "recall_by_topic", {"query": "Helios Neo4j", "top_k": 5})
 
 
 async def scenario_corpus(client: MCPToolClient, run: NativeEvaluationRun) -> None:
