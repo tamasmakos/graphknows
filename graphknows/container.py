@@ -22,6 +22,7 @@ their stack in a single line — see ``graphknows/tools.py`` for examples.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import uuid
@@ -179,7 +180,7 @@ class GraphKnowsContainer:
 
 
 # ---------------------------------------------------------------------------
-# Tool builder — constructs the list[GraphKnowsTool] bound to a container
+# Module-level helpers
 # ---------------------------------------------------------------------------
 
 
@@ -189,213 +190,233 @@ async def _embed_one(text: str, model: str) -> list[float]:
     return arr[0].tolist()
 
 
-def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901  # NOSONAR
+# ---------------------------------------------------------------------------
+# Tool implementations — each receives the container as its first argument.
+# _build_tools() binds `c` via functools.partial so callers see only the
+# domain parameters.
+# ---------------------------------------------------------------------------
+
+
+async def _tool_retrieve(
+    c: GraphKnowsContainer,
+    query: str,
+    session_id: str = "default",
+    top_k: int = 10,
+) -> str:
+    ctx = await c.retriever.retrieve(query, session_id, top_k=top_k)
+    return ctx.to_xml()
+
+
+async def _tool_entity_search(
+    c: GraphKnowsContainer,
+    query: str,
+    k: int = 10,
+    entity_types: list[str] | None = None,
+) -> str:
+    emb = await _embed_one(query, c.settings.embed_model)
+    results = await c.pg.search_entities(emb, k=k, entity_types=entity_types or None)
+    return json.dumps(results, ensure_ascii=False)
+
+
+async def _tool_entity_neighbors(
+    c: GraphKnowsContainer,
+    entity_name: str,
+    depth: int = 1,
+    relationship_types: list[str] | None = None,
+) -> str:
+    result = await c.neo.get_entity_neighbors(
+        entity_name, depth=depth, relationship_types=relationship_types
+    )
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def _tool_get_chunks(c: GraphKnowsContainer, chunk_ids: list[str]) -> str:
+    text_map = await c.pg.get_chunks_by_ids(chunk_ids)
+    entity_results = await asyncio.gather(
+        *[c.neo.get_chunk_entities(cid) for cid in chunk_ids],
+        return_exceptions=True,
+    )
+    enriched: dict[str, Any] = {}
+    for cid, ent_result in zip(chunk_ids, entity_results, strict=False):
+        base = text_map.get(cid, {})
+        enriched[cid] = {
+            "doc_id": base.get("doc_id", ""),
+            "text": base.get("text", ""),
+            "metadata": base.get("metadata", {}),
+            "entities": ent_result if not isinstance(ent_result, Exception) else [],
+        }
+    return json.dumps(enriched, ensure_ascii=False)
+
+
+async def _tool_session_memory(
+    c: GraphKnowsContainer,
+    content: str,
+    title: str = "",
+    session_id: str = "default",
+) -> str:
+    full_text = f"{title}\n\n{content}" if title else content
+    chunk_id = f"memo:{uuid.uuid4().hex}"
+    emb = await _embed_one(full_text, c.settings.embed_model)
+    await c.pg.upsert_chunks(
+        session_id=session_id,
+        chunks=[
+            {
+                "id": chunk_id,
+                "doc_id": f"memo:{session_id}",
+                "text": full_text,
+                "embedding": emb,
+                "metadata": {"title": title, "source": "session_memory"},
+            }
+        ],
+    )
+    return json.dumps({"chunk_id": chunk_id, "session_id": session_id, "stored": True})
+
+
+async def _tool_ingest(
+    c: GraphKnowsContainer,
+    text: str,
+    title: str = "",
+    config_override: dict[str, Any] | None = None,
+) -> str:
+    run_id = str(uuid.uuid4())
+    queued_at = datetime.now(UTC).isoformat()
+    c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}
+
+    async def _run_workflow() -> None:
+        c._jobs[run_id]["status"] = "running"
+        c._jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
+        try:
+            from graphknows.memory.extractor import GLiNER2EntityExtractor
+            from graphknows.memory.workflows.corpus_ingest import (
+                CorpusIngestRequest,
+                CorpusIngestWorkflow,
+            )
+
+            extractor = GLiNER2EntityExtractor()
+            workflow = CorpusIngestWorkflow(
+                mg_store=c._memgraph,
+                pg_store=c._pg,
+                neo_store=c._neo,
+                extractor=extractor,
+                embed_fn=None,
+            )
+            request = CorpusIngestRequest(
+                documents=[{"text": text, "title": title}],
+            )
+            result = await workflow.run(request)
+            stats = {
+                "session_id": result.session_id,
+                "documents_processed": result.documents_processed,
+                "entities_extracted": result.entities_extracted,
+                "chunks_written": result.chunks_written,
+                "nodes_written": result.nodes_written,
+                "edges_written": result.edges_written,
+                "elapsed_s": result.elapsed_s,
+                "errors": result.errors,
+            }
+            c._jobs[run_id].update(
+                status="completed",
+                stats=stats,
+                finished_at=datetime.now(UTC).isoformat(),
+            )
+        except Exception as exc:
+            log.exception("Ingest job %s failed", run_id)
+            c._jobs[run_id].update(
+                status="failed",
+                error=str(exc),
+                finished_at=datetime.now(UTC).isoformat(),
+            )
+
+    bg_task = asyncio.create_task(_run_workflow())
+    c._background_tasks.add(bg_task)
+    bg_task.add_done_callback(c._background_tasks.discard)
+    return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
+
+
+async def _tool_poll_job(c: GraphKnowsContainer, run_id: str) -> str:
+    job = c._jobs.get(run_id)
+    if job is None:
+        return json.dumps({"run_id": run_id, "status": "not_found"})
+    return json.dumps({"run_id": run_id, **job})
+
+
+async def _tool_get_session_graph(
+    c: GraphKnowsContainer, session_id: str = "default"
+) -> str:
+    result = await c.memgraph.get_session_graph(session_id)
+    return json.dumps(result, ensure_ascii=False)
+
+
+async def _tool_get_corpus_stats(c: GraphKnowsContainer) -> str:
+    neo_counts = await c.neo.count_nodes()
+    pool = c.pg._pool
+    pg_counts: dict[str, int] = {"stm_chunks": 0, "ltm_chunks": 0}
+    if pool:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT (SELECT count(*) FROM stm_chunks) AS stm_chunks, "
+                "(SELECT count(*) FROM ltm_chunks) AS ltm_chunks"
+            )
+            if rows:
+                pg_counts = {
+                    "stm_chunks": int(rows[0]["stm_chunks"]),
+                    "ltm_chunks": int(rows[0]["ltm_chunks"]),
+                }
+    return json.dumps({"neo4j": neo_counts, "pgvector": pg_counts})
+
+
+async def _tool_community_summary(c: GraphKnowsContainer, entity_name: str) -> str:
+    topic = await c.neo.get_entity_community(entity_name)
+    if topic is None:
+        return f"No community found for entity: {entity_name}"
+    return f"{topic['label']}\n\n{topic['summary']}"
+
+
+async def _tool_list_segments(c: GraphKnowsContainer, limit: int = 20) -> str:
+    segments = await c.neo.list_segments(limit=limit)
+    if not segments:
+        return "No SEGMENT nodes found in the corpus."
+    lines = ["SEGMENT nodes (newest first):", ""]
+    for seg in segments:
+        lines.append(
+            f"  {seg.get('segment_id', 'unknown')}  |  "
+            f"{seg.get('ingested_at', 'N/A')}  |  "
+            f"taxonomy={seg.get('taxonomy_name', 'N/A')}  |  "
+            f"docs={seg.get('source_count', '?')}"
+        )
+    return "\n".join(lines)
+
+
+async def _tool_segment_info(c: GraphKnowsContainer, segment_id: str) -> str:
+    info = await c.neo.get_segment_info(segment_id)
+    if info is None:
+        return f"No SEGMENT found with id: {segment_id}"
+    lines = [f"SEGMENT: {segment_id}", ""]
+    for k, v in info.items():
+        lines.append(f"  {k}: {v}")
+    return "\n".join(lines)
+
+
+async def _tool_cypher_query(
+    c: GraphKnowsContainer,
+    template: str,
+    params: dict[str, Any] | None = None,
+) -> str:
+    result = await c.neo.run_read_query(template, params or {})
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool builder — assembles the list[GraphKnowsTool] bound to a container
+# ---------------------------------------------------------------------------
+
+
+def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:
     """Instantiate all 13 graphknows tools bound to container ``c``."""
 
-    # ---- retrieve -------------------------------------------------------
-    async def _retrieve(
-        query: str,
-        session_id: str = "default",
-        top_k: int = 10,
-    ) -> str:
-        ctx = await c.retriever.retrieve(query, session_id, top_k=top_k)
-        return ctx.to_xml()
+    def _bind(fn):  # type: ignore[type-arg]
+        return functools.partial(fn, c)
 
-    # ---- entity_search --------------------------------------------------
-    async def _entity_search(
-        query: str,
-        k: int = 10,
-        entity_types: list[str] | None = None,
-    ) -> str:
-        emb = await _embed_one(query, c.settings.embed_model)
-        results = await c.pg.search_entities(emb, k=k, entity_types=entity_types or None)
-        return json.dumps(results, ensure_ascii=False)
-
-    # ---- entity_neighbors -----------------------------------------------
-    async def _entity_neighbors(
-        entity_name: str,
-        depth: int = 1,
-        relationship_types: list[str] | None = None,
-    ) -> str:
-        result = await c.neo.get_entity_neighbors(
-            entity_name, depth=depth, relationship_types=relationship_types
-        )
-        return json.dumps(result, ensure_ascii=False)
-
-    # ---- get_chunks -----------------------------------------------------
-    async def _get_chunks(chunk_ids: list[str]) -> str:
-        text_map = await c.pg.get_chunks_by_ids(chunk_ids)
-        entity_results = await asyncio.gather(
-            *[c.neo.get_chunk_entities(cid) for cid in chunk_ids],
-            return_exceptions=True,
-        )
-        enriched: dict[str, Any] = {}
-        for cid, ent_result in zip(chunk_ids, entity_results, strict=False):
-            base = text_map.get(cid, {})
-            enriched[cid] = {
-                "doc_id": base.get("doc_id", ""),
-                "text": base.get("text", ""),
-                "metadata": base.get("metadata", {}),
-                "entities": ent_result if not isinstance(ent_result, Exception) else [],
-            }
-        return json.dumps(enriched, ensure_ascii=False)
-
-    # ---- session_memory -------------------------------------------------
-    async def _session_memory(
-        content: str,
-        title: str = "",
-        session_id: str = "default",
-    ) -> str:
-        full_text = f"{title}\n\n{content}" if title else content
-        chunk_id = f"memo:{uuid.uuid4().hex}"
-        emb = await _embed_one(full_text, c.settings.embed_model)
-        await c.pg.upsert_chunks(
-            session_id=session_id,
-            chunks=[
-                {
-                    "id": chunk_id,
-                    "doc_id": f"memo:{session_id}",
-                    "text": full_text,
-                    "embedding": emb,
-                    "metadata": {"title": title, "source": "session_memory"},
-                }
-            ],
-        )
-        return json.dumps({"chunk_id": chunk_id, "session_id": session_id, "stored": True})
-
-    # ---- ingest ---------------------------------------------------------
-    async def _ingest(  # NOSONAR — async required by GraphKnowsTool (Callable[..., Awaitable[Any]])
-        text: str,
-        title: str = "",
-        config_override: dict[str, Any] | None = None,
-    ) -> str:
-        run_id = str(uuid.uuid4())
-        queued_at = datetime.now(UTC).isoformat()
-        c._jobs[run_id] = {"status": "queued", "queued_at": queued_at}
-
-        async def _run_workflow() -> None:
-            c._jobs[run_id]["status"] = "running"
-            c._jobs[run_id]["started_at"] = datetime.now(UTC).isoformat()
-            try:
-                from graphknows.memory.extractor import GLiNER2EntityExtractor
-                from graphknows.memory.workflows.corpus_ingest import (
-                    CorpusIngestRequest,
-                    CorpusIngestWorkflow,
-                )
-
-                extractor = GLiNER2EntityExtractor()
-                workflow = CorpusIngestWorkflow(
-                    mg_store=c._memgraph,
-                    pg_store=c._pg,
-                    neo_store=c._neo,
-                    extractor=extractor,
-                    embed_fn=None,
-                )
-                request = CorpusIngestRequest(
-                    documents=[{"text": text, "title": title}],
-                )
-                result = await workflow.run(request)
-                stats = {
-                    "session_id": result.session_id,
-                    "documents_processed": result.documents_processed,
-                    "entities_extracted": result.entities_extracted,
-                    "chunks_written": result.chunks_written,
-                    "nodes_written": result.nodes_written,
-                    "edges_written": result.edges_written,
-                    "elapsed_s": result.elapsed_s,
-                    "errors": result.errors,
-                }
-                c._jobs[run_id].update(
-                    status="completed",
-                    stats=stats,
-                    finished_at=datetime.now(UTC).isoformat(),
-                )
-            except Exception as exc:
-                log.exception("Ingest job %s failed", run_id)
-                c._jobs[run_id].update(
-                    status="failed",
-                    error=str(exc),
-                    finished_at=datetime.now(UTC).isoformat(),
-                )
-
-        _bg_task = asyncio.create_task(_run_workflow())  # NOSONAR
-        c._background_tasks.add(_bg_task)
-        _bg_task.add_done_callback(c._background_tasks.discard)
-        return json.dumps({"run_id": run_id, "status": "queued", "queued_at": queued_at})
-
-    # ---- poll_job -------------------------------------------------------
-    async def _poll_job(run_id: str) -> str:  # NOSONAR — async per GraphKnowsTool contract
-        job = c._jobs.get(run_id)
-        if job is None:
-            return json.dumps({"run_id": run_id, "status": "not_found"})
-        return json.dumps({"run_id": run_id, **job})
-
-    # ---- get_session_graph ----------------------------------------------
-    async def _get_session_graph(session_id: str = "default") -> str:
-        result = await c.memgraph.get_session_graph(session_id)
-        return json.dumps(result, ensure_ascii=False)
-
-    # ---- get_corpus_stats -----------------------------------------------
-    async def _get_corpus_stats() -> str:
-        neo_counts = await c.neo.count_nodes()
-        pool = c.pg._pool
-        pg_counts: dict[str, int] = {"stm_chunks": 0, "ltm_chunks": 0}
-        if pool:
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT (SELECT count(*) FROM stm_chunks) AS stm_chunks, "
-                    "(SELECT count(*) FROM ltm_chunks) AS ltm_chunks"
-                )
-                if rows:
-                    pg_counts = {
-                        "stm_chunks": int(rows[0]["stm_chunks"]),
-                        "ltm_chunks": int(rows[0]["ltm_chunks"]),
-                    }
-        return json.dumps({"neo4j": neo_counts, "pgvector": pg_counts})
-
-    # ---- community_summary ----------------------------------------------
-    async def _community_summary(entity_name: str) -> str:
-        topic = await c.neo.get_entity_community(entity_name)
-        if topic is None:
-            return f"No community found for entity: {entity_name}"
-        return f"{topic['label']}\n\n{topic['summary']}"
-
-    # ---- list_segments --------------------------------------------------
-    async def _list_segments(limit: int = 20) -> str:
-        segments = await c.neo.list_segments(limit=limit)
-        if not segments:
-            return "No SEGMENT nodes found in the corpus."
-        lines = ["SEGMENT nodes (newest first):", ""]
-        for seg in segments:
-            lines.append(
-                f"  {seg.get('segment_id', 'unknown')}  |  "
-                f"{seg.get('ingested_at', 'N/A')}  |  "
-                f"taxonomy={seg.get('taxonomy_name', 'N/A')}  |  "
-                f"docs={seg.get('source_count', '?')}"
-            )
-        return "\n".join(lines)
-
-    # ---- segment_info ---------------------------------------------------
-    async def _segment_info(segment_id: str) -> str:
-        info = await c.neo.get_segment_info(segment_id)
-        if info is None:
-            return f"No SEGMENT found with id: {segment_id}"
-        lines = [f"SEGMENT: {segment_id}", ""]
-        for k, v in info.items():
-            lines.append(f"  {k}: {v}")
-        return "\n".join(lines)
-
-    # ---- cypher_query ---------------------------------------------------
-    async def _cypher_query(
-        template: str,
-        params: dict[str, Any] | None = None,
-    ) -> str:
-        result = await c.neo.run_read_query(template, params or {})
-        return json.dumps(result, ensure_ascii=False, default=str)
-
-    # ------------------------------------------------------------------
-    # Assemble
-    # ------------------------------------------------------------------
     return [
         GraphKnowsTool(
             name="retrieve",
@@ -412,7 +433,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["query"],
             },
-            fn=_retrieve,
+            fn=_bind(_tool_retrieve),
             tags=["retrieval"],
         ),
         GraphKnowsTool(
@@ -431,7 +452,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["query"],
             },
-            fn=_entity_search,
+            fn=_bind(_tool_entity_search),
             tags=["retrieval", "graph"],
         ),
         GraphKnowsTool(
@@ -446,7 +467,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["entity_name"],
             },
-            fn=_entity_neighbors,
+            fn=_bind(_tool_entity_neighbors),
             tags=["graph"],
         ),
         GraphKnowsTool(
@@ -459,7 +480,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["chunk_ids"],
             },
-            fn=_get_chunks,
+            fn=_bind(_tool_get_chunks),
             tags=["retrieval"],
         ),
         GraphKnowsTool(
@@ -474,7 +495,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["content"],
             },
-            fn=_session_memory,
+            fn=_bind(_tool_session_memory),
             tags=["memory"],
         ),
         GraphKnowsTool(
@@ -489,7 +510,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["text"],
             },
-            fn=_ingest,
+            fn=_bind(_tool_ingest),
             tags=["ingestion"],
         ),
         GraphKnowsTool(
@@ -502,7 +523,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["run_id"],
             },
-            fn=_poll_job,
+            fn=_bind(_tool_poll_job),
             tags=["ingestion"],
         ),
         GraphKnowsTool(
@@ -515,7 +536,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": [],
             },
-            fn=_get_session_graph,
+            fn=_bind(_tool_get_session_graph),
             tags=["graph", "memory"],
         ),
         GraphKnowsTool(
@@ -526,7 +547,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 "properties": {},
                 "required": [],
             },
-            fn=_get_corpus_stats,
+            fn=_bind(_tool_get_corpus_stats),
             tags=["admin"],
         ),
         GraphKnowsTool(
@@ -539,7 +560,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["entity_name"],
             },
-            fn=_community_summary,
+            fn=_bind(_tool_community_summary),
             tags=["graph"],
         ),
         GraphKnowsTool(
@@ -552,7 +573,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": [],
             },
-            fn=_list_segments,
+            fn=_bind(_tool_list_segments),
             tags=["admin", "provenance"],
         ),
         GraphKnowsTool(
@@ -565,7 +586,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["segment_id"],
             },
-            fn=_segment_info,
+            fn=_bind(_tool_segment_info),
             tags=["admin", "provenance"],
         ),
         GraphKnowsTool(
@@ -582,7 +603,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:  # noqa: C901 
                 },
                 "required": ["template"],
             },
-            fn=_cypher_query,
+            fn=_bind(_tool_cypher_query),
             tags=["graph", "admin"],
         ),
     ]

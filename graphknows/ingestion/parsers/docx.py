@@ -12,17 +12,9 @@ class DocxParser(BaseParser):
     """Parse .docx files into Markdown-formatted, heading-aligned segments."""
 
     def parse(self, text: str, source_hint: str = "", title: str = "") -> ParsedFile:
-        """Raise because DocxParser requires binary input.
-
-        Args:
-            text: Unused; raises ValueError.
-            source_hint: Unused.
-            title: Unused.
-
-        Raises:
-            ValueError: Always.
-        """
-        raise ValueError("DocxParser requires binary input — use parse_bytes(data: bytes, ...)")
+        raise NotImplementedError(
+            "DocxParser requires binary input — use parse_bytes(data: bytes, ...)"
+        )
 
     def parse_bytes(self, data: bytes, source_hint: str = "", title: str = "") -> ParsedFile:
         """Parse binary DOCX data into Markdown-chunked segments.

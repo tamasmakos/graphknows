@@ -19,6 +19,10 @@ from graphknows.config.health import check_backends, get_memory_stats
 from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get_settings
 from graphknows.web.links import DEFAULT_PORT
 
+_STM_RECALL_WEIGHT: float = 0.6  # STM hits weighted higher than LTM in combined recall
+_LTM_RECALL_WEIGHT: float = 0.4
+assert _STM_RECALL_WEIGHT + _LTM_RECALL_WEIGHT == 1.0
+
 
 def _frontend_dir() -> Path:
     configured = os.environ.get("GRAPHKNOWS_FRONTEND_DIR")
@@ -352,8 +356,8 @@ def _run_recall(
         neo.close()
 
     if scope == "both":
-        _normalise_hits(stm_hits, 0.6)
-        _normalise_hits(ltm_hits, 0.4)
+        _normalise_hits(stm_hits, _STM_RECALL_WEIGHT)
+        _normalise_hits(ltm_hits, _LTM_RECALL_WEIGHT)
         combined = sorted(stm_hits + ltm_hits, key=lambda h: h.score, reverse=True)
         return {"hits": _fmt(combined[:top_k])}
 

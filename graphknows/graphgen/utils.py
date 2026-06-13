@@ -11,6 +11,10 @@ from graphknows.ingestion.domain.normalization import standardize_label
 
 log = logging.getLogger(__name__)
 
+_DEFAULT_EDGE_WEIGHT: float = 1.0
+_GENERATED_ENTITY_PREFIX = "ENTITY_"
+_GENERATED_PLACE_PREFIX = "PLACE_"
+
 
 def create_output_directory(path: str) -> None:
     """Create directory if it doesn't exist."""
@@ -20,7 +24,7 @@ def create_output_directory(path: str) -> None:
 
 
 def _merge_edge_weight(graph: nx.DiGraph, u: str, v: str, new_data: dict) -> None:
-    graph[u][v]["weight"] = max(graph[u][v].get("weight", 1.0), new_data.get("weight", 1.0))
+    graph[u][v]["weight"] = max(graph[u][v].get("weight", _DEFAULT_EDGE_WEIGHT), new_data.get("weight", _DEFAULT_EDGE_WEIGHT))
 
 
 def merge_node_into(graph: nx.DiGraph, source_node: str, target_node: str) -> None:
@@ -76,7 +80,7 @@ def merge_node_into(graph: nx.DiGraph, source_node: str, target_node: str) -> No
         aliases.update(source_data["aliases"])
 
     # Also add the source_node ID itself as an alias if it looks like a name
-    if not source_node.startswith("ENTITY_") and not source_node.startswith("PLACE_"):
+    if not source_node.startswith(_GENERATED_ENTITY_PREFIX) and not source_node.startswith(_GENERATED_PLACE_PREFIX):
         aliases.add(source_node)
 
     graph.nodes[target_node]["aliases"] = list(aliases)

@@ -100,6 +100,100 @@ async def extract_relations_with_llm_async(
         raise RuntimeError(f"extract_relations_with_llm_async failed: {e}") from e
 
 
+def _build_gliner_schema(
+    model: Any, taxonomy: Any, threshold: float
+) -> tuple[Any, dict[str, str]]:
+    """Build the GLiNER2 Schema API spec from taxonomy and return (schema, child_to_group).
+
+    The returned child_to_group maps lowercased child/group labels back to their
+    canonical parent group label for use when mapping raw span labels.
+    """
+    gliner_schema = model.create_schema()
+
+    descriptions = {
+        k: v.description.strip()
+        for k, v in taxonomy.entity_groups.items()
+        if hasattr(v, "description") and v.description.strip()
+    }
+    thresholds = {
+        k: v.min_ner_confidence
+        for k, v in taxonomy.entity_groups.items()
+        if hasattr(v, "min_ner_confidence")
+    }
+    entity_spec = {
+        label.lower(): {
+            "description": descriptions.get(label, label.lower()),
+            "threshold": thresholds.get(label) or threshold,
+        }
+        for label in taxonomy.entity_groups
+    }
+    gliner_schema.entities(entity_spec)
+
+    if hasattr(taxonomy, "relation_types") and taxonomy.relation_types:
+        rel_descs: dict[str, str] = {}
+        for rt in taxonomy.relation_types:
+            if isinstance(rt, dict):
+                rel_descs.update(rt)
+            else:
+                rel_descs[str(rt)] = str(rt).replace("_", " ").lower()
+        if rel_descs:
+            gliner_schema.relations(rel_descs)
+
+    child_to_group: dict[str, str] = {}
+    for group_label, group_cfg in taxonomy.entity_groups.items():
+        child_to_group[group_label.lower()] = group_label
+        for child in getattr(group_cfg, "children", []):
+            child_to_group[child.lower()] = group_label
+
+    return gliner_schema, child_to_group
+
+
+def _map_raw_spans(
+    raw: dict[str, Any],
+    child_to_group: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Map model.extract() output to (flat_entities, candidate_relations)."""
+    flat_entities: list[dict[str, Any]] = []
+    for raw_label, spans in (raw.get("entities") or {}).items():
+        canonical = child_to_group.get(raw_label.lower(), raw_label.upper())
+        for span in spans or []:
+            flat_entities.append(
+                {
+                    "text": span.get("text", ""),
+                    "label": standardize_label(canonical),
+                    "ontology_label": standardize_label(canonical),
+                    "confidence": float(span.get("confidence", 0.0)),
+                    "start": span.get("start"),
+                    "end": span.get("end"),
+                    "backend": "gliner2",
+                }
+            )
+
+    candidate_relations: list[dict[str, Any]] = []
+    for rel_type, triplets in (raw.get("relation_extraction") or {}).items():
+        for triplet in triplets or []:
+            head = triplet.get("head", {})
+            tail = triplet.get("tail", {})
+            src_text = head.get("text", "")
+            tgt_text = tail.get("text", "")
+            if not src_text or not tgt_text or src_text == tgt_text:
+                continue
+            candidate_relations.append(
+                {
+                    "source": src_text,
+                    "relation": rel_type.upper(),
+                    "target": tgt_text,
+                    "confidence": min(
+                        float(head.get("confidence", 0.0)),
+                        float(tail.get("confidence", 0.0)),
+                    ),
+                    "extractor": "gliner2",
+                }
+            )
+
+    return flat_entities, candidate_relations
+
+
 async def _extract_entities_for_chunk(
     text: str,
     config: dict[str, Any],
@@ -133,43 +227,14 @@ async def _extract_entities_for_chunk(
                 "Check available RAM — model requires ~2 GB."
             )
 
-        threshold = extraction_config.get("gliner_threshold", 0.5)
-
         if taxonomy is None:
             raise RuntimeError(
                 "No taxonomy supplied to _extract_entities_for_chunk. "
                 "GLiNER2 Schema API requires a loaded TaxonomyConfig."
             )
 
-        descriptions = {
-            k: v.description.strip()
-            for k, v in taxonomy.entity_groups.items()
-            if hasattr(v, "description") and v.description.strip()
-        }
-        thresholds = {
-            k: v.min_ner_confidence
-            for k, v in taxonomy.entity_groups.items()
-            if hasattr(v, "min_ner_confidence")
-        }
-        entity_spec = {
-            label.lower(): {
-                "description": descriptions.get(label, label.lower()),
-                "threshold": thresholds.get(label) or threshold,
-            }
-            for label in taxonomy.entity_groups
-        }
-        gliner_schema = model.create_schema()
-        gliner_schema.entities(entity_spec)
-
-        if hasattr(taxonomy, "relation_types") and taxonomy.relation_types:
-            rel_descs: dict[str, str] = {}
-            for rt in taxonomy.relation_types:
-                if isinstance(rt, dict):
-                    rel_descs.update(rt)
-                else:
-                    rel_descs[str(rt)] = str(rt).replace("_", " ").lower()
-            if rel_descs:
-                gliner_schema.relations(rel_descs)
+        threshold = extraction_config.get("gliner_threshold", 0.5)
+        gliner_schema, child_to_group = _build_gliner_schema(model, taxonomy, threshold)
 
         raw = await asyncio.to_thread(
             model.extract,
@@ -181,49 +246,7 @@ async def _extract_entities_for_chunk(
             True,  # include_spans
         )
 
-        child_to_group: dict[str, str] = {}
-        for group_label, group_cfg in taxonomy.entity_groups.items():
-            child_to_group[group_label.lower()] = group_label
-            for child in getattr(group_cfg, "children", []):
-                child_to_group[child.lower()] = group_label
-
-        flat_entities: list[dict[str, Any]] = []
-        for raw_label, spans in (raw.get("entities") or {}).items():
-            canonical = child_to_group.get(raw_label.lower(), raw_label.upper())
-            for span in spans or []:
-                flat_entities.append(
-                    {
-                        "text": span.get("text", ""),
-                        "label": standardize_label(canonical),
-                        "ontology_label": standardize_label(canonical),
-                        "confidence": float(span.get("confidence", 0.0)),
-                        "start": span.get("start"),
-                        "end": span.get("end"),
-                        "backend": "gliner2",
-                    }
-                )
-
-        candidate_relations: list[dict[str, Any]] = []
-        for rel_type, triplets in (raw.get("relation_extraction") or {}).items():
-            for triplet in triplets or []:
-                head = triplet.get("head", {})
-                tail = triplet.get("tail", {})
-                src_text = head.get("text", "")
-                tgt_text = tail.get("text", "")
-                if not src_text or not tgt_text or src_text == tgt_text:
-                    continue
-                candidate_relations.append(
-                    {
-                        "source": src_text,
-                        "relation": rel_type.upper(),
-                        "target": tgt_text,
-                        "confidence": min(
-                            float(head.get("confidence", 0.0)),
-                            float(tail.get("confidence", 0.0)),
-                        ),
-                        "extractor": "gliner2",
-                    }
-                )
+        flat_entities, candidate_relations = _map_raw_spans(raw, child_to_group)
 
         label_space = build_top_level_label_space(labels or [], taxonomy=taxonomy)
         refined_entities = refine_entities_with_ontology(

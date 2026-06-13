@@ -12,6 +12,8 @@ log = logging.getLogger("graphknows.ingestion.ontology.loader")
 # Root of the bundled ontology asset bundle owned by the agent service.
 _ONTOLOGY_ROOT = Path(__file__).with_name("assets")
 _REGISTRY_PATH = _ONTOLOGY_ROOT / "registry.json"
+_SUMMARY_MAX_CLASSES: int = 100
+_SUMMARY_MAX_PROPERTIES: int = 50
 
 
 @dataclass
@@ -176,8 +178,8 @@ def _load_owl_manifest(  # noqa: C901  # NOSONAR
         summary_jsonld = json.dumps(
             {
                 "id": meta["id"],
-                "classes": classes[:100],
-                "properties": properties[:50],
+                "classes": classes[:_SUMMARY_MAX_CLASSES],
+                "properties": properties[:_SUMMARY_MAX_PROPERTIES],
             }
         )
 

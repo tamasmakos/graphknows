@@ -81,3 +81,4 @@ llm-wiki
 .agents
 skills-lock.json
 .claude
+AGENTS.md
