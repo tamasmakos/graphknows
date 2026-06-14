@@ -4,6 +4,8 @@ Ontology utility imports stay LLM-free unless the caller explicitly requests the
 DSPy-backed relation extractor.
 """
 
+from typing import Any
+
 from graphknows.ingestion.ontology.labels import DEFAULT_LABELS, resolve_entity_labels
 from graphknows.ingestion.ontology.loader import OntologyLoader, OntologyManifest
 from graphknows.ingestion.ontology.ports import OntologyProvider
@@ -26,7 +28,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "OntologyRelExtractor":
         from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
 

@@ -60,4 +60,3 @@ class OntologyRelExtractor:
             for source, relation, target, metadata in relations
             if float(metadata.get("confidence", 1.0) or 0.0) >= self._threshold
         ]
-
