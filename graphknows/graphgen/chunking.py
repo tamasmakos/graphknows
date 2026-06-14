@@ -17,9 +17,7 @@ def split_sentences(text: str) -> list[str]:
     return [s.strip() for s in sentences if s.strip()]
 
 
-async def process_document_splitting(
-    content: str, config: dict[str, Any]
-) -> list[str]:
+async def process_document_splitting(content: str, config: dict[str, Any]) -> list[str]:
     """Process text using LangChain splitter."""
 
     try:

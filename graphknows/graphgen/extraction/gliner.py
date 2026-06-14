@@ -100,9 +100,7 @@ async def extract_relations_with_llm_async(
         raise RuntimeError(f"extract_relations_with_llm_async failed: {e}") from e
 
 
-def _build_gliner_schema(
-    model: Any, taxonomy: Any, threshold: float
-) -> tuple[Any, dict[str, str]]:
+def _build_gliner_schema(model: Any, taxonomy: Any, threshold: float) -> tuple[Any, dict[str, str]]:
     """Build the GLiNER2 Schema API spec from taxonomy and return (schema, child_to_group).
 
     The returned child_to_group maps lowercased child/group labels back to their

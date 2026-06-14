@@ -111,6 +111,19 @@ def _coerce_triplets(prediction: Any) -> list[Any]:
     return triplets or []
 
 
+def _is_empty_lm_response_error(exc: Exception) -> bool:
+    """Return true for provider responses that contain no parseable extraction."""
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "empty or null response",
+            "failed to parse the lm response",
+            "did not include triplets",
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Abstract interface
 # ---------------------------------------------------------------------------
@@ -135,22 +148,61 @@ class BaseExtractor(ABC):
 # ---------------------------------------------------------------------------
 
 _OPEN_DOMAIN_CLASSES = [
-    "PERSON", "ORGANIZATION", "PROJECT", "SYSTEM", "TEAM", "LOCATION",
-    "PRODUCT", "SERVICE", "TECHNOLOGY", "CONCEPT", "EVENT", "DOCUMENT",
+    "PERSON",
+    "ORGANIZATION",
+    "PROJECT",
+    "SYSTEM",
+    "TEAM",
+    "LOCATION",
+    "PRODUCT",
+    "SERVICE",
+    "TECHNOLOGY",
+    "CONCEPT",
+    "EVENT",
+    "DOCUMENT",
 ]
 
 _OPEN_DOMAIN_RELATION_TYPES = [
-    "WORKS_AT", "WORKS_FOR", "EMPLOYED_BY", "MEMBER_OF", "JOINED",
-    "MANAGES", "MANAGED_BY", "REPORTS_TO", "LEADS", "LED_BY",
-    "OWNS", "OWNED_BY", "OPERATED_BY", "OPERATES",
-    "FUNDS", "FUNDED_BY", "SPONSORS", "SPONSORED_BY",
-    "PART_OF", "CONTAINS", "BELONGS_TO", "LOCATED_IN",
-    "CREATED_BY", "DEVELOPED_BY", "AUTHORED_BY",
-    "USES", "USED_BY", "DEPENDS_ON", "SUPPORTS",
-    "SUBMITTED_TO", "APPROVED_BY", "REVIEWED_BY",
-    "ASSOCIATED_WITH", "RELATED_TO", "CONNECTED_TO",
-    "SUPPLIES", "SUPPLIED_BY", "CONTRACTED_WITH",
-    "ASSIGNED_TO", "RESPONSIBLE_FOR",
+    "WORKS_AT",
+    "WORKS_FOR",
+    "EMPLOYED_BY",
+    "MEMBER_OF",
+    "JOINED",
+    "MANAGES",
+    "MANAGED_BY",
+    "REPORTS_TO",
+    "LEADS",
+    "LED_BY",
+    "OWNS",
+    "OWNED_BY",
+    "OPERATED_BY",
+    "OPERATES",
+    "FUNDS",
+    "FUNDED_BY",
+    "SPONSORS",
+    "SPONSORED_BY",
+    "PART_OF",
+    "CONTAINS",
+    "BELONGS_TO",
+    "LOCATED_IN",
+    "CREATED_BY",
+    "DEVELOPED_BY",
+    "AUTHORED_BY",
+    "USES",
+    "USED_BY",
+    "DEPENDS_ON",
+    "SUPPORTS",
+    "SUBMITTED_TO",
+    "APPROVED_BY",
+    "REVIEWED_BY",
+    "ASSOCIATED_WITH",
+    "RELATED_TO",
+    "CONNECTED_TO",
+    "SUPPLIES",
+    "SUPPLIED_BY",
+    "CONTRACTED_WITH",
+    "ASSIGNED_TO",
+    "RESPONSIBLE_FOR",
 ]
 
 
@@ -198,9 +250,7 @@ class DSPyExtractor(BaseExtractor):
                 standardize_label(label) for label in self._ontology.property_labels
             ]
             if not self._ontology_classes or not self._ontology_relation_types:
-                raise ValueError(
-                    f"RDF ontology file produced no DSPy labels: {ontology_file}"
-                )
+                raise ValueError(f"RDF ontology file produced no DSPy labels: {ontology_file}")
         else:
             self._ontology = None
             self._ontology_classes = _OPEN_DOMAIN_CLASSES
@@ -305,8 +355,8 @@ class DSPyExtractor(BaseExtractor):
                     continue
 
                 triplet_decisions.append({**raw, "kept": True, "drop_reason": None})
-                source, relation, target, source_type, target_type, props = (
-                    self._normalize_triplet(raw)
+                source, relation, target, source_type, target_type, props = self._normalize_triplet(
+                    raw
                 )
                 relations.append((source, relation, target, props))
 
@@ -329,6 +379,24 @@ class DSPyExtractor(BaseExtractor):
             )
 
         except Exception as e:
+            if _is_empty_lm_response_error(e):
+                log.warning(
+                    "DSPy relation extraction returned no parseable output; "
+                    "treating chunk as having no assisted relations: %s",
+                    e,
+                )
+                return (
+                    [],
+                    [],
+                    {
+                        "raw_triplets": [],
+                        "triplet_decisions": [],
+                        "ontology_classes": ontology_classes,
+                        "ontology_relation_types": ontology_relation_types,
+                        "error_type": "empty_lm_response",
+                        "error": str(e),
+                    },
+                )
             raise RuntimeError(f"DSPy relation extraction failed: {e}") from e
 
 
