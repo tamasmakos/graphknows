@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from evaluation.core.research.harness import (
     ResearchCase,
     ResearchMemoryOptions,
@@ -39,6 +41,7 @@ def test_score_case_reports_headline_scores() -> None:
     assert metrics["research_overall_score"] == 1.0
 
 
+@pytest.mark.asyncio
 async def test_run_research_memory_uses_fixed_operation_sequence(monkeypatch) -> None:
     case = ResearchCase(
         case_id="c1",
