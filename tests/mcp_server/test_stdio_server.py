@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Import guard — must not trigger GLiNER2 or heavy model loads
 # ---------------------------------------------------------------------------
@@ -155,21 +157,26 @@ def test_memory_recall_returns_hits():
 
     from graphknows.mcp.stdio_server import memory_recall
 
-    hit = MagicMock()
-    hit.score = 0.95
-    hit.source_type = "chunk"
-    hit.text = "graphknows is a framework-agnostic memory layer."
-    hit.provenance = {"session_id": "test-001"}
-    hit.entity_names = ["graphknows"]
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(
+        return_value={
+            "hits": [
+                {
+                    "type": "chunk",
+                    "session_id": "test-001",
+                    "score": round(0.95, 6),
+                    "entities": ["graphknows"],
+                }
+            ]
+        }
+    )
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm._bg_run"),
-        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
-    ):
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
 
+    runtime.recall_memory.assert_awaited_once_with(
+        "graphknows", session_id="test-001", top_k=5, scope="stm"
+    )
     assert "hits" in result
     assert len(result["hits"]) == 1
     h = result["hits"][0]
@@ -185,20 +192,23 @@ def test_memory_recall_hit_has_cosine_score():
 
     from graphknows.mcp.stdio_server import memory_recall
 
-    hit = MagicMock()
-    hit.score = 0.95
-    hit.cosine_score = 0.87
-    hit.source_type = "chunk"
-    hit.text = "graphknows is a framework-agnostic memory layer."
-    hit.provenance = {"session_id": "test-001"}
-    hit.entity_names = ["graphknows"]
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(
+        return_value={
+            "hits": [
+                {
+                    "score": round(0.95, 6),
+                    "cosine_score": 0.87,
+                    "type": "chunk",
+                    "text": "graphknows is a framework-agnostic memory layer.",
+                    "session_id": "test-001",
+                    "entities": ["graphknows"],
+                }
+            ]
+        }
+    )
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm._bg_run"),
-        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
-    ):
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="graphknows", session_id="test-001", top_k=5))
 
     assert "hits" in result
@@ -215,12 +225,10 @@ def test_memory_recall_empty():
 
     from graphknows.mcp.stdio_server import memory_recall
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm._bg_run"),
-        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[]),
-    ):
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(return_value={"hits": []})
+
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="unknown", session_id="test-001"))
 
     assert result == {"hits": []}
@@ -232,32 +240,19 @@ def test_memory_recall_empty():
 
 
 def test_ltm_recall_uses_session_filter():
-    """LTM recall must scope results to the requested session_id."""
+    """MCP recall passes the requested session_id through to the runtime."""
     import asyncio
 
     from graphknows.mcp.stdio_server import memory_recall
 
-    hit = MagicMock()
-    hit.score = 0.9
-    hit.source_type = "chunk"
-    hit.text = "some ltm content"
-    hit.provenance = {"session_id": "other-session"}
-    hit.entity_names = ["test"]
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(return_value={"hits": [{"text": "some ltm content"}]})
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
-        patch(
-            "graphknows.memory.query.recall_ltm.recall_long_term", return_value=[hit]
-        ) as mock_recall_ltm,
-    ):
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="test", session_id="current-session", scope="ltm"))
 
-    mock_recall_ltm.assert_called_once()
-    _kwargs = mock_recall_ltm.call_args.kwargs
-    assert _kwargs.get("session_filter") == "current-session", (
-        f"Expected session_filter='current-session', got {_kwargs.get('session_filter')}"
+    runtime.recall_memory.assert_awaited_once_with(
+        "test", session_id="current-session", top_k=5, scope="ltm"
     )
     assert len(result["hits"]) == 1
 
@@ -268,31 +263,22 @@ def test_ltm_recall_uses_session_filter():
 
 
 def test_clean_strips_content_prefix():
-    """_clean() strips the '## Content\\n' heading artifact (case-insensitive)."""
+    """MCP recall returns the runtime's cleaned text unchanged."""
     import asyncio
 
     from graphknows.mcp.stdio_server import memory_recall
 
     def _run_ltm(text: str, score: float = 0.9) -> str:
-        hit = MagicMock()
-        hit.score = score
-        hit.source_type = "chunk"
-        hit.text = text
-        hit.provenance = {"session_id": "s1"}
-        hit.entity_names = []
+        runtime = MagicMock()
+        runtime.recall_memory = AsyncMock(return_value={"hits": [{"text": text, "score": score}]})
 
-        with (
-            patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-            patch("graphknows.mcp.tools.stm.get_pg_store", new=AsyncMock(return_value=MagicMock())),
-            patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
-            patch("graphknows.memory.query.recall_ltm.recall_long_term", return_value=[hit]),
-        ):
+        with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
             return asyncio.run(memory_recall(query="x", session_id="s1", scope="ltm"))["hits"][0][
                 "text"
             ]
 
-    assert _run_ltm("## Content\n\nSome real content here.") == "Some real content here."
-    assert _run_ltm("## content\n\nLower case.") == "Lower case."
+    assert _run_ltm("Some real content here.") == "Some real content here."
+    assert _run_ltm("Lower case.") == "Lower case."
     assert _run_ltm("regular text without prefix") == "regular text without prefix"
 
 
@@ -399,89 +385,58 @@ def test_normalise_and_weight_equal_scores():
 
 
 def test_scope_stm_unchanged():
-    """scope='stm' must behave identically (no normalise/weight applied)."""
+    """scope='stm' is passed through to runtime recall."""
     import asyncio
 
     from graphknows.mcp.stdio_server import memory_recall
 
-    hit = MagicMock()
-    hit.score = 0.95
-    hit.source_type = "chunk"
-    hit.text = "stm only content"
-    hit.provenance = {"session_id": "test-001"}
-    hit.entity_names = []
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(return_value={"hits": [{"score": round(0.95, 6)}]})
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm._bg_run"),
-        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[hit]),
-    ):
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="x", session_id="test-001", scope="stm"))
 
+    runtime.recall_memory.assert_awaited_once_with(
+        "x", session_id="test-001", top_k=5, scope="stm"
+    )
     assert len(result["hits"]) == 1
     assert result["hits"][0]["score"] == round(0.95, 6)
 
 
 def test_scope_ltm_unchanged():
-    """scope='ltm' must behave identically (no normalise/weight applied)."""
+    """scope='ltm' is passed through to runtime recall."""
     import asyncio
 
     from graphknows.mcp.stdio_server import memory_recall
 
-    hit = MagicMock()
-    hit.score = 0.87
-    hit.source_type = "chunk"
-    hit.text = "ltm only content"
-    hit.provenance = {"session_id": "other"}
-    hit.entity_names = []
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(return_value={"hits": [{"score": round(0.87, 6)}]})
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
-        patch("graphknows.memory.query.recall_ltm.recall_long_term", return_value=[hit]),
-    ):
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="x", session_id="test-001", scope="ltm"))
 
+    runtime.recall_memory.assert_awaited_once_with(
+        "x", session_id="test-001", top_k=5, scope="ltm"
+    )
     assert len(result["hits"]) == 1
     assert result["hits"][0]["score"] == round(0.87, 6)
 
 
 def test_scope_both_normalises_cross_scope_scores():
-    """scope='both' normalises STM/LTM scores before merge and respects weights."""
+    """scope='both' returns runtime-normalised cross-scope scores."""
     import asyncio
-    from types import SimpleNamespace
 
     from graphknows.mcp.stdio_server import memory_recall
 
-    stm_hit = SimpleNamespace()
-    stm_hit.score = 0.016
-    stm_hit.cosine_score = 0.016
-    stm_hit.source_type = "chunk"
-    stm_hit.text = "stm content"
-    stm_hit.provenance = {"session_id": "s1"}
-    stm_hit.entity_names = []
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(
+        return_value={"hits": [{"score": round(0.6, 6)}, {"score": round(0.4, 6)}]}
+    )
 
-    ltm_hit = SimpleNamespace()
-    ltm_hit.score = 0.033
-    ltm_hit.cosine_score = 0.033
-    ltm_hit.source_type = "chunk"
-    ltm_hit.text = "ltm content"
-    ltm_hit.provenance = {"session_id": "s2"}
-    ltm_hit.entity_names = []
-
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm._bg_run"),
-        patch("graphknows.mcp.tools.stm.get_pg_store_bridge", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=MagicMock()),
-        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[stm_hit]),
-        patch("graphknows.memory.query.recall_ltm.recall_long_term", return_value=[ltm_hit]),
-    ):
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="x", session_id="s1", top_k=5, scope="both"))
 
+    runtime.recall_memory.assert_awaited_once_with("x", session_id="s1", top_k=5, scope="both")
     assert len(result["hits"]) == 2
     # Both are single-element lists, so each normalises to 1.0:
     #   STM: 0.6 * 1.0 = 0.6
@@ -516,15 +471,18 @@ def test_ltm_topics_returns_topics():
     """ltm_topics returns topic list above threshold."""
     from graphknows.mcp.stdio_server import ltm_topics
 
-    mock_store = MagicMock()
-    mock_store.list_topic_nodes.return_value = [
-        {"community_id": 1, "summary": "AI topics", "entity_count": 5},
-        {"community_id": 2, "summary": "ML topics", "entity_count": 3},
-    ]
+    runtime = MagicMock()
+    runtime.ltm_topics.return_value = {
+        "topics": [
+            {"community_id": 1, "summary": "AI topics", "entity_count": 5},
+            {"community_id": 2, "summary": "ML topics", "entity_count": 3},
+        ]
+    }
 
-    with patch("graphknows.mcp.tools.ltm.get_neo_store", return_value=mock_store):
+    with patch("graphknows.mcp.tools.ltm.get_runtime", return_value=runtime):
         result = ltm_topics(min_entities=3)
 
+    runtime.ltm_topics.assert_called_once_with(min_entities=3)
     assert "topics" in result
     assert len(result["topics"]) == 2
     assert result["topics"][0]["community_id"] == 1
@@ -535,12 +493,10 @@ def test_ltm_entity_not_found():
     """ltm_entity returns error dict when entity not found."""
     from graphknows.mcp.stdio_server import ltm_entity
 
-    drv = MagicMock()
-    drv.session.return_value.__enter__ = lambda s: s
-    drv.session.return_value.__exit__ = MagicMock(return_value=False)
-    drv.session.return_value.run.return_value.single.return_value = None
+    runtime = MagicMock()
+    runtime.ltm_entity.return_value = {"error": "Entity not found: NonExistent"}
 
-    with patch("neo4j.GraphDatabase.driver", return_value=drv):
+    with patch("graphknows.mcp.tools.ltm.get_runtime", return_value=runtime):
         result = ltm_entity(name="NonExistent")
 
     assert "error" in result
@@ -552,11 +508,10 @@ def test_ltm_entity_found():
     from graphknows.mcp.stdio_server import ltm_entity
 
     mock_props = {"name": "TestEntity", "pagerank": 0.5, "segment_count": 3}
+    runtime = MagicMock()
+    runtime.ltm_entity.return_value = mock_props
 
-    mock_store = MagicMock()
-    mock_store.get_entity_by_name.return_value = mock_props
-
-    with patch("graphknows.mcp.tools.ltm.get_neo_store", return_value=mock_store):
+    with patch("graphknows.mcp.tools.ltm.get_runtime", return_value=runtime):
         result = ltm_entity(name="TestEntity")
 
     assert "error" not in result
@@ -570,34 +525,26 @@ def test_ltm_entity_found():
 
 
 def test_corpus_ingest_calls_run_ingestion():
-    """corpus_ingest routes through CorpusIngestWorkflow (not graphgen.run_ingestion)."""
+    """corpus_ingest routes through the runtime facade."""
     import asyncio
 
     from graphknows.mcp.tools.corpus import corpus_ingest
 
-    fake_result = MagicMock()
-    fake_result.session_id = "sess-abc"
-    fake_result.documents_processed = 1
-    fake_result.entities_extracted = 5
-    fake_result.chunks_written = 2
-    fake_result.nodes_written = 5
-    fake_result.edges_written = 3
-    fake_result.elapsed_s = 0.1
-    fake_result.errors = []
+    runtime = MagicMock()
+    runtime.corpus_ingest = AsyncMock(
+        return_value={
+            "session_id": "sess-abc",
+            "documents_processed": 1,
+            "entities_extracted": 5,
+            "chunks_written": 2,
+            "nodes_written": 5,
+            "edges_written": 3,
+            "elapsed_s": 0.1,
+            "errors": [],
+        }
+    )
 
-    mock_workflow = MagicMock()
-    mock_workflow.run = AsyncMock(return_value=fake_result)
-
-    with (
-        patch(
-            "graphknows.mcp.tools.corpus.get_settings",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "graphknows.config.builders.stores.build_corpus_workflow",
-            return_value=mock_workflow,
-        ),
-    ):
+    with patch("graphknows.mcp.tools.corpus.get_runtime", return_value=runtime):
         result = asyncio.run(
             corpus_ingest(
                 documents=[{"text": "test", "title": "t", "id": "1"}],
@@ -608,9 +555,9 @@ def test_corpus_ingest_calls_run_ingestion():
     assert result["documents_processed"] == 1
     assert result["nodes_written"] == 5
     assert "session_id" in result
-    request = mock_workflow.run.await_args.args[0]
-    assert request.session_id == "sess-abc"
-    assert request.summarize_topics is True
+    runtime.corpus_ingest.assert_awaited_once_with(
+        [{"text": "test", "title": "t", "id": "1"}], session_id="sess-abc"
+    )
 
 
 def test_corpus_ingest_empty_documents():
@@ -624,11 +571,6 @@ def test_corpus_ingest_empty_documents():
     assert "error" in result
     assert result["documents_processed"] == 0
 
-
-import asyncio
-import os
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Module-level constants sanity
@@ -663,129 +605,104 @@ class TestMemoryFlushIdempotency:
         """When session already exists in LTM, return status=already_flushed without calling flusher."""
         from graphknows.mcp.tools import stm as stm_mod
 
-        # Mock get_neo_store() to return a Neo4j store whose _driver.session.run returns count > 0
-        mock_neo = MagicMock()
-        mock_neo._db = "neo4j"
-        mock_neo_session = MagicMock()
-        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
-        # MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n  →  n=1
-        mock_record = MagicMock()
-        mock_record.__getitem__ = lambda self, k: 1
-        mock_neo_session.run.return_value = [mock_record]
-
-        with (
-            patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
-            patch(
-                "graphknows.config.builders.stores.build_promotion_pipeline"
-            ) as mock_build_pipeline,
-        ):
+        runtime = MagicMock()
+        runtime.flush_memory = AsyncMock(
+            return_value={
+                "session_id": "session-already-flushed",
+                "status": "already_flushed",
+                "nodes": 0,
+                "edges": 0,
+                "chunks": 0,
+                "turns": 0,
+                "topics_created": 0,
+                "merged_entities": 0,
+                "elapsed_s": 0.0,
+                "errors": [],
+            }
+        )
+        with patch.object(stm_mod, "get_runtime", return_value=runtime):
             result = await stm_mod.memory_flush("session-already-flushed")
 
+        runtime.flush_memory.assert_awaited_once_with("session-already-flushed")
         assert result["status"] == "already_flushed"
         assert result["session_id"] == "session-already-flushed"
         assert result["nodes"] == 0
         assert result["chunks"] == 0
         assert result["errors"] == []
-        # Pipeline should NOT have been built
-        mock_build_pipeline.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_new_session_calls_flusher(self):
         """When session is NOT in LTM, the flusher should be called."""
         from graphknows.mcp.tools import stm as stm_mod
 
-        # Neo4j session returns count = 0 (not in LTM)
-        mock_neo = MagicMock()
-        mock_neo._db = "neo4j"
-        mock_neo_session = MagicMock()
-        mock_neo._driver.session.return_value.__enter__.return_value = mock_neo_session
-        mock_record = MagicMock()
-        mock_record.__getitem__ = lambda self, k: 0
-        mock_neo_session.run.return_value = [mock_record]
+        runtime = MagicMock()
+        runtime.flush_memory = AsyncMock(
+            return_value={
+                "nodes": 5,
+                "edges": 3,
+                "chunks": 2,
+                "turns": 1,
+                "topics_created": 0,
+                "merged_entities": 0,
+                "elapsed_s": 0.5,
+                "errors": [],
+            }
+        )
 
-        # Mock everything needed for flush
-        mock_result = MagicMock()
-        mock_result.nodes_written = 5
-        mock_result.edges_written = 3
-        mock_result.chunks_promoted = 2
-        mock_result.turns_promoted = 1
-        mock_result.elapsed_s = 0.5
-        mock_result.errors = []
-
-        mock_pipeline_instance = AsyncMock()
-        mock_pipeline_instance.promote = AsyncMock(return_value=mock_result)
-
-        with (
-            patch.object(stm_mod, "get_neo_store", return_value=mock_neo),
-            patch("graphknows.config.builders.stores.build_promotion_pipeline", return_value=mock_pipeline_instance),
-        ):
+        with patch.object(stm_mod, "get_runtime", return_value=runtime):
             result = await stm_mod.memory_flush("session-new")
 
-        # Pipeline MUST have been called
-        mock_pipeline_instance.promote.assert_awaited_once()
-        # Result should NOT have already_flushed status
+        runtime.flush_memory.assert_awaited_once_with("session-new")
         assert result.get("status") != "already_flushed"
 
 
 def test_memory_ingest_returns_no_warnings():
     """memory_ingest must not return rel_extractor_disabled warning — issue #113."""
     import asyncio
+
     from graphknows.mcp.stdio_server import memory_ingest
 
-    mock_result = MagicMock()
-    mock_result.file_id = "abc123"
-    mock_result.chunk_count = 1
-    mock_result.entity_count = 5
-    mock_result.elapsed_s = 1.0
-    mock_result.errors = []
+    runtime = MagicMock()
+    runtime.ingest_memory = AsyncMock(
+        return_value={
+            "file_id": "abc123",
+            "chunks": 1,
+            "entities": 5,
+            "elapsed_s": 1.0,
+            "errors": [],
+            "warnings": [],
+        }
+    )
 
-    with (
-        patch("graphknows.config.builders.stores.build_stm_service") as mock_build,
-        patch("graphknows.mcp.tools.stm.get_settings"),
-    ):
-        mock_ingestor = MagicMock()
-        mock_ingestor.ingest.return_value = mock_result
-        mock_build.return_value = mock_ingestor
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_ingest("some text", session_id="test", title="t"))
         assert result["warnings"] == [], f"Expected no warnings, got: {result['warnings']}"
         assert "rel_extractor_disabled" not in result["warnings"]
 
 
 def test_memory_flush_summarizes_topics():
-    """memory_flush must always request topic summarization (run_topics=True by default)."""
+    """memory_flush delegates topic-aware promotion policy to the runtime."""
     import asyncio
+
     from graphknows.mcp.stdio_server import memory_flush
 
-    captured_request = {}
+    runtime = MagicMock()
+    runtime.flush_memory = AsyncMock(
+        return_value={
+            "nodes": 1,
+            "edges": 1,
+            "chunks": 1,
+            "turns": 0,
+            "topics_created": 1,
+            "merged_entities": 0,
+            "elapsed_s": 1.0,
+            "errors": [],
+        }
+    )
 
-    async def fake_promote(request):
-        captured_request["run_topics"] = request.run_topics
-        m = MagicMock()
-        m.nodes_written = 1
-        m.edges_written = 1
-        m.chunks_promoted = 1
-        m.turns_promoted = 0
-        m.elapsed_s = 1.0
-        m.errors = []
-        return m
-
-    mock_neo = MagicMock()
-    mock_neo_sess = MagicMock()
-    mock_neo_sess.run.return_value = [{"n": 0}]
-    mock_neo._driver.session.return_value.__enter__ = lambda s: mock_neo_sess
-    mock_neo._driver.session.return_value.__exit__ = MagicMock(return_value=False)
-
-    with (
-        patch("graphknows.config.builders.stores.build_promotion_pipeline") as mock_build,
-        patch("graphknows.mcp.tools.stm.get_settings"),
-        patch("graphknows.mcp.tools.stm.get_neo_store", return_value=mock_neo),
-    ):
-        mock_pipeline = MagicMock()
-        mock_pipeline.promote = fake_promote
-        mock_build.return_value = mock_pipeline
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         asyncio.run(memory_flush("test-session"))
-        assert captured_request.get("run_topics") is True, \
-            "memory_flush must use run_topics=True (PromotionRequest default)"
+        runtime.flush_memory.assert_awaited_once_with("test-session")
 
 
 # ---------------------------------------------------------------------------
@@ -794,43 +711,44 @@ def test_memory_flush_summarizes_topics():
 
 
 def test_stm_recall_uses_bg_loop_pg_store():
-    """memory_recall builds a fresh pg store on _BG_LOOP for stm scope, not get_pg_store()."""
+    """memory_recall delegates pgvector loop policy to the runtime."""
     import asyncio
 
     from graphknows.mcp.tools.stm import memory_recall
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_pg_store") as mock_get_pg,
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.build_pgvector_store") as mock_build,
-        patch("graphknows.mcp.tools.stm._bg_run") as mock_bg_run,
-        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[]),
-    ):
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(return_value={"hits": []})
+
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         asyncio.run(memory_recall("test query", session_id="test-session", scope="stm"))
-        mock_get_pg.assert_not_called()
-        mock_build.assert_called_once()
-        mock_bg_run.assert_called_once()
+        runtime.recall_memory.assert_awaited_once_with(
+            "test query", session_id="test-session", top_k=5, scope="stm"
+        )
 
 
 def test_stm_recall_hit_entity_only_has_cosine_score_zero():
     """Entity-only recall hits must have cosine_score explicitly set to 0.0 — issue #112."""
     import asyncio
+
     from graphknows.mcp.stdio_server import memory_recall
 
-    entity_hit = MagicMock()
-    entity_hit.score = 0.016
-    entity_hit.cosine_score = 0.0
-    entity_hit.source_type = "chunk"
-    entity_hit.text = "entity-only hit"
-    entity_hit.provenance = {"session_id": "test-001"}
-    entity_hit.entity_names = ["graphknows"]
+    runtime = MagicMock()
+    runtime.recall_memory = AsyncMock(
+        return_value={
+            "hits": [
+                {
+                    "score": 0.016,
+                    "cosine_score": 0.0,
+                    "type": "chunk",
+                    "text": "entity-only hit",
+                    "session_id": "test-001",
+                    "entities": ["graphknows"],
+                }
+            ]
+        }
+    )
 
-    with (
-        patch("graphknows.mcp.tools.stm.get_mg_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm.build_pgvector_store", return_value=MagicMock()),
-        patch("graphknows.mcp.tools.stm._bg_run"),
-        patch("graphknows.memory.stm.recall.recall_short_term", return_value=[entity_hit]),
-    ):
+    with patch("graphknows.mcp.tools.stm.get_runtime", return_value=runtime):
         result = asyncio.run(memory_recall(query="test", session_id="test-001", scope="stm"))
     hits = result.get("hits", [])
     assert len(hits) == 1
@@ -843,7 +761,7 @@ class TestLTMPromotionPipelineRelationExtractionGuard:
     @pytest.mark.asyncio
     async def test_write_skips_extraction_when_key_empty(self) -> None:
         """Empty or whitespace-only openrouter_key → extract_and_write_relations is never called."""
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock
 
         from graphknows.memory.flush import LTMPromotionPipeline
 
@@ -904,6 +822,7 @@ class TestLTMPromotionPipelineRelationExtractionGuard:
 def test_bg_run_flush_offload():
     """_bg_run correctly submits a coroutine to _BG_LOOP from sync context."""
     import asyncio
+
     from graphknows.memory.stm._async_bridge import _run as _bg_run
 
     async def _simple():

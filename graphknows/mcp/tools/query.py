@@ -25,7 +25,7 @@ async def memory_query(
         query: Natural-language question or search phrase.
         session_id: Session namespace for STM scoping (used when scope
             includes ``"stm"``).
-        top_k: Maximum hits to return (1–100, default 10).
+        top_k: Maximum hits to return (1-100, default 10).
         scope: Which memory tier to search — ``"stm"`` (session chunks),
             ``"ltm"`` (promoted long-term chunks), or ``"both"`` (default).
 
