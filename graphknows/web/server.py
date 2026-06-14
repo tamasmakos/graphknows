@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -15,13 +14,39 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from graphknows.config.health import check_backends, get_memory_stats
-from graphknows.mcp._state import get_mg_store, get_neo_store, get_pg_store, get_settings
+from graphknows.config import GraphKnowsSettings
+from graphknows.config.builders.stores import build_memgraph_store, build_neo4j_store
+from graphknows.runtime import GraphKnowsRuntime
 from graphknows.web.links import DEFAULT_PORT
 
-_STM_RECALL_WEIGHT: float = 0.6  # STM hits weighted higher than LTM in combined recall
-_LTM_RECALL_WEIGHT: float = 0.4
-assert _STM_RECALL_WEIGHT + _LTM_RECALL_WEIGHT == 1.0
+_settings: GraphKnowsSettings | None = None
+_runtime: GraphKnowsRuntime | None = None
+
+
+def get_settings() -> GraphKnowsSettings:
+    """Return web-local singleton settings."""
+    global _settings
+    if _settings is None:
+        _settings = GraphKnowsSettings()
+    return _settings
+
+
+def get_runtime() -> GraphKnowsRuntime:
+    """Return web-local singleton runtime."""
+    global _runtime
+    if _runtime is None:
+        _runtime = GraphKnowsRuntime(get_settings())
+    return _runtime
+
+
+def get_mg_store() -> Any:
+    """Build a Memgraph store from web settings."""
+    return build_memgraph_store(get_settings())
+
+
+def get_neo_store() -> Any:
+    """Build a Neo4j store from web settings."""
+    return build_neo4j_store(get_settings())
 
 
 def _frontend_dir() -> Path:
@@ -211,7 +236,7 @@ async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
 async def health(_: Request) -> JSONResponse:
     """Return backend connectivity status."""
     try:
-        return JSONResponse(await check_backends(get_settings()))
+        return JSONResponse(await get_runtime().doctor())
     except Exception as exc:
         return JSONResponse(_error_payload(exc), status_code=503)
 
@@ -220,7 +245,7 @@ async def stats(request: Request) -> JSONResponse:
     """Return STM and LTM memory statistics."""
     try:
         session_id = request.query_params.get("session_id", "")
-        return JSONResponse(await get_memory_stats(get_settings(), session_id=session_id))
+        return JSONResponse(await get_runtime().stats(session_id=session_id))
     except Exception as exc:
         return JSONResponse(_error_payload(exc), status_code=503)
 
@@ -293,17 +318,6 @@ async def graph(request: Request) -> JSONResponse:
         return JSONResponse(_error_payload(exc), status_code=503)
 
 
-def _normalise_hits(hits: list[Any], weight: float) -> None:
-    """Min-max normalise hit scores in place, then apply weight factor."""
-    if not hits:
-        return
-    scores = [h.score for h in hits]
-    mn, mx = min(scores), max(scores)
-    rng = mx - mn
-    for h in hits:
-        h.score = weight * ((h.score - mn) / rng if rng else 1.0)
-
-
 def _run_recall(
     scope: str,
     query: str,
@@ -311,57 +325,7 @@ def _run_recall(
     top_k: int,
 ) -> dict[str, Any]:
     """Synchronous recall across STM/LTM stores. Returns serialisable hits dict."""
-    from graphknows.memory.stm._async_bridge import _run as _bg_run
-    from graphknows.memory.stores.embedder import embed_one
-
-    def _clean(text: str) -> str:
-        return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
-
-    def _fmt(results: list[Any]) -> list[dict[str, Any]]:
-        return [
-            {
-                "score": round(r.score, 6),
-                "cosine_score": round(getattr(r, "cosine_score", r.score), 6),
-                "type": r.source_type,
-                "text": _clean(r.text),
-                "session_id": r.provenance.get("session_id", session_id),
-                "entities": list(r.entity_names or []),
-            }
-            for r in results
-        ]
-
-    stm_hits: list[Any] = []
-    ltm_hits: list[Any] = []
-
-    if scope in ("stm", "both"):
-        from graphknows.memory.stm.recall import recall_short_term
-
-        mg = get_mg_store()
-        pg = get_pg_store()
-        _bg_run(pg.connect())
-        stm_hits = recall_short_term(
-            mg, pg, query, session_id=session_id, top_k=top_k, embed_fn=embed_one
-        )
-        mg.close()
-
-    if scope in ("ltm", "both"):
-        from graphknows.memory.query.recall_ltm import recall_long_term
-
-        pg2 = get_pg_store()
-        neo = get_neo_store()
-        _bg_run(pg2.connect())
-        ltm_hits = recall_long_term(
-            neo, pg2, query, top_k=top_k, session_filter=session_id or None, embed_fn=embed_one
-        )
-        neo.close()
-
-    if scope == "both":
-        _normalise_hits(stm_hits, _STM_RECALL_WEIGHT)
-        _normalise_hits(ltm_hits, _LTM_RECALL_WEIGHT)
-        combined = sorted(stm_hits + ltm_hits, key=lambda h: h.score, reverse=True)
-        return {"hits": _fmt(combined[:top_k])}
-
-    return {"hits": _fmt(stm_hits if scope == "stm" else ltm_hits)}
+    return get_runtime()._recall_memory_sync(query, session_id, top_k, scope)
 
 
 async def recall(request: Request) -> JSONResponse:
@@ -415,17 +379,14 @@ async def ingest(request: Request) -> JSONResponse:
         )
 
     try:
-        from graphknows.config.builders.stores import build_stm_service
-
-        service = await asyncio.to_thread(build_stm_service, get_settings())
-        result = await asyncio.to_thread(service.ingest, text, session_id, title)
+        result = await get_runtime().ingest_memory(text, session_id=session_id, title=title)
         return JSONResponse(
             {
-                "file_id": result.file_id,
-                "chunk_count": result.chunk_count,
-                "entity_count": result.entity_count,
-                "elapsed_s": round(result.elapsed_s, 3),
-                "errors": list(result.errors),
+                "file_id": result["file_id"],
+                "chunk_count": result["chunks"],
+                "entity_count": result["entities"],
+                "elapsed_s": result["elapsed_s"],
+                "errors": result["errors"],
             }
         )
     except Exception as exc:
@@ -446,35 +407,22 @@ async def flush_session(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    opts_raw = body.get("options", {}) or {}
-
     try:
-        from graphknows.config.builders.stores import build_promotion_pipeline
-        from graphknows.memory.models.promotion import PromotionRequest
-
-        request = PromotionRequest(
-            session_id=session_id,
-            clear_stm=bool(opts_raw.get("clear_stm", True)),
-            run_gds=bool(opts_raw.get("run_gds", True)),
-            merge_entities=bool(opts_raw.get("merge_entities", True)),
-        )
-        pipeline = await asyncio.to_thread(build_promotion_pipeline, get_settings())
-        result = await pipeline.promote(request)
-        gds = result.gds_result
+        result = await get_runtime().flush_memory(session_id)
         return JSONResponse(
             {
-                "session_id": result.session_id,
-                "nodes_written": result.nodes_written,
-                "edges_written": result.edges_written,
-                "chunks_promoted": result.chunks_promoted,
-                "turns_promoted": result.turns_promoted,
-                "merged_entities": result.merged_entities,
-                "community_count": gds.community_count if gds else 0,
-                "modularity": round(gds.modularity, 4) if gds else 0.0,
-                "ran_iterations": gds.ran_iterations if gds else 0,
-                "topics_created": result.topics_created,
-                "elapsed_s": round(result.elapsed_s, 2),
-                "errors": result.errors,
+                "session_id": session_id,
+                "nodes_written": result.get("nodes", 0),
+                "edges_written": result.get("edges", 0),
+                "chunks_promoted": result.get("chunks", 0),
+                "turns_promoted": result.get("turns", 0),
+                "merged_entities": result.get("merged_entities", 0),
+                "community_count": 0,
+                "modularity": 0.0,
+                "ran_iterations": 0,
+                "topics_created": result.get("topics_created", 0),
+                "elapsed_s": result.get("elapsed_s", 0.0),
+                "errors": result.get("errors", []),
             }
         )
     except Exception as exc:
