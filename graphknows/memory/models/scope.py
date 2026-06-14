@@ -22,11 +22,9 @@ class MemoryScope(BaseModel, frozen=True):
     run_id: str | None = None
 
     @model_validator(mode="after")
-    def _at_least_one(self) -> "MemoryScope":
+    def _at_least_one(self) -> MemoryScope:
         if not any([self.user_id, self.agent_id, self.run_id]):
-            raise ValueError(
-                "MemoryScope requires at least one of: user_id, agent_id, run_id"
-            )
+            raise ValueError("MemoryScope requires at least one of: user_id, agent_id, run_id")
         return self
 
     def to_session_id(self) -> str:

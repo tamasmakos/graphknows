@@ -245,14 +245,13 @@ class PgVectorStore:
         """
         pool = self._pool_or_raise()
         emb_str = json.dumps(query_emb)
-        table = "stm_chunks" if session_id else "ltm_chunks"
         async with pool.acquire() as conn:
             if session_id:
                 rows = await conn.fetch(
-                    f"""
+                    """
                     SELECT id, file_id AS doc_id, text, metadata,
                            1 - (embedding <=> $1::vector) AS cosine_score
-                    FROM {table}
+                    FROM stm_chunks
                     WHERE session_id = $2
                     ORDER BY embedding <=> $1::vector
                     LIMIT $3
@@ -263,10 +262,10 @@ class PgVectorStore:
                 )
             else:
                 rows = await conn.fetch(
-                    f"""
+                    """
                     SELECT id, file_id AS doc_id, text, metadata,
                            1 - (embedding <=> $1::vector) AS cosine_score
-                    FROM {table}
+                    FROM ltm_chunks
                     ORDER BY embedding <=> $1::vector
                     LIMIT $2
                     """,
@@ -363,10 +362,24 @@ class PgVectorStore:
         result: dict[str, dict[str, Any]] = {}
         async with pool.acquire() as conn:
             for table in ("stm_chunks", "ltm_chunks"):
-                rows = await conn.fetch(
-                    f"SELECT id, file_id AS doc_id, text, metadata FROM {table} WHERE id = ANY($1)",
-                    chunk_ids,
-                )
+                if table == "stm_chunks":
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, file_id AS doc_id, text, metadata
+                        FROM stm_chunks
+                        WHERE id = ANY($1)
+                        """,
+                        chunk_ids,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, file_id AS doc_id, text, metadata
+                        FROM ltm_chunks
+                        WHERE id = ANY($1)
+                        """,
+                        chunk_ids,
+                    )
                 for r in rows:
                     if r["id"] not in result:
                         result[r["id"]] = {
@@ -382,7 +395,14 @@ class PgVectorStore:
         deleted = 0
         async with pool.acquire() as conn:
             for table in ("stm_chunks", "ltm_chunks"):
-                result = await conn.execute(f"DELETE FROM {table} WHERE session_id = $1", session_id)
+                if table == "stm_chunks":
+                    result = await conn.execute(
+                        "DELETE FROM stm_chunks WHERE session_id = $1", session_id
+                    )
+                else:
+                    result = await conn.execute(
+                        "DELETE FROM ltm_chunks WHERE session_id = $1", session_id
+                    )
                 deleted += int(result.split()[-1])
         logger.info("Deleted %d chunks for session %s", deleted, session_id)  # NOSONAR
         return deleted

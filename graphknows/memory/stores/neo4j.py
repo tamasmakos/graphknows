@@ -76,8 +76,12 @@ def _write_relation_edges(
         safe = _safe_rel_label(rel)
         if not safe:
             continue
-        src_type = metadata.get("source_type") or entity_by_name.get(src_canon, {}).get("type", "ENTITY")
-        tgt_type = metadata.get("target_type") or entity_by_name.get(tgt_canon, {}).get("type", "ENTITY")
+        src_type = metadata.get("source_type") or entity_by_name.get(src_canon, {}).get(
+            "type", "ENTITY"
+        )
+        tgt_type = metadata.get("target_type") or entity_by_name.get(tgt_canon, {}).get(
+            "type", "ENTITY"
+        )
         s.run(
             "MERGE (e1:ENTITY {name: $src}) "
             "SET e1.type = coalesce(e1.type, $src_type) "
@@ -775,7 +779,9 @@ class Neo4jStore:
                         if r.get("source") and r.get("relation") and r.get("target")
                     ]
                     if triplets:
-                        e3 = _write_relation_edges(s, triplets, entity_by_name, session_id=session_id)
+                        e3 = _write_relation_edges(
+                            s, triplets, entity_by_name, session_id=session_id
+                        )
             return {"nodes": n1 + n2, "edges": e1 + e2 + e3}
 
         return await asyncio.to_thread(_sync)
@@ -930,7 +936,9 @@ class Neo4jStore:
                 "|".join(sorted(members)).encode(), usedforsecurity=False
             ).hexdigest()
             if existing_hashes.get(comm_id) == comm_hash:
-                logger.debug("summarize_topics: community %d unchanged; refreshing metadata", comm_id)
+                logger.debug(
+                    "summarize_topics: community %d unchanged; refreshing metadata", comm_id
+                )
                 await self._refresh_topic_metadata(
                     comm_id=comm_id,
                     modularity=modularity,
@@ -1007,7 +1015,9 @@ class Neo4jStore:
 
         return topics_created
 
-    async def _topic_communities(self) -> tuple[dict[int, list[str]], float | None, float | None, str]:
+    async def _topic_communities(
+        self,
+    ) -> tuple[dict[int, list[str]], float | None, float | None, str]:
         """Return topic communities from GDS, or local Leiden fallback."""
         gds_rows = await self._arun(
             "MATCH (e:ENTITY) "

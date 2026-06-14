@@ -89,7 +89,12 @@ class HybridRetriever(BaseGraphRetriever):
         """
         log.debug(
             "retrieve START  query=%r  session=%s  scope=%s  k_entity=%d  k_semantic=%d  top_k=%d",
-            query, session_id, scope, k_entity, k_semantic, top_k,
+            query,
+            session_id,
+            scope,
+            k_entity,
+            k_semantic,
+            top_k,
         )
 
         # ── Step 1: embed query once ───────────────────────────────────────
@@ -126,24 +131,33 @@ class HybridRetriever(BaseGraphRetriever):
                 for j, nc in enumerate(neo_chunks):
                     mention_weight = entity_similarity * (1.0 / (j + 1))
                     cid = nc["chunk_id"]
-                    if cid not in graph_chunk_info or mention_weight > graph_chunk_info[cid]["mention_weight"]:
+                    if (
+                        cid not in graph_chunk_info
+                        or mention_weight > graph_chunk_info[cid]["mention_weight"]
+                    ):
                         graph_chunk_info[cid] = {
                             "entity_rank": i,
                             "mention_weight": mention_weight,
                             "doc_id": nc.get("doc_id", ""),
                             "text": nc.get("text", ""),
                         }
-                    chunk_matches.append(ChunkMatch(
-                        chunk_id=cid,
-                        doc_id=nc.get("doc_id", ""),
-                        text=nc.get("text", ""),
-                        metadata={"mention_weight": mention_weight},
-                        entities=[{"name": ent["name"], "label": ent["label"]}],
-                    ))
-                entity_matches.append(EntityMatch(
-                    name=ent["name"], label=ent["label"],
-                    similarity=entity_similarity, chunks=chunk_matches,
-                ))
+                    chunk_matches.append(
+                        ChunkMatch(
+                            chunk_id=cid,
+                            doc_id=nc.get("doc_id", ""),
+                            text=nc.get("text", ""),
+                            metadata={"mention_weight": mention_weight},
+                            entities=[{"name": ent["name"], "label": ent["label"]}],
+                        )
+                    )
+                entity_matches.append(
+                    EntityMatch(
+                        name=ent["name"],
+                        label=ent["label"],
+                        similarity=entity_similarity,
+                        chunks=chunk_matches,
+                    )
+                )
 
         # ── Step 4: semantic matches list ──────────────────────────────────
         semantic_matches: list[ChunkMatch] = [
@@ -188,16 +202,18 @@ class HybridRetriever(BaseGraphRetriever):
                 sources.append("graph")
             if cid in sem_ids:
                 sources.append("semantic")
-            fused.append({
-                "chunk_id": cid,
-                "doc_id": fc.get("doc_id", graph_chunk_info.get(cid, {}).get("doc_id", "")),
-                "text": fc.get("text", graph_chunk_info.get(cid, {}).get("text", "")),
-                "metadata": fc.get("metadata", {}),
-                "rrf_score": round(rrf_score, 6),
-                "sources": ",".join(sources),
-                "rank": rank + 1,
-                "entities": chunk_entities.get(cid, []),
-            })
+            fused.append(
+                {
+                    "chunk_id": cid,
+                    "doc_id": fc.get("doc_id", graph_chunk_info.get(cid, {}).get("doc_id", "")),
+                    "text": fc.get("text", graph_chunk_info.get(cid, {}).get("text", "")),
+                    "metadata": fc.get("metadata", {}),
+                    "rrf_score": round(rrf_score, 6),
+                    "sources": ",".join(sources),
+                    "rank": rank + 1,
+                    "entities": chunk_entities.get(cid, []),
+                }
+            )
 
         log.debug("retrieve DONE  fused=%d", len(fused))
         return RetrievalContext(
@@ -227,12 +243,12 @@ class HybridRetriever(BaseGraphRetriever):
         if scope == "ltm":
             return await self.pg.search_chunks(emb, session_id="", k=k)
         # "both": query both tiers concurrently, merge by score
-        stm_task = asyncio.create_task(
-            self.pg.search_chunks(emb, session_id=session_id, k=k)
-        ) if session_id else None
-        ltm_task = asyncio.create_task(
-            self.pg.search_chunks(emb, session_id="", k=k)
+        stm_task = (
+            asyncio.create_task(self.pg.search_chunks(emb, session_id=session_id, k=k))
+            if session_id
+            else None
         )
+        ltm_task = asyncio.create_task(self.pg.search_chunks(emb, session_id="", k=k))
         tasks = [t for t in (stm_task, ltm_task) if t is not None]
         results = await asyncio.gather(*tasks)
         stm_rows = results[0] if stm_task else []

@@ -83,7 +83,7 @@ class DialogCapture:
         session_id: str,
         dialog_id: str,
         turn: Turn,
-        extra_metadata: dict | None = None,
+        extra_metadata: dict[str, Any] | None = None,
     ) -> DialogResult:
         """Write a single turn into the interaction graph.
 
@@ -91,6 +91,7 @@ class DialogCapture:
             session_id: Parent session namespace (for entity scoping).
             dialog_id: Parent dialog identifier.
             turn: Turn data including text, role, tool calls.
+            extra_metadata: Optional metadata stored with the pgvector turn row.
 
         Returns:
             DialogResult with entity_count and any errors.
@@ -158,7 +159,7 @@ class DialogCapture:
         # Embed turn text → stm_turns
         try:
             embedding = self._embed_fn(turn.text) if turn.text.strip() else []
-            turn_record: dict = {
+            turn_record: dict[str, Any] = {
                 "id": turn.id,
                 "session_id": session_id,
                 "dialog_id": dialog_id,

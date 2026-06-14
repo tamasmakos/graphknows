@@ -9,10 +9,13 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-
-import asyncpg
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+
+try:
+    import asyncpg
+except ImportError:  # pragma: no cover - optional deployment dependency
+    asyncpg = None  # type: ignore[assignment]
 
 from graphknows.memory.adapter_types import (
     AdapterCapabilities,
@@ -24,7 +27,7 @@ from graphknows.memory.adapter_types import (
 from graphknows.memory.flush import LTMPromotionPipeline
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.models.ingest_options import IngestOptions
-from graphknows.memory.models.message import Message, MessageInput, normalize_messages
+from graphknows.memory.models.message import MessageInput, normalize_messages
 from graphknows.memory.models.promotion import PromotionRequest
 from graphknows.memory.models.scope import MemoryScope
 from graphknows.memory.stm import STMService
@@ -155,6 +158,8 @@ class GraphknowsAdapter:
             "memory_class": artifact.memory_class.value,
             "artifact_id": artifact.artifact_id,
         }
+        if self._stm_service is None:
+            raise RuntimeError("GraphknowsAdapter is not initialized")
         self._stm_service.ingest(
             artifact.content,
             session_id=session_id,
@@ -357,7 +362,7 @@ class GraphknowsMemoryAdapter:
         def _require_env(key: str) -> str:
             v = os.environ.get(key)
             if not v:
-                raise EnvironmentError(f"{key} is not set")
+                raise OSError(f"{key} is not set")
             return v
 
         mg = MemgraphStore(_require_env("MEMGRAPH_URI"))
@@ -380,6 +385,7 @@ class GraphknowsMemoryAdapter:
         if self._container is not None:
             mg, pg, _ = self._stores_from_container()
             from graphknows.memory.stores.embedder import embed_one
+
             embed_fn = embed_one
         else:
             mg, pg, _, embed_fn = self._lazy_stores()
@@ -523,6 +529,8 @@ class GraphknowsMemoryAdapter:
 
         if not pg_dsn:
             pg_dsn = os.environ.get("PGVECTOR_DSN", "")
+        if asyncpg is None:
+            raise ImportError("asyncpg is required for GraphknowsMemoryAdapter.stats")
 
         stm: dict[str, Any] = {}
         ltm: dict[str, Any] = {}

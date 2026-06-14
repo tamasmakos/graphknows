@@ -24,7 +24,7 @@ class BaseGraphRetriever(ABC):
         session_id: str,
         top_k: int = 10,
         scope: str = "both",
-    ) -> "RetrievalContext":
+    ) -> RetrievalContext:
         """Retrieve relevant context for *query*.
 
         Args:

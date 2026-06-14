@@ -385,7 +385,7 @@ async def test_retrieve_semantic_only():
 
     with patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed_fn):
         ctx = await retriever.retrieve(
-            "test query", session_id="s1", k_entity=5, k_semantic=10, k_final=5
+            "test query", session_id="s1", k_entity=5, k_semantic=10, top_k=5
         )
 
     assert isinstance(ctx, RetrievalContext)
@@ -540,7 +540,7 @@ async def test_retrieve_k_final_limits_fused_results():
     )
 
     with patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed_fn):
-        ctx = await retriever.retrieve("q", session_id="s1", k_final=3)
+        ctx = await retriever.retrieve("q", session_id="s1", top_k=3)
 
     assert len(ctx.fused_results) == 3
 

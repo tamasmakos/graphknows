@@ -511,6 +511,7 @@ class LTMEnrichmentService:
             pg_store: PgVectorStore for ltm_topics write-back.
             llm_key: OpenRouter API key.
             llm_model: LLM model identifier.
+            gds_result: Optional GDS metadata to persist on generated topics.
 
         Returns:
             Number of topics created.

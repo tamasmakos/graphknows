@@ -312,11 +312,14 @@ async def test_get_chunks_by_ids_returns_dict():
 @pytest.mark.asyncio
 async def test_delete_session_returns_count():
     store, conn = _make_store()
-    conn.execute = AsyncMock(return_value="DELETE 5")
+    conn.execute = AsyncMock(side_effect=["DELETE 5", "DELETE 3"])
     count = await store.delete_session("sess42")
-    assert count == 5
-    sql = conn.execute.call_args[0][0]
-    assert "DELETE FROM chunks" in sql
+    assert count == 8
+    sql_calls = [call.args[0] for call in conn.execute.call_args_list]
+    assert sql_calls == [
+        "DELETE FROM stm_chunks WHERE session_id = $1",
+        "DELETE FROM ltm_chunks WHERE session_id = $1",
+    ]
 
 
 @pytest.mark.asyncio
