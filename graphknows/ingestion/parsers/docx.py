@@ -12,6 +12,7 @@ class DocxParser(BaseParser):
     """Parse .docx files into Markdown-formatted, heading-aligned segments."""
 
     def parse(self, text: str, source_hint: str = "", title: str = "") -> ParsedFile:
+        """Reject text parsing because DOCX inputs must be parsed from bytes."""
         raise NotImplementedError(
             "DocxParser requires binary input — use parse_bytes(data: bytes, ...)"
         )
