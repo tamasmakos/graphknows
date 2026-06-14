@@ -81,7 +81,7 @@ def test_build_stm_service_default_uses_gliner2():
     mock_rel.assert_not_called()
 
 
-def test_build_stm_service_llm_assisted_uses_gliner2_only(monkeypatch):
+def test_build_stm_service_llm_assisted_wires_relation_extractor(monkeypatch):
     monkeypatch.setenv("RELATION_EXTRACTION_MODE", "llm_assisted")
     settings = GraphKnowsSettings()
     with (
@@ -89,13 +89,14 @@ def test_build_stm_service_llm_assisted_uses_gliner2_only(monkeypatch):
         patch("graphknows.config.builders.stores.build_pgvector_store", return_value=MagicMock()),
         patch("graphknows.memory.stm._async_bridge._run"),
         patch("graphknows.memory.extractor.GLiNER2EntityExtractor") as mock_gliner,
-        patch("graphknows.ingestion.ontology.rel_extractor.OntologyRelExtractor") as mock_rel,
+        patch("graphknows.config.builders.stores.build_relation_extractor") as mock_rel,
     ):
+        mock_rel.return_value = MagicMock()
         service = build_stm_service(settings)
 
     assert service._extractor is mock_gliner.return_value
-    assert service._rel_extractor is None
-    mock_rel.assert_not_called()
+    assert service._rel_extractor is mock_rel.return_value
+    mock_rel.assert_called_once_with(settings)
 
 
 def test_build_stm_service_off_disables_extraction(monkeypatch):
