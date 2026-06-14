@@ -12,6 +12,7 @@ _pg_connected: bool = False
 _pg_bridge: Any = None
 _pg_bridge_connected: bool = False
 _retriever: Any = None
+_runtime: Any = None
 
 
 def get_settings() -> GraphKnowsSettings:
@@ -20,6 +21,16 @@ def get_settings() -> GraphKnowsSettings:
     if _settings is None:
         _settings = GraphKnowsSettings()
     return _settings
+
+
+def get_runtime() -> Any:
+    """Return the singleton transport-neutral graphknows runtime."""
+    global _runtime
+    if _runtime is None:
+        from graphknows.runtime import GraphKnowsRuntime
+
+        _runtime = GraphKnowsRuntime(get_settings())
+    return _runtime
 
 
 def get_mg_store() -> Any:
