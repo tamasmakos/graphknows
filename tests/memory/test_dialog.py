@@ -8,6 +8,8 @@ from __future__ import annotations
 import inspect
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.stm.dialog import DialogCapture, Turn
 from graphknows.memory.stores.memgraph import MemgraphStore
@@ -90,12 +92,12 @@ def test_write_turn_calls_write_stm_turn():
     pg.write_stm_turn.assert_called_once()
 
 
-def test_extractor_failure_appended_to_errors():
+def test_extractor_failure_propagates():
     ext = MagicMock()
     ext.extract = MagicMock(side_effect=RuntimeError("NER crash"))
     writer, mg, pg, _ = _make_writer(extractor=ext)
-    result = writer.write_turn("s1", "d1", _turn(0, text="Some text"))
-    assert any("entity_extract" in e for e in result.errors)
+    with pytest.raises(RuntimeError, match="NER crash"):
+        writer.write_turn("s1", "d1", _turn(0, text="Some text"))
 
 
 def test_pg_failure_appended_to_errors():

@@ -6,33 +6,46 @@ import asyncio
 import logging
 from typing import Any
 
-import dspy
+try:
+    import dspy
+except ImportError:  # pragma: no cover - optional deployment dependency
+    dspy = None  # type: ignore[assignment]
 
 from graphknows.config.llm import normalize_openrouter_model
 
 log = logging.getLogger(__name__)
 
 
-class TopicSummarySignature(dspy.Signature):
-    """Summarize a graph community from member entities and evidence passages."""
+if dspy is not None:
 
-    entities: list[str] = dspy.InputField(desc="Entity names in one graph community.")
-    passages: str = dspy.InputField(
-        desc="Sample of source chunks connected to entities in the same community."
-    )
-    title: str = dspy.OutputField(desc="Short human-readable topic title.")
-    summary: str = dspy.OutputField(desc="Two or three sentence grounded topic summary.")
+    class TopicSummarySignature(dspy.Signature):
+        """Summarize a graph community from member entities and evidence passages."""
 
+        entities: list[str] = dspy.InputField(desc="Entity names in one graph community.")
+        passages: str = dspy.InputField(
+            desc="Sample of source chunks connected to entities in the same community."
+        )
+        title: str = dspy.OutputField(desc="Short human-readable topic title.")
+        summary: str = dspy.OutputField(desc="Two or three sentence grounded topic summary.")
 
-class TopicSummaryModule(dspy.Module):
-    """Tiny DSPy module for topic title and summary generation."""
+    class TopicSummaryModule(dspy.Module):
+        """Tiny DSPy module for topic title and summary generation."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.summarize = dspy.Predict(TopicSummarySignature)
+        def __init__(self) -> None:
+            super().__init__()
+            self.summarize = dspy.Predict(TopicSummarySignature)
 
-    def forward(self, entities: list[str], passages: str) -> Any:
-        return self.summarize(entities=entities, passages=passages)
+        def forward(self, entities: list[str], passages: str) -> Any:
+            """Return a DSPy prediction for topic title and summary."""
+            return self.summarize(entities=entities, passages=passages)
+
+else:
+
+    class TopicSummaryModule:
+        """Placeholder module used when DSPy is not installed."""
+
+        def __init__(self) -> None:
+            raise ImportError("dspy is required for LLM-backed topic summarization")
 
 
 class TopicSummarizer:
@@ -47,9 +60,11 @@ class TopicSummarizer:
     def __init__(self, api_key: str | None, model: str) -> None:
         self._api_key = (api_key or "").strip()
         self._model = normalize_openrouter_model(model)
-        self._module = TopicSummaryModule()
+        self._module = TopicSummaryModule() if self._api_key else None
         self._lm = None
         if self._api_key:
+            if dspy is None:
+                raise ImportError("dspy is required for LLM-backed topic summarization")
             self._lm = dspy.LM(
                 model=self._model,
                 api_key=self._api_key,
@@ -71,6 +86,7 @@ class TopicSummarizer:
             return fallback_title, ""
 
         def _summarize_sync() -> Any:
+            assert dspy is not None
             with dspy.settings.context(lm=self._lm):
                 return self._module(entities=members, passages=passages)
 

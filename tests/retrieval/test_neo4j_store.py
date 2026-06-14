@@ -187,13 +187,13 @@ class TestWriteEvidenceGraph:
         calls = " ".join(str(c) for c in s.run.call_args_list)
         assert "CO_OCCURS" not in calls
 
-    def test_has_entity_present(self) -> None:
+    def test_mentions_entity_present(self) -> None:
         s = _mock_session()
         stm = _stm_with_entities()
         entity_by_name = {e["name"]: e for e in stm["entities"]}
         _write_evidence_graph(s, "sess-1", stm, entity_by_name, "2026-01-01")
         calls = " ".join(str(c) for c in s.run.call_args_list)
-        assert "HAS_ENTITY" in calls
+        assert "MENTIONS" in calls
 
     def test_returns_chunk_to_ents_map(self) -> None:
         s = _mock_session()

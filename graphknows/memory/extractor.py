@@ -188,9 +188,7 @@ class _SpacySchemaMiner:
             schema_name = _schema_label(label)
             label_to_type[schema_name] = label
             entity_spec[schema_name] = {
-                "description": (
-                    f"Named entity with the label {label}, observed in this chunk."
-                ),
+                "description": (f"Named entity with the label {label}, observed in this chunk."),
                 "threshold": _BASE_THRESHOLD,
             }
 

@@ -55,6 +55,7 @@ class CorpusIngestWorkflow:
         openrouter_key: str = "",
         rel_extractor: Any = None,
         relation_extraction_mode: str = "gliner2",
+        flush_pg_store: Any | None = None,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
@@ -64,6 +65,7 @@ class CorpusIngestWorkflow:
         self._openrouter_key = openrouter_key
         self._rel_extractor = rel_extractor
         self._relation_extraction_mode = relation_extraction_mode
+        self._flush_pg_store = flush_pg_store
 
     async def run(self, request: CorpusIngestRequest) -> CorpusIngestResult:
         """Execute the STM-first corpus ingestion pipeline.
@@ -131,10 +133,7 @@ class CorpusIngestWorkflow:
         # Phase 2: flush STM → LTM
         # Build a separate pg store for the flusher so it connects on the MCP async event loop
         # (self._pg is bound to _BG_LOOP for STM ingest and cannot be reused here).
-        from graphknows.config.builders.stores import build_pgvector_store
-        from graphknows.mcp._state import get_settings
-
-        flush_pg = build_pgvector_store(get_settings())
+        flush_pg = self._flush_pg_store or self._pg
         pipeline = LTMPromotionPipeline(
             mg_store=self._mg,
             pg_store=flush_pg,

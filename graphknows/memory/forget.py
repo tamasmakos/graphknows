@@ -7,7 +7,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import asyncpg as _asyncpg
+try:
+    import asyncpg as _asyncpg
+except ImportError:  # pragma: no cover - optional deployment dependency
+    _asyncpg = None  # type: ignore[assignment]
 
 log = logging.getLogger("graphknows.memory.forget")
 
@@ -56,6 +59,8 @@ class LTMForget:
             s.run("MATCH (t:TOPIC {community_id: $cid}) DETACH DELETE t", cid=community_id)
 
         async def _pg_delete():
+            if _asyncpg is None:
+                raise ImportError("asyncpg is required to delete LTM topic rows")
             conn = await _asyncpg.connect(self._pg_dsn)
             try:
                 await conn.execute("DELETE FROM ltm_topics WHERE community_id=$1", community_id)

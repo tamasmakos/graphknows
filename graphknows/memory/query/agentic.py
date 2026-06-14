@@ -6,9 +6,11 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-import dspy
+try:
+    import dspy
+except ImportError:  # pragma: no cover - optional deployment dependency
+    dspy = None  # type: ignore[assignment]
 
-from graphknows.config.llm import normalize_openrouter_model
 from graphknows.memory.query.base import BaseGraphRetriever
 
 if TYPE_CHECKING:
@@ -16,6 +18,25 @@ if TYPE_CHECKING:
     from graphknows.memory.query.context import RetrievalContext
 
 log = logging.getLogger(__name__)
+
+_DEFAULT_MODEL = "moonshotai/kimi-k2"
+
+
+def _normalize_openrouter_model(model: str | None) -> str:
+    """Return *model* with an ``openrouter/`` prefix."""
+    if not model:
+        return f"openrouter/{_DEFAULT_MODEL}"
+    clean = str(model)
+    if clean.startswith("openrouter/"):
+        clean = clean[len("openrouter/") :]
+    return f"openrouter/{clean}"
+
+
+def _require_dspy() -> Any:
+    """Return the DSPy module or raise a clear optional dependency error."""
+    if dspy is None:
+        raise ImportError("dspy is required for agentic retrieval")
+    return dspy
 
 
 class AgenticRetriever(BaseGraphRetriever):
@@ -31,7 +52,7 @@ class AgenticRetriever(BaseGraphRetriever):
 
     def __init__(
         self,
-        settings: "GraphKnowsSettings",
+        settings: GraphKnowsSettings,
         pg: Any,
         neo: Any,
         memgraph: Any,
@@ -59,6 +80,8 @@ class AgenticRetriever(BaseGraphRetriever):
         return self._pg_bridge
 
     def _get_react(self, *, session_id: str = "") -> Any:
+        """Build and cache the DSPy ReAct retriever for one session."""
+        dspy_mod = _require_dspy()
         if self._react is not None:
             return self._react
 
@@ -113,8 +136,9 @@ class AgenticRetriever(BaseGraphRetriever):
 
         # ---- Tool 3: LTM Neo4j entity + neighbor search ---------------
         def search_ltm_graph(query: str, top_k: int = 10) -> list[dict]:
-            """Search long-term memory for entity-linked chunks using ANN entity search
-            followed by Neo4j graph traversal.
+            """Search long-term memory for entity-linked chunks.
+
+            Uses ANN entity search followed by Neo4j graph traversal.
 
             Args:
                 query: Natural-language query to find relevant entities.
@@ -147,34 +171,34 @@ class AgenticRetriever(BaseGraphRetriever):
             return chunks[:top_k]
 
         # ---- DSPy signature and ReAct module --------------------------
-        class RetrievalSignature(dspy.Signature):
+        class RetrievalSignature(dspy_mod.Signature):  # type: ignore[misc, name-defined]
             """Retrieve the most relevant knowledge-graph context for a query.
 
             Use the available tools to search vectors and graphs.
             Synthesize findings to identify the most relevant information.
             """
 
-            query: str = dspy.InputField(
+            query: str = dspy_mod.InputField(
                 desc="Natural-language question to retrieve context for."
             )
-            session_id: str = dspy.InputField(
+            session_id: str = dspy_mod.InputField(
                 desc="Session namespace for scoping short-term memory searches."
             )
-            answer: str = dspy.OutputField(
+            answer: str = dspy_mod.OutputField(
                 desc="2-3 sentence summary of the most relevant retrieved information."
             )
 
         react_model = self._settings.extraction_model or self._settings.llm_model
-        self._lm = dspy.LM(
-            model=normalize_openrouter_model(react_model),
+        self._lm = dspy_mod.LM(
+            model=_normalize_openrouter_model(react_model),
             api_key=self._settings.openrouter_api_key,
             api_base="https://openrouter.ai/api/v1",
             temperature=0.0,
             max_tokens=2048,
             num_retries=1,
         )
-        with dspy.settings.context(lm=self._lm):
-            self._react = dspy.ReAct(
+        with dspy_mod.settings.context(lm=self._lm):
+            self._react = dspy_mod.ReAct(
                 RetrievalSignature,
                 tools=[search_vectors, search_stm_graph, search_ltm_graph],
             )
@@ -190,7 +214,8 @@ class AgenticRetriever(BaseGraphRetriever):
         session_id: str,
         top_k: int = 10,
         scope: str = "both",
-    ) -> "RetrievalContext":
+    ) -> RetrievalContext:
+        """Retrieve relevant context with DSPy ReAct and vector fallback."""
         from graphknows.memory.query.context import ChunkMatch, RetrievalContext
         from graphknows.memory.stores.embedder import embed
 
@@ -214,7 +239,9 @@ class AgenticRetriever(BaseGraphRetriever):
         react_chunks: dict[str, dict] = {}
         for r in self._collected_chunks:
             cid = r["chunk_id"]
-            if cid not in react_chunks or r.get("cosine_score", 0) > react_chunks[cid].get("cosine_score", 0):
+            if cid not in react_chunks or r.get("cosine_score", 0) > react_chunks[cid].get(
+                "cosine_score", 0
+            ):
                 react_chunks[cid] = r
 
         # Fallback vector search fills gaps when ReAct found few chunks.

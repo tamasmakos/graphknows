@@ -1168,6 +1168,8 @@ class TestEmbed:
         from graphknows.memory.stores.embedder import embed
 
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPEN_ROUTER_API", raising=False)
+        monkeypatch.setattr("graphknows.memory.stores.embedder._repo_env_key", lambda: "")
         with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
             embed(["hello"])
 

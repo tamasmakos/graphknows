@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Union
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, model_validator
 
 
-class Role(str, Enum):
+class Role(StrEnum):
+    """Supported conversation message roles."""
+
     user = "user"
     assistant = "assistant"
     system = "system"
@@ -38,7 +40,7 @@ class Message(BaseModel, frozen=True):
         return v
 
 
-MessageInput = Union[str, dict, list]
+MessageInput = str | dict[str, Any] | list[Any]
 
 
 def normalize_messages(input: MessageInput) -> list[Message]:

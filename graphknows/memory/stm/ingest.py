@@ -198,7 +198,7 @@ class _STMIngestHandler:
             # Each triplet is (subject, relation, object, props_dict).
             if self._rel_extractor is not None and len(entities) >= 2:
                 raw = _run(self._rel_extractor.extract_relations(text=clean_text))
-                dspy_triplets: list[tuple] = raw[0] if isinstance(raw, tuple) else []
+                dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
                 for triplet in dspy_triplets:
                     subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
                     props = triplet[3] if len(triplet) > 3 else {}

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 
 from graphknows.memory.ltm.enrichment import LTMEnrichmentService
 from graphknows.memory.models.promotion import PromotionRecord, PromotionRequest
@@ -68,7 +68,9 @@ class LTMPromotionPipeline:
                 stm_data.get("entities", [])
             )
 
-        graph_counts = await self._write_ltm_graph(request.session_id, stm_data, errors=record.errors)
+        graph_counts = await self._write_ltm_graph(
+            request.session_id, stm_data, errors=record.errors
+        )
         record.nodes_written = graph_counts["nodes"]
         record.edges_written = graph_counts["edges"]
 
@@ -126,7 +128,7 @@ class LTMPromotionPipeline:
 
     async def _read_stm(self, session_id: str) -> dict[str, Any]:
         try:
-            return await self._mg.read_session_subgraph(session_id)
+            return cast(dict[str, Any], await self._mg.read_session_subgraph(session_id))
         except Exception as exc:
             log.warning("read_stm %s: %s", session_id, exc)
             return {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}

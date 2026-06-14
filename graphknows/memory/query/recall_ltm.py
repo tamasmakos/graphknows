@@ -6,7 +6,8 @@ import logging
 from typing import Any
 
 from graphknows.memory.models.recall import RecallResult
-from graphknows.memory.query._rrf_common import RRF_K, shape_score as _shape_score
+from graphknows.memory.query._rrf_common import RRF_K
+from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.stm._async_bridge import _run
 
 log = logging.getLogger("graphknows.memory.query.recall_ltm")
@@ -79,10 +80,18 @@ def _ann_turns(
     return turn_results
 
 
-_STRUCTURAL_REL_TYPES = frozenset({
-    "MENTIONS", "HAS_CHUNK", "IN_SESSION", "IN_TOPIC", "IN_COMMUNITY",
-    "HAS_TURN", "IN_DIALOG", "PART_OF",
-})
+_STRUCTURAL_REL_TYPES = frozenset(
+    {
+        "MENTIONS",
+        "HAS_CHUNK",
+        "IN_SESSION",
+        "IN_TOPIC",
+        "IN_COMMUNITY",
+        "HAS_TURN",
+        "IN_DIALOG",
+        "PART_OF",
+    }
+)
 
 
 def _entity_traversal(
