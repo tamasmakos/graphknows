@@ -26,6 +26,7 @@ import functools
 import json
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -340,9 +341,7 @@ async def _tool_poll_job(c: GraphKnowsContainer, run_id: str) -> str:
     return json.dumps({"run_id": run_id, **job})
 
 
-async def _tool_get_session_graph(
-    c: GraphKnowsContainer, session_id: str = "default"
-) -> str:
+async def _tool_get_session_graph(c: GraphKnowsContainer, session_id: str = "default") -> str:
     result = await c.memgraph.get_session_graph(session_id)
     return json.dumps(result, ensure_ascii=False)
 
@@ -414,7 +413,7 @@ async def _tool_cypher_query(
 def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:
     """Instantiate all 13 graphknows tools bound to container ``c``."""
 
-    def _bind(fn):  # type: ignore[type-arg]
+    def _bind(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         return functools.partial(fn, c)
 
     return [

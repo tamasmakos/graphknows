@@ -48,8 +48,10 @@ def _get_openrouter_api_key(config: dict[str, Any] | None = None) -> str:
         llm = config.get("llm", {})
         if hasattr(llm, "model_dump"):
             llm = llm.model_dump()
-        key = _extract_secret(infra, "openrouter_api_key") or _extract_secret(
-            llm, "openrouter_api_key"
+        key = (
+            _extract_secret(config, "openrouter_api_key")
+            or _extract_secret(infra, "openrouter_api_key")
+            or _extract_secret(llm, "openrouter_api_key")
         )
         if key:
             return key
