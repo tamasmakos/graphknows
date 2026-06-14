@@ -16,7 +16,7 @@ class FakeClient:
         self.calls.append((name, arguments))
         if name == "memory_ingest":
             return {"chunks": 1, "entities": 2}
-        if name == "memory_recall":
+        if name == "memory_query":
             return {"hits": [{"text": "Alex visited Prague after Berlin."}]}
         return {"errors": []}
 
@@ -56,7 +56,7 @@ def test_file_backed_runner_ingests_sessions_and_scores_answer(tmp_path) -> None
 
     assert [name for name, _args in client.calls] == [
         "memory_ingest",
-        "memory_recall",
+        "memory_query",
         "memory_purge",
     ]
     assert cases[0].case_id == "case-1"
