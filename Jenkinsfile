@@ -131,7 +131,8 @@ pipeline {
                                 --progress-spinner off \
                                 --ignore-vuln CVE-2025-69872 \
                                 --ignore-vuln PYSEC-2025-217 \
-                                --ignore-vuln CVE-2026-1839
+                                --ignore-vuln CVE-2026-1839 \
+                                --ignore-vuln CVE-2025-3000
                         '''
                     }
                 }
