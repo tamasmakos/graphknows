@@ -4,6 +4,8 @@ Imports stay lazy so the baseline GLiNER2 ingest path does not import the
 DSPy/LiteLLM stack unless an LLM-assisted relation adapter is explicitly used.
 """
 
+from typing import Any
+
 from graphknows.config.adapters.ports.embedder import IEmbedder
 from graphknows.config.adapters.ports.graph_db import IGraphDb
 from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
@@ -20,7 +22,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "DspyRelationExtractorAdapter":
         from graphknows.config.adapters.dspy_relation_extractor import DspyRelationExtractorAdapter
 

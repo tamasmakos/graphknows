@@ -24,17 +24,19 @@ async def check_backends(settings: GraphKnowsSettings) -> dict[str, object]:
     """
     result: dict[str, object] = {"version": get_version()}
 
+    graph_database = None
     try:
-        from neo4j import GraphDatabase as _GDB
+        from neo4j import GraphDatabase
+
+        graph_database = GraphDatabase
     except ImportError:
         result["neo4j"] = False
         result["memgraph"] = False
-        _GDB = None  # type: ignore[assignment]
 
-    if _GDB is not None:
+    if graph_database is not None:
         # neo4j
         try:
-            driver = _GDB.driver(
+            driver = graph_database.driver(
                 settings.neo4j_uri,
                 auth=(settings.neo4j_user, settings.neo4j_password),
             )
@@ -46,7 +48,7 @@ async def check_backends(settings: GraphKnowsSettings) -> dict[str, object]:
 
         # memgraph (bolt, no auth by default)
         try:
-            driver = _GDB.driver(settings.memgraph_uri)
+            driver = graph_database.driver(settings.memgraph_uri)
             driver.verify_connectivity()
             driver.close()
             result["memgraph"] = True

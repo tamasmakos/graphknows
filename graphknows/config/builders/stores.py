@@ -142,6 +142,7 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
 
     mg = build_memgraph_store(settings)
     pg = build_pgvector_store(settings)
+    flush_pg = build_pgvector_store(settings)
     neo = build_neo4j_store(settings)
     mode = settings.relation_extraction_mode
     extractor = _build_entity_extractor(mode)
@@ -156,4 +157,5 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
         openrouter_key=key,
         rel_extractor=rel_extractor,
         relation_extraction_mode=mode,
+        flush_pg_store=flush_pg,
     )
