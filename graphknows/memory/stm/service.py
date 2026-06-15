@@ -1,7 +1,7 @@
 """STMService: first-class service layer for Short-Term Memory operations.
 
-Owns STM ingest, dialog capture, and STM recall. Delegates to
-_STMIngestHandler, DialogCapture, and recall_short_term respectively.
+Owns STM ingest and dialog capture. Delegates to _STMIngestHandler and
+DialogCapture. For retrieval, use DETRetriever.retrieve(scope="stm").
 """
 
 from __future__ import annotations
@@ -11,13 +11,12 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from graphknows.memory.config import STMConfig
+from graphknows.memory.stm.config import STMConfig
 
 if TYPE_CHECKING:
     from graphknows.memory.models.ingest import IngestResult
     from graphknows.memory.models.ingest_options import IngestOptions
     from graphknows.memory.models.message import Message
-    from graphknows.memory.models.recall import RecallResult
 
 log = logging.getLogger("graphknows.memory.stm.service")
 
@@ -226,84 +225,3 @@ class STMService:
             errors=errors,
         )
 
-    # ------------------------------------------------------------------
-    # Recall
-    # ------------------------------------------------------------------
-
-    def recall(
-        self,
-        query: str,
-        session_id: str,
-        top_k: int = 5,
-        embed_fn: Any | None = None,
-    ) -> list[RecallResult]:
-        """Recall from short-term memory using hybrid RRF search.
-
-        Args:
-            query: Natural-language query string.
-            session_id: Session namespace.
-            top_k: Maximum results to return.
-            embed_fn: Override embedding callable (uses self._embed_fn if None).
-
-        Returns:
-            List of RecallResult sorted by score descending.
-        """
-        from graphknows.memory.models.recall import RecallResult
-        from graphknows.memory.query._rrf_common import rrf_score
-        from graphknows.memory.query._rrf_common import shape_score as _shape_score
-        from graphknows.memory.stm._async_bridge import _run
-
-        fn = embed_fn or self._embed_fn
-        if fn is None:
-            from graphknows.memory.stores.embedder import embed_one
-            fn = embed_one
-
-        words = [w for w in query.lower().split() if len(w) > 3]
-        embedding = fn(query)
-        results: dict[str, tuple[float, RecallResult]] = {}
-
-        for rows, stype in (
-            (_run(self._pg.search_stm_chunks(session_id, embedding, top_k=top_k * 2)), "chunk"),
-            (_run(self._pg.search_stm_turns(session_id, embedding, top_k=top_k * 2)), "turn"),
-        ):
-            for rank, r in enumerate(rows or []):
-                rrf = rrf_score(rank)
-                cid = r["id"]
-                if cid not in results or results[cid][0] < rrf:
-                    results[cid] = (rrf, RecallResult(
-                        text=r["text"], source_type=stype, scope="short_term",
-                        score=rrf, cosine_score=r.get("cosine_score", 0.0),
-                        entity_names=r.get("metadata", {}).get("entity_names", []),
-                        heading_path=r.get("heading_path", ""),
-                        provenance={"session_id": session_id, "file_id": r.get("file_id", ""),
-                                    "memory_class": r.get("metadata", {}).get("memory_class", "raw_evidence")},
-                        metadata=r.get("metadata", {}),
-                    ))
-
-        if words:
-            for rank, ec in enumerate(_run(self._mg.query_entity_chunks(
-                session_id=session_id, entity_names=words, top_k=top_k,
-            )) or []):
-                rrf = rrf_score(rank)
-                cid = ec["chunk_id"]
-                if cid in results:
-                    old_score, old_result = results[cid]
-                    old_result.score = old_score + rrf
-                    old_result.entity_names = ec.get("entity_names", [])
-                    results[cid] = (old_score + rrf, old_result)
-                else:
-                    results[cid] = (rrf, RecallResult(
-                        text=ec.get("text", ""), source_type="chunk", scope="short_term",
-                        score=rrf, cosine_score=0.0,
-                        entity_names=ec.get("entity_names", []),
-                        heading_path=ec.get("heading_path", ""),
-                        provenance={"session_id": session_id, "file_id": ec.get("file_id", ""),
-                                    "memory_class": ec.get("memory_class", "raw_evidence")},
-                        metadata=ec.get("metadata", {}),
-                    ))
-
-        shaped = sorted(
-            ((_shape_score(s, r.metadata.get("memory_class")), r) for s, r in results.values()),
-            key=lambda x: x[0], reverse=True,
-        )
-        return [r for _, r in shaped[:top_k]]
