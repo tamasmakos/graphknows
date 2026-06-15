@@ -500,38 +500,31 @@ class LTMEnrichmentService:
         llm_model: str,
         gds_result: Any | None = None,
     ) -> int:
-        """Run Louvain + LLM topic summarization and write TOPIC nodes.
-
-        Accepts a neo_store object (Neo4jStore or compatible) as ``driver``
-        when the caller already has one, or a raw driver when the store is
-        not yet available.  If ``driver`` exposes a ``summarize_topics``
-        coroutine it is called directly; otherwise a basic Louvain-only pass
-        is executed via the internal helpers.
+        """Run LLM topic summarization and write TOPIC nodes.
 
         Args:
             session_id: The session ID to summarize topics for.
-            driver: Neo4jStore instance (preferred) or bare Neo4j driver.
+            driver: Neo4jStore instance.
             pg_store: PgVectorStore for ltm_topics write-back.
-            llm_key: OpenRouter API key.
+            llm_key: OpenRouter API key (empty string disables LLM summarization).
             llm_model: LLM model identifier.
             gds_result: Optional GDS metadata to persist on generated topics.
 
         Returns:
             Number of topics created.
         """
-        if hasattr(driver, "summarize_topics"):
-            # driver is actually a Neo4jStore (or compatible) — delegate directly
-            return await driver.summarize_topics(  # type: ignore[return-value, no-any-return]
-                session_id=session_id,
-                openrouter_key=llm_key,
-                llm_model=llm_model,
-                pg_store=pg_store,
-                gds_modularity=getattr(gds_result, "modularity", None),
-                community_algorithm=getattr(gds_result, "algorithm_used", None),
-            )
-        # Bare driver — no topic summarization available without a store wrapper
-        log.warning("run_topic_summarization: bare driver passed; skipping LLM summarization")
-        return 0
+        summarizer = None
+        if llm_key:
+            from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
+
+            summarizer = TopicSummarizer(llm_key, llm_model)
+        return await driver.write_topic_summaries(
+            session_id=session_id,
+            summarizer=summarizer,
+            pg_store=pg_store,
+            gds_modularity=getattr(gds_result, "modularity", None),
+            community_algorithm=getattr(gds_result, "algorithm_used", None),
+        )
 
     async def run_gds_async(self, neo_store: Any) -> GDSResult:
         """Async wrapper for run_gds.
