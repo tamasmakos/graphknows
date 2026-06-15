@@ -249,7 +249,7 @@ class STMService:
             List of RecallResult sorted by score descending.
         """
         from graphknows.memory.models.recall import RecallResult
-        from graphknows.memory.query._rrf_common import RRF_K
+        from graphknows.memory.query._rrf_common import rrf_score
         from graphknows.memory.query._rrf_common import shape_score as _shape_score
         from graphknows.memory.stm._async_bridge import _run
 
@@ -267,7 +267,7 @@ class STMService:
             (_run(self._pg.search_stm_turns(session_id, embedding, top_k=top_k * 2)), "turn"),
         ):
             for rank, r in enumerate(rows or []):
-                rrf = 1.0 / (RRF_K + rank + 1)
+                rrf = rrf_score(rank)
                 cid = r["id"]
                 if cid not in results or results[cid][0] < rrf:
                     results[cid] = (rrf, RecallResult(
@@ -284,7 +284,7 @@ class STMService:
             for rank, ec in enumerate(_run(self._mg.query_entity_chunks(
                 session_id=session_id, entity_names=words, top_k=top_k,
             )) or []):
-                rrf = 1.0 / (RRF_K + rank + 1)
+                rrf = rrf_score(rank)
                 cid = ec["chunk_id"]
                 if cid in results:
                     old_score, old_result = results[cid]

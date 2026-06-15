@@ -32,11 +32,18 @@ def _clean_env_secret(value: str | None) -> str:
 
 
 def _find_repo_env() -> Path | None:
-    """Locate the nearest repo-level .env file by walking upward from this module."""
+    """Locate the nearest repo-level .env file by walking upward from this module.
+
+    Stops at the first directory that contains a pyproject.toml or .git marker
+    so the walk never escapes the repository root.
+    """
     for parent in Path(__file__).resolve().parents:
         candidate = parent / ".env"
         if candidate.exists():
             return candidate
+        # Stop searching once we've reached the repo root.
+        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
+            break
     return None
 
 
@@ -110,6 +117,8 @@ class GraphKnowsSettings(BaseSettings):
     # LLM
     llm_model: str = Field(default="moonshotai/kimi-k2", alias="LLM_MODEL")
     llm_provider: str = Field(default="openrouter", alias="LLM_PROVIDER")
+    llm_temperature: float = Field(default=0.0, alias="LLM_TEMPERATURE")
+    llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     extraction_model: str = Field(default="moonshotai/kimi-k2", alias="EXTRACTION_MODEL")
 
@@ -159,8 +168,10 @@ class GraphKnowsSettings(BaseSettings):
                 env.get("OPENROUTER_API_KEY") or env.get("OPEN_ROUTER_API")
             )
 
-        # Push credentials into os.environ so downstream code that reads os.environ
-        # directly (e.g. embedder.py) picks them up without requiring dotenv at call-site.
+        # Push credentials into os.environ so embedder.py (and any other code that
+        # reads os.environ directly) picks them up without requiring its own dotenv load.
+        # embedder._openrouter_api_key() reads os.environ first, then falls back to its
+        # own repo-env scan — this push makes the settings the authoritative source.
         if self.openrouter_api_key and not os.environ.get("OPENROUTER_API_KEY"):
             os.environ["OPENROUTER_API_KEY"] = self.openrouter_api_key
         if self.openrouter_api_key and not os.environ.get("OPEN_ROUTER_API"):

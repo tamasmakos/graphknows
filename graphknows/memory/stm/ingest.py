@@ -14,6 +14,7 @@ from graphknows.ingestion.parsers.registry import get_parser
 from graphknows.memory.extractor import ExtractionResult as _ExtractionResult
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.stm._async_bridge import _run
+from graphknows.memory.stm._entity_writer import write_entity_nodes_and_edges, write_relation_edges
 
 log = logging.getLogger("graphknows.memory.stm.ingest")
 
@@ -120,7 +121,46 @@ class _STMIngestHandler:
         t0 = time.monotonic()
         entity_count = 0
 
-        # 1. Ensure SESSION + FILE nodes in Memgraph
+        self._ensure_session_and_file(session_id, parsed, metadata, t0)
+        for seg in parsed.segments:
+            chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
+            clean = self._clean_text(seg.text)
+            extraction = self._extract(clean)
+            embedding: list[float] = self._embed_fn(clean)
+            entity_count += self._write_chunk_to_mg(
+                session_id, parsed.source_id, chunk_id, clean, seg, extraction
+            )
+            self._write_chunk_to_pg(
+                session_id, parsed.source_id, chunk_id, clean, seg, embedding,
+                extraction.entities, metadata,
+            )
+
+        elapsed = time.monotonic() - t0
+        log.info(
+            "ingest session=%s file=%s chunks=%d entities=%d elapsed=%.1fs",
+            session_id, parsed.source_id, len(parsed.segments), entity_count, elapsed,
+        )
+        return IngestResult(
+            session_id=session_id,
+            file_id=parsed.source_id,
+            title=parsed.title,
+            chunk_count=len(parsed.segments),
+            entity_count=entity_count,
+            elapsed_s=elapsed,
+            errors=[],
+        )
+
+    # ------------------------------------------------------------------
+    # Private step methods
+    # ------------------------------------------------------------------
+
+    def _ensure_session_and_file(
+        self,
+        session_id: str,
+        parsed: ParsedFile,
+        metadata: dict[str, Any],
+        t0: float,
+    ) -> None:
         _run(self._mg.write_session_metadata(session_id, {"started_at": t0}))
         _run(
             self._mg.write_file_node(
@@ -132,130 +172,112 @@ class _STMIngestHandler:
             )
         )
 
-        # 2. Per-segment: extract entities, embed, write CHUNK + ENTITY nodes
-        for seg in parsed.segments:
-            chunk_id = hashlib.sha256(
-                f"{session_id}:{parsed.source_id}::{seg.char_offset}".encode()
-            ).hexdigest()[:16]
+    def _make_chunk_id(self, session_id: str, source_id: str, seg: Any) -> str:
+        return hashlib.sha256(
+            f"{session_id}:{source_id}::{seg.char_offset}".encode()
+        ).hexdigest()[:16]
 
-            # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
-            clean_text = re.sub(r"^##\s*Content\s*\n+", "", seg.text, flags=re.IGNORECASE).strip()
+    def _clean_text(self, text: str) -> str:
+        # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
+        return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
 
-            # One GLiNER2 call returns both entities and relations — capture both.
-            # Previously only .entities was captured; .relations was silently discarded.
-            extraction = (
-                self._extractor.extract(clean_text)
-                if self._extractor is not None
-                else _ExtractionResult()
+    def _extract(self, clean_text: str) -> _ExtractionResult:
+        # One GLiNER2 call returns both entities and relations — capture both.
+        if self._extractor is not None:
+            return self._extractor.extract(clean_text)
+        return _ExtractionResult()
+
+    def _write_chunk_to_mg(
+        self,
+        session_id: str,
+        source_id: str,
+        chunk_id: str,
+        clean_text: str,
+        seg: Any,
+        extraction: _ExtractionResult,
+    ) -> int:
+        """Write CHUNK node, entity nodes/edges, and relation edges to Memgraph.
+
+        Returns the entity count for this chunk.
+        """
+        _run(
+            self._mg.write_chunk_node(
+                session_id=session_id,
+                file_id=source_id,
+                chunk_id=chunk_id,
+                text=clean_text,
+                heading_path=seg.heading_path,
+                metadata=seg.metadata,
             )
-            entities: list[dict[str, Any]] = extraction.entities
-
-            embedding: list[float] = self._embed_fn(clean_text)
-
-            # Write to Memgraph
-            _run(
-                self._mg.write_chunk_node(
-                    session_id=session_id,
-                    file_id=parsed.source_id,
+        )
+        entity_count = write_entity_nodes_and_edges(
+            mg=self._mg,
+            session_id=session_id,
+            entities=extraction.entities,
+            edge_writer=lambda ent: _run(
+                self._mg.write_chunk_entity_edge(
                     chunk_id=chunk_id,
-                    text=clean_text,
-                    heading_path=seg.heading_path,
-                    metadata=seg.metadata,
+                    entity_name=ent["name"],
+                    session_id=session_id,
                 )
-            )
-            for ent in entities:
-                _run(
-                    self._mg.write_entity_node(
-                        session_id=session_id,
-                        entity_name=ent["name"],
-                        entity_type=ent.get("type", "ENTITY"),
-                        confidence=ent.get("score", 1.0),
-                    )
-                )
-                _run(
-                    self._mg.write_chunk_entity_edge(
-                        chunk_id=chunk_id,
-                        entity_name=ent["name"],
-                        session_id=session_id,
-                    )
-                )
-                entity_count += 1
+            ),
+            _run=_run,
+        )
+        # GLiNER2 relations — no fallback; let failures propagate.
+        write_relation_edges(self._mg, session_id, extraction.relations, _run)
 
-            # Write GLiNER2 relations — no fallback; let failures propagate.
-            for rel in extraction.relations:
+        # DSPy ontology-guided relation extraction (llm_assisted mode only).
+        # extract_relations returns (triplets, nodes, diagnostics).
+        # Each triplet is (subject, relation, object, props_dict).
+        if self._rel_extractor is not None and len(extraction.entities) >= 2:
+            raw = _run(self._rel_extractor.extract_relations(text=clean_text))
+            dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
+            for triplet in dspy_triplets:
+                subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
+                props = triplet[3] if len(triplet) > 3 else {}
+                confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
                 _run(
                     self._mg.write_relation_edge(
                         session_id=session_id,
-                        subject_name=rel["head"],
-                        relation_name=rel["relation"],
-                        object_name=rel["tail"],
-                        confidence=rel.get("score", 0.5),
+                        subject_name=subj,
+                        relation_name=rel_name,
+                        object_name=obj,
+                        confidence=confidence,
                     )
                 )
-
-            # DSPy ontology-guided relation extraction (llm_assisted mode only).
-            # extract_relations returns (triplets, nodes, diagnostics).
-            # Each triplet is (subject, relation, object, props_dict).
-            if self._rel_extractor is not None and len(entities) >= 2:
-                raw = _run(self._rel_extractor.extract_relations(text=clean_text))
-                dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
-                for triplet in dspy_triplets:
-                    subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
-                    props = triplet[3] if len(triplet) > 3 else {}
-                    confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
-                    _run(
-                        self._mg.write_relation_edge(
-                            session_id=session_id,
-                            subject_name=subj,
-                            relation_name=rel_name,
-                            object_name=obj,
-                            confidence=confidence,
-                        )
-                    )
-                log.debug(
-                    "DSPy extraction session=%s chunk=%s: %d triples",
-                    session_id,
-                    chunk_id[:8],
-                    len(dspy_triplets),
-                )
-
-            # Write to pgvector STM
-            entity_names_list = [e["name"] for e in entities]
-            _run(
-                self._pg.write_stm_chunk(
-                    {
-                        "id": chunk_id,
-                        "session_id": session_id,
-                        "file_id": parsed.source_id,
-                        "text": clean_text,
-                        "heading_path": seg.heading_path,
-                        "embedding": embedding,
-                        "metadata": {
-                            **seg.metadata,
-                            **metadata,
-                            "atom_type": seg.metadata.get("atom_type", "text"),
-                            "memory_class": seg.metadata.get("memory_class", "raw_evidence"),
-                            "entity_names": entity_names_list,
-                        },
-                    }
-                )
+            log.debug(
+                "DSPy extraction session=%s chunk=%s: %d triples",
+                session_id, chunk_id[:8], len(dspy_triplets),
             )
+        return entity_count
 
-        elapsed = time.monotonic() - t0
-        log.info(
-            "ingest session=%s file=%s chunks=%d entities=%d elapsed=%.1fs",
-            session_id,
-            parsed.source_id,
-            len(parsed.segments),
-            entity_count,
-            elapsed,
-        )
-        return IngestResult(
-            session_id=session_id,
-            file_id=parsed.source_id,
-            title=parsed.title,
-            chunk_count=len(parsed.segments),
-            entity_count=entity_count,
-            elapsed_s=elapsed,
-            errors=[],
+    def _write_chunk_to_pg(
+        self,
+        session_id: str,
+        source_id: str,
+        chunk_id: str,
+        clean_text: str,
+        seg: Any,
+        embedding: list[float],
+        entities: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> None:
+        _run(
+            self._pg.write_stm_chunk(
+                {
+                    "id": chunk_id,
+                    "session_id": session_id,
+                    "file_id": source_id,
+                    "text": clean_text,
+                    "heading_path": seg.heading_path,
+                    "embedding": embedding,
+                    "metadata": {
+                        **seg.metadata,
+                        **metadata,
+                        "atom_type": seg.metadata.get("atom_type", "text"),
+                        "memory_class": seg.metadata.get("memory_class", "raw_evidence"),
+                        "entity_names": [e["name"] for e in entities],
+                    },
+                }
+            )
         )

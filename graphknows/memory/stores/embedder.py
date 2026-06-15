@@ -42,7 +42,12 @@ def _repo_env_key() -> str:
 
 
 def _openrouter_api_key() -> str:
-    """Resolve and normalize the OpenRouter key for all embedder call paths."""
+    """Resolve and normalize the OpenRouter key for all embedder call paths.
+
+    Primary source is os.environ, which GraphKnowsSettings._populate_from_repo_env
+    populates at startup (config/__init__.py).  The repo-env fallback here handles
+    standalone embedder use (tests, scripts) when GraphKnowsSettings is not loaded.
+    """
     key = _clean_secret(os.environ.get("OPENROUTER_API_KEY")) or _clean_secret(
         os.environ.get("OPEN_ROUTER_API")
     )

@@ -19,10 +19,10 @@ def test_read_session_subgraph_includes_relation_edges():
 
     async def run():
         await store.write_entity_node(
-            session_id=session_id, name="Alice", entity_type="PERSON", confidence=0.9
+            session_id=session_id, entity_name="Alice", entity_type="PERSON", confidence=0.9
         )
         await store.write_entity_node(
-            session_id=session_id, name="Bob", entity_type="PERSON", confidence=0.9
+            session_id=session_id, entity_name="Bob", entity_type="PERSON", confidence=0.9
         )
         await store.write_relation_edge(
             session_id=session_id,

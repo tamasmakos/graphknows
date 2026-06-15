@@ -8,286 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from ._gds import _compute_silhouette, _write_pgvector_topic
+from ._helpers import _GK_NS, entity_node_id
 
 if TYPE_CHECKING:
     from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
 
 logger = logging.getLogger(__name__)
-
-# UUID5 namespace for graphknows nodes (fixed sentinel)
-_GK_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")  # NAMESPACE_URL
-
-
-def chunk_node_id(doc_id: str, chunk_hash: str) -> str:
-    """Deterministic UUID5 for a Chunk node — idempotent across pipeline runs."""
-    return str(uuid.uuid5(_GK_NS, f"chunk:{doc_id}:{chunk_hash}"))
-
-
-def entity_node_id(name: str) -> str:
-    """Deterministic UUID5 for an Entity node keyed on normalised name."""
-    return str(uuid.uuid5(_GK_NS, f"entity:{name.strip().upper()}"))
-
-
-def _safe_rel_label(raw: str) -> str:
-    """Convert a free-text relation string to a valid Cypher relationship type.
-
-    Uppercases, replaces spaces/hyphens with underscores, strips non-alphanumeric
-    characters. Returns empty string if nothing valid remains.
-    """
-    label = raw.upper().replace("-", "_").replace(" ", "_")
-    label = re.sub(r"[^\w]", "", label)
-    return label
-
-
-def _write_relation_edges(
-    s: Any,
-    triplets: list[tuple[str, str, str] | tuple[str, str, str, dict[str, Any]]],
-    entity_by_name: dict[str, dict[str, Any]],
-    session_id: str = "",
-) -> int:
-    """Write typed directed edges between ENTITY nodes using dynamic Cypher labels.
-
-    Each triplet is (source_name, relation_label, target_name). The relation_label
-    becomes an actual Cypher relationship type (e.g. REGULATES, FUNDS). Triplets
-    whose endpoints cannot be matched to a known entity are silently skipped.
-
-    Name matching is case-insensitive: the extractor may return uppercased names
-    (e.g. "GRAPHRAG") while entity_by_name stores them as-extracted ("GraphRAG").
-
-    Returns:
-        Number of edges written.
-    """
-    # Build a case-insensitive index so we can resolve canonical names.
-    # Normalize underscores to spaces so DSPy labels like "NEXUS_FOUNDATION"
-    # match GLiNER2-extracted names like "Nexus Foundation".
-    canonical: dict[str, str] = {k.upper().replace("_", " "): k for k in entity_by_name}
-
-    edges = 0
-    for item in triplets:
-        src, rel, tgt = item[0], item[1], item[2]
-        metadata = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
-        src_canon = canonical.get(src.upper().replace("_", " "), src)
-        tgt_canon = canonical.get(tgt.upper().replace("_", " "), tgt)
-        safe = _safe_rel_label(rel)
-        if not safe:
-            continue
-        src_type = metadata.get("source_type") or entity_by_name.get(src_canon, {}).get(
-            "type", "ENTITY"
-        )
-        tgt_type = metadata.get("target_type") or entity_by_name.get(tgt_canon, {}).get(
-            "type", "ENTITY"
-        )
-        s.run(
-            "MERGE (e1:ENTITY {name: $src}) "
-            "SET e1.type = coalesce(e1.type, $src_type) "
-            "MERGE (e2:ENTITY {name: $tgt}) "
-            "SET e2.type = coalesce(e2.type, $tgt_type) "
-            f"MERGE (e1)-[r:{safe}]->(e2) "
-            "SET r.weight = coalesce(r.weight, 0) + 1, "
-            "r.session_id = $session_id, "
-            "r.confidence = coalesce($confidence, r.confidence), "
-            "r.evidence = coalesce($evidence, r.evidence), "
-            "r.reasoning = coalesce($reasoning, r.reasoning)",
-            src=src_canon,
-            tgt=tgt_canon,
-            src_type=src_type,
-            tgt_type=tgt_type,
-            session_id=session_id,
-            confidence=metadata.get("confidence"),
-            evidence=metadata.get("evidence"),
-            reasoning=metadata.get("reasoning"),
-        )
-        edges += 1
-    return edges
-
-
-def _compute_silhouette(
-    names: list[str],
-    name_idx: dict[str, int],
-    communities: dict[int, list[str]],
-    rows: list[dict[str, Any]],
-    weights: list[float],
-) -> float | None:
-    """Compute silhouette score from weighted edge co-occurrence data.
-
-    Uses a distance matrix: d(i,j) = 1 - weight/max_weight. Returns None on
-    any failure (missing optional deps, single community, etc.).
-    """
-    try:
-        import numpy as np
-        from sklearn.metrics import silhouette_score
-
-        labels = [0] * len(names)
-        for comm_id, members in communities.items():
-            for m in members:
-                labels[name_idx[m]] = comm_id
-        if len(set(labels)) < 2:
-            return None
-        max_w = max(weights) if weights else 1.0
-        adj = [[1.0] * len(names) for _ in range(len(names))]
-        for edge_data, w in zip(rows, weights, strict=False):
-            i, j = name_idx[edge_data["a"]], name_idx[edge_data["b"]]
-            d = 1.0 - w / max_w
-            adj[i][j] = d
-            adj[j][i] = d
-            adj[i][i] = 0.0
-            adj[j][j] = 0.0
-        return float(silhouette_score(np.array(adj), labels, metric="precomputed", random_state=42))
-    except Exception as exc:
-        logger.warning("Silhouette computation skipped: %s", exc)
-        return None
-
-
-async def _write_pgvector_topic(
-    pg_store: Any,
-    topic: dict[str, Any],
-    *,
-    title: str,
-    summary: str,
-    comm_id: int,
-) -> None:
-    """Write a topic row to pgvector, embedding summary/title text when available."""
-    embedding_text = (summary or "").strip() or (title or "").strip()
-    if embedding_text:
-        try:
-            from graphknows.memory.stores.embedder import embed_one
-
-            topic["embedding"] = await asyncio.to_thread(embed_one, embedding_text)
-        except Exception as exc:
-            logger.warning("Topic embedding failed for community %d: %s", comm_id, exc)
-
-    await pg_store.write_ltm_topic(topic)
-
-
-def _write_evidence_graph(
-    s: Any,
-    session_id: str,
-    stm_data: dict[str, Any],
-    entity_by_name: dict[str, dict[str, Any]],
-    now: str,
-) -> tuple[int, int, dict[str, list[str]]]:
-    """MERGE SESSION→FILE→CHUNK→ENTITY into *s*. Returns (nodes, edges, chunk_to_ents).
-
-    CO_OCCURS edges are NOT written here. Relation extraction runs separately in
-    flush.py using the returned chunk_to_ents map.
-    """
-    nodes, edges = 1, 0
-    s.run("MERGE (sess:SESSION {id: $sid}) SET sess.flushed_at = $now", sid=session_id, now=now)
-    for f in stm_data.get("files", []):
-        s.run(
-            "MERGE (f:FILE {id: $fid}) "
-            "SET f.title=$title, f.parser_name=$parser_name, f.source_hint=$source_hint "
-            "WITH f MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(f)",
-            fid=f["id"],
-            title=f.get("title", ""),
-            parser_name=f.get("parser_name", ""),
-            source_hint=f.get("source_hint", ""),
-            sid=session_id,
-        )
-        nodes += 1
-        edges += 1
-    for c in stm_data.get("chunks", []):
-        s.run(
-            "MERGE (c:CHUNK {id: $cid}) "
-            "SET c.text=$text, c.heading_path=$hp, c.chunk_index=$ci "
-            "WITH c MATCH (f:FILE {id: $fid}) MERGE (f)-[:HAS_CHUNK]->(c)",
-            cid=c["id"],
-            text=c.get("text", ""),
-            hp=c.get("heading_path", ""),
-            ci=c.get("chunk_index", 0),
-            fid=c["file_id"],
-        )
-        nodes += 1
-        edges += 1
-    written: set[str] = set()
-    chunk_to_ents: dict[str, list[str]] = defaultdict(list)
-    for ce in stm_data.get("chunk_entity_edges", []):
-        ename = ce["entity_name"]
-        chunk_to_ents[ce["chunk_id"]].append(ename)
-        em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
-        if ename not in written:
-            s.run(
-                "MERGE (e:ENTITY {name: $n}) SET e.type=$t, e.confidence=$c",
-                n=ename,
-                t=em.get("type", "UNKNOWN"),
-                c=em.get("confidence", 1.0),
-            )
-            nodes += 1
-            written.add(ename)
-        s.run(
-            "MATCH (c:CHUNK {id: $cid}), (e:ENTITY {name: $n}) MERGE (c)-[:MENTIONS]->(e)",
-            cid=ce["chunk_id"],
-            n=ename,
-        )
-        edges += 1
-    return nodes, edges, dict(chunk_to_ents)
-
-
-def _write_interaction_graph(
-    s: Any,
-    session_id: str,
-    stm_data: dict[str, Any],
-    entity_by_name: dict[str, dict[str, Any]],
-    base_written: set[str],
-) -> tuple[int, int]:
-    """MERGE SESSION→DIALOG→TURN + NEXT + TURN→ENTITY into *s*. Returns (nodes, edges)."""
-    nodes, edges = 0, 0
-    for d in stm_data.get("dialogs", []):
-        s.run(
-            "MERGE (d:DIALOG {id: $did}) SET d.session_id=$sid, d.started_at=$sa "
-            "WITH d MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(d)",
-            did=d["id"],
-            sid=session_id,
-            sa=d.get("started_at", ""),
-        )
-        nodes += 1
-        edges += 1
-    for t in stm_data.get("turns", []):
-        s.run(
-            "MERGE (t:TURN {id: $tid}) "
-            "SET t.session_id=$sid, t.turn_index=$ti, t.role=$r, t.text=$txt "
-            "WITH t MATCH (d:DIALOG {id: $did}) MERGE (d)-[:HAS_TURN]->(t)",
-            tid=t["id"],
-            sid=session_id,
-            ti=t.get("turn_index", 0),
-            r=t.get("role", "unknown"),
-            txt=t.get("text", ""),
-            did=t["dialog_id"],
-        )
-        nodes += 1
-        edges += 1
-    for ne in stm_data.get("next_edges", []):
-        s.run(
-            "MATCH (t1:TURN {id: $a}), (t2:TURN {id: $b}) MERGE (t1)-[:NEXT]->(t2)",
-            a=ne["from_turn_id"],
-            b=ne["to_turn_id"],
-        )
-        edges += 1
-    written = set(base_written)
-    for te in stm_data.get("turn_entity_edges", []):
-        ename = te["entity_name"]
-        em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
-        if ename not in written:
-            s.run(
-                "MERGE (e:ENTITY {name: $n}) SET e.type=$t, e.confidence=$c",
-                n=ename,
-                t=em.get("type", "UNKNOWN"),
-                c=em.get("confidence", 1.0),
-            )
-            nodes += 1
-            written.add(ename)
-        s.run(
-            "MATCH (t:TURN {id: $tid}), (e:ENTITY {name: $n}) MERGE (t)-[:HAS_ENTITY]->(e)",
-            tid=te["turn_id"],
-            n=ename,
-        )
-        edges += 1
-    return nodes, edges
 
 
 class Neo4jStore:
@@ -762,14 +493,19 @@ class Neo4jStore:
         }
 
         def _sync() -> dict[str, int]:
+            # Late import so test patches on graphknows.memory.stores.neo4j.* are honoured.
+            import graphknows.memory.stores.neo4j as _pkg
+
             _db = getattr(self, "_db", None)
             _sess_kwargs: dict[str, Any] = {"database": _db} if _db else {}
             with self._driver.session(**_sess_kwargs) as s:
-                n1, e1, _chunk_to_ents = _write_evidence_graph(
+                n1, e1, _chunk_to_ents = _pkg._write_evidence_graph(
                     s, session_id, stm_data, entity_by_name, now
                 )
                 written: set[str] = {e["name"] for e in stm_data.get("entities", [])}
-                n2, e2 = _write_interaction_graph(s, session_id, stm_data, entity_by_name, written)
+                n2, e2 = _pkg._write_interaction_graph(
+                    s, session_id, stm_data, entity_by_name, written
+                )
                 relation_edges = stm_data.get("relation_edges", [])
                 e3 = 0
                 if relation_edges:
@@ -779,7 +515,7 @@ class Neo4jStore:
                         if r.get("source") and r.get("relation") and r.get("target")
                     ]
                     if triplets:
-                        e3 = _write_relation_edges(
+                        e3 = _pkg._write_relation_edges(
                             s, triplets, entity_by_name, session_id=session_id
                         )
             return {"nodes": n1 + n2, "edges": e1 + e2 + e3}
@@ -873,10 +609,14 @@ class Neo4jStore:
             return 0
 
         def _sync_write() -> int:
+            import graphknows.memory.stores.neo4j as _pkg
+
             _db = getattr(self, "_db", None)
             _sk: dict[str, Any] = {"database": _db} if _db else {}
             with self._driver.session(**_sk) as s:
-                return _write_relation_edges(s, all_triplets, entity_by_name, session_id=session_id)
+                return _pkg._write_relation_edges(
+                    s, all_triplets, entity_by_name, session_id=session_id
+                )
 
         return await asyncio.to_thread(_sync_write)
 

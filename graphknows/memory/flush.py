@@ -58,9 +58,7 @@ class LTMPromotionPipeline:
         t0 = time.monotonic()
         record = PromotionRecord(session_id=request.session_id)
 
-        if hasattr(self._pg, "connect") and not getattr(self._pg, "_pool", None):
-            await self._pg.connect()
-
+        await self._ensure_pg_connected()
         stm_data = await self._read_stm(request.session_id)
 
         if request.merge_entities:
@@ -74,38 +72,14 @@ class LTMPromotionPipeline:
         record.nodes_written = graph_counts["nodes"]
         record.edges_written = graph_counts["edges"]
 
-        try:
-            chunks_promoted, turns_promoted = await self._pg.promote_to_ltm(request.session_id)
-            record.chunks_promoted = chunks_promoted
-            record.turns_promoted = turns_promoted
-        except Exception as exc:
-            record.errors.append(f"promote_to_ltm: {exc}")
-
+        await self._copy_vector_to_ltm(request.session_id, record)
         await self._index_entities(stm_data, record)
 
         gds_result = None
-
         if request.run_gds:
-            try:
-                gds_result = await self._enrichment.run_gds_async(self._neo)
-                record.gds_result = gds_result
-            except Exception as exc:
-                record.errors.append(f"gds: {exc}")
-                log.warning("GDS enrichment failed: %s", exc)
-
+            gds_result = await self._run_gds(record)
         if request.run_topics:
-            try:
-                record.topics_created = await self._enrichment.run_topic_summarization(
-                    session_id=request.session_id,
-                    driver=self._neo,
-                    pg_store=self._pg,
-                    llm_key=self._openrouter_key,
-                    llm_model=self._llm_model,
-                    gds_result=gds_result,
-                )
-            except Exception as exc:
-                record.errors.append(f"topics: {exc}")
-                log.warning("Topic summarization failed: %s", exc)
+            await self._run_topics(request.session_id, gds_result, record)
 
         if request.clear_stm:
             try:
@@ -125,6 +99,44 @@ class LTMPromotionPipeline:
             record.elapsed_s,
         )
         return record
+
+    async def _ensure_pg_connected(self) -> None:
+        if hasattr(self._pg, "connect") and not getattr(self._pg, "_pool", None):
+            await self._pg.connect()
+
+    async def _copy_vector_to_ltm(self, session_id: str, record: PromotionRecord) -> None:
+        try:
+            chunks_promoted, turns_promoted = await self._pg.promote_to_ltm(session_id)
+            record.chunks_promoted = chunks_promoted
+            record.turns_promoted = turns_promoted
+        except Exception as exc:
+            record.errors.append(f"promote_to_ltm: {exc}")
+
+    async def _run_gds(self, record: PromotionRecord) -> Any:
+        try:
+            gds_result = await self._enrichment.run_gds_async(self._neo)
+            record.gds_result = gds_result
+            return gds_result
+        except Exception as exc:
+            record.errors.append(f"gds: {exc}")
+            log.warning("GDS enrichment failed: %s", exc)
+            return None
+
+    async def _run_topics(
+        self, session_id: str, gds_result: Any, record: PromotionRecord
+    ) -> None:
+        try:
+            record.topics_created = await self._enrichment.run_topic_summarization(
+                session_id=session_id,
+                driver=self._neo,
+                pg_store=self._pg,
+                llm_key=self._openrouter_key,
+                llm_model=self._llm_model,
+                gds_result=gds_result,
+            )
+        except Exception as exc:
+            record.errors.append(f"topics: {exc}")
+            log.warning("Topic summarization failed: %s", exc)
 
     async def _read_stm(self, session_id: str) -> dict[str, Any]:
         try:

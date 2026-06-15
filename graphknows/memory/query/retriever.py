@@ -19,7 +19,9 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from graphknows.memory.query._rrf_common import RRF_K
+from graphknows.memory.query._rrf_common import RRF_RELATION_BOOST
+from graphknows.memory.query._rrf_common import TOPIC_PREFIX as _TOPIC_PREFIX
+from graphknows.memory.query._rrf_common import rrf_score
 from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
@@ -42,9 +44,6 @@ _STRUCTURAL_REL_TYPES = frozenset(
         "PART_OF",
     }
 )
-
-# Chunk-id prefix for topic results — excluded from pgvector bulk-fetch.
-_TOPIC_PREFIX = "topic:"
 
 
 class DETRetriever(BaseGraphRetriever):
@@ -204,7 +203,7 @@ class DETRetriever(BaseGraphRetriever):
                 top_k=top_k,
             )
             for rank, ec in enumerate(entity_chunks):
-                rrf = 1.0 / (RRF_K + rank + 1)
+                rrf = rrf_score(rank)
                 cid = ec["chunk_id"]
                 if cid in result:
                     result[cid] = (result[cid][0] + rrf, result[cid][1])
@@ -246,7 +245,7 @@ class DETRetriever(BaseGraphRetriever):
                     text_bonus = sum(1 for t in token_set if t in summary.lower()) if summary else 0
                     if text_bonus == 0:
                         continue
-                rrf = 1.0 / (RRF_K + rank + 1)
+                rrf = rrf_score(rank)
                 topic_id = f"{_TOPIC_PREFIX}{row.get('topic_id', rank)}"
                 result[topic_id] = (
                     rrf,
@@ -347,7 +346,7 @@ class DETRetriever(BaseGraphRetriever):
                     params = {"words": words, "top_k": top_k}
 
                 for rank, row in enumerate(s.run(cypher, **params).data()):
-                    rrf = 1.0 / (RRF_K + rank + 1)
+                    rrf = rrf_score(rank)
                     cid = row["chunk_id"]
                     if cid in result:
                         result[cid] = (result[cid][0] + rrf, result[cid][1])
@@ -396,7 +395,7 @@ class DETRetriever(BaseGraphRetriever):
                         rel_params = {"words": words, "top_k": top_k, "skip_types": skip_types}
 
                     for rank, row in enumerate(s.run(rel_cypher, **rel_params).data()):
-                        rrf = 1.5 / (RRF_K + rank + 1)  # boosted for relation-expanded results
+                        rrf = rrf_score(rank, RRF_RELATION_BOOST)
                         cid = row["chunk_id"]
                         if cid in result:
                             result[cid] = (result[cid][0] + rrf, result[cid][1])
@@ -454,7 +453,7 @@ class DETRetriever(BaseGraphRetriever):
                 log.warning("ANN %s failed: %s", label, rows)
                 continue
             for rank, r in enumerate(rows):
-                rrf = 1.0 / (RRF_K + rank + 1)
+                rrf = rrf_score(rank)
                 cid = r["id"]
                 if cid in result:
                     result[cid] = (result[cid][0] + rrf, result[cid][1])
