@@ -33,7 +33,11 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
     )
     return DspyRelationExtractorAdapter(
         config={
-            "llm": {"model": settings.extraction_model or settings.llm_model},
+            "llm": {
+                "model": settings.extraction_model or settings.llm_model,
+                "temperature": settings.llm_temperature,
+                "max_tokens": settings.llm_max_tokens,
+            },
             "infra": {"openrouter_api_key": settings.openrouter_api_key or ""},
             "ontology": {"file": ontology_file},
         }

@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
 from mcp.server.fastmcp import FastMCP
+
+
+@asynccontextmanager
+async def _lifespan(app: FastMCP) -> AsyncIterator[None]:
+    yield
+    import graphknows.mcp._state as _state
+    if _state._pg is not None:
+        await _state._pg.close()
+
 
 app = FastMCP(
     "graphknows-memory",
@@ -17,4 +29,5 @@ app = FastMCP(
         "Use ltm_topics to browse topic clusters by entity threshold. "
         "Use corpus_ingest for bulk document ingestion into the LTM knowledge graph."
     ),
+    lifespan=_lifespan,
 )

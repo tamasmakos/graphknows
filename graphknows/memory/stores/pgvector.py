@@ -16,11 +16,13 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
+_VECTOR_DIM: int = 1536  # must match embedder.EMBED_DIM
+
 # ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
 
-_DDL = """
+_DDL = f"""
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Short-term memory (ephemeral, session-scoped)
@@ -30,7 +32,7 @@ CREATE TABLE IF NOT EXISTS stm_chunks (
     file_id      TEXT,
     text         TEXT NOT NULL,
     heading_path TEXT,
-    embedding    VECTOR(1536),
+    embedding    VECTOR({_VECTOR_DIM}),
     metadata     JSONB,
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
@@ -44,7 +46,7 @@ CREATE TABLE IF NOT EXISTS stm_turns (
     turn_index   INT,
     role         TEXT NOT NULL,
     text         TEXT NOT NULL,
-    embedding    VECTOR(1536),
+    embedding    VECTOR({_VECTOR_DIM}),
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS stm_turns_session_idx ON stm_turns (session_id);
@@ -57,7 +59,7 @@ CREATE TABLE IF NOT EXISTS ltm_chunks (
     file_id      TEXT,
     text         TEXT NOT NULL,
     heading_path TEXT,
-    embedding    VECTOR(1536),
+    embedding    VECTOR({_VECTOR_DIM}),
     metadata     JSONB,
     flushed_at   TIMESTAMPTZ DEFAULT NOW()
 );
@@ -71,7 +73,7 @@ CREATE TABLE IF NOT EXISTS ltm_turns (
     turn_index   INT,
     role         TEXT,
     text         TEXT NOT NULL,
-    embedding    VECTOR(1536),
+    embedding    VECTOR({_VECTOR_DIM}),
     flushed_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ltm_turns_session_idx ON ltm_turns (session_id);
@@ -80,7 +82,7 @@ CREATE INDEX IF NOT EXISTS ltm_turns_emb_idx ON ltm_turns USING hnsw (embedding 
 CREATE TABLE IF NOT EXISTS ltm_topics (
     topic_id     TEXT PRIMARY KEY,
     summary      TEXT,
-    embedding    VECTOR(1536),
+    embedding    VECTOR({_VECTOR_DIM}),
     entity_names TEXT[],
     session_ids  TEXT[],
     created_at   TIMESTAMPTZ DEFAULT NOW()
@@ -91,7 +93,7 @@ CREATE INDEX IF NOT EXISTS ltm_topics_emb_idx ON ltm_topics USING hnsw (embeddin
 CREATE TABLE IF NOT EXISTS entities (
     name        TEXT PRIMARY KEY,
     label       TEXT,
-    embedding   VECTOR(1536),
+    embedding   VECTOR({_VECTOR_DIM}),
     chunk_count INT  DEFAULT 0,
     updated_at  TIMESTAMPTZ DEFAULT NOW()
 );

@@ -233,8 +233,8 @@ class AgenticRetriever(BaseGraphRetriever):
             model=_normalize_openrouter_model(react_model),
             api_key=self._settings.openrouter_api_key,
             api_base="https://openrouter.ai/api/v1",
-            temperature=0.0,
-            max_tokens=2048,
+            temperature=self._settings.llm_temperature,
+            max_tokens=self._settings.llm_max_tokens,
             num_retries=1,
         )
         with dspy_mod.settings.context(lm=self._lm):

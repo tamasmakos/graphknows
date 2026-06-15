@@ -270,8 +270,8 @@ class DSPyExtractor(BaseExtractor):
             model=or_model,
             api_key=api_key,
             api_base="https://openrouter.ai/api/v1",
-            temperature=0.0,
-            max_tokens=2048,
+            temperature=self.config.get("llm", {}).get("temperature", 0.0),
+            max_tokens=self.config.get("llm", {}).get("max_tokens", 2048),
             num_retries=0,
         )
         self.module = GraphExtractorModule()

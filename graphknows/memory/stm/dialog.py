@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graphknows.memory.stm._async_bridge import _run
+from graphknows.memory.stm._entity_writer import write_entity_nodes_and_edges, write_relation_edges
 
 log = logging.getLogger("graphknows.memory.stm.dialog")
 
@@ -125,36 +126,23 @@ class DialogCapture:
         if self._extractor and turn.text.strip():
             extraction = self._extractor.extract(turn.text)
             try:
-                for ent in extraction.entities:
-                    _run(
-                        self._mg.write_entity_node(
-                            session_id=session_id,
-                            entity_name=ent["name"],
-                            entity_type=ent.get("type", "ENTITY"),
-                            confidence=ent.get("score", 1.0),
-                        )
-                    )
-                    _run(
+                entity_count += write_entity_nodes_and_edges(
+                    mg=self._mg,
+                    session_id=session_id,
+                    entities=extraction.entities,
+                    edge_writer=lambda ent: _run(
                         self._mg.write_turn_entity_edge(
                             turn_id=turn.id,
                             entity_name=ent["name"],
                             session_id=session_id,
                             confidence=ent.get("score", 1.0),
                         )
-                    )
-                    entity_count += 1
+                    ),
+                    _run=_run,
+                )
             except Exception as exc:
                 errors.append(f"entity_write: {exc}")
-            for rel in extraction.relations:
-                _run(
-                    self._mg.write_relation_edge(
-                        session_id=session_id,
-                        subject_name=rel["head"],
-                        relation_name=rel["relation"],
-                        object_name=rel["tail"],
-                        confidence=rel.get("score", 0.5),
-                    )
-                )
+            write_relation_edges(self._mg, session_id, extraction.relations, _run)
 
         # Embed turn text → stm_turns
         try:

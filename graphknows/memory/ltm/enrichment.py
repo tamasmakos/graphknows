@@ -166,50 +166,53 @@ def _run_betweenness(s: Any, ec: int) -> None:
             log.warning("Betweenness failed (non-fatal): %s", exc)
 
 
+_COMMUNITY_VARIANTS: list[tuple[str, str]] = [
+    (
+        "leiden_weighted",
+        """
+        CALL gds.leiden.write('ltm-entities', {
+            writeProperty: 'community_id',
+            relationshipWeightProperty: 'weight'
+        })
+        YIELD communityCount, modularity, modularities, ranLevels
+        """,
+    ),
+    (
+        "leiden_unweighted",
+        """
+        CALL gds.leiden.write('ltm-entities', {writeProperty: 'community_id'})
+        YIELD communityCount, modularity, modularities, ranLevels
+        """,
+    ),
+    (
+        "louvain_weighted",
+        """
+        CALL gds.louvain.write('ltm-entities', {
+            writeProperty: 'community_id',
+            relationshipWeightProperty: 'weight'
+        })
+        YIELD communityCount, modularity, modularities, ranLevels
+        """,
+    ),
+    (
+        "louvain_unweighted",
+        """
+        CALL gds.louvain.write('ltm-entities', {writeProperty: 'community_id'})
+        YIELD communityCount, modularity, modularities, ranLevels
+        """,
+    ),
+]
+
+
 def _run_community_detection(s: Any) -> tuple[Any, str]:
-    comm_result = None
-    algorithm_used = "leiden"
-    try:
-        comm_result = s.run("""
-            CALL gds.leiden.write('ltm-entities', {
-                writeProperty: 'community_id',
-                relationshipWeightProperty: 'weight'
-            })
-            YIELD communityCount, modularity, modularities, ranLevels
-        """).single()
-    except Exception as exc:
-        log.warning("Weighted Leiden failed (%s); trying unweighted Leiden", exc)
+    for name, cypher in _COMMUNITY_VARIANTS:
         try:
-            comm_result = s.run("""
-                CALL gds.leiden.write('ltm-entities', {writeProperty: 'community_id'})
-                YIELD communityCount, modularity, modularities, ranLevels
-            """).single()
-            algorithm_used = "leiden_unweighted"
-        except Exception as leiden_unweighted_exc:
-            log.warning(
-                "Unweighted Leiden failed (%s); trying Louvain fallback",
-                leiden_unweighted_exc,
-            )
-            algorithm_used = "louvain"
-            try:
-                comm_result = s.run("""
-                    CALL gds.louvain.write('ltm-entities', {
-                        writeProperty: 'community_id',
-                        relationshipWeightProperty: 'weight'
-                    })
-                    YIELD communityCount, modularity, modularities, ranLevels
-                """).single()
-            except Exception as louvain_exc:
-                log.warning("Weighted Louvain failed (%s); trying unweighted Louvain", louvain_exc)
-                try:
-                    comm_result = s.run("""
-                        CALL gds.louvain.write('ltm-entities', {writeProperty: 'community_id'})
-                        YIELD communityCount, modularity, modularities, ranLevels
-                    """).single()
-                    algorithm_used = "louvain_unweighted"
-                except Exception:
-                    log.exception("Community detection failed")
-    return comm_result, algorithm_used
+            result = s.run(cypher).single()
+            return result, name
+        except Exception as exc:
+            log.warning("Community detection %s failed (%s); trying next variant", name, exc)
+    log.exception("All community detection variants failed")
+    return None, ""
 
 
 def run_feature_engineering(driver: Any, session_id: str = "") -> dict[str, Any]:
