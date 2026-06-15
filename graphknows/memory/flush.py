@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
-from collections import defaultdict
 from typing import Any, cast
 
+from graphknows.config.adapters.ports.vector_db import IVectorDb
 from graphknows.memory.ltm.enrichment import LTMEnrichmentService
+from graphknows.memory.ltm.entity_resolution import EntityResolution
+from graphknows.memory.models.contracts import CommunityAssignment, SessionSnapshot
 from graphknows.memory.models.promotion import PromotionRecord, PromotionRequest
 
 log = logging.getLogger("graphknows.memory.flush")
@@ -31,7 +34,7 @@ class LTMPromotionPipeline:
     def __init__(
         self,
         mg_store: Any,
-        pg_store: Any,
+        pg_store: IVectorDb,
         neo_store: Any,
         openrouter_key: str = "",
         llm_model: str = "meta-llama/llama-3.1-8b-instruct",
@@ -45,6 +48,7 @@ class LTMPromotionPipeline:
         self._llm_model = llm_model
         self._relation_extraction_mode = relation_extraction_mode
         self._enrichment = enrichment_service or LTMEnrichmentService()
+        self._entity_resolution = EntityResolution()
 
     async def promote(self, request: PromotionRequest) -> PromotionRecord:
         """Run the full STM→LTM promotion pipeline.
@@ -57,14 +61,19 @@ class LTMPromotionPipeline:
         """
         t0 = time.monotonic()
         record = PromotionRecord(session_id=request.session_id)
+        policy = request.resolve_policy(self._relation_extraction_mode)
+        record.topic_mode = policy.topic_mode
 
         await self._ensure_pg_connected()
         stm_data = await self._read_stm(request.session_id)
+        snapshot = SessionSnapshot.from_store(request.session_id, stm_data)
+        stm_data = snapshot.to_store_dict()
 
-        if request.merge_entities:
-            stm_data["entities"], record.merged_entities = self._resolve_entities(
+        if policy.merge_entities:
+            stm_data["entities"], record.audit = self._resolve_entities_with_audit(
                 stm_data.get("entities", [])
             )
+            record.merged_entities = record.audit.merged_entities
 
         graph_counts = await self._write_ltm_graph(
             request.session_id, stm_data, errors=record.errors
@@ -76,12 +85,13 @@ class LTMPromotionPipeline:
         await self._index_entities(stm_data, record)
 
         gds_result = None
-        if request.run_gds:
+        if policy.run_gds:
             gds_result = await self._run_gds(record)
-        if request.run_topics:
+            await self._write_community_metadata(request.session_id, record)
+        if policy.run_topics:
             await self._run_topics(request.session_id, gds_result, record)
 
-        if request.clear_stm:
+        if policy.clear_stm:
             try:
                 await self._clear_stm(request.session_id)
             except Exception as exc:
@@ -145,20 +155,85 @@ class LTMPromotionPipeline:
             log.warning("read_stm %s: %s", session_id, exc)
             return {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
 
-    def _resolve_entities(self, entities: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
-        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for entity in entities:
-            groups[entity["name"].lower()].append(entity)
+    def _resolve_entities_with_audit(
+        self, entities: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], Any]:
+        return self._entity_resolution.resolve(entities)
 
-        resolved: list[dict[str, Any]] = []
-        merge_count = 0
-        for group in groups.values():
-            best = max(group, key=lambda x: x.get("confidence", 1.0))
-            if len(group) > 1:
-                merge_count += len(group) - 1
-            resolved.append(best)
+    async def _write_community_metadata(
+        self,
+        session_id: str,
+        record: PromotionRecord,
+    ) -> None:
+        """Write community assignments back to Semantic Memory when available."""
+        assignments = await self._read_community_assignments()
+        record.audit.communities = assignments
+        if not assignments:
+            return
+        writer = getattr(self._pg, "write_community_assignments", None)
+        if not callable(writer):
+            return
+        try:
+            result = writer(session_id, [item.model_dump() for item in assignments])
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            record.errors.append(f"community_metadata: {exc}")
 
-        return resolved, merge_count
+    async def _read_community_assignments(self) -> list[CommunityAssignment]:
+        reader = getattr(self._neo, "get_community_assignments", None)
+        if callable(reader):
+            try:
+                result = reader()
+                rows = await result if inspect.isawaitable(result) else result
+                return [self._community_from_row(row) for row in rows or []]
+            except Exception as exc:
+                log.warning("get_community_assignments failed: %s", exc)
+
+        driver = getattr(self._neo, "_driver", None)
+        if driver is None:
+            return []
+
+        def _sync() -> list[dict[str, Any]]:
+            _db = getattr(self._neo, "_db", None)
+            kwargs: dict[str, Any] = {"database": _db} if _db else {}
+            with driver.session(**kwargs) as s:
+                return s.run(
+                    """
+                    MATCH (e:ENTITY)
+                    WHERE e.community_id IS NOT NULL
+                    OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e)
+                    OPTIONAL MATCH (t:TURN)-[:HAS_ENTITY|MENTIONS]->(e)
+                    WITH e.community_id AS community_id,
+                         collect(DISTINCT e.name) AS entity_names,
+                         collect(DISTINCT c.id) AS chunk_ids,
+                         collect(DISTINCT t.id) AS turn_ids
+                    RETURN community_id, entity_names, chunk_ids, turn_ids
+                    """
+                ).data()
+
+        try:
+            rows = await asyncio.to_thread(_sync)
+        except Exception as exc:
+            log.warning("community assignment read failed: %s", exc)
+            return []
+        return [self._community_from_row(row) for row in rows]
+
+    @staticmethod
+    def _community_from_row(row: dict[str, Any]) -> CommunityAssignment:
+        entity_names = [name for name in row.get("entity_names", []) if name]
+        chunk_ids = [chunk_id for chunk_id in row.get("chunk_ids", []) if chunk_id]
+        turn_ids = [turn_id for turn_id in row.get("turn_ids", []) if turn_id]
+        community_id = int(row.get("community_id") or row.get("cid") or 0)
+        weight = max(1.0, float(len(entity_names) or 1))
+        return CommunityAssignment(
+            community_id=community_id,
+            entity_names=entity_names,
+            chunk_ids=chunk_ids,
+            turn_ids=turn_ids,
+            weight=weight,
+            algorithm=str(row.get("algorithm") or row.get("community_algorithm") or ""),
+        )
 
     async def _write_ltm_graph(
         self,
