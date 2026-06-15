@@ -161,18 +161,20 @@ async def test_ingest_delegates_to_memory_ingestor(mock_container):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_recall_scope_stm(mock_container):
-    with (
-        patch(
-            "graphknows.memory.stm.recall.recall_short_term",
-            return_value=[
-                _make_recall_result(0.9, "stm hit", entities=["e1"]),
-            ],
-        ),
-        patch(
-            "graphknows.memory.adapter.asyncio.to_thread",
-            new=_sync_to_thread,
-        ),
-    ):
+    from graphknows.memory.query.context import RetrievalContext
+
+    fake_ctx = RetrievalContext(
+        query="test",
+        session_id="s1",
+        fused_results=[
+            {"chunk_id": "c1", "doc_id": "", "text": "stm hit", "metadata": {},
+             "rrf_score": 0.9, "sources": "stm_graph", "rank": 1, "entities": ["e1"]}
+        ],
+        search_type="DET",
+    )
+
+    with patch("graphknows.memory.query.retriever.DETRetriever") as MockDET:
+        MockDET.return_value.retrieve = AsyncMock(return_value=fake_ctx)
         adapter = GraphknowsMemoryAdapter(container=mock_container)
         result = await adapter.recall(query="test", scope="s1", top_k=5, recall_scope="stm")
 
@@ -187,52 +189,48 @@ async def test_recall_scope_stm(mock_container):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_recall_scope_ltm(mock_container):
-    with (
-        patch(
-            "graphknows.memory.stm.recall.recall_short_term",
-            return_value=[],
-        ),
-        patch(
-            "graphknows.memory.query.recall_ltm.recall_long_term",
-            return_value=[
-                _make_recall_result(0.8, "ltm hit", source_type="turn"),
-            ],
-        ),
-        patch(
-            "graphknows.memory.adapter.asyncio.to_thread",
-            new=_sync_to_thread,
-        ),
-    ):
+    from graphknows.memory.query.context import RetrievalContext
+
+    fake_ctx = RetrievalContext(
+        query="test",
+        session_id="s1",
+        fused_results=[
+            {"chunk_id": "c2", "doc_id": "", "text": "ltm hit", "metadata": {},
+             "rrf_score": 0.8, "sources": "ltm_graph", "rank": 1, "entities": []}
+        ],
+        search_type="DET",
+    )
+
+    with patch("graphknows.memory.query.retriever.DETRetriever") as MockDET:
+        MockDET.return_value.retrieve = AsyncMock(return_value=fake_ctx)
         adapter = GraphknowsMemoryAdapter(container=mock_container)
         result = await adapter.recall(query="test", scope="s1", top_k=5, recall_scope="ltm")
 
     assert len(result) == 1
     assert result[0].score == 0.8
     assert result[0].text == "ltm hit"
-    assert result[0].source_type == "turn"
+    assert result[0].source_type == "ltm_graph"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_recall_scope_both(mock_container):
-    with (
-        patch(
-            "graphknows.memory.stm.recall.recall_short_term",
-            return_value=[
-                _make_recall_result(0.9, "stm hit", entities=["e1"]),
-            ],
-        ),
-        patch(
-            "graphknows.memory.query.recall_ltm.recall_long_term",
-            return_value=[
-                _make_recall_result(0.7, "ltm hit", source_type="turn"),
-            ],
-        ),
-        patch(
-            "graphknows.memory.adapter.asyncio.to_thread",
-            new=_sync_to_thread,
-        ),
-    ):
+    from graphknows.memory.query.context import RetrievalContext
+
+    fake_ctx = RetrievalContext(
+        query="test",
+        session_id="s1",
+        fused_results=[
+            {"chunk_id": "c1", "doc_id": "", "text": "stm hit", "metadata": {},
+             "rrf_score": 0.9, "sources": "stm_graph", "rank": 1, "entities": ["e1"]},
+            {"chunk_id": "c2", "doc_id": "", "text": "ltm hit", "metadata": {},
+             "rrf_score": 0.7, "sources": "ltm_graph", "rank": 2, "entities": []},
+        ],
+        search_type="DET",
+    )
+
+    with patch("graphknows.memory.query.retriever.DETRetriever") as MockDET:
+        MockDET.return_value.retrieve = AsyncMock(return_value=fake_ctx)
         adapter = GraphknowsMemoryAdapter(container=mock_container)
         result = await adapter.recall(query="test", scope="s1", top_k=5, recall_scope="both")
 
@@ -317,10 +315,6 @@ def test_agent_memory_adapter_is_protocol():
 # ===========================================================================
 
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
 from graphknows.memory.adapter import GraphknowsAdapter
 from graphknows.memory.adapter_types import (
     AdapterCapabilities,
@@ -333,7 +327,7 @@ from graphknows.memory.adapter_types import (
 from graphknows.memory.models.recall import RecallResult
 
 
-def _make_adapter():
+def _make_adapter_full():
     mg = MagicMock()
     pg = MagicMock()
     neo = MagicMock()
@@ -348,7 +342,7 @@ def test_open_session_sets_active_session_id(
     mock_dialog_writer,
     mock_ingestor,
 ):
-    adapter = _make_adapter()
+    adapter = _make_adapter_full()
     adapter.open_session("s1")
     assert adapter._active_session_id == "s1"
 
@@ -359,7 +353,7 @@ def test_ingest_artifact_delegates_to_ingestor(
     mock_dialog_writer,
     mock_stm_cls,
 ):
-    adapter = _make_adapter()
+    adapter = _make_adapter_full()
     artifact = ArtifactRecord(
         artifact_id="a1",
         path="/tmp/test.py",
@@ -380,25 +374,32 @@ def test_ingest_artifact_delegates_to_ingestor(
     assert metadata.get("artifact_id") == "a1"
 
 
-@patch("graphknows.memory.stm.recall.recall_short_term")
-@patch("graphknows.memory.adapter.STMService")
-@patch("graphknows.memory.adapter.DialogCapture")
-def test_recall_returns_hits_as_dicts(
-    mock_dialog_writer,
-    mock_ingestor,
-    mock_recall,
-):
+def _sync_run_for_tests(coro):
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def test_recall_returns_hits_as_dicts():
     adapter = _make_adapter()
-    mock_recall.return_value = [
-        RecallResult(
-            text="hello",
-            source_type="chunk",
-            scope="short_term",
-            score=0.9,
-        )
-    ]
-    request = RecallRequest(query="test", session_id="s1", top_k=5)
-    result = adapter.recall(request)
+
+    async def stm_chunks(*a, **k):
+        return [{"id": "c1", "text": "hello", "cosine_score": 0.9,
+                 "file_id": "f1", "heading_path": "", "metadata": {"memory_class": "chunk"}}]
+
+    async def empty(*a, **k):
+        return []
+
+    adapter.pg_store.search_stm_chunks = stm_chunks
+    adapter.pg_store.search_stm_turns = empty
+    adapter.mg_store.query_entity_chunks = empty
+
+    request = RecallRequest(query="test query here", session_id="s1", top_k=5)
+    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests):
+        result = adapter.recall(request)
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -407,38 +408,27 @@ def test_recall_returns_hits_as_dicts(
     assert result[0]["scope"] == "short_term"
 
 
-@patch("graphknows.memory.stm.recall.recall_short_term")
-@patch("graphknows.memory.adapter.STMService")
-@patch("graphknows.memory.adapter.DialogCapture")
-def test_recall_filters_raw_evidence_when_include_raw_false(
-    mock_dialog_writer,
-    mock_ingestor,
-    mock_recall,
-):
+def test_recall_filters_raw_evidence_when_include_raw_false():
     adapter = _make_adapter()
-    mock_recall.return_value = [
-        RecallResult(
-            text="raw",
-            source_type="chunk",
-            scope="short_term",
-            score=0.9,
-            provenance={"memory_class": "raw_evidence"},
-        ),
-        RecallResult(
-            text="summary",
-            source_type="chunk",
-            scope="short_term",
-            score=0.8,
-            provenance={"memory_class": "summary"},
-        ),
-    ]
-    request = RecallRequest(
-        query="test",
-        session_id="s1",
-        top_k=5,
-        include_raw=False,
-    )
-    result = adapter.recall(request)
+
+    async def stm_chunks(*a, **k):
+        return [
+            {"id": "c1", "text": "raw", "cosine_score": 0.9,
+             "file_id": "", "heading_path": "", "metadata": {"memory_class": "raw_evidence"}},
+            {"id": "c2", "text": "summary", "cosine_score": 0.8,
+             "file_id": "", "heading_path": "", "metadata": {"memory_class": "summary"}},
+        ]
+
+    async def empty(*a, **k):
+        return []
+
+    adapter.pg_store.search_stm_chunks = stm_chunks
+    adapter.pg_store.search_stm_turns = empty
+    adapter.mg_store.query_entity_chunks = empty
+
+    request = RecallRequest(query="test query here", session_id="s1", top_k=5, include_raw=False)
+    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests):
+        result = adapter.recall(request)
 
     assert len(result) == 1
     assert result[0]["text"] == "summary"
@@ -592,25 +582,40 @@ class TestAdapterLifecycle:
             adapter.ingest_artifact(artifact, SESSION_ID)
         assert mock_ing_cls.return_value.ingest.call_count == len(ARTIFACTS)
 
-    @patch("graphknows.memory.stm.recall.recall_short_term")
-    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
-    def test_recall_after_write(self, mock_dw_cls, mock_ing_cls, mock_recall):
-        mock_recall.return_value = [
-            RecallResult(
-                text="EU AI Act fact",
-                source_type="chunk",
-                scope="short_term",
-                score=0.9,
-                metadata={"memory_class": "fact"},
-            )
-        ]
-        adapter = _make_adapter()
+    def test_recall_after_write(self, mock_dw_cls):
+        import asyncio
+
+        def _sync_run(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        fake_row = {
+            "id": "c1", "text": "EU AI Act fact",
+            "metadata": {"memory_class": "fact"},
+            "file_id": "", "cosine_score": 0.9, "heading_path": "",
+        }
+        pg = MagicMock()
+        pg.search_stm_chunks = AsyncMock(return_value=[fake_row])
+        pg.search_stm_turns = AsyncMock(return_value=[])
+        mg = MagicMock()
+        mg.query_entity_chunks = AsyncMock(return_value=[])
+
+        # Use a real STMService backed by mock stores — STMService must NOT be
+        # patched here because recall() now delegates to _stm_service.recall().
+        adapter = GraphknowsAdapter(
+            mg_store=mg, pg_store=pg, neo_store=MagicMock(),
+            extractor=MagicMock(), embed_fn=lambda q: [0.0] * 1536,
+        )
         adapter.open_session(SESSION_ID)
         for turn in TURNS:
             adapter.write_turn(turn)
 
-        result = adapter.recall(RECALL_REQUEST)
+        with patch("graphknows.memory.stm._async_bridge._run", side_effect=_sync_run):
+            result = adapter.recall(RECALL_REQUEST)
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["text"] == "EU AI Act fact"
@@ -666,29 +671,36 @@ class TestAdapterLifecycle:
         adapter.open_session(SESSION_ID)  # second call — no exception
         assert adapter._active_session_id == SESSION_ID
 
-    @patch("graphknows.memory.stm.recall.recall_short_term")
-    @patch("graphknows.memory.adapter.STMService")
     @patch("graphknows.memory.adapter.DialogCapture")
-    def test_recall_include_raw_false_filters(self, mock_dw_cls, mock_ing_cls, mock_recall):
-        mock_recall.return_value = [
-            RecallResult(
-                text="raw hit",
-                source_type="chunk",
-                scope="short_term",
-                score=0.9,
-                provenance={"memory_class": "raw_evidence"},
-            ),
-            RecallResult(
-                text="fact hit",
-                source_type="chunk",
-                scope="short_term",
-                score=0.8,
-                provenance={"memory_class": "fact"},
-            ),
+    def test_recall_include_raw_false_filters(self, mock_dw_cls):
+        import asyncio
+
+        def _sync_run(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        rows = [
+            {"id": "c1", "text": "raw hit", "metadata": {"memory_class": "raw_evidence"},
+             "file_id": "", "cosine_score": 0.9, "heading_path": ""},
+            {"id": "c2", "text": "fact hit", "metadata": {"memory_class": "fact"},
+             "file_id": "", "cosine_score": 0.8, "heading_path": ""},
         ]
-        adapter = _make_adapter()
+        pg = MagicMock()
+        pg.search_stm_chunks = AsyncMock(return_value=rows)
+        pg.search_stm_turns = AsyncMock(return_value=[])
+        mg = MagicMock()
+        mg.query_entity_chunks = AsyncMock(return_value=[])
+
+        adapter = GraphknowsAdapter(
+            mg_store=mg, pg_store=pg, neo_store=MagicMock(),
+            extractor=MagicMock(), embed_fn=lambda q: [0.0] * 1536,
+        )
         req = RecallRequest(query="test", session_id=SESSION_ID, top_k=5, include_raw=False)
-        result = adapter.recall(req)
+        with patch("graphknows.memory.stm._async_bridge._run", side_effect=_sync_run):
+            result = adapter.recall(req)
         texts = [r["text"] for r in result]
         assert "raw hit" not in texts
         assert "fact hit" in texts

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class BaseGraphRetriever(ABC):
     """Abstract base for retrieval over graphknows memory stores.
 
-    Both deterministic (HybridRetriever) and agentic (AgenticRetriever)
+    Both deterministic (DETRetriever) and agentic (AgenticRetriever)
     modes inherit from this class, ensuring a uniform interface regardless
     of whether an LLM is involved in retrieval.
     """

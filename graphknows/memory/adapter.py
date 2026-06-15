@@ -177,24 +177,16 @@ class GraphknowsAdapter:
         Returns:
             List of recall hits as dictionaries.
         """
-        from graphknows.memory.stm.recall import recall_short_term
-
-        session_id: str = request.session_id or ""
-        hits = recall_short_term(
-            mg_store=self.mg_store,
-            pg_store=self.pg_store,
-            query=request.query,
-            session_id=session_id,
+        if self._stm_service is None:
+            raise RuntimeError("GraphknowsAdapter is not initialized")
+        results = self._stm_service.recall(
+            request.query,
+            session_id=request.session_id or "",
             top_k=request.top_k,
-            embed_fn=self.embed_fn,
         )
-        hit_dicts = [hit.model_dump() for hit in hits]
+        hit_dicts = [r.model_dump() for r in results]
         if not request.include_raw:
-            hit_dicts = [
-                hit
-                for hit in hit_dicts
-                if hit.get("provenance", {}).get("memory_class") != "raw_evidence"
-            ]
+            hit_dicts = [h for h in hit_dicts if h.get("provenance", {}).get("memory_class") != "raw_evidence"]
         return hit_dicts
 
     async def promote(self, options: PromoteOptions) -> dict[str, Any]:
@@ -432,60 +424,40 @@ class GraphknowsMemoryAdapter:
         top_k: int = 5,
         recall_scope: str = "stm",
     ) -> list[RecallHit]:
-        """Recall relevant chunks from STM, LTM, or both."""
-        if self._container is not None:
-            mg, pg, neo = self._stores_from_container()
-            from graphknows.memory.stores.embedder import embed_one
-
-            embed_fn = embed_one
-        else:
-            mg, pg, neo, embed_fn = self._lazy_stores()
-
-        from graphknows.memory.stm.recall import recall_short_term
+        """Recall relevant chunks from STM, LTM, or both via DETRetriever."""
+        from graphknows.memory.query.retriever import DETRetriever
 
         session_id = scope.to_session_id() if isinstance(scope, MemoryScope) else scope
 
-        stm_hits: list[Any] = []
-        ltm_hits: list[Any] = []
+        if self._container is not None:
+            mg, pg, neo = self._stores_from_container()
+            embed_model = getattr(getattr(self._container, "settings", None), "embed_model",
+                                  "openai/text-embedding-3-small")
+            pg_owned = False
+        else:
+            mg, pg, neo, _ = self._lazy_stores()
+            await pg.connect()
+            embed_model = "openai/text-embedding-3-small"
+            pg_owned = True
 
-        if recall_scope in ("stm", "both"):
-            stm_hits = await asyncio.to_thread(
-                recall_short_term,
-                mg,
-                pg,
-                query=query,
+        try:
+            retriever = DETRetriever(pg=pg, neo=neo, mg=mg, embed_model=embed_model)
+            ctx = await retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=recall_scope)
+        finally:
+            if pg_owned:
+                await pg.close()
+                neo.close()
+
+        return [
+            RecallHit(
+                score=r.get("rrf_score", 0.0),
+                text=r.get("text", ""),
                 session_id=session_id,
-                top_k=top_k,
-                embed_fn=embed_fn,
+                entities=r.get("entities", []),
+                source_type=r.get("sources", ""),
             )
-
-        if recall_scope in ("ltm", "both"):
-            from graphknows.memory.query.recall_ltm import recall_long_term
-
-            ltm_hits = await asyncio.to_thread(
-                recall_long_term,
-                neo,
-                pg,
-                query,
-                top_k=top_k,
-                session_filter=session_id,
-                embed_fn=embed_fn,
-            )
-
-        all_hits = stm_hits + ltm_hits
-        result: list[RecallHit] = []
-        for h in all_hits:
-            result.append(
-                RecallHit(
-                    score=h.score,
-                    text=h.text,
-                    session_id=session_id,
-                    entities=list(h.entity_names or []),
-                    source_type=h.source_type,
-                )
-            )
-        result.sort(key=lambda r: r.score, reverse=True)
-        return result[:top_k]
+            for r in ctx.fused_results
+        ]
 
     # ------------------------------------------------------------------
     # flush

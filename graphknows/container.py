@@ -38,7 +38,7 @@ from graphknows.config.builders import (
 )
 from graphknows.mcp.tool import GraphKnowsTool
 from graphknows.memory.query.base import BaseGraphRetriever
-from graphknows.memory.query.retriever import HybridRetriever
+from graphknows.memory.query.retriever import DETRetriever
 from graphknows.memory.stores.embedder import embed
 from graphknows.memory.stores.memgraph import MemgraphStore
 from graphknows.memory.stores.neo4j import Neo4jStore
@@ -104,9 +104,10 @@ class GraphKnowsContainer:
                 memgraph=self._memgraph,
             )
         else:
-            self._retriever = HybridRetriever(
+            self._retriever = DETRetriever(
                 pg=self._pg,
                 neo=self._neo,
+                mg=self._memgraph,
                 embed_model=cfg.embed_model,
             )
         log.info("GraphKnowsContainer ready (env=%s)", cfg.graphknows_env)
