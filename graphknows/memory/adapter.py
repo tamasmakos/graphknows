@@ -169,7 +169,7 @@ class GraphknowsAdapter:
         )
 
     def recall(self, request: RecallRequest) -> list[dict[str, Any]]:
-        """Recall memories from short-term memory.
+        """Recall memories from short-term memory via DETRetriever.
 
         Args:
             request: Recall query parameters.
@@ -177,14 +177,33 @@ class GraphknowsAdapter:
         Returns:
             List of recall hits as dictionaries.
         """
-        if self._stm_service is None:
-            raise RuntimeError("GraphknowsAdapter is not initialized")
-        results = self._stm_service.recall(
+        from graphknows.memory.query.retriever import DETRetriever
+        from graphknows.memory.stm._async_bridge import _run
+
+        retriever = DETRetriever(pg=self.pg_store, neo=self.neo_store, mg=self.mg_store)
+        ctx = _run(retriever.retrieve(
             request.query,
             session_id=request.session_id or "",
             top_k=request.top_k,
-        )
-        hit_dicts = [r.model_dump() for r in results]
+            scope="stm",
+        ))
+        hit_dicts = [
+            {
+                "text": r.get("text", ""),
+                "source_type": "chunk",
+                "scope": "short_term",
+                "score": r.get("rrf_score", 0.0),
+                "cosine_score": r.get("rrf_score", 0.0),
+                "entity_names": r.get("entities", []),
+                "heading_path": "",
+                "provenance": {
+                    "session_id": request.session_id or "",
+                    "memory_class": r.get("metadata", {}).get("memory_class", "raw_evidence"),
+                },
+                "metadata": r.get("metadata", {}),
+            }
+            for r in ctx.fused_results
+        ]
         if not request.include_raw:
             hit_dicts = [h for h in hit_dicts if h.get("provenance", {}).get("memory_class") != "raw_evidence"]
         return hit_dicts
@@ -212,7 +231,7 @@ class GraphknowsAdapter:
         return {
             "session_id": options.session_id,
             "run_gds": options.run_gds,
-            "run_topics": True,
+            "topic_mode": result.topic_mode,
             "nodes_written": result.nodes_written,
             "edges_written": result.edges_written,
             "chunks_promoted": result.chunks_promoted,
@@ -336,6 +355,7 @@ class GraphknowsMemoryAdapter:
 
     def __init__(self, container: Any = None) -> None:
         self._container = container
+        self._svc_cache: tuple[Any, Any, STMService] | None = None
 
     # ------------------------------------------------------------------
     # Lazy helpers
@@ -372,6 +392,9 @@ class GraphknowsMemoryAdapter:
         return GLiNER2EntityExtractor()
 
     def _build_svc(self) -> tuple[Any, Any, STMService]:
+        if self._svc_cache is not None:
+            return self._svc_cache
+
         from graphknows.memory.stm._async_bridge import _run as _stm_run
 
         if self._container is not None:
@@ -383,7 +406,8 @@ class GraphknowsMemoryAdapter:
             mg, pg, _, embed_fn = self._lazy_stores()
         extractor = self._get_extractor()
         _stm_run(pg.connect())
-        return mg, pg, STMService(mg, pg, extractor, embed_fn=embed_fn)
+        self._svc_cache = mg, pg, STMService(mg, pg, extractor, embed_fn=embed_fn)
+        return self._svc_cache
 
     # ------------------------------------------------------------------
     # ingest
