@@ -1,20 +1,14 @@
-"""HybridRetriever — entity-first graph retrieval + pgvector semantic search + RRF fusion.
+"""DETRetriever — deterministic entity-traversal + pgvector hybrid RAG with RRF fusion.
 
-Algorithm
----------
-1. Embed the query with BGE-small-en-v1.5 (shared stores/embedder singleton).
-2. Entity-first graph path:
-   a. ANN search entities table → top k_entity entities by cosine similarity.
-   b. For each entity, traverse MENTIONS edges in Neo4j → linked Chunk nodes.
-   c. Collect (chunk_id, entity_rank) pairs for RRF scoring.
-3. Semantic path:
-   a. ANN search chunks table filtered to session_id → top k_semantic chunks.
-4. RRF fusion (K=60):
-   - Graph path contributes: 1 / (60 + entity_rank + 1) per chunk.
-   - Semantic path contributes: 1 / (60 + semantic_rank + 1) per chunk.
-   - Sum scores per unique chunk_id, sort descending, take top k_final.
-5. Fetch full text + metadata for fused chunk IDs from pgvector.
-6. Return a RetrievalContext with all three views: graph_matches, semantic_matches, fused_results.
+Four sources run concurrently and are merged via Reciprocal Rank Fusion (RRF):
+  A. STM entity boost   — Memgraph entity→chunk lookup for the session
+  B. Topic recall       — Neo4j TOPIC node keyword match
+  C. LTM entity traversal — Neo4j two-pass entity→chunk (direct + relation-expanded)
+  D. Semantic ANN       — pgvector ANN on stm_chunks, stm_turns, ltm_chunks, ltm_turns
+
+All results are RRF-merged into a single ranked ``fused_results`` list inside
+a ``RetrievalContext``.  The ``scope`` parameter gates which pgvector tables
+Source D queries; the other three sources always run.
 """
 
 from __future__ import annotations
@@ -23,467 +17,145 @@ import asyncio
 import logging
 import re
 from collections import defaultdict
+from typing import Any
 
+from graphknows.memory.query._rrf_common import RRF_K
+from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
-from graphknows.memory.query.context import ChunkMatch, EntityMatch, RetrievalContext
+from graphknows.memory.query.context import RetrievalContext
 from graphknows.memory.stores.embedder import embed
+from graphknows.memory.stores.memgraph import MemgraphStore
 from graphknows.memory.stores.neo4j import Neo4jStore
 from graphknows.memory.stores.pgvector import PgVectorStore
 
 log = logging.getLogger(__name__)
 
-RRF_K: int = 60
-DEFAULT_K_ENTITY: int = 10
-DEFAULT_K_SEMANTIC: int = 20
-DEFAULT_K_FINAL: int = 10
-MAX_CHUNKS_PER_ENTITY: int = 5
+_STRUCTURAL_REL_TYPES = frozenset(
+    {
+        "MENTIONS",
+        "HAS_CHUNK",
+        "IN_SESSION",
+        "IN_TOPIC",
+        "IN_COMMUNITY",
+        "HAS_TURN",
+        "IN_DIALOG",
+        "PART_OF",
+    }
+)
+
+# Chunk-id prefix for topic results — excluded from pgvector bulk-fetch.
+_TOPIC_PREFIX = "topic:"
 
 
-class HybridRetriever(BaseGraphRetriever):
-    """Stateless retriever: entity-graph traversal + dense vector search + RRF fusion.
+class DETRetriever(BaseGraphRetriever):
+    """Deterministic entity-traversal hybrid retriever.
 
-    Attributes:
-        pg: Connected PgVectorStore.
-        neo: Connected Neo4jStore.
-        embed_model: Name of the sentence-transformer model.
+    All four retrieval sources (STM entity boost, topic recall, LTM entity
+    traversal, semantic ANN) run concurrently and are merged with RRF.
     """
 
     def __init__(
         self,
         pg: PgVectorStore,
         neo: Neo4jStore,
-        embed_model: str = "BAAI/bge-small-en-v1.5",
+        mg: MemgraphStore,
+        embed_model: str = "openai/text-embedding-3-small",
     ) -> None:
         self.pg = pg
         self.neo = neo
+        self.mg = mg
         self.embed_model = embed_model
 
-    async def retrieve(  # noqa: C901  # NOSONAR
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def retrieve(
         self,
         query: str,
         session_id: str,
-        top_k: int = DEFAULT_K_FINAL,
+        top_k: int = 10,
         scope: str = "both",
-        k_entity: int = DEFAULT_K_ENTITY,
-        k_semantic: int = DEFAULT_K_SEMANTIC,
     ) -> RetrievalContext:
-        """Run the hybrid retrieval pipeline.
-
-        Embeds the query once, then concurrently:
-        - Runs an ANN entity search (graph path, degrades gracefully if no entities table).
-        - Runs ANN chunk search on the tier(s) selected by *scope*.
-
-        Both result sets are merged via RRF and returned as a ranked flat list.
+        """Run all four retrieval sources concurrently and return RRF-merged results.
 
         Args:
-            query: Natural-language query string.
-            session_id: Session namespace used when scope includes ``"stm"``.
-            top_k: Maximum fused results to return.
-            scope: Which memory tier(s) to search — ``"stm"`` (session chunks),
-                ``"ltm"`` (promoted chunks), or ``"both"`` (merge both, default).
-            k_entity: Candidate entity count for the graph path.
-            k_semantic: Candidate chunk count per tier for the semantic path.
+            query: Natural-language query.
+            session_id: Session namespace for STM sources and pgvector scope.
+            top_k: Maximum results in ``fused_results``.
+            scope: ``"stm"`` | ``"ltm"`` | ``"both"`` — gates Source D tables.
 
         Returns:
-            RetrievalContext with ranked fused_results.
+            RetrievalContext with ``search_type="DET"``.
         """
-        log.debug(
-            "retrieve START  query=%r  session=%s  scope=%s  k_entity=%d  k_semantic=%d  top_k=%d",
-            query,
-            session_id,
-            scope,
-            k_entity,
-            k_semantic,
-            top_k,
-        )
+        log.debug("DET retrieve  query=%r  session=%s  scope=%s  top_k=%d",
+                  query, session_id, scope, top_k)
 
-        # ── Step 1: embed query once ───────────────────────────────────────
         emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
         emb = emb_array[0].tolist()
+        words = [w for w in query.lower().split() if len(w) > 3]
 
-        # ── Step 2: run entity + chunk searches concurrently ──────────────
-        # Entity search degrades to [] when the entities table is absent.
-        # Chunk search routes to stm_chunks / ltm_chunks / both based on scope.
-        entity_rows_task = asyncio.create_task(self.pg.search_entities(emb, k=k_entity))
-        sem_rows_task = asyncio.create_task(
-            self._search_chunks_by_scope(emb, session_id, scope, k_semantic)
+        src_a, src_b, src_c, src_d = await asyncio.gather(
+            self._stm_entity_boost(words, session_id, top_k),
+            self._topic_recall(words, top_k),
+            self._ltm_entity_traversal(words, session_id, top_k),
+            self._semantic_ann(emb, session_id, scope, top_k),
+            return_exceptions=True,
         )
-        entity_rows, sem_rows = await asyncio.gather(entity_rows_task, sem_rows_task)
-        log.debug("ANN  entities=%d  chunks=%d", len(entity_rows), len(sem_rows))
 
-        # ── Step 3: entity → chunks via Neo4j MENTIONS (graph path) ───────
-        graph_chunk_info: dict[str, dict] = {}
-        entity_matches: list[EntityMatch] = []
-
-        if entity_rows:
-            neo_tasks = [
-                self.neo.get_chunks_for_entity(ent["name"], top_k=MAX_CHUNKS_PER_ENTITY)
-                for ent in entity_rows
-            ]
-            neo_results = await asyncio.gather(*neo_tasks, return_exceptions=True)
-
-            for i, (ent, neo_chunks) in enumerate(zip(entity_rows, neo_results, strict=False)):
-                if isinstance(neo_chunks, Exception):
-                    log.warning("Neo4j lookup failed for %r: %s", ent["name"], neo_chunks)
-                    neo_chunks = []
-                entity_similarity = ent["score"]
-                chunk_matches: list[ChunkMatch] = []
-                for j, nc in enumerate(neo_chunks):
-                    mention_weight = entity_similarity * (1.0 / (j + 1))
-                    cid = nc["chunk_id"]
-                    if (
-                        cid not in graph_chunk_info
-                        or mention_weight > graph_chunk_info[cid]["mention_weight"]
-                    ):
-                        graph_chunk_info[cid] = {
-                            "entity_rank": i,
-                            "mention_weight": mention_weight,
-                            "doc_id": nc.get("doc_id", ""),
-                            "text": nc.get("text", ""),
-                        }
-                    chunk_matches.append(
-                        ChunkMatch(
-                            chunk_id=cid,
-                            doc_id=nc.get("doc_id", ""),
-                            text=nc.get("text", ""),
-                            metadata={"mention_weight": mention_weight},
-                            entities=[{"name": ent["name"], "label": ent["label"]}],
-                        )
+        # Merge scores across sources; accumulate per unique chunk_id.
+        combined: dict[str, tuple[float, dict[str, Any]]] = {}
+        for src in (src_a, src_b, src_c, src_d):
+            if isinstance(src, Exception):
+                log.warning("Retrieval source error: %s", src)
+                continue
+            for cid, (score, info) in src.items():
+                if cid in combined:
+                    old_score, old_info = combined[cid]
+                    combined[cid] = (
+                        old_score + score,
+                        {**old_info, "sources": old_info["sources"] | info["sources"]},
                     )
-                entity_matches.append(
-                    EntityMatch(
-                        name=ent["name"],
-                        label=ent["label"],
-                        similarity=entity_similarity,
-                        chunks=chunk_matches,
-                    )
-                )
+                else:
+                    combined[cid] = (score, info)
 
-        # ── Step 4: semantic matches list ──────────────────────────────────
-        semantic_matches: list[ChunkMatch] = [
-            ChunkMatch(
-                chunk_id=r["chunk_id"],
-                doc_id=r.get("doc_id", ""),
-                text=r.get("text", ""),
-                metadata={"cosine_score": r.get("cosine_score", 0.0), **r.get("metadata", {})},
-                entities=[],
-            )
-            for r in sem_rows
+        ranked = sorted(combined.items(), key=lambda x: -x[1][0])[:top_k]
+
+        # Fetch canonical text from pgvector for chunks that lack inline text.
+        needs_fetch = [
+            cid
+            for cid, (_, info) in ranked
+            if not info.get("text") and not cid.startswith(_TOPIC_PREFIX)
         ]
+        text_map = await self.pg.get_chunks_by_ids(needs_fetch) if needs_fetch else {}
 
-        # ── Step 5: RRF fusion ─────────────────────────────────────────────
-        rrf_scores: dict[str, float] = defaultdict(float)
-        sem_ids: set[str] = set()
-
-        for cid, info in graph_chunk_info.items():
-            rrf_scores[cid] += 1.0 / (RRF_K + info["entity_rank"] + 1)
-
-        for rank, r in enumerate(sem_rows):
-            cid = r["chunk_id"]
-            rrf_scores[cid] += 1.0 / (RRF_K + rank + 1)
-            sem_ids.add(cid)
-
-        ranked = sorted(rrf_scores.items(), key=lambda x: -x[1])[:top_k]
-        log.debug("RRF  unique=%d  returning=%d", len(rrf_scores), len(ranked))
-
-        # ── Step 6: bulk-fetch full text for fused chunk IDs ──────────────
-        full_text_map = await self.pg.get_chunks_by_ids([cid for cid, _ in ranked])
-
-        chunk_entities: dict[str, list[dict]] = defaultdict(list)
-        for em in entity_matches:
-            for cm in em.chunks:
-                chunk_entities[cm.chunk_id].append({"name": em.name, "label": em.label})
-
-        fused: list[dict] = []
-        for rank, (cid, rrf_score) in enumerate(ranked):
-            fc = full_text_map.get(cid, {})
-            sources = []
-            if cid in graph_chunk_info:
-                sources.append("graph")
-            if cid in sem_ids:
-                sources.append("semantic")
+        fused: list[dict[str, Any]] = []
+        for rank_i, (cid, (rrf_score, info)) in enumerate(ranked):
+            fc = text_map.get(cid, {})
+            meta = fc.get("metadata") or info.get("metadata") or {}
+            memory_class = meta.get("memory_class")
+            shaped = _shape_score(rrf_score, memory_class)
+            ents = info.get("entities", [])
             fused.append(
                 {
                     "chunk_id": cid,
-                    "doc_id": fc.get("doc_id", graph_chunk_info.get(cid, {}).get("doc_id", "")),
-                    "text": fc.get("text", graph_chunk_info.get(cid, {}).get("text", "")),
-                    "metadata": fc.get("metadata", {}),
-                    "rrf_score": round(rrf_score, 6),
-                    "sources": ",".join(sources),
-                    "rank": rank + 1,
-                    "entities": chunk_entities.get(cid, []),
+                    "doc_id": fc.get("doc_id") or info.get("doc_id", ""),
+                    "text": fc.get("text") or info.get("text", ""),
+                    "metadata": meta,
+                    "rrf_score": round(shaped, 6),
+                    "sources": ",".join(sorted(info["sources"])),
+                    "rank": rank_i + 1,
+                    "entities": ents if isinstance(ents, list) else list(ents),
                 }
             )
 
-        log.debug("retrieve DONE  fused=%d", len(fused))
-        return RetrievalContext(
-            query=query,
-            session_id=session_id,
-            graph_matches=entity_matches,
-            semantic_matches=semantic_matches,
-            fused_results=fused,
-            search_type="HYBRID",
-        )
-
-    async def _search_chunks_by_scope(
-        self,
-        emb: list[float],
-        session_id: str,
-        scope: str,
-        k: int,
-    ) -> list[dict]:
-        """Run ANN chunk search against the tier(s) selected by *scope*.
-
-        - ``"stm"``: stm_chunks scoped to session_id.
-        - ``"ltm"``: ltm_chunks (all sessions).
-        - ``"both"``: merge stm + ltm, deduplicate by chunk_id, sort by score.
-        """
-        if scope == "stm":
-            return await self.pg.search_chunks(emb, session_id=session_id, k=k)
-        if scope == "ltm":
-            return await self.pg.search_chunks(emb, session_id="", k=k)
-        # "both": query both tiers concurrently, merge by score
-        stm_task = (
-            asyncio.create_task(self.pg.search_chunks(emb, session_id=session_id, k=k))
-            if session_id
-            else None
-        )
-        ltm_task = asyncio.create_task(self.pg.search_chunks(emb, session_id="", k=k))
-        tasks = [t for t in (stm_task, ltm_task) if t is not None]
-        results = await asyncio.gather(*tasks)
-        stm_rows = results[0] if stm_task else []
-        ltm_rows = results[-1]
-
-        merged: dict[str, dict] = {}
-        for r in stm_rows:
-            merged[r["chunk_id"]] = r
-        for r in ltm_rows:
-            if r["chunk_id"] not in merged:
-                merged[r["chunk_id"]] = r
-        return sorted(merged.values(), key=lambda x: -x.get("cosine_score", 0))[:k]
-
-    # ------------------------------------------------------------------
-    # SEMANTIC mode — pure pgvector ANN on session-scoped chunks
-    # ------------------------------------------------------------------
-
-    async def retrieve_semantic(
-        self,
-        query: str,
-        session_id: str,
-        k: int = 20,
-    ) -> RetrievalContext:
-        """Pure vector search on chunks — no graph traversal.
-
-        Args:
-            query: Natural-language query.
-            session_id: Session namespace for chunk search.
-            k: Number of chunks to return.
-
-        Returns:
-            RetrievalContext with semantic_matches and fused_results only.
-        """
-        emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
-        emb = emb_array[0].tolist()
-
-        sem_rows = await self.pg.search_chunks(emb, session_id=session_id, k=k)
-        semantic_matches = [
-            ChunkMatch(
-                chunk_id=r["chunk_id"],
-                doc_id=r.get("doc_id", ""),
-                text=r.get("text", ""),
-                metadata={"cosine_score": r.get("cosine_score", 0.0), **r.get("metadata", {})},
-                entities=[],
-            )
-            for r in sem_rows
-        ]
-        fused = [
-            {
-                "chunk_id": cm.chunk_id,
-                "doc_id": cm.doc_id,
-                "text": cm.text,
-                "metadata": cm.metadata,
-                "rrf_score": cm.metadata.get("cosine_score", 0.0),
-                "sources": "semantic",
-                "rank": i + 1,
-                "entities": [],
-            }
-            for i, cm in enumerate(semantic_matches)
-        ]
-        return RetrievalContext(
-            query=query,
-            session_id=session_id,
-            semantic_matches=semantic_matches,
-            fused_results=fused,
-            search_type="SEMANTIC",
-        )
-
-    # ------------------------------------------------------------------
-    # GRAPH_TRAVERSAL mode — entity match → multi-hop neighborhood → chunks
-    # ------------------------------------------------------------------
-
-    async def retrieve_graph_traversal(  # noqa: C901  # NOSONAR
-        self,
-        query: str,
-        session_id: str,
-        k_entity: int = 5,
-        depth: int = 2,
-        k_final: int = 10,
-    ) -> RetrievalContext:
-        """Entity-first graph traversal with multi-hop neighbor expansion.
-
-        Args:
-            query: Natural-language query.
-            session_id: Session namespace (passed through to context).
-            k_entity: Number of seed entities to retrieve.
-            depth: Graph traversal depth (capped at 3).
-            k_final: Maximum fused results to return.
-
-        Returns:
-            RetrievalContext with deep graph-traversal results.
-        """
-        emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
-        emb = emb_array[0].tolist()
-
-        entity_rows = await self.pg.search_entities(emb, k=k_entity)
-        entity_matches: list[EntityMatch] = []
-        seen_chunks: dict[str, dict] = {}
-
-        for ent in entity_rows:
-            # Direct MENTIONS chunks
-            direct_chunks = await self.neo.get_chunks_for_entity(
-                ent["name"], top_k=MAX_CHUNKS_PER_ENTITY
-            )
-            # Neighbor entities and their chunks
-            neighbor_info = await self.neo.get_entity_neighbors(ent["name"], depth=depth)
-            neighbor_names = [n["name"] for n in neighbor_info.get("neighbors", [])]
-            neighbor_chunk_tasks = [
-                self.neo.get_chunks_for_entity(n, top_k=2)
-                for n in neighbor_names[:10]  # limit fan-out
-            ]
-            neighbor_chunk_results = await asyncio.gather(
-                *neighbor_chunk_tasks, return_exceptions=True
-            )
-
-            all_raw = list(direct_chunks)
-            for result in neighbor_chunk_results:
-                if not isinstance(result, Exception):
-                    all_raw.extend(result)
-
-            chunk_matches: list[ChunkMatch] = []
-            for _j, nc in enumerate(all_raw):
-                cid = nc["chunk_id"]
-                if cid not in seen_chunks:
-                    seen_chunks[cid] = {
-                        "entity_rank": entity_rows.index(ent),
-                        "doc_id": nc.get("doc_id", ""),
-                        "text": nc.get("text", ""),
-                    }
-                chunk_matches.append(
-                    ChunkMatch(
-                        chunk_id=cid,
-                        doc_id=nc.get("doc_id", ""),
-                        text=nc.get("text", ""),
-                        metadata={"traversal_depth": depth},
-                        entities=[{"name": ent["name"], "label": ent["label"]}],
-                    )
-                )
-
-            entity_matches.append(
-                EntityMatch(
-                    name=ent["name"],
-                    label=ent["label"],
-                    similarity=ent["score"],
-                    chunks=chunk_matches,
-                )
-            )
-
-        # Build fused results deduped by chunk_id
-        fused: list[dict] = []
-        seen: set[str] = set()
-        for em in entity_matches:
-            for cm in em.chunks:
-                if cm.chunk_id not in seen:
-                    seen.add(cm.chunk_id)
-                    fused.append(
-                        {
-                            "chunk_id": cm.chunk_id,
-                            "doc_id": cm.doc_id,
-                            "text": cm.text,
-                            "metadata": cm.metadata,
-                            "rrf_score": 0.0,
-                            "sources": "graph",
-                            "rank": len(fused) + 1,
-                            "entities": cm.entities,
-                        }
-                    )
-                    if len(fused) >= k_final:
-                        break
-            if len(fused) >= k_final:
-                break
-
-        return RetrievalContext(
-            query=query,
-            session_id=session_id,
-            graph_matches=entity_matches,
-            fused_results=fused,
-            search_type="GRAPH_TRAVERSAL",
-        )
-
-    # ------------------------------------------------------------------
-    # SUMMARIES mode — entity match → community Topic summaries
-    # ------------------------------------------------------------------
-
-    async def retrieve_summaries(
-        self,
-        query: str,
-        session_id: str,
-        k_entity: int = 5,
-    ) -> RetrievalContext:
-        """Return community/topic summaries for entities matching the query.
-
-        Args:
-            query: Natural-language query.
-            session_id: Passed through to context.
-            k_entity: Number of entities to look up.
-
-        Returns:
-            RetrievalContext whose fused_results contain topic summary dicts.
-        """
-        emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
-        emb = emb_array[0].tolist()
-
-        entity_rows = await self.pg.search_entities(emb, k=k_entity)
-
-        community_tasks = [self.neo.get_entity_community(ent["name"]) for ent in entity_rows]
-        community_results = await asyncio.gather(*community_tasks, return_exceptions=True)
-
-        fused: list[dict] = []
-        for ent, topic in zip(entity_rows, community_results, strict=False):
-            if isinstance(topic, Exception) or topic is None:
-                continue
-            fused.append(
-                {
-                    "chunk_id": f"topic:{topic.get('id', '')}",
-                    "doc_id": "",
-                    "text": f"{topic.get('label', '')}\n\n{topic.get('summary', '')}",
-                    "metadata": {"community_label": topic.get("label", "")},
-                    "rrf_score": round(ent["score"], 6),
-                    "sources": "summaries",
-                    "rank": len(fused) + 1,
-                    "entities": [{"name": ent["name"], "label": ent["label"]}],
-                }
-            )
-
+        log.debug("DET retrieve DONE  fused=%d", len(fused))
         return RetrievalContext(
             query=query,
             session_id=session_id,
             fused_results=fused,
-            search_type="SUMMARIES",
+            search_type="DET",
         )
-
-    # ------------------------------------------------------------------
-    # CYPHER mode — parameterized read-only Cypher execution
-    # ------------------------------------------------------------------
 
     async def execute_cypher(
         self,
@@ -492,28 +164,17 @@ class HybridRetriever(BaseGraphRetriever):
     ) -> list[dict]:
         """Execute a parameterized read-only Cypher query.
 
-        User values are passed only via *params* — never interpolated into the
-        template string. The template is validated to reject any f-string style
-        ``{variable}`` interpolation markers.
-
-        Args:
-            cypher_template: Cypher query with ``$param`` placeholders.
-            params: Dict of parameter values bound to ``$param`` references.
-
-        Returns:
-            List of row dicts.
+        User values must be passed via *params* — never interpolated into the
+        template.  Write keywords and f-string markers are rejected.
 
         Raises:
-            ValueError: If the template contains ``{...}`` interpolation markers
-                or forbidden write keywords.
+            ValueError: On ``{var}`` interpolation markers or write keywords.
         """
-        # Guard: reject f-string style interpolation markers
         if re.search(r"\{[^}]+\}", cypher_template):
             raise ValueError(
                 "Cypher template must not contain {var} interpolation — "
                 "use $param placeholders and pass values via the params dict"
             )
-        # Guard: reject write operations
         forbidden = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.IGNORECASE)
         if forbidden.search(cypher_template):
             raise ValueError(
@@ -524,81 +185,290 @@ class HybridRetriever(BaseGraphRetriever):
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
-    # FEELING_LUCKY mode — heuristic search-type routing
+    # Source A — STM entity boost (Memgraph)
     # ------------------------------------------------------------------
 
-    async def retrieve_feeling_lucky(
+    async def _stm_entity_boost(
         self,
-        query: str,
+        words: list[str],
         session_id: str,
-        k_entity: int = DEFAULT_K_ENTITY,
-        k_semantic: int = DEFAULT_K_SEMANTIC,
-        k_final: int = DEFAULT_K_FINAL,
-    ) -> RetrievalContext:
-        """Auto-route to the most appropriate search mode based on query heuristics.
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        if not words:
+            return result
+        try:
+            entity_chunks = await self.mg.query_entity_chunks(
+                session_id=session_id,
+                entity_names=words,
+                top_k=top_k,
+            )
+            for rank, ec in enumerate(entity_chunks):
+                rrf = 1.0 / (RRF_K + rank + 1)
+                cid = ec["chunk_id"]
+                if cid in result:
+                    result[cid] = (result[cid][0] + rrf, result[cid][1])
+                else:
+                    result[cid] = (
+                        rrf,
+                        {
+                            "text": ec.get("text", ""),
+                            "entities": ec.get("entity_names", []),
+                            "sources": {"stm_graph"},
+                            "doc_id": ec.get("file_id", ""),
+                            "metadata": ec.get("metadata", {}),
+                        },
+                    )
+        except Exception as exc:
+            log.warning("STM entity boost failed: %s", exc)
+        return result
 
-        Routing rules (evaluated in order):
-        1. Query contains Cypher keywords → raise ValueError (force explicit CYPHER).
-        2. Short query (< 5 tokens) → GRAPH_TRAVERSAL (likely an entity/concept lookup).
-        3. Contains summary triggers (summarize, overview, what is, etc.) → SUMMARIES.
-        4. Default → HYBRID.
+    # ------------------------------------------------------------------
+    # Source B — Topic recall (Neo4j TOPIC nodes)
+    # ------------------------------------------------------------------
 
-        Args:
-            query: Natural-language query.
-            session_id: Session namespace.
-            k_entity: Max entity candidates to retrieve per mode.
-            k_semantic: Max semantic chunk candidates to retrieve.
-            k_final: Max results to return after fusion/reranking.
+    async def _topic_recall(
+        self,
+        words: list[str],
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        if not words:
+            return result
+        try:
+            rows = await asyncio.to_thread(self._run_topic_cypher, words, top_k)
+            token_set = set(words)
+            rank = 0
+            for row in rows:
+                entity_score = float(row.get("score") or 0)
+                summary = row.get("summary") or row.get("label") or ""
+                if entity_score == 0:
+                    text_bonus = sum(1 for t in token_set if t in summary.lower()) if summary else 0
+                    if text_bonus == 0:
+                        continue
+                rrf = 1.0 / (RRF_K + rank + 1)
+                topic_id = f"{_TOPIC_PREFIX}{row.get('topic_id', rank)}"
+                result[topic_id] = (
+                    rrf,
+                    {
+                        "text": summary,
+                        "entities": list(row.get("entities") or []),
+                        "sources": {"topic"},
+                        "doc_id": "",
+                        "metadata": {},
+                    },
+                )
+                rank += 1
+        except Exception as exc:
+            log.warning("Topic recall failed: %s", exc)
+        return result
 
-        Returns:
-            RetrievalContext from the selected mode, with search_type set.
+    def _run_topic_cypher(self, words: list[str], top_k: int) -> list[dict]:
+        cypher = """
+        UNWIND $words AS word
+        MATCH (e)
+        WHERE (e:ENTITY OR e:ENTITY_CONCEPT) AND toLower(e.name) CONTAINS word
+        WITH collect(DISTINCT e.name) AS matched_names
+        MATCH (t:TOPIC)
+        OPTIONAL MATCH (e2)-[:IN_TOPIC]->(t)
+        WHERE e2.name IN matched_names
+        WITH t,
+             collect(DISTINCT e2.name) AS matched_entities,
+             count(DISTINCT e2) AS overlap
+        ORDER BY overlap DESC
+        LIMIT $top_k
+        RETURN t.id AS topic_id,
+               t.label AS label,
+               t.summary AS summary,
+               matched_entities AS entities,
+               overlap AS score
         """
-        cypher_pat = re.compile(r"\b(MATCH|RETURN|WHERE|WITH|UNWIND)\b", re.IGNORECASE)
-        if cypher_pat.search(query):
-            raise ValueError(
-                "Query looks like Cypher syntax — use search_type='CYPHER' explicitly "
-                "and pass your query as cypher_template with a params dict."
+        driver = getattr(self.neo, "_driver", self.neo)
+        _db = getattr(self.neo, "_db", None)
+        kwargs: dict[str, Any] = {"database": _db} if _db else {}
+        with driver.session(**kwargs) as s:
+            return s.run(cypher, words=words, top_k=top_k).data()
+
+    # ------------------------------------------------------------------
+    # Source C — LTM entity traversal (Neo4j, two passes)
+    # ------------------------------------------------------------------
+
+    async def _ltm_entity_traversal(
+        self,
+        words: list[str],
+        session_id: str,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        if not words:
+            return {}
+        try:
+            return await asyncio.to_thread(
+                self._run_entity_traversal_sync,
+                words,
+                session_id or None,
+                top_k,
             )
+        except Exception as exc:
+            log.warning("LTM entity traversal failed: %s", exc)
+            return {}
 
-        tokens = query.strip().split()
-        query_lower = query.lower()
+    def _run_entity_traversal_sync(
+        self,
+        words: list[str],
+        session_filter: str | None,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        driver = getattr(self.neo, "_driver", self.neo)
+        _db = getattr(self.neo, "_db", None)
+        kwargs: dict[str, Any] = {"database": _db} if _db else {}
+        try:
+            with driver.session(**kwargs) as s:
+                # Pass 1 — direct entity → chunk
+                if session_filter:
+                    cypher = """
+                    MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)
+                    MATCH (c)-[:MENTIONS]->(e:ENTITY)
+                    WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                    WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
+                    ORDER BY mc DESC LIMIT $top_k
+                    RETURN c.id AS chunk_id, c.text AS text, entities
+                    """
+                    params: dict[str, Any] = {"words": words, "top_k": top_k, "sid": session_filter}
+                else:
+                    cypher = """
+                    MATCH (e:ENTITY)
+                    WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                    MATCH (c:CHUNK)-[:MENTIONS]->(e)
+                    WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
+                    ORDER BY mc DESC LIMIT $top_k
+                    RETURN c.id AS chunk_id, c.text AS text, entities
+                    """
+                    params = {"words": words, "top_k": top_k}
 
-        summary_triggers = {
-            "summarize",
-            "summary",
-            "overview",
-            "what is",
-            "describe",
-            "explain",
-            "tell me about",
-            "who is",
-        }
+                for rank, row in enumerate(s.run(cypher, **params).data()):
+                    rrf = 1.0 / (RRF_K + rank + 1)
+                    cid = row["chunk_id"]
+                    if cid in result:
+                        result[cid] = (result[cid][0] + rrf, result[cid][1])
+                    else:
+                        result[cid] = (
+                            rrf,
+                            {
+                                "text": row["text"],
+                                "entities": row["entities"],
+                                "sources": {"ltm_graph"},
+                                "doc_id": "",
+                                "metadata": {},
+                            },
+                        )
 
-        if len(tokens) < 5:
-            ctx = await self.retrieve_graph_traversal(
-                query, session_id, k_entity=k_entity, depth=2, k_final=k_final
-            )
-            ctx.search_type = "FEELING_LUCKY→GRAPH_TRAVERSAL"
-            return ctx
+                # Pass 2 — relation-expanded (no-op when no relation edges exist)
+                try:
+                    skip_types = list(_STRUCTURAL_REL_TYPES)
+                    if session_filter:
+                        rel_cypher = """
+                        MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c0:CHUNK)
+                        MATCH (c0)-[:MENTIONS]->(e:ENTITY)
+                        WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                        MATCH (e)-[r]-(e2:ENTITY)
+                        WHERE NOT type(r) IN $skip_types
+                        MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e2)
+                        WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
+                        ORDER BY mc DESC LIMIT $top_k
+                        RETURN c.id AS chunk_id, c.text AS text, ents AS entities
+                        """
+                        rel_params: dict[str, Any] = {
+                            "words": words, "top_k": top_k,
+                            "sid": session_filter, "skip_types": skip_types,
+                        }
+                    else:
+                        rel_cypher = """
+                        MATCH (e:ENTITY)
+                        WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
+                        MATCH (e)-[r]-(e2:ENTITY)
+                        WHERE NOT type(r) IN $skip_types
+                        MATCH (c:CHUNK)-[:MENTIONS]->(e2)
+                        WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
+                        ORDER BY mc DESC LIMIT $top_k
+                        RETURN c.id AS chunk_id, c.text AS text, ents AS entities
+                        """
+                        rel_params = {"words": words, "top_k": top_k, "skip_types": skip_types}
 
-        if any(trigger in query_lower for trigger in summary_triggers):
-            ctx = await self.retrieve_summaries(query, session_id, k_entity=k_entity)
-            ctx.search_type = "FEELING_LUCKY→SUMMARIES"
-            return ctx
+                    for rank, row in enumerate(s.run(rel_cypher, **rel_params).data()):
+                        rrf = 1.5 / (RRF_K + rank + 1)  # boosted for relation-expanded results
+                        cid = row["chunk_id"]
+                        if cid in result:
+                            result[cid] = (result[cid][0] + rrf, result[cid][1])
+                        else:
+                            result[cid] = (
+                                rrf,
+                                {
+                                    "text": row["text"],
+                                    "entities": row["entities"],
+                                    "sources": {"ltm_graph"},
+                                    "doc_id": "",
+                                    "metadata": {},
+                                },
+                            )
+                except Exception as rel_exc:
+                    log.debug("relation-expanded pass skipped: %s", rel_exc)
+        except Exception as exc:
+            log.warning("LTM entity traversal error: %s", exc)
+        return result
 
-        ctx = await self.retrieve(
-            query,
-            session_id,
-            top_k=k_final,
-            k_entity=k_entity,
-            k_semantic=k_semantic,
-        )
-        ctx.search_type = "FEELING_LUCKY→HYBRID"
-        return ctx
+    # ------------------------------------------------------------------
+    # Source D — Semantic ANN (pgvector, all four tables by scope)
+    # ------------------------------------------------------------------
 
+    async def _semantic_ann(
+        self,
+        emb: list[float],
+        session_id: str,
+        scope: str,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        k = top_k * 2  # more candidates for RRF merge
 
-def _assert_base() -> None:
-    assert issubclass(HybridRetriever, BaseGraphRetriever)
+        coros: list[Any] = []
+        labels: list[str] = []
+        if scope in ("stm", "both") and session_id:
+            coros.append(self.pg.search_stm_chunks(session_id, emb, top_k=k))
+            labels.append("stm_chunk")
+            coros.append(self.pg.search_stm_turns(session_id, emb, top_k=k))
+            labels.append("stm_turn")
+        if scope in ("ltm", "both"):
+            coros.append(self.pg.search_ltm_chunks(emb, top_k=k, session_id=None))
+            labels.append("ltm_chunk")
+            coros.append(self.pg.search_ltm_turns(emb, top_k=k, session_id=None))
+            labels.append("ltm_turn")
 
+        if not coros:
+            return result
 
-_assert_base()
+        all_rows = await asyncio.gather(*coros, return_exceptions=True)
+
+        for label, rows in zip(labels, all_rows):
+            if isinstance(rows, Exception):
+                log.warning("ANN %s failed: %s", label, rows)
+                continue
+            for rank, r in enumerate(rows):
+                rrf = 1.0 / (RRF_K + rank + 1)
+                cid = r["id"]
+                if cid in result:
+                    result[cid] = (result[cid][0] + rrf, result[cid][1])
+                else:
+                    result[cid] = (
+                        rrf,
+                        {
+                            "text": r.get("text", ""),
+                            "entities": r.get("metadata", {}).get("entity_names", []),
+                            "sources": {"semantic"},
+                            "doc_id": r.get("file_id", r.get("doc_id", "")),
+                            "metadata": r.get("metadata", {}),
+                        },
+                    )
+
+        return result
+

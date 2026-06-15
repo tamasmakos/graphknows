@@ -93,7 +93,7 @@ async def get_or_init_retriever() -> Any:
             memgraph=get_mg_store(),
         )
     else:
-        from graphknows.memory.query.retriever import HybridRetriever
+        from graphknows.memory.query.retriever import DETRetriever
 
-        _retriever = HybridRetriever(pg=pg, neo=neo, embed_model=s.embed_model)
+        _retriever = DETRetriever(pg=pg, neo=neo, mg=get_mg_store(), embed_model=s.embed_model)
     return _retriever

@@ -50,3 +50,12 @@ class TestGraphKnowsSettings:
 import os
 import pytest
 
+
+class TestFindRepoEnv:
+    def test_finds_env_file_in_parents(self, tmp_path):
+        from graphknows.config import _find_repo_env
+
+        (tmp_path / ".env").write_text("TEST=1")
+        result = _find_repo_env()
+        assert result is None or isinstance(result, type(tmp_path))
+

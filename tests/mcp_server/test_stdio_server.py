@@ -49,9 +49,6 @@ def test_all_tools_registered():
         "ltm_query",
         "ltm_entity",
         "ltm_topics",
-        "recall_by_document",
-        "recall_by_dialog",
-        "recall_by_topic",
         "corpus_ingest",
     }
     assert expected == tool_names, f"Missing tools: {expected - tool_names}"
@@ -460,9 +457,6 @@ def test_ltm_tools_registered():
         "ltm_query",
         "ltm_entity",
         "ltm_topics",
-        "recall_by_document",
-        "recall_by_dialog",
-        "recall_by_topic",
     ):
         assert name in tool_names, f"Missing tool: {name}"
 

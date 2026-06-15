@@ -248,13 +248,62 @@ class STMService:
         Returns:
             List of RecallResult sorted by score descending.
         """
-        from graphknows.memory.stm.recall import recall_short_term
+        from graphknows.memory.models.recall import RecallResult
+        from graphknows.memory.query._rrf_common import RRF_K
+        from graphknows.memory.query._rrf_common import shape_score as _shape_score
+        from graphknows.memory.stm._async_bridge import _run
 
-        return recall_short_term(
-            mg_store=self._mg,
-            pg_store=self._pg,
-            query=query,
-            session_id=session_id,
-            top_k=top_k,
-            embed_fn=embed_fn or self._embed_fn,
+        fn = embed_fn or self._embed_fn
+        if fn is None:
+            from graphknows.memory.stores.embedder import embed_one
+            fn = embed_one
+
+        words = [w for w in query.lower().split() if len(w) > 3]
+        embedding = fn(query)
+        results: dict[str, tuple[float, RecallResult]] = {}
+
+        for rows, stype in (
+            (_run(self._pg.search_stm_chunks(session_id, embedding, top_k=top_k * 2)), "chunk"),
+            (_run(self._pg.search_stm_turns(session_id, embedding, top_k=top_k * 2)), "turn"),
+        ):
+            for rank, r in enumerate(rows or []):
+                rrf = 1.0 / (RRF_K + rank + 1)
+                cid = r["id"]
+                if cid not in results or results[cid][0] < rrf:
+                    results[cid] = (rrf, RecallResult(
+                        text=r["text"], source_type=stype, scope="short_term",
+                        score=rrf, cosine_score=r.get("cosine_score", 0.0),
+                        entity_names=r.get("metadata", {}).get("entity_names", []),
+                        heading_path=r.get("heading_path", ""),
+                        provenance={"session_id": session_id, "file_id": r.get("file_id", ""),
+                                    "memory_class": r.get("metadata", {}).get("memory_class", "raw_evidence")},
+                        metadata=r.get("metadata", {}),
+                    ))
+
+        if words:
+            for rank, ec in enumerate(_run(self._mg.query_entity_chunks(
+                session_id=session_id, entity_names=words, top_k=top_k,
+            )) or []):
+                rrf = 1.0 / (RRF_K + rank + 1)
+                cid = ec["chunk_id"]
+                if cid in results:
+                    old_score, old_result = results[cid]
+                    old_result.score = old_score + rrf
+                    old_result.entity_names = ec.get("entity_names", [])
+                    results[cid] = (old_score + rrf, old_result)
+                else:
+                    results[cid] = (rrf, RecallResult(
+                        text=ec.get("text", ""), source_type="chunk", scope="short_term",
+                        score=rrf, cosine_score=0.0,
+                        entity_names=ec.get("entity_names", []),
+                        heading_path=ec.get("heading_path", ""),
+                        provenance={"session_id": session_id, "file_id": ec.get("file_id", ""),
+                                    "memory_class": ec.get("memory_class", "raw_evidence")},
+                        metadata=ec.get("metadata", {}),
+                    ))
+
+        shaped = sorted(
+            ((_shape_score(s, r.metadata.get("memory_class")), r) for s, r in results.values()),
+            key=lambda x: x[0], reverse=True,
         )
+        return [r for _, r in shaped[:top_k]]

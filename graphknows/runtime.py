@@ -48,6 +48,20 @@ def _format_recall_hits(results: list[Any], session_id: str) -> list[dict[str, A
     ]
 
 
+def _format_fused_hits(fused_results: list[dict], session_id: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "score": r.get("rrf_score", 0.0),
+            "cosine_score": r.get("rrf_score", 0.0),
+            "type": r.get("sources", ""),
+            "text": _clean_recall_text(r.get("text", "")),
+            "session_id": session_id,
+            "entities": r.get("entities", []),
+        }
+        for r in fused_results
+    ]
+
+
 def _format_entity_recall_hits(results: list[Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -188,53 +202,25 @@ class GraphKnowsRuntime:
         top_k: int,
         scope: str,
     ) -> dict[str, Any]:
-        from graphknows.config.builders.stores import build_memgraph_store, build_neo4j_store
-        from graphknows.memory.stores.embedder import embed_one
+        from graphknows.config.builders.stores import (
+            build_memgraph_store,
+            build_neo4j_store,
+        )
+        from graphknows.memory.query.retriever import DETRetriever
+        from graphknows.memory.stm._async_bridge import _run as bg_run
 
-        stm_hits: list[Any] = []
-        ltm_hits: list[Any] = []
-
-        if scope in ("stm", "both"):
-            from graphknows.memory.stm.recall import recall_short_term
-
-            mg = build_memgraph_store(self.settings)
-            pg = self._connect_pg_on_bridge()
-            try:
-                stm_hits = recall_short_term(
-                    mg,
-                    pg,
-                    query,
-                    session_id=session_id,
-                    top_k=top_k,
-                    embed_fn=embed_one,
-                )
-            finally:
-                mg.close()
-
-        if scope in ("ltm", "both"):
-            from graphknows.memory.query.recall_ltm import recall_long_term
-
-            pg = self._connect_pg_on_bridge()
-            neo = build_neo4j_store(self.settings)
-            try:
-                ltm_hits = recall_long_term(
-                    neo,
-                    pg,
-                    query,
-                    top_k=top_k,
-                    session_filter=session_id or None,
-                    embed_fn=embed_one,
-                )
-            finally:
-                neo.close()
-
-        if scope == "both":
-            normalise_and_weight(stm_hits, _STM_RECALL_WEIGHT)
-            normalise_and_weight(ltm_hits, _LTM_RECALL_WEIGHT)
-            combined = sorted(stm_hits + ltm_hits, key=lambda hit: hit.score, reverse=True)
-            return {"hits": _format_recall_hits(combined[:top_k], session_id)}
-
-        return {"hits": _format_recall_hits(stm_hits if scope == "stm" else ltm_hits, session_id)}
+        mg = build_memgraph_store(self.settings)
+        pg = self._connect_pg_on_bridge()
+        neo = build_neo4j_store(self.settings)
+        try:
+            retriever = DETRetriever(
+                pg=pg, neo=neo, mg=mg, embed_model=self.settings.embed_model,
+            )
+            ctx = bg_run(retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=scope))
+        finally:
+            mg.close()
+            neo.close()
+        return {"hits": _format_fused_hits(ctx.fused_results, session_id)}
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Promote a session from STM into LTM."""
@@ -535,48 +521,3 @@ class GraphKnowsRuntime:
             ]
         return {"results": topics[: max(1, min(top_k, 20))]}
 
-    def recall_by_document(self, query: str, top_k: int = 5) -> dict[str, Any]:
-        """Recall document chunks ranked by matched LTM entities."""
-        from graphknows.config.builders.stores import build_neo4j_store
-        from graphknows.memory.recall import recall_by_document
-
-        neo = build_neo4j_store(self.settings)
-        try:
-            results = recall_by_document(neo._driver, query, top_k=top_k)
-        finally:
-            neo.close()
-        return {"results": _format_entity_recall_hits(results)}
-
-    def recall_by_dialog(
-        self,
-        query: str,
-        top_k: int = 5,
-        session_id: str = "",
-    ) -> dict[str, Any]:
-        """Recall dialog turns ranked by matched LTM entities."""
-        from graphknows.config.builders.stores import build_neo4j_store
-        from graphknows.memory.recall import recall_by_dialog
-
-        neo = build_neo4j_store(self.settings)
-        try:
-            results = recall_by_dialog(
-                neo._driver,
-                query,
-                top_k=top_k,
-                session_filter=session_id or None,
-            )
-        finally:
-            neo.close()
-        return {"results": _format_entity_recall_hits(results)}
-
-    def recall_by_topic(self, query: str, top_k: int = 5) -> dict[str, Any]:
-        """Recall topic summaries ranked by matched LTM entities."""
-        from graphknows.config.builders.stores import build_neo4j_store
-        from graphknows.memory.recall import recall_by_topic
-
-        neo = build_neo4j_store(self.settings)
-        try:
-            results = recall_by_topic(neo._driver, query, top_k=top_k)
-        finally:
-            neo.close()
-        return {"results": _format_entity_recall_hits(results)}

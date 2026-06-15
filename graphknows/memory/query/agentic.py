@@ -47,7 +47,7 @@ class AgenticRetriever(BaseGraphRetriever):
     The main ``retrieve()`` method is fully async.
 
     Inherits from BaseGraphRetriever so it is interchangeable with
-    HybridRetriever at the factory layer.
+    DETRetriever at the factory layer.
     """
 
     def __init__(
@@ -170,11 +170,51 @@ class AgenticRetriever(BaseGraphRetriever):
                     break
             return chunks[:top_k]
 
+        # ---- Tool 4: Neo4j TOPIC keyword search -----------------------
+        def search_topics(query: str, top_k: int = 5) -> list[dict]:
+            """Search topic nodes in long-term memory by keyword match.
+
+            Args:
+                query: Keywords to match against topic entity names and summaries.
+                top_k: Maximum topics to return (default 5).
+
+            Returns:
+                List of dicts with topic_id, label, summary, entities, score.
+            """
+            cypher = """
+            UNWIND $words AS word
+            MATCH (e)
+            WHERE (e:ENTITY OR e:ENTITY_CONCEPT) AND toLower(e.name) CONTAINS word
+            WITH collect(DISTINCT e.name) AS matched_names
+            MATCH (t:TOPIC)
+            OPTIONAL MATCH (e2)-[:IN_TOPIC]->(t)
+            WHERE e2.name IN matched_names
+            WITH t, collect(DISTINCT e2.name) AS matched_entities,
+                 count(DISTINCT e2) AS overlap
+            ORDER BY overlap DESC
+            LIMIT $top_k
+            RETURN t.id AS topic_id, t.label AS label, t.summary AS summary,
+                   matched_entities AS entities, overlap AS score
+            """
+            words = [w for w in query.lower().split() if len(w) > 3]
+            if not words:
+                return []
+            driver = getattr(neo, "_driver", neo)
+            _db = getattr(neo, "_db", None)
+            session_kwargs: dict = {"database": _db} if _db else {}
+            try:
+                with driver.session(**session_kwargs) as s:
+                    return s.run(cypher, words=words, top_k=top_k).data()
+            except Exception as exc:
+                log.warning("search_topics failed: %s", exc)
+                return []
+
         # ---- DSPy signature and ReAct module --------------------------
         class RetrievalSignature(dspy_mod.Signature):  # type: ignore[misc, name-defined]
             """Retrieve the most relevant knowledge-graph context for a query.
 
-            Use the available tools to search vectors and graphs.
+            Use the available tools to search across four retrieval sources:
+            semantic vectors, STM entity graph, LTM entity graph, and topic nodes.
             Synthesize findings to identify the most relevant information.
             """
 
@@ -200,7 +240,7 @@ class AgenticRetriever(BaseGraphRetriever):
         with dspy_mod.settings.context(lm=self._lm):
             self._react = dspy_mod.ReAct(
                 RetrievalSignature,
-                tools=[search_vectors, search_stm_graph, search_ltm_graph],
+                tools=[search_vectors, search_stm_graph, search_ltm_graph, search_topics],
             )
         return self._react
 

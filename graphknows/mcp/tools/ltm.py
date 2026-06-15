@@ -26,23 +26,3 @@ def ltm_query(query: str, top_k: int = 5) -> dict[str, Any]:
     return get_runtime().ltm_query(query=query, top_k=top_k)
 
 
-@app.tool()
-def recall_by_document(query: str, top_k: int = 5) -> dict[str, Any]:
-    """Recall document chunks ranked by matched entities."""
-    return get_runtime().recall_by_document(query=query, top_k=top_k)
-
-
-@app.tool()
-def recall_by_dialog(
-    query: str,
-    top_k: int = 5,
-    session_id: str = "",
-) -> dict[str, Any]:
-    """Recall dialog turns ranked by matched entities."""
-    return get_runtime().recall_by_dialog(query=query, top_k=top_k, session_id=session_id)
-
-
-@app.tool()
-def recall_by_topic(query: str, top_k: int = 5) -> dict[str, Any]:
-    """Recall topics ranked by matched entities."""
-    return get_runtime().recall_by_topic(query=query, top_k=top_k)
