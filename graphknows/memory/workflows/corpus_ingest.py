@@ -21,7 +21,6 @@ class CorpusIngestRequest:
     session_id: str | None = None  # auto-generated if None; supply for idempotent retry
     run_gds: bool = True
     clear_stm: bool = True
-    summarize_topics: bool = True  # Deprecated: topic summarization always runs.
 
 
 @dataclass

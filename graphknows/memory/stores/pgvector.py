@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS stm_chunks (
     heading_path TEXT,
     embedding    VECTOR({_VECTOR_DIM}),
     metadata     JSONB,
+    community_id INT,
+    community_weight DOUBLE PRECISION,
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS stm_chunks_session_idx ON stm_chunks (session_id);
@@ -47,6 +49,9 @@ CREATE TABLE IF NOT EXISTS stm_turns (
     role         TEXT NOT NULL,
     text         TEXT NOT NULL,
     embedding    VECTOR({_VECTOR_DIM}),
+    metadata     JSONB,
+    community_id INT,
+    community_weight DOUBLE PRECISION,
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS stm_turns_session_idx ON stm_turns (session_id);
@@ -61,6 +66,8 @@ CREATE TABLE IF NOT EXISTS ltm_chunks (
     heading_path TEXT,
     embedding    VECTOR({_VECTOR_DIM}),
     metadata     JSONB,
+    community_id INT,
+    community_weight DOUBLE PRECISION,
     flushed_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ltm_chunks_session_idx ON ltm_chunks (session_id);
@@ -74,6 +81,9 @@ CREATE TABLE IF NOT EXISTS ltm_turns (
     role         TEXT,
     text         TEXT NOT NULL,
     embedding    VECTOR({_VECTOR_DIM}),
+    metadata     JSONB,
+    community_id INT,
+    community_weight DOUBLE PRECISION,
     flushed_at   TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ltm_turns_session_idx ON ltm_turns (session_id);
@@ -81,6 +91,7 @@ CREATE INDEX IF NOT EXISTS ltm_turns_emb_idx ON ltm_turns USING hnsw (embedding 
 
 CREATE TABLE IF NOT EXISTS ltm_topics (
     topic_id     TEXT PRIMARY KEY,
+    community_id INT,
     summary      TEXT,
     embedding    VECTOR({_VECTOR_DIM}),
     entity_names TEXT[],
@@ -98,6 +109,18 @@ CREATE TABLE IF NOT EXISTS entities (
     updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS entities_emb_idx ON entities USING hnsw (embedding vector_cosine_ops);
+
+ALTER TABLE stm_chunks ADD COLUMN IF NOT EXISTS community_id INT;
+ALTER TABLE stm_chunks ADD COLUMN IF NOT EXISTS community_weight DOUBLE PRECISION;
+ALTER TABLE stm_turns ADD COLUMN IF NOT EXISTS metadata JSONB;
+ALTER TABLE stm_turns ADD COLUMN IF NOT EXISTS community_id INT;
+ALTER TABLE stm_turns ADD COLUMN IF NOT EXISTS community_weight DOUBLE PRECISION;
+ALTER TABLE ltm_chunks ADD COLUMN IF NOT EXISTS community_id INT;
+ALTER TABLE ltm_chunks ADD COLUMN IF NOT EXISTS community_weight DOUBLE PRECISION;
+ALTER TABLE ltm_turns ADD COLUMN IF NOT EXISTS metadata JSONB;
+ALTER TABLE ltm_turns ADD COLUMN IF NOT EXISTS community_id INT;
+ALTER TABLE ltm_turns ADD COLUMN IF NOT EXISTS community_weight DOUBLE PRECISION;
+ALTER TABLE ltm_topics ADD COLUMN IF NOT EXISTS community_id INT;
 """
 
 
@@ -180,11 +203,11 @@ class PgVectorStore:
         async with pool.acquire() as conn:
             await conn.executemany(
                 """
-                INSERT INTO chunks (id, session_id, doc_id, text, embedding, metadata)
+                INSERT INTO stm_chunks (id, session_id, file_id, text, embedding, metadata)
                 VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb)
                 ON CONFLICT (id) DO UPDATE SET
                     session_id = EXCLUDED.session_id,
-                    doc_id     = EXCLUDED.doc_id,
+                    file_id    = EXCLUDED.file_id,
                     text       = EXCLUDED.text,
                     embedding  = EXCLUDED.embedding,
                     metadata   = EXCLUDED.metadata
@@ -426,15 +449,18 @@ class PgVectorStore:
             await conn.execute(
                 """
                 INSERT INTO stm_chunks
-                    (id, session_id, file_id, text, heading_path, embedding, metadata)
-                VALUES ($1, $2, $3, $4, $5, $6::vector, $7::jsonb)
+                    (id, session_id, file_id, text, heading_path, embedding, metadata,
+                     community_id, community_weight)
+                VALUES ($1, $2, $3, $4, $5, $6::vector, $7::jsonb, $8, $9)
                 ON CONFLICT (id) DO UPDATE SET
                     session_id   = EXCLUDED.session_id,
                     file_id      = EXCLUDED.file_id,
                     text         = EXCLUDED.text,
                     heading_path = EXCLUDED.heading_path,
                     embedding    = EXCLUDED.embedding,
-                    metadata     = EXCLUDED.metadata
+                    metadata     = EXCLUDED.metadata,
+                    community_id = EXCLUDED.community_id,
+                    community_weight = EXCLUDED.community_weight
                 """,
                 chunk["id"],
                 chunk["session_id"],
@@ -443,6 +469,8 @@ class PgVectorStore:
                 chunk.get("heading_path"),
                 embedding,
                 json.dumps(chunk.get("metadata") or {}),
+                chunk.get("community_id"),
+                chunk.get("community_weight"),
             )
 
     async def write_stm_turn(self, turn: dict[str, Any]) -> None:
@@ -458,15 +486,19 @@ class PgVectorStore:
             await conn.execute(
                 """
                 INSERT INTO stm_turns
-                    (id, session_id, dialog_id, turn_index, role, text, embedding)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
+                    (id, session_id, dialog_id, turn_index, role, text, embedding, metadata,
+                     community_id, community_weight)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8::jsonb, $9, $10)
                 ON CONFLICT (id) DO UPDATE SET
                     session_id = EXCLUDED.session_id,
                     dialog_id  = EXCLUDED.dialog_id,
                     turn_index = EXCLUDED.turn_index,
                     role       = EXCLUDED.role,
                     text       = EXCLUDED.text,
-                    embedding  = EXCLUDED.embedding
+                    embedding  = EXCLUDED.embedding,
+                    metadata   = EXCLUDED.metadata,
+                    community_id = EXCLUDED.community_id,
+                    community_weight = EXCLUDED.community_weight
                 """,
                 turn["id"],
                 turn["session_id"],
@@ -475,6 +507,9 @@ class PgVectorStore:
                 turn["role"],
                 turn["text"],
                 embedding,
+                json.dumps(turn.get("metadata") or {}),
+                turn.get("community_id"),
+                turn.get("community_weight"),
             )
 
     async def search_stm_chunks(
@@ -545,7 +580,7 @@ class PgVectorStore:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, session_id, dialog_id, turn_index, role, text,
+                SELECT id, session_id, dialog_id, turn_index, role, text, metadata,
                        1 - (embedding <=> $1::vector) AS cosine_score
                 FROM stm_turns
                 WHERE session_id = $2
@@ -564,6 +599,7 @@ class PgVectorStore:
                 "turn_index": r["turn_index"],
                 "role": r["role"],
                 "text": r["text"],
+                "metadata": json.loads(r["metadata"] or "{}"),
                 "cosine_score": float(r["cosine_score"]),
             }
             for r in rows
@@ -583,8 +619,10 @@ class PgVectorStore:
             chunks_result = await conn.execute(
                 """
                 INSERT INTO ltm_chunks
-                    (id, session_id, file_id, text, heading_path, embedding, metadata)
-                SELECT id, session_id, file_id, text, heading_path, embedding, metadata
+                    (id, session_id, file_id, text, heading_path, embedding, metadata,
+                     community_id, community_weight)
+                SELECT id, session_id, file_id, text, heading_path, embedding, metadata,
+                       community_id, community_weight
                 FROM stm_chunks
                 WHERE session_id = $1
                 ON CONFLICT (id) DO NOTHING
@@ -594,8 +632,10 @@ class PgVectorStore:
             turns_result = await conn.execute(
                 """
                 INSERT INTO ltm_turns
-                    (id, session_id, dialog_id, turn_index, role, text, embedding)
-                SELECT id, session_id, dialog_id, turn_index, role, text, embedding
+                    (id, session_id, dialog_id, turn_index, role, text, embedding, metadata,
+                     community_id, community_weight)
+                SELECT id, session_id, dialog_id, turn_index, role, text, embedding, metadata,
+                       community_id, community_weight
                 FROM stm_turns
                 WHERE session_id = $1
                 ON CONFLICT (id) DO NOTHING
@@ -706,8 +746,8 @@ class PgVectorStore:
             if session_id:
                 rows = await conn.fetch(
                     """
-                    SELECT id, session_id, dialog_id, turn_index, role, text,
-                           1 - (embedding <=> $1::vector) AS cosine_score
+                SELECT id, session_id, dialog_id, turn_index, role, text, metadata,
+                       1 - (embedding <=> $1::vector) AS cosine_score
                     FROM ltm_turns
                     WHERE session_id = $2
                     ORDER BY embedding <=> $1::vector
@@ -720,8 +760,8 @@ class PgVectorStore:
             else:
                 rows = await conn.fetch(
                     """
-                    SELECT id, session_id, dialog_id, turn_index, role, text,
-                           1 - (embedding <=> $1::vector) AS cosine_score
+                SELECT id, session_id, dialog_id, turn_index, role, text, metadata,
+                       1 - (embedding <=> $1::vector) AS cosine_score
                     FROM ltm_turns
                     ORDER BY embedding <=> $1::vector
                     LIMIT $2
@@ -737,6 +777,7 @@ class PgVectorStore:
                 "turn_index": r["turn_index"],
                 "role": r["role"],
                 "text": r["text"],
+                "metadata": json.loads(r["metadata"] or "{}"),
                 "cosine_score": float(r["cosine_score"]),
             }
             for r in rows
@@ -756,17 +797,76 @@ class PgVectorStore:
             await conn.execute(
                 """
                 INSERT INTO ltm_topics
-                    (topic_id, summary, embedding, entity_names, session_ids)
-                VALUES ($1, $2, $3::vector, $4, $5)
+                    (topic_id, community_id, summary, embedding, entity_names, session_ids)
+                VALUES ($1, $2, $3, $4::vector, $5, $6)
                 ON CONFLICT (topic_id) DO UPDATE SET
+                    community_id = EXCLUDED.community_id,
                     summary      = EXCLUDED.summary,
                     embedding    = EXCLUDED.embedding,
                     entity_names = EXCLUDED.entity_names,
                     session_ids  = EXCLUDED.session_ids
                 """,
                 topic["topic_id"],
+                topic.get("community_id"),
                 topic.get("summary"),
                 embedding,
                 topic.get("entity_names") or [],
                 topic.get("session_ids") or [],
             )
+
+    async def write_community_assignments(
+        self,
+        session_id: str,
+        assignments: list[dict[str, Any]],
+    ) -> None:
+        """Write community metadata onto promoted semantic rows."""
+        if not assignments:
+            return
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            for assignment in assignments:
+                community_id = assignment.get("community_id")
+                weight = assignment.get("weight", 1.0)
+                chunk_ids = assignment.get("chunk_ids") or []
+                turn_ids = assignment.get("turn_ids") or []
+                entity_names = assignment.get("entity_names") or []
+                if chunk_ids:
+                    await conn.execute(
+                        """
+                        UPDATE ltm_chunks
+                        SET community_id = $1,
+                            community_weight = $2,
+                            metadata = coalesce(metadata, '{}'::jsonb)
+                                || jsonb_build_object(
+                                    'community_id', $1,
+                                    'community_weight', $2,
+                                    'community_entity_names', $4::text[]
+                                )
+                        WHERE session_id = $3 AND id = ANY($5::text[])
+                        """,
+                        community_id,
+                        weight,
+                        session_id,
+                        entity_names,
+                        chunk_ids,
+                    )
+                if turn_ids:
+                    await conn.execute(
+                        """
+                        UPDATE ltm_turns
+                        SET community_id = $1,
+                            community_weight = $2,
+                            metadata = coalesce(metadata, '{}'::jsonb)
+                                || jsonb_build_object(
+                                    'community_id', $1,
+                                    'community_weight', $2,
+                                    'community_entity_names', $4::text[]
+                                )
+                        WHERE session_id = $3 AND id = ANY($5::text[])
+                        """,
+                        community_id,
+                        weight,
+                        session_id,
+                        entity_names,
+                        turn_ids,
+                    )
