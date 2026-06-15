@@ -100,13 +100,10 @@ class PromoteOptions:
     Attributes:
         session_id: Session to promote.
         run_gds: Run GDS enrichment after promotion.
-        run_topics: Deprecated compatibility flag; promotion always runs topic
-            summarization.
     """
 
     session_id: str
     run_gds: bool = True
-    run_topics: bool = True
 
 
 @dataclass(frozen=True)
