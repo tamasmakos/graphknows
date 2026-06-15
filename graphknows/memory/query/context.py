@@ -170,13 +170,14 @@ class RetrievalContext:
         # ── semantic_matches ───────────────────────────────────────────
         lines.append(f'  <semantic_matches count="{len(self.semantic_matches)}">')
         for cm in self.semantic_matches:
-            score = cm.metadata.pop("cosine_score", 0.0) if isinstance(cm.metadata, dict) else 0.0
+            meta = dict(cm.metadata) if isinstance(cm.metadata, dict) else {}
+            score = meta.pop("cosine_score", 0.0)
             lines.append(
                 f'    <chunk id="{_esc(cm.chunk_id)}" doc_id="{_esc(cm.doc_id)}"'
                 f' cosine_score="{score:.4f}">'
             )
             lines.append(f"      <text>{_esc(cm.text)}</text>")
-            lines.append(_metadata_tag(cm.metadata, indent=6))
+            lines.append(_metadata_tag(meta, indent=6))
             lines.append("    </chunk>")
         lines.append("  </semantic_matches>")
 

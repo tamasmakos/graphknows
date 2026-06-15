@@ -64,6 +64,8 @@ class AgenticRetriever(BaseGraphRetriever):
         self._react: Any = None
         self._lm: Any = None
         self._pg_bridge: Any = None
+        self._last_session_id: str | None = None
+        self._collected_chunks: list[dict] = []
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -79,10 +81,30 @@ class AgenticRetriever(BaseGraphRetriever):
             _run(self._pg_bridge.connect())
         return self._pg_bridge
 
-    def _get_react(self, *, session_id: str = "") -> Any:
-        """Build and cache the DSPy ReAct retriever for one session."""
+    def _get_lm(self) -> Any:
+        """Return the cached DSPy LM instance, building it once."""
+        if self._lm is not None:
+            return self._lm
         dspy_mod = _require_dspy()
-        if self._react is not None:
+        react_model = self._settings.extraction_model or self._settings.llm_model
+        self._lm = dspy_mod.LM(
+            model=_normalize_openrouter_model(react_model),
+            api_key=self._settings.openrouter_api_key,
+            api_base="https://openrouter.ai/api/v1",
+            temperature=self._settings.llm_temperature,
+            max_tokens=self._settings.llm_max_tokens,
+            num_retries=1,
+        )
+        return self._lm
+
+    def _get_react(self, *, session_id: str = "") -> Any:
+        """Build and cache the DSPy ReAct retriever for one session.
+
+        The LM is built once and reused. The ReAct module (which closes over
+        session_id via tool closures) is rebuilt only when the session changes.
+        """
+        dspy_mod = _require_dspy()
+        if self._react is not None and session_id == self._last_session_id:
             return self._react
 
         from graphknows.memory.stm._async_bridge import _run as bg_run
@@ -91,9 +113,8 @@ class AgenticRetriever(BaseGraphRetriever):
         neo = self._neo
         memgraph = self._memgraph
         embed_model = self._settings.embed_model
-        # Chunks collected by tool calls during ReAct execution.
-        # retrieve() reads this list after ReAct finishes.
-        self._collected_chunks: list[dict] = []
+        # Reuse or initialize the chunks buffer; closures below capture this reference.
+        self._collected_chunks.clear()
         collected = self._collected_chunks
 
         # ---- Tool 1: pgvector ANN chunk search -------------------------
@@ -228,20 +249,13 @@ class AgenticRetriever(BaseGraphRetriever):
                 desc="2-3 sentence summary of the most relevant retrieved information."
             )
 
-        react_model = self._settings.extraction_model or self._settings.llm_model
-        self._lm = dspy_mod.LM(
-            model=_normalize_openrouter_model(react_model),
-            api_key=self._settings.openrouter_api_key,
-            api_base="https://openrouter.ai/api/v1",
-            temperature=self._settings.llm_temperature,
-            max_tokens=self._settings.llm_max_tokens,
-            num_retries=1,
-        )
-        with dspy_mod.settings.context(lm=self._lm):
+        lm = self._get_lm()
+        with dspy_mod.settings.context(lm=lm):
             self._react = dspy_mod.ReAct(
                 RetrievalSignature,
                 tools=[search_vectors, search_stm_graph, search_ltm_graph, search_topics],
             )
+        self._last_session_id = session_id
         return self._react
 
     # ------------------------------------------------------------------
@@ -259,10 +273,10 @@ class AgenticRetriever(BaseGraphRetriever):
         from graphknows.memory.query.context import ChunkMatch, RetrievalContext
         from graphknows.memory.stores.embedder import embed
 
-        # Reset ReAct per call so closures bind to a fresh collected list.
-        self._react = None
+        # _get_react() reuses the existing ReAct module for same-session calls
+        # and clears _collected_chunks before each run.
         react = self._get_react(session_id=session_id)
-        lm = self._lm
+        lm = self._get_lm()
 
         def _run_react() -> Any:
             with dspy.settings.context(lm=lm):
