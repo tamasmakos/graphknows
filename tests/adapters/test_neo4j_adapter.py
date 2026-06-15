@@ -16,6 +16,7 @@ def mock_store() -> MagicMock:
     """Create a mock Neo4jStore with async methods."""
     store = MagicMock()
     store.ensure_indexes = AsyncMock()
+    store.run_read_query = AsyncMock(return_value=[])
     store.upsert_chunks = AsyncMock()
     store.upsert_entities_and_mentions = AsyncMock()
     store.upsert_topics = AsyncMock()
@@ -28,6 +29,7 @@ def mock_store() -> MagicMock:
     store.get_entity_neighbors = AsyncMock(return_value={"neighbors": []})
     store.get_chunks_for_entity = AsyncMock(return_value=[])
     store.get_entity_community = AsyncMock(return_value=None)
+    store.get_community_assignments = AsyncMock(return_value=[])
     store.write_session_subgraph = AsyncMock(return_value={"nodes": 1, "edges": 0})
     store.count_nodes = AsyncMock(return_value={"chunks": 1, "entities": 2})
     store.get_segment_info = AsyncMock(return_value=None)
@@ -69,5 +71,4 @@ async def test_seed_session_from_corpus(adapter: Neo4jAdapter, mock_store: Magic
 async def test_get_chunk_entities(adapter: Neo4jAdapter, mock_store: MagicMock) -> None:
     result = await adapter.get_chunk_entities("chunk-123")
     assert result == [{"name": "Alice", "label": "PERSON"}]
-
 

@@ -18,6 +18,7 @@ def mock_store() -> MagicMock:
         "search_chunks", "search_entities", "write_stm_chunk", "write_stm_turn",
         "search_stm_chunks", "search_stm_turns", "promote_to_ltm",
         "search_ltm_chunks", "search_ltm_turns", "write_ltm_topic", "clear_stm",
+        "write_community_assignments",
     ):
         setattr(store, method, AsyncMock(return_value=None))
     return store

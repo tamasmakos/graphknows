@@ -34,7 +34,7 @@ def _make_pipeline(**kwargs):
 
     neo = MagicMock()
     neo.write_session_subgraph = AsyncMock(return_value={"nodes": 10, "edges": 20})
-    neo.summarize_topics = AsyncMock(return_value=3)
+    neo.write_topic_summaries = AsyncMock(return_value=3)
     neo.extract_and_write_relations = AsyncMock(return_value=0)
     neo._driver = MagicMock()
 
@@ -56,9 +56,10 @@ async def test_promote_default_request_calls_all_steps():
     mg.read_session_subgraph.assert_called_once_with("s1")
     neo.write_session_subgraph.assert_called_once()
     pg.promote_to_ltm.assert_called_once_with("s1")
-    enrichment.run_topic_summarization.assert_called_once()
+    enrichment.run_topic_summarization.assert_not_called()
     mg.delete_session.assert_called_once_with("s1")
     pg.clear_stm.assert_called_once_with("s1")
+    assert result.topic_mode == "off"
 
 
 @pytest.mark.asyncio
@@ -83,12 +84,12 @@ def test_resolve_entities_merges_by_lowercase_keeps_highest_confidence():
         {"name": "eu", "type": "ORG", "confidence": 0.7},
         {"name": "France", "type": "LOC", "confidence": 0.8},
     ]
-    resolved, merge_count = pipeline._resolve_entities(entities)
+    resolved, audit = pipeline._resolve_entities_with_audit(entities)
     names_lower = {e["name"].lower() for e in resolved}
     assert "eu" in names_lower
     assert "france" in names_lower
     assert len(resolved) == 2
-    assert merge_count == 1
+    assert audit.merged_entities == 1
     eu_ent = next(e for e in resolved if e["name"].lower() == "eu")
     assert eu_ent["confidence"] == 0.9
 
@@ -99,15 +100,17 @@ def test_resolve_entities_preserves_unique_names():
         {"name": "Germany", "type": "LOC", "confidence": 0.95},
         {"name": "France", "type": "LOC", "confidence": 0.85},
     ]
-    resolved, _ = pipeline._resolve_entities(entities)
+    resolved, _ = pipeline._resolve_entities_with_audit(entities)
     assert len(resolved) == 2
 
 
 @pytest.mark.asyncio
 async def test_topic_summarization_failure_adds_to_errors():
-    pipeline, mg, pg, neo, enrichment = _make_pipeline()
+    pipeline, mg, pg, neo, enrichment = _make_pipeline(relation_extraction_mode="llm_assisted")
     enrichment.run_topic_summarization = AsyncMock(side_effect=RuntimeError("LLM timeout"))
-    result = await pipeline.promote(PromotionRequest(session_id="s1", run_gds=False))
+    result = await pipeline.promote(
+        PromotionRequest(session_id="s1", run_gds=False, topic_mode="llm_assisted")
+    )
     assert any("topics" in e for e in result.errors)
 
 
@@ -128,6 +131,17 @@ async def test_promote_result_has_correct_counts():
     assert result.edges_written == 20
     assert result.chunks_promoted == 5
     assert result.turns_promoted == 3
+    assert result.topics_created == 0
+
+
+@pytest.mark.asyncio
+async def test_llm_assisted_promote_runs_topic_enrichment():
+    pipeline, mg, pg, neo, enrichment = _make_pipeline(relation_extraction_mode="llm_assisted")
+    result = await pipeline.promote(
+        PromotionRequest(session_id="s1", run_gds=False, topic_mode="llm_assisted")
+    )
+    enrichment.run_topic_summarization.assert_called_once()
+    assert result.topic_mode == "llm_assisted"
     assert result.topics_created == 3
 
 
@@ -177,7 +191,7 @@ async def test_summarize_topics_no_key_skips_llm(monkeypatch):
         ]
     )
 
-    count = await store.summarize_topics("sess-1", openrouter_key="", pg_store=None)
+    count = await store.write_topic_summaries("sess-1", summarizer=None, pg_store=None)
     assert count == 1
     store.upsert_topics.assert_awaited_once()
     topics = store.upsert_topics.call_args[0][0]
@@ -196,7 +210,7 @@ async def test_summarize_topics_skips_singletons():
     store.upsert_topics = AsyncMock(return_value=None)
     store._arun = AsyncMock(return_value=[])
 
-    count = await store.summarize_topics("sess-2", openrouter_key="", pg_store=None)
+    count = await store.write_topic_summaries("sess-2", summarizer=None, pg_store=None)
     assert count == 0
     store.upsert_topics.assert_not_awaited()
 
@@ -239,7 +253,8 @@ async def test_summarize_topics_writes_topic_embedding_from_summary(monkeypatch)
     monkeypatch.setattr(embedder_module, "embed_one", fake_embed_one)
     monkeypatch.setattr(TopicSummarizer, "summarize", fake_summarize)
 
-    count = await store.summarize_topics("sess-embed", openrouter_key="sk-test", pg_store=pg_store)
+    summarizer = TopicSummarizer("sk-test", "meta-llama/llama-3.1-8b-instruct")
+    count = await store.write_topic_summaries("sess-embed", summarizer=summarizer, pg_store=pg_store)
 
     assert count == 1
     assert embedded_inputs == ["France and the EU coordinate policy."]
@@ -285,7 +300,12 @@ async def test_summarize_topics_falls_back_to_title_for_embedding(monkeypatch):
     monkeypatch.setattr(embedder_module, "embed_one", fake_embed_one)
     monkeypatch.setattr(TopicSummarizer, "summarize", fake_summarize)
 
-    count = await store.summarize_topics("sess-fallback", openrouter_key="sk-test", pg_store=pg_store)
+    summarizer = TopicSummarizer("sk-test", "meta-llama/llama-3.1-8b-instruct")
+    count = await store.write_topic_summaries(
+        "sess-fallback",
+        summarizer=summarizer,
+        pg_store=pg_store,
+    )
 
     assert count == 1
     assert embedded_inputs == ["European coordination"]

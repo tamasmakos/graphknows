@@ -395,10 +395,11 @@ def test_recall_returns_hits_as_dicts():
 
     adapter.pg_store.search_stm_chunks = stm_chunks
     adapter.pg_store.search_stm_turns = empty
-    adapter.mg_store.query_entity_chunks = empty
-
+    adapter.mg_store.query_entity_chunks = AsyncMock(return_value=[])
+    import numpy as np
     request = RecallRequest(query="test query here", session_id="s1", top_k=5)
-    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests):
+    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests), \
+         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))):
         result = adapter.recall(request)
 
     assert isinstance(result, list)
@@ -424,10 +425,11 @@ def test_recall_filters_raw_evidence_when_include_raw_false():
 
     adapter.pg_store.search_stm_chunks = stm_chunks
     adapter.pg_store.search_stm_turns = empty
-    adapter.mg_store.query_entity_chunks = empty
-
+    adapter.mg_store.query_entity_chunks = AsyncMock(return_value=[])
+    import numpy as np
     request = RecallRequest(query="test query here", session_id="s1", top_k=5, include_raw=False)
-    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests):
+    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests), \
+         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))):
         result = adapter.recall(request)
 
     assert len(result) == 1
@@ -469,6 +471,7 @@ async def test_promote_calls_session_flusher(
             chunks_promoted=3,
             turns_promoted=2,
             topics_created=1,
+            topic_mode="llm_assisted",
             merged_entities=0,
             elapsed_s=1.5,
             errors=[],
@@ -477,7 +480,6 @@ async def test_promote_calls_session_flusher(
     options = PromoteOptions(
         session_id="s1",
         run_gds=True,
-        run_topics=True,
     )
     result = await adapter.promote(options)
 
@@ -487,7 +489,7 @@ async def test_promote_calls_session_flusher(
     assert request.run_gds is True
     assert result["session_id"] == "s1"
     assert result["run_gds"] is True
-    assert result["run_topics"] is True
+    assert result["topic_mode"] == "llm_assisted"
     assert result["nodes_written"] == 10
     assert result["edges_written"] == 5
     assert result["chunks_promoted"] == 3
@@ -515,6 +517,7 @@ async def test_promote_always_summarizes_topics(
             chunks_promoted=1,
             turns_promoted=0,
             topics_created=1,
+            topic_mode="off",
             merged_entities=0,
             elapsed_s=0.1,
             errors=[],
@@ -523,13 +526,12 @@ async def test_promote_always_summarizes_topics(
     options = PromoteOptions(
         session_id="s1",
         run_gds=False,
-        run_topics=False,
     )
     result = await adapter.promote(options)
 
     (request,), _ = mock_pipeline.return_value.promote.call_args
     assert request.run_gds is False
-    assert result["run_topics"] is True
+    assert result["topic_mode"] == "off"
 
 
 # ===========================================================================
@@ -604,8 +606,7 @@ class TestAdapterLifecycle:
         mg = MagicMock()
         mg.query_entity_chunks = AsyncMock(return_value=[])
 
-        # Use a real STMService backed by mock stores — STMService must NOT be
-        # patched here because recall() now delegates to _stm_service.recall().
+        import numpy as np
         adapter = GraphknowsAdapter(
             mg_store=mg, pg_store=pg, neo_store=MagicMock(),
             extractor=MagicMock(), embed_fn=lambda q: [0.0] * 1536,
@@ -614,7 +615,8 @@ class TestAdapterLifecycle:
         for turn in TURNS:
             adapter.write_turn(turn)
 
-        with patch("graphknows.memory.stm._async_bridge._run", side_effect=_sync_run):
+        with patch("graphknows.memory.stm._async_bridge._run", side_effect=_sync_run), \
+             patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 1536))):
             result = adapter.recall(RECALL_REQUEST)
         assert isinstance(result, list)
         assert len(result) == 1

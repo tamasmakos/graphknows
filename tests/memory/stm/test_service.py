@@ -61,12 +61,6 @@ def test_ingest_calls_handler(tmp_path):
     assert result.chunk_count >= 1
 
 
-def test_recall_returns_list():
-    svc, mg, pg, embed = _make_service()
-    hits = svc.recall("test query", session_id="s1")
-    assert isinstance(hits, list)
-
-
 def test_record_turn_creates_dialog_capture():
     from graphknows.memory.stm.dialog import Turn
 
