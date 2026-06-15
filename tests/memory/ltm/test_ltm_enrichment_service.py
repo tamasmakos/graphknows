@@ -114,7 +114,7 @@ def test_run_centrality_too_small() -> None:
 @pytest.mark.asyncio
 async def test_run_topic_summarization_with_store() -> None:
     neo_store = MagicMock()
-    neo_store.summarize_topics = AsyncMock(return_value=3)
+    neo_store.write_topic_summaries = AsyncMock(return_value=3)
     fake_pg = MagicMock()
     svc = LTMEnrichmentService()
     count = await svc.run_topic_summarization(
@@ -126,29 +126,30 @@ async def test_run_topic_summarization_with_store() -> None:
         gds_result=GDSResult(modularity=0.42, algorithm_used="leiden"),
     )
     assert count == 3
-    neo_store.summarize_topics.assert_called_once_with(
-        session_id="sess-1",
-        openrouter_key="key",
-        llm_model="model",
-        pg_store=fake_pg,
-        gds_modularity=0.42,
-        community_algorithm="leiden",
-    )
+    neo_store.write_topic_summaries.assert_called_once()
+    call_kwargs = neo_store.write_topic_summaries.call_args.kwargs
+    assert call_kwargs["session_id"] == "sess-1"
+    assert call_kwargs["pg_store"] is fake_pg
+    assert call_kwargs["gds_modularity"] == 0.42
+    assert call_kwargs["community_algorithm"] == "leiden"
+    assert call_kwargs["summarizer"] is not None
 
 
 @pytest.mark.asyncio
-async def test_run_topic_summarization_bare_driver_returns_zero() -> None:
-    driver = _make_driver()
-    driver.summarize_topics = AsyncMock(return_value=0)
+async def test_run_topic_summarization_no_llm_key_passes_none_summarizer() -> None:
+    neo_store = MagicMock()
+    neo_store.write_topic_summaries = AsyncMock(return_value=0)
     svc = LTMEnrichmentService()
     count = await svc.run_topic_summarization(
         session_id="sess-2",
-        driver=driver,
+        driver=neo_store,
         pg_store=MagicMock(),
-        llm_key="key",
+        llm_key="",
         llm_model="model",
     )
     assert count == 0
+    call_kwargs = neo_store.write_topic_summaries.call_args.kwargs
+    assert call_kwargs["summarizer"] is None
 
 
 @pytest.mark.asyncio

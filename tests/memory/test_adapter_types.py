@@ -197,7 +197,6 @@ class TestPromoteOptions:
         options = PromoteOptions(session_id="s1")
 
         assert options.run_gds is True
-        assert options.run_topics is True
 
     def test_frozen_prevents_mutation(self) -> None:
         """Frozen dataclass must raise when mutation is attempted."""

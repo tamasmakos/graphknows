@@ -108,6 +108,7 @@ def test_pgvector_store_has_required_stm_methods():
         "promote_to_ltm": {"session_id"},
         "clear_stm": {"session_id"},
         "write_ltm_topic": {"topic"},
+        "write_community_assignments": {"session_id", "assignments"},
     }
 
     for method_name, expected_params in required.items():

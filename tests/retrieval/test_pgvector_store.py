@@ -98,7 +98,7 @@ async def test_upsert_chunks_calls_executemany():
     await store.upsert_chunks("sess1", chunks)
     conn.executemany.assert_called_once()
     sql, records = conn.executemany.call_args[0]
-    assert "INSERT INTO chunks" in sql
+    assert "INSERT INTO stm_chunks" in sql
     assert "ON CONFLICT" in sql
     # record should be (id, session_id, doc_id, text_truncated, emb_json, meta_json)
     assert records[0][0] == "c1"
@@ -436,3 +436,34 @@ async def test_promote_to_ltm_returns_counts():
     chunks, turns = await store.promote_to_ltm("s1")
     assert chunks == 7
     assert turns == 3
+
+
+# ---------------------------------------------------------------------------
+# write_community_assignments
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_community_assignments_updates_ltm_chunks():
+    store, conn = _make_store()
+    conn.execute = AsyncMock(return_value="UPDATE 2")
+
+    await store.write_community_assignments(
+        "s1",
+        [
+            {
+                "community_id": 3,
+                "weight": 2.0,
+                "entity_names": ["EU", "France"],
+                "chunk_ids": ["c1", "c2"],
+            }
+        ],
+    )
+
+    sql, *params = conn.execute.call_args[0]
+    assert "UPDATE ltm_chunks" in sql
+    assert params[0] == 3
+    assert params[1] == 2.0
+    assert params[2] == "s1"
+    assert params[3] == ["EU", "France"]
+    assert params[4] == ["c1", "c2"]

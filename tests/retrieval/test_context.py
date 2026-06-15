@@ -229,6 +229,15 @@ def test_to_xml_produces_valid_xml_for_full_context():
     ET.fromstring(xml_str)  # raises if invalid
 
 
+def test_to_xml_does_not_mutate_semantic_metadata():
+    ctx = _make_full_context()
+    before = dict(ctx.semantic_matches[0].metadata)
+
+    ctx.to_xml()
+
+    assert ctx.semantic_matches[0].metadata == before
+
+
 def test_to_xml_root_element_has_correct_attributes():
     ctx = _simple_ctx()
     root = ET.fromstring(ctx.to_xml())

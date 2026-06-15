@@ -51,5 +51,4 @@ RECALL_REQUEST = RecallRequest(
 PROMOTE_OPTIONS = PromoteOptions(
     session_id=SESSION_ID,
     run_gds=False,
-    run_topics=False,
 )
