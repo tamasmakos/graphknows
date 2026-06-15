@@ -28,6 +28,13 @@ class Neo4jAdapter:
     async def ensure_indexes(self) -> None:
         return await self._store.ensure_indexes()
 
+    async def run_read_query(
+        self,
+        template: str,
+        params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self._store.run_read_query(template, params)
+
     async def upsert_chunks(self, chunks: list[dict[str, Any]]) -> None:
         return await self._store.upsert_chunks(chunks)
 
@@ -83,6 +90,9 @@ class Neo4jAdapter:
 
     async def get_entity_community(self, entity_name: str) -> dict[str, Any] | None:
         return await self._store.get_entity_community(entity_name)
+
+    async def get_community_assignments(self) -> list[dict[str, Any]]:
+        return await self._store.get_community_assignments()
 
     async def write_session_subgraph(
         self, session_id: str, stm_data: dict[str, Any]

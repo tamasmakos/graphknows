@@ -117,3 +117,11 @@ class IVectorDb(Protocol):
     async def write_ltm_topic(self, topic: dict[str, Any]) -> None:
         """UPSERT a topic into ltm_topics."""
         ...
+
+    async def write_community_assignments(
+        self,
+        session_id: str,
+        assignments: list[dict[str, Any]],
+    ) -> None:
+        """Write community metadata onto semantic memory rows."""
+        ...

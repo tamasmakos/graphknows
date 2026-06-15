@@ -112,6 +112,13 @@ class PgVectorAdapter:
     async def write_ltm_topic(self, topic: dict[str, Any]) -> None:
         return await self._store.write_ltm_topic(topic)
 
+    async def write_community_assignments(
+        self,
+        session_id: str,
+        assignments: list[dict[str, Any]],
+    ) -> None:
+        return await self._store.write_community_assignments(session_id, assignments)
+
 
 # Verify structural compatibility at import time
 def _assert_protocol() -> None:

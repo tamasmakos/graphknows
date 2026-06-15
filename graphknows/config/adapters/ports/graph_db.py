@@ -13,6 +13,14 @@ class IGraphDb(Protocol):
         """Create corpus + session indexes idempotently."""
         ...
 
+    async def run_read_query(
+        self,
+        template: str,
+        params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run a parameterized read-only Cypher query."""
+        ...
+
     async def upsert_chunks(self, chunks: list[dict[str, Any]]) -> None:
         """Write Chunk nodes (idempotent MERGE)."""
         ...
@@ -79,6 +87,10 @@ class IGraphDb(Protocol):
 
     async def get_entity_community(self, entity_name: str) -> dict[str, Any] | None:
         """Return the Topic node linked to entity_name via IN_COMMUNITY edge."""
+        ...
+
+    async def get_community_assignments(self) -> list[dict[str, Any]]:
+        """Return LTM entity community assignments and chunk ids."""
         ...
 
     async def write_session_subgraph(
