@@ -56,6 +56,38 @@ class Neo4jStore:
     async def _arun(self, cypher: str, **params: Any) -> list[Any]:
         return await asyncio.to_thread(self._run, cypher, **params)
 
+    async def run_read_query(
+        self,
+        template: str,
+        params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run a parameterized read-only Cypher query."""
+        import re
+
+        if re.search(r"\{[^}]+\}", template):
+            raise ValueError("Cypher template must use $params, not {var} interpolation")
+        forbidden = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.IGNORECASE)
+        if forbidden.search(template):
+            raise ValueError("Only read-only Cypher is permitted")
+        rows = await self._arun(template, **(params or {}))
+        return [dict(row) for row in rows]
+
+    async def get_community_assignments(self) -> list[dict[str, Any]]:
+        """Return current LTM entity community assignments and mentioned chunks."""
+        return await self.run_read_query(
+            """
+            MATCH (e:ENTITY)
+            WHERE e.community_id IS NOT NULL
+            OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e)
+            OPTIONAL MATCH (t:TURN)-[:HAS_ENTITY|MENTIONS]->(e)
+            WITH e.community_id AS community_id,
+                 collect(DISTINCT e.name) AS entity_names,
+                 collect(DISTINCT c.id) AS chunk_ids,
+                 collect(DISTINCT t.id) AS turn_ids
+            RETURN community_id, entity_names, chunk_ids, turn_ids
+            """
+        )
+
     def close(self) -> None:
         """Close the Neo4j Bolt driver connection."""
         self._driver.close()
@@ -620,25 +652,23 @@ class Neo4jStore:
 
         return await asyncio.to_thread(_sync_write)
 
-    async def summarize_topics(
+    async def write_topic_summaries(
         self,
         session_id: str,
-        openrouter_key: str,
-        llm_model: str = "meta-llama/llama-3.1-8b-instruct",
+        summarizer: Any = None,
         pg_store: Any = None,
         gds_modularity: float | None = None,
         community_algorithm: str | None = None,
     ) -> int:
-        """Summarize graph communities and write TOPIC nodes.
+        """Write TOPIC nodes for graph communities.
 
         GDS-owned communities are preferred: if ``ENTITY.community_id`` exists,
         those yielded communities define topics. If GDS has not run, a local
-        Leiden fallback is used and the fallback community IDs are written back
-        to entities for notebook and UI inspection.
+        Leiden fallback is used.
 
         Only communities whose member set changed since the previous flush are
-        re-summarized. Topic nodes always receive the available modularity and
-        community algorithm metadata.
+        re-summarized. If ``summarizer`` is provided, it is used to generate
+        LLM-assisted titles and summaries; otherwise entity names are used as labels.
         """
         import hashlib
         import uuid as _uuid
@@ -662,11 +692,6 @@ class Neo4jStore:
         except Exception as exc:
             logger.warning("summarize_topics: could not load existing hashes: %s", exc)
 
-        summarizer = None
-        if openrouter_key:
-            from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
-
-            summarizer = TopicSummarizer(openrouter_key, llm_model)
         topics_created = 0
         for comm_id, members in communities.items():
             if len(members) < 2:
