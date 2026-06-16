@@ -32,7 +32,7 @@ class EntityResolution:
         merge_count = 0
 
         for group in groups.values():
-            best = max(group, key=lambda item: float(item.get("confidence", 1.0) or 0.0))
+            best = max(group, key=lambda item: float(item.get("score", item.get("confidence", 1.0)) or 0.0))
             canonical_name = str(best.get("name", "")).strip()
             alias_names = sorted(
                 {
