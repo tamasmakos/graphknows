@@ -385,8 +385,9 @@ class MemgraphStore:
                 rows = list(
                     s.run(
                         """
-                        UNWIND $names AS n
-                        MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY {name: n, session_id: $sid})
+                        MATCH (e:ENTITY {session_id: $sid})
+                        WHERE any(w IN $names WHERE toLower(e.name) CONTAINS w)
+                        MATCH (c:CHUNK)-[:MENTIONS]->(e)
                         RETURN DISTINCT c.id AS chunk_id, c.text AS text
                         LIMIT $k
                         """,
