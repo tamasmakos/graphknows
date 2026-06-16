@@ -7,17 +7,13 @@ DSPy/LiteLLM stack unless an LLM-assisted relation adapter is explicitly used.
 from typing import Any
 
 from graphknows.config.adapters.ports.embedder import IEmbedder
-from graphknows.config.adapters.ports.graph_db import IGraphDb
 from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
-from graphknows.config.adapters.ports.session_db import ISessionDb
 from graphknows.config.adapters.ports.vector_db import IVectorDb
 
 __all__ = [
     "DspyRelationExtractorAdapter",
     "IEmbedder",
-    "IGraphDb",
     "IRelationExtractor",
-    "ISessionDb",
     "IVectorDb",
 ]
 

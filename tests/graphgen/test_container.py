@@ -1,7 +1,7 @@
-"""Wave 3 — container.py GraphKnowsContainer tests.
+"""container.py GraphKnowsContainer tests.
 
 Tests using __new__ bypass + mock injection:
-- from_env / from_settings class methods
+- from_env class method
 - retriever/pg/neo/memgraph property guards (raise RuntimeError when not entered)
 - __init__ state initialization
 - _ERR_NOT_ENTERED sentinel
@@ -60,11 +60,11 @@ class TestGraphKnowsContainerInit:
 
 
 class TestFromClassMethods:
-    def test_from_settings_returns_container(self):
+    def test_constructor_accepts_settings(self):
         from graphknows.container import GraphKnowsContainer
 
         settings = MagicMock()
-        c = GraphKnowsContainer.from_settings(settings)
+        c = GraphKnowsContainer(settings)
         assert isinstance(c, GraphKnowsContainer)
         assert c.settings is settings
 
