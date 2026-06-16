@@ -40,6 +40,7 @@ class FileBackedBenchmarkOptions:
     promote_to_ltm: bool = False
     session_prefix: str = "eval"
     purge: bool = True
+    relation_extraction_mode: str = "gliner2"
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
@@ -183,9 +184,11 @@ async def run_file_backed_benchmark(
             max_documents=options.max_documents,
             max_chars=options.max_chars_per_document,
         )
-        ingest_results: list[dict[str, Any]] = []
+        ingest_outputs: list[dict[str, Any]] = []
         flush_result: dict[str, Any] = {}
+        retrieval_raw: dict[str, Any] = {}
         recall: list[dict[str, Any]] = []
+        ltm_entity_list: list[dict[str, Any]] = []
         try:
             for index, document in enumerate(documents):
                 result = await client.call_tool(
@@ -196,10 +199,23 @@ async def run_file_backed_benchmark(
                         "title": document["title"] or f"{case_id}-document-{index}",
                     },
                 )
-                ingest_results.append(result if isinstance(result, dict) else {"result": result})
+                mcp_result = result if isinstance(result, dict) else {"result": result}
+                is_error = "chunks" not in mcp_result
+                ingest_outputs.append({
+                    "document_title": document["title"],
+                    "document_text": document["text"],
+                    "is_error": is_error,
+                    **mcp_result,
+                })
             if options.promote_to_ltm:
                 result = await client.call_tool("memory_flush", {"session_id": session_id})
                 flush_result = result if isinstance(result, dict) else {"result": result}
+                # Capture entity list after flush for extraction quality analysis.
+                entity_result = await client.call_tool(
+                    "ltm_entities", {"session_id": session_id, "limit": 500}
+                )
+                if isinstance(entity_result, dict):
+                    ltm_entity_list = entity_result.get("entities", [])
             result = await client.call_tool(
                 "memory_query",
                 {
@@ -209,12 +225,18 @@ async def run_file_backed_benchmark(
                     "scope": options.recall_scope,
                 },
             )
-            recall = _parse_memory_query_hits(result)
+            retrieval_raw = result if isinstance(result, dict) else {"result": result}
+            recall = _parse_memory_query_hits(retrieval_raw)
         finally:
             if options.purge:
                 await client.call_tool("memory_purge", {"scope": "both", "session_id": session_id})
 
         answer_score = _answer_support_score(gold, recall)
+        ingest_elapsed_s = sum(float(r.get("elapsed_s", 0)) for r in ingest_outputs)
+        flush_elapsed_s = float(flush_result.get("elapsed_s", 0)) if flush_result else 0.0
+        ltm_graph_hit_count = sum(
+            1 for h in recall if "ltm_graph" in str(h.get("sources", ""))
+        )
         cases.append(
             BenchmarkCaseResult(
                 case_id=case_id,
@@ -226,22 +248,33 @@ async def run_file_backed_benchmark(
                     "category": category or None,
                     "session_id": session_id,
                     "source_file": str(options.data_root / options.questions_file),
-                    "ingest_documents": len(documents),
-                    "ingest_results": ingest_results,
+                    "relation_extraction_mode": options.relation_extraction_mode,
+                    "recall_scope": options.recall_scope,
+                    "promote_to_ltm": options.promote_to_ltm,
+                    "top_k": options.top_k,
+                    "ingest_documents": len(ingest_outputs),
+                    "ingest_outputs": ingest_outputs,
                     "flush_result": flush_result or None,
+                    "ltm_entity_list": ltm_entity_list,
+                    "retrieval_raw": retrieval_raw,
                 },
                 metrics={
                     "recall_hit_count": len(recall),
                     "answer_support_score": answer_score,
                     "answer_support_hit": answer_score >= 1.0,
-                    "ingest_calls": len(ingest_results),
-                    "ingested_chunks": sum(int(result.get("chunks", 0)) for result in ingest_results),
-                    "ingested_entities": sum(int(result.get("entities", 0)) for result in ingest_results),
+                    "ingest_calls": len(ingest_outputs),
+                    "ingest_error_count": sum(1 for o in ingest_outputs if o.get("is_error", False)),
+                    "ingested_chunks": sum(int(r.get("chunks", 0)) for r in ingest_outputs),
+                    "ingested_entities": sum(int(r.get("entities", 0)) for r in ingest_outputs),
+                    "ingest_elapsed_s": round(ingest_elapsed_s, 3),
                     "flush_nodes": int(flush_result.get("nodes", 0)) if flush_result else 0,
                     "flush_edges": int(flush_result.get("edges", 0)) if flush_result else 0,
                     "flush_chunks": int(flush_result.get("chunks", 0)) if flush_result else 0,
                     "flush_topics": int(flush_result.get("topics_created", 0)) if flush_result else 0,
+                    "flush_elapsed_s": round(flush_elapsed_s, 3),
                     "flush_error_count": len(flush_result.get("errors", [])) if flush_result else 0,
+                    "ltm_entity_count": len(ltm_entity_list),
+                    "ltm_graph_hit_count": ltm_graph_hit_count,
                 },
                 score=answer_score,
             )
