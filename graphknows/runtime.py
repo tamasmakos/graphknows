@@ -259,15 +259,19 @@ class GraphKnowsRuntime:
         )
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, lambda: bg_run(pipeline.promote(request)))
+        await loop.run_in_executor(None, lambda: bg_run(pipeline.close()))
 
         try:
             pg = build_pgvector_store(self.settings)
-            await pg.connect()
-            neo_sync = build_neo4j_store(self.settings)
             try:
-                await self._sync_topics_to_pgvector(neo_sync, pg)
+                await pg.connect()
+                neo_sync = build_neo4j_store(self.settings)
+                try:
+                    await self._sync_topics_to_pgvector(neo_sync, pg)
+                finally:
+                    neo_sync.close()
             finally:
-                neo_sync.close()
+                await pg.close()
         except Exception as exc:
             result.errors.append(f"topic_sync: {exc}")
 
@@ -358,13 +362,16 @@ class GraphKnowsRuntime:
             from graphknows.config.builders.stores import build_pgvector_store
 
             pg_store = build_pgvector_store(self.settings)
-            await pg_store.connect()
-            if session_id:
-                await pg_store.clear_stm(session_id)
-            else:
-                pool = pg_store._pool_or_raise()
-                async with pool.acquire() as conn:
-                    await conn.execute("TRUNCATE TABLE stm_chunks, stm_turns")
+            try:
+                await pg_store.connect()
+                if session_id:
+                    await pg_store.clear_stm(session_id)
+                else:
+                    pool = pg_store._pool_or_raise()
+                    async with pool.acquire() as conn:
+                        await conn.execute("TRUNCATE TABLE stm_chunks, stm_turns")
+            finally:
+                await pg_store.close()
         except Exception as exc:
             errors.append(f"pgvector stm: {exc}")
 
@@ -382,24 +389,27 @@ class GraphKnowsRuntime:
 
         try:
             pg_store = build_pgvector_store(self.settings)
-            await pg_store.connect()
-            pool = pg_store._pool_or_raise()
-            async with pool.acquire() as conn:
-                if session_id:
-                    await conn.execute("DELETE FROM ltm_chunks WHERE session_id = $1", session_id)
-                    await conn.execute("DELETE FROM ltm_turns WHERE session_id = $1", session_id)
-                    await conn.execute(
-                        "DELETE FROM ltm_topics "
-                        "WHERE $1 = ANY(COALESCE(session_ids, ARRAY[]::text[]))",
-                        session_id,
-                    )
-                    if await conn.fetchval("SELECT to_regclass('public.chunks') IS NOT NULL"):
-                        await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
-                else:
-                    await conn.execute(
-                        "TRUNCATE TABLE ltm_chunks, ltm_turns, ltm_topics, "
-                        "chunks, chunk_entities, entities"
-                    )
+            try:
+                await pg_store.connect()
+                pool = pg_store._pool_or_raise()
+                async with pool.acquire() as conn:
+                    if session_id:
+                        await conn.execute("DELETE FROM ltm_chunks WHERE session_id = $1", session_id)
+                        await conn.execute("DELETE FROM ltm_turns WHERE session_id = $1", session_id)
+                        await conn.execute(
+                            "DELETE FROM ltm_topics "
+                            "WHERE $1 = ANY(COALESCE(session_ids, ARRAY[]::text[]))",
+                            session_id,
+                        )
+                        if await conn.fetchval("SELECT to_regclass('public.chunks') IS NOT NULL"):
+                            await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
+                    else:
+                        await conn.execute(
+                            "TRUNCATE TABLE ltm_chunks, ltm_turns, ltm_topics, "
+                            "chunks, chunk_entities, entities"
+                        )
+            finally:
+                await pg_store.close()
         except Exception as exc:
             errors.append(f"pgvector ltm: {exc}")
 
@@ -520,4 +530,38 @@ class GraphKnowsRuntime:
                 )
             ]
         return {"results": topics[: max(1, min(top_k, 20))]}
+
+    def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
+        """List ENTITY nodes from the LTM graph, optionally scoped to one session."""
+        from graphknows.config.builders.stores import build_neo4j_store
+
+        neo = build_neo4j_store(self.settings)
+        try:
+            _db = getattr(neo, "_db", None)
+            kwargs: dict[str, Any] = {"database": _db} if _db else {}
+            with neo._driver.session(**kwargs) as s:
+                if session_id:
+                    cypher = """
+                    MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(:FILE)-[:HAS_CHUNK]->(:CHUNK)
+                          -[:MENTIONS]->(e:ENTITY)
+                    RETURN DISTINCT e.name AS name, coalesce(e.type,'ENTITY') AS type,
+                           coalesce(e.confidence, 1.0) AS confidence,
+                           coalesce(e.pagerank, 0.0) AS pagerank,
+                           coalesce(e.community_id, -1) AS community_id
+                    ORDER BY e.name LIMIT $limit
+                    """
+                    rows = s.run(cypher, sid=session_id, limit=limit).data()
+                else:
+                    cypher = """
+                    MATCH (e:ENTITY)
+                    RETURN e.name AS name, coalesce(e.type,'ENTITY') AS type,
+                           coalesce(e.confidence, 1.0) AS confidence,
+                           coalesce(e.pagerank, 0.0) AS pagerank,
+                           coalesce(e.community_id, -1) AS community_id
+                    ORDER BY e.name LIMIT $limit
+                    """
+                    rows = s.run(cypher, limit=limit).data()
+        finally:
+            neo.close()
+        return {"entities": [dict(r) for r in rows], "count": len(rows), "session_id": session_id}
 
