@@ -45,7 +45,8 @@ from graphknows.mcp._app import app  # noqa: E402
 # Re-export tool functions so existing code/tests can reference them on this module
 from graphknows.mcp.tools.admin import memory_doctor, memory_purge, memory_stats  # noqa: F401, E402
 from graphknows.mcp.tools.corpus import corpus_ingest  # noqa: F401, E402
-from graphknows.mcp.tools.ltm import ltm_entity, ltm_query, ltm_topics  # noqa: F401, E402
+from graphknows.mcp.tools.ltm import ltm_entities, ltm_entity, ltm_query, ltm_topics  # noqa: F401, E402
+from graphknows.mcp.tools.query import memory_query  # noqa: F401, E402
 from graphknows.mcp.tools.stm import memory_flush, memory_ingest, memory_recall  # noqa: F401, E402
 from graphknows.mcp.tools.web import memory_mirror  # noqa: F401, E402
 

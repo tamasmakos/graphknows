@@ -46,8 +46,10 @@ def test_all_tools_registered():
         "memory_recall",
         "memory_flush",
         "memory_mirror",
+        "memory_query",
         "ltm_query",
         "ltm_entity",
+        "ltm_entities",
         "ltm_topics",
         "corpus_ingest",
     }
