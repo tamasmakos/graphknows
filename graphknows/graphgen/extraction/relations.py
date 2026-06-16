@@ -301,10 +301,15 @@ class DSPyExtractor(BaseExtractor):
     def _normalize_triplet(
         self, raw: dict[str, Any]
     ) -> tuple[str, str, str, str, str, dict[str, Any]]:
-        """Standardize labels and build the props dict for a valid triplet."""
-        source = standardize_label(raw["source"])
+        """Standardize labels and build the props dict for a valid triplet.
+
+        Entity names (source/target) preserve original casing so they match
+        GLiNER2 extractions during entity resolution. Relation types are still
+        standardized to UPPER_CASE_WITH_UNDERSCORES for Cypher compatibility.
+        """
+        source = (raw["source"] or "").strip()
         relation = standardize_label(raw["relation"])
-        target = standardize_label(raw["target"])
+        target = (raw["target"] or "").strip()
         source_type = standardize_label(raw.get("source_type") or "") or "ENTITY"
         target_type = standardize_label(raw.get("target_type") or "") or "ENTITY"
         props = {
