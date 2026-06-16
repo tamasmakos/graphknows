@@ -168,6 +168,7 @@ async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkRepo
                 promote_to_ltm=args.promote_to_ltm,
                 session_prefix="eval-locomo",
                 purge=not args.no_purge,
+                relation_extraction_mode=args.relation_extraction_mode,
             ),
         )
     return write_benchmark_report(
@@ -273,6 +274,7 @@ async def _run_longmemeval(args: argparse.Namespace, *, run_id: str) -> Benchmar
                     promote_to_ltm=args.promote_to_ltm,
                     session_prefix="eval-longmemeval",
                     purge=not args.no_purge,
+                    relation_extraction_mode=args.relation_extraction_mode,
                 ),
             )
     return write_benchmark_report(
@@ -319,6 +321,7 @@ async def _run_beam(args: argparse.Namespace, *, run_id: str) -> BenchmarkReport
                 promote_to_ltm=args.promote_to_ltm,
                 session_prefix=f"eval-beam-{args.beam_scale}",
                 purge=not args.no_purge,
+                relation_extraction_mode=args.relation_extraction_mode,
             ),
         )
     return write_benchmark_report(
