@@ -834,12 +834,12 @@ class PgVectorStore:
                     await conn.execute(
                         """
                         UPDATE ltm_chunks
-                        SET community_id = $1,
-                            community_weight = $2,
+                        SET community_id     = $1::int,
+                            community_weight = $2::float8,
                             metadata = coalesce(metadata, '{}'::jsonb)
                                 || jsonb_build_object(
-                                    'community_id', $1,
-                                    'community_weight', $2,
+                                    'community_id', $1::int,
+                                    'community_weight', $2::float8,
                                     'community_entity_names', $4::text[]
                                 )
                         WHERE session_id = $3 AND id = ANY($5::text[])
@@ -854,12 +854,12 @@ class PgVectorStore:
                     await conn.execute(
                         """
                         UPDATE ltm_turns
-                        SET community_id = $1,
-                            community_weight = $2,
+                        SET community_id     = $1::int,
+                            community_weight = $2::float8,
                             metadata = coalesce(metadata, '{}'::jsonb)
                                 || jsonb_build_object(
-                                    'community_id', $1,
-                                    'community_weight', $2,
+                                    'community_id', $1::int,
+                                    'community_weight', $2::float8,
                                     'community_entity_names', $4::text[]
                                 )
                         WHERE session_id = $3 AND id = ANY($5::text[])
