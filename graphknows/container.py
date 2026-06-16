@@ -74,11 +74,6 @@ class GraphKnowsContainer:
         """Build a container from environment variables / .env file."""
         return cls(GraphKnowsSettings())
 
-    @classmethod
-    def from_settings(cls, settings: GraphKnowsSettings) -> GraphKnowsContainer:
-        """Build a container from a pre-constructed settings object."""
-        return cls(settings)
-
     # ------------------------------------------------------------------
     # Async context manager
     # ------------------------------------------------------------------
@@ -175,10 +170,6 @@ class GraphKnowsContainer:
         any tool is *called* (though building the list is safe beforehand).
         """
         return _build_tools(self)
-
-    # ------------------------------------------------------------------
-    # (legacy _run_ingest_task removed in Wave 5 Epic #43)
-    # ------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

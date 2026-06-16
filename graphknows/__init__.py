@@ -31,7 +31,6 @@ No agent framework is imported by this package.
 from __future__ import annotations
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.config.wiring import build_service
 from graphknows.container import GraphKnowsContainer
 from graphknows.mcp.tool import GraphKnowsTool
 from graphknows.memory.query import DETRetriever, RetrievalContext
@@ -54,7 +53,6 @@ __all__ = [
     "Neo4jStore",
     "PgVectorStore",
     "RetrievalContext",
-    "build_service",
     "embed",
     "embed_one",
     "get_embedder",

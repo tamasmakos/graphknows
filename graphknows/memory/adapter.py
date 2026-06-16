@@ -427,16 +427,6 @@ class GraphknowsMemoryAdapter:
         msgs = normalize_messages(messages)
         return await asyncio.to_thread(svc.ingest_messages, msgs, options)
 
-    async def _ingest_text(
-        self,
-        text: str,
-        session_id: str,
-        title: str = "",
-    ) -> IngestResult:
-        """Ingest raw text as a document (artifact path, not dialog turns)."""
-        _, _, svc = self._build_svc()
-        return await asyncio.to_thread(svc.ingest, text, session_id=session_id, title=title)
-
     # ------------------------------------------------------------------
     # recall
     # ------------------------------------------------------------------

@@ -1,8 +1,4 @@
-"""Shared store factory functions.
-
-Provides both concrete store factories (for backward compatibility) and
-adapter factories that return port-typed instances.
-"""
+"""Shared store factory functions."""
 
 from __future__ import annotations
 
@@ -10,15 +6,7 @@ import os
 from typing import Any
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.config.adapters.embedder_adapter import EmbedderAdapter
-from graphknows.config.adapters.memgraph_adapter import MemgraphAdapter
-from graphknows.config.adapters.neo4j_adapter import Neo4jAdapter
-from graphknows.config.adapters.pgvector_adapter import PgVectorAdapter
-from graphknows.config.adapters.ports.embedder import IEmbedder
-from graphknows.config.adapters.ports.graph_db import IGraphDb
 from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
-from graphknows.config.adapters.ports.session_db import ISessionDb
-from graphknows.config.adapters.ports.vector_db import IVectorDb
 from graphknows.memory.stores.memgraph import MemgraphStore
 from graphknows.memory.stores.neo4j import Neo4jStore
 from graphknows.memory.stores.pgvector import PgVectorStore
@@ -45,13 +33,12 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
 
 
 def build_neo4j_store(settings: GraphKnowsSettings) -> Neo4jStore:
-    """Build a Neo4jStore from settings (backward-compat)."""
+    """Build a Neo4jStore from settings."""
     relation_extractor = (
         build_relation_extractor(settings)
         if settings.relation_extraction_mode == "llm_assisted"
         else None
     )
-
     return Neo4jStore(
         uri=settings.neo4j_uri,
         user=settings.neo4j_user,
@@ -62,39 +49,16 @@ def build_neo4j_store(settings: GraphKnowsSettings) -> Neo4jStore:
 
 
 def build_pgvector_store(settings: GraphKnowsSettings) -> PgVectorStore:
-    """Build a PgVectorStore from settings (backward-compat)."""
+    """Build a PgVectorStore from settings."""
     return PgVectorStore(dsn=settings.pgvector_dsn)
 
 
 def build_memgraph_store(settings: GraphKnowsSettings) -> MemgraphStore:
-    """Build a MemgraphStore from settings (backward-compat)."""
+    """Build a MemgraphStore from settings."""
     return MemgraphStore(uri=settings.memgraph_uri)
 
 
-# --- Port-typed adapter factories (preferred for new code) ---
-
-
-def build_graph_db(settings: GraphKnowsSettings) -> IGraphDb:
-    """Build an IGraphDb adapter from settings."""
-    return Neo4jAdapter(build_neo4j_store(settings))
-
-
-def build_vector_db(settings: GraphKnowsSettings) -> IVectorDb:
-    """Build an IVectorDb adapter from settings."""
-    return PgVectorAdapter(build_pgvector_store(settings))
-
-
-def build_session_db(settings: GraphKnowsSettings) -> ISessionDb:
-    """Build an ISessionDb adapter from settings."""
-    return MemgraphAdapter(build_memgraph_store(settings))
-
-
-def build_embedder(model_name: str = "openai/text-embedding-3-small") -> IEmbedder:
-    """Build an IEmbedder adapter."""
-    return EmbedderAdapter(model_name=model_name)
-
-
-# --- Service factories (MCP transport layer) ---
+# --- Service factories ---
 
 
 def _build_entity_extractor(mode: str) -> Any:
@@ -150,7 +114,6 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     neo = build_neo4j_store(settings)
     mode = settings.relation_extraction_mode
     extractor = _build_entity_extractor(mode)
-    rel_extractor = None
     key = settings.openrouter_api_key or ""
     return CorpusIngestWorkflow(
         mg_store=mg,
@@ -159,7 +122,7 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
         extractor=extractor,
         embed_fn=embed_one,
         openrouter_key=key,
-        rel_extractor=rel_extractor,
+        rel_extractor=None,
         relation_extraction_mode=mode,
         flush_pg_store=flush_pg,
     )
