@@ -100,7 +100,9 @@ class DETRetriever(BaseGraphRetriever):
                     combined[cid] = (score, info)
 
         ranked = sorted(combined.items(), key=lambda x: -x[1][0])[:top_k]
-        needs_fetch = [cid for cid, (_, info) in ranked if not info.get("text")]
+        # Fetch PgVector metadata for any chunk that lacks it (ltm_graph arm
+        # returns text from Neo4j but no community_weight/memory_class metadata).
+        needs_fetch = [cid for cid, (_, info) in ranked if not info.get("metadata")]
         text_map = await self.pg.get_chunks_by_ids(needs_fetch) if needs_fetch else {}
 
         fused: list[dict[str, Any]] = []
@@ -266,8 +268,9 @@ class DETRetriever(BaseGraphRetriever):
                 MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c0:CHUNK)
                 MATCH (c0)-[:MENTIONS]->(e:ENTITY)
                 WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                MATCH (e)-[r]-(e2:ENTITY)
-                WHERE NOT type(r) IN $skip_types
+                MATCH path = (e)-[*1..2]-(e2:ENTITY)
+                WHERE e2 <> e
+                  AND NONE(rel IN relationships(path) WHERE type(rel) IN $skip_types)
                 MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e2)
                 WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
                 ORDER BY mc DESC LIMIT $top_k
@@ -283,8 +286,9 @@ class DETRetriever(BaseGraphRetriever):
                 rel_cypher = """
                 MATCH (e:ENTITY)
                 WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                MATCH (e)-[r]-(e2:ENTITY)
-                WHERE NOT type(r) IN $skip_types
+                MATCH path = (e)-[*1..2]-(e2:ENTITY)
+                WHERE e2 <> e
+                  AND NONE(rel IN relationships(path) WHERE type(rel) IN $skip_types)
                 MATCH (c:CHUNK)-[:MENTIONS]->(e2)
                 WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
                 ORDER BY mc DESC LIMIT $top_k
