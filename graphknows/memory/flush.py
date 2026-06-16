@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import math
 import time
 from typing import Any, cast
 
@@ -50,6 +51,10 @@ class LTMPromotionPipeline:
         self._enrichment = enrichment_service or LTMEnrichmentService()
         self._entity_resolution = EntityResolution()
 
+    async def close(self) -> None:
+        """Release the internal PgVector pool (must be called from the same event loop that created it)."""
+        await self._pg.close()
+
     async def promote(self, request: PromotionRequest) -> PromotionRecord:
         """Run the full STM→LTM promotion pipeline.
 
@@ -74,6 +79,20 @@ class LTMPromotionPipeline:
                 stm_data.get("entities", [])
             )
             record.merged_entities = record.audit.merged_entities
+            # Remap alias names in edges to the canonical form so Neo4j doesn't
+            # create split entity nodes (one with CHUNK-[:MENTIONS] edges from
+            # chunk_entity_edges, another with relation edges from the canonical).
+            if record.audit.entity_aliases:
+                alias_to_canon: dict[str, str] = {}
+                for canon, aliases in record.audit.entity_aliases.items():
+                    for alias in aliases:
+                        alias_to_canon[alias.casefold()] = canon
+                for edge in stm_data.get("chunk_entity_edges", []):
+                    name = edge.get("entity_name", "")
+                    edge["entity_name"] = alias_to_canon.get(name.casefold(), name)
+                for edge in stm_data.get("turn_entity_edges", []):
+                    name = edge.get("entity_name", "")
+                    edge["entity_name"] = alias_to_canon.get(name.casefold(), name)
 
         graph_counts = await self._write_ltm_graph(
             request.session_id, stm_data, errors=record.errors
@@ -87,9 +106,13 @@ class LTMPromotionPipeline:
         gds_result = None
         if policy.run_gds:
             gds_result = await self._run_gds(record)
-            await self._write_community_metadata(request.session_id, record)
         if policy.run_topics:
             await self._run_topics(request.session_id, gds_result, record)
+        if policy.run_gds:
+            # Community metadata written after GDS+topics so that both the
+            # Python-native Leiden write-back and any leidenalg fallback in
+            # write_topic_summaries have already set community_id on ENTITY nodes.
+            await self._write_community_metadata(request.session_id, record)
 
         if policy.clear_stm:
             try:
@@ -225,7 +248,7 @@ class LTMPromotionPipeline:
         chunk_ids = [chunk_id for chunk_id in row.get("chunk_ids", []) if chunk_id]
         turn_ids = [turn_id for turn_id in row.get("turn_ids", []) if turn_id]
         community_id = int(row.get("community_id") or row.get("cid") or 0)
-        weight = max(1.0, float(len(entity_names) or 1))
+        weight = max(1.0, 1.0 + math.log1p(len(entity_names)))
         return CommunityAssignment(
             community_id=community_id,
             entity_names=entity_names,
