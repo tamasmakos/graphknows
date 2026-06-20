@@ -1,4 +1,4 @@
-"""Cypher identifier and property helpers shared by the Neo4j store."""
+"""Cypher identifier and property helpers for graph store operations."""
 
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ def _escape_cypher_identifier(identifier: str) -> str:
     return identifier
 
 
-def _clean_props_for_neo4j(props: dict[str, Any]) -> dict[str, Any]:
-    """Clean a property dict so every value is Neo4j-compatible.
+def _clean_props(props: dict[str, Any]) -> dict[str, Any]:
+    """Clean a property dict so every value is Cypher-compatible.
 
-    Neo4j supports primitives (bool, int, float, str) and homogeneous lists of
+    Supports primitives (bool, int, float, str) and homogeneous lists of
     primitives. Everything else is JSON-encoded to a string.
     """
     cleaned: dict[str, Any] = {}
@@ -38,14 +38,14 @@ def _clean_props_for_neo4j(props: dict[str, Any]) -> dict[str, Any]:
         if value is None:
             continue
 
-        if isinstance(value, (bool, int, float, str)):
+        if isinstance(value, bool | int | float | str):
             cleaned[key] = value
-        elif isinstance(value, (list, tuple)):
+        elif isinstance(value, list | tuple):
             if not value:
                 continue
             first = value[0]
             if all(isinstance(x, type(first)) for x in value):
-                if isinstance(first, (int, float, str)):
+                if isinstance(first, int | float | str):
                     cleaned[key] = list(value)
                 else:
                     try:
