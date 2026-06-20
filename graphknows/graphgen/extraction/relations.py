@@ -139,9 +139,9 @@ class BaseExtractor(ABC):
     ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
         """Extract (source, relation, target, props) triplets from *text*."""
 
-    @abstractmethod
     async def close(self) -> None:
-        """Clean up resources."""
+        """Clean up resources (no-op by default; override when the subclass holds connections)."""
+        return
 
 
 # ---------------------------------------------------------------------------

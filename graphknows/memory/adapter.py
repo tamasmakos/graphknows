@@ -10,15 +10,29 @@ import asyncio
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from graphknows.memory.adapter_types import (
     AdapterCapabilities,
+    AgentMemoryAdapter,
     ArtifactRecord,
+    FlushResult,
+    MemoryStats,
     PromoteOptions,
+    RecallHit,
     RecallRequest,
     TurnRecord,
 )
+
+# Re-export so callers that import from this module keep working
+__all__ = [
+    "AgentMemoryAdapter",
+    "FlushResult",
+    "GraphknowsAdapter",
+    "GraphknowsMemoryAdapter",
+    "MemoryStats",
+    "RecallHit",
+]
 from graphknows.memory.flush import LTMPromotionPipeline
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.models.ingest_options import IngestOptions
@@ -257,89 +271,6 @@ class GraphknowsAdapter:
             supports_recall=True,
             supports_promote=True,
         )
-
-
-# ---------------------------------------------------------------------------
-# ADAPT-001: Host-agnostic protocol + concrete GraphknowsMemoryAdapter
-# ---------------------------------------------------------------------------
-# Data transfer objects
-# ---------------------------------------------------------------------------
-# IngestResult is defined in graphknows.memory.models.ingest (imported above).
-
-
-@dataclass
-class RecallHit:
-    """A single hit returned by a memory recall query."""
-
-    score: float
-    text: str
-    session_id: str
-    entities: list[str] = field(default_factory=list)
-    source_type: str = ""
-
-
-@dataclass
-class FlushResult:
-    """Result of flushing a session from STM to LTM."""
-
-    nodes: int
-    edges: int
-    chunks: int
-    turns: int
-    elapsed_s: float
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class MemoryStats:
-    """Aggregate node/chunk counts for STM and LTM."""
-
-    stm: dict[str, Any] = field(default_factory=dict)
-    ltm: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Protocol
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class AgentMemoryAdapter(Protocol):
-    """Stable interface between an agent runtime and Graphknows memory.
-
-    Implementations must be async-safe and session-scoped.
-    All methods are async so they can be used in any async agent loop.
-    """
-
-    async def ingest(
-        self,
-        messages: MessageInput,
-        options: IngestOptions,
-    ) -> IngestResult:
-        """Ingest messages into STM.
-
-        messages accepts str, dict, or list[str | dict | Message].
-        All inputs are normalized via normalize_messages() before storage.
-        """
-        ...
-
-    async def recall(
-        self,
-        query: str,
-        scope: MemoryScope,
-        top_k: int = 5,
-        recall_scope: str = "stm",
-    ) -> list[RecallHit]:
-        """Recall relevant chunks from memory for the given query."""
-        ...
-
-    async def flush(self, scope: MemoryScope) -> FlushResult:
-        """Flush a session from STM to LTM."""
-        ...
-
-    async def stats(self, scope: MemoryScope | None = None) -> MemoryStats:
-        """Return node/chunk counts for STM and LTM."""
-        ...
 
 
 # ---------------------------------------------------------------------------

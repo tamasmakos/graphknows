@@ -1,18 +1,18 @@
 # Memory package — STM ingestion, dialog writing, and LTM flush
 
 from graphknows.memory.adapter import (
-    AgentMemoryAdapter,
-    FlushResult,
     GraphknowsAdapter,
     GraphknowsMemoryAdapter,
-    MemoryStats,
-    RecallHit,
 )
 from graphknows.memory.adapter_types import (
     AdapterCapabilities,
+    AgentMemoryAdapter,
     ArtifactRecord,
+    FlushResult,
     MemoryClass,
+    MemoryStats,
     PromoteOptions,
+    RecallHit,
     RecallRequest,
     TurnRecord,
 )

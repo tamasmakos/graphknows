@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 class MemoryClass(StrEnum):
@@ -125,3 +125,78 @@ class AdapterCapabilities:
     supports_artifact_ingest: bool
     supports_recall: bool
     supports_promote: bool
+
+
+# ---------------------------------------------------------------------------
+# Response types for GraphknowsMemoryAdapter
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RecallHit:
+    """A single hit returned by a memory recall query."""
+
+    score: float
+    text: str
+    session_id: str
+    entities: list[str] = field(default_factory=list)
+    source_type: str = ""
+
+
+@dataclass
+class FlushResult:
+    """Result of flushing a session from STM to LTM."""
+
+    nodes: int
+    edges: int
+    chunks: int
+    turns: int
+    elapsed_s: float
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MemoryStats:
+    """Aggregate node/chunk counts for STM and LTM."""
+
+    stm: dict[str, Any] = field(default_factory=dict)
+    ltm: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class AgentMemoryAdapter(Protocol):
+    """Stable interface between an agent runtime and Graphknows memory.
+
+    Implementations must be async-safe and session-scoped.
+    All methods are async so they can be used in any async agent loop.
+
+    The ``messages`` / ``options`` / ``scope`` parameters accept the types from
+    ``graphknows.memory.models`` — typed as ``Any`` here to avoid circular imports.
+    """
+
+    async def ingest(self, messages: Any, options: Any) -> Any:
+        """Ingest messages into STM."""
+        ...
+
+    async def recall(
+        self,
+        query: str,
+        scope: Any,
+        top_k: int = 5,
+        recall_scope: str = "stm",
+    ) -> list[RecallHit]:
+        """Recall relevant chunks from memory for the given query."""
+        ...
+
+    async def flush(self, scope: Any) -> FlushResult:
+        """Flush a session from STM to LTM."""
+        ...
+
+    async def stats(self, scope: Any | None = None) -> MemoryStats:
+        """Return node/chunk counts for STM and LTM."""
+        ...
