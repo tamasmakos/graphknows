@@ -1,5 +1,7 @@
 """Ensure services/agent is importable when running ontology tests."""
+
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 

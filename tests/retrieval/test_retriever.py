@@ -40,7 +40,7 @@ async def test_execute_cypher_rejects_write_keywords():
 @pytest.mark.asyncio
 async def test_execute_cypher_allows_read_cypher():
     retriever, _, neo, _ = _make_retriever()
-    neo._arun = AsyncMock(return_value=[{"name": "Alice"}])
+    neo._qry = AsyncMock(return_value=[{"name": "Alice"}])
 
     result = await retriever.execute_cypher(
         "MATCH (n:Entity) WHERE n.name = $name RETURN n.name AS name",
@@ -52,7 +52,7 @@ async def test_execute_cypher_allows_read_cypher():
 @pytest.mark.asyncio
 async def test_execute_cypher_empty_params():
     retriever, _, neo, _ = _make_retriever()
-    neo._arun = AsyncMock(return_value=[])
+    neo._qry = AsyncMock(return_value=[])
     result = await retriever.execute_cypher("MATCH (n:Entity) RETURN n LIMIT 5")
     assert result == []
 

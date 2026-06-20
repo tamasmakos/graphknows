@@ -1,4 +1,4 @@
-"""Tests for OntologyRelExtractor and Neo4j ONTOLOGY_REL write."""
+"""Tests for OntologyRelExtractor and graph ONTOLOGY_REL write."""
 
 from __future__ import annotations
 
@@ -11,12 +11,15 @@ from graphknows.ingestion.ontology.loader import OntologyLoader
 from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
 from graphknows.ingestion.ontology.router import OntologyRouter
 
-REGISTRY_ROOT = Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "ontology" / "assets"
+REGISTRY_ROOT = (
+    Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "ontology" / "assets"
+)
 
 
 # ---------------------------------------------------------------------------
 # OntologyRelExtractor tests — DSPy mocked, no real LLM calls
 # ---------------------------------------------------------------------------
+
 
 class TestOntologyRelExtractor:
     def _make_extractor_with_mock(self, relations: list[tuple]) -> OntologyRelExtractor:
@@ -30,9 +33,7 @@ class TestOntologyRelExtractor:
     @pytest.mark.asyncio
     async def test_extract_async_returns_rdf_validated_triples(self):
         extractor = self._make_extractor_with_mock(
-            [
-                ("EU", "REGULATES", "AI systems", {"confidence": 0.9})
-            ]
+            [("EU", "REGULATES", "AI systems", {"confidence": 0.9})]
         )
         result = await extractor.extract_async("The EU regulates AI systems.")
 
@@ -70,10 +71,11 @@ class TestOntologyRelExtractor:
 
 
 # ---------------------------------------------------------------------------
-# Neo4j write_ontology_relations — mock driver, assert Cypher params
+# write_ontology_relations — mock store, assert Cypher params
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+
 
 class TestOntologyRouterIntegration:
     def setup_method(self):
@@ -89,6 +91,8 @@ class TestOntologyRouterIntegration:
         assert m.id == "schema-org", f"Got {m.id}"
 
     def test_provenance_text_selects_prov_o(self):
-        text = "The activity was attributed to the agent. The organization delegated responsibility."
+        text = (
+            "The activity was attributed to the agent. The organization delegated responsibility."
+        )
         m = self.router.select(text, alpha=1.0)
         assert m.id == "prov-o", f"Got {m.id}"

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from graphknows.memory.ltm.entity_resolution import EntityResolution
 
 

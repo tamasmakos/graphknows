@@ -16,7 +16,9 @@ from graphknows.ingestion.ontology.router import OntologyRouter
 # Helpers
 # ---------------------------------------------------------------------------
 
-REGISTRY_ROOT = Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "ontology" / "assets"
+REGISTRY_ROOT = (
+    Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "ontology" / "assets"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +204,7 @@ class TestOntologyRelExtractor:
 
 
 # ---------------------------------------------------------------------------
-# Neo4j write_ontology_relations — mock driver, assert Cypher params
+# write_ontology_relations — mock store, assert Cypher params
 # ---------------------------------------------------------------------------
 
 

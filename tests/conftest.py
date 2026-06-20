@@ -47,6 +47,7 @@ _STUB_KEYS = (
 def _reset_settings_singletons():
     """Reset module-level _settings singletons so env-patching tests stay isolated."""
     import sys
+
     yield
     for mod_name in ("graphknows.mcp.stdio_server",):
         mod = sys.modules.get(mod_name)

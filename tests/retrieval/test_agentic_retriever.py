@@ -27,7 +27,7 @@ def _make_retriever():
     pg.search_chunks = AsyncMock(return_value=[])
     neo = MagicMock()
     mg = MagicMock()
-    return AgenticRetriever(settings=settings, pg=pg, neo=neo, memgraph=mg)
+    return AgenticRetriever(settings=settings, pg=pg, neo=neo, stm=mg)
 
 
 async def _fake_to_thread(fn, *args, **kwargs):
@@ -52,10 +52,12 @@ async def test_retrieve_returns_retrieval_context():
     # Stub _get_react and _get_lm to avoid dspy network/auth
     fake_react = MagicMock(return_value=MagicMock())
 
-    with patch.object(retriever, "_get_react", return_value=fake_react), \
-         patch.object(retriever, "_get_lm", return_value=MagicMock()), \
-         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))), \
-         patch("asyncio.to_thread", side_effect=_fake_to_thread):
+    with (
+        patch.object(retriever, "_get_react", return_value=fake_react),
+        patch.object(retriever, "_get_lm", return_value=MagicMock()),
+        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("asyncio.to_thread", side_effect=_fake_to_thread),
+    ):
         ctx = await retriever.retrieve("test query", session_id="s1", top_k=5)
 
     assert isinstance(ctx, RetrievalContext)
@@ -77,10 +79,12 @@ async def test_lm_not_rebuilt_on_same_session_call():
             retriever._lm = fake_lm
         return retriever._lm
 
-    with patch.object(retriever, "_get_lm", side_effect=_get_lm_counted), \
-         patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())), \
-         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))), \
-         patch("asyncio.to_thread", side_effect=_fake_to_thread):
+    with (
+        patch.object(retriever, "_get_lm", side_effect=_get_lm_counted),
+        patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())),
+        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("asyncio.to_thread", side_effect=_fake_to_thread),
+    ):
         await retriever.retrieve("query one", session_id="s1", top_k=3)
         await retriever.retrieve("query two", session_id="s1", top_k=3)
 
@@ -98,10 +102,12 @@ async def test_react_not_rebuilt_within_same_session():
         get_react_calls.append(session_id)
         return MagicMock(return_value=MagicMock())
 
-    with patch.object(retriever, "_get_react", side_effect=_get_react_counting), \
-         patch.object(retriever, "_get_lm", return_value=MagicMock()), \
-         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))), \
-         patch("asyncio.to_thread", side_effect=_fake_to_thread):
+    with (
+        patch.object(retriever, "_get_react", side_effect=_get_react_counting),
+        patch.object(retriever, "_get_lm", return_value=MagicMock()),
+        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("asyncio.to_thread", side_effect=_fake_to_thread),
+    ):
         await retriever.retrieve("q1", session_id="s1", top_k=3)
         await retriever.retrieve("q2", session_id="s1", top_k=3)
         await retriever.retrieve("q3", session_id="s2", top_k=3)
@@ -132,10 +138,12 @@ async def test_react_failure_falls_back_to_vector_search():
             raise RuntimeError("DSPy error")
         return fn(*args, **kwargs)
 
-    with patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())), \
-         patch.object(retriever, "_get_lm", return_value=MagicMock()), \
-         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))), \
-         patch("asyncio.to_thread", side_effect=_raise_first_then_pass):
+    with (
+        patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())),
+        patch.object(retriever, "_get_lm", return_value=MagicMock()),
+        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("asyncio.to_thread", side_effect=_raise_first_then_pass),
+    ):
         ctx = await retriever.retrieve("query", session_id="s1", top_k=5)
 
     assert any(r.get("text") == "fallback chunk" for r in ctx.fused_results)

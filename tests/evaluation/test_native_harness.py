@@ -19,7 +19,11 @@ class FakeClient:
 
     async def call_tool(self, name: str, arguments: dict | None = None) -> dict:
         self.calls.append((name, arguments or {}))
-        return {"scope": arguments.get("scope", ""), "session_id": arguments.get("session_id", ""), "errors": []}
+        return {
+            "scope": arguments.get("scope", ""),
+            "session_id": arguments.get("session_id", ""),
+            "errors": [],
+        }
 
 
 @pytest.mark.asyncio
@@ -39,6 +43,4 @@ async def test_cleanup_uses_scoped_memory_purge() -> None:
 
     await cleanup_eval_sessions(client, run)
 
-    assert client.calls == [
-        ("memory_purge", {"scope": "both", "session_id": "eval-test-stm"})
-    ]
+    assert client.calls == [("memory_purge", {"scope": "both", "session_id": "eval-test-stm"})]

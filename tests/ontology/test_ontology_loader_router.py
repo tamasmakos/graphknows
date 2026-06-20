@@ -14,12 +14,15 @@ from graphknows.ingestion.ontology.router import OntologyRouter
 # Helpers
 # ---------------------------------------------------------------------------
 
-REGISTRY_ROOT = Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "ontology" / "assets"
+REGISTRY_ROOT = (
+    Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "ontology" / "assets"
+)
 
 
 # ---------------------------------------------------------------------------
 # OntologyLoader tests
 # ---------------------------------------------------------------------------
+
 
 class TestOntologyLoader:
     def setup_method(self):
@@ -84,6 +87,7 @@ class TestOntologyLoader:
 # ---------------------------------------------------------------------------
 # OntologyRouter tests (keyword-only — no embedding model dependency)
 # ---------------------------------------------------------------------------
+
 
 class TestOntologyRouterKeyword:
     """Test routing using keyword heuristic only (alpha=1.0)."""

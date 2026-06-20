@@ -209,15 +209,9 @@ class TestCommonProperties:
 # ===========================================================================
 
 
-import asyncio
-import json
-import textwrap
 import tempfile
+import textwrap
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # OntologyLabelExtractor
@@ -289,8 +283,9 @@ class TestOntologyLoadRdfFiles:
 
 class TestOntologyExtractLabels:
     def test_extract_labels_from_in_memory_graph(self):
-        from rdflib import Graph, URIRef, Literal
+        from rdflib import Graph, Literal, URIRef
         from rdflib.namespace import OWL, RDF, RDFS
+
         from graphknows.ingestion.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake")
@@ -312,8 +307,9 @@ class TestOntologyExtractLabels:
         assert isinstance(labels, list)
 
     def test_namespace_filter_applied(self):
-        from rdflib import Graph, URIRef, Literal
+        from rdflib import Graph, Literal, URIRef
         from rdflib.namespace import OWL, RDF, RDFS
+
         from graphknows.ingestion.ontology.rdf_parser import OntologyLabelExtractor
 
         ext = OntologyLabelExtractor("/tmp/fake", namespace_filter="http://example.org/")
@@ -333,5 +329,3 @@ class TestOntologyExtractLabels:
         labels = ext.extract_labels()
         assert "Policy" in labels
         assert "Thing" not in labels
-
-

@@ -25,7 +25,9 @@ from graphknows.memory.models.scope import MemoryScope
 
 @pytest.mark.unit
 def test_ingest_result_dataclass():
-    r = IngestResult(session_id="s1", file_id="f1", title="", chunk_count=3, entity_count=5, elapsed_s=1.2)
+    r = IngestResult(
+        session_id="s1", file_id="f1", title="", chunk_count=3, entity_count=5, elapsed_s=1.2
+    )
     assert r.file_id == "f1"
     assert r.chunk_count == 3
     assert r.entity_count == 5
@@ -84,8 +86,6 @@ def test_graphknows_memory_adapter_satisfies_protocol():
 
 
 def _make_recall_result(score, text, source_type="chunk", entities=None):
-    from graphknows.memory.models.recall import RecallResult
-
     return RecallResult(
         text=text,
         source_type=source_type,
@@ -103,9 +103,9 @@ async def _sync_to_thread(fn, *args, **kwargs):
 @pytest.fixture
 def mock_container():
     c = MagicMock()
-    c.memgraph = MagicMock()
-    c.pg = MagicMock()
-    c.neo = MagicMock()
+    c.stm = MagicMock()
+    c.vector = MagicMock()
+    c.ltm = MagicMock()
     return c
 
 
@@ -118,8 +118,12 @@ def mock_container():
 @pytest.mark.asyncio
 async def test_ingest_delegates_to_memory_ingestor(mock_container):
     internal_result = IngestResult(
-        session_id="r:s1", file_id="dialog-r:s1", title="",
-        chunk_count=2, entity_count=5, elapsed_s=1.2,
+        session_id="r:s1",
+        file_id="dialog-r:s1",
+        title="",
+        chunk_count=2,
+        entity_count=5,
+        elapsed_s=1.2,
     )
 
     mock_svc = MagicMock()
@@ -167,8 +171,16 @@ async def test_recall_scope_stm(mock_container):
         query="test",
         session_id="s1",
         fused_results=[
-            {"chunk_id": "c1", "doc_id": "", "text": "stm hit", "metadata": {},
-             "rrf_score": 0.9, "sources": "stm_graph", "rank": 1, "entities": ["e1"]}
+            {
+                "chunk_id": "c1",
+                "doc_id": "",
+                "text": "stm hit",
+                "metadata": {},
+                "rrf_score": 0.9,
+                "sources": "stm_graph",
+                "rank": 1,
+                "entities": ["e1"],
+            }
         ],
         search_type="DET",
     )
@@ -195,8 +207,16 @@ async def test_recall_scope_ltm(mock_container):
         query="test",
         session_id="s1",
         fused_results=[
-            {"chunk_id": "c2", "doc_id": "", "text": "ltm hit", "metadata": {},
-             "rrf_score": 0.8, "sources": "ltm_graph", "rank": 1, "entities": []}
+            {
+                "chunk_id": "c2",
+                "doc_id": "",
+                "text": "ltm hit",
+                "metadata": {},
+                "rrf_score": 0.8,
+                "sources": "ltm_graph",
+                "rank": 1,
+                "entities": [],
+            }
         ],
         search_type="DET",
     )
@@ -221,10 +241,26 @@ async def test_recall_scope_both(mock_container):
         query="test",
         session_id="s1",
         fused_results=[
-            {"chunk_id": "c1", "doc_id": "", "text": "stm hit", "metadata": {},
-             "rrf_score": 0.9, "sources": "stm_graph", "rank": 1, "entities": ["e1"]},
-            {"chunk_id": "c2", "doc_id": "", "text": "ltm hit", "metadata": {},
-             "rrf_score": 0.7, "sources": "ltm_graph", "rank": 2, "entities": []},
+            {
+                "chunk_id": "c1",
+                "doc_id": "",
+                "text": "stm hit",
+                "metadata": {},
+                "rrf_score": 0.9,
+                "sources": "stm_graph",
+                "rank": 1,
+                "entities": ["e1"],
+            },
+            {
+                "chunk_id": "c2",
+                "doc_id": "",
+                "text": "ltm hit",
+                "metadata": {},
+                "rrf_score": 0.7,
+                "sources": "ltm_graph",
+                "rank": 2,
+                "entities": [],
+            },
         ],
         search_type="DET",
     )
@@ -279,18 +315,31 @@ async def test_flush_calls_session_flusher(mock_container):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_stats_queries_pg_and_neo4j(mock_container):
-    mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(side_effect=[10, 5, 20, 15, 3])
-    mock_conn.close = AsyncMock()
+async def test_stats_queries_arcadedb(mock_container):
+    def _make_count(n):
+        return AsyncMock(return_value=[{"c": n}])
 
-    mock_container.neo._arun = AsyncMock(
-        side_effect=[[{"c": 42}], [{"c": 7}]]
+    mock_container.vector._db = "stm"
+    mock_container.vector._c = MagicMock()
+    mock_container.vector._c.query = AsyncMock(
+        side_effect=[
+            [{"c": 10}],  # stm CHUNK
+            [{"c": 5}],  # stm TURN
+        ]
+    )
+    mock_container.ltm._c = MagicMock()
+    mock_container.ltm._c.query = AsyncMock(
+        side_effect=[
+            [{"c": 20}],  # ltm CHUNK
+            [{"c": 2}],  # ltm TURN
+            [{"c": 3}],  # ltm TOPIC
+            [{"c": 42}],  # ltm ENTITY
+            [{"c": 7}],  # ltm SESSION
+        ]
     )
 
-    with patch("asyncpg.connect", new=AsyncMock(return_value=mock_conn)):
-        adapter = GraphknowsMemoryAdapter(container=mock_container)
-        result = await adapter.stats()
+    adapter = GraphknowsMemoryAdapter(container=mock_container)
+    result = await adapter.stats()
 
     assert isinstance(result, MemoryStats)
     assert result.stm["chunks"] == 10
@@ -322,7 +371,6 @@ from graphknows.memory.adapter_types import (
     MemoryClass,
     PromoteOptions,
     RecallRequest,
-    TurnRecord,
 )
 from graphknows.memory.models.recall import RecallResult
 
@@ -376,6 +424,7 @@ def test_ingest_artifact_delegates_to_ingestor(
 
 def _sync_run_for_tests(coro):
     import asyncio
+
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
@@ -387,8 +436,16 @@ def test_recall_returns_hits_as_dicts():
     adapter = _make_adapter()
 
     async def stm_chunks(*a, **k):
-        return [{"id": "c1", "text": "hello", "cosine_score": 0.9,
-                 "file_id": "f1", "heading_path": "", "metadata": {"memory_class": "chunk"}}]
+        return [
+            {
+                "id": "c1",
+                "text": "hello",
+                "cosine_score": 0.9,
+                "file_id": "f1",
+                "heading_path": "",
+                "metadata": {"memory_class": "chunk"},
+            }
+        ]
 
     async def empty(*a, **k):
         return []
@@ -397,9 +454,12 @@ def test_recall_returns_hits_as_dicts():
     adapter.pg_store.search_stm_turns = empty
     adapter.mg_store.query_entity_chunks = AsyncMock(return_value=[])
     import numpy as np
+
     request = RecallRequest(query="test query here", session_id="s1", top_k=5)
-    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests), \
-         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))):
+    with (
+        patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests),
+        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+    ):
         result = adapter.recall(request)
 
     assert isinstance(result, list)
@@ -414,10 +474,22 @@ def test_recall_filters_raw_evidence_when_include_raw_false():
 
     async def stm_chunks(*a, **k):
         return [
-            {"id": "c1", "text": "raw", "cosine_score": 0.9,
-             "file_id": "", "heading_path": "", "metadata": {"memory_class": "raw_evidence"}},
-            {"id": "c2", "text": "summary", "cosine_score": 0.8,
-             "file_id": "", "heading_path": "", "metadata": {"memory_class": "summary"}},
+            {
+                "id": "c1",
+                "text": "raw",
+                "cosine_score": 0.9,
+                "file_id": "",
+                "heading_path": "",
+                "metadata": {"memory_class": "raw_evidence"},
+            },
+            {
+                "id": "c2",
+                "text": "summary",
+                "cosine_score": 0.8,
+                "file_id": "",
+                "heading_path": "",
+                "metadata": {"memory_class": "summary"},
+            },
         ]
 
     async def empty(*a, **k):
@@ -427,9 +499,12 @@ def test_recall_filters_raw_evidence_when_include_raw_false():
     adapter.pg_store.search_stm_turns = empty
     adapter.mg_store.query_entity_chunks = AsyncMock(return_value=[])
     import numpy as np
+
     request = RecallRequest(query="test query here", session_id="s1", top_k=5, include_raw=False)
-    with patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests), \
-         patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))):
+    with (
+        patch("graphknows.memory.stm._async_bridge._run", _sync_run_for_tests),
+        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+    ):
         result = adapter.recall(request)
 
     assert len(result) == 1
@@ -539,13 +614,10 @@ async def test_promote_always_summarizes_topics(
 # ===========================================================================
 
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from graphknows.memory.adapter import GraphknowsAdapter
-from graphknows.memory.adapter_types import AdapterCapabilities, RecallRequest
-from graphknows.memory.models.recall import RecallResult
 from tests.fixtures.synthetic_host_session import (
     ARTIFACTS,
     PROMOTE_OPTIONS,
@@ -596,9 +668,12 @@ class TestAdapterLifecycle:
                 loop.close()
 
         fake_row = {
-            "id": "c1", "text": "EU AI Act fact",
+            "id": "c1",
+            "text": "EU AI Act fact",
             "metadata": {"memory_class": "fact"},
-            "file_id": "", "cosine_score": 0.9, "heading_path": "",
+            "file_id": "",
+            "cosine_score": 0.9,
+            "heading_path": "",
         }
         pg = MagicMock()
         pg.search_stm_chunks = AsyncMock(return_value=[fake_row])
@@ -607,16 +682,22 @@ class TestAdapterLifecycle:
         mg.query_entity_chunks = AsyncMock(return_value=[])
 
         import numpy as np
+
         adapter = GraphknowsAdapter(
-            mg_store=mg, pg_store=pg, neo_store=MagicMock(),
-            extractor=MagicMock(), embed_fn=lambda q: [0.0] * 1536,
+            mg_store=mg,
+            pg_store=pg,
+            neo_store=MagicMock(),
+            extractor=MagicMock(),
+            embed_fn=lambda q: [0.0] * 1536,
         )
         adapter.open_session(SESSION_ID)
         for turn in TURNS:
             adapter.write_turn(turn)
 
-        with patch("graphknows.memory.stm._async_bridge._run", side_effect=_sync_run), \
-             patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 1536))):
+        with (
+            patch("graphknows.memory.stm._async_bridge._run", side_effect=_sync_run),
+            patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 1536))),
+        ):
             result = adapter.recall(RECALL_REQUEST)
         assert isinstance(result, list)
         assert len(result) == 1
@@ -685,10 +766,22 @@ class TestAdapterLifecycle:
                 loop.close()
 
         rows = [
-            {"id": "c1", "text": "raw hit", "metadata": {"memory_class": "raw_evidence"},
-             "file_id": "", "cosine_score": 0.9, "heading_path": ""},
-            {"id": "c2", "text": "fact hit", "metadata": {"memory_class": "fact"},
-             "file_id": "", "cosine_score": 0.8, "heading_path": ""},
+            {
+                "id": "c1",
+                "text": "raw hit",
+                "metadata": {"memory_class": "raw_evidence"},
+                "file_id": "",
+                "cosine_score": 0.9,
+                "heading_path": "",
+            },
+            {
+                "id": "c2",
+                "text": "fact hit",
+                "metadata": {"memory_class": "fact"},
+                "file_id": "",
+                "cosine_score": 0.8,
+                "heading_path": "",
+            },
         ]
         pg = MagicMock()
         pg.search_stm_chunks = AsyncMock(return_value=rows)
@@ -697,8 +790,11 @@ class TestAdapterLifecycle:
         mg.query_entity_chunks = AsyncMock(return_value=[])
 
         adapter = GraphknowsAdapter(
-            mg_store=mg, pg_store=pg, neo_store=MagicMock(),
-            extractor=MagicMock(), embed_fn=lambda q: [0.0] * 1536,
+            mg_store=mg,
+            pg_store=pg,
+            neo_store=MagicMock(),
+            extractor=MagicMock(),
+            embed_fn=lambda q: [0.0] * 1536,
         )
         req = RecallRequest(query="test", session_id=SESSION_ID, top_k=5, include_raw=False)
         with patch("graphknows.memory.stm._async_bridge._run", side_effect=_sync_run):

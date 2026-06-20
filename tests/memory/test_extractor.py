@@ -17,7 +17,7 @@ class _Tok:
         text: str,
         lemma: str,
         pos: str,
-        ancestors: list["_Tok"] | None = None,
+        ancestors: list[_Tok] | None = None,
     ) -> None:
         self.i = idx
         self.text = text
@@ -26,7 +26,7 @@ class _Tok:
         self._ancestors = ancestors or []
 
     @property
-    def ancestors(self) -> list["_Tok"]:
+    def ancestors(self) -> list[_Tok]:
         return self._ancestors
 
 

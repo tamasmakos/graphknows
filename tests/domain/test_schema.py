@@ -129,10 +129,10 @@ def test_no_mixed_case_labels_in_codebase():
 
 def test_schema_ddl_uses_canonical_labels():
     """Verify that schema.py constraint definitions use the canonical constants."""
-    from graphknows.ingestion.domain.schema import CONSTRAINTS, INDEXES, MEMGRAPH_INDEXES
+    from graphknows.ingestion.domain.schema import CONSTRAINTS, INDEXES
 
     # All DDL should contain only uppercase labels
-    all_ddl = "\n".join(CONSTRAINTS + INDEXES + MEMGRAPH_INDEXES)
+    all_ddl = "\n".join(CONSTRAINTS + INDEXES)
 
     # Should contain uppercase labels
     assert ":SESSION" in all_ddl

@@ -80,4 +80,3 @@ def test_retrieval_hit_and_community_assignment_contracts() -> None:
 
     assert hit.metadata["community_id"] == assignment.community_id
     assert assignment.chunk_ids == ["c1"]
-

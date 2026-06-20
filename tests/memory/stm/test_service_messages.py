@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from graphknows.memory.stm.service import STMService
 
 
@@ -27,8 +25,8 @@ def _make_svc():
 
 
 def _make_options(user_id="u1", agent_id="a1", run_id="r1", infer=True):
-    from graphknows.memory.models.ingest_options import IngestOptions, MemoryScope
     from graphknows.memory.adapter_types import MemoryClass
+    from graphknows.memory.models.ingest_options import IngestOptions, MemoryScope
 
     return IngestOptions(
         scope=MemoryScope(user_id=user_id, agent_id=agent_id, run_id=run_id),
@@ -48,7 +46,6 @@ def _make_messages(n=2):
 
 def test_ingest_messages_returns_ingest_result():
     from graphknows.memory.models.ingest import IngestResult
-    from graphknows.memory.stm._async_bridge import _run as orig_run
 
     svc, mg, pg = _make_svc()
     messages = _make_messages(3)
