@@ -90,7 +90,7 @@ def validate_result_shape(tool_name: str, payload: Any) -> tuple[bool, str]:
     if not isinstance(payload, dict):
         return False, "payload is not an object"
     required_by_tool = {
-        "memory_doctor": ("memgraph", "neo4j", "pgvector"),
+        "memory_doctor": ("arcadedb_stm", "arcadedb_ltm"),
         "memory_stats": ("stm", "ltm"),
         "memory_ingest": ("file_id", "chunks", "entities", "elapsed_s"),
         "memory_flush": ("elapsed_s", "errors"),
@@ -168,7 +168,9 @@ def aggregate_observations(observations: list[ToolObservation], top_k: int = 5) 
                     (row.latency_ms for row in rows if row.cold_start), None
                 ),
                 "avg_recall_at_k": (
-                    sum(float(q["recall_at_k"]) for q in quality) / len(quality) if quality else None
+                    sum(float(q["recall_at_k"]) for q in quality) / len(quality)
+                    if quality
+                    else None
                 ),
                 "avg_precision_at_k": (
                     sum(float(q["precision_at_k"]) for q in quality) / len(quality)

@@ -15,8 +15,7 @@ from evaluation.core.reporting.metrics import ExpectedEvidence, ToolObservation
 class MCPToolClient(Protocol):
     """Protocol implemented by real and fake MCP clients."""
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        ...
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -107,8 +106,8 @@ async def scenario_health(client: MCPToolClient, run: NativeEvaluationRun) -> No
 async def scenario_stm_recall(client: MCPToolClient, run: NativeEvaluationRun) -> None:
     session_id = run.session_id("stm")
     text = (
-        "Graphknows evaluation seed: Project Aurora stores retry budgets in pgvector, "
-        "promotes durable entities into Neo4j, and keeps live agent turns in Memgraph. "
+        "Graphknows evaluation seed: Project Aurora stores retry budgets in ArcadeDB vector, "
+        "promotes durable entities into ArcadeDB LTM, and keeps live agent turns in ArcadeDB STM. "
         "The responsible engineer is Ada Lovelace and the release codename is Helios."
     )
     await measured_call(
@@ -137,8 +136,8 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
     session_id = run.session_id("ltm")
     text = (
         "The Long Memory Council approved the Helios migration. "
-        "Memgraph tracks short term graph state, pgvector stores semantic chunks, "
-        "and Neo4j stores long term entity communities."
+        "ArcadeDB STM tracks short term graph state, ArcadeDB vector stores semantic chunks, "
+        "and ArcadeDB LTM stores long term entity communities."
     )
     await measured_call(
         client,
@@ -148,8 +147,10 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
         {"text": text, "session_id": session_id, "title": "native-ltm-seed"},
     )
     await measured_call(client, run, "ltm-flush", "memory_flush", {"session_id": session_id})
-    await measured_call(client, run, "ltm-flush-idempotent", "memory_flush", {"session_id": session_id})
-    expected = ExpectedEvidence(terms=("helios", "neo4j"), entities=("long memory council",))
+    await measured_call(
+        client, run, "ltm-flush-idempotent", "memory_flush", {"session_id": session_id}
+    )
+    expected = ExpectedEvidence(terms=("helios", "arcadedb"), entities=("long memory council",))
     await measured_call(
         client,
         run,
@@ -169,7 +170,7 @@ async def scenario_ltm_recall(client: MCPToolClient, run: NativeEvaluationRun) -
         "both-recall",
         "memory_query",
         {
-            "query": "How does Helios split state across Memgraph pgvector and Neo4j?",
+            "query": "How does Helios split state across ArcadeDB STM, vector, and LTM?",
             "session_id": session_id,
             "top_k": run.config.top_k,
             "scope": "both",

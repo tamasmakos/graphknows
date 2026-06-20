@@ -14,6 +14,7 @@ from evaluation.core.benchmark_registry import (
 )
 from evaluation.core.client import GraphknowsMCPClient
 from evaluation.core.file_backed import FileBackedBenchmarkOptions, run_file_backed_benchmark
+from evaluation.core.locomo import run_locomo_benchmark
 from evaluation.core.longmemeval import run_longmemeval_small
 from evaluation.core.reporting import BenchmarkReportPaths, write_benchmark_report
 
@@ -46,6 +47,23 @@ def _add_common_run_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--locomo-questions", default="questions.jsonl")
     parser.add_argument("--locomo-max-documents", type=int, default=50)
     parser.add_argument("--locomo-max-chars-per-document", type=int, default=4000)
+    parser.add_argument(
+        "--generate-answers",
+        action="store_true",
+        help="Add DSPy answer generation step (retrieve → generate → token F1). "
+        "Makes scores paper-comparable. Requires OPENROUTER_API_KEY.",
+    )
+    parser.add_argument(
+        "--generation-model",
+        default="",
+        help="OpenRouter model for answer generation (e.g. moonshotai/kimi-k2). "
+        "Defaults to OPENROUTER_MODEL env var or moonshotai/kimi-k2.",
+    )
+    parser.add_argument(
+        "--purge-ltm",
+        action="store_true",
+        help="Purge all LTM data before the eval run starts. Prevents cross-run contamination.",
+    )
 
     parser.add_argument("--longmemeval-data-root", default="evaluation/data/longmemeval-v2")
     parser.add_argument("--longmemeval-question-id", default="")
@@ -82,7 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_run_options(run)
 
     for name in BENCHMARK_ORDER:
-        single = subparsers.add_parser(name, help=f"Run only {SUPPORTED_BENCHMARKS[name].display_name}.")
+        single = subparsers.add_parser(
+            name, help=f"Run only {SUPPORTED_BENCHMARKS[name].display_name}."
+        )
         single.set_defaults(benchmarks=[name])
         _add_common_run_options(single)
 
@@ -118,6 +138,7 @@ def _evaluation_env(relation_extraction_mode: str) -> dict[str, str]:
     # Propagate GRAPHKNOWS_ONTOLOGY_FILE only if already set in the environment.
     # When unset, DSPyExtractor uses its open-domain relation type defaults.
     import os as _os
+
     if _os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE"):
         env["GRAPHKNOWS_ONTOLOGY_FILE"] = _os.environ["GRAPHKNOWS_ONTOLOGY_FILE"]
     return env
@@ -133,10 +154,7 @@ def _resolve_file_backed_root(
         return root, "local_data"
     fallback = Path(fixture_root)
     if (fallback / questions_file).exists():
-        print(
-            f"{root / questions_file} not found; using smoke fixture "
-            f"{fallback / questions_file}"
-        )
+        print(f"{root / questions_file} not found; using smoke fixture {fallback / questions_file}")
         return fallback, "smoke_fixture"
     return root, "missing"
 
@@ -152,7 +170,7 @@ async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkRepo
         request_timeout_s=900,
         env=_evaluation_env(args.relation_extraction_mode),
     ) as client:
-        cases = await run_file_backed_benchmark(
+        cases = await run_locomo_benchmark(
             client,
             FileBackedBenchmarkOptions(
                 benchmark="locomo",
@@ -169,6 +187,9 @@ async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkRepo
                 session_prefix="eval-locomo",
                 purge=not args.no_purge,
                 relation_extraction_mode=args.relation_extraction_mode,
+                generate_answers=getattr(args, "generate_answers", False),
+                generation_model=getattr(args, "generation_model", ""),
+                pre_run_purge_ltm=getattr(args, "purge_ltm", False),
             ),
         )
     return write_benchmark_report(
@@ -189,26 +210,33 @@ async def _run_locomo(args: argparse.Namespace, *, run_id: str) -> BenchmarkRepo
     )
 
 
-_LME_QUESTION_TYPES = frozenset({
-    "single_session_user",
-    "single_session_assistant",
-    "single_session_preference",
-    "knowledge_update",
-    "temporal_reasoning",
-    "multi_session",
-})
+_LME_QUESTION_TYPES = frozenset(
+    {
+        "single_session_user",
+        "single_session_assistant",
+        "single_session_preference",
+        "knowledge_update",
+        "temporal_reasoning",
+        "multi_session",
+    }
+)
 
 
 def _lme_data_is_valid(data_root: Path) -> bool:
     """Return True only when data_root contains proper LME conversational-memory questions."""
     import json as _json
+
     questions_path = data_root / "questions.jsonl"
     haystacks_path = data_root / "haystacks" / "lme_v2_small.json"
     if not questions_path.exists() or not haystacks_path.exists():
         return False
     try:
         first_line = next(
-            (line for line in questions_path.read_text(encoding="utf-8").splitlines() if line.strip()),
+            (
+                line
+                for line in questions_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ),
             None,
         )
         if not first_line:
