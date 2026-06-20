@@ -1,4 +1,5 @@
 """Verify compat shims work."""
+
 from graphknows.memory.models import IngestResult, RecallResult
 
 

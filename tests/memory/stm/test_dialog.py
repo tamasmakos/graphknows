@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.stm.dialog import DialogCapture, Turn
 

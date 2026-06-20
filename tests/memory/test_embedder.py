@@ -41,7 +41,7 @@ class TestEmbed:
         assert result.dtype == np.float32
 
     def test_truncates_long_text(self, monkeypatch):
-        from graphknows.memory.stores.embedder import EMBED_DIM, _MAX_CHARS_PER_TEXT, embed
+        from graphknows.memory.stores.embedder import _MAX_CHARS_PER_TEXT, EMBED_DIM, embed
 
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
 

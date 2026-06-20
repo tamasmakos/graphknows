@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 
 from evaluation.core.file_backed import FileBackedBenchmarkOptions, run_file_backed_benchmark
 

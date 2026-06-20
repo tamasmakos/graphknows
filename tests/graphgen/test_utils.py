@@ -171,6 +171,7 @@ def test_create_output_directory_idempotent_when_exists():
         create_output_directory(tmp)
         assert os.path.exists(tmp)
 
+
 # ---------------------------------------------------------------------------
 # diagnostics_enabled
 # ---------------------------------------------------------------------------
@@ -533,6 +534,7 @@ class TestNormalizeOpenrouterModel:
         result = normalize_openrouter_model(None)
         assert result == f"openrouter/{_DEFAULT_MODEL}"
 
+
 class TestDiagnosticsEnabled:
     def test_false_when_none(self):
         from graphknows.graphgen.diagnostics import diagnostics_enabled
@@ -702,5 +704,3 @@ class TestResolveEntityLabels:
         result = resolve_entity_labels(cfg)
         assert result == sorted(set(result))
         assert result.count("PERSON") == 1
-
-

@@ -34,12 +34,12 @@ def test_observation_scores_expected_evidence() -> None:
         {
             "hits": [
                 {
-                    "text": "Project Helios stores durable entities in Neo4j.",
-                    "entities": ["Project Helios", "Neo4j"],
+                    "text": "Project Helios stores durable entities in ArcadeDB.",
+                    "entities": ["Project Helios", "ArcadeDB"],
                 }
             ]
         },
-        expected=ExpectedEvidence(terms=("helios",), entities=("neo4j",)),
+        expected=ExpectedEvidence(terms=("helios",), entities=("arcadedb",)),
     )
 
     record = observation_to_record(observation, top_k=5)

@@ -1,5 +1,4 @@
 import ast
-import importlib
 from pathlib import Path
 
 import pytest
@@ -42,7 +41,9 @@ class TestTaxonomyConfig:
 
 class TestLoadTaxonomy:
     def test_load_taxonomy_valid(self, tmp_path):
-        yaml_content = "name: test\nversion: '1.0'\nentity_groups:\n  PERSON:\n    ner_labels: [PER]\n"
+        yaml_content = (
+            "name: test\nversion: '1.0'\nentity_groups:\n  PERSON:\n    ner_labels: [PER]\n"
+        )
         f = tmp_path / "test.yaml"
         f.write_text(yaml_content)
         t = load_taxonomy(str(f))

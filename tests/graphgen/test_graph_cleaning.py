@@ -153,5 +153,3 @@ def test_are_potential_aliases_clearly_different_terms():
 def test_are_potential_aliases_opposing_terms_not_aliases():
     # Conflicting forms (dependence vs independence) should not be aliases
     assert are_potential_aliases("Energy Dependence", "Energy Independence") is False
-
-

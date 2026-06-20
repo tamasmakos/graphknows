@@ -58,7 +58,7 @@ async def test_all_three_collectors_contribute():
     pg.search_ltm_turns = AsyncMock(return_value=[])
     pg.get_chunks_by_ids = AsyncMock(return_value={})
 
-    def _ltm_traversal(words, session_filter, top_k):
+    async def _ltm_traversal(words, session_id, top_k):
         return {
             r["chunk_id"]: (
                 1.0 / (RRF_K + i + 1),
@@ -75,7 +75,7 @@ async def test_all_three_collectors_contribute():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_run_entity_traversal_sync", side_effect=_ltm_traversal),
+        patch.object(retriever, "_ltm_entity_traversal", side_effect=_ltm_traversal),
     ):
         ctx = await retriever.retrieve("alice policy", session_id="s1", scope="both")
 
@@ -128,7 +128,7 @@ async def test_multi_source_chunk_ranks_higher():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_run_entity_traversal_sync", return_value={}),
+        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve("alice", session_id="s1", scope="stm")
 
@@ -168,7 +168,7 @@ async def test_community_weight_boosts_semantic_hit_without_topic_chunk():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_run_entity_traversal_sync", return_value={}),
+        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve("climate policy", session_id="s1", scope="stm")
 
@@ -194,7 +194,7 @@ async def test_top_k_is_respected():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_run_entity_traversal_sync", return_value={}),
+        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve("query words here", session_id="s1", top_k=3)
 
@@ -202,10 +202,10 @@ async def test_top_k_is_respected():
 
 
 @pytest.mark.asyncio
-async def test_memgraph_failure_degrades_gracefully():
+async def test_stm_failure_degrades_gracefully():
     retriever, pg, neo, mg = _make_retriever()
 
-    mg.query_entity_chunks = AsyncMock(side_effect=RuntimeError("memgraph down"))
+    mg.query_entity_chunks = AsyncMock(side_effect=RuntimeError("stm down"))
     pg.search_stm_chunks = AsyncMock(
         return_value=[
             {
@@ -225,7 +225,7 @@ async def test_memgraph_failure_degrades_gracefully():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_run_entity_traversal_sync", return_value={}),
+        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve("query text here", session_id="s1")
 

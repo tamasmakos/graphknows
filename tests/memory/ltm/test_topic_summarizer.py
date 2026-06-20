@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -35,8 +35,6 @@ async def test_none_api_key_returns_fallback_title():
 
 @pytest.mark.asyncio
 async def test_llm_path_returns_prediction(monkeypatch):
-    import dspy
-
     prediction = MagicMock()
     prediction.title = "European Policy"
     prediction.summary = "EU and France coordinate on policy matters."
@@ -45,8 +43,12 @@ async def test_llm_path_returns_prediction(monkeypatch):
     fake_module = MagicMock()
     fake_module.return_value = prediction
 
-    with patch("dspy.LM", return_value=fake_lm), \
-         patch("graphknows.memory.ltm.topic_summarizer.TopicSummaryModule", return_value=fake_module):
+    with (
+        patch("dspy.LM", return_value=fake_lm),
+        patch(
+            "graphknows.memory.ltm.topic_summarizer.TopicSummaryModule", return_value=fake_module
+        ),
+    ):
         summarizer = TopicSummarizer(api_key="sk-test", model="meta-llama/llama-3.1-8b-instruct")
         summarizer._lm = fake_lm
 
@@ -66,12 +68,12 @@ async def test_llm_path_returns_prediction(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_failure_returns_fallback(monkeypatch):
-    import dspy
-
     fake_lm = MagicMock()
 
-    with patch("dspy.LM", return_value=fake_lm), \
-         patch("graphknows.memory.ltm.topic_summarizer.TopicSummaryModule"):
+    with (
+        patch("dspy.LM", return_value=fake_lm),
+        patch("graphknows.memory.ltm.topic_summarizer.TopicSummaryModule"),
+    ):
         summarizer = TopicSummarizer(api_key="sk-test", model="meta-llama/llama-3.1-8b-instruct")
         summarizer._lm = fake_lm
 

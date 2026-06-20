@@ -118,7 +118,7 @@ async def test_workflow_stm_failure_collected_in_errors() -> None:
     wf = _make_workflow()
 
     mock_stm = MagicMock()
-    mock_stm.ingest = MagicMock(side_effect=RuntimeError("memgraph down"))
+    mock_stm.ingest = MagicMock(side_effect=RuntimeError("stm down"))
 
     mock_pipeline = MagicMock()
     mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
@@ -136,7 +136,7 @@ async def test_workflow_stm_failure_collected_in_errors() -> None:
         result = await wf.run(request)
 
     assert result.documents_processed == 0
-    assert any("memgraph down" in e for e in result.errors)
+    assert any("stm down" in e for e in result.errors)
     assert mock_pipeline.promote.call_count == 1
 
 
@@ -151,7 +151,7 @@ async def test_workflow_flush_failure_collected_in_errors() -> None:
     mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
 
     mock_pipeline = MagicMock()
-    mock_pipeline.promote = AsyncMock(side_effect=RuntimeError("neo4j unavailable"))
+    mock_pipeline.promote = AsyncMock(side_effect=RuntimeError("ltm unavailable"))
 
     with (
         patch(
@@ -165,7 +165,7 @@ async def test_workflow_flush_failure_collected_in_errors() -> None:
     ):
         result = await wf.run(request)
 
-    assert any("neo4j unavailable" in e for e in result.errors)
+    assert any("ltm unavailable" in e for e in result.errors)
 
 
 @pytest.mark.asyncio

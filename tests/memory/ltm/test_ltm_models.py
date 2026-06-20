@@ -44,7 +44,9 @@ def test_community_result_defaults() -> None:
 
 
 def test_community_result_populated() -> None:
-    r = CommunityResult(community_count=5, modularity=0.5, algorithm_used="louvain", did_converge=True)
+    r = CommunityResult(
+        community_count=5, modularity=0.5, algorithm_used="louvain", did_converge=True
+    )
     assert r.community_count == 5
     assert r.algorithm_used == "louvain"
 
