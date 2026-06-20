@@ -359,7 +359,7 @@ def export_graphml_and_cypher_artifacts(
     graphml_path = output_dir / "ontology_graph.graphml"
     nx.write_graphml(graph, graphml_path)
 
-    cypher_path = output_dir / "ontology_memgraph.cypher"
+    cypher_path = output_dir / "ontology.cypher"
     with cypher_path.open("w", encoding="utf-8") as fh:
         fh.write("CREATE INDEX ON :ENTITY(name);\\n")
         for entity in entities:
@@ -397,7 +397,7 @@ def export_graphml_and_cypher_artifacts(
 
     return {
         "graphml": str(graphml_path),
-        "memgraph_cypher": str(cypher_path),
+        "cypher": str(cypher_path),
         "summary_json": str(summary_path),
     }
 

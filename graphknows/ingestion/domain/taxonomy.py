@@ -120,7 +120,7 @@ def get_default_taxonomy() -> TaxonomyConfig:
             raise ValueError("GRAPHKNOWS_TAXONOMY_FILE must be an absolute path to a YAML file")
         yaml_path = Path(env_path)
     else:
-        yaml_path = Path(__file__).parent / "taxonomy.generic.yaml"
+        yaml_path = Path(__file__).parent / "taxonomy.intentionality.yaml"
     return load_taxonomy(str(yaml_path))
 
 
