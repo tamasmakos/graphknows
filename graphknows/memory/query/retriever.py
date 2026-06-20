@@ -1,9 +1,9 @@
-"""Deterministic entity-traversal + pgvector hybrid RAG with RRF fusion.
+"""Deterministic entity-traversal + vector hybrid RAG with RRF fusion.
 
 Three collectors run concurrently:
-  A. STM structural recall from Memgraph.
-  B. LTM structural recall from Neo4j.
-  C. Semantic recall from pgvector.
+  A. STM structural recall from ArcadeDB STM.
+  B. LTM structural recall from ArcadeDB LTM.
+  C. Semantic recall from ArcadeDB vector store.
 
 Topic nodes are LLM-assisted enrichment artifacts; deterministic retrieval uses
 community metadata as score shaping rather than returning synthetic topic hits.
@@ -16,15 +16,13 @@ import logging
 import re
 from typing import Any
 
-from graphknows.memory.query._rrf_common import RRF_RELATION_BOOST
-from graphknows.memory.query._rrf_common import rrf_score
-from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.config.adapters.ports.vector_db import IVectorDb
+from graphknows.memory.query._rrf_common import RRF_RELATION_BOOST, rrf_score
+from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
+from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 from graphknows.memory.stores.embedder import embed
-from graphknows.memory.stores.memgraph import MemgraphStore
-from graphknows.memory.stores.neo4j import Neo4jStore
 
 log = logging.getLogger(__name__)
 
@@ -48,8 +46,8 @@ class DETRetriever(BaseGraphRetriever):
     def __init__(
         self,
         pg: IVectorDb,
-        neo: Neo4jStore,
-        mg: MemgraphStore,
+        neo: Any,
+        mg: ArcadeDBSTMStore,
         embed_model: str = "openai/text-embedding-3-small",
     ) -> None:
         self.pg = pg
@@ -75,17 +73,24 @@ class DETRetriever(BaseGraphRetriever):
 
         emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
         emb = emb_array[0].tolist()
-        words = [w for w in query.lower().split() if len(w) > 3]
+        # words_graph: include 3-char tokens (month names, short proper nouns) for
+        # entity/graph matching where substring-of-name is the lookup key.
+        # words: >3-char only for full-text search to reduce noise.
+        words_graph = [w for w in re.findall(r"[a-z0-9][a-z0-9']*", query.lower()) if len(w) >= 3]
+        words = [w for w in words_graph if len(w) > 3]
 
-        src_stm, src_ltm, src_semantic = await asyncio.gather(
-            self._stm_entity_boost(words, session_id, top_k),
-            self._ltm_entity_traversal(words, session_id, top_k),
+        gather_results = await asyncio.gather(
+            self._stm_entity_boost(words_graph, session_id, top_k),
+            self._ltm_entity_traversal(words_graph, session_id, top_k),
             self._semantic_ann(emb, session_id, scope, top_k),
+            self._stm_full_text(words, session_id, top_k),
+            self._ltm_full_text(words, session_id, scope, top_k),
             return_exceptions=True,
         )
+        src_stm, src_ltm, src_semantic, src_text, src_ltm_text = gather_results  # type: ignore[misc]
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
-        for src in (src_stm, src_ltm, src_semantic):
+        for src in (src_stm, src_ltm, src_semantic, src_text, src_ltm_text):
             if isinstance(src, Exception):
                 log.warning("Retrieval source error: %s", src)
                 continue
@@ -100,8 +105,6 @@ class DETRetriever(BaseGraphRetriever):
                     combined[cid] = (score, info)
 
         ranked = sorted(combined.items(), key=lambda x: -x[1][0])[:top_k]
-        # Fetch PgVector metadata for any chunk that lacks it (ltm_graph arm
-        # returns text from Neo4j but no community_weight/memory_class metadata).
         needs_fetch = [cid for cid, (_, info) in ranked if not info.get("metadata")]
         text_map = await self.pg.get_chunks_by_ids(needs_fetch) if needs_fetch else {}
 
@@ -136,7 +139,7 @@ class DETRetriever(BaseGraphRetriever):
         cypher_template: str,
         params: dict | None = None,
     ) -> list[dict]:
-        """Execute a parameterized read-only Cypher query."""
+        """Execute a parameterized read-only Cypher query against the LTM store."""
         if re.search(r"\{[^}]+\}", cypher_template):
             raise ValueError(
                 "Cypher template must not contain {var} interpolation; "
@@ -145,7 +148,7 @@ class DETRetriever(BaseGraphRetriever):
         forbidden = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.IGNORECASE)
         if forbidden.search(cypher_template):
             raise ValueError("Only read-only Cypher is permitted")
-        rows = await self.neo._arun(cypher_template, **(params or {}))
+        rows = await self.neo._qry(cypher_template, **(params or {}))
         return [dict(r) for r in rows]
 
     async def _stm_entity_boost(
@@ -178,6 +181,88 @@ class DETRetriever(BaseGraphRetriever):
             log.warning("STM entity boost failed: %s", exc)
         return result
 
+    _FT_STOPWORDS: frozenset[str] = frozenset(
+        {
+            "when",
+            "what",
+            "where",
+            "which",
+            "that",
+            "this",
+            "with",
+            "from",
+            "have",
+            "been",
+            "does",
+            "were",
+            "they",
+            "their",
+            "there",
+            "about",
+            "like",
+            "just",
+            "some",
+            "than",
+            "then",
+            "into",
+            "will",
+            "your",
+            "would",
+            "could",
+            "should",
+            "might",
+            "much",
+        }
+    )
+
+    async def _stm_full_text(
+        self,
+        words: list[str],
+        session_id: str,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Keyword text search — catches entities the extractor missed.
+
+        Runs two passes: AND (all specific terms) for high-precision hits,
+        then OR (any term) for broader coverage.  AND results rank higher.
+        """
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        specific = [w for w in words if w not in self._FT_STOPWORDS]
+        if not specific:
+            return result
+
+        def _make_info(text: str) -> dict[str, Any]:
+            return {
+                "text": text,
+                "entities": [],
+                "sources": {"stm_text"},
+                "doc_id": "",
+                "metadata": {},
+            }
+
+        try:
+            # High-precision pass: all specific terms must appear together.
+            # Use boost=3 so an exact multi-term match can outrank a chunk
+            # that only has entity+semantic support without the exact phrase.
+            and_chunks = await self.mg.full_text_search_chunks(
+                session_id=session_id, terms=specific, top_k=top_k, require_all=True
+            )
+            for rank, c in enumerate(and_chunks):
+                cid = c["chunk_id"]
+                result[cid] = (rrf_score(rank, boost=3.0), _make_info(c.get("text", "")))
+
+            # Broader pass: any term (lower-ranked, only new chunks)
+            or_chunks = await self.mg.full_text_search_chunks(
+                session_id=session_id, terms=specific, top_k=top_k, require_all=False
+            )
+            for rank, c in enumerate(or_chunks):
+                cid = c["chunk_id"]
+                if cid not in result:
+                    result[cid] = (rrf_score(rank + top_k), _make_info(c.get("text", "")))
+        except Exception as exc:
+            log.warning("STM full-text search failed: %s", exc)
+        return result
+
     async def _ltm_entity_traversal(
         self,
         words: list[str],
@@ -187,116 +272,115 @@ class DETRetriever(BaseGraphRetriever):
         if not words:
             return {}
         try:
-            return await asyncio.to_thread(
-                self._run_entity_traversal_sync,
-                words,
-                session_id or None,
-                top_k,
-            )
+            return await self._run_entity_traversal_async(words, session_id or None, top_k)
         except Exception as exc:
             log.warning("LTM entity traversal failed: %s", exc)
             return {}
 
-    def _run_entity_traversal_sync(
+    async def _run_entity_traversal_async(
         self,
         words: list[str],
         session_filter: str | None,
         top_k: int,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Entity-graph traversal against LTM.
+
+        Uses dynamic OR conditions in place of the any() list predicate —
+        ArcadeDB's openCypher does not support any(x IN $list WHERE ...) syntax.
+        """
         result: dict[str, tuple[float, dict[str, Any]]] = {}
-        driver = getattr(self.neo, "_driver", self.neo)
-        _db = getattr(self.neo, "_db", None)
-        kwargs: dict[str, Any] = {"database": _db} if _db else {}
+        if not words:
+            return result
+        # Build safe dynamic WHERE clause: toLower(e.name) CONTAINS 'w1' OR ...
+        safe = [w.replace("'", "") for w in words]
+        where_entity = " OR ".join(f"toLower(e.name) CONTAINS '{w}'" for w in safe)
         try:
-            with driver.session(**kwargs) as s:
-                if session_filter:
-                    cypher = """
-                    MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)
-                    MATCH (c)-[:MENTIONS]->(e:ENTITY)
-                    WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                    WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
-                    ORDER BY mc DESC LIMIT $top_k
-                    RETURN c.id AS chunk_id, c.text AS text, entities
-                    """
-                    params: dict[str, Any] = {
-                        "words": words,
-                        "top_k": top_k,
-                        "sid": session_filter,
-                    }
-                else:
-                    cypher = """
-                    MATCH (e:ENTITY)
-                    WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                    MATCH (c:CHUNK)-[:MENTIONS]->(e)
-                    WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc
-                    ORDER BY mc DESC LIMIT $top_k
-                    RETURN c.id AS chunk_id, c.text AS text, entities
-                    """
-                    params = {"words": words, "top_k": top_k}
+            if session_filter:
+                cypher = (
+                    f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
+                    f"-[:HAS_CHUNK]->(c:CHUNK) "
+                    f"MATCH (c)-[:MENTIONS]->(e:ENTITY) "
+                    f"WHERE {where_entity} "
+                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc "
+                    f"ORDER BY mc DESC LIMIT $top_k "
+                    f"RETURN c.id AS chunk_id, c.text AS text, entities"
+                )
+                rows = await self.neo._qry(cypher, top_k=top_k, sid=session_filter)
+            else:
+                cypher = (
+                    f"MATCH (e:ENTITY) WHERE {where_entity} "
+                    f"MATCH (c:CHUNK)-[:MENTIONS]->(e) "
+                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc "
+                    f"ORDER BY mc DESC LIMIT $top_k "
+                    f"RETURN c.id AS chunk_id, c.text AS text, entities"
+                )
+                rows = await self.neo._qry(cypher, top_k=top_k)
 
-                for rank, row in enumerate(s.run(cypher, **params).data()):
-                    _add_result(
-                        result,
-                        row["chunk_id"],
-                        rrf_score(rank),
-                        {
-                            "text": row["text"],
-                            "entities": row["entities"],
-                            "sources": {"ltm_graph"},
-                            "doc_id": "",
-                            "metadata": {},
-                        },
-                    )
+            for rank, row in enumerate(rows):
+                _add_result(
+                    result,
+                    row["chunk_id"],
+                    rrf_score(rank),
+                    {
+                        "text": row["text"],
+                        "entities": row["entities"],
+                        "sources": {"ltm_graph"},
+                        "doc_id": "",
+                        "metadata": {},
+                    },
+                )
 
-                self._run_relation_expansion(s, result, words, session_filter, top_k)
+            await self._run_relation_expansion_async(result, words, safe, session_filter, top_k)
         except Exception as exc:
             log.warning("LTM entity traversal error: %s", exc)
         return result
 
-    def _run_relation_expansion(
+    async def _run_relation_expansion_async(
         self,
-        session: Any,
         result: dict[str, tuple[float, dict[str, Any]]],
         words: list[str],
+        safe_words: list[str],
         session_filter: str | None,
         top_k: int,
     ) -> None:
-        try:
-            skip_types = list(_STRUCTURAL_REL_TYPES)
-            if session_filter:
-                rel_cypher = """
-                MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c0:CHUNK)
-                MATCH (c0)-[:MENTIONS]->(e:ENTITY)
-                WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                MATCH path = (e)-[*1..2]-(e2:ENTITY)
-                WHERE e2 <> e
-                  AND NONE(rel IN relationships(path) WHERE type(rel) IN $skip_types)
-                MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e2)
-                WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
-                ORDER BY mc DESC LIMIT $top_k
-                RETURN c.id AS chunk_id, c.text AS text, ents AS entities
-                """
-                params: dict[str, Any] = {
-                    "words": words,
-                    "top_k": top_k,
-                    "sid": session_filter,
-                    "skip_types": skip_types,
-                }
-            else:
-                rel_cypher = """
-                MATCH (e:ENTITY)
-                WHERE any(w IN $words WHERE toLower(e.name) CONTAINS w)
-                MATCH path = (e)-[*1..2]-(e2:ENTITY)
-                WHERE e2 <> e
-                  AND NONE(rel IN relationships(path) WHERE type(rel) IN $skip_types)
-                MATCH (c:CHUNK)-[:MENTIONS]->(e2)
-                WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc
-                ORDER BY mc DESC LIMIT $top_k
-                RETURN c.id AS chunk_id, c.text AS text, ents AS entities
-                """
-                params = {"words": words, "top_k": top_k, "skip_types": skip_types}
+        """2-hop relation expansion from seeded entities to neighbour chunks.
 
-            for rank, row in enumerate(session.run(rel_cypher, **params).data()):
+        Replaces any()/NONE() list predicates (unsupported in ArcadeDB Cypher)
+        with dynamic OR WHERE conditions. Structural edge types are excluded via
+        a NOT IN list embedded in the Cypher string.
+        """
+        try:
+            where_entity = " OR ".join(f"toLower(e.name) CONTAINS '{w}'" for w in safe_words)
+            # Embed skip-types as a literal list in Cypher rather than a $param list,
+            # because ArcadeDB does not support IN $list for type() comparisons.
+            skip_list = ", ".join(f"'{t}'" for t in sorted(_STRUCTURAL_REL_TYPES))
+            not_in_skip = f"NOT type(rel) IN [{skip_list}]"
+            if session_filter:
+                rel_cypher = (
+                    f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
+                    f"-[:HAS_CHUNK]->(c0:CHUNK)-[:MENTIONS]->(e:ENTITY) "
+                    f"WHERE {where_entity} "
+                    f"MATCH (e)-[rel]-(e2:ENTITY) "
+                    f"WHERE e2 <> e AND {not_in_skip} "
+                    f"MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e2) "
+                    f"WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc "
+                    f"ORDER BY mc DESC LIMIT $top_k "
+                    f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
+                )
+                rows = await self.neo._qry(rel_cypher, top_k=top_k, sid=session_filter)
+            else:
+                rel_cypher = (
+                    f"MATCH (e:ENTITY) WHERE {where_entity} "
+                    f"MATCH (e)-[rel]-(e2:ENTITY) "
+                    f"WHERE e2 <> e AND {not_in_skip} "
+                    f"MATCH (c:CHUNK)-[:MENTIONS]->(e2) "
+                    f"WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc "
+                    f"ORDER BY mc DESC LIMIT $top_k "
+                    f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
+                )
+                rows = await self.neo._qry(rel_cypher, top_k=top_k)
+
+            for rank, row in enumerate(rows):
                 _add_result(
                     result,
                     row["chunk_id"],
@@ -311,6 +395,58 @@ class DETRetriever(BaseGraphRetriever):
                 )
         except Exception as exc:
             log.debug("relation-expanded pass skipped: %s", exc)
+
+    async def _ltm_full_text(
+        self,
+        words: list[str],
+        session_id: str,
+        scope: str,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Keyword text search on LTM chunks — mirrors _stm_full_text for LTM scope.
+
+        Runs only when scope includes 'ltm'. Gives keyword recall for LTM mode
+        equivalent to what _stm_full_text provides for STM, catching named entities
+        and dates that ANN may rank lower than semantically similar but off-topic chunks.
+        """
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        if scope not in ("ltm", "both"):
+            return result
+        specific = [w for w in words if w not in self._FT_STOPWORDS]
+        if not specific:
+            return result
+
+        neo_ft = getattr(self.neo, "full_text_search_chunks", None)
+        if not callable(neo_ft):
+            return result
+
+        def _make_info(text: str) -> dict[str, Any]:
+            return {
+                "text": text,
+                "entities": [],
+                "sources": {"ltm_text"},
+                "doc_id": "",
+                "metadata": {},
+            }
+
+        try:
+            and_chunks = await neo_ft(
+                terms=specific, session_id=session_id or None, top_k=top_k, require_all=True
+            )
+            for rank, c in enumerate(and_chunks):
+                cid = c["chunk_id"]
+                result[cid] = (rrf_score(rank, boost=5.0), _make_info(c.get("text", "")))
+
+            or_chunks = await neo_ft(
+                terms=specific, session_id=session_id or None, top_k=top_k, require_all=False
+            )
+            for rank, c in enumerate(or_chunks):
+                cid = c["chunk_id"]
+                if cid not in result:
+                    result[cid] = (rrf_score(rank + top_k), _make_info(c.get("text", "")))
+        except Exception as exc:
+            log.warning("LTM full-text search failed: %s", exc)
+        return result
 
     async def _semantic_ann(
         self,
@@ -330,16 +466,20 @@ class DETRetriever(BaseGraphRetriever):
             coros.append(self.pg.search_stm_turns(session_id, emb, top_k=k))
             labels.append("stm_turn")
         if scope in ("ltm", "both"):
-            coros.append(self.pg.search_ltm_chunks(emb, top_k=k, session_id=None))
+            # Pass session_id so the vector store applies session-scoped over-fetching
+            # (k_pre = max(top_k * 20, 200)) and post-filters by session.  This prevents
+            # cross-session contamination when multiple sessions coexist in LTM.
+            ltm_sid = session_id or None
+            coros.append(self.pg.search_ltm_chunks(emb, top_k=k, session_id=ltm_sid))
             labels.append("ltm_chunk")
-            coros.append(self.pg.search_ltm_turns(emb, top_k=k, session_id=None))
+            coros.append(self.pg.search_ltm_turns(emb, top_k=k, session_id=ltm_sid))
             labels.append("ltm_turn")
 
         if not coros:
             return result
 
         all_rows = await asyncio.gather(*coros, return_exceptions=True)
-        for label, rows in zip(labels, all_rows):
+        for label, rows in zip(labels, all_rows, strict=False):
             if isinstance(rows, Exception):
                 log.warning("ANN %s failed: %s", label, rows)
                 continue
@@ -384,4 +524,3 @@ def _community_boost(metadata: dict[str, Any]) -> float:
     except (TypeError, ValueError):
         weight = 1.0
     return max(1.0, min(weight, 3.0))
-

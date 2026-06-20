@@ -7,11 +7,11 @@ host-specific fields and no framework-specific terminology.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class MemoryClass(str, Enum):  # noqa: UP042
+class MemoryClass(StrEnum):
     """Classification of memory records by semantic role."""
 
     raw_evidence = "raw_evidence"

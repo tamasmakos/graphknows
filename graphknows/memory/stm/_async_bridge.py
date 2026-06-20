@@ -1,7 +1,7 @@
 """Shared background event-loop bridge for STM async store calls.
 
 A single background thread with its own persistent event loop is created once.
-All async store calls are dispatched into this loop — so asyncpg pools, which
+All async store calls are dispatched into this loop — so async clients, which
 are bound to the loop they were created on, always see the same loop.
 """
 

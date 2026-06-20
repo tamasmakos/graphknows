@@ -15,7 +15,7 @@ class IngestOptions(BaseModel, frozen=True):
         scope: Identity triple (user_id / agent_id / run_id).
         metadata: Extra key/value pairs stored alongside each record.
         infer: When True, run NER extraction and build entity graph nodes.
-            When False, embed only — no NER, no Memgraph writes. Useful for
+            When False, embed only — no NER, no STM graph writes. Useful for
             tool output, system prompts, and high-volume ephemeral content.
         memory_class: Semantic classification of the ingested content.
         turn_index_offset: Starting turn index for appending to existing dialogs.

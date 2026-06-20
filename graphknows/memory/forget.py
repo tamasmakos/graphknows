@@ -2,107 +2,76 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
-
-try:
-    import asyncpg as _asyncpg
-except ImportError:  # pragma: no cover - optional deployment dependency
-    _asyncpg = None  # type: ignore[assignment]
 
 log = logging.getLogger("graphknows.memory.forget")
 
 
 class LTMForget:
-    def __init__(self, neo4j_driver: Any, pg_dsn: str) -> None:
-        self._driver = neo4j_driver
-        self._pg_dsn = pg_dsn
+    def __init__(self, ltm_store: Any) -> None:
+        self._ltm = ltm_store
 
-    def prune_disconnected(self, _min_component_size: int = 2) -> dict:
+    async def prune_disconnected(self, _min_component_size: int = 2) -> dict[str, Any]:
         """Drop Entity nodes with no relations (degree=0) or tiny components."""
-        with self._driver.session() as s:
-            result = s.run(
-                "MATCH (e:ENTITY) WHERE NOT (e)--() "
-                "WITH e DETACH DELETE e RETURN count(e) as deleted"
-            ).single()
-            deleted = result["deleted"] if result else 0
+        rows = await self._ltm._cmd(
+            "MATCH (e:ENTITY) WHERE NOT (e)--() WITH e DETACH DELETE e RETURN count(e) as deleted"
+        )
+        deleted = rows[0]["deleted"] if rows else 0
         log.info("prune_disconnected: removed %d isolated entities", deleted)
         return {"deleted_entities": deleted}
 
-    def prune_by_ttl(self, ttl_days: int = 90, pagerank_floor: float = 0.001) -> dict:
+    async def prune_by_ttl(
+        self, ttl_days: int = 90, pagerank_floor: float = 0.001
+    ) -> dict[str, Any]:
         """Drop entities not seen in ttl_days with pagerank below floor."""
         cutoff = (datetime.now(UTC) - timedelta(days=ttl_days)).isoformat()
-        with self._driver.session() as s:
-            result = s.run(
-                "MATCH (e:ENTITY) "
-                "WHERE e.last_seen < $cutoff AND coalesce(e.pagerank, 0) < $floor "
-                "DETACH DELETE e RETURN count(e) as deleted",
-                cutoff=cutoff,
-                floor=pagerank_floor,
-            ).single()
-            deleted = result["deleted"] if result else 0
+        rows = await self._ltm._cmd(
+            "MATCH (e:ENTITY) "
+            "WHERE e.last_seen < $cutoff AND coalesce(e.pagerank, 0) < $floor "
+            "DETACH DELETE e RETURN count(e) as deleted",
+            cutoff=cutoff,
+            floor=pagerank_floor,
+        )
+        deleted = rows[0]["deleted"] if rows else 0
         log.info("prune_by_ttl: removed %d stale low-rank entities", deleted)
         return {"deleted_entities": deleted}
 
-    def forget_community(self, community_id: int) -> dict:
+    async def forget_community(self, community_id: int) -> dict[str, Any]:
         """Delete all entities exclusively in this community + their Topic node."""
-        with self._driver.session() as s:
-            result = s.run(
-                "MATCH (e:ENTITY {community_id: $cid}) "
-                "WHERE NOT EXISTS { MATCH (e)-[:BELONGS_TO]->(t:TOPIC) WHERE t.community_id <> $cid } "
-                "DETACH DELETE e RETURN count(e) as deleted",
-                cid=community_id,
-            ).single()
-            deleted = result["deleted"] if result else 0
-            s.run("MATCH (t:TOPIC {community_id: $cid}) DETACH DELETE t", cid=community_id)
-
-        async def _pg_delete():
-            if _asyncpg is None:
-                raise ImportError("asyncpg is required to delete LTM topic rows")
-            conn = await _asyncpg.connect(self._pg_dsn)
-            try:
-                await conn.execute("DELETE FROM ltm_topics WHERE community_id=$1", community_id)
-            finally:
-                await conn.close()
-
-        try:
-            asyncio.get_event_loop().run_until_complete(_pg_delete())
-        except RuntimeError as exc:
-            log.warning("forget_community pg_delete failed: %s", exc)
-
+        rows = await self._ltm._cmd(
+            "MATCH (e:ENTITY {community_id: $cid}) "
+            "WHERE NOT EXISTS { MATCH (e)-[:BELONGS_TO]->(t:TOPIC) WHERE t.community_id <> $cid } "
+            "DETACH DELETE e RETURN count(e) as deleted",
+            cid=community_id,
+        )
+        deleted = rows[0]["deleted"] if rows else 0
+        await self._ltm._cmd(
+            "MATCH (t:TOPIC {community_id: $cid}) DETACH DELETE t", cid=community_id
+        )
         log.info("forget_community %d: deleted %d entities + topic node", community_id, deleted)
         return {"community_id": community_id, "deleted_entities": deleted}
 
-    def forget_before(self, before_date: str) -> dict:
+    async def forget_before(self, before_date: str) -> dict[str, Any]:
         """Delete Segment nodes older than date and orphaned entities."""
-        with self._driver.session() as s:
-            s.run(
-                "MATCH (seg:Segment) WHERE seg.timestamp < $date DETACH DELETE seg",
-                date=before_date,
-            )
-            result = s.run(
-                "MATCH (e:ENTITY) WHERE NOT (e)-[:APPEARED_IN]->() AND NOT (e)--() "
-                "DETACH DELETE e RETURN count(e) as deleted"
-            ).single()
+        await self._ltm._cmd(
+            "MATCH (seg:Segment) WHERE seg.timestamp < $date DETACH DELETE seg",
+            date=before_date,
+        )
+        rows = await self._ltm._cmd(
+            "MATCH (e:ENTITY) WHERE NOT (e)-[:APPEARED_IN]->() AND NOT (e)--() "
+            "DETACH DELETE e RETURN count(e) as deleted"
+        )
         return {
             "deleted_segments": True,
-            "orphaned_entities_deleted": result["deleted"] if result else 0,
+            "orphaned_entities_deleted": rows[0]["deleted"] if rows else 0,
         }
 
-    def prune(
+    async def prune(
         self, _session_id: str | None = None, utterance_ttl_days: int = 180
     ) -> dict[str, Any]:
-        """Prune orphaned Document, Chunk, Dialog, Utterance nodes.
-
-        Args:
-            _session_id: Ignored (kept for API compatibility).
-            utterance_ttl_days: Prune utterances older than this many days.
-
-        Returns:
-            Dict with counts of pruned nodes per type.
-        """
+        """Prune orphaned Document, Chunk, Dialog, Utterance nodes."""
         cutoff = (datetime.now(UTC) - timedelta(days=utterance_ttl_days)).isoformat()
         results: dict[str, Any] = {
             "documents_orphaned": 0,
@@ -110,50 +79,47 @@ class LTMForget:
             "dialogs_empty": 0,
             "utterances_ttl": 0,
         }
-        with self._driver.session() as s:
-            # Count then delete — Neo4j doesn't support aggregation + DELETE in one pass
-            r = s.run(
-                "MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() RETURN count(d) AS c"
-            ).single()
-            results["documents_orphaned"] = r["c"] if r else 0
-            if results["documents_orphaned"]:
-                s.run("MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() DELETE d")
 
-            r = s.run(
-                "MATCH (c:CHUNK) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() "
-                "RETURN count(c) AS c"
-            ).single()
-            results["chunks_orphaned"] = r["c"] if r else 0
-            if results["chunks_orphaned"]:
-                s.run(
-                    "MATCH (c:CHUNK) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() DETACH DELETE c"
-                )
+        rows = await self._ltm._qry(
+            "MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() RETURN count(d) AS c"
+        )
+        results["documents_orphaned"] = rows[0]["c"] if rows else 0
+        if results["documents_orphaned"]:
+            await self._ltm._cmd("MATCH (d:Document) WHERE NOT (d)-[:HAS_CHUNK]->() DELETE d")
 
-            r = s.run(
+        rows = await self._ltm._qry(
+            "MATCH (c:CHUNK) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() "
+            "RETURN count(c) AS c"
+        )
+        results["chunks_orphaned"] = rows[0]["c"] if rows else 0
+        if results["chunks_orphaned"]:
+            await self._ltm._cmd(
+                "MATCH (c:CHUNK) WHERE NOT ()-[:HAS_CHUNK]->(c) OR NOT (c)-[:MENTIONS]->() DETACH DELETE c"
+            )
+
+        rows = await self._ltm._qry(
+            "MATCH (d:DIALOG) WHERE NOT EXISTS { "
+            "  MATCH (d)-[:PARTICIPANT]->(:Participant)-[:SAID]->(:Utterance) "
+            "} RETURN count(d) AS c"
+        )
+        results["dialogs_empty"] = rows[0]["c"] if rows else 0
+        if results["dialogs_empty"]:
+            await self._ltm._cmd(
                 "MATCH (d:DIALOG) WHERE NOT EXISTS { "
                 "  MATCH (d)-[:PARTICIPANT]->(:Participant)-[:SAID]->(:Utterance) "
-                "} RETURN count(d) AS c"
-            ).single()
-            if r:
-                results["dialogs_empty"] = r["c"]
-            if results["dialogs_empty"]:
-                s.run(
-                    "MATCH (d:DIALOG) WHERE NOT EXISTS { "
-                    "  MATCH (d)-[:PARTICIPANT]->(:Participant)-[:SAID]->(:Utterance) "
-                    "} DELETE d"
-                )
+                "} DELETE d"
+            )
 
-            r = s.run(
-                "MATCH (u:Utterance) WHERE u.timestamp < $cutoff RETURN count(u) AS c",
+        rows = await self._ltm._qry(
+            "MATCH (u:Utterance) WHERE u.timestamp < $cutoff RETURN count(u) AS c",
+            cutoff=cutoff,
+        )
+        results["utterances_ttl"] = rows[0]["c"] if rows else 0
+        if results["utterances_ttl"]:
+            await self._ltm._cmd(
+                "MATCH (u:Utterance) WHERE u.timestamp < $cutoff DETACH DELETE u",
                 cutoff=cutoff,
-            ).single()
-            if r:
-                results["utterances_ttl"] = r["c"]
-            if results["utterances_ttl"]:
-                s.run(
-                    "MATCH (u:Utterance) WHERE u.timestamp < $cutoff DETACH DELETE u",
-                    cutoff=cutoff,
-                )
+            )
 
         log.info("prune: %s", results)
         return results

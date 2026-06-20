@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,9 +16,9 @@ class RecallResult(BaseModel):
     score: float = 0.0
     cosine_score: float = 0.0
     entity_names: list[str] = Field(default_factory=list)
-    provenance: dict = Field(default_factory=dict)
+    provenance: dict[str, Any] = Field(default_factory=dict)
     heading_path: str = ""
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RecallQuery(BaseModel):

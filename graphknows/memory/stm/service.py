@@ -32,8 +32,8 @@ class STMService:
     # TODO(Wave 3): replace direct store references with IGraphDb adapter.
 
     Attributes:
-        _mg: MemgraphStore for session evidence graph writes/queries.
-        _pg: PgVectorStore for stm_chunks / stm_turns writes/queries.
+        _mg: ArcadeDBSTMStore for session evidence graph writes/queries.
+        _pg: ArcadeDBVectorStore for stm_chunks / stm_turns writes/queries.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Embedding callable (text -> list[float]).
         _rel_extractor: Optional relation extractor.
@@ -224,4 +224,3 @@ class STMService:
             elapsed_s=round(time.perf_counter() - t0, 3),
             errors=errors,
         )
-

@@ -7,7 +7,7 @@ RRF_K: int = 60
 # Extra weight applied to relation-expanded traversal results in Source C.
 RRF_RELATION_BOOST: float = 1.5
 
-# Chunk-id prefix for topic results — excluded from pgvector bulk-fetch.
+# Chunk-id prefix for topic results — excluded from vector store bulk-fetch.
 TOPIC_PREFIX: str = "topic:"
 
 _SHAPE_FACTORS: dict[str | None, float] = {

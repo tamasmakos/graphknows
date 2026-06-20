@@ -48,14 +48,12 @@ class DialogResult:
 class DialogCapture:
     """Write conversation turns into the STM interaction graph.
 
-    Creates and maintains DIALOG → TURN → ENTITY nodes in Memgraph
-    and embeds turn text into pgvector stm_turns.
-
-    # TODO(Wave 3): replace direct store references with IGraphDb adapter.
+    Creates and maintains DIALOG → TURN → ENTITY nodes in ArcadeDB STM
+    and embeds turn text into the vector store.
 
     Attributes:
-        _mg: MemgraphStore for interaction graph writes.
-        _pg: PgVectorStore for stm_turns writes.
+        _mg: ArcadeDBSTMStore for interaction graph writes.
+        _pg: ArcadeDBVectorStore for stm_turns writes.
         _extractor: Entity extractor for turn text NER (optional).
         _embed_fn: Embedding callable.
         _prev_turn_ids: Tracks the last turn ID per dialog for NEXT edge linking.
@@ -92,7 +90,7 @@ class DialogCapture:
             session_id: Parent session namespace (for entity scoping).
             dialog_id: Parent dialog identifier.
             turn: Turn data including text, role, tool calls.
-            extra_metadata: Optional metadata stored with the pgvector turn row.
+            extra_metadata: Optional metadata stored with the vector store turn row.
 
         Returns:
             DialogResult with entity_count and any errors.

@@ -20,13 +20,11 @@ log = logging.getLogger("graphknows.memory.stm.ingest")
 
 
 class _STMIngestHandler:
-    """Ingest parsed text into STM (Memgraph evidence graph + pgvector stm_chunks).
-
-    # TODO(Wave 3): replace with IGraphDb adapter.
+    """Ingest parsed text into STM (ArcadeDB evidence graph + vector store).
 
     Attributes:
-        _mg: MemgraphStore for session evidence graph writes.
-        _pg: PgVectorStore for stm_chunks writes.
+        _mg: ArcadeDBSTMStore for session evidence graph writes.
+        _pg: ArcadeDBVectorStore for stm_chunks writes.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Callable that takes text and returns list[float] embedding.
         _rel_extractor: Optional relation extractor.
@@ -131,14 +129,24 @@ class _STMIngestHandler:
                 session_id, parsed.source_id, chunk_id, clean, seg, extraction
             )
             self._write_chunk_to_pg(
-                session_id, parsed.source_id, chunk_id, clean, seg, embedding,
-                extraction.entities, metadata,
+                session_id,
+                parsed.source_id,
+                chunk_id,
+                clean,
+                seg,
+                embedding,
+                extraction.entities,
+                metadata,
             )
 
         elapsed = time.monotonic() - t0
         log.info(
             "ingest session=%s file=%s chunks=%d entities=%d elapsed=%.1fs",
-            session_id, parsed.source_id, len(parsed.segments), entity_count, elapsed,
+            session_id,
+            parsed.source_id,
+            len(parsed.segments),
+            entity_count,
+            elapsed,
         )
         return IngestResult(
             session_id=session_id,
@@ -173,9 +181,9 @@ class _STMIngestHandler:
         )
 
     def _make_chunk_id(self, session_id: str, source_id: str, seg: Any) -> str:
-        return hashlib.sha256(
-            f"{session_id}:{source_id}::{seg.char_offset}".encode()
-        ).hexdigest()[:16]
+        return hashlib.sha256(f"{session_id}:{source_id}::{seg.char_offset}".encode()).hexdigest()[
+            :16
+        ]
 
     def _clean_text(self, text: str) -> str:
         # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
@@ -184,7 +192,9 @@ class _STMIngestHandler:
     def _extract(self, clean_text: str) -> _ExtractionResult:
         # One GLiNER2 call returns both entities and relations — capture both.
         if self._extractor is not None:
-            return self._extractor.extract(clean_text)
+            from typing import cast
+
+            return cast(_ExtractionResult, self._extractor.extract(clean_text))
         return _ExtractionResult()
 
     def _write_chunk_to_mg(
@@ -196,7 +206,7 @@ class _STMIngestHandler:
         seg: Any,
         extraction: _ExtractionResult,
     ) -> int:
-        """Write CHUNK node, entity nodes/edges, and relation edges to Memgraph.
+        """Write CHUNK node, entity nodes/edges, and relation edges to ArcadeDB STM.
 
         Returns the entity count for this chunk.
         """
@@ -226,6 +236,9 @@ class _STMIngestHandler:
         # GLiNER2 relations — no fallback; let failures propagate.
         write_relation_edges(self._mg, session_id, extraction.relations, _run)
 
+        # SpaCy dep-pattern relations (intentionality strata G/H/I) — always-on, soft-fail.
+        self._write_spacy_dep_relations(session_id, clean_text, extraction.entities)
+
         # DSPy ontology-guided relation extraction (llm_assisted mode only).
         # extract_relations returns (triplets, nodes, diagnostics).
         # Each triplet is (subject, relation, object, props_dict).
@@ -247,9 +260,52 @@ class _STMIngestHandler:
                 )
             log.debug(
                 "DSPy extraction session=%s chunk=%s: %d triples",
-                session_id, chunk_id[:8], len(dspy_triplets),
+                session_id,
+                chunk_id[:8],
+                len(dspy_triplets),
             )
         return entity_count
+
+    def _write_spacy_dep_relations(
+        self,
+        session_id: str,
+        text: str,
+        gliner_entities: list[dict[str, Any]],
+    ) -> None:
+        """Run SpaCy dep-pattern extraction and write triples to ArcadeDB STM.
+
+        Accepts GLiNER2 entity dicts in either graphgen format (text/label/ontology_label)
+        or memory-extractor format (name/type) — _ground_span handles both.
+
+        Soft-fails: SpaCy not installed, model not found, or parse errors are logged
+        at DEBUG level and do not interrupt the ingestion pipeline.
+        """
+        try:
+            from graphknows.graphgen.extraction.spacy_relations import extract_intentional_relations
+
+            triples = extract_intentional_relations(text, gliner_entities)
+        except Exception as exc:
+            log.debug("SpaCy dep extraction skipped: %s", exc)
+            return
+        written = 0
+        for triple in triples:
+            if triple.get("negated"):
+                continue
+            try:
+                _run(
+                    self._mg.write_relation_edge(
+                        session_id=session_id,
+                        subject_name=triple["source"],
+                        relation_name=triple["relation"],
+                        object_name=triple["target"],
+                        confidence=triple.get("confidence", 0.8),
+                    )
+                )
+                written += 1
+            except Exception as exc:
+                log.debug("SpaCy dep relation write error (non-fatal): %s", exc)
+        if written:
+            log.debug("SpaCy dep patterns: %d triples written for session=%s", written, session_id)
 
     def _write_chunk_to_pg(
         self,

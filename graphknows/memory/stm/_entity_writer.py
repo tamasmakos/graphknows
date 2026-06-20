@@ -1,4 +1,4 @@
-"""Shared helpers for writing entity nodes + edges + relation edges to Memgraph.
+"""Shared helpers for writing entity nodes + edges + relation edges to the STM store.
 
 Both _STMIngestHandler and DialogCapture follow the same write pattern but use
 different edge types (chunk vs. turn).  The edge_writer callable is the only
@@ -7,7 +7,8 @@ difference — callers supply a lambda that calls the appropriate edge method.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 def write_entity_nodes_and_edges(
@@ -15,18 +16,18 @@ def write_entity_nodes_and_edges(
     session_id: str,
     entities: list[dict[str, Any]],
     edge_writer: Callable[[dict[str, Any]], None],
-    _run: Callable,
+    _run: Callable[..., Any],
 ) -> int:
     """Write entity nodes and their source edge. Returns the entity count.
 
     Args:
-        mg: MemgraphStore (or ISessionDb) for graph writes.
+        mg: ArcadeDBSTMStore (or ISessionDb) for graph writes.
         session_id: Session namespace.
         entities: List of entity dicts with "name", optional "type" and "score".
         edge_writer: Callable(ent_dict) that writes the edge linking the entity
             to its source node (chunk or turn).  Callers supply this to avoid
             coupling the helper to a specific edge method.
-        _run: Synchronous bridge for async Memgraph calls.
+        _run: Synchronous bridge for async store calls.
     """
     entity_count = 0
     for ent in entities:
@@ -47,15 +48,15 @@ def write_relation_edges(
     mg: Any,
     session_id: str,
     relations: list[dict[str, Any]],
-    _run: Callable,
+    _run: Callable[..., Any],
 ) -> None:
     """Write relation edges from extraction results.
 
     Args:
-        mg: MemgraphStore (or ISessionDb) for graph writes.
+        mg: ArcadeDBSTMStore (or ISessionDb) for graph writes.
         session_id: Session namespace.
         relations: List of relation dicts with "head", "relation", "tail", optional "score".
-        _run: Synchronous bridge for async Memgraph calls.
+        _run: Synchronous bridge for async store calls.
     """
     for rel in relations:
         _run(

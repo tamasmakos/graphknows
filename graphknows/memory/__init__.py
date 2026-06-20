@@ -21,29 +21,33 @@ from graphknows.memory.models.ingest_options import IngestOptions
 from graphknows.memory.models.message import Message, MessageInput, Role, normalize_messages
 from graphknows.memory.models.scope import MemoryScope
 from graphknows.memory.query import DETRetriever, RetrievalContext
+from graphknows.memory.stores.arcadedb import (
+    ArcadeDBClient,
+    ArcadeDBLTMStore,
+    ArcadeDBSTMStore,
+    ArcadeDBVectorStore,
+)
 from graphknows.memory.stores.embedder import embed, embed_one, get_embedder
-from graphknows.memory.stores.memgraph import MemgraphStore
-from graphknows.memory.stores.neo4j import Neo4jStore
-from graphknows.memory.stores.pgvector import PgVectorStore
 
 __all__ = [
     "AdapterCapabilities",
     "AgentMemoryAdapter",
+    "ArcadeDBClient",
+    "ArcadeDBLTMStore",
+    "ArcadeDBSTMStore",
+    "ArcadeDBVectorStore",
     "ArtifactRecord",
+    "DETRetriever",
     "FlushResult",
     "GraphknowsAdapter",
     "GraphknowsMemoryAdapter",
-    "DETRetriever",
     "IngestOptions",
     "IngestResult",
-    "MemgraphStore",
     "MemoryClass",
     "MemoryScope",
     "MemoryStats",
     "Message",
     "MessageInput",
-    "Neo4jStore",
-    "PgVectorStore",
     "PromoteOptions",
     "RecallHit",
     "RecallRequest",

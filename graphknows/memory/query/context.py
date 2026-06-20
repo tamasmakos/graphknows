@@ -80,7 +80,7 @@ class RetrievalContext:
 
     Attributes:
         query: Original query string.
-        session_id: Session namespace used for pgvector search.
+        session_id: Session namespace used for vector search.
         graph_matches: Entities found via cosine search, each with linked chunks.
         semantic_matches: Chunks found via direct cosine search.
         fused_results: RRF-fused deduped chunks, sorted by rrf_score descending.

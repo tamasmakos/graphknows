@@ -12,11 +12,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-try:
-    import asyncpg
-except ImportError:  # pragma: no cover - optional deployment dependency
-    asyncpg = None  # type: ignore[assignment]
-
 from graphknows.memory.adapter_types import (
     AdapterCapabilities,
     ArtifactRecord,
@@ -45,8 +40,8 @@ def _build_stm_service(
     """Factory helper — construct STMService from raw stores.
 
     Args:
-        mg_store: MemgraphStore instance.
-        pg_store: PgVectorStore instance.
+        mg_store: ArcadeDBSTMStore instance.
+        pg_store: ArcadeDBVectorStore instance.
         extractor: Entity extractor.
         embed_fn: Optional embedding callable.
         rel_extractor: Optional relation extractor.
@@ -72,9 +67,9 @@ class GraphknowsAdapter:
     outside this class.
 
     Args:
-        mg_store: Memgraph store instance.
-        pg_store: PgVector store instance.
-        neo_store: Neo4j store instance.
+        mg_store: ArcadeDBSTMStore instance.
+        pg_store: ArcadeDBVectorStore instance.
+        neo_store: ArcadeDBLTMStore instance.
         extractor: Entity extractor (GLiNER2EntityExtractor or compatible).
         embed_fn: Optional embedding function (text -> list[float]).
     """
@@ -181,12 +176,14 @@ class GraphknowsAdapter:
         from graphknows.memory.stm._async_bridge import _run
 
         retriever = DETRetriever(pg=self.pg_store, neo=self.neo_store, mg=self.mg_store)
-        ctx = _run(retriever.retrieve(
-            request.query,
-            session_id=request.session_id or "",
-            top_k=request.top_k,
-            scope="stm",
-        ))
+        ctx = _run(
+            retriever.retrieve(
+                request.query,
+                session_id=request.session_id or "",
+                top_k=request.top_k,
+                scope="stm",
+            )
+        )
         hit_dicts = [
             {
                 "text": r.get("text", ""),
@@ -205,7 +202,11 @@ class GraphknowsAdapter:
             for r in ctx.fused_results
         ]
         if not request.include_raw:
-            hit_dicts = [h for h in hit_dicts if h.get("provenance", {}).get("memory_class") != "raw_evidence"]
+            hit_dicts = [
+                h
+                for h in hit_dicts
+                if h.get("provenance", {}).get("memory_class") != "raw_evidence"
+            ]
         return hit_dicts
 
     async def promote(self, options: PromoteOptions) -> dict[str, Any]:
@@ -347,11 +348,7 @@ class AgentMemoryAdapter(Protocol):
 
 
 class GraphknowsMemoryAdapter:
-    """Concrete AgentMemoryAdapter backed by the Graphknows memory stack.
-
-    Delegates to STMService, LTMPromotionPipeline, recall functions, and
-    pgvector/Neo4j queries for stats.
-    """
+    """Concrete AgentMemoryAdapter backed by the Graphknows memory stack."""
 
     def __init__(self, container: Any = None) -> None:
         self._container = container
@@ -363,27 +360,43 @@ class GraphknowsMemoryAdapter:
 
     def _stores_from_container(self) -> tuple[Any, Any, Any]:
         c = self._container
-        return c.memgraph, c.pg, c.neo  # type: ignore[no-any-return]
+        return c.stm, c.vector, c.ltm  # type: ignore[no-any-return]
 
     def _lazy_stores(self) -> tuple[Any, Any, Any, Any]:
+        from graphknows.memory.stm._async_bridge import _run
+        from graphknows.memory.stores.arcadedb.client import ArcadeDBClient
+        from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
+        from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+        from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
         from graphknows.memory.stores.embedder import embed_one
-        from graphknows.memory.stores.memgraph import MemgraphStore
-        from graphknows.memory.stores.neo4j import Neo4jStore
-        from graphknows.memory.stores.pgvector import PgVectorStore
 
-        def _require_env(key: str) -> str:
-            v = os.environ.get(key)
-            if not v:
-                raise OSError(f"{key} is not set")
-            return v
-
-        mg = MemgraphStore(_require_env("MEMGRAPH_URI"))
-        pg = PgVectorStore(_require_env("PGVECTOR_DSN"))
-        neo = Neo4jStore(
-            uri=_require_env("NEO4J_URI"),
-            user=os.environ.get("NEO4J_USER", "neo4j"),
-            password=_require_env("NEO4J_PASSWORD"),
+        arcade_client = ArcadeDBClient(
+            base_url=os.environ.get("ARCADEDB_URL", "http://172.18.0.1:2480"),
+            user=os.environ.get("ARCADEDB_USER", "root"),
+            password=os.environ.get("ARCADEDB_PASSWORD", "changeme"),
         )
+        _run(arcade_client.connect())
+        mg = ArcadeDBSTMStore(arcade_client)
+        _run(mg.ensure_schema())
+
+        vec_client = ArcadeDBClient(
+            base_url=os.environ.get("ARCADEDB_URL", "http://172.18.0.1:2480"),
+            user=os.environ.get("ARCADEDB_USER", "root"),
+            password=os.environ.get("ARCADEDB_PASSWORD", "changeme"),
+        )
+        _run(vec_client.connect())
+        pg = ArcadeDBVectorStore(vec_client)
+        _run(pg.ensure_schema())
+
+        ltm_client = ArcadeDBClient(
+            base_url=os.environ.get("ARCADEDB_URL", "http://172.18.0.1:2480"),
+            user=os.environ.get("ARCADEDB_USER", "root"),
+            password=os.environ.get("ARCADEDB_PASSWORD", "changeme"),
+        )
+        _run(ltm_client.connect())
+        neo = ArcadeDBLTMStore(ltm_client)
+        _run(neo.ensure_schema())
+
         return mg, pg, neo, embed_one
 
     def _get_extractor(self) -> Any:
@@ -445,8 +458,11 @@ class GraphknowsMemoryAdapter:
 
         if self._container is not None:
             mg, pg, neo = self._stores_from_container()
-            embed_model = getattr(getattr(self._container, "settings", None), "embed_model",
-                                  "openai/text-embedding-3-small")
+            embed_model = getattr(
+                getattr(self._container, "settings", None),
+                "embed_model",
+                "openai/text-embedding-3-small",
+            )
             pg_owned = False
         else:
             mg, pg, neo, _ = self._lazy_stores()
@@ -456,7 +472,9 @@ class GraphknowsMemoryAdapter:
 
         try:
             retriever = DETRetriever(pg=pg, neo=neo, mg=mg, embed_model=embed_model)
-            ctx = await retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=recall_scope)
+            ctx = await retriever.retrieve(
+                query, session_id=session_id, top_k=top_k, scope=recall_scope
+            )
         finally:
             if pg_owned:
                 await pg.close()
@@ -478,7 +496,7 @@ class GraphknowsMemoryAdapter:
     # ------------------------------------------------------------------
 
     async def flush(self, scope: MemoryScope | str) -> FlushResult:
-        """Flush a session from Memgraph STM to Neo4j LTM."""
+        """Flush a session from STM to LTM."""
         if self._container is not None:
             mg, pg, neo = self._stores_from_container()
         else:
@@ -505,35 +523,25 @@ class GraphknowsMemoryAdapter:
     # ------------------------------------------------------------------
 
     async def stats(self, scope: MemoryScope | str | None = None) -> MemoryStats:
-        """Return aggregate node/chunk counts for STM and LTM."""
+        """Return aggregate node/chunk counts for STM and LTM via ArcadeDB."""
         if self._container is not None:
             _, pg, neo = self._stores_from_container()
-            pg_dsn = getattr(pg, "_dsn", "")
         else:
             _, pg, neo, _ = self._lazy_stores()
-            pg_dsn = ""
-
-        if not pg_dsn:
-            pg_dsn = os.environ.get("PGVECTOR_DSN", "")
-        if asyncpg is None:
-            raise ImportError("asyncpg is required for GraphknowsMemoryAdapter.stats")
 
         stm: dict[str, Any] = {}
         ltm: dict[str, Any] = {}
 
-        conn = await asyncpg.connect(pg_dsn)
-        try:
-            stm["chunks"] = int(await conn.fetchval("SELECT count(*) FROM stm_chunks"))
-            stm["turns"] = int(await conn.fetchval("SELECT count(*) FROM stm_turns"))
-            ltm["chunks"] = int(await conn.fetchval("SELECT count(*) FROM ltm_chunks"))
-            ltm["turns"] = int(await conn.fetchval("SELECT count(*) FROM ltm_turns"))
-            ltm["topics"] = int(await conn.fetchval("SELECT count(*) FROM ltm_topics"))
-        finally:
-            await conn.close()
+        async def _count(store: Any, db: str, label: str) -> int:
+            rows = await store._c.query(db, f"MATCH (n:{label}) RETURN count(n) AS c")
+            return int(rows[0].get("c") or 0) if rows else 0
 
-        rows_e = await neo._arun("MATCH (e:ENTITY) RETURN count(e) AS c")
-        rows_s = await neo._arun("MATCH (s:SESSION) RETURN count(s) AS c")
-        ltm["entities"] = int(rows_e[0]["c"]) if rows_e else 0
-        ltm["sessions"] = int(rows_s[0]["c"]) if rows_s else 0
+        stm["chunks"] = await _count(pg, pg._db if hasattr(pg, "_db") else "stm", "CHUNK")
+        stm["turns"] = await _count(pg, pg._db if hasattr(pg, "_db") else "stm", "TURN")
+        ltm["chunks"] = await _count(neo, "ltm", "CHUNK")
+        ltm["turns"] = await _count(neo, "ltm", "TURN")
+        ltm["topics"] = await _count(neo, "ltm", "TOPIC")
+        ltm["entities"] = await _count(neo, "ltm", "ENTITY")
+        ltm["sessions"] = await _count(neo, "ltm", "SESSION")
 
         return MemoryStats(stm=stm, ltm=ltm)
