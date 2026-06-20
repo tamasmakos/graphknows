@@ -7,7 +7,7 @@ from typing import Any
 from graphknows.config import GraphKnowsSettings
 
 _settings: GraphKnowsSettings | None = None
-_pg: Any = None
+_vector: Any = None
 _retriever: Any = None
 _runtime: Any = None
 
@@ -30,29 +30,33 @@ def get_runtime() -> Any:
     return _runtime
 
 
-def get_mg_store() -> Any:
-    """Build a MemgraphStore from current settings."""
-    from graphknows.config.builders.stores import build_memgraph_store
+def get_stm_store() -> Any:
+    """Build an ArcadeDBSTMStore from current settings (not yet connected)."""
+    from graphknows.config.builders.stores import build_arcadedb_stm_store
 
-    return build_memgraph_store(get_settings())
-
-
-async def get_pg_store() -> Any:
-    """Return a connected PgVectorStore singleton."""
-    global _pg
-    if _pg is None:
-        from graphknows.config.builders.stores import build_pgvector_store
-
-        _pg = build_pgvector_store(get_settings())
-        await _pg.connect()
-    return _pg
+    return build_arcadedb_stm_store(get_settings())
 
 
-def get_neo_store() -> Any:
-    """Build a Neo4jStore from current settings."""
-    from graphknows.config.builders.stores import build_neo4j_store
+async def get_vector_store() -> Any:
+    """Return a connected ArcadeDBVectorStore singleton."""
+    global _vector
+    if _vector is None:
+        from graphknows.config.builders.stores import build_arcadedb_vector_store
 
-    return build_neo4j_store(get_settings())
+        _vector = build_arcadedb_vector_store(get_settings())
+        await _vector.connect()
+        await _vector.ensure_schema()
+    return _vector
+
+
+async def get_ltm_store() -> Any:
+    """Return a connected ArcadeDBLTMStore."""
+    from graphknows.config.builders.stores import build_arcadedb_ltm_store
+
+    store = build_arcadedb_ltm_store(get_settings())
+    await store._c.connect()
+    await store.ensure_schema()
+    return store
 
 
 async def get_or_init_retriever() -> Any:
@@ -61,19 +65,21 @@ async def get_or_init_retriever() -> Any:
     if _retriever is not None:
         return _retriever
     s = get_settings()
-    pg = await get_pg_store()
-    neo = get_neo_store()
+    vector = await get_vector_store()
+    ltm = await get_ltm_store()
+    stm = get_stm_store()
+    await stm._c.connect()
     if s.retrieval_mode == "agentic":
         from graphknows.memory.query.agentic import AgenticRetriever
 
         _retriever = AgenticRetriever(
             settings=s,
-            pg=pg,
-            neo=neo,
-            memgraph=get_mg_store(),
+            pg=vector,
+            neo=ltm,
+            stm=stm,
         )
     else:
         from graphknows.memory.query.retriever import DETRetriever
 
-        _retriever = DETRetriever(pg=pg, neo=neo, mg=get_mg_store(), embed_model=s.embed_model)
+        _retriever = DETRetriever(pg=vector, neo=ltm, mg=stm, embed_model=s.embed_model)
     return _retriever
