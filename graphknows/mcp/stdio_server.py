@@ -7,10 +7,10 @@ without requiring the full agent service.
 Tools
 -----
 STM tools:
-  memory_doctor   — connectivity check: memgraph, neo4j, pgvector
+  memory_doctor   — connectivity check: ArcadeDB STM, LTM, vector
   memory_stats    — STM and LTM node/chunk counts
-  memory_ingest   — ingest text into STM (Memgraph + pgvector)
-  memory_flush    — promote STM session → Neo4j LTM
+  memory_ingest   — ingest text into STM (ArcadeDB)
+  memory_flush    — promote STM session → ArcadeDB LTM
   memory_mirror   — return the local Memory Mirror browser URL
 
 LTM tools:
@@ -45,7 +45,12 @@ from graphknows.mcp._app import app  # noqa: E402
 # Re-export tool functions so existing code/tests can reference them on this module
 from graphknows.mcp.tools.admin import memory_doctor, memory_purge, memory_stats  # noqa: F401, E402
 from graphknows.mcp.tools.corpus import corpus_ingest  # noqa: F401, E402
-from graphknows.mcp.tools.ltm import ltm_entities, ltm_entity, ltm_query, ltm_topics  # noqa: F401, E402
+from graphknows.mcp.tools.ltm import (  # noqa: F401, E402
+    ltm_entities,
+    ltm_entity,
+    ltm_query,
+    ltm_topics,
+)
 from graphknows.mcp.tools.query import memory_query  # noqa: F401, E402
 from graphknows.mcp.tools.stm import memory_flush, memory_ingest, memory_recall  # noqa: F401, E402
 from graphknows.mcp.tools.web import memory_mirror  # noqa: F401, E402
@@ -55,7 +60,7 @@ from graphknows.runtime import normalise_and_weight as _normalise_and_weight  # 
 
 
 async def _startup_warmup() -> None:
-    """Pre-warm embedder and pgvector pool before first tool call."""
+    """Pre-warm embedder and stores before first tool call."""
     log = logging.getLogger("graphknows.startup")
 
     # Load settings first so repo .env values are promoted to os.environ before
