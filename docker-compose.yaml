@@ -1,129 +1,27 @@
-# docker-compose.yaml — production service definitions
-# Override with docker-compose.dev.yaml for local development
+# docker-compose.yaml — ArcadeDB-only stack
+# Services: arcadedb, mcp, workspace, web
 # Usage: docker compose up -d
-#        docker compose --profile observability up -d   (adds Langfuse)
 
 services:
   # ── Infrastructure ──────────────────────────────────────────────────────────
 
-  neo4j:
-    image: neo4j:5.26-community
+  arcadedb:
+    image: arcadedata/arcadedb:latest
     ports:
-      - "${NEO4J_HTTP_PORT:-7474}:7474"
-      - "${NEO4J_BOLT_PORT:-7687}:7687"
+      - "${ARCADEDB_HTTP_PORT:-2480}:2480"
     environment:
-      NEO4J_AUTH: "${NEO4J_AUTH:-neo4j/changeme}"
+      JAVA_OPTS: "-Darcadedb.server.rootPassword=${ARCADEDB_PASSWORD:-changeme}"
     volumes:
-      - neo4j_data:/data
+      - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      test: ["CMD", "curl", "-f", "http://localhost:2480/api/v1/ready"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
 
-  pgvector:
-    image: pgvector/pgvector:pg16
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    environment:
-      POSTGRES_DB: "${POSTGRES_DB:-graphknows}"
-      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
-    volumes:
-      - pgvector_data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # ── Application Services ────────────────────────────────────────────────────
-
-  graphgen:
-    build:
-      context: .
-      dockerfile: services/graphgen/Dockerfile
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
-    environment:
-      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
-      NEO4J_USER: "${NEO4J_USER:-neo4j}"
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
-      POSTGRES_HOST: "${POSTGRES_HOST:-pgvector}"
-      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
-      POSTGRES_DB: "${POSTGRES_DB:-graphknows}"
-      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
-      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
-      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
-      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
-      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      GRAPHGEN_INPUT_DIR: "${GRAPHGEN_INPUT_DIR:-/data/input}"
-      GRAPHGEN_OUTPUT_DIR: "${GRAPHGEN_OUTPUT_DIR:-/data/output}"
-      PYTHONPATH: /app/src
-    ports:
-      - "8020:8000"
-    volumes:
-      - graphgen_input:/data/input
-      - graphgen_output:/data/output
-    depends_on:
-      neo4j:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-    restart: unless-stopped
-
-  graphrag:
-    build:
-      context: .
-      dockerfile: services/graphrag/Dockerfile
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
-    environment:
-      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
-      NEO4J_USER: "${NEO4J_USER:-neo4j}"
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
-      POSTGRES_HOST: "${POSTGRES_HOST:-pgvector}"
-      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
-      POSTGRES_DB: "${POSTGRES_DB:-graphknows}"
-      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme}"
-      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
-      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
-      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
-      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      LANGFUSE_HOST: "${LANGFUSE_HOST:-http://langfuse:3000}"
-      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
-      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
-      GRAPHRAG_KEYWORDS_MODEL: "${GRAPHRAG_KEYWORDS_MODEL:-llama-3.1-8b-instant}"
-      GRAPHRAG_CHAT_MODEL: "${GRAPHRAG_CHAT_MODEL:-llama-3.3-70b-versatile}"
-      PYTHONPATH: /app/src
-    ports:
-      - "8010:8000"
-    depends_on:
-      neo4j:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-    restart: unless-stopped
-
-  memgraph:
-    image: memgraph/memgraph-mage:latest
-    ports:
-      - "${MEMGRAPH_BOLT_PORT:-7688}:7687"
-      - "${MEMGRAPH_HTTP_PORT:-7444}:7444"
-    environment:
-      MEMGRAPH_STORAGE_MODE: "IN_MEMORY_ANALYTICAL"
-    volumes:
-      - memgraph_data:/var/lib/memgraph
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "echo 'RETURN 1' | mgconsole --host localhost --port 7687 2>/dev/null || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
 
   mcp:
     container_name: graphknows-mcp
@@ -134,41 +32,23 @@ services:
       - .:/app
     command: graphknows-mcp
     environment:
-      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
-      NEO4J_HOST: "${NEO4J_HOST:-neo4j}"
-      NEO4J_PORT: "${NEO4J_PORT:-7687}"
-      NEO4J_USER: "${NEO4J_USER:-neo4j}"
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
-      NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
-      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
-      MEMGRAPH_USER: "${MEMGRAPH_USER:-}"
-      MEMGRAPH_PASSWORD: "${MEMGRAPH_PASSWORD:-}"
-      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
-      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
-      PGVECTOR_DB: "${PGVECTOR_DB:-graphknows}"
-      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
-      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
-      PGVECTOR_DSN: "${PGVECTOR_DSN:-postgresql://postgres:changeme@pgvector:5432/graphknows}"
+      ARCADEDB_URL: "${ARCADEDB_URL:-http://arcadedb:2480}"
+      ARCADEDB_USER: "${ARCADEDB_USER:-root}"
+      ARCADEDB_PASSWORD: "${ARCADEDB_PASSWORD:-changeme}"
       LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
       LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
       LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
       LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
-      LANGFUSE_HOST: "${LANGFUSE_HOST:-http://langfuse:3000}"
+      LANGFUSE_HOST: "${LANGFUSE_HOST:-}"
       LANGFUSE_BASE_URL: "${LANGFUSE_BASE_URL:-}"
       LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
       LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
     depends_on:
-      neo4j:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-      memgraph:
+      arcadedb:
         condition: service_healthy
     restart: "no"
-
-  # ── Memory Mirror web UI ────────────────────────────────────────────────────
 
   web:
     build:
@@ -177,22 +57,14 @@ services:
     ports:
       - "${WEB_PORT:-8800}:8800"
     environment:
-      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
-      NEO4J_HOST: "${NEO4J_HOST:-neo4j}"
-      NEO4J_PORT: "${NEO4J_PORT:-7687}"
-      NEO4J_USER: "${NEO4J_USER:-neo4j}"
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
-      NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
-      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
-      MEMGRAPH_USER: "${MEMGRAPH_USER:-}"
-      MEMGRAPH_PASSWORD: "${MEMGRAPH_PASSWORD:-}"
+      ARCADEDB_URL: "${ARCADEDB_URL:-http://arcadedb:2480}"
+      ARCADEDB_USER: "${ARCADEDB_USER:-root}"
+      ARCADEDB_PASSWORD: "${ARCADEDB_PASSWORD:-changeme}"
       GRAPHKNOWS_WEB_HOST: "0.0.0.0"
       GRAPHKNOWS_WEB_PORT: "8800"
       GRAPHKNOWS_FRONTEND_DIR: "/app/frontend"
     depends_on:
-      neo4j:
-        condition: service_healthy
-      memgraph:
+      arcadedb:
         condition: service_healthy
     restart: unless-stopped
 
@@ -207,33 +79,20 @@ services:
     volumes:
       - .:/app
     environment:
-      NEO4J_URI: "${NEO4J_URI:-bolt://neo4j:7687}"
-      NEO4J_HOST: "${NEO4J_HOST:-neo4j}"
-      NEO4J_PORT: "${NEO4J_PORT:-7687}"
-      NEO4J_USER: "${NEO4J_USER:-neo4j}"
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme}"
-      NEO4J_DATABASE: "${NEO4J_DATABASE:-neo4j}"
-      MEMGRAPH_URI: "${MEMGRAPH_URI:-bolt://memgraph:7687}"
-      PGVECTOR_HOST: "${PGVECTOR_HOST:-pgvector}"
-      PGVECTOR_PORT: "${PGVECTOR_PORT:-5432}"
-      PGVECTOR_DB: "${PGVECTOR_DB:-graphknows}"
-      PGVECTOR_USER: "${PGVECTOR_USER:-postgres}"
-      PGVECTOR_PASSWORD: "${PGVECTOR_PASSWORD:-changeme}"
-      PGVECTOR_DSN: "${PGVECTOR_DSN:-postgresql://postgres:changeme@pgvector:5432/graphknows}"
+      ARCADEDB_URL: "${ARCADEDB_URL:-http://arcadedb:2480}"
+      ARCADEDB_USER: "${ARCADEDB_USER:-root}"
+      ARCADEDB_PASSWORD: "${ARCADEDB_PASSWORD:-changeme}"
       LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
       LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
       LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
       LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       PYTHONPATH: /app
     tty: true
     stdin_open: true
     command: /bin/bash
     depends_on:
-      neo4j:
-        condition: service_healthy
-      pgvector:
-        condition: service_healthy
-      memgraph:
+      arcadedb:
         condition: service_healthy
     restart: unless-stopped
 
@@ -272,9 +131,5 @@ services:
       - langfuse_data:/var/lib/postgresql/data
 
 volumes:
-  neo4j_data:
-  pgvector_data:
-  graphgen_input:
-  graphgen_output:
-  memgraph_data:
+  arcadedb_data:
   langfuse_data:

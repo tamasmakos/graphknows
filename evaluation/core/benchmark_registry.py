@@ -79,7 +79,6 @@ BENCHMARK_ORDER: tuple[str, ...] = ("locomo", "longmemeval", "beam")
 
 def expand_benchmark_selection(selection: list[str]) -> list[str]:
     """Expand CLI benchmark selections into ordered, de-duplicated benchmark names."""
-
     names = BENCHMARK_ORDER if "all" in selection else tuple(selection)
     expanded: list[str] = []
     for name in names:

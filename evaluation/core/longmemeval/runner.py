@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from evaluation.core.client import GraphknowsMCPClient
 from evaluation.core.data import download_if_missing
 from evaluation.core.file_backed import _parse_memory_query_hits
 from evaluation.core.models import BenchmarkCaseResult
-from evaluation.core.client import GraphknowsMCPClient
 
 LONGMEMEVAL_DATASET = "xiaowu0162/longmemeval-v2"
 LONGMEMEVAL_RESOLVE = "https://huggingface.co/datasets/xiaowu0162/longmemeval-v2/resolve/main"
@@ -58,7 +58,9 @@ def load_lme_metadata(data_root: Path) -> tuple[list[dict[str, Any]], dict[str, 
         for line in (data_root / "questions.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    haystack = json.loads((data_root / "haystacks" / "lme_v2_small.json").read_text(encoding="utf-8"))
+    haystack = json.loads(
+        (data_root / "haystacks" / "lme_v2_small.json").read_text(encoding="utf-8")
+    )
     return questions, haystack
 
 
@@ -91,7 +93,9 @@ def extract_lme_trajectories(
     if len(found) == len(selected_set):
         return [found[item] for item in selected]
 
-    download_if_missing(f"{LONGMEMEVAL_RESOLVE}/trajectories.jsonl", data_root / "trajectories.jsonl")
+    download_if_missing(
+        f"{LONGMEMEVAL_RESOLVE}/trajectories.jsonl", data_root / "trajectories.jsonl"
+    )
     with (data_root / "trajectories.jsonl").open("r", encoding="utf-8") as handle:
         for line in handle:
             row = json.loads(line)
@@ -110,7 +114,9 @@ def extract_lme_trajectories(
     return [found[item] for item in selected]
 
 
-def select_states(trajectory: dict[str, Any], question: str, *, max_states: int) -> list[dict[str, Any]]:
+def select_states(
+    trajectory: dict[str, Any], question: str, *, max_states: int
+) -> list[dict[str, Any]]:
     states = [state for state in trajectory.get("states", []) if isinstance(state, dict)]
     if not states or max_states <= 0:
         return []
@@ -129,7 +135,9 @@ def select_states(trajectory: dict[str, Any], question: str, *, max_states: int)
     return [states[index] for index in sorted(selected_indexes)[:max_states]]
 
 
-def build_trajectory_capsule(trajectory: dict[str, Any], question: str, options: CapsuleOptions) -> str:
+def build_trajectory_capsule(
+    trajectory: dict[str, Any], question: str, options: CapsuleOptions
+) -> str:
     parts = [
         f"Trajectory id: {trajectory.get('id')}",
         f"Domain: {trajectory.get('domain')}",
@@ -221,7 +229,9 @@ async def run_longmemeval_case(
     purge: bool = True,
 ) -> BenchmarkCaseResult:
     questions, haystack = load_lme_metadata(data_root)
-    question = select_lme_questions(questions, haystack, question_id=question_id, max_questions=1)[0]
+    question = select_lme_questions(questions, haystack, question_id=question_id, max_questions=1)[
+        0
+    ]
     qid = str(question["id"])
     trajectory_ids = list(haystack[qid])
     trajectories = extract_lme_trajectories(data_root, trajectory_ids, max_trajectories)
@@ -253,7 +263,9 @@ async def run_longmemeval_case(
                         "memory_ingest",
                         {"text": doc["text"], "session_id": session_id, "title": doc["title"]},
                     )
-                    ingest_results.append(result if isinstance(result, dict) else {"result": result})
+                    ingest_results.append(
+                        result if isinstance(result, dict) else {"result": result}
+                    )
         else:
             for trajectory in trajectories:
                 result = await client.call_tool(
@@ -302,7 +314,9 @@ async def run_longmemeval_case(
             "indexed_trajectories": len(trajectories),
             "ingest_strategy": ingest_strategy,
             "session_id": session_id,
-            "ingest_documents": len(trajectories) if ingest_strategy != "raw" else len(trajectories),
+            "ingest_documents": len(trajectories)
+            if ingest_strategy != "raw"
+            else len(trajectories),
             "ingest_results": ingest_results,
             "flush_result": flush_result or None,
         },
