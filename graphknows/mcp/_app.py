@@ -11,10 +11,9 @@ from mcp.server.fastmcp import FastMCP
 @asynccontextmanager
 async def _lifespan(app: FastMCP) -> AsyncIterator[None]:
     yield
-    import graphknows.mcp._state as _state
+    from graphknows.mcp._state import close
 
-    if _state._pg is not None:
-        await _state._pg.close()
+    await close()
 
 
 app = FastMCP(

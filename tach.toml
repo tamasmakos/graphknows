@@ -113,12 +113,28 @@ depends_on = [
 ]
 
 [[modules]]
+path = "graphknows.runtime"
+depends_on = [
+  "graphknows.config",
+  "graphknows.config.builders",
+  "graphknows.memory",
+  "graphknows.memory.models",
+  "graphknows.memory.query",
+  "graphknows.memory.stm",
+  "graphknows.memory.workflows",
+  "graphknows.web",
+]
+
+[[modules]]
 path = "graphknows.mcp"
 depends_on = [
   "graphknows.config",
   "graphknows.config.builders",
   "graphknows.memory.query",
-  "graphknows.memory.stores", "graphknows.memory.stm", "graphknows.mcp.tools",
+  "graphknows.memory.stores",
+  "graphknows.memory.stm",
+  "graphknows.mcp.tools",
+  "graphknows.runtime",
 ]
 
 [[modules]]
@@ -143,4 +159,5 @@ depends_on = [
   "graphknows.config",
   "graphknows.config.builders",
   "graphknows.memory.models",
+  "graphknows.runtime",
 ]

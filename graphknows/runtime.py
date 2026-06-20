@@ -81,6 +81,49 @@ class GraphKnowsRuntime:
 
     def __init__(self, settings: GraphKnowsSettings | None = None) -> None:
         self.settings = settings or GraphKnowsSettings()
+        self._retriever: Any = None
+        self._retriever_stores: list[Any] = []
+
+    async def close(self) -> None:
+        """Close any store connections held by this runtime instance."""
+        import contextlib
+
+        for store in self._retriever_stores:
+            with contextlib.suppress(Exception):
+                await store._c.close()
+        self._retriever = None
+        self._retriever_stores = []
+
+    async def _get_retriever(self) -> Any:
+        """Return a cached retriever, connecting stores lazily on first call."""
+        if self._retriever is not None:
+            return self._retriever
+        from graphknows.config.builders.stores import (
+            build_arcadedb_ltm_store,
+            build_arcadedb_stm_store,
+            build_arcadedb_vector_store,
+        )
+
+        s = self.settings
+        pg = build_arcadedb_vector_store(s)
+        neo = build_arcadedb_ltm_store(s)
+        mg = build_arcadedb_stm_store(s)
+        await asyncio.gather(
+            pg.connect(),  # vector: connect + ensure_schema
+            neo._c.connect(),
+            mg._c.connect(),
+        )
+        await neo.ensure_schema()
+        self._retriever_stores = [pg, neo, mg]
+        if s.retrieval_mode == "agentic":
+            from graphknows.memory.query.agentic import AgenticRetriever
+
+            self._retriever = AgenticRetriever(settings=s, pg=pg, neo=neo, stm=mg)
+        else:
+            from graphknows.memory.query.retriever import DETRetriever
+
+            self._retriever = DETRetriever(pg=pg, neo=neo, mg=mg, embed_model=s.embed_model)
+        return self._retriever
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity."""
@@ -192,41 +235,8 @@ class GraphKnowsRuntime:
         top_k = max(1, min(top_k, 25))
         if scope not in {"stm", "ltm", "both"}:
             scope = "both"
-        return await asyncio.to_thread(self._recall_memory_sync, query, session_id, top_k, scope)
-
-    def _recall_memory_sync(
-        self,
-        query: str,
-        session_id: str,
-        top_k: int,
-        scope: str,
-    ) -> dict[str, Any]:
-        from graphknows.config.builders.stores import (
-            build_arcadedb_ltm_store,
-            build_arcadedb_stm_store,
-            build_arcadedb_vector_store,
-        )
-        from graphknows.memory.query.retriever import DETRetriever
-        from graphknows.memory.stm._async_bridge import _run as bg_run
-
-        mg = build_arcadedb_stm_store(self.settings)
-        pg = build_arcadedb_vector_store(self.settings)
-        neo = build_arcadedb_ltm_store(self.settings)
-        try:
-            bg_run(mg._c.connect())
-            bg_run(pg._c.connect())
-            bg_run(neo._c.connect())
-            retriever = DETRetriever(
-                pg=pg,
-                neo=neo,
-                mg=mg,
-                embed_model=self.settings.embed_model,
-            )
-            ctx = bg_run(retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=scope))
-        finally:
-            bg_run(mg._c.close())
-            bg_run(pg._c.close())
-            bg_run(neo._c.close())
+        retriever = await self._get_retriever()
+        ctx = await retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
         return {"hits": _format_fused_hits(ctx.fused_results, session_id)}
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:

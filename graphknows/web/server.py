@@ -39,16 +39,6 @@ def get_runtime() -> GraphKnowsRuntime:
     return _runtime
 
 
-def get_stm_store() -> Any:
-    """Build an ArcadeDB STM store from web settings."""
-    return build_arcadedb_stm_store(get_settings())
-
-
-def get_ltm_store() -> Any:
-    """Build an ArcadeDB LTM store from web settings."""
-    return build_arcadedb_ltm_store(get_settings())
-
-
 def _frontend_dir() -> Path:
     configured = os.environ.get("GRAPHKNOWS_FRONTEND_DIR")
     if configured:
@@ -180,7 +170,7 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
 
 
 async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
-    ltm = get_ltm_store()
+    ltm = build_arcadedb_ltm_store(get_settings())
     await ltm._c.connect()
     try:
         node_cypher, edge_cypher, params = _ltm_queries(session_id, limit)
@@ -258,7 +248,7 @@ async def sessions(_: Request) -> JSONResponse:
     errors: list[str] = []
 
     try:
-        stm = get_stm_store()
+        stm = build_arcadedb_stm_store(get_settings())
         await stm._c.connect()
         try:
             rows = await stm._c.query(
@@ -273,7 +263,7 @@ async def sessions(_: Request) -> JSONResponse:
         errors.append(f"stm: {exc}")
 
     try:
-        ltm = get_ltm_store()
+        ltm = build_arcadedb_ltm_store(get_settings())
         await ltm._c.connect()
         try:
             rows = await ltm._qry("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
@@ -302,7 +292,7 @@ async def graph(request: Request) -> JSONResponse:
                     },
                     status_code=400,
                 )
-            stm = get_stm_store()
+            stm = build_arcadedb_stm_store(get_settings())
             try:
                 raw = await stm.get_session_graph(session_id)
             finally:
@@ -319,16 +309,6 @@ async def graph(request: Request) -> JSONResponse:
         return JSONResponse(_error_payload(exc), status_code=503)
 
 
-def _run_recall(
-    scope: str,
-    query: str,
-    session_id: str,
-    top_k: int,
-) -> dict[str, Any]:
-    """Synchronous recall across STM/LTM stores. Returns serialisable hits dict."""
-    return get_runtime()._recall_memory_sync(query, session_id, top_k, scope)
-
-
 async def recall(request: Request) -> JSONResponse:
     """Return ranked recall hits for a query."""
     query = request.query_params.get("q", "").strip()
@@ -343,7 +323,9 @@ async def recall(request: Request) -> JSONResponse:
             status_code=400,
         )
     try:
-        result = await asyncio.to_thread(_run_recall, scope, query, session_id, top_k)
+        result = await get_runtime().recall_memory(
+            query, session_id=session_id, top_k=top_k, scope=scope
+        )
         return JSONResponse(result)
     except Exception as exc:
         return JSONResponse(_error_payload(exc), status_code=503)
