@@ -34,24 +34,28 @@ from graphknows.config import GraphKnowsSettings
 from graphknows.container import GraphKnowsContainer
 from graphknows.mcp.tool import GraphKnowsTool
 from graphknows.memory.query import DETRetriever, RetrievalContext
+from graphknows.memory.stores.arcadedb import (
+    ArcadeDBClient,
+    ArcadeDBLTMStore,
+    ArcadeDBSTMStore,
+    ArcadeDBVectorStore,
+)
 from graphknows.memory.stores.embedder import embed, embed_one, get_embedder
-from graphknows.memory.stores.memgraph import MemgraphStore
-from graphknows.memory.stores.neo4j import Neo4jStore
-from graphknows.memory.stores.pgvector import PgVectorStore
 
 # Ergonomic top-level alias — the most common import pattern:
 #   from graphknows import GraphKnows
 GraphKnows = GraphKnowsContainer
 
 __all__ = [
+    "ArcadeDBClient",
+    "ArcadeDBLTMStore",
+    "ArcadeDBSTMStore",
+    "ArcadeDBVectorStore",
+    "DETRetriever",
     "GraphKnows",
     "GraphKnowsContainer",
     "GraphKnowsSettings",
     "GraphKnowsTool",
-    "DETRetriever",
-    "MemgraphStore",
-    "Neo4jStore",
-    "PgVectorStore",
     "RetrievalContext",
     "embed",
     "embed_one",

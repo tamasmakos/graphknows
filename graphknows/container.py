@@ -1,7 +1,7 @@
 """graphknows dependency-injection container.
 
 ``GraphKnowsContainer`` is an async context manager that owns the full store
-lifecycle (Neo4j, pgvector, Memgraph) and surfaces all capabilities as
+lifecycle (ArcadeDB STM, LTM, and vector) and surfaces all capabilities as
 framework-agnostic ``GraphKnowsTool`` objects.
 
 Typical usage in any agentic project::
@@ -32,17 +32,17 @@ from typing import Any
 
 from graphknows.config import GraphKnowsSettings
 from graphknows.config.builders import (
-    build_memgraph_store,
-    build_neo4j_store,
-    build_pgvector_store,
+    build_arcadedb_ltm_store,
+    build_arcadedb_stm_store,
+    build_arcadedb_vector_store,
 )
 from graphknows.mcp.tool import GraphKnowsTool
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.retriever import DETRetriever
+from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
+from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
 from graphknows.memory.stores.embedder import embed
-from graphknows.memory.stores.memgraph import MemgraphStore
-from graphknows.memory.stores.neo4j import Neo4jStore
-from graphknows.memory.stores.pgvector import PgVectorStore
 
 log = logging.getLogger("graphknows.container")
 
@@ -56,9 +56,9 @@ class GraphKnowsContainer:
 
     def __init__(self, settings: GraphKnowsSettings) -> None:
         self.settings = settings
-        self._pg: PgVectorStore | None = None
-        self._neo: Neo4jStore | None = None
-        self._memgraph: MemgraphStore | None = None
+        self._vector: ArcadeDBVectorStore | None = None
+        self._ltm: ArcadeDBLTMStore | None = None
+        self._stm: ArcadeDBSTMStore | None = None
         self._retriever: BaseGraphRetriever | None = None
         self._jobs: dict[str, dict[str, Any]] = {}
         self._background_tasks: set[asyncio.Task] = set()
@@ -80,48 +80,49 @@ class GraphKnowsContainer:
 
     async def __aenter__(self) -> GraphKnowsContainer:
         cfg = self.settings
-        self._neo = build_neo4j_store(cfg)
-        self._pg = build_pgvector_store(cfg)
-        self._memgraph = build_memgraph_store(cfg)
+        self._stm = build_arcadedb_stm_store(cfg)
+        self._ltm = build_arcadedb_ltm_store(cfg)
+        self._vector = build_arcadedb_vector_store(cfg)
 
-        await self._pg.connect()
         await asyncio.gather(
-            self._pg.ensure_schema(),
-            self._neo.ensure_indexes(),
+            self._stm._c.connect(),
+            self._ltm._c.connect(),
+            self._vector._c.connect(),
+        )
+        await asyncio.gather(
+            self._stm.ensure_schema(),
+            self._ltm.ensure_schema(),
+            self._vector.ensure_schema(),
         )
         if cfg.retrieval_mode == "agentic":
             from graphknows.memory.query.agentic import AgenticRetriever
 
             self._retriever = AgenticRetriever(
                 settings=cfg,
-                pg=self._pg,
-                neo=self._neo,
-                memgraph=self._memgraph,
+                pg=self._vector,
+                neo=self._ltm,
+                stm=self._stm,
             )
         else:
             self._retriever = DETRetriever(
-                pg=self._pg,
-                neo=self._neo,
-                mg=self._memgraph,
+                pg=self._vector,
+                neo=self._ltm,
+                mg=self._stm,
                 embed_model=cfg.embed_model,
             )
         log.info("GraphKnowsContainer ready (env=%s)", cfg.graphknows_env)
         return self
 
     async def __aexit__(self, *_: object) -> None:
-        try:
-            if self._pg is not None:
-                await self._pg.close()
-        except Exception:
-            log.debug("Cleanup error ignored", exc_info=True)
-        try:
-            if self._neo is not None:
-                self._neo.close()
-        except Exception:
-            log.debug("Cleanup error ignored", exc_info=True)
-        self._pg = None
-        self._neo = None
-        self._memgraph = None
+        for store in (self._stm, self._ltm, self._vector):
+            try:
+                if store is not None:
+                    await store._c.close()
+            except Exception:
+                log.debug("Cleanup error ignored", exc_info=True)
+        self._vector = None
+        self._ltm = None
+        self._stm = None
         self._retriever = None
         log.info("GraphKnowsContainer closed")
 
@@ -137,25 +138,25 @@ class GraphKnowsContainer:
         return self._retriever
 
     @property
-    def pg(self) -> PgVectorStore:
-        """Return the PgVector store; raises if container is not entered."""
-        if self._pg is None:
+    def vector(self) -> ArcadeDBVectorStore:
+        """Return the vector store; raises if container is not entered."""
+        if self._vector is None:
             raise RuntimeError(self._ERR_NOT_ENTERED)
-        return self._pg
+        return self._vector
 
     @property
-    def neo(self) -> Neo4jStore:
-        """Return the Neo4j store; raises if container is not entered."""
-        if self._neo is None:
+    def ltm(self) -> ArcadeDBLTMStore:
+        """Return the LTM graph store; raises if container is not entered."""
+        if self._ltm is None:
             raise RuntimeError(self._ERR_NOT_ENTERED)
-        return self._neo
+        return self._ltm
 
     @property
-    def memgraph(self) -> MemgraphStore:
-        """Return the Memgraph store; raises if container is not entered."""
-        if self._memgraph is None:
+    def stm(self) -> ArcadeDBSTMStore:
+        """Return the STM store; raises if container is not entered."""
+        if self._stm is None:
             raise RuntimeError(self._ERR_NOT_ENTERED)
-        return self._memgraph
+        return self._stm
 
     # ------------------------------------------------------------------
     # Framework-agnostic tool list
@@ -207,7 +208,7 @@ async def _tool_entity_search(
     entity_types: list[str] | None = None,
 ) -> str:
     emb = await _embed_one(query, c.settings.embed_model)
-    results = await c.pg.search_entities(emb, k=k, entity_types=entity_types or None)
+    results = await c.vector.search_entities(emb, k=k, entity_types=entity_types or None)
     return json.dumps(results, ensure_ascii=False)
 
 
@@ -217,16 +218,16 @@ async def _tool_entity_neighbors(
     depth: int = 1,
     relationship_types: list[str] | None = None,
 ) -> str:
-    result = await c.neo.get_entity_neighbors(
+    result = await c.ltm.get_entity_neighbors(
         entity_name, depth=depth, relationship_types=relationship_types
     )
     return json.dumps(result, ensure_ascii=False)
 
 
 async def _tool_get_chunks(c: GraphKnowsContainer, chunk_ids: list[str]) -> str:
-    text_map = await c.pg.get_chunks_by_ids(chunk_ids)
+    text_map = await c.vector.get_chunks_by_ids(chunk_ids)
     entity_results = await asyncio.gather(
-        *[c.neo.get_chunk_entities(cid) for cid in chunk_ids],
+        *[c.ltm.get_chunk_entities(cid) for cid in chunk_ids],
         return_exceptions=True,
     )
     enriched: dict[str, Any] = {}
@@ -250,7 +251,7 @@ async def _tool_session_memory(
     full_text = f"{title}\n\n{content}" if title else content
     chunk_id = f"memo:{uuid.uuid4().hex}"
     emb = await _embed_one(full_text, c.settings.embed_model)
-    await c.pg.upsert_chunks(
+    await c.vector.upsert_chunks(
         session_id=session_id,
         chunks=[
             {
@@ -287,9 +288,9 @@ async def _tool_ingest(
 
             extractor = GLiNER2EntityExtractor()
             workflow = CorpusIngestWorkflow(
-                mg_store=c._memgraph,
-                pg_store=c._pg,
-                neo_store=c._neo,
+                mg_store=c._stm,
+                pg_store=c._vector,
+                neo_store=c._ltm,
                 extractor=extractor,
                 embed_fn=None,
             )
@@ -334,37 +335,42 @@ async def _tool_poll_job(c: GraphKnowsContainer, run_id: str) -> str:
 
 
 async def _tool_get_session_graph(c: GraphKnowsContainer, session_id: str = "default") -> str:
-    result = await c.memgraph.get_session_graph(session_id)
+    result = await c.stm.get_session_graph(session_id)
     return json.dumps(result, ensure_ascii=False)
 
 
 async def _tool_get_corpus_stats(c: GraphKnowsContainer) -> str:
-    neo_counts = await c.neo.count_nodes()
-    pool = c.pg._pool
-    pg_counts: dict[str, int] = {"stm_chunks": 0, "ltm_chunks": 0}
-    if pool:
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT (SELECT count(*) FROM stm_chunks) AS stm_chunks, "
-                "(SELECT count(*) FROM ltm_chunks) AS ltm_chunks"
-            )
-            if rows:
-                pg_counts = {
-                    "stm_chunks": int(rows[0]["stm_chunks"]),
-                    "ltm_chunks": int(rows[0]["ltm_chunks"]),
-                }
-    return json.dumps({"neo4j": neo_counts, "pgvector": pg_counts})
+    neo_counts = await c.ltm.count_nodes()
+    stm_rows = await c.vector._c.query(
+        "stm", "MATCH (n:CHUNK) RETURN count(n) AS c", language="cypher"
+    )
+    ltm_rows = await c.vector._c.query(
+        "ltm", "MATCH (n:CHUNK) RETURN count(n) AS c", language="cypher"
+    )
+    stm_turns = await c.vector._c.query(
+        "stm", "MATCH (n:TURN) RETURN count(n) AS c", language="cypher"
+    )
+    ltm_turns = await c.vector._c.query(
+        "ltm", "MATCH (n:TURN) RETURN count(n) AS c", language="cypher"
+    )
+    vector_counts = {
+        "stm_chunks": int(stm_rows[0].get("c") or 0) if stm_rows else 0,
+        "ltm_chunks": int(ltm_rows[0].get("c") or 0) if ltm_rows else 0,
+        "stm_turns": int(stm_turns[0].get("c") or 0) if stm_turns else 0,
+        "ltm_turns": int(ltm_turns[0].get("c") or 0) if ltm_turns else 0,
+    }
+    return json.dumps({"graph": neo_counts, "vectors": vector_counts})
 
 
 async def _tool_community_summary(c: GraphKnowsContainer, entity_name: str) -> str:
-    topic = await c.neo.get_entity_community(entity_name)
+    topic = await c.ltm.get_entity_community(entity_name)
     if topic is None:
         return f"No community found for entity: {entity_name}"
     return f"{topic['label']}\n\n{topic['summary']}"
 
 
 async def _tool_list_segments(c: GraphKnowsContainer, limit: int = 20) -> str:
-    segments = await c.neo.list_segments(limit=limit)
+    segments = await c.ltm.list_segments(limit=limit)
     if not segments:
         return "No SEGMENT nodes found in the corpus."
     lines = ["SEGMENT nodes (newest first):", ""]
@@ -379,7 +385,7 @@ async def _tool_list_segments(c: GraphKnowsContainer, limit: int = 20) -> str:
 
 
 async def _tool_segment_info(c: GraphKnowsContainer, segment_id: str) -> str:
-    info = await c.neo.get_segment_info(segment_id)
+    info = await c.ltm.get_segment_info(segment_id)
     if info is None:
         return f"No SEGMENT found with id: {segment_id}"
     lines = [f"SEGMENT: {segment_id}", ""]
@@ -393,7 +399,7 @@ async def _tool_cypher_query(
     template: str,
     params: dict[str, Any] | None = None,
 ) -> str:
-    result = await c.neo.run_read_query(template, params or {})
+    result = await c.ltm.run_read_query(template, params or {})
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
@@ -519,7 +525,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:
         ),
         GraphKnowsTool(
             name="get_session_graph",
-            description="Return the entity graph for a session from Memgraph. Shows entities and RELATES edges.",
+            description="Return the entity graph for a session from ArcadeDB STM. Shows entities and RELATES edges.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -532,7 +538,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:
         ),
         GraphKnowsTool(
             name="get_corpus_stats",
-            description="Return combined node and row counts from Neo4j and pgvector.",
+            description="Return combined node and row counts from ArcadeDB LTM and vector store.",
             parameters={
                 "type": "object",
                 "properties": {},
@@ -582,7 +588,7 @@ def _build_tools(c: GraphKnowsContainer) -> list[GraphKnowsTool]:
         ),
         GraphKnowsTool(
             name="cypher_query",
-            description="Run a parameterized read-only Cypher query against Neo4j. Write keywords are rejected.",
+            description="Run a parameterized read-only Cypher query against ArcadeDB LTM. Write keywords are rejected.",
             parameters={
                 "type": "object",
                 "properties": {

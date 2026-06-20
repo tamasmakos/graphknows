@@ -55,12 +55,12 @@ class AgenticRetriever(BaseGraphRetriever):
         settings: GraphKnowsSettings,
         pg: Any,
         neo: Any,
-        memgraph: Any,
+        stm: Any,
     ) -> None:
         self._settings = settings
         self._pg = pg
         self._neo = neo
-        self._memgraph = memgraph
+        self._stm = stm
         self._react: Any = None
         self._lm: Any = None
         self._pg_bridge: Any = None
@@ -72,14 +72,8 @@ class AgenticRetriever(BaseGraphRetriever):
     # ------------------------------------------------------------------
 
     def _get_pg_bridge(self) -> Any:
-        """Return a PgVectorStore connected on _BG_LOOP for sync DSPy tools."""
-        if self._pg_bridge is None:
-            from graphknows.config.builders.stores import build_pgvector_store
-            from graphknows.memory.stm._async_bridge import _run
-
-            self._pg_bridge = build_pgvector_store(self._settings)
-            _run(self._pg_bridge.connect())
-        return self._pg_bridge
+        """Return the vector store for use in sync DSPy tool closures."""
+        return self._pg
 
     def _get_lm(self) -> Any:
         """Return the cached DSPy LM instance, building it once."""
@@ -111,15 +105,15 @@ class AgenticRetriever(BaseGraphRetriever):
 
         pg_bridge = self._get_pg_bridge()
         neo = self._neo
-        memgraph = self._memgraph
+        stm = self._stm
         embed_model = self._settings.embed_model
         # Reuse or initialize the chunks buffer; closures below capture this reference.
         self._collected_chunks.clear()
         collected = self._collected_chunks
 
-        # ---- Tool 1: pgvector ANN chunk search -------------------------
+        # ---- Tool 1: vector ANN chunk search --------------------------
         def search_vectors(query: str, scope: str = "ltm", top_k: int = 10) -> list[dict]:
-            """Search pgvector for relevant text chunks.
+            """Search the vector store for relevant text chunks.
 
             Args:
                 query: Natural-language search query.
@@ -140,7 +134,7 @@ class AgenticRetriever(BaseGraphRetriever):
             # chunks that pure vector search cannot find.
             return results
 
-        # ---- Tool 2: STM Memgraph entity lookup -----------------------
+        # ---- Tool 2: STM entity lookup --------------------------------
         def search_stm_graph(query: str) -> list[dict]:
             """Search the short-term memory graph for entities matching the query.
 
@@ -150,16 +144,16 @@ class AgenticRetriever(BaseGraphRetriever):
             Returns:
                 List of entity dicts whose name contains the query string.
             """
-            result = bg_run(memgraph.get_session_graph(session_id=session_id))
+            result = bg_run(stm.get_session_graph(session_id=session_id))
             nodes = result.get("nodes", [])
             q_lower = query.lower()
             return [n for n in nodes if q_lower in str(n.get("name", "")).lower()]
 
-        # ---- Tool 3: LTM Neo4j entity + neighbor search ---------------
+        # ---- Tool 3: LTM entity + neighbor search ---------------------
         def search_ltm_graph(query: str, top_k: int = 10) -> list[dict]:
             """Search long-term memory for entity-linked chunks.
 
-            Uses ANN entity search followed by Neo4j graph traversal.
+            Uses ANN entity search followed by ArcadeDB graph traversal.
 
             Args:
                 query: Natural-language query to find relevant entities.
@@ -191,7 +185,7 @@ class AgenticRetriever(BaseGraphRetriever):
                     break
             return chunks[:top_k]
 
-        # ---- Tool 4: Neo4j TOPIC keyword search -----------------------
+        # ---- Tool 4: TOPIC keyword search -----------------------------
         def search_topics(query: str, top_k: int = 5) -> list[dict]:
             """Search topic nodes in long-term memory by keyword match.
 
@@ -204,8 +198,8 @@ class AgenticRetriever(BaseGraphRetriever):
             """
             cypher = """
             UNWIND $words AS word
-            MATCH (e)
-            WHERE (e:ENTITY OR e:ENTITY_CONCEPT) AND toLower(e.name) CONTAINS word
+            MATCH (e:ENTITY)
+            WHERE toLower(e.name) CONTAINS word
             WITH collect(DISTINCT e.name) AS matched_names
             MATCH (t:TOPIC)
             OPTIONAL MATCH (e2)-[:IN_TOPIC]->(t)
@@ -220,12 +214,8 @@ class AgenticRetriever(BaseGraphRetriever):
             words = [w for w in query.lower().split() if len(w) > 3]
             if not words:
                 return []
-            driver = getattr(neo, "_driver", neo)
-            _db = getattr(neo, "_db", None)
-            session_kwargs: dict = {"database": _db} if _db else {}
             try:
-                with driver.session(**session_kwargs) as s:
-                    return s.run(cypher, words=words, top_k=top_k).data()
+                return bg_run(neo._qry(cypher, words=words, top_k=top_k))
             except Exception as exc:
                 log.warning("search_topics failed: %s", exc)
                 return []

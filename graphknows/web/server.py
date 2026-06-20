@@ -15,7 +15,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.config.builders.stores import build_memgraph_store, build_neo4j_store
+from graphknows.config.builders.stores import build_arcadedb_ltm_store, build_arcadedb_stm_store
 from graphknows.runtime import GraphKnowsRuntime
 from graphknows.web.links import DEFAULT_PORT
 
@@ -39,14 +39,14 @@ def get_runtime() -> GraphKnowsRuntime:
     return _runtime
 
 
-def get_mg_store() -> Any:
-    """Build a Memgraph store from web settings."""
-    return build_memgraph_store(get_settings())
+def get_stm_store() -> Any:
+    """Build an ArcadeDB STM store from web settings."""
+    return build_arcadedb_stm_store(get_settings())
 
 
-def get_neo_store() -> Any:
-    """Build a Neo4j store from web settings."""
-    return build_neo4j_store(get_settings())
+def get_ltm_store() -> Any:
+    """Build an ArcadeDB LTM store from web settings."""
+    return build_arcadedb_ltm_store(get_settings())
 
 
 def _frontend_dir() -> Path:
@@ -180,14 +180,16 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
 
 
 async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
-    neo = get_neo_store()
+    ltm = get_ltm_store()
+    await ltm._c.connect()
     try:
         node_cypher, edge_cypher, params = _ltm_queries(session_id, limit)
         node_rows, edge_rows = await asyncio.gather(
-            neo._arun(node_cypher, **params), neo._arun(edge_cypher, **params)
+            ltm._qry(node_cypher, **params),
+            ltm._qry(edge_cypher, **params),
         )
     finally:
-        neo.close()
+        await ltm._c.close()
 
     nodes = []
     known_ids: set[str] = set()
@@ -256,29 +258,28 @@ async def sessions(_: Request) -> JSONResponse:
     errors: list[str] = []
 
     try:
-        mg = get_mg_store()
-
-        def _read_stm_sessions() -> list[Any]:
-            with mg._driver.session() as session:
-                return list(
-                    session.run(
-                        "MATCH (n:ENTITY) "
-                        "WHERE n.session_id IS NOT NULL "
-                        "RETURN DISTINCT n.session_id AS id ORDER BY id"
-                    )
-                )
-
-        rows = await asyncio.to_thread(_read_stm_sessions)
-        values.update(_string(row["id"]) for row in rows if row.get("id"))
-        mg.close()
+        stm = get_stm_store()
+        await stm._c.connect()
+        try:
+            rows = await stm._c.query(
+                stm._db,
+                "MATCH (n:ENTITY) WHERE n.session_id IS NOT NULL "
+                "RETURN DISTINCT n.session_id AS id ORDER BY id",
+            )
+            values.update(_string(row["id"]) for row in rows if row.get("id"))
+        finally:
+            await stm._c.close()
     except Exception as exc:
         errors.append(f"stm: {exc}")
 
     try:
-        neo = get_neo_store()
-        rows = await neo._arun("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
-        values.update(_string(row["id"]) for row in rows if row.get("id"))
-        neo.close()
+        ltm = get_ltm_store()
+        await ltm._c.connect()
+        try:
+            rows = await ltm._qry("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
+            values.update(_string(row["id"]) for row in rows if row.get("id"))
+        finally:
+            await ltm._c.close()
     except Exception as exc:
         errors.append(f"ltm: {exc}")
 
@@ -301,11 +302,11 @@ async def graph(request: Request) -> JSONResponse:
                     },
                     status_code=400,
                 )
-            mg = get_mg_store()
+            stm = get_stm_store()
             try:
-                raw = await mg.get_session_graph(session_id)
+                raw = await stm.get_session_graph(session_id)
             finally:
-                mg.close()
+                stm.close()
             return JSONResponse(_normalise_stm_graph(raw, limit))
 
         if scope != "ltm":
