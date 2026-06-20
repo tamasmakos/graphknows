@@ -80,7 +80,7 @@ class SessionSnapshot(BaseModel):
     relation_edges: list[dict[str, Any]] = Field(default_factory=list)
 
     @classmethod
-    def from_store(cls, session_id: str, data: dict[str, Any]) -> "SessionSnapshot":
+    def from_store(cls, session_id: str, data: dict[str, Any]) -> SessionSnapshot:
         """Build a snapshot from a session graph store response."""
         fields = {key: value for key, value in data.items() if key in cls.model_fields}
         return cls(session_id=session_id, **fields)

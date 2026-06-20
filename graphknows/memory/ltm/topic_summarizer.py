@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 if dspy is not None:
 
-    class TopicSummarySignature(dspy.Signature):
+    class TopicSummarySignature(dspy.Signature):  # type: ignore[misc]
         """Summarize a graph community from member entities and evidence passages."""
 
         entities: list[str] = dspy.InputField(desc="Entity names in one graph community.")
@@ -28,7 +28,7 @@ if dspy is not None:
         title: str = dspy.OutputField(desc="Short human-readable topic title.")
         summary: str = dspy.OutputField(desc="Two or three sentence grounded topic summary.")
 
-    class TopicSummaryModule(dspy.Module):
+    class TopicSummaryModule(dspy.Module):  # type: ignore[misc]
         """Tiny DSPy module for topic title and summary generation."""
 
         def __init__(self) -> None:
@@ -41,7 +41,7 @@ if dspy is not None:
 
 else:
 
-    class TopicSummaryModule:
+    class TopicSummaryModule:  # type: ignore[no-redef]
         """Placeholder module used when DSPy is not installed."""
 
         def __init__(self) -> None:
@@ -82,13 +82,16 @@ class TopicSummarizer:
         fallback_title: str,
     ) -> tuple[str, str]:
         """Return ``(title, summary)`` for one community."""
-        if self._lm is None:
+        if self._lm is None or self._module is None:
             return fallback_title, ""
+
+        module = self._module
+        lm = self._lm
 
         def _summarize_sync() -> Any:
             assert dspy is not None
-            with dspy.settings.context(lm=self._lm):
-                return self._module(entities=members, passages=passages)
+            with dspy.settings.context(lm=lm):
+                return module(entities=members, passages=passages)
 
         try:
             prediction = await asyncio.to_thread(_summarize_sync)

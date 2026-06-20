@@ -275,7 +275,7 @@ This ontology is licensed under the Creative Commons Attribution 4.0 Internation
   </owl:Class>
   <owl:Class rdf:about="http://www.estrellaproject.org/lkif-core/norm.owl#Exclusionary_Right">
     <rdfs:subClassOf rdf:resource="http://www.estrellaproject.org/lkif-core/norm.owl#Obligative_Right"/>
-    <rdfs:comment rdf:datatype="http://www.w3.org/2001/XMLSchema#string">An exclusionary right concerns the prohibition against performing certain inferences (against reasoning in certain ways), or 
+    <rdfs:comment rdf:datatype="http://www.w3.org/2001/XMLSchema#string">An exclusionary right concerns the prohibition against performing certain inferences (against reasoning in certain ways), or
 against using certain kinds of premises for certain purposes, in the interest of a particular person. This is especially the case with anti-discrimination rules.</rdfs:comment>
   </owl:Class>
   <owl:Class rdf:about="http://www.estrellaproject.org/lkif-core/norm.owl#Disallowed_Intention">
@@ -325,7 +325,7 @@ against using certain kinds of premises for certain purposes, in the interest of
   </owl:Class>
   <owl:Class rdf:about="http://www.estrellaproject.org/lkif-core/norm.owl#Potestative_Right">
     <rdfs:subClassOf rdf:resource="http://www.estrellaproject.org/lkif-core/norm.owl#Enabling_Power"/>
-    <rdfs:comment rdf:datatype="http://www.w3.org/2001/XMLSchema#string">A potestative right is an enabling power which is meant to benefit the holder of the power. For example, if some animal y does not 
+    <rdfs:comment rdf:datatype="http://www.w3.org/2001/XMLSchema#string">A potestative right is an enabling power which is meant to benefit the holder of the power. For example, if some animal y does not
 belong to anybody, then x has the potestative-right to start x’s ownership of the animal,  by capturing y.</rdfs:comment>
   </owl:Class>
   <owl:Class rdf:about="http://www.estrellaproject.org/lkif-core/norm.owl#International_Arbitration">

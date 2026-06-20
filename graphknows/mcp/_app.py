@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from mcp.server.fastmcp import FastMCP
 
@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 async def _lifespan(app: FastMCP) -> AsyncIterator[None]:
     yield
     import graphknows.mcp._state as _state
+
     if _state._pg is not None:
         await _state._pg.close()
 
