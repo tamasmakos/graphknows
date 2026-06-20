@@ -33,7 +33,9 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"tests/*" = ["D", "S101"]
+"tests/*" = ["D", "S101", "B017", "E402", "N806", "SIM102", "UP038"]
+"scripts/*" = ["D103"]
+"evaluation/**" = ["D", "C901", "UP038", "RUF034"]
 "**/graphgen/**" = ["ALL"]  # absorbed research pipeline — linting deferred progressively
 # TODO(tech-debt): add docstrings and refactor complexity in the files below
 "**/document_ingestor.py" = ["D101"]
@@ -44,7 +46,9 @@ ignore = [
 "**/topic_summarizer.py" = ["D101"]
 "**/rdf_parser.py" = ["C901"]
 "**/_cypher_utils.py" = ["C901"]
-"**/stores/neo4j.py" = ["C901"]  # summarize_topics is intentionally large
+"**/stores/arcadedb/*.py" = ["D102", "C901"]  # data-access layer — docstrings deferred
+"**/memory/flush.py" = ["C901"]  # promotion pipeline is intentionally a single flow
+"**/memory/query/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
 "**/ingestion/domain/schema.py" = ["RUF022"]  # __all__ is grouped by category intentionally
 
 [lint.pydocstyle]
