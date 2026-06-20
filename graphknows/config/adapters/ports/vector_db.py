@@ -1,4 +1,4 @@
-"""IVectorDb — Protocol for pgvector-style vector database operations."""
+"""IVectorDb — Protocol for vector database operations."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class IVectorDb(Protocol):
-    """Protocol for vector database operations (pgvector boundary)."""
+    """Protocol for vector database operations."""
 
     async def connect(self) -> None:
-        """Open the asyncpg connection pool."""
+        """Open the database connection."""
         ...
 
     async def close(self) -> None:

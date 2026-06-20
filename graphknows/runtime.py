@@ -48,7 +48,9 @@ def _format_recall_hits(results: list[Any], session_id: str) -> list[dict[str, A
     ]
 
 
-def _format_fused_hits(fused_results: list[dict], session_id: str) -> list[dict[str, Any]]:
+def _format_fused_hits(
+    fused_results: list[dict[str, Any]], session_id: str
+) -> list[dict[str, Any]]:
     return [
         {
             "score": r.get("rrf_score", 0.0),
@@ -128,6 +130,7 @@ class GraphKnowsRuntime:
         from graphknows.memory.models.ingest_options import IngestOptions
         from graphknows.memory.models.message import normalize_messages
         from graphknows.memory.models.scope import MemoryScope
+        from graphknows.memory.stm._async_bridge import _run as _bg_run
 
         scope = MemoryScope(
             user_id=user_id or None,
@@ -139,39 +142,43 @@ class GraphKnowsRuntime:
         )
 
         service = build_stm_service(self.settings)
-        if is_conversation or (isinstance(messages, str) and not title):
-            try:
-                resolved_class = MemoryClass(memory_class)
-            except ValueError:
-                resolved_class = MemoryClass.raw_evidence
-            options = IngestOptions(
-                scope=scope,
-                metadata=metadata or {},
-                infer=infer,
-                memory_class=resolved_class,
+        try:
+            if is_conversation or (isinstance(messages, str) and not title):
+                try:
+                    resolved_class = MemoryClass(memory_class)
+                except ValueError:
+                    resolved_class = MemoryClass.raw_evidence
+                options = IngestOptions(
+                    scope=scope,
+                    metadata=metadata or {},
+                    infer=infer,
+                    memory_class=resolved_class,
+                )
+                result = service.ingest_messages(normalize_messages(messages), options)
+                return {
+                    "file_id": result.file_id,
+                    "chunks": result.chunk_count,
+                    "entities": result.entity_count,
+                    "elapsed_s": round(result.elapsed_s, 3),
+                    "errors": list(result.errors),
+                }
+
+            result = service.ingest(
+                messages,  # type: ignore[arg-type]
+                session_id=scope.to_session_id(),
+                title=title,
             )
-            result = service.ingest_messages(normalize_messages(messages), options)
             return {
                 "file_id": result.file_id,
                 "chunks": result.chunk_count,
                 "entities": result.entity_count,
                 "elapsed_s": round(result.elapsed_s, 3),
                 "errors": list(result.errors),
+                "warnings": [],
             }
-
-        result = service.ingest(
-            messages,  # type: ignore[arg-type]
-            session_id=scope.to_session_id(),
-            title=title,
-        )
-        return {
-            "file_id": result.file_id,
-            "chunks": result.chunk_count,
-            "entities": result.entity_count,
-            "elapsed_s": round(result.elapsed_s, 3),
-            "errors": list(result.errors),
-            "warnings": [],
-        }
+        finally:
+            _bg_run(service._mg._c.close())
+            _bg_run(service._pg._c.close())
 
     async def recall_memory(
         self,
@@ -187,14 +194,6 @@ class GraphKnowsRuntime:
             scope = "both"
         return await asyncio.to_thread(self._recall_memory_sync, query, session_id, top_k, scope)
 
-    def _connect_pg_on_bridge(self) -> Any:
-        from graphknows.config.builders.stores import build_pgvector_store
-        from graphknows.memory.stm._async_bridge import _run as bg_run
-
-        pg = build_pgvector_store(self.settings)
-        bg_run(pg.connect())
-        return pg
-
     def _recall_memory_sync(
         self,
         query: str,
@@ -203,52 +202,38 @@ class GraphKnowsRuntime:
         scope: str,
     ) -> dict[str, Any]:
         from graphknows.config.builders.stores import (
-            build_memgraph_store,
-            build_neo4j_store,
+            build_arcadedb_ltm_store,
+            build_arcadedb_stm_store,
+            build_arcadedb_vector_store,
         )
         from graphknows.memory.query.retriever import DETRetriever
         from graphknows.memory.stm._async_bridge import _run as bg_run
 
-        mg = build_memgraph_store(self.settings)
-        pg = self._connect_pg_on_bridge()
-        neo = build_neo4j_store(self.settings)
+        mg = build_arcadedb_stm_store(self.settings)
+        pg = build_arcadedb_vector_store(self.settings)
+        neo = build_arcadedb_ltm_store(self.settings)
         try:
+            bg_run(mg._c.connect())
+            bg_run(pg._c.connect())
+            bg_run(neo._c.connect())
             retriever = DETRetriever(
-                pg=pg, neo=neo, mg=mg, embed_model=self.settings.embed_model,
+                pg=pg,
+                neo=neo,
+                mg=mg,
+                embed_model=self.settings.embed_model,
             )
             ctx = bg_run(retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=scope))
         finally:
-            mg.close()
-            neo.close()
+            bg_run(mg._c.close())
+            bg_run(pg._c.close())
+            bg_run(neo._c.close())
         return {"hits": _format_fused_hits(ctx.fused_results, session_id)}
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Promote a session from STM into LTM."""
-        from graphknows.config.builders.stores import (
-            build_neo4j_store,
-            build_pgvector_store,
-            build_promotion_pipeline,
-        )
+        from graphknows.config.builders.stores import build_promotion_pipeline
         from graphknows.memory.models.promotion import PromotionRequest
         from graphknows.memory.stm._async_bridge import _run as bg_run
-
-        neo_check = build_neo4j_store(self.settings)
-        try:
-            if await asyncio.to_thread(self._session_exists, neo_check, session_id):
-                return {
-                    "session_id": session_id,
-                    "status": "already_flushed",
-                    "nodes": 0,
-                    "edges": 0,
-                    "chunks": 0,
-                    "turns": 0,
-                    "topics_created": 0,
-                    "merged_entities": 0,
-                    "elapsed_s": 0.0,
-                    "errors": [],
-                }
-        finally:
-            neo_check.close()
 
         pipeline = build_promotion_pipeline(self.settings)
         request = PromotionRequest(
@@ -261,20 +246,6 @@ class GraphKnowsRuntime:
         result = await loop.run_in_executor(None, lambda: bg_run(pipeline.promote(request)))
         await loop.run_in_executor(None, lambda: bg_run(pipeline.close()))
 
-        try:
-            pg = build_pgvector_store(self.settings)
-            try:
-                await pg.connect()
-                neo_sync = build_neo4j_store(self.settings)
-                try:
-                    await self._sync_topics_to_pgvector(neo_sync, pg)
-                finally:
-                    neo_sync.close()
-            finally:
-                await pg.close()
-        except Exception as exc:
-            result.errors.append(f"topic_sync: {exc}")
-
         return {
             "nodes": result.nodes_written,
             "edges": result.edges_written,
@@ -285,47 +256,6 @@ class GraphKnowsRuntime:
             "elapsed_s": round(result.elapsed_s, 3),
             "errors": list(result.errors),
         }
-
-    @staticmethod
-    def _session_exists(neo_store: Any, session_id: str) -> bool:
-        with neo_store._driver.session(database=neo_store._db) as session:
-            rows = list(
-                session.run(
-                    "MATCH (s:SESSION {id: $sid}) RETURN count(s) AS n",
-                    sid=session_id,
-                )
-            )
-        return bool(rows and rows[0]["n"] > 0)
-
-    async def _sync_topics_to_pgvector(self, neo_store: Any, pg_store: Any) -> int:
-        from graphknows.memory.stores.embedder import embed_one
-
-        with neo_store._driver.session(database=neo_store._db) as session:
-            rows = session.run(
-                "MATCH (t:TOPIC) "
-                "OPTIONAL MATCH (e:ENTITY)-[:IN_TOPIC]->(t) "
-                "RETURN t.id AS topic_id, t.summary AS summary, t.community_id AS comm_id, "
-                "collect(e.name) AS members"
-            ).data()
-
-        synced = 0
-        loop = asyncio.get_running_loop()
-        for row in rows:
-            topic_id = row.get("topic_id") or f"TOPIC_{row.get('comm_id', synced)}"
-            summary = (row.get("summary") or "").strip()
-            members = row.get("members") or []
-            embedding = await loop.run_in_executor(None, embed_one, summary or topic_id)
-            await pg_store.write_ltm_topic(
-                {
-                    "topic_id": topic_id,
-                    "summary": summary,
-                    "embedding": embedding,
-                    "entity_names": [member for member in members if member],
-                    "session_ids": [],
-                }
-            )
-            synced += 1
-        return synced
 
     async def purge_memory(self, scope: str = "both", session_id: str = "") -> dict[str, Any]:
         """Purge STM and/or LTM memory."""
@@ -347,116 +277,59 @@ class GraphKnowsRuntime:
         }
 
     async def _purge_stm(self, session_id: str, errors: list[str]) -> None:
-        from graphknows.config.builders.stores import build_memgraph_store
+        from graphknows.config.builders.stores import build_arcadedb_stm_store
 
         try:
-            mg_store = build_memgraph_store(self.settings)
-            if session_id:
-                await mg_store.delete_session(session_id)
-            else:
-                await asyncio.to_thread(self._wipe_graph_store, mg_store)
-        except Exception as exc:
-            errors.append(f"memgraph stm: {exc}")
-
-        try:
-            from graphknows.config.builders.stores import build_pgvector_store
-
-            pg_store = build_pgvector_store(self.settings)
+            stm_store = build_arcadedb_stm_store(self.settings)
+            await stm_store._c.connect()
             try:
-                await pg_store.connect()
                 if session_id:
-                    await pg_store.clear_stm(session_id)
+                    await stm_store.delete_session(session_id)
                 else:
-                    pool = pg_store._pool_or_raise()
-                    async with pool.acquire() as conn:
-                        await conn.execute("TRUNCATE TABLE stm_chunks, stm_turns")
+                    await stm_store._c.drop_database(stm_store._db)
             finally:
-                await pg_store.close()
+                await stm_store._c.close()
         except Exception as exc:
-            errors.append(f"pgvector stm: {exc}")
+            errors.append(f"arcadedb stm: {exc}")
 
     async def _purge_ltm(self, session_id: str, errors: list[str]) -> None:
-        from graphknows.config.builders.stores import build_neo4j_store, build_pgvector_store
+        from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
         try:
-            neo_store = build_neo4j_store(self.settings)
-            if session_id:
-                await asyncio.to_thread(self._delete_ltm_session, neo_store, session_id)
-            else:
-                await asyncio.to_thread(self._wipe_graph_store, neo_store)
-        except Exception as exc:
-            errors.append(f"neo4j ltm: {exc}")
-
-        try:
-            pg_store = build_pgvector_store(self.settings)
+            ltm_store = build_arcadedb_ltm_store(self.settings)
+            await ltm_store._c.connect()
             try:
-                await pg_store.connect()
-                pool = pg_store._pool_or_raise()
-                async with pool.acquire() as conn:
-                    if session_id:
-                        await conn.execute("DELETE FROM ltm_chunks WHERE session_id = $1", session_id)
-                        await conn.execute("DELETE FROM ltm_turns WHERE session_id = $1", session_id)
-                        await conn.execute(
-                            "DELETE FROM ltm_topics "
-                            "WHERE $1 = ANY(COALESCE(session_ids, ARRAY[]::text[]))",
-                            session_id,
-                        )
-                        if await conn.fetchval("SELECT to_regclass('public.chunks') IS NOT NULL"):
-                            await conn.execute("DELETE FROM chunks WHERE session_id = $1", session_id)
-                    else:
-                        await conn.execute(
-                            "TRUNCATE TABLE ltm_chunks, ltm_turns, ltm_topics, "
-                            "chunks, chunk_entities, entities"
-                        )
+                if session_id:
+                    await self._delete_ltm_session(ltm_store, session_id)
+                else:
+                    await ltm_store._c.drop_database("ltm")
             finally:
-                await pg_store.close()
+                await ltm_store._c.close()
         except Exception as exc:
-            errors.append(f"pgvector ltm: {exc}")
+            errors.append(f"arcadedb ltm: {exc}")
 
     @staticmethod
-    def _wipe_graph_store(store: Any) -> None:
-        kwargs = {"database": store._db} if hasattr(store, "_db") else {}
-        with store._driver.session(**kwargs) as session:
-            session.run("MATCH (n) DETACH DELETE n")
-
-    @staticmethod
-    def _delete_ltm_session(neo_store: Any, session_id: str) -> None:
-        with neo_store._driver.session(database=neo_store._db) as session:
-            session.run(
-                """
-                MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)
-                OPTIONAL MATCH (f)-[:HAS_CHUNK]->(c:CHUNK)
-                WITH f, collect(DISTINCT c) AS chunks
-                FOREACH (chunk IN chunks | DETACH DELETE chunk)
-                DETACH DELETE f
-                """,
-                sid=session_id,
-            )
-            session.run(
-                """
-                MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(d:DIALOG)
-                OPTIONAL MATCH (d)-[:HAS_TURN]->(t:TURN)
-                WITH d, collect(DISTINCT t) AS turns
-                FOREACH (turn IN turns | DETACH DELETE turn)
-                DETACH DELETE d
-                """,
-                sid=session_id,
-            )
-            session.run("MATCH (sess:SESSION {id: $sid}) DETACH DELETE sess", sid=session_id)
-            session.run(
-                "MATCH (n:SessionEntity {session_id: $sid}) DETACH DELETE n",
-                sid=session_id,
-            )
-            session.run("MATCH ()-[r {session_id: $sid}]-() DELETE r", sid=session_id)
-            session.run("MATCH (e:ENTITY) WHERE NOT (e)--() DETACH DELETE e")
-            session.run(
-                """
-                MATCH (t:TOPIC)
-                WHERE NOT (t)<-[:IN_TOPIC]-(:ENTITY)
-                  AND NOT (t)<-[:IN_COMMUNITY]-(:ENTITY)
-                DETACH DELETE t
-                """
-            )
+    async def _delete_ltm_session(ltm_store: Any, session_id: str) -> None:
+        await ltm_store._cmd(
+            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
+            "DETACH DELETE c",
+            sid=session_id,
+        )
+        await ltm_store._cmd(
+            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE) DETACH DELETE f",
+            sid=session_id,
+        )
+        await ltm_store._cmd(
+            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(:DIALOG)-[:HAS_TURN]->(t:TURN) "
+            "DETACH DELETE t",
+            sid=session_id,
+        )
+        await ltm_store._cmd(
+            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(d:DIALOG) DETACH DELETE d",
+            sid=session_id,
+        )
+        await ltm_store._cmd("MATCH (sess:SESSION {id: $sid}) DETACH DELETE sess", sid=session_id)
+        await ltm_store._cmd("MATCH (e:ENTITY) WHERE NOT (e)--() DETACH DELETE e")
 
     async def corpus_ingest(
         self,
@@ -475,7 +348,6 @@ class GraphKnowsRuntime:
                 CorpusIngestRequest(
                     documents=documents,
                     session_id=session_id,
-                    summarize_topics=True,
                     run_gds=True,
                 )
             )
@@ -492,32 +364,49 @@ class GraphKnowsRuntime:
             "errors": result.errors,
         }
 
-    def ltm_topics(self, min_entities: int = 3) -> dict[str, Any]:
+    async def ltm_topics(self, min_entities: int = 3) -> dict[str, Any]:
         """List LTM topic nodes."""
-        from graphknows.config.builders.stores import build_neo4j_store
+        from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
-        neo = build_neo4j_store(self.settings)
+        ltm = build_arcadedb_ltm_store(self.settings)
+        await ltm._c.connect()
         try:
-            return {"topics": neo.list_topic_nodes(min_entities)}
+            rows = await ltm._qry(
+                "MATCH (t:TOPIC) WHERE t.entity_count >= $min "
+                "RETURN t.topic_id AS topic_id, t.label AS label, t.summary AS summary, "
+                "t.community_id AS community_id, t.entity_names AS entity_names, "
+                "t.entity_count AS entity_count "
+                "ORDER BY t.entity_count DESC",
+                min=min_entities,
+            )
         finally:
-            neo.close()
+            await ltm._c.close()
+        return {"topics": [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]}
 
-    def ltm_entity(self, name: str) -> dict[str, Any]:
+    async def ltm_entity(self, name: str) -> dict[str, Any]:
         """Return one LTM entity by name."""
-        from graphknows.config.builders.stores import build_neo4j_store
+        from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
-        neo = build_neo4j_store(self.settings)
+        ltm = build_arcadedb_ltm_store(self.settings)
+        await ltm._c.connect()
         try:
-            entity = neo.get_entity_by_name(name)
+            rows = await ltm._qry(
+                "MATCH (e:ENTITY) WHERE toLower(e.name) = toLower($name) "
+                "RETURN e.name AS name, e.type AS type, e.confidence AS confidence, "
+                "e.pagerank AS pagerank, e.community_id AS community_id LIMIT 1",
+                name=name,
+            )
         finally:
-            neo.close()
-        if entity is None:
+            await ltm._c.close()
+        if not rows:
             return {"error": f"Entity not found: {name}"}
-        return entity
+        return {k: v for k, v in rows[0].items() if not k.startswith("@")}
 
     def ltm_query(self, query: str, top_k: int = 5) -> dict[str, Any]:
         """Return topic-like LTM matches for research evaluation callers."""
-        topics = self.ltm_topics(min_entities=1)["topics"]
+        from graphknows.memory.stm._async_bridge import _run as bg_run
+
+        topics = bg_run(self.ltm_topics(min_entities=1))["topics"]
         tokens = [token for token in re.findall(r"\b\w{3,}\b", query.lower())]
         if tokens:
             topics = [
@@ -531,37 +420,38 @@ class GraphKnowsRuntime:
             ]
         return {"results": topics[: max(1, min(top_k, 20))]}
 
-    def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
+    async def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
         """List ENTITY nodes from the LTM graph, optionally scoped to one session."""
-        from graphknows.config.builders.stores import build_neo4j_store
+        from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
-        neo = build_neo4j_store(self.settings)
+        ltm = build_arcadedb_ltm_store(self.settings)
+        await ltm._c.connect()
         try:
-            _db = getattr(neo, "_db", None)
-            kwargs: dict[str, Any] = {"database": _db} if _db else {}
-            with neo._driver.session(**kwargs) as s:
-                if session_id:
-                    cypher = """
-                    MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(:FILE)-[:HAS_CHUNK]->(:CHUNK)
-                          -[:MENTIONS]->(e:ENTITY)
-                    RETURN DISTINCT e.name AS name, coalesce(e.type,'ENTITY') AS type,
-                           coalesce(e.confidence, 1.0) AS confidence,
-                           coalesce(e.pagerank, 0.0) AS pagerank,
-                           coalesce(e.community_id, -1) AS community_id
-                    ORDER BY e.name LIMIT $limit
-                    """
-                    rows = s.run(cypher, sid=session_id, limit=limit).data()
-                else:
-                    cypher = """
-                    MATCH (e:ENTITY)
-                    RETURN e.name AS name, coalesce(e.type,'ENTITY') AS type,
-                           coalesce(e.confidence, 1.0) AS confidence,
-                           coalesce(e.pagerank, 0.0) AS pagerank,
-                           coalesce(e.community_id, -1) AS community_id
-                    ORDER BY e.name LIMIT $limit
-                    """
-                    rows = s.run(cypher, limit=limit).data()
+            if session_id:
+                # Split into two MATCH clauses — ArcadeDB's openCypher rejects
+                # 5-hop chains in a single MATCH pattern.
+                rows = await ltm._qry(
+                    "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
+                    "MATCH (c)-[:MENTIONS]->(e:ENTITY) "
+                    "RETURN DISTINCT e.name AS name, coalesce(e.type,'ENTITY') AS type, "
+                    "coalesce(e.confidence, 1.0) AS confidence, "
+                    "coalesce(e.pagerank, 0.0) AS pagerank, "
+                    "coalesce(e.community_id, -1) AS community_id "
+                    "LIMIT $limit",
+                    sid=session_id,
+                    limit=limit,
+                )
+            else:
+                rows = await ltm._qry(
+                    "MATCH (e:ENTITY) "
+                    "RETURN e.name AS name, coalesce(e.type,'ENTITY') AS type, "
+                    "coalesce(e.confidence, 1.0) AS confidence, "
+                    "coalesce(e.pagerank, 0.0) AS pagerank, "
+                    "coalesce(e.community_id, -1) AS community_id "
+                    "ORDER BY e.name LIMIT $limit",
+                    limit=limit,
+                )
         finally:
-            neo.close()
-        return {"entities": [dict(r) for r in rows], "count": len(rows), "session_id": session_id}
-
+            await ltm._c.close()
+        entities = [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]
+        return {"entities": entities, "count": len(entities), "session_id": session_id}

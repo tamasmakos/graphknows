@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from graphknows.config import GraphKnowsSettings
 from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
-from graphknows.memory.stores.memgraph import MemgraphStore
-from graphknows.memory.stores.neo4j import Neo4jStore
-from graphknows.memory.stores.pgvector import PgVectorStore
+
+if TYPE_CHECKING:
+    from graphknows.memory.stores.arcadedb.client import ArcadeDBClient
+    from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
+    from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+    from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
 
 
 def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor:
@@ -32,30 +35,44 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
     )
 
 
-def build_neo4j_store(settings: GraphKnowsSettings) -> Neo4jStore:
-    """Build a Neo4jStore from settings."""
+def build_arcadedb_client(settings: GraphKnowsSettings) -> ArcadeDBClient:
+    """Build an ArcadeDBClient from settings (not yet connected)."""
+    from graphknows.memory.stores.arcadedb.client import ArcadeDBClient
+
+    return ArcadeDBClient(
+        base_url=settings.arcadedb_url,
+        user=settings.arcadedb_user,
+        password=settings.arcadedb_password,
+    )
+
+
+def build_arcadedb_stm_store(settings: GraphKnowsSettings) -> ArcadeDBSTMStore:
+    """Build an ArcadeDBSTMStore (client not yet connected — call ensure_schema after connect)."""
+    from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+
+    client = build_arcadedb_client(settings)
+    return ArcadeDBSTMStore(client=client)
+
+
+def build_arcadedb_ltm_store(settings: GraphKnowsSettings) -> ArcadeDBLTMStore:
+    """Build an ArcadeDBLTMStore from settings."""
+    from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
+
     relation_extractor = (
         build_relation_extractor(settings)
         if settings.relation_extraction_mode == "llm_assisted"
         else None
     )
-    return Neo4jStore(
-        uri=settings.neo4j_uri,
-        user=settings.neo4j_user,
-        password=settings.neo4j_password,
-        database=settings.neo4j_database,
-        relation_extractor=relation_extractor,
-    )
+    client = build_arcadedb_client(settings)
+    return ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
 
 
-def build_pgvector_store(settings: GraphKnowsSettings) -> PgVectorStore:
-    """Build a PgVectorStore from settings."""
-    return PgVectorStore(dsn=settings.pgvector_dsn)
+def build_arcadedb_vector_store(settings: GraphKnowsSettings) -> ArcadeDBVectorStore:
+    """Build an ArcadeDBVectorStore from settings."""
+    from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
 
-
-def build_memgraph_store(settings: GraphKnowsSettings) -> MemgraphStore:
-    """Build a MemgraphStore from settings."""
-    return MemgraphStore(uri=settings.memgraph_uri)
+    client = build_arcadedb_client(settings)
+    return ArcadeDBVectorStore(client=client)
 
 
 # --- Service factories ---
@@ -76,9 +93,11 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     from graphknows.memory.stm.service import STMService
     from graphknows.memory.stores.embedder import embed_one
 
-    mg = build_memgraph_store(settings)
-    pg = build_pgvector_store(settings)
-    _run(pg.connect())
+    mg = build_arcadedb_stm_store(settings)
+    pg = build_arcadedb_vector_store(settings)
+    _run(mg._c.connect())
+    _run(mg.ensure_schema())
+    _run(pg.connect())  # connects client + ensures schema
 
     mode = settings.relation_extraction_mode
     extractor = _build_entity_extractor(mode)
@@ -90,9 +109,9 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     """Build an LTMPromotionPipeline from settings."""
     from graphknows.memory.flush import LTMPromotionPipeline
 
-    mg = build_memgraph_store(settings)
-    pg = build_pgvector_store(settings)
-    neo = build_neo4j_store(settings)
+    mg = build_arcadedb_stm_store(settings)
+    pg = build_arcadedb_vector_store(settings)
+    neo = build_arcadedb_ltm_store(settings)
     key = settings.openrouter_api_key or ""
     return LTMPromotionPipeline(
         mg,
@@ -108,10 +127,10 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     from graphknows.memory.stores.embedder import embed_one
     from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
 
-    mg = build_memgraph_store(settings)
-    pg = build_pgvector_store(settings)
-    flush_pg = build_pgvector_store(settings)
-    neo = build_neo4j_store(settings)
+    mg = build_arcadedb_stm_store(settings)
+    pg = build_arcadedb_vector_store(settings)
+    flush_pg = build_arcadedb_vector_store(settings)
+    neo = build_arcadedb_ltm_store(settings)
     mode = settings.relation_extraction_mode
     extractor = _build_entity_extractor(mode)
     key = settings.openrouter_api_key or ""
