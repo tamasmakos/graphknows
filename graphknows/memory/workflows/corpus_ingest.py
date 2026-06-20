@@ -41,7 +41,7 @@ class CorpusIngestWorkflow:
     """Batch corpus ingestion via STM-first pipeline.
 
     Phase 1: Per-document STMService.ingest() into a single corpus session_id.
-    Phase 2: SessionFlusher.flush() → Neo4j LTM promotion.
+    Phase 2: SessionFlusher.flush() → ArcadeDB LTM promotion.
     """
 
     def __init__(
@@ -75,8 +75,8 @@ class CorpusIngestWorkflow:
         Returns:
             CorpusIngestResult with aggregated counts and any errors.
         """
-        # Ensure asyncpg pool is created on _BG_LOOP where stm.ingest() dispatches queries.
-        # Using _stm_run (sync) avoids binding the pool to the MCP event loop.
+        # Ensure the connection is created on _BG_LOOP where stm.ingest() dispatches queries.
+        # Using _stm_run (sync) avoids binding the connection to the MCP event loop.
         if not getattr(self._pg, "_pool", None):
             _stm_run(self._pg.connect())
 

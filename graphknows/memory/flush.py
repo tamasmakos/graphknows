@@ -1,8 +1,9 @@
-"""LTMPromotionPipeline: promote STM (Memgraph + stm_* pgvector) to LTM (Neo4j + ltm_* pgvector)."""
+"""LTMPromotionPipeline: promote STM to LTM (ArcadeDB)."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import logging
 import math
@@ -10,7 +11,6 @@ import time
 from typing import Any, cast
 
 from graphknows.config.adapters.ports.vector_db import IVectorDb
-from graphknows.memory.ltm.enrichment import LTMEnrichmentService
 from graphknows.memory.ltm.entity_resolution import EntityResolution
 from graphknows.memory.models.contracts import CommunityAssignment, SessionSnapshot
 from graphknows.memory.models.promotion import PromotionRecord, PromotionRequest
@@ -22,9 +22,9 @@ class LTMPromotionPipeline:
     """Promote a session's STM to LTM and optionally clear STM.
 
     Promotion phases (in order):
-    1. Read SESSION subgraph from Memgraph.
+    1. Read SESSION subgraph from ArcadeDB STM.
     2. Optional entity resolution: canonical name, highest confidence.
-    3. MERGE into Neo4j: SESSION → FILE → CHUNK → ENTITY, SESSION → DIALOG → TURN.
+    3. MERGE into ArcadeDB LTM: SESSION → FILE → CHUNK → ENTITY, SESSION → DIALOG → TURN.
     4. Optional LLM relation extraction (llm_assisted mode only).
     5. Copy stm_chunks → ltm_chunks, stm_turns → ltm_turns.
     6. Optional GDS PageRank + Leiden community detection.
@@ -40,7 +40,6 @@ class LTMPromotionPipeline:
         openrouter_key: str = "",
         llm_model: str = "meta-llama/llama-3.1-8b-instruct",
         relation_extraction_mode: str = "gliner2",
-        enrichment_service: LTMEnrichmentService | None = None,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
@@ -48,12 +47,16 @@ class LTMPromotionPipeline:
         self._openrouter_key = openrouter_key
         self._llm_model = llm_model
         self._relation_extraction_mode = relation_extraction_mode
-        self._enrichment = enrichment_service or LTMEnrichmentService()
         self._entity_resolution = EntityResolution()
 
     async def close(self) -> None:
-        """Release the internal PgVector pool (must be called from the same event loop that created it)."""
+        """Release all store connections."""
         await self._pg.close()
+        for store in (self._mg, self._neo):
+            client = getattr(store, "_c", None)
+            if client is not None and hasattr(client, "close"):
+                with contextlib.suppress(Exception):
+                    await client.close()
 
     async def promote(self, request: PromotionRequest) -> PromotionRecord:
         """Run the full STM→LTM promotion pipeline.
@@ -69,7 +72,7 @@ class LTMPromotionPipeline:
         policy = request.resolve_policy(self._relation_extraction_mode)
         record.topic_mode = policy.topic_mode
 
-        await self._ensure_pg_connected()
+        await self._ensure_stores_connected()
         stm_data = await self._read_stm(request.session_id)
         snapshot = SessionSnapshot.from_store(request.session_id, stm_data)
         stm_data = snapshot.to_store_dict()
@@ -79,7 +82,7 @@ class LTMPromotionPipeline:
                 stm_data.get("entities", [])
             )
             record.merged_entities = record.audit.merged_entities
-            # Remap alias names in edges to the canonical form so Neo4j doesn't
+            # Remap alias names in edges to the canonical form so ArcadeDB doesn't
             # create split entity nodes (one with CHUNK-[:MENTIONS] edges from
             # chunk_entity_edges, another with relation edges from the canonical).
             if record.audit.entity_aliases:
@@ -133,9 +136,21 @@ class LTMPromotionPipeline:
         )
         return record
 
-    async def _ensure_pg_connected(self) -> None:
+    async def _ensure_stores_connected(self) -> None:
+        """Connect all store clients that are not yet open."""
         if hasattr(self._pg, "connect") and not getattr(self._pg, "_pool", None):
             await self._pg.connect()
+        for store in (self._mg, self._neo):
+            client = getattr(store, "_c", None)
+            if (
+                client is not None
+                and getattr(client, "_client", None) is None
+                and hasattr(client, "connect")
+            ):
+                await client.connect()
+
+    # keep old name so callers outside this file still compile
+    _ensure_pg_connected = _ensure_stores_connected
 
     async def _copy_vector_to_ltm(self, session_id: str, record: PromotionRecord) -> None:
         try:
@@ -146,26 +161,21 @@ class LTMPromotionPipeline:
             record.errors.append(f"promote_to_ltm: {exc}")
 
     async def _run_gds(self, record: PromotionRecord) -> Any:
-        try:
-            gds_result = await self._enrichment.run_gds_async(self._neo)
-            record.gds_result = gds_result
-            return gds_result
-        except Exception as exc:
-            record.errors.append(f"gds: {exc}")
-            log.warning("GDS enrichment failed: %s", exc)
-            return None
+        return None
 
-    async def _run_topics(
-        self, session_id: str, gds_result: Any, record: PromotionRecord
-    ) -> None:
+    async def _run_topics(self, session_id: str, gds_result: Any, record: PromotionRecord) -> None:
         try:
-            record.topics_created = await self._enrichment.run_topic_summarization(
+            summarizer = None
+            if self._openrouter_key:
+                from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
+
+                summarizer = TopicSummarizer(self._openrouter_key, self._llm_model)
+            record.topics_created = await self._neo.write_topic_summaries(
                 session_id=session_id,
-                driver=self._neo,
+                summarizer=summarizer,
                 pg_store=self._pg,
-                llm_key=self._openrouter_key,
-                llm_model=self._llm_model,
-                gds_result=gds_result,
+                gds_modularity=getattr(gds_result, "modularity", None),
+                community_algorithm=getattr(gds_result, "algorithm_used", None),
             )
         except Exception as exc:
             record.errors.append(f"topics: {exc}")
@@ -204,43 +214,21 @@ class LTMPromotionPipeline:
             record.errors.append(f"community_metadata: {exc}")
 
     async def _read_community_assignments(self) -> list[CommunityAssignment]:
-        reader = getattr(self._neo, "get_community_assignments", None)
-        if callable(reader):
-            try:
-                result = reader()
-                rows = await result if inspect.isawaitable(result) else result
-                return [self._community_from_row(row) for row in rows or []]
-            except Exception as exc:
-                log.warning("get_community_assignments failed: %s", exc)
-
-        driver = getattr(self._neo, "_driver", None)
-        if driver is None:
-            return []
-
-        def _sync() -> list[dict[str, Any]]:
-            _db = getattr(self._neo, "_db", None)
-            kwargs: dict[str, Any] = {"database": _db} if _db else {}
-            with driver.session(**kwargs) as s:
-                return s.run(
-                    """
-                    MATCH (e:ENTITY)
-                    WHERE e.community_id IS NOT NULL
-                    OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e)
-                    OPTIONAL MATCH (t:TURN)-[:HAS_ENTITY|MENTIONS]->(e)
-                    WITH e.community_id AS community_id,
-                         collect(DISTINCT e.name) AS entity_names,
-                         collect(DISTINCT c.id) AS chunk_ids,
-                         collect(DISTINCT t.id) AS turn_ids
-                    RETURN community_id, entity_names, chunk_ids, turn_ids
-                    """
-                ).data()
-
         try:
-            rows = await asyncio.to_thread(_sync)
+            rows = await self._neo._qry(
+                "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
+                "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e) "
+                "OPTIONAL MATCH (t:TURN)-[:HAS_ENTITY|MENTIONS]->(e) "
+                "WITH e.community_id AS community_id, "
+                "     collect(DISTINCT e.name) AS entity_names, "
+                "     collect(DISTINCT c.id) AS chunk_ids, "
+                "     collect(DISTINCT t.id) AS turn_ids "
+                "RETURN community_id, entity_names, chunk_ids, turn_ids"
+            )
+            return [self._community_from_row(row) for row in rows]
         except Exception as exc:
             log.warning("community assignment read failed: %s", exc)
             return []
-        return [self._community_from_row(row) for row in rows]
 
     @staticmethod
     def _community_from_row(row: dict[str, Any]) -> CommunityAssignment:
@@ -264,7 +252,7 @@ class LTMPromotionPipeline:
         stm_data: dict[str, Any],
         errors: list[str] | None = None,
     ) -> dict[str, int]:
-        """MERGE all STM nodes/edges into Neo4j LTM."""
+        """MERGE all STM nodes/edges into ArcadeDB LTM."""
         nodes = 0
         edges = 0
         try:
@@ -316,7 +304,7 @@ class LTMPromotionPipeline:
         stm_data: dict[str, Any],
         record: Any,
     ) -> None:
-        """Embed entity names and upsert into pgvector entities table.
+        """Embed entity names and upsert into the vector store.
 
         Called after promote_to_ltm so the entity-graph path in HybridRetriever
         has live data to search. Non-fatal: errors are logged and appended to record.
