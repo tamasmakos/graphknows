@@ -70,7 +70,7 @@ class CodeParser(BaseParser):
 
         lines = text.split("\n")
         for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 start = node.lineno - 1
                 end = getattr(node, "end_lineno", len(lines))
                 if end is None:

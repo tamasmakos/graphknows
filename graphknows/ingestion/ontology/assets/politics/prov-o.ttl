@@ -854,7 +854,7 @@ A primary source relation is a particular case of derivation of secondary materi
 
 :qualifiedForm
     a owl:AnnotationProperty ;
-    rdfs:comment """This annotation property links a subproperty of prov:wasInfluencedBy with the subclass of prov:Influence and the qualifying property that are used to qualify it. 
+    rdfs:comment """This annotation property links a subproperty of prov:wasInfluencedBy with the subclass of prov:Influence and the qualifying property that are used to qualify it.
 
 Example annotation:
 
@@ -867,7 +867,7 @@ Then this unqualified assertion:
 can be qualified by adding:
 
    :entity1 prov:qualifiedGeneration :entity1Gen .
-   :entity1Gen 
+   :entity1Gen
        a prov:Generation, prov:Influence;
        prov:activity :activity1;
        :customValue 1337 .
@@ -1168,7 +1168,7 @@ Note how the value of the unqualified influence (prov:wasGeneratedBy :activity1)
 
 Subproperties of prov:wasInfluencedBy may also be asserted directly without being qualified.
 
-prov:wasInfluencedBy should not be used without also using one of its subproperties. 
+prov:wasInfluencedBy should not be used without also using one of its subproperties.
 """@en ;
     :inverse "influenced" ;
     :qualifiedForm :Influence, :qualifiedInfluence ;
@@ -1255,7 +1255,7 @@ prov:wasInfluencedBy should not be used without also using one of its subpropert
 
 <http://www.w3.org/ns/prov-o#>
     a owl:Ontology ;
-    rdfs:comment """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page). 
+    rdfs:comment """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page).
 
 If you wish to make comments regarding this document, please send them to public-prov-comments@w3.org (subscribe public-prov-comments-request@w3.org, archives http://lists.w3.org/Archives/Public/public-prov-comments/). All feedback is welcome."""@en ;
     rdfs:label "W3C PROVenance Interchange Ontology (PROV-O)"@en ;
@@ -1332,7 +1332,7 @@ If you wish to make comments regarding this document, please send them to public
 
 []
     a owl:Axiom ;
-    rdfs:comment """Revision is a derivation (see http://www.w3.org/TR/prov-dm/#term-Revision). Moreover, according to 
+    rdfs:comment """Revision is a derivation (see http://www.w3.org/TR/prov-dm/#term-Revision). Moreover, according to
 http://www.w3.org/TR/2013/REC-prov-constraints-20130430/#term-Revision 23 April 2012 'wasRevisionOf is a strict sub-relation of wasDerivedFrom since two entities e2 and e1 may satisfy wasDerivedFrom(e2,e1) without being a variant of each other.'""" ;
     owl:annotatedProperty rdfs:subPropertyOf ;
     owl:annotatedSource :wasRevisionOf ;
@@ -1710,7 +1710,7 @@ prov:wasStartedBy rdfs:isDefinedBy <http://www.w3.org/ns/prov-o#> .
 
 <http://www.w3.org/ns/prov-aq#>
     a owl:Ontology ;
-    rdfs:comment "0.2"^^xsd:string, """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page). 
+    rdfs:comment "0.2"^^xsd:string, """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page).
 
 If you wish to make comments regarding this document, please send them to public-prov-comments@w3.org (subscribe public-prov-comments-request@w3.org, archives http://lists.w3.org/Archives/Public/public-prov-comments/). All feedback is welcome."""@en ;
     rdfs:label "PROV Access and Query Ontology"@en ;
@@ -1719,7 +1719,7 @@ If you wish to make comments regarding this document, please send them to public
 
 
 ##prov-aq definitions
- 
+
 
 :ServiceDescription
     a owl:Class ;
@@ -1729,7 +1729,7 @@ If you wish to make comments regarding this document, please send them to public
     rdfs:subClassOf :SoftwareAgent ;
     :aq "http://www.w3.org/TR/2013/NOTE-prov-aq-20130430/#provenance-query-service-discovery"^^xsd:anyURI ;
     :category "access-and-query" .
-    
+
 :DirectQueryService
     a owl:Class ;
     rdfs:comment "Type for a generic provenance query service. Mainly for use in RDF provenance query service descriptions, to facilitate discovery in linked data environments." ;
@@ -1765,7 +1765,7 @@ If you wish to make comments regarding this document, please send them to public
     :aq "http://www.w3.org/TR/2013/NOTE-prov-aq-20130430/"^^xsd:anyURI ;
     :category "access-and-query" ;
     :inverse "provenanceQueryServiceOf" .
-    
+
 :describesService
     a owl:ObjectProperty ;
     rdfs:comment "relates a generic provenance query service resource (type prov:ServiceDescription) to a specific query service description (e.g. a prov:DirectQueryService or a sd:Service)."@en ;
@@ -1774,7 +1774,7 @@ If you wish to make comments regarding this document, please send them to public
     :aq "http://www.w3.org/TR/2013/NOTE-prov-aq-20130430/rovenance-query-service-description"^^xsd:anyURI ;
     :category "access-and-query" ;
     :inverse "serviceDescribedBy" .
-    
+
 
 :provenanceUriTemplate
     a owl:DatatypeProperty ;
@@ -1783,7 +1783,7 @@ If you wish to make comments regarding this document, please send them to public
     rdfs:label "provenanceUriTemplate" ;
     :aq "http://www.w3.org/TR/2013/NOTE-prov-aq-20130430/"^^xsd:anyURI ;
     :category "access-and-query" .
-    
+
 :pingback
     a owl:ObjectProperty ;
     rdfs:comment "Relates a resource to a provenance pingback service that may receive additional provenance links about the resource."@en ;
@@ -1879,7 +1879,7 @@ owl:versionInfo
     rdfs:comment "When the prov-o term does not have a definition drawn from prov-dm, and the prov-o editor provides one."@en ;
     rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
     rdfs:subPropertyOf :definition .
-    
+
 :hadUsage
     a owl:ObjectProperty ;
     rdfs:comment "The _optional_ Usage involved in an Entity's Derivation."@en ;
@@ -1904,7 +1904,7 @@ owl:versionInfo
 
 :qualifiedForm
     a owl:AnnotationProperty ;
-    rdfs:comment """This annotation property links a subproperty of prov:wasInfluencedBy with the subclass of prov:Influence and the qualifying property that are used to qualify it. 
+    rdfs:comment """This annotation property links a subproperty of prov:wasInfluencedBy with the subclass of prov:Influence and the qualifying property that are used to qualify it.
 
 Example annotation:
 
@@ -1917,7 +1917,7 @@ Then this unqualified assertion:
 can be qualified by adding:
 
    :entity1 prov:qualifiedGeneration :entity1Gen .
-   :entity1Gen 
+   :entity1Gen
        a prov:Generation, prov:Influence;
        prov:activity :activity1;
        :customValue 1337 .
@@ -1961,13 +1961,13 @@ Note how the value of the unqualified influence (prov:wasGeneratedBy :activity1)
 @base <http://www.w3.org/ns/prov-dc#> .
 
 <http://www.w3.org/ns/prov-dc#> rdf:type owl:Ontology ;
-                                
+
                                 rdfs:label "Dublin Core extensions of the W3C PROVenance Interchange Ontology (PROV-O) "@en ;
-                                
-                                rdfs:comment """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page). 
+
+                                rdfs:comment """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page).
 
 If you wish to make comments regarding this document, please send them to public-prov-comments@w3.org (subscribe public-prov-comments-request@w3.org, archives http://lists.w3.org/Archives/Public/public-prov-comments/). All feedback is welcome."""@en ;
-                                
+
                                 owl:imports <http://www.w3.org/ns/prov-o#> .
 
 
@@ -1999,11 +1999,11 @@ If you wish to make comments regarding this document, please send them to public
 ###  http://www.w3.org/ns/prov#Accept
 
 prov:Accept rdf:type owl:Class ;
-            
+
             rdfs:label "Accept"@en ;
-            
+
             rdfs:subClassOf prov:Activity ;
-            
+
             prov:definition "Activity that identifies the acceptance of a resource (e.g., an article in a conference)"@en .
 
 
@@ -2011,12 +2011,12 @@ prov:Accept rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Contribute
 
 prov:Contribute rdf:type owl:Class ;
-                
+
                 rdfs:label """Contribute
 """@en ;
-                
+
                 rdfs:subClassOf prov:Activity ;
-                
+
                 prov:definition "Activity that identifies any contribution of an agent to a resource. "@en .
 
 
@@ -2024,11 +2024,11 @@ prov:Contribute rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Contributor
 
 prov:Contributor rdf:type owl:Class ;
-                 
+
                  rdfs:label "Contributor"@en ;
-                 
+
                  rdfs:subClassOf prov:Role ;
-                 
+
                  prov:definition "Role with the function of having responsibility for making contributions to a resource. The Agent assigned to this role is associated with a Modify or Create Activities"@en .
 
 
@@ -2036,11 +2036,11 @@ prov:Contributor rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Copyright
 
 prov:Copyright rdf:type owl:Class ;
-               
+
                rdfs:label "Copyright"@en ;
-               
+
                rdfs:subClassOf prov:Activity ;
-               
+
                prov:definition "Activity that identifies the Copyrighting activity associated to a resource."@en .
 
 
@@ -2048,11 +2048,11 @@ prov:Copyright rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Create
 
 prov:Create rdf:type owl:Class ;
-            
+
             rdfs:label "Create"@en ;
-            
+
             rdfs:subClassOf prov:Contribute ;
-            
+
             prov:definition "Activity that identifies the creation of a resource"@en .
 
 
@@ -2060,11 +2060,11 @@ prov:Create rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Creator
 
 prov:Creator rdf:type owl:Class ;
-             
+
              rdfs:label "Creator"@en ;
-             
+
              rdfs:subClassOf prov:Contributor ;
-             
+
              prov:definition "Role with the function of creating a resource. The Agent assigned to this role is associated with a Create Activity"@en .
 
 
@@ -2072,11 +2072,11 @@ prov:Creator rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Modify
 
 prov:Modify rdf:type owl:Class ;
-            
+
             rdfs:label "Modify"@en ;
-            
+
             rdfs:subClassOf prov:Activity ;
-            
+
             prov:definition "Activity that identifies the modification of a resource. "@en .
 
 
@@ -2084,11 +2084,11 @@ prov:Modify rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Publish
 
 prov:Publish rdf:type owl:Class ;
-             
+
              rdfs:label "Publish"@en ;
-             
+
              rdfs:subClassOf prov:Activity ;
-             
+
              prov:definition "Activity that identifies the publication of a resource"@en .
 
 
@@ -2096,11 +2096,11 @@ prov:Publish rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Publisher
 
 prov:Publisher rdf:type owl:Class ;
-               
+
                rdfs:label "Publisher"@en ;
-               
+
                rdfs:subClassOf prov:Role ;
-               
+
                prov:definition "Role with the function of publishing a resource. The Agent assigned to this role is associated with a Publish Activity"@en .
 
 
@@ -2108,11 +2108,11 @@ prov:Publisher rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Replace
 
 prov:Replace rdf:type owl:Class ;
-             
+
              rdfs:label "Replace"@en ;
-             
+
              rdfs:subClassOf prov:Activity ;
-             
+
              prov:definition "Activity that identifies the replacement of a resource."@en .
 
 
@@ -2120,11 +2120,11 @@ prov:Replace rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#RightsAssignment
 
 prov:RightsAssignment rdf:type owl:Class ;
-                      
+
                       rdfs:label "RightsAssignment"@en ;
-                      
+
                       rdfs:subClassOf prov:Activity ;
-                      
+
                       prov:definition "Activity that identifies the rights assignment of a resource."@en .
 
 
@@ -2132,11 +2132,11 @@ prov:RightsAssignment rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#RightsHolder
 
 prov:RightsHolder rdf:type owl:Class ;
-                  
+
                   rdfs:label "RightsHolder"@en ;
-                  
+
                   rdfs:subClassOf prov:Role ;
-                  
+
                   prov:definition "Role with the function of owning or managing rights over a resource. The Agent assigned to this role is associated with a RightsAssignment Activity"@en .
 
 
@@ -2144,11 +2144,11 @@ prov:RightsHolder rdf:type owl:Class ;
 ###  http://www.w3.org/ns/prov#Submit
 
 prov:Submit rdf:type owl:Class ;
-            
+
             rdfs:label "Submit"@en ;
-            
+
             rdfs:subClassOf prov:Activity ;
-            
+
             prov:definition "Activity that identifies the issuance (e.g., publication) of a resource. "@en .
 
 
@@ -2162,12 +2162,12 @@ prov:Submit rdf:type owl:Class ;
 
 <http://www.w3.org/ns/prov-dictionary#>
     a owl:Ontology ;
-    rdfs:comment """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page). 
+    rdfs:comment """This document is published by the Provenance Working Group (http://www.w3.org/2011/prov/wiki/Main_Page).
 
 If you wish to make comments regarding this document, please send them to public-prov-comments@w3.org (subscribe public-prov-comments-request@w3.org, archives http://lists.w3.org/Archives/Public/public-prov-comments/). All feedback is welcome."""@en ;
     rdfs:label "W3C PROVenance Interchange Ontology (PROV-O) Dictionary Extension"@en ;
     rdfs:seeAlso <http://www.w3.org/TR/prov-dictionary/>, <http://www.w3.org/ns/prov> .
-	
+
 <http://www.w3.org/ns/prov#>
     a owl:Ontology .
 
@@ -2183,7 +2183,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-conceptual-definition"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :EmptyDictionary
 	a owl:Class ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2196,18 +2196,18 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-conceptual-definition"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :KeyEntityPair
 	a owl:Class ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
 	rdfs:label "Key-Entity Pair" ;
 	:definition "A key-entity pair. Part of a prov:Dictionary through prov:hadDictionaryMember. The key is any RDF Literal, the value is a prov:Entity." ;
-	rdfs:subClassOf 
+	rdfs:subClassOf
 		[ a owl:Restriction ;
 		  owl:onProperty :pairKey ;
 		  owl:cardinality "1"^^xsd:int
 		] ;
-	rdfs:subClassOf 
+	rdfs:subClassOf
 		[ a owl:Restriction ;
 		  owl:onProperty :pairEntity ;
 		  owl:cardinality "1"^^xsd:int
@@ -2217,19 +2217,19 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-membership"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-membership"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :Insertion
 	a owl:Class ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
 	rdfs:label "Insertion" ;
 	:definition "Insertion is a derivation that transforms a dictionary into another, by insertion of one or more key-entity pairs." ;
 	rdfs:subClassOf :Derivation ;
-	rdfs:subClassOf 
+	rdfs:subClassOf
 		[ a owl:Restriction ;
 		  owl:onProperty :dictionary ;
 		  owl:cardinality "1"^^xsd:int
 		] ;
-	rdfs:subClassOf 
+	rdfs:subClassOf
 		[ a owl:Restriction ;
 		  owl:onProperty :insertedKeyEntityPair ;
 		  owl:minCardinality "1"^^xsd:int
@@ -2240,19 +2240,19 @@ If you wish to make comments regarding this document, please send them to public
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-insertion"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI ;
 	:unqualifiedForm :derivedByInsertionFrom .
-	
+
 :Removal
 	a owl:Class ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
 	rdfs:label "Removal" ;
 	:definition "Removal is a derivation that transforms a dictionary into another, by removing one or more key-entity pairs." ;
 	rdfs:subClassOf :Derivation ;
-	rdfs:subClassOf 
+	rdfs:subClassOf
 		[ a owl:Restriction ;
 		  owl:onProperty :dictionary ;
 		  owl:cardinality "1"^^xsd:int
 		] ;
-	rdfs:subClassOf 
+	rdfs:subClassOf
 		[ a owl:Restriction ;
 		  owl:onProperty :removedKey ;
 		  owl:minCardinality "1"^^xsd:int
@@ -2263,7 +2263,7 @@ If you wish to make comments regarding this document, please send them to public
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-removal"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI ;
 	:unqualifiedForm :derivedByRemovalFrom .
-	
+
 :dictionary
 	a owl:ObjectProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2279,7 +2279,7 @@ If you wish to make comments regarding this document, please send them to public
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-insertion"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-removal"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :derivedByInsertionFrom
 	a owl:ObjectProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2293,7 +2293,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-insertion"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-insertion"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :derivedByRemovalFrom
 	a owl:ObjectProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2307,7 +2307,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-removal"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-removal"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :insertedKeyEntityPair
 	a owl:ObjectProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2320,7 +2320,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-insertion"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-insertion"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :hadDictionaryMember
 	a owl:ObjectProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2333,7 +2333,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-membership"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-membership"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :pairKey
 	a owl:DatatypeProperty, owl:FunctionalProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2346,7 +2346,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-membership"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-membership"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :pairEntity
 	a owl:ObjectProperty, owl:FunctionalProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2359,7 +2359,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-membership"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-membership"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :qualifiedInsertion
 	a owl:ObjectProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2373,7 +2373,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-insertion"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-insertion"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :qualifiedRemoval
 	a owl:ObjectProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2387,7 +2387,7 @@ If you wish to make comments regarding this document, please send them to public
 	:dm "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#term-dictionary-removal"^^xsd:anyURI ;
 	:n "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#expression-dictionary-removal"^^xsd:anyURI ;
 	:constraints "http://www.w3.org/TR/2013/NOTE-prov-dictionary-20130430/#dictionary-constraints"^^xsd:anyURI .
-	
+
 :removedKey
 	a owl:DatatypeProperty ;
 	rdfs:isDefinedBy <http://www.w3.org/ns/prov#> ;
@@ -2441,7 +2441,7 @@ owl:versionInfo
     a owl:ObjectProperty ;
     rdfs:label "asInBundle" ;
     rdfs:isDefinedBy <http://www.w3.org/ns/prov-links#> ;
-    rdfs:comment 
+    rdfs:comment
       """prov:asInBundle is used to specify which bundle the general entity of a prov:mentionOf property is described.
 
 When :x prov:mentionOf :y and :y is described in Bundle :b, the triple :x prov:asInBundle :b is also asserted to cite the Bundle in which :y was described."""@en;
@@ -2455,7 +2455,7 @@ When :x prov:mentionOf :y and :y is described in Bundle :b, the triple :x prov:a
     a owl:ObjectProperty ;
     rdfs:isDefinedBy <http://www.w3.org/ns/prov-links#> ;
     rdfs:label "mentionOf" ;
-    rdfs:comment 
+    rdfs:comment
       """prov:mentionOf is used to specialize an entity as described in another bundle. It is to be used in conjuction with prov:asInBundle.
 
 prov:asInBundle is used to cite the Bundle in which the generalization was mentioned."""@en;

@@ -45,7 +45,7 @@ def check_file(path: Path) -> list[str]:
     # Collect all top-level import statements (direct children of Module)
     errors: list[str] = []
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+        if isinstance(node, ast.Import | ast.ImportFrom):
             if isinstance(node, ast.Import):
                 names = [alias.name.split(".")[0] for alias in node.names]
             else:
