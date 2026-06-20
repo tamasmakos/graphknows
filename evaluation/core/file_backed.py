@@ -41,6 +41,9 @@ class FileBackedBenchmarkOptions:
     session_prefix: str = "eval"
     purge: bool = True
     relation_extraction_mode: str = "gliner2"
+    generate_answers: bool = False
+    generation_model: str = ""
+    pre_run_purge_ltm: bool = False
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
@@ -65,7 +68,9 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
             rows = payload.get(key)
             if isinstance(rows, list):
                 return [row for row in rows if isinstance(row, dict)]
-    raise ValueError(f"{path} must contain a JSON array, JSONL rows, or a dict with cases/questions")
+    raise ValueError(
+        f"{path} must contain a JSON array, JSONL rows, or a dict with cases/questions"
+    )
 
 
 def _first_string(row: dict[str, Any], keys: tuple[str, ...], default: str = "") -> str:
@@ -111,7 +116,9 @@ def _document_text(document: Any) -> tuple[str, str]:
     return title, text
 
 
-def _case_documents(row: dict[str, Any], *, max_documents: int, max_chars: int) -> list[dict[str, str]]:
+def _case_documents(
+    row: dict[str, Any], *, max_documents: int, max_chars: int
+) -> list[dict[str, str]]:
     sources: list[Any] = []
     for key in ("documents", "evidence", "memories", "haystack", "contexts"):
         value = row.get(key)
@@ -127,7 +134,9 @@ def _case_documents(row: dict[str, Any], *, max_documents: int, max_chars: int) 
             if isinstance(session, dict):
                 sources.append(
                     {
-                        "title": _first_string(session, ("title", "id", "session_id"), f"session-{index}"),
+                        "title": _first_string(
+                            session, ("title", "id", "session_id"), f"session-{index}"
+                        ),
                         "messages": session.get("messages") or session.get("turns") or [],
                         "text": _first_string(session, ("text", "content", "summary")),
                     }
@@ -167,15 +176,18 @@ async def run_file_backed_benchmark(
     options: FileBackedBenchmarkOptions,
 ) -> list[BenchmarkCaseResult]:
     """Run a file-backed memory benchmark against the MCP memory tools."""
-
     rows = _read_rows(options.data_root / options.questions_file)
     selected = rows[options.offset : options.offset + options.limit]
     cases: list[BenchmarkCaseResult] = []
     for ordinal, row in enumerate(selected, start=options.offset):
-        case_id = _first_string(row, ("id", "question_id", "case_id"), f"{options.benchmark}-{ordinal}")
+        case_id = _first_string(
+            row, ("id", "question_id", "case_id"), f"{options.benchmark}-{ordinal}"
+        )
         question = _first_string(row, ("question", "query", "prompt"))
         if not question:
-            raise ValueError(f"{options.benchmark} case {case_id} is missing a question/query/prompt")
+            raise ValueError(
+                f"{options.benchmark} case {case_id} is missing a question/query/prompt"
+            )
         gold = row.get("answer", row.get("gold", row.get("target")))
         category = _first_string(row, ("category", "type", "task_type", "question_type"))
         session_id = f"{options.session_prefix}-{options.benchmark}-{options.run_id}-{case_id}"
@@ -201,12 +213,14 @@ async def run_file_backed_benchmark(
                 )
                 mcp_result = result if isinstance(result, dict) else {"result": result}
                 is_error = "chunks" not in mcp_result
-                ingest_outputs.append({
-                    "document_title": document["title"],
-                    "document_text": document["text"],
-                    "is_error": is_error,
-                    **mcp_result,
-                })
+                ingest_outputs.append(
+                    {
+                        "document_title": document["title"],
+                        "document_text": document["text"],
+                        "is_error": is_error,
+                        **mcp_result,
+                    }
+                )
             if options.promote_to_ltm:
                 result = await client.call_tool("memory_flush", {"session_id": session_id})
                 flush_result = result if isinstance(result, dict) else {"result": result}
@@ -234,9 +248,7 @@ async def run_file_backed_benchmark(
         answer_score = _answer_support_score(gold, recall)
         ingest_elapsed_s = sum(float(r.get("elapsed_s", 0)) for r in ingest_outputs)
         flush_elapsed_s = float(flush_result.get("elapsed_s", 0)) if flush_result else 0.0
-        ltm_graph_hit_count = sum(
-            1 for h in recall if "ltm_graph" in str(h.get("sources", ""))
-        )
+        ltm_graph_hit_count = sum(1 for h in recall if "ltm_graph" in str(h.get("sources", "")))
         cases.append(
             BenchmarkCaseResult(
                 case_id=case_id,
@@ -263,14 +275,18 @@ async def run_file_backed_benchmark(
                     "answer_support_score": answer_score,
                     "answer_support_hit": answer_score >= 1.0,
                     "ingest_calls": len(ingest_outputs),
-                    "ingest_error_count": sum(1 for o in ingest_outputs if o.get("is_error", False)),
+                    "ingest_error_count": sum(
+                        1 for o in ingest_outputs if o.get("is_error", False)
+                    ),
                     "ingested_chunks": sum(int(r.get("chunks", 0)) for r in ingest_outputs),
                     "ingested_entities": sum(int(r.get("entities", 0)) for r in ingest_outputs),
                     "ingest_elapsed_s": round(ingest_elapsed_s, 3),
                     "flush_nodes": int(flush_result.get("nodes", 0)) if flush_result else 0,
                     "flush_edges": int(flush_result.get("edges", 0)) if flush_result else 0,
                     "flush_chunks": int(flush_result.get("chunks", 0)) if flush_result else 0,
-                    "flush_topics": int(flush_result.get("topics_created", 0)) if flush_result else 0,
+                    "flush_topics": int(flush_result.get("topics_created", 0))
+                    if flush_result
+                    else 0,
                     "flush_elapsed_s": round(flush_elapsed_s, 3),
                     "flush_error_count": len(flush_result.get("errors", [])) if flush_result else 0,
                     "ltm_entity_count": len(ltm_entity_list),
