@@ -21,6 +21,7 @@ from graphknows.memory.stores.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
 
+
 class ArcadeDBSTMStore:
     """Session-scoped graph store backed by ArcadeDB.
 

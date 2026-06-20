@@ -152,6 +152,7 @@ async def _tool_ingest(
             )
         except Exception as exc:
             import logging
+
             logging.getLogger("graphknows.container").exception("Ingest job %s failed", run_id)
             c._jobs[run_id].update(
                 status="failed",

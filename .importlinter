@@ -2,14 +2,32 @@
 root_package = graphknows
 unmatched_ignore_imports_alerting = none
 
-[importlinter:contract:layers]
-name = Declared architecture layers
-type = layers
-layers =
-    graphknows.mcp
+# Real dependency graph:
+#   mcp          → config, memory
+#   config       → memory, graphgen          (DI wiring layer)
+#   memory       → graphgen, config.adapters, config.llm
+#   graphgen     → config.llm               (LLM access only)
+#
+# Strict layering is not applicable because config is a top-level DI layer.
+# Instead, protect the invariants that actually matter:
+
+# graphgen is extraction primitives — it must not reach up into memory or mcp.
+[importlinter:contract:graphgen-no-memory]
+name = graphgen must not import memory
+type = forbidden
+source_modules =
     graphknows.graphgen
+forbidden_modules =
     graphknows.memory
+    graphknows.mcp
+
+# mcp must not be imported by non-entry-point packages.
+[importlinter:contract:mcp-not-imported-by-internal]
+name = mcp layer is terminal — not imported by internal packages
+type = forbidden
+source_modules =
     graphknows.config
-ignore_imports =
-    graphknows.config -> graphknows.config.health
-    graphknows.config.health -> graphknows.config
+    graphknows.memory
+    graphknows.graphgen
+forbidden_modules =
+    graphknows.mcp

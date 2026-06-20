@@ -68,22 +68,51 @@ def _pattern_a(
                 raw = _span_text(doc, ccomp)
                 tgt_text = _strip_leading_complementizer(raw)
                 results.append(
-                    _triple(src_text, src_label, relation, tgt_text, "PROPOSITION",
-                            sent_text, 0.90, "A-ccomp", negated)
+                    _triple(
+                        src_text,
+                        src_label,
+                        relation,
+                        tgt_text,
+                        "PROPOSITION",
+                        sent_text,
+                        0.90,
+                        "A-ccomp",
+                        negated,
+                    )
                 )
             elif xcomp is not None:
                 raw = _span_text(doc, xcomp)
                 tgt_text = re.sub(r"^to\s+", "", raw, flags=re.IGNORECASE)
                 results.append(
-                    _triple(src_text, src_label, relation, tgt_text, "PROPOSITION",
-                            sent_text, 0.85, "A-xcomp", negated)
+                    _triple(
+                        src_text,
+                        src_label,
+                        relation,
+                        tgt_text,
+                        "PROPOSITION",
+                        sent_text,
+                        0.85,
+                        "A-xcomp",
+                        negated,
+                    )
                 )
             elif dobj is not None:
                 tgt_text = _span_text(doc, dobj)
-                tgt_text, tgt_label = _ground_span(tgt_text, gliner_entities, spacy_ent_map, "ENTITY")
+                tgt_text, tgt_label = _ground_span(
+                    tgt_text, gliner_entities, spacy_ent_map, "ENTITY"
+                )
                 results.append(
-                    _triple(src_text, src_label, relation, tgt_text, tgt_label,
-                            sent_text, 0.80, "A-dobj", negated)
+                    _triple(
+                        src_text,
+                        src_label,
+                        relation,
+                        tgt_text,
+                        tgt_label,
+                        sent_text,
+                        0.80,
+                        "A-dobj",
+                        negated,
+                    )
                 )
     return results
 
@@ -113,8 +142,16 @@ def _pattern_b(
             tgt_text = _span_text(doc, attr)
             tgt_text, tgt_label = _ground_span(tgt_text, gliner_entities, spacy_ent_map, "CONCEPT")
             results.append(
-                _triple(src_text, src_label, "DEFINED_AS", tgt_text, tgt_label,
-                        sent_text, 0.85, "B-copula")
+                _triple(
+                    src_text,
+                    src_label,
+                    "DEFINED_AS",
+                    tgt_text,
+                    tgt_label,
+                    sent_text,
+                    0.85,
+                    "B-copula",
+                )
             )
     return results
 
@@ -150,10 +187,20 @@ def _pattern_c(
             pobjs = [c for c in prep.children if c.dep_ == "pobj"]
             for pobj in pobjs:
                 tgt_text = _span_text(doc, pobj)
-                tgt_text, tgt_label = _ground_span(tgt_text, gliner_entities, spacy_ent_map, "CONCEPT")
+                tgt_text, tgt_label = _ground_span(
+                    tgt_text, gliner_entities, spacy_ent_map, "CONCEPT"
+                )
                 results.append(
-                    _triple(src_text, src_label, "DEFINED_AS", tgt_text, tgt_label,
-                            sent_text, 0.90, "C-passive-def")
+                    _triple(
+                        src_text,
+                        src_label,
+                        "DEFINED_AS",
+                        tgt_text,
+                        tgt_label,
+                        sent_text,
+                        0.90,
+                        "C-passive-def",
+                    )
                 )
     return results
 
@@ -179,8 +226,16 @@ def _pattern_d(
         head_text, head_label = _ground_span(head_text, gliner_entities, spacy_ent_map, "ENTITY")
         appos_text, appos_label = _ground_span(appos_text, gliner_entities, spacy_ent_map, "ENTITY")
         results.append(
-            _triple(head_text, head_label, "EXEMPLIFIES", appos_text, appos_label,
-                    sent_text, 0.75, "D-appos")
+            _triple(
+                head_text,
+                head_label,
+                "EXEMPLIFIES",
+                appos_text,
+                appos_label,
+                sent_text,
+                0.75,
+                "D-appos",
+            )
         )
     return results
 
@@ -222,10 +277,20 @@ def _pattern_e(
             src_text, src_label = _ground_span(src_text, gliner_entities, spacy_ent_map, "CONCEPT")
             for tgt_tok in targets:
                 tgt_text = _span_text(doc, tgt_tok)
-                tgt_text, tgt_label = _ground_span(tgt_text, gliner_entities, spacy_ent_map, "CONCEPT")
+                tgt_text, tgt_label = _ground_span(
+                    tgt_text, gliner_entities, spacy_ent_map, "CONCEPT"
+                )
                 results.append(
-                    _triple(src_text, src_label, relation, tgt_text, tgt_label,
-                            sent_text, 0.85, "E-referential")
+                    _triple(
+                        src_text,
+                        src_label,
+                        relation,
+                        tgt_text,
+                        tgt_label,
+                        sent_text,
+                        0.85,
+                        "E-referential",
+                    )
                 )
     return results
 
@@ -276,17 +341,37 @@ def _pattern_f(
             src_text, src_label = _ground_span(src_text, gliner_entities, spacy_ent_map, "AGENT")
             for dobj_tok in dobjs:
                 tgt1_text = _span_text(doc, dobj_tok)
-                tgt1_text, tgt1_label = _ground_span(tgt1_text, gliner_entities, spacy_ent_map, "CONCEPT")
+                tgt1_text, tgt1_label = _ground_span(
+                    tgt1_text, gliner_entities, spacy_ent_map, "CONCEPT"
+                )
                 results.append(
-                    _triple(src_text, src_label, "DISTINGUISHES", tgt1_text, tgt1_label,
-                            sent_text, 0.85, "F-distinction")
+                    _triple(
+                        src_text,
+                        src_label,
+                        "DISTINGUISHES",
+                        tgt1_text,
+                        tgt1_label,
+                        sent_text,
+                        0.85,
+                        "F-distinction",
+                    )
                 )
             for pobj_tok in from_pobjs:
                 tgt2_text = _span_text(doc, pobj_tok)
-                tgt2_text, tgt2_label = _ground_span(tgt2_text, gliner_entities, spacy_ent_map, "CONCEPT")
+                tgt2_text, tgt2_label = _ground_span(
+                    tgt2_text, gliner_entities, spacy_ent_map, "CONCEPT"
+                )
                 results.append(
-                    _triple(src_text, src_label, "DISTINGUISHES", tgt2_text, tgt2_label,
-                            sent_text, 0.85, "F-distinction-from")
+                    _triple(
+                        src_text,
+                        src_label,
+                        "DISTINGUISHES",
+                        tgt2_text,
+                        tgt2_label,
+                        sent_text,
+                        0.85,
+                        "F-distinction-from",
+                    )
                 )
     return results
 
@@ -322,8 +407,17 @@ def _pattern_g(
             src_text = _span_text(doc, subj)
             src_text, src_label = _ground_span(src_text, gliner_entities, spacy_ent_map, "AGENT")
             results.append(
-                _triple(src_text, src_label, "DIRECTS", tgt_text, "PROPOSITION",
-                        sent_text, 0.80, "G-deontic", negated)
+                _triple(
+                    src_text,
+                    src_label,
+                    "DIRECTS",
+                    tgt_text,
+                    "PROPOSITION",
+                    sent_text,
+                    0.80,
+                    "G-deontic",
+                    negated,
+                )
             )
     return results
 
@@ -348,8 +442,7 @@ def _pattern_h(
             continue
         main_verb = token.head
         main_subjects = [
-            c for c in main_verb.children
-            if c.dep_ in ("nsubj", "nsubjpass") and not _is_pronoun(c)
+            c for c in main_verb.children if c.dep_ in ("nsubj", "nsubjpass") and not _is_pronoun(c)
         ]
         if not main_subjects:
             continue
@@ -357,15 +450,23 @@ def _pattern_h(
         for mark in marks:
             prefix = mark.text + " "
             if causal_raw.lower().startswith(prefix.lower()):
-                causal_raw = causal_raw[len(prefix):]
+                causal_raw = causal_raw[len(prefix) :]
         causal_text = _norm(causal_raw)
         sent_text = sent.text.strip()
         for subj in main_subjects:
             tgt_text = _span_text(doc, subj)
             tgt_text, tgt_label = _ground_span(tgt_text, gliner_entities, spacy_ent_map, "ENTITY")
             results.append(
-                _triple(causal_text, "PROPOSITION", "EXPLAINS", tgt_text, tgt_label,
-                        sent_text, 0.85, "H-causal")
+                _triple(
+                    causal_text,
+                    "PROPOSITION",
+                    "EXPLAINS",
+                    tgt_text,
+                    tgt_label,
+                    sent_text,
+                    0.85,
+                    "H-causal",
+                )
             )
     return results
 
@@ -409,7 +510,15 @@ def _pattern_i(
         if not ant_text or not con_text:
             continue
         results.append(
-            _triple(ant_text, "PROPOSITION", "ENTAILS", con_text, "PROPOSITION",
-                    sent_text, 0.75, "I-connective")
+            _triple(
+                ant_text,
+                "PROPOSITION",
+                "ENTAILS",
+                con_text,
+                "PROPOSITION",
+                sent_text,
+                0.75,
+                "I-connective",
+            )
         )
     return results

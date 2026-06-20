@@ -29,8 +29,6 @@ class STMService:
     single public surface that callers (MemoryAdapter, MCP handlers, etc.)
     should reference.
 
-    # TODO(Wave 3): replace direct store references with IGraphDb adapter.
-
     Attributes:
         _mg: ArcadeDBSTMStore for session evidence graph writes/queries.
         _pg: ArcadeDBVectorStore for stm_chunks / stm_turns writes/queries.
