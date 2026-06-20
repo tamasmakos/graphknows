@@ -67,14 +67,12 @@ shell: ## Open a shell in a running container  →  make shell SVC=agent
 	$(COMPOSE) exec $(SVC) /bin/bash
 
 # ── Infra-only ────────────────────────────────────────────────────
-infra-up: ## Start only infrastructure (Neo4j, pgvector, Memgraph)
-	$(COMPOSE) up -d neo4j pgvector memgraph
-	@echo "Waiting for Neo4j..."
-	@$(COMPOSE) exec neo4j bash -c "until wget -q --spider http://localhost:7474; do sleep 2; done" 2>/dev/null || true
+infra-up: ## Start only infrastructure (ArcadeDB)
+	$(COMPOSE) up -d arcadedb
 	@echo "Infrastructure ready."
 
 infra-down: ## Stop only infrastructure containers
-	$(COMPOSE) stop neo4j pgvector memgraph
+	$(COMPOSE) stop arcadedb
 
 # ── Observability stack ───────────────────────────────────────────
 observability: ## Start Langfuse + its Postgres (profile: observability)
