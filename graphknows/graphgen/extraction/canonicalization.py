@@ -132,10 +132,7 @@ def surface_forms_conflict(a: str, b: str) -> bool:
     ):
         return True
 
-    if _likely_region_adjectival_conflict(tokens_a, tokens_b):
-        return True
-
-    return False
+    return bool(_likely_region_adjectival_conflict(tokens_a, tokens_b))
 
 
 def classify_surface_form(text: str) -> str:
@@ -178,7 +175,4 @@ def are_potential_aliases(a: str, b: str) -> bool:
 
     tokens_a = set(norm_a.split("_"))
     tokens_b = set(norm_b.split("_"))
-    if tokens_a and tokens_b and tokens_a == tokens_b:
-        return True
-
-    return False
+    return bool(tokens_a and tokens_b and tokens_a == tokens_b)

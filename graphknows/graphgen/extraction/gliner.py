@@ -23,7 +23,6 @@ from graphknows.graphgen.extraction.ontology import (
     build_top_level_label_space,
     refine_entities_with_ontology,
 )
-from graphknows.graphgen.diagnostics import diagnostics_enabled, write_diagnostic_json
 from graphknows.graphgen.utils import standardize_label
 
 log = logging.getLogger(__name__)
@@ -63,7 +62,7 @@ def get_gliner2_model(config: dict[str, Any] | None = None):
             GLINER2_MODEL = GLiNER2.from_pretrained(model_name)
             log.info("GLiNER2 model loaded.")
         except Exception as e:
-            log.error("Failed to load GLiNER2: %s", e)
+            log.exception("Failed to load GLiNER2")
             raise RuntimeError(
                 f"GLiNER2 model could not be loaded ({type(e).__name__}: {e}). "
                 "Check RAM availability — model requires ~2 GB. No silent fallback."
@@ -86,6 +85,10 @@ async def extract_relations_with_llm_async(
 
     try:
         result = await extractor.extract_relations(text=text)
+    except Exception as e:
+        log.error("Extraction failed: %s", e, exc_info=True)
+        raise RuntimeError(f"extract_relations_with_llm_async failed: {e}") from e
+    else:
         if isinstance(result, tuple):
             if len(result) == 3:
                 relations, nodes, diagnostics = result
@@ -95,9 +98,6 @@ async def extract_relations_with_llm_async(
                 return relations or [], nodes or [], {}
         log.warning("Extractor returned unexpected result shape; treating as empty extraction")
         return [], [], {}
-    except Exception as e:
-        log.error("Extraction failed: %s", e, exc_info=True)
-        raise RuntimeError(f"extract_relations_with_llm_async failed: {e}") from e
 
 
 def _build_gliner_schema(model: Any, taxonomy: Any, threshold: float) -> tuple[Any, dict[str, str]]:
@@ -259,10 +259,10 @@ async def _extract_entities_for_chunk(
                 "schema_mode": "taxonomy",
             }
         )
-        return (refined_entities, diagnostics) if return_diagnostics else refined_entities
-
     except Exception as e:
         raise RuntimeError(f"GLiNER2 extraction failed for chunk: {e}") from e
+    else:
+        return (refined_entities, diagnostics) if return_diagnostics else refined_entities
 
 
 def _build_relation_eligible_entities(

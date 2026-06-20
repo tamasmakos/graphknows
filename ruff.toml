@@ -36,7 +36,7 @@ ignore = [
 "tests/*" = ["D", "S101", "B017", "E402", "N806", "SIM102", "UP038"]
 "scripts/*" = ["D103"]
 "evaluation/**" = ["D", "C901", "UP038", "RUF034"]
-"**/graphgen/**" = ["ALL"]  # absorbed research pipeline — linting deferred progressively
+"**/graphgen/**" = ["C901", "D"]  # complexity and docstrings deferred to progressive cleanup
 # TODO(tech-debt): add docstrings and refactor complexity in the files below
 "**/document_ingestor.py" = ["D101"]
 "**/feature_engineering.py" = ["D101", "C901", "N806", "E741"]

@@ -137,7 +137,7 @@ POLITICAL_TYPE_OVERRIDES: dict[str, str] = {
 
 def build_top_level_label_space(
     ontology_labels: list[str],
-    taxonomy: "TaxonomyConfig | None" = None,
+    taxonomy: TaxonomyConfig | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build a hierarchical label-space dict from a flat list of entity labels.
 
@@ -180,7 +180,7 @@ def build_top_level_label_space(
 def build_gliner2_schema(
     candidate_labels: list[str],
     label_descriptions: dict[str, str] | None = None,
-    taxonomy: "TaxonomyConfig | None" = None,
+    taxonomy: TaxonomyConfig | None = None,
 ) -> dict[str, dict[str, str]]:
     """Build the entity-schema dict consumed by GLiNER2.
 
@@ -223,7 +223,7 @@ def select_candidate_labels(
     text: str,
     label_space: dict[str, dict[str, Any]],
     top_k: int = 5,
-    taxonomy: "TaxonomyConfig | None" = None,
+    taxonomy: TaxonomyConfig | None = None,
 ) -> list[str]:
     """Rank top-level labels by how well they match *text* and return the best *top_k*.
 
@@ -265,7 +265,7 @@ def select_candidate_labels(
 def refine_entities_with_ontology(
     entities: list[dict[str, Any]],
     label_space: dict[str, dict[str, Any]],
-    taxonomy: "TaxonomyConfig | None" = None,
+    taxonomy: TaxonomyConfig | None = None,
 ) -> list[dict[str, Any]]:
     """Map raw GLiNER2 entity labels to canonical ontology labels.
 

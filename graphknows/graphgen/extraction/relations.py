@@ -139,6 +139,7 @@ class BaseExtractor(ABC):
     ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
         """Extract (source, relation, target, props) triplets from *text*."""
 
+    @abstractmethod
     async def close(self) -> None:
         """Clean up resources."""
 
@@ -372,17 +373,6 @@ class DSPyExtractor(BaseExtractor):
                     nodes_data.append({"id": target, "type": target_type, "properties": {}})
                     seen_nodes.add(target)
 
-            return (
-                relations,
-                nodes_data,
-                {
-                    "raw_triplets": raw_triplets,
-                    "triplet_decisions": triplet_decisions,
-                    "ontology_classes": ontology_classes,
-                    "ontology_relation_types": ontology_relation_types,
-                },
-            )
-
         except Exception as e:
             if _is_empty_lm_response_error(e):
                 log.warning(
@@ -403,6 +393,17 @@ class DSPyExtractor(BaseExtractor):
                     },
                 )
             raise RuntimeError(f"DSPy relation extraction failed: {e}") from e
+        else:
+            return (
+                relations,
+                nodes_data,
+                {
+                    "raw_triplets": raw_triplets,
+                    "triplet_decisions": triplet_decisions,
+                    "ontology_classes": ontology_classes,
+                    "ontology_relation_types": ontology_relation_types,
+                },
+            )
 
 
 def get_extractor(config: dict[str, Any]) -> BaseExtractor:

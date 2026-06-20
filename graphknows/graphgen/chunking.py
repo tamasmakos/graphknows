@@ -45,8 +45,8 @@ async def process_document_splitting(content: str, config: dict[str, Any]) -> li
         )
 
         chunks = splitter.split_text(content)
-        return chunks
-
-    except Exception as e:
-        log.error("Error in splitting: %s", e)
+    except Exception:
+        log.exception("Error in splitting")
         raise
+    else:
+        return chunks
