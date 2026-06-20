@@ -8,7 +8,6 @@ from typing import Any
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-
 HF_ROWS = "https://datasets-server.huggingface.co/rows"
 
 

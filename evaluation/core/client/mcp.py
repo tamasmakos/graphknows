@@ -27,7 +27,7 @@ class GraphknowsMCPClient:
     _proc: asyncio.subprocess.Process | None = field(default=None, init=False, repr=False)
     _request_id: int = field(default=0, init=False)
 
-    async def __aenter__(self) -> "GraphknowsMCPClient":
+    async def __aenter__(self) -> GraphknowsMCPClient:
         await self.start()
         return self
 

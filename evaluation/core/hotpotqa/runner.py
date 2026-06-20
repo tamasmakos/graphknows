@@ -72,9 +72,7 @@ def score_hotpotqa_support(
     text = "\n".join(str(hit.get("text", "")) for hit in hits)
     normalised_text = _normalise(text)
     title_hits = [
-        title
-        for title in supporting_titles
-        if title and _normalise(title) in normalised_text
+        title for title in supporting_titles if title and _normalise(title) in normalised_text
     ]
     answer_hit = bool(answer and _normalise(answer) in normalised_text)
     recall = len(title_hits) / len(supporting_titles) if supporting_titles else 0.0
