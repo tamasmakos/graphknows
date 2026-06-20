@@ -1,0 +1,506 @@
+# Intentionality Taxonomy v2
+# ---------------------------------------------------------------------------
+# Changes from v1:
+#   A: PROPOSITION/INFERENCE/ARGUMENT/THEORY descriptions rewritten to lead
+#      with noun-phrase surface-form anchors ("the view that", "therefore")
+#      so GLiNER2 can anchor on NP-sized spans rather than full clauses.
+#   B: Per-label min_ner_confidence thresholds — abstract labels use 0.25–0.30,
+#      concrete labels use 0.45–0.50. (In _build_gliner_schema, non-zero values
+#      override the global threshold; 0.0 would fall back to global.)
+#   E: All descriptions trimmed to ≤40 tokens — reduces schema encoding cost.
+# ---------------------------------------------------------------------------
+
+name: intentionality
+version: "2.1"
+
+entity_groups:
+
+  # ── Stratum I ──────────────────────────────────────────────────────────────
+  AGENT:
+    children:
+      - AGENT
+      - PERSON
+      - ORGANIZATION
+      - INSTITUTION
+      - COLLECTIVE
+      - THINKER
+      - SPEAKER
+      - AUTHOR
+    aliases:
+      - agent
+      - person
+      - thinker
+      - philosopher
+      - author
+      - researcher
+      - speaker
+      - organization
+      - institution
+      - mind
+      - subject
+    description: >
+      A person, thinker, philosopher, researcher, speaker, organization, or collective
+      that thinks or speaks intentionally. Examples: Brentano, the European Commission,
+      a narrator, a research team.
+    classification_tokens:
+      - MR
+      - MS
+      - DR
+      - PROFESSOR
+      - PHILOSOPHER
+      - RESEARCHER
+      - AUTHOR
+    classification_patterns: []
+    min_ner_confidence: 0.45
+
+  # ── Stratum II ─────────────────────────────────────────────────────────────
+  CONCEPT:
+    children:
+      - CONCEPT
+      - PRINCIPLE
+      - CATEGORY
+      - PROPERTY
+      - NOTION
+      - TERM
+      - PHENOMENON
+    aliases:
+      - concept
+      - notion
+      - idea
+      - principle
+      - property
+      - phenomenon
+      - category
+      - term
+      - theory
+      - doctrine
+      - abstraction
+      - construct
+    description: >
+      An abstract idea, principle, or category: intentionality, consciousness, opacity,
+      Sinn, Bedeutung, propositional attitude, entropy, justice, marginal utility.
+      Not a physical object or named agent.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.35
+
+  PROPOSITION:
+    children:
+      - PROPOSITION
+      - THESIS
+      - CLAIM
+      - BELIEF_CONTENT
+      - HYPOTHESIS
+      - CONJECTURE
+    aliases:
+      - proposition
+      - thesis
+      - claim
+      - assertion
+      - belief
+      - hypothesis
+      - conjecture
+      - statement
+      - view
+      - position
+      - that
+    description: >
+      A named thesis, claim, or view: 'the view that', 'the claim that', 'the thesis that',
+      'the position that', 'the proposition that'. Examples: 'intentionality is the mark
+      of the mental', 'consciousness is substrate-independent'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.25
+
+  ARGUMENT:
+    children:
+      - ARGUMENT
+      - PROOF
+      - PUZZLE
+      - PARADOX
+      - OBJECTION
+      - COUNTEREXAMPLE
+    aliases:
+      - argument
+      - proof
+      - puzzle
+      - paradox
+      - objection
+      - counterexample
+      - reasoning
+      - case
+      - demonstration
+    description: >
+      A named argument, proof, puzzle, paradox, or objection:
+      Frege's puzzle, the knowledge argument, the Gettier counterexample,
+      the argument from opacity, Moore's open question argument.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.30
+
+  THEORY:
+    children:
+      - THEORY
+      - FRAMEWORK
+      - DOCTRINE
+      - SEMANTICS
+      - ACCOUNT
+      - MODEL
+      - SYSTEM
+    aliases:
+      - theory
+      - framework
+      - semantics
+      - doctrine
+      - account
+      - model
+      - programme
+      - approach
+      - system
+      - analysis
+    description: >
+      A named theory, framework, or doctrine: speech act theory, possible-worlds semantics,
+      Fregean sense theory, Bayesian epistemology, relevance theory, two-dimensional semantics.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.30
+
+  # ── Stratum III ────────────────────────────────────────────────────────────
+  EPISTEMIC_STATE:
+    children:
+      - EPISTEMIC_STATE
+      - BELIEF
+      - KNOWLEDGE
+      - DOUBT
+      - CERTAINTY
+      - ASSUMPTION
+      - OPINION
+    aliases:
+      - belief
+      - knowledge
+      - doubt
+      - certainty
+      - assumption
+      - opinion
+      - conviction
+      - epistemic
+      - knowing
+      - believing
+      - thinks
+      - suspects
+    description: >
+      A state of knowing, believing, doubting, or being certain:
+      'believes that', 'knows that', 'is certain', 'doubts whether', 'assumes that',
+      'is convinced that', 'suspects that'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.28
+
+  CONATIVE_STATE:
+    children:
+      - CONATIVE_STATE
+      - DESIRE
+      - INTENTION
+      - GOAL
+      - PREFERENCE
+      - MOTIVATION
+      - WILL
+    aliases:
+      - desire
+      - intention
+      - goal
+      - preference
+      - motivation
+      - will
+      - aim
+      - want
+      - intend
+      - conative
+      - volition
+    description: >
+      A state of wanting, intending, or desiring:
+      'wants to', 'intends to', 'aims at', 'seeks to', 'prefers that',
+      'has the goal of', 'is motivated by', 'is determined to'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.25
+
+  AFFECTIVE_STATE:
+    children:
+      - AFFECTIVE_STATE
+      - EMOTION
+      - FEELING
+      - MOOD
+      - SENTIMENT
+      - VALUATION
+    aliases:
+      - emotion
+      - feeling
+      - mood
+      - sentiment
+      - fear
+      - hope
+      - joy
+      - anger
+      - love
+      - affective
+      - evaluative
+    description: >
+      An emotion word or name — the emotion itself, not what is feared or hoped for:
+      fear, hope, love, joy, anger, sorrow, anxiety, admiration, distress.
+      Examples: 'a feeling of fear', 'the emotion', 'her hope', 'deep anxiety'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.25
+
+  # ── Stratum IV ─────────────────────────────────────────────────────────────
+  SPEECH_ACT:
+    children:
+      - SPEECH_ACT
+      - ASSERTION
+      - DIRECTIVE
+      - COMMISSIVE
+      - EXPRESSIVE
+      - DECLARATION
+      - QUESTION
+      - COMMAND
+      - PROMISE
+    aliases:
+      - speech act
+      - assertion
+      - directive
+      - commissive
+      - expressive
+      - declaration
+      - question
+      - command
+      - promise
+      - illocutionary
+      - utterance
+      - statement
+    description: >
+      A named illocutionary act: an assertion, declaration, promise, command, or question.
+      'Hereby declares', 'I promise', 'I assert', performative utterances, explicit
+      speech acts with named illocutionary force.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.30
+
+  # ── Stratum V ──────────────────────────────────────────────────────────────
+  INFERENCE:
+    children:
+      - INFERENCE
+      - DEDUCTION
+      - INDUCTION
+      - ABDUCTION
+      - IMPLICATION
+      - CONCLUSION
+    aliases:
+      - inference
+      - deduction
+      - induction
+      - abduction
+      - implication
+      - conclusion
+      - therefore
+      - follows
+      - reasoning
+      - entails
+      - thus
+    description: >
+      A logical conclusion or inferential step: 'therefore', 'it follows that',
+      'we can conclude', 'the best explanation is', 'necessarily', 'thus', 'hence'.
+      A deductive, inductive, or abductive move from premises to conclusion.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.25
+
+  # ── Cross-cutting ───────────────────────────────────────────────────────────
+  ARTIFACT:
+    children:
+      - ARTIFACT
+      - DOCUMENT
+      - WORK
+      - TEXT
+      - TOOL
+      - SYSTEM
+      - LANGUAGE
+      - SYMBOL
+    aliases:
+      - artifact
+      - document
+      - work
+      - text
+      - book
+      - paper
+      - tool
+      - system
+      - language
+      - symbol
+      - representation
+    description: >
+      A created object, book, paper, system, or language: Principia Mathematica,
+      the Treaty of Lisbon, Python, a formal proof system, the German language,
+      a musical score.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.42
+
+  EVENT:
+    children:
+      - EVENT
+      - OCCURRENCE
+      - EPISODE
+      - DISCOVERY
+      - PUBLICATION
+    aliases:
+      - event
+      - occurrence
+      - episode
+      - discovery
+      - publication
+      - meeting
+      - development
+    description: >
+      A specific bounded occurrence: a discovery, publication, conference, court ruling,
+      debate, or historical event at a particular time.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.42
+
+  PROCESS:
+    children:
+      - PROCESS
+      - ACTIVITY
+      - PRACTICE
+      - METHOD
+      - PROCEDURE
+    aliases:
+      - process
+      - activity
+      - practice
+      - method
+      - procedure
+      - approach
+      - technique
+      - operation
+    description: >
+      An ongoing activity or procedure: the scientific method, deliberation,
+      argumentation, language learning, conceptual analysis, peer review.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.38
+
+  LOCATION:
+    children:
+      - LOCATION
+      - PLACE
+      - REGION
+      - DOMAIN
+      - FIELD
+    aliases:
+      - location
+      - place
+      - region
+      - domain
+      - field
+      - area
+      - discipline
+      - context
+    description: >
+      A place, region, field of inquiry, or discipline: Vienna, the philosophy of language,
+      cognitive science, the analytic tradition, the legal domain.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.48
+
+  TIME:
+    children:
+      - TIME
+      - DATE
+      - PERIOD
+      - ERA
+      - EPOCH
+    aliases:
+      - time
+      - date
+      - period
+      - era
+      - century
+      - year
+      - epoch
+      - age
+    description: >
+      A date, period, era, or epoch: the late nineteenth century, 1892,
+      the analytic turn, the Enlightenment, the twentieth century.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.48
+
+overrides:
+  INTENTIONALITY: CONCEPT
+  CONSCIOUSNESS: CONCEPT
+  ABOUTNESS: CONCEPT
+  DIRECTEDNESS: CONCEPT
+  NOEMA: CONCEPT
+  NOESIS: CONCEPT
+  SINN: CONCEPT
+  BEDEUTUNG: CONCEPT
+  FREGE: AGENT
+  BRENTANO: AGENT
+  HUSSERL: AGENT
+  SEARLE: AGENT
+  AUSTIN: AGENT
+  GRICE: AGENT
+  RUSSELL: AGENT
+  PEIRCE: AGENT
+
+relation_types:
+  - BELIEVES
+  - INTENDS
+  - FEELS
+  - PERCEIVES
+  - DOUBTS
+  - ASSERTS
+  - QUESTIONS
+  - COMMANDS
+  - PROMISES
+  - DECLARES
+  - REFERS_TO
+  - EXPRESSES
+  - PRESUPPOSES
+  - IMPLICATES
+  - DENOTES
+  - ENTAILS
+  - SUPPORTS
+  - EXPLAINS
+  - CONTRADICTS
+  - GROUNDS
+  - DEFINED_AS
+  - EXEMPLIFIES
+  - CRITIQUES
+  - DEFENDS
+  - DISTINGUISHES
+  - CAUSED_BY
+  - PART_OF
+  - AUTHORED
+
+hierarchy:
+  SEGMENT:
+    edges: [CONTAINS_DOC]
+    properties: [segment_id, ingested_at, run_id, taxonomy_name]
+  DOC:
+    edges: [HAS_PASSAGE]
+    properties: [id, name, node_type, ontology_class]
+  PASSAGE:
+    edges: [HAS_CHUNK]
+    properties: [id, doc_id, passage_idx, content]
+  CHUNK:
+    edges: [MENTIONS]
+    properties: [id, doc_id, text, length]
+  ENTITY:
+    edges: [IN_COMMUNITY, RELATION, CO_OCCURS]
+    properties: [id, name, label, ontology_class, ingested_at, contributing_session_id, merged_session_count]
+  TOPIC:
+    edges: []
+    properties: [id, label, summary, community_id]

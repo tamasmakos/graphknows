@@ -1,0 +1,601 @@
+# Intentionality-Based Universal Taxonomy
+# ---------------------------------------------------------------------------
+# A domain-agnostic label set grounded in the philosophy of language.
+#
+# Theoretical basis: Brentano/Husserl intentionality, Frege sense/reference,
+# Searle speech act taxonomy, Peirce reasoning types, and the six-stratum
+# architecture of directed mind (Intentionality → Propositional Content →
+# Attitudinal Type → Illocutionary Force → Reasoning Transitions →
+# Discourse Modes).
+#
+# Key design principle: intentionality is DOMAIN-GENERAL. The structure
+# AGENT → ATTITUDE → CONTENT applies universally across science, law,
+# literature, conversation, philosophy, and every other text type.
+#
+# Schema: graphknows/ingestion/domain/taxonomy.py → TaxonomyConfig
+# ---------------------------------------------------------------------------
+
+name: intentionality
+version: "1.0"
+
+# ---------------------------------------------------------------------------
+# Entity groups — 15 labels across 6 strata of directed mind
+#
+# Stratum I   (Intentionality)       → AGENT
+# Stratum II  (Propositional content) → CONCEPT, PROPOSITION, ARGUMENT, THEORY
+# Stratum III (Attitudinal type)      → EPISTEMIC_STATE, CONATIVE_STATE, AFFECTIVE_STATE
+# Stratum IV  (Illocutionary force)   → SPEECH_ACT
+# Stratum V   (Reasoning)             → INFERENCE
+# Cross-cutting (universal anchors)   → ARTIFACT, EVENT, PROCESS, LOCATION, TIME
+# ---------------------------------------------------------------------------
+
+entity_groups:
+
+  # ── Stratum I: Intentional subject ────────────────────────────────────────
+  AGENT:
+    children:
+      - AGENT
+      - PERSON
+      - ORGANIZATION
+      - INSTITUTION
+      - COLLECTIVE
+      - THINKER
+      - SPEAKER
+      - AUTHOR
+    aliases:
+      - agent
+      - person
+      - thinker
+      - philosopher
+      - author
+      - researcher
+      - speaker
+      - organization
+      - institution
+      - mind
+      - subject
+    description: >
+      Any entity capable of intentional mental states: a person, thinker, philosopher,
+      researcher, speaker, organization, or collective that believes, desires, perceives,
+      or performs speech acts. Brentano's 'psychical subject' in its most general form.
+      Examples: Brentano, Frege, the European Commission, a research team, a narrator.
+    classification_tokens:
+      - MR
+      - MS
+      - DR
+      - PROFESSOR
+      - PHILOSOPHER
+      - RESEARCHER
+      - AUTHOR
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Stratum II: Propositional content ─────────────────────────────────────
+  CONCEPT:
+    children:
+      - CONCEPT
+      - PRINCIPLE
+      - CATEGORY
+      - PROPERTY
+      - NOTION
+      - TERM
+      - PHENOMENON
+    aliases:
+      - concept
+      - notion
+      - idea
+      - principle
+      - property
+      - phenomenon
+      - category
+      - term
+      - theory
+      - doctrine
+      - abstraction
+      - construct
+    description: >
+      An abstract concept, theoretical notion, principle, property, or category that
+      is the object of thought. The noematic correlate of a conceptual act. Examples:
+      intentionality, opacity, Sinn, propositional attitude, de dicto, consciousness,
+      justice, entropy, marginal utility, natural selection.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  PROPOSITION:
+    children:
+      - PROPOSITION
+      - THESIS
+      - CLAIM
+      - BELIEF_CONTENT
+      - HYPOTHESIS
+      - CONJECTURE
+    aliases:
+      - proposition
+      - thesis
+      - claim
+      - assertion
+      - belief
+      - hypothesis
+      - conjecture
+      - statement
+      - view
+      - position
+      - that
+    description: >
+      An explicitly formulated propositional content — 'that p' — which can be the
+      object of an attitude or illocutionary act. Includes named theses, claims,
+      views, positions, and hypotheses. Examples: 'the view that intentionality is
+      the mark of the mental', 'the claim that meaning is use', 'the hypothesis
+      that consciousness is substrate-independent'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  ARGUMENT:
+    children:
+      - ARGUMENT
+      - PROOF
+      - PUZZLE
+      - PARADOX
+      - OBJECTION
+      - COUNTEREXAMPLE
+    aliases:
+      - argument
+      - proof
+      - puzzle
+      - paradox
+      - objection
+      - counterexample
+      - reasoning
+      - case
+      - demonstration
+    description: >
+      A structured chain of reasoning: a named argument, proof, puzzle, paradox,
+      or objection that moves from premises to conclusion. Examples: Frege's puzzle,
+      the knowledge argument, the masked man fallacy, the Gettier counterexample,
+      Moore's open question argument, the argument from opacity.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  THEORY:
+    children:
+      - THEORY
+      - FRAMEWORK
+      - DOCTRINE
+      - SEMANTICS
+      - ACCOUNT
+      - MODEL
+      - SYSTEM
+    aliases:
+      - theory
+      - framework
+      - semantics
+      - doctrine
+      - account
+      - model
+      - programme
+      - approach
+      - system
+      - analysis
+    description: >
+      A systematic explanatory framework, doctrine, or semantic theory. A body of
+      propositions organized around explanatory principles. Examples: possible-worlds
+      semantics, Fregean sense theory, speech act theory, Gricean implicature,
+      two-dimensional semantics, relevance theory, Bayesian epistemology.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Stratum III: Attitudinal types ────────────────────────────────────────
+  EPISTEMIC_STATE:
+    children:
+      - EPISTEMIC_STATE
+      - BELIEF
+      - KNOWLEDGE
+      - DOUBT
+      - CERTAINTY
+      - ASSUMPTION
+      - OPINION
+    aliases:
+      - belief
+      - knowledge
+      - doubt
+      - certainty
+      - assumption
+      - opinion
+      - conviction
+      - epistemic
+      - knowing
+      - believing
+      - thinks
+      - suspects
+    description: >
+      An explicitly attributed state of knowing, believing, doubting, or being certain.
+      The belief-family of propositional attitudes (Brentano's 'intellectual' acts).
+      Grounded in the world-to-mind direction of fit. Examples: 'believes that p',
+      'knows that q', 'is certain that', 'doubts whether', 'assumes that'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  CONATIVE_STATE:
+    children:
+      - CONATIVE_STATE
+      - DESIRE
+      - INTENTION
+      - GOAL
+      - PREFERENCE
+      - MOTIVATION
+      - WILL
+    aliases:
+      - desire
+      - intention
+      - goal
+      - preference
+      - motivation
+      - will
+      - aim
+      - want
+      - intend
+      - conative
+      - volition
+    description: >
+      An explicitly attributed state of wanting, intending, desiring, or aiming.
+      The desire-family of propositional attitudes with mind-to-world direction of
+      fit. Examples: 'wants to achieve', 'intends to show', 'aims at', 'seeks to',
+      'prefers that', 'has the goal of', 'is motivated by'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  AFFECTIVE_STATE:
+    children:
+      - AFFECTIVE_STATE
+      - EMOTION
+      - FEELING
+      - MOOD
+      - SENTIMENT
+      - VALUATION
+    aliases:
+      - emotion
+      - feeling
+      - mood
+      - sentiment
+      - fear
+      - hope
+      - joy
+      - anger
+      - love
+      - affective
+      - evaluative
+    description: >
+      An explicitly attributed emotional, feeling, or evaluative state. The emotion
+      family of attitudes, which combines directedness with phenomenal valence.
+      Examples: 'fears that', 'hopes for', 'is delighted by', 'resents', 'admires',
+      'is disturbed by', 'finds meaningful', 'is proud of'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Stratum IV: Illocutionary acts ────────────────────────────────────────
+  SPEECH_ACT:
+    children:
+      - SPEECH_ACT
+      - ASSERTION
+      - DIRECTIVE
+      - COMMISSIVE
+      - EXPRESSIVE
+      - DECLARATION
+      - QUESTION
+      - COMMAND
+      - PROMISE
+    aliases:
+      - speech act
+      - assertion
+      - directive
+      - commissive
+      - expressive
+      - declaration
+      - question
+      - command
+      - promise
+      - illocutionary
+      - utterance
+      - statement
+    description: >
+      An identifiable linguistic act with illocutionary force (Austin/Searle taxonomy).
+      Assertives commit the speaker to truth; directives aim to get the hearer to act;
+      commissives commit the speaker to future action; expressives express a psychological
+      state; declarations change institutional reality by being performed. Examples:
+      'hereby declare', 'I promise', 'I request', 'I assert', performative utterances.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Stratum V: Reasoning transitions ──────────────────────────────────────
+  INFERENCE:
+    children:
+      - INFERENCE
+      - DEDUCTION
+      - INDUCTION
+      - ABDUCTION
+      - IMPLICATION
+      - CONCLUSION
+    aliases:
+      - inference
+      - deduction
+      - induction
+      - abduction
+      - implication
+      - conclusion
+      - therefore
+      - follows
+      - reasoning
+      - entails
+      - thus
+    description: >
+      An explicit reasoning step, logical move, or inferential conclusion. Covers
+      Peirce's three forms: deduction (necessary consequence from premises), induction
+      (probabilistic generalization from instances), and abduction (inference to the
+      best explanation). Examples: 'therefore', 'it follows that', 'we can conclude',
+      'the best explanation is', 'generalizing from', 'necessarily if p then q'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Universal cross-cutting anchors ───────────────────────────────────────
+  ARTIFACT:
+    children:
+      - ARTIFACT
+      - DOCUMENT
+      - WORK
+      - TEXT
+      - TOOL
+      - SYSTEM
+      - LANGUAGE
+      - SYMBOL
+    aliases:
+      - artifact
+      - document
+      - work
+      - text
+      - book
+      - paper
+      - tool
+      - system
+      - language
+      - symbol
+      - representation
+    description: >
+      Any created physical or abstract object: a book, paper, document, symbol system,
+      tool, artifact, language, or representation. Products of intentional creation.
+      Examples: 'Principia Mathematica', 'the German language', 'a formal proof system',
+      'the Treaty of Lisbon', 'Python', 'a musical score', 'the Bayesian network'.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  EVENT:
+    children:
+      - EVENT
+      - OCCURRENCE
+      - EPISODE
+      - DISCOVERY
+      - PUBLICATION
+    aliases:
+      - event
+      - occurrence
+      - episode
+      - discovery
+      - publication
+      - meeting
+      - development
+    description: >
+      A specific bounded occurrence: what happens at a particular time and place.
+      Examples: a scientific discovery, a historical event, a publication date,
+      a philosophical debate, a court ruling, a conference, a revolution.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  PROCESS:
+    children:
+      - PROCESS
+      - ACTIVITY
+      - PRACTICE
+      - METHOD
+      - PROCEDURE
+    aliases:
+      - process
+      - activity
+      - practice
+      - method
+      - procedure
+      - approach
+      - technique
+      - operation
+    description: >
+      An ongoing activity, practice, or procedure unfolding over time. Differs from
+      EVENT (bounded) by being iterative or continuous. Examples: the scientific method,
+      deliberation, interpretation, translation, argumentation, language learning,
+      conceptual analysis, peer review.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  LOCATION:
+    children:
+      - LOCATION
+      - PLACE
+      - REGION
+      - DOMAIN
+      - FIELD
+    aliases:
+      - location
+      - place
+      - region
+      - domain
+      - field
+      - area
+      - discipline
+      - context
+    description: >
+      Any spatial or domain reference: a place, region, field of inquiry, discipline,
+      or intellectual domain. Examples: Vienna, the philosophy of language, the field
+      of cognitive science, the legal domain, the analytic tradition.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  TIME:
+    children:
+      - TIME
+      - DATE
+      - PERIOD
+      - ERA
+      - EPOCH
+    aliases:
+      - time
+      - date
+      - period
+      - era
+      - century
+      - year
+      - epoch
+      - age
+    description: >
+      Any temporal reference: a specific date, period, era, or epoch. Examples:
+      the late nineteenth century, 1892, the analytic turn, the post-war period,
+      the Enlightenment, the twentieth century, contemporary debates.
+    classification_tokens: []
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+# ---------------------------------------------------------------------------
+# Hard overrides — bypass scoring; map normalised entity name → canonical label
+# ---------------------------------------------------------------------------
+
+overrides:
+  INTENTIONALITY: CONCEPT
+  CONSCIOUSNESS: CONCEPT
+  ABOUTNESS: CONCEPT
+  DIRECTEDNESS: CONCEPT
+  NOEMA: CONCEPT
+  NOESIS: CONCEPT
+  SINN: CONCEPT
+  BEDEUTUNG: CONCEPT
+  FREGE: AGENT
+  BRENTANO: AGENT
+  HUSSERL: AGENT
+  SEARLE: AGENT
+  AUSTIN: AGENT
+  GRICE: AGENT
+  RUSSELL: AGENT
+  PEIRCE: AGENT
+
+# ---------------------------------------------------------------------------
+# Relation types — 26 relations covering all six strata of directed mind
+#
+# Stratum III  (Attitudinal)     → BELIEVES, INTENDS, FEELS, PERCEIVES, DOUBTS
+# Stratum IV   (Illocutionary)   → ASSERTS, QUESTIONS, COMMANDS, PROMISES, DECLARES
+# Stratum II   (Semantic/Ref.)   → REFERS_TO, EXPRESSES, PRESUPPOSES, IMPLICATES, DENOTES
+# Stratum V    (Reasoning)       → ENTAILS, SUPPORTS, EXPLAINS, CONTRADICTS, GROUNDS
+# Definitional/Conceptual        → DEFINED_AS, EXEMPLIFIES, CRITIQUES, DEFENDS, DISTINGUISHES
+# Structural                     → CAUSED_BY, PART_OF, AUTHORED
+# ---------------------------------------------------------------------------
+
+relation_types:
+  # Attitudinal (Stratum III)
+  - BELIEVES
+  - INTENDS
+  - FEELS
+  - PERCEIVES
+  - DOUBTS
+  # Illocutionary (Stratum IV)
+  - ASSERTS
+  - QUESTIONS
+  - COMMANDS
+  - PROMISES
+  - DECLARES
+  # Semantic / Reference (Stratum II)
+  - REFERS_TO
+  - EXPRESSES
+  - PRESUPPOSES
+  - IMPLICATES
+  - DENOTES
+  # Reasoning (Stratum V)
+  - ENTAILS
+  - SUPPORTS
+  - EXPLAINS
+  - CONTRADICTS
+  - GROUNDS
+  # Definitional / Conceptual
+  - DEFINED_AS
+  - EXEMPLIFIES
+  - CRITIQUES
+  - DEFENDS
+  - DISTINGUISHES
+  # Structural
+  - CAUSED_BY
+  - PART_OF
+  - AUTHORED
+
+# ---------------------------------------------------------------------------
+# Graph hierarchy — same structural backbone as other taxonomies
+# ---------------------------------------------------------------------------
+
+hierarchy:
+  SEGMENT:
+    edges:
+      - CONTAINS_DOC
+    properties:
+      - segment_id
+      - ingested_at
+      - run_id
+      - taxonomy_name
+  DOC:
+    edges:
+      - HAS_PASSAGE
+    properties:
+      - id
+      - name
+      - node_type
+      - ontology_class
+  PASSAGE:
+    edges:
+      - HAS_CHUNK
+    properties:
+      - id
+      - doc_id
+      - passage_idx
+      - content
+  CHUNK:
+    edges:
+      - MENTIONS
+    properties:
+      - id
+      - doc_id
+      - text
+      - length
+  ENTITY:
+    edges:
+      - IN_COMMUNITY
+      - RELATION
+      - CO_OCCURS
+    properties:
+      - id
+      - name
+      - label
+      - ontology_class
+      - ingested_at
+      - contributing_session_id
+      - merged_session_count
+  TOPIC:
+    edges: []
+    properties:
+      - id
+      - label
+      - summary
+      - community_id

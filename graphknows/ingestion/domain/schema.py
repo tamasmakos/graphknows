@@ -1,4 +1,4 @@
-"""Canonical graph schema constants for STM (Memgraph) and LTM (Neo4j).
+"""Canonical graph schema constants for STM and LTM (ArcadeDB).
 
 This module defines the single source of truth for all node labels and relationship
 types used across the graphknows memory graph. All Cypher queries MUST use these
@@ -30,7 +30,7 @@ LABEL_FILE = "FILE"
 """File node — represents an ingested document or source."""
 
 LABEL_CHUNK = "CHUNK"
-"""Chunk node — a text segment from a file, embedded in pgvector."""
+"""Chunk node — a text segment from a file."""
 
 LABEL_ENTITY = "ENTITY"
 """Entity node — a named entity extracted by GLiNER2 or similar."""
@@ -122,7 +122,6 @@ __all__ = [
     "LABEL_SUBTOPIC",
     "LABEL_TOPIC",
     "LABEL_TURN",
-    "MEMGRAPH_INDEXES",
     "NodeSchema",
     # Relationship types
     "REL_BELONGS_TO",
@@ -139,7 +138,6 @@ __all__ = [
     "REL_RELATES_TO",
     "REL_RELATION",
     # Schema models
-    "apply_memgraph_schema",
     "apply_schema",
     "get_default_schema",
 ]
@@ -188,7 +186,7 @@ from pydantic import BaseModel, Field  # noqa: E402 (after constants)
 class NodeSchema(BaseModel):
     """Schema definition for a graph node type."""
 
-    label: str = Field(description="Neo4j node label (uppercase)")
+    label: str = Field(description="Graph node label (uppercase)")
     required_properties: list[str] = Field(
         default_factory=list, description="Properties that must always be present"
     )
@@ -196,7 +194,7 @@ class NodeSchema(BaseModel):
         default_factory=list, description="Optional node properties"
     )
     indexed_properties: list[str] = Field(
-        default_factory=list, description="Properties with Neo4j indexes"
+        default_factory=list, description="Properties with graph indexes"
     )
     unique_constraints: list[str] = Field(
         default_factory=list, description="Properties with UNIQUE constraints"
@@ -206,7 +204,7 @@ class NodeSchema(BaseModel):
 class EdgeSchema(BaseModel):
     """Schema definition for a graph relationship type."""
 
-    type: str = Field(description="Neo4j relationship type (uppercase)")
+    type: str = Field(description="Graph relationship type (uppercase)")
     source_label: str = Field(description="Label of the source node")
     target_label: str = Field(description="Label of the target node")
     properties: list[str] = Field(
@@ -314,8 +312,7 @@ def get_default_schema() -> GraphSchema:
 
 
 # ============================================================================
-# DDL — Neo4j (LTM) constraints/indexes and Memgraph (STM) indexes
-# (moved from graphknows.schema)
+# DDL — graph constraints/indexes
 # ============================================================================
 
 import logging as _logging  # noqa: E402
@@ -340,19 +337,9 @@ INDEXES: list[str] = [
     f"CREATE FULLTEXT INDEX turn_text_idx IF NOT EXISTS FOR (t:{LABEL_TURN}) ON EACH [t.text]",
 ]
 
-MEMGRAPH_INDEXES: list[str] = [
-    f"CREATE INDEX ON :{LABEL_SESSION}(id)",
-    f"CREATE INDEX ON :{LABEL_FILE}(id)",
-    f"CREATE INDEX ON :{LABEL_CHUNK}(session_id)",
-    f"CREATE INDEX ON :{LABEL_ENTITY}(session_id)",
-    f"CREATE INDEX ON :{LABEL_ENTITY}(name)",
-    f"CREATE INDEX ON :{LABEL_DIALOG}(session_id)",
-    f"CREATE INDEX ON :{LABEL_TURN}(session_id)",
-]
-
 
 def apply_schema(session: Any) -> dict:  # type: ignore[type-arg]
-    """Apply Neo4j constraints and indexes. Idempotent. Returns counts."""
+    """Apply graph constraints and indexes. Idempotent. Returns counts."""
     applied: dict = {"constraints": 0, "indexes": 0, "errors": []}
     for stmt in CONSTRAINTS:
         try:
@@ -372,16 +359,4 @@ def apply_schema(session: Any) -> dict:  # type: ignore[type-arg]
         applied["indexes"],
         len(applied["errors"]),
     )
-    return applied
-
-
-def apply_memgraph_schema(session: Any) -> dict:  # type: ignore[type-arg]
-    """Apply Memgraph indexes. Idempotent (best-effort). Returns counts."""
-    applied: dict = {"indexes": 0, "errors": []}
-    for stmt in MEMGRAPH_INDEXES:
-        try:
-            session.run(stmt).consume()
-            applied["indexes"] += 1
-        except Exception as exc:
-            applied["errors"].append(f"index: {exc}")
     return applied
