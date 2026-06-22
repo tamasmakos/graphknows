@@ -1,164 +1,85 @@
 # Graphknows Evaluation
 
-This package is the production evaluation surface for graphknows memory systems.
-It intentionally exposes only the three benchmarks that define the current
-measurement landscape:
+A LoCoMo evaluation framework with one job: measure graphknows ingestion and
+retrieval through a DSPy answer-generation pipeline, scored with paper-comparable
+token F1 (arXiv 2402.17753).
 
-- `locomo`: LoCoMo, 1,540 questions across single-hop, multi-hop, open-domain,
-  and temporal memory recall.
-- `longmemeval`: LongMemEval, 500 questions across single-session user recall,
-  single-session assistant recall, single-session preference recall, knowledge
-  update, temporal reasoning, and multi-session recall.
-- `beam`: BEAM at 1M and 10M token scales across preference following,
-  instruction following, information extraction, knowledge update,
-  multi-session reasoning, summarization, temporal reasoning, event ordering,
-  abstention, and contradiction resolution.
+There is **one workflow**, not a flag matrix. The pipeline ingests each dialogue
+once, then for every question: retrieve → DSPy generate → score token F1 vs gold.
 
-The launcher is designed so these can be run together or separately.
-
-## Entry Points
+## Run
 
 ```bash
-python -m evaluation list
-python -m evaluation run locomo
-python -m evaluation run longmemeval
-python -m evaluation run beam
-python -m evaluation run all
+python -m evaluation --limit 152          # run 152 questions
+python -m evaluation --limit 10 --offset 0
 ```
 
-The individual benchmark names are shorthand for `run`:
+`--limit` / `--offset` are the only flags. Everything else — the MCP command,
+retrieval depth, recall scope, relation-extraction mode, generation model,
+promote-to-LTM, purge behaviour — lives in [`config.py`](config.py) as a single
+frozen `EvalConfig`. Edit that file to change the workflow.
+
+Requires `OPENROUTER_API_KEY` (generation is always on) and a running graphknows
+MCP server.
+
+## Structure
+
+```
+evaluation/
+  config.py          EvalConfig — the single hardcoded workflow
+  datamodels.py      Pydantic models crossing every stage boundary
+  dataset.py         LoCoMo loading + session→document normalization
+  pipeline.py        orchestrator: ingest → retrieve → generate → score
+  cli.py             python -m evaluation  (--limit / --offset)
+  client/            MCP stdio client
+  ingestion/         Ingestor — memory_ingest + memory_flush
+  retrieval/         Retriever — memory_query → RetrievedPassage
+  generation/        DSPy signature + AnswerGenerator
+  scoring/           token-F1 + retrieval diagnostics
+  reporting/         JSON + CSV + Markdown writers
+  data/locomo/       questions.jsonl
+  scripts/           convert_locomo.py, retrieval_probe.py
+  results/           run artifacts (git-ignored)
+```
+
+## Data
+
+`data/locomo/questions.jsonl` is produced from the official HuggingFace dataset:
 
 ```bash
-python -m evaluation locomo
-python -m evaluation longmemeval
-python -m evaluation beam
-python -m evaluation all
+python -m evaluation.scripts.convert_locomo \
+  --output evaluation/data/locomo/questions.jsonl
 ```
 
-Multiple benchmarks can be selected explicitly:
-
-```bash
-python -m evaluation run locomo beam
-```
-
-## Infrastructure
-
-Start graphknows first:
-
-```bash
-make infra-up
-```
-
-From the host machine, prefer connecting to the singleton MCP container:
-
-```bash
-python -m evaluation run longmemeval \
-  --command "docker exec -i graphknows-mcp graphknows-mcp"
-```
-
-The default command is `graphknows-mcp`, which is convenient inside a local venv
-or workspace container.
-
-## LongMemEval
-
-LongMemEval uses the existing LongMemEval-V2 adapter. Missing official files are
-downloaded into `evaluation/data/longmemeval-v2`.
-
-```bash
-python -m evaluation longmemeval \
-  --longmemeval-max-questions 1 \
-  --longmemeval-max-trajectories 25 \
-  --longmemeval-max-states 4 \
-  --longmemeval-max-chars-per-trajectory 4000 \
-  --longmemeval-ingest-strategy batched_capsules
-```
-
-## LoCoMo And BEAM Local Data
-
-LoCoMo and BEAM are file-backed adapters so local benchmark exports can be
-plugged in without locking this repo to one external distribution format.
-
-Defaults:
-
-- LoCoMo: `evaluation/data/locomo/questions.jsonl`
-- BEAM 1M: `evaluation/data/beam/1m/questions.jsonl`
-- BEAM 10M: `evaluation/data/beam/10m/questions.jsonl`
-
-If those full local exports are not present, the CLI falls back to tracked smoke
-fixtures under `evaluation/fixtures/`. These fixtures are intentionally tiny and
-only prove the evaluation framework launches and emits comparable artifacts;
-they are not substitutes for official benchmark scores.
-
-Each row may be JSONL or part of a JSON array. The runner accepts these common
-fields:
-
-- Identity: `id`, `question_id`, or `case_id`
-- Prompt: `question`, `query`, or `prompt`
-- Gold answer: `answer`, `gold`, or `target`
-- Category: `category`, `type`, `task_type`, or `question_type`
-- Memory context: `sessions`, `messages`, `turns`, `conversation`,
-  `documents`, `contexts`, `evidence`, `memories`, `haystack`, `context`,
-  `memory`, or `transcript`
-
-Example LoCoMo row:
+Each row is one question:
 
 ```json
 {
-  "id": "locomo-dev-001",
-  "category": "temporal memory recall",
+  "id": "conv-26-q0001",
+  "category": "single_hop",
   "question": "Which city did Alex visit after the Berlin conference?",
   "answer": "Prague",
   "sessions": [
-    {
-      "session_id": "s1",
-      "messages": [
-        {"role": "user", "content": "I am flying to Berlin for the conference."},
-        {"role": "user", "content": "After Berlin I will spend two days in Prague."}
-      ]
-    }
+    {"session_id": "conv-26-s1", "messages": [
+      {"role": "Alex", "content": "Flying to Berlin.", "timestamp": "1 May 2023"},
+      {"role": "Alex", "content": "Then two days in Prague."}
+    ]}
   ]
 }
 ```
 
-Example BEAM commands:
+## Diagnostics
+
+`retrieval_probe.py` classifies retrieval failures (OK / RANKING /
+VOCAB_MISMATCH / MISSING / EMBED_FAIL) for one dialogue:
 
 ```bash
-python -m evaluation beam --beam-scale 1m --limit 1
-python -m evaluation beam --beam-scale 10m --beam-max-documents 500 --limit 1
+python -m evaluation.scripts.retrieval_probe \
+  --dialogue conv-26 --out evaluation/results/locomo/probe-conv-26.json
 ```
-
-## Shared Controls
-
-All runnable commands accept:
-
-```bash
---command
---run-id
---output-dir
---top-k
---offset
---limit
---recall-scope stm|ltm|both
---relation-extraction-mode gliner2|llm_assisted|off
---promote-to-ltm
---no-purge
-```
-
-Use `--promote-to-ltm --recall-scope ltm` when comparing `gliner2` with
-`llm_assisted`. The LLM-assisted relation extractor runs during STM-to-LTM
-promotion, so STM-only runs prove launch health but do not measure assisted
-relation extraction.
 
 ## Outputs
 
-Each run writes JSON and Markdown artifacts into:
-
-```text
-evaluation/results/<benchmark>/
-```
-
-Large benchmark data and outputs are intentionally ignored by git under:
-
-- `evaluation/results/`
-- `evaluation/data/`
-- `evaluation/external/`
+Each run writes `{run_id}-locomo.{json,csv,md}` into `config.output_dir`
+(`evaluation/results/locomo/`, git-ignored). The CSV is one flat row per case for
+statistical analysis.

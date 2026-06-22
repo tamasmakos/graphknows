@@ -1,0 +1,155 @@
+"""LoCoMo dataset loading and document normalization.
+
+Reads the converted LoCoMo JSONL (see ``scripts/convert_locomo.py``), groups
+questions by dialogue, and normalizes each dialogue's sessions into
+``EvalDocument`` objects ready for ingestion.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from dateparser import parse as _parse_date
+
+from evaluation.config import EvalConfig
+from evaluation.datamodels import Dialogue, EvalDocument, LocomoCase
+
+_CASE_ID_KEYS = ("id", "question_id", "case_id")
+_QUESTION_KEYS = ("question", "query", "prompt")
+_CATEGORY_KEYS = ("category", "type", "task_type", "question_type")
+
+
+def read_rows(path: Path) -> list[dict[str, Any]]:
+    """Read benchmark rows from a JSONL file (one JSON object per line)."""
+    if not path.exists():
+        raise FileNotFoundError(f"{path} does not exist. Run scripts/convert_locomo.py first.")
+    if path.suffix == ".jsonl":
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    raise ValueError(f"{path} must contain JSONL rows or a JSON array of objects")
+
+
+def first_string(row: dict[str, Any], keys: tuple[str, ...], default: str = "") -> str:
+    """Return the first present, non-null key value coerced to str."""
+    for key in keys:
+        value = row.get(key)
+        if value is not None:
+            return str(value)
+    return default
+
+
+def dialogue_id(case_id: str) -> str:
+    """Extract the dialogue prefix from a LoCoMo case id.
+
+    ``"conv-26-q0001"`` → ``"conv-26"``; an id without a ``-qNNNN`` suffix is
+    its own group.
+    """
+    idx = case_id.rfind("-q")
+    if idx > 0 and case_id[idx + 2 :].isdigit():
+        return case_id[:idx]
+    return case_id
+
+
+def _clip(text: str, max_chars: int) -> str:
+    clean = text.strip()
+    if len(clean) <= max_chars:
+        return clean
+    return clean[: max(0, max_chars - 3)].rstrip() + "..."
+
+
+def _message_text(message: Any) -> str:
+    if isinstance(message, str):
+        return message
+    if not isinstance(message, dict):
+        return ""
+    role = first_string(message, ("role", "speaker", "author"), "message")
+    content = first_string(message, ("content", "text", "utterance", "message"))
+    timestamp = first_string(message, ("timestamp", "created_at", "time"))
+    prefix = f"{timestamp} | {role}" if timestamp else role
+    return f"{prefix}: {content}" if content else ""
+
+
+def _session_anchor(session: dict[str, Any]) -> str:
+    """ISO anchor datetime from the first timestamped message in a session.
+
+    Used as the ingest ``anchor_date`` so relative dates ("yesterday", "last
+    Saturday") resolve against the conversation's own time. Returns "" when no
+    parseable timestamp is present.
+    """
+    for msg in session.get("messages", []):
+        if not isinstance(msg, dict):
+            continue
+        ts = first_string(msg, ("timestamp", "created_at", "time"))
+        if not ts:
+            continue
+        dt = _parse_date(ts)
+        return dt.isoformat() if dt else ""
+    return ""
+
+
+def build_documents(row: dict[str, Any], *, max_documents: int, max_chars: int) -> list[EvalDocument]:
+    """Normalize a LoCoMo row's ``sessions`` into ingestable documents."""
+    sessions = row.get("sessions")
+    if not isinstance(sessions, list):
+        return []
+    documents: list[EvalDocument] = []
+    for index, session in enumerate(sessions[:max_documents]):
+        if not isinstance(session, dict):
+            continue
+        title = first_string(session, ("title", "id", "session_id"), f"session-{index}")
+        text = "\n".join(
+            filter(None, (_message_text(msg) for msg in session.get("messages", [])))
+        )
+        text = _clip(text, max_chars)
+        if text:
+            documents.append(
+                EvalDocument(title=title, text=text, anchor_date=_session_anchor(session))
+            )
+    return documents
+
+
+def load_dialogues(config: EvalConfig, *, limit: int, offset: int) -> list[Dialogue]:
+    """Load the selected question window and group it into dialogues.
+
+    Questions are grouped by dialogue id, preserving order. Each dialogue's
+    documents are built once from its first question's row (all questions in a
+    LoCoMo dialogue embed the same sessions).
+    """
+    rows = read_rows(config.data_root / config.questions_file)
+    selected = rows[offset : offset + limit]
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in selected:
+        dlg = dialogue_id(first_string(row, _CASE_ID_KEYS, ""))
+        groups.setdefault(dlg, []).append(row)
+
+    dialogues: list[Dialogue] = []
+    for dlg_id, dlg_rows in groups.items():
+        documents = build_documents(
+            dlg_rows[0],
+            max_documents=config.max_documents,
+            max_chars=config.max_chars_per_document,
+        )
+        cases = [
+            LocomoCase(
+                case_id=first_string(r, _CASE_ID_KEYS, f"{dlg_id}-unknown"),
+                dialogue_id=dlg_id,
+                question=first_string(r, _QUESTION_KEYS),
+                gold=str(r.get("answer") or r.get("gold") or r.get("target") or ""),
+                category=first_string(r, _CATEGORY_KEYS),
+            )
+            for r in dlg_rows
+        ]
+        for case in cases:
+            if not case.question:
+                raise ValueError(f"LoCoMo case {case.case_id} has no question/query/prompt")
+        dialogues.append(Dialogue(dialogue_id=dlg_id, documents=documents, cases=cases))
+    return dialogues

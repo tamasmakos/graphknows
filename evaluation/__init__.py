@@ -1,19 +1,20 @@
-"""Production evaluation package for graphknows."""
+"""LoCoMo evaluation framework for graphknows.
 
-from evaluation.core import (
-    ExpectedEvidence,
-    GraphknowsMCPClient,
-    ToolObservation,
-    aggregate_observations,
-    write_benchmark_report,
-    write_report,
-)
+One workflow: ingest → retrieve → DSPy generate → token-F1. Run with
+``python -m evaluation --limit N``.
+"""
+
+from __future__ import annotations
+
+from evaluation.config import EvalConfig
+from evaluation.datamodels import CaseResult, LocomoCase, RetrievedPassage, RunReport
+from evaluation.pipeline import run_evaluation
 
 __all__ = [
-    "ExpectedEvidence",
-    "GraphknowsMCPClient",
-    "ToolObservation",
-    "aggregate_observations",
-    "write_benchmark_report",
-    "write_report",
+    "CaseResult",
+    "EvalConfig",
+    "LocomoCase",
+    "RetrievedPassage",
+    "RunReport",
+    "run_evaluation",
 ]

@@ -2,42 +2,49 @@
 
 from __future__ import annotations
 
-from evaluation.core.reporting import write_benchmark_report, write_report
-from evaluation.core.reporting.metrics import ToolObservation
+from evaluation.config import EvalConfig
+from evaluation.datamodels import CaseResult, RetrievedPassage, RunReport
+from evaluation.reporting import summarize, write_report
 
 
-def test_write_report_includes_tool_rows(tmp_path) -> None:
-    paths = write_report(
-        [ToolObservation("case-1", "memory_stats", True, 5.0, {"stm": {}, "ltm": {}})],
-        output_dir=tmp_path,
-        run_id="eval-test",
+def _case(score: float, category: str) -> CaseResult:
+    return CaseResult(
+        case_id=f"conv-26-q-{category}",
+        question="Where did they go?",
+        gold="Prague",
+        category=category,
+        dialogue_id="conv-26",
+        passages=[RetrievedPassage(text="Prague", score=0.4, sources="ltm_graph")],
+        generated_answer="Prague",
+        score=score,
+        metrics={"gold_reachable_at_20": True, "recall_hit_count": 1},
     )
 
-    assert paths.json_path.exists()
-    markdown = paths.markdown_path.read_text(encoding="utf-8")
-    assert "memory_stats" in markdown
-    assert "Tool Summary" in markdown
+
+def test_summarize_aggregates_scores_and_categories() -> None:
+    summary = summarize([_case(1.0, "single_hop"), _case(0.0, "temporal")])
+    assert summary["case_count"] == 2
+    assert summary["avg_score"] == 0.5
+    assert summary["avg_score_by_category"]["single_hop"] == 1.0
+    assert summary["avg_score_by_category"]["temporal"] == 0.0
+    assert summary["metric_summary"]["recall_hit_count"] == 1.0
 
 
-def test_write_benchmark_report_aggregates_metrics(tmp_path) -> None:
-    paths = write_benchmark_report(
-        benchmark="hotpotqa",
-        run_id="eval-benchmark",
-        output_dir=tmp_path,
-        cases=[
-            {
-                "case_id": "row-1",
-                "question": "Who wrote the book?",
-                "gold": "Ada",
-                "memory_context": [],
-                "metrics": {"answer_support_hit": True, "supporting_title_recall_at_k": 0.5},
-                "score": None,
-                "metadata": {"stm_snapshot": {"total_stm_nodes": 12}},
-            }
-        ],
-    )
+def test_write_report_emits_json_csv_markdown(tmp_path) -> None:
+    cases = [_case(1.0, "single_hop")]
+    config = EvalConfig(output_dir=tmp_path)
+    run = RunReport(run_id="eval-test", config=config, cases=cases, summary=summarize(cases))
+
+    paths = write_report(run)
 
     assert paths.json_path.exists()
+    assert paths.csv_path.exists()
+    assert paths.markdown_path.exists()
+
     markdown = paths.markdown_path.read_text(encoding="utf-8")
-    assert "Aggregated Metrics" in markdown
-    assert "supporting_title_recall_at_k" in markdown
+    assert "Mean token-F1" in markdown
+    assert "single_hop" in markdown
+
+    csv_text = paths.csv_path.read_text(encoding="utf-8")
+    assert "case_id" in csv_text
+    assert "Prague" in csv_text
