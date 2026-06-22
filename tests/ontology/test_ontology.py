@@ -4,20 +4,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from graphknows.ingestion.ontology.loader import OntologyLoader, OntologyManifest
-from graphknows.ingestion.ontology.rel_extractor import OntologyRelExtractor
-from graphknows.ingestion.ontology.router import OntologyRouter
+from graphknows.extraction.ontology.loader import OntologyLoader, OntologyManifest
+from graphknows.extraction.ontology.router import OntologyRouter
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 REGISTRY_ROOT = (
-    Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "ontology" / "assets"
+    Path(__file__).parent.parent.parent / "graphknows" / "extraction" / "ontology" / "assets"
 )
 
 
@@ -145,70 +144,6 @@ class TestOntologyRouterKeyword:
 
 
 # ---------------------------------------------------------------------------
-# OntologyRelExtractor tests
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# OntologyRelExtractor tests — DSPy mocked, no real LLM calls
-# ---------------------------------------------------------------------------
-
-
-class TestOntologyRelExtractor:
-    def _make_extractor_with_mock(self, relations: list[tuple]) -> OntologyRelExtractor:
-        """Build an extractor whose RDF-backed delegate returns fixed relations."""
-        extractor = OntologyRelExtractor.__new__(OntologyRelExtractor)
-        extractor._threshold = 0.5
-        extractor._extractor = MagicMock()
-        extractor._extractor.extract_relations = AsyncMock(return_value=(relations, [], {}))
-        return extractor
-
-    @pytest.mark.asyncio
-    async def test_extract_async_returns_rdf_validated_triples(self):
-        extractor = self._make_extractor_with_mock(
-            [("EU", "REGULATES", "AI systems", {"confidence": 0.9})]
-        )
-        result = await extractor.extract_async("The EU regulates AI systems.")
-
-        assert result == [
-            {
-                "subject": "EU",
-                "predicate": "REGULATES",
-                "object": "AI systems",
-                "confidence": 0.9,
-            }
-        ]
-        extractor._extractor.extract_relations.assert_awaited_once_with(
-            text="The EU regulates AI systems."
-        )
-
-    @pytest.mark.asyncio
-    async def test_extract_async_filters_low_confidence_relations(self):
-        extractor = self._make_extractor_with_mock(
-            [
-                ("A", "REL", "B", {"confidence": 0.4}),
-                ("A", "REL", "C", {"confidence": 0.7}),
-            ]
-        )
-        result = await extractor.extract_async("A relates to B and C")
-
-        assert result == [{"subject": "A", "predicate": "REL", "object": "C", "confidence": 0.7}]
-
-    def test_constructor_requires_ontology_file(self):
-        with pytest.raises(RuntimeError, match="ontology_file"):
-            OntologyRelExtractor("")
-
-    def test_constructor_rejects_injected_lm(self):
-        with pytest.raises(RuntimeError, match="injected LM"):
-            OntologyRelExtractor("ontology.ttl", lm=MagicMock())
-
-
-# ---------------------------------------------------------------------------
-# write_ontology_relations — mock store, assert Cypher params
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # Router integration: assert right ontology selected per domain text
 # ---------------------------------------------------------------------------
 
@@ -248,7 +183,7 @@ def _make_taxonomy(entity_groups=None):
 
 class TestBuildGliner2Schema:
     def test_returns_entity_dict_without_taxonomy(self):
-        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
+        from graphknows.extraction.entities.label_space import build_gliner2_schema
 
         labels = ["PERSON", "ORGANIZATION", "LOCATION"]
         result = build_gliner2_schema(labels)
@@ -257,21 +192,21 @@ class TestBuildGliner2Schema:
         assert "organization" in result["entities"]
 
     def test_custom_label_descriptions_override_defaults(self):
-        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
+        from graphknows.extraction.entities.label_space import build_gliner2_schema
 
         labels = ["PERSON"]
         result = build_gliner2_schema(labels, label_descriptions={"PERSON": "My custom desc"})
         assert result["entities"]["person"] == "My custom desc"
 
     def test_unknown_label_falls_back_to_lowercase(self):
-        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
+        from graphknows.extraction.entities.label_space import build_gliner2_schema
 
         labels = ["CUSTOM_TYPE"]
         result = build_gliner2_schema(labels)
         assert result["entities"]["custom_type"] == "custom_type"
 
     def test_with_taxonomy_merges_descriptions(self):
-        from graphknows.graphgen.extraction.ontology import build_gliner2_schema
+        from graphknows.extraction.entities.label_space import build_gliner2_schema
 
         group = MagicMock()
         group.description = "A real person."
@@ -283,7 +218,7 @@ class TestBuildGliner2Schema:
 
 class TestSelectCandidateLabels:
     def test_returns_top_k_labels(self):
-        from graphknows.graphgen.extraction.ontology import select_candidate_labels
+        from graphknows.extraction.entities.label_space import select_candidate_labels
 
         label_space = {
             "PERSON": {"aliases": ["president"], "children": []},
@@ -299,7 +234,7 @@ class TestSelectCandidateLabels:
         assert "PERSON" in result
 
     def test_returns_top_k_even_with_no_matches(self):
-        from graphknows.graphgen.extraction.ontology import select_candidate_labels
+        from graphknows.extraction.entities.label_space import select_candidate_labels
 
         label_space = {
             "TYPE_A": {"aliases": [], "children": []},
@@ -310,7 +245,7 @@ class TestSelectCandidateLabels:
         assert len(result) == 2  # fallback to first 2
 
     def test_scores_alias_matches_higher(self):
-        from graphknows.graphgen.extraction.ontology import select_candidate_labels
+        from graphknows.extraction.entities.label_space import select_candidate_labels
 
         label_space = {
             "PERSON": {"aliases": ["prime minister"], "children": []},
@@ -320,7 +255,7 @@ class TestSelectCandidateLabels:
         assert result[0] == "PERSON"
 
     def test_child_token_scoring(self):
-        from graphknows.graphgen.extraction.ontology import select_candidate_labels
+        from graphknows.extraction.entities.label_space import select_candidate_labels
 
         label_space = {
             "LOCATION": {"aliases": [], "children": ["COUNTRY", "CITY"]},
@@ -332,7 +267,7 @@ class TestSelectCandidateLabels:
 
 class TestRefineEntitiesWithOntology:
     def test_returns_entities_with_ontology_label(self):
-        from graphknows.graphgen.extraction.ontology import (
+        from graphknows.extraction.entities.label_space import (
             refine_entities_with_ontology,
         )
 
@@ -345,7 +280,7 @@ class TestRefineEntitiesWithOntology:
         assert "ontology_label" in result[0]
 
     def test_empty_entities_returns_empty(self):
-        from graphknows.graphgen.extraction.ontology import (
+        from graphknows.extraction.entities.label_space import (
             refine_entities_with_ontology,
         )
 

@@ -102,7 +102,14 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     mode = settings.relation_extraction_mode
     extractor = _build_entity_extractor(mode)
     rel_extractor = build_relation_extractor(settings) if mode == "llm_assisted" else None
-    return STMService(mg, pg, extractor, embed_fn=embed_one, rel_extractor=rel_extractor)
+    return STMService(
+        mg,
+        pg,
+        extractor,
+        embed_fn=embed_one,
+        rel_extractor=rel_extractor,
+        spacy_relations=settings.spacy_relations,
+    )
 
 
 def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:

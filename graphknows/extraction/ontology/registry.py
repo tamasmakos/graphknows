@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from graphknows.ingestion.ontology.loader import OntologyLoader, OntologyManifest
-from graphknows.ingestion.ontology.ports import OntologyProvider
+from graphknows.extraction.ontology.loader import OntologyLoader, OntologyManifest
+from graphknows.extraction.ontology.ports import OntologyProvider
 
 
 @dataclass(frozen=True)

@@ -16,7 +16,7 @@ class DspyRelationExtractorAdapter:
 
     def _get_delegate(self) -> Any:
         if self._delegate is None:
-            from graphknows.graphgen.extraction.relations import DSPyExtractor
+            from graphknows.extraction.relations.dspy import DSPyExtractor
 
             self._delegate = DSPyExtractor(config=self._config)
         return self._delegate

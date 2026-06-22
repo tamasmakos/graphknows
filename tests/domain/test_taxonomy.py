@@ -84,6 +84,6 @@ class TestImportBoundary:
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if isinstance(node, ast.ImportFrom) and node.module:
-                    assert "graphknows.graphgen" not in node.module, (
+                    assert "graphknows.extraction" not in node.module, (
                         f"domain/taxonomy.py must not import from graphgen: {node.module}"
                     )

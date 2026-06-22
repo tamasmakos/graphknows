@@ -23,8 +23,8 @@ from graphknows.config.llm import (
     _get_openrouter_api_key,
     normalize_openrouter_model,
 )
-from graphknows.graphgen.utils import standardize_label
-from graphknows.ingestion.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
+from graphknows.extraction.utils import standardize_label
+from graphknows.extraction.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
 
 log = logging.getLogger(__name__)
 

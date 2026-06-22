@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
-from graphknows.graphgen.utils import standardize_label
+from graphknows.extraction.utils import standardize_label
 
 # TYPE_CHECKING guard avoids circular import at runtime
 if TYPE_CHECKING:

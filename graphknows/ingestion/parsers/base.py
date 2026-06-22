@@ -7,8 +7,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-MAX_CHUNK_TOKENS: int = 512
-MIN_CHUNK_TOKENS: int = 64
+MAX_CHUNK_TOKENS: int = 200
+MIN_CHUNK_TOKENS: int = 48
 APPROX_CHARS_PER_TOKEN: int = 4  # rough estimate, no tokenizer dep
 
 
@@ -119,21 +119,30 @@ class BaseParser(ABC):
         body: str,
         max_tokens: int,
     ) -> list[tuple[str, str]]:
-        """Split a single large section at paragraph boundaries."""
-        result: list[tuple[str, str]] = []
-        paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
-        buf = f"{path.split(' / ')[-1]}\n\n" if path else ""
+        """Split a large section at sentence boundaries, packing to ``max_tokens``.
+
+        Uses spaCy sentence segmentation so chunks never break a word or a
+        sentence. Sentences are packed greedily up to the token budget; this
+        works for prose (paragraphs) and dialogue (newline-delimited messages,
+        which have no blank-line paragraph boundaries) alike.
+        """
+        from graphknows.ingestion.parsers._sentences import split_sentences
+
         heading_text = path.split(" / ")[-1].strip()
-        for para in paragraphs:
-            buf_text = buf.strip()
-            if (len(buf_text) // APPROX_CHARS_PER_TOKEN) + (
-                len(para) // APPROX_CHARS_PER_TOKEN
-            ) + 2 > max_tokens and len(buf_text) > len(heading_text):
-                if buf_text:
-                    result.append((path, buf_text))
-                buf = f"{heading_text}\n\n{para}"
-            else:
-                buf = (buf + "\n\n" + para).strip()
-        if buf.strip():
-            result.append((path, buf.strip()))
+        sentences = split_sentences(body)
+        result: list[tuple[str, str]] = []
+        buf_sentences: list[str] = []
+        buf_tokens = 0
+        for sent in sentences:
+            sent_tokens = max(1, len(sent) // APPROX_CHARS_PER_TOKEN)
+            if buf_sentences and buf_tokens + sent_tokens > max_tokens:
+                body_text = " ".join(buf_sentences)
+                result.append((path, f"{heading_text}\n\n{body_text}" if heading_text else body_text))
+                buf_sentences = []
+                buf_tokens = 0
+            buf_sentences.append(sent)
+            buf_tokens += sent_tokens
+        if buf_sentences:
+            body_text = " ".join(buf_sentences)
+            result.append((path, f"{heading_text}\n\n{body_text}" if heading_text else body_text))
         return result

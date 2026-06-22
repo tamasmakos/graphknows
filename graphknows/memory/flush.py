@@ -161,7 +161,27 @@ class LTMPromotionPipeline:
             record.errors.append(f"promote_to_ltm: {exc}")
 
     async def _run_gds(self, record: PromotionRecord) -> Any:
-        return None
+        """Run community detection and persist community_id on entities.
+
+        Mode-agnostic: runs for both llm-free and llm-assisted so the
+        community-weight retrieval signal exists in every mode.
+        """
+        detect = getattr(self._neo, "detect_communities", None)
+        if not callable(detect):
+            return None
+        try:
+            result = await detect()
+        except Exception as exc:
+            record.errors.append(f"gds: {exc}")
+            log.warning("community detection failed: %s", exc)
+            return None
+        log.info(
+            "community detection: %d communities (algo=%s, modularity=%.3f)",
+            getattr(result, "community_count", 0),
+            getattr(result, "algorithm_used", "?"),
+            getattr(result, "modularity", 0.0),
+        )
+        return result
 
     async def _run_topics(self, session_id: str, gds_result: Any, record: PromotionRecord) -> None:
         try:

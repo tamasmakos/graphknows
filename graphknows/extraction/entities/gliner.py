@@ -15,16 +15,16 @@ import asyncio
 import logging
 from typing import Any
 
-from graphknows.graphgen.extraction.canonicalization import (
+from graphknows.extraction.entities.canonicalization import (
     classify_surface_form,
     normalize_surface_form,
 )
-from graphknows.graphgen.extraction.ontology import (
+from graphknows.extraction.entities.label_space import (
     build_top_level_label_space,
     refine_entities_with_ontology,
 )
-from graphknows.graphgen.diagnostics import diagnostics_enabled, write_diagnostic_json
-from graphknows.graphgen.utils import standardize_label
+from graphknows.extraction.diagnostics import diagnostics_enabled, write_diagnostic_json
+from graphknows.extraction.utils import standardize_label
 
 log = logging.getLogger(__name__)
 

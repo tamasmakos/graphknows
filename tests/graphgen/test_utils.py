@@ -8,13 +8,12 @@ from pathlib import Path
 
 import networkx as nx
 
-from graphknows.graphgen.diagnostics import (
+from graphknows.extraction.diagnostics import (
     _sanitize_name,
     diagnostic_dir,
     diagnostics_enabled,
 )
-from graphknows.ingestion.ontology.labels import DEFAULT_LABELS, resolve_entity_labels
-from graphknows.graphgen.utils import (
+from graphknows.extraction.utils import (
     create_output_directory,
     merge_node_into,
     standardize_label,
@@ -262,43 +261,6 @@ def test_sanitize_name_alphanumeric_unchanged():
     assert _sanitize_name("valid_name123") == "valid_name123"
 
 
-# ---------------------------------------------------------------------------
-# resolve_entity_labels
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_entity_labels_empty_config_returns_default_labels():
-    result = resolve_entity_labels({})
-    assert isinstance(result, list)
-    assert len(result) > 0
-    # All DEFAULT_LABELS should appear (after standardization)
-    standardized_defaults = {label.upper().replace(" ", "_") for label in DEFAULT_LABELS}
-    result_set = set(result)
-    assert standardized_defaults <= result_set
-
-
-def test_resolve_entity_labels_custom_gliner_labels_returned_standardized():
-    result = resolve_entity_labels({"gliner_labels": ["Person", "Entity"]})
-    assert "PERSON" in result
-    assert "ENTITY" in result
-
-
-def test_resolve_entity_labels_result_is_sorted():
-    result = resolve_entity_labels({})
-    assert result == sorted(result)
-
-
-def test_resolve_entity_labels_no_duplicates():
-    result = resolve_entity_labels({})
-    assert len(result) == len(set(result))
-
-
-def test_resolve_entity_labels_labels_are_uppercased():
-    result = resolve_entity_labels({"gliner_labels": ["organization", "person"]})
-    for label in result:
-        assert label == label.upper()
-
-
 # ===========================================================================
 # Pure config/logging functions
 # ===========================================================================
@@ -537,24 +499,24 @@ class TestNormalizeOpenrouterModel:
 
 class TestDiagnosticsEnabled:
     def test_false_when_none(self):
-        from graphknows.graphgen.diagnostics import diagnostics_enabled
+        from graphknows.extraction.diagnostics import diagnostics_enabled
 
         assert diagnostics_enabled(None) is False
 
     def test_false_when_not_set(self):
-        from graphknows.graphgen.diagnostics import diagnostics_enabled
+        from graphknows.extraction.diagnostics import diagnostics_enabled
 
         assert diagnostics_enabled({"extraction": {"diagnostic_mode": False}}) is False
 
     def test_true_when_enabled(self):
-        from graphknows.graphgen.diagnostics import diagnostics_enabled
+        from graphknows.extraction.diagnostics import diagnostics_enabled
 
         assert diagnostics_enabled({"extraction": {"diagnostic_mode": True}}) is True
 
 
 class TestDiagnosticDir:
     def test_returns_correct_path(self):
-        from graphknows.graphgen.diagnostics import diagnostic_dir
+        from graphknows.extraction.diagnostics import diagnostic_dir
 
         cfg = {
             "infra": {"output_dir": "/tmp/out"},
@@ -564,7 +526,7 @@ class TestDiagnosticDir:
         assert str(result) == "/tmp/out/diag"
 
     def test_defaults(self):
-        from graphknows.graphgen.diagnostics import diagnostic_dir
+        from graphknows.extraction.diagnostics import diagnostic_dir
 
         result = diagnostic_dir({})
         assert result == Path("output") / "diagnostics"
@@ -572,29 +534,29 @@ class TestDiagnosticDir:
 
 class TestSanitizeName:
     def test_replaces_special_chars(self):
-        from graphknows.graphgen.diagnostics import _sanitize_name
+        from graphknows.extraction.diagnostics import _sanitize_name
 
         assert _sanitize_name("foo/bar baz") == "foo_bar_baz"
 
     def test_empty_gives_diagnostic(self):
-        from graphknows.graphgen.diagnostics import _sanitize_name
+        from graphknows.extraction.diagnostics import _sanitize_name
 
         assert _sanitize_name("") == "diagnostic"
 
 
 class TestJsonSafe:
     def test_plain_types_passthrough(self):
-        from graphknows.graphgen.diagnostics import _json_safe
+        from graphknows.extraction.diagnostics import _json_safe
 
         assert _json_safe({"a": [1, 2]}) == {"a": [1, 2]}
 
     def test_path_to_str(self):
-        from graphknows.graphgen.diagnostics import _json_safe
+        from graphknows.extraction.diagnostics import _json_safe
 
         assert _json_safe(Path("/tmp/file")) == "/tmp/file"
 
     def test_set_to_sorted_list(self):
-        from graphknows.graphgen.diagnostics import _json_safe
+        from graphknows.extraction.diagnostics import _json_safe
 
         result = _json_safe({3, 1, 2})
         assert result == [1, 2, 3]
@@ -602,14 +564,14 @@ class TestJsonSafe:
 
 class TestWriteDiagnosticJson:
     def test_returns_none_when_disabled(self, tmp_path):
-        from graphknows.graphgen.diagnostics import write_diagnostic_json
+        from graphknows.extraction.diagnostics import write_diagnostic_json
 
         cfg = {"extraction": {"diagnostic_mode": False}}
         result = write_diagnostic_json(cfg, "test", {"data": 1})
         assert result is None
 
     def test_writes_file_when_enabled(self, tmp_path):
-        from graphknows.graphgen.diagnostics import write_diagnostic_json
+        from graphknows.extraction.diagnostics import write_diagnostic_json
 
         cfg = {
             "extraction": {"diagnostic_mode": True, "diagnostic_output_subdir": "diag"},
@@ -622,7 +584,7 @@ class TestWriteDiagnosticJson:
         assert data["value"] == 42
 
     def test_sanitizes_filename(self, tmp_path):
-        from graphknows.graphgen.diagnostics import write_diagnostic_json
+        from graphknows.extraction.diagnostics import write_diagnostic_json
 
         cfg = {
             "extraction": {"diagnostic_mode": True, "diagnostic_output_subdir": "diag"},
@@ -634,73 +596,3 @@ class TestWriteDiagnosticJson:
         assert "/" not in fname
 
 
-# ---------------------------------------------------------------------------
-# labels.py
-# ---------------------------------------------------------------------------
-
-
-class TestResolveEntityLabels:
-    def test_manual_labels_returned_and_standardized(self):
-        from graphknows.ingestion.ontology.labels import resolve_entity_labels
-
-        cfg = {"gliner_labels": ["Person", "organization"]}
-        result = resolve_entity_labels(cfg)
-        # After standardize_label (uppercase) + dedup + sort
-        assert "PERSON" in result
-        assert "ORGANIZATION" in result
-
-    def test_defaults_when_empty_config(self):
-        from graphknows.ingestion.ontology.labels import DEFAULT_LABELS, resolve_entity_labels
-
-        result = resolve_entity_labels({})
-        # Should contain standardized versions of DEFAULT_LABELS
-        assert len(result) > 0
-
-    def test_entity_labels_key_takes_priority(self):
-        from graphknows.ingestion.ontology.labels import resolve_entity_labels
-
-        cfg = {
-            "entity_labels": ["Country"],
-            "gliner_labels": ["Person"],
-        }
-        result = resolve_entity_labels(cfg)
-        assert "COUNTRY" in result
-        # gliner_labels should NOT be used since entity_labels was present
-        assert "PERSON" not in result
-
-    def test_ontology_disabled_uses_manual_only(self):
-        from graphknows.ingestion.ontology.labels import resolve_entity_labels
-
-        cfg = {
-            "gliner_labels": ["Politician"],
-            "ontology": {"enabled": False},
-        }
-        result = resolve_entity_labels(cfg)
-        assert "POLITICIAN" in result
-
-    def test_ontology_enabled_but_extraction_fails_falls_back(self):
-        from graphknows.ingestion.ontology.labels import resolve_entity_labels
-
-        cfg = {
-            "gliner_labels": ["Person"],
-            "ontology": {"enabled": True, "ontology_dir": "/nonexistent"},
-        }
-        # Should not raise — falls back to manual labels
-        result = resolve_entity_labels(cfg)
-        assert len(result) > 0
-
-    def test_pydantic_model_input(self):
-        from graphknows.ingestion.ontology.labels import resolve_entity_labels
-
-        mock_cfg = MagicMock()
-        mock_cfg.model_dump.return_value = {"gliner_labels": ["Doctor"]}
-        result = resolve_entity_labels(mock_cfg)
-        assert "DOCTOR" in result
-
-    def test_result_is_sorted_unique(self):
-        from graphknows.ingestion.ontology.labels import resolve_entity_labels
-
-        cfg = {"gliner_labels": ["person", "Person", "PERSON"]}
-        result = resolve_entity_labels(cfg)
-        assert result == sorted(set(result))
-        assert result.count("PERSON") == 1

@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-log = logging.getLogger("graphknows.ingestion.ontology.loader")
+log = logging.getLogger("graphknows.extraction.ontology.loader")
 
 # Root of the bundled ontology asset bundle owned by the agent service.
 _ONTOLOGY_ROOT = Path(__file__).with_name("assets")
