@@ -11,7 +11,7 @@ from typing import Any
 
 from graphknows.ingestion.parsers.base import ParsedFile
 from graphknows.ingestion.parsers.registry import get_parser
-from graphknows.memory.extractor import ExtractionResult as _ExtractionResult
+from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.stm._async_bridge import _run
 from graphknows.memory.stm._entity_writer import write_entity_nodes_and_edges, write_relation_edges
@@ -37,17 +37,25 @@ class _STMIngestHandler:
         extractor: Any,
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
+        spacy_relations: bool = True,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
+        self._spacy_relations = spacy_relations
         if embed_fn is not None:
             self._embed_fn = embed_fn
         else:
             from graphknows.memory.stores.embedder import embed_one
 
             self._embed_fn = embed_one
+
+        # Ontology curation layer — applied AFTER extraction to drop relations
+        # whose label is not part of the configured ontology.
+        from graphknows.extraction.ontology.relation_filter import build_relation_filter
+
+        self._relation_filter = build_relation_filter()
 
     def ingest_text(
         self,
@@ -125,8 +133,9 @@ class _STMIngestHandler:
             clean = self._clean_text(seg.text)
             extraction = self._extract(clean)
             embedding: list[float] = self._embed_fn(clean)
+            temporal = self._resolve_temporal(extraction.entities, seg, metadata)
             entity_count += self._write_chunk_to_mg(
-                session_id, parsed.source_id, chunk_id, clean, seg, extraction
+                session_id, parsed.source_id, chunk_id, clean, seg, extraction, temporal
             )
             self._write_chunk_to_pg(
                 session_id,
@@ -136,7 +145,7 @@ class _STMIngestHandler:
                 seg,
                 embedding,
                 extraction.entities,
-                metadata,
+                {**metadata, "temporal": temporal} if temporal else metadata,
             )
 
         elapsed = time.monotonic() - t0
@@ -180,22 +189,44 @@ class _STMIngestHandler:
             )
         )
 
+    def _resolve_temporal(
+        self, entities: list[dict[str, Any]], seg: Any, metadata: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        """Resolve DATE/TIME spans to ISO dates, anchored on any supplied date.
+
+        The anchor for relative expressions ("last Saturday") is taken from the
+        segment metadata, then the file metadata; absent an anchor only absolute
+        dates resolve.
+        """
+        from graphknows.memory.temporal import resolve_temporal
+
+        seg_meta = getattr(seg, "metadata", {}) or {}
+        anchor = (
+            seg_meta.get("timestamp")
+            or seg_meta.get("anchor_date")
+            or metadata.get("anchor_date")
+            or metadata.get("timestamp")
+        )
+        return resolve_temporal(entities, anchor)
+
     def _make_chunk_id(self, session_id: str, source_id: str, seg: Any) -> str:
-        return hashlib.sha256(f"{session_id}:{source_id}::{seg.char_offset}".encode()).hexdigest()[
-            :16
-        ]
+        # Include the chunk text in the key: char_offset alone collides when a
+        # section yields several chunks that resolve to the same offset (e.g.
+        # sentence-packed dialogue), which would overwrite all but one chunk.
+        key = f"{session_id}:{source_id}::{seg.char_offset}::{seg.text}"
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     def _clean_text(self, text: str) -> str:
         # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
         return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
 
-    def _extract(self, clean_text: str) -> _ExtractionResult:
+    def _extract(self, clean_text: str) -> ExtractionResult:
         # One GLiNER2 call returns both entities and relations — capture both.
         if self._extractor is not None:
             from typing import cast
 
-            return cast(_ExtractionResult, self._extractor.extract(clean_text))
-        return _ExtractionResult()
+            return cast(ExtractionResult, self._extractor.extract(clean_text))
+        return ExtractionResult()
 
     def _write_chunk_to_mg(
         self,
@@ -204,12 +235,14 @@ class _STMIngestHandler:
         chunk_id: str,
         clean_text: str,
         seg: Any,
-        extraction: _ExtractionResult,
+        extraction: ExtractionResult,
+        temporal: list[dict[str, str]] | None = None,
     ) -> int:
         """Write CHUNK node, entity nodes/edges, and relation edges to ArcadeDB STM.
 
         Returns the entity count for this chunk.
         """
+        chunk_metadata = {**seg.metadata, "temporal": temporal} if temporal else seg.metadata
         _run(
             self._mg.write_chunk_node(
                 session_id=session_id,
@@ -217,7 +250,7 @@ class _STMIngestHandler:
                 chunk_id=chunk_id,
                 text=clean_text,
                 heading_path=seg.heading_path,
-                metadata=seg.metadata,
+                metadata=chunk_metadata,
             )
         )
         entity_count = write_entity_nodes_and_edges(
@@ -233,11 +266,13 @@ class _STMIngestHandler:
             ),
             _run=_run,
         )
-        # GLiNER2 relations — no fallback; let failures propagate.
-        write_relation_edges(self._mg, session_id, extraction.relations, _run)
+        # GLiNER2 relations — ontology-filtered, then written.
+        gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
+        write_relation_edges(self._mg, session_id, gliner_relations, _run)
 
-        # SpaCy dep-pattern relations (intentionality strata G/H/I) — always-on, soft-fail.
-        self._write_spacy_dep_relations(session_id, clean_text, extraction.entities)
+        # SpaCy dep-pattern relations (intentionality strata G/H/I) — toggleable, soft-fail.
+        if self._spacy_relations:
+            self._write_spacy_dep_relations(session_id, clean_text, extraction.entities)
 
         # DSPy ontology-guided relation extraction (llm_assisted mode only).
         # extract_relations returns (triplets, nodes, diagnostics).
@@ -281,12 +316,13 @@ class _STMIngestHandler:
         at DEBUG level and do not interrupt the ingestion pipeline.
         """
         try:
-            from graphknows.graphgen.extraction.spacy_relations import extract_intentional_relations
+            from graphknows.extraction.relations.spacy import extract_intentional_relations
 
             triples = extract_intentional_relations(text, gliner_entities)
         except Exception as exc:
             log.debug("SpaCy dep extraction skipped: %s", exc)
             return
+        triples = self._relation_filter.filter(triples, label_key="relation")
         written = 0
         for triple in triples:
             if triple.get("negated"):

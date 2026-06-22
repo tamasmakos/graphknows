@@ -48,11 +48,13 @@ class STMService:
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
         config: STMConfig | None = None,
+        spacy_relations: bool = True,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
+        self._spacy_relations = spacy_relations
         self._config = config or STMConfig()
 
         if embed_fn is not None:
@@ -99,6 +101,7 @@ class STMService:
                 extractor=self._extractor,
                 embed_fn=self._embed_fn,
                 rel_extractor=self._rel_extractor,
+                spacy_relations=self._spacy_relations,
             )
         return self._ingest_handler.ingest_text(  # type: ignore[no-any-return]
             text,

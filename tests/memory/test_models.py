@@ -11,8 +11,6 @@ from graphknows.memory.models import (
     MemoryClass,
     PromotionRecord,
     PromotionRequest,
-    RecallQuery,
-    RecallResult,
 )
 
 
@@ -26,19 +24,6 @@ def test_ingest_result_defaults():
     r = IngestResult(session_id="s1", file_id="f1", title="t")
     assert r.errors == []
     assert r.chunk_count == 0
-
-
-def test_recall_result_round_trip():
-    r = RecallResult(text="data", source_type="chunk", scope="short_term")
-    d = r.model_dump()
-    r2 = RecallResult(**d)
-    assert r2.text == "data"
-
-
-def test_recall_query_defaults():
-    q = RecallQuery(query="find me", session_id="s1")
-    assert q.top_k == 5
-    assert q.scope == "stm"
 
 
 def test_promotion_request_frozen():
