@@ -7,16 +7,31 @@ indexes) uses ArcadeDB SQL because Cypher has no DDL surface.
 
 from __future__ import annotations
 
+import ast
 import datetime
 import logging
-import re
 from typing import Any
 
+from graphknows.memory.stores.arcadedb._labels import _safe_rel_label
 from graphknows.memory.stores.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
 
 _DB = "stm"
+
+
+def _parse_chunk_metadata(raw: Any) -> dict[str, Any]:
+    """Parse a CHUNK.metadata value (stored as a Python repr string) into a dict."""
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        parsed = ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
 
 # Known single-valued relation types — a new fact tombstones the old one.
 _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
@@ -60,26 +75,6 @@ _SCHEMA_DDL = [
     "CREATE INDEX ON TURN(id) UNIQUE",
     "CREATE INDEX ON TURN(session_id)",
 ]
-
-
-_VERTEX_TYPE_NAMES: frozenset[str] = frozenset(
-    {"SESSION", "FILE", "CHUNK", "ENTITY", "DIALOG", "TURN", "V", "E"}
-)
-
-
-def _safe_rel_label(raw: str) -> str:
-    """Convert a relation string to a valid Cypher relationship type label.
-
-    Prefixes with REL_ to avoid collision with vertex type names (ArcadeDB
-    requires distinct type registries for vertices and edges).
-    """
-    label = raw.upper().replace("-", "_").replace(" ", "_")
-    label = re.sub(r"[^\w]", "", label)
-    if not label or label[0].isdigit():
-        return ""
-    if label in _VERTEX_TYPE_NAMES:
-        label = f"REL_{label}"
-    return label
 
 
 class ArcadeDBSTMStore:
@@ -646,7 +641,8 @@ class ArcadeDBSTMStore:
             MATCH (sess:SESSION)-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)
             WHERE sess.id = $sid
             RETURN c.id AS id, f.id AS file_id, c.text AS text,
-                   c.heading_path AS heading_path, c.chunk_index AS chunk_index
+                   c.heading_path AS heading_path, c.chunk_index AS chunk_index,
+                   c.metadata AS metadata
             """,
             params={"sid": session_id},
         )
@@ -657,6 +653,7 @@ class ArcadeDBSTMStore:
                 "text": r["text"],
                 "heading_path": r["heading_path"],
                 "chunk_index": r["chunk_index"] if r["chunk_index"] is not None else 0,
+                "metadata": _parse_chunk_metadata(r.get("metadata")),
             }
             for r in chunks_rows
         ]

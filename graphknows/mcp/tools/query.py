@@ -31,7 +31,8 @@ async def memory_query(
 
     Returns:
         Dict with a ``hits`` list, each hit containing ``text``, ``score``,
-        ``chunk_id``, ``doc_id``, ``sources``, and ``entities``.
+        ``chunk_id``, ``doc_id``, ``sources``, ``entities``, and ``metadata``
+        (resolved temporal dates, memory_class, community).
     """
     top_k = max(1, min(top_k, 100))
     if scope not in ("stm", "ltm", "both"):
@@ -48,6 +49,7 @@ async def memory_query(
             "doc_id": fc["doc_id"],
             "sources": fc.get("sources", ""),
             "entities": fc.get("entities", []),
+            "metadata": fc.get("metadata", {}),
         }
         for fc in ctx.fused_results
     ]

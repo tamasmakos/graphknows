@@ -16,13 +16,26 @@ Example:
 from __future__ import annotations
 
 import os
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graphknows.config.env_loader import load_env_file
+
+
+class MemoryMode(StrEnum):
+    """Single switch that governs both extraction and retrieval.
+
+    - ``llm_free``: GLiNER entities + spaCy relations + deterministic retrieval.
+      No network LLM calls on the ingestion/retrieval hot paths.
+    - ``llm_assisted``: additionally runs DSPy relation extraction, topic
+      summarisation, and the agentic retriever.
+    """
+
+    llm_free = "llm_free"
+    llm_assisted = "llm_assisted"
 
 
 def _clean_env_secret(value: str | None) -> str:
@@ -107,14 +120,14 @@ class GraphKnowsSettings(BaseSettings):
     # Entity extraction
     gliner_model: str = Field(default="fastino/gliner2-multi-v1", alias="GLINER_MODEL")
     gliner_threshold: float = Field(default=0.5, alias="GLINER_THRESHOLD")
-    relation_extraction_mode: Literal["gliner2", "llm_assisted", "off"] = Field(
-        default="gliner2",
-        alias="RELATION_EXTRACTION_MODE",
-    )
-    retrieval_mode: Literal["deterministic", "agentic"] = Field(
-        default="deterministic",
-        alias="RETRIEVAL_MODE",
-    )
+    # Single mode switch driving both extraction and retrieval.
+    mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="MODE")
+    # spaCy dependency-pattern relations are LLM-free; toggle for development.
+    spacy_relations: bool = Field(default=True, alias="SPACY_RELATIONS")
+    # Score-aware fusion: weight applied to normalised cosine similarity as a
+    # tiebreaker on top of rank-based RRF in the semantic collector. 0 disables
+    # (pure RRF); small values break ties without overriding multi-source agreement.
+    fusion_alpha: float = Field(default=0.005, alias="FUSION_ALPHA")
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
     # Summarisation
@@ -139,7 +152,28 @@ class GraphKnowsSettings(BaseSettings):
         if self.openrouter_api_key and not os.environ.get("OPEN_ROUTER_API"):
             os.environ["OPEN_ROUTER_API"] = self.openrouter_api_key
 
+        # Back-compat: derive the single mode from legacy env vars when MODE is
+        # not set, so callers still exporting RELATION_EXTRACTION_MODE/RETRIEVAL_MODE
+        # (e.g. the evaluation harness) keep working.
+        if "MODE" not in os.environ and "MODE" not in env:
+            legacy_rel = os.environ.get("RELATION_EXTRACTION_MODE") or env.get(
+                "RELATION_EXTRACTION_MODE"
+            )
+            legacy_ret = os.environ.get("RETRIEVAL_MODE") or env.get("RETRIEVAL_MODE")
+            if legacy_rel == "llm_assisted" or legacy_ret == "agentic":
+                self.mode = MemoryMode.llm_assisted
+
         return self
+
+    @property
+    def relation_extraction_mode(self) -> str:
+        """Legacy relation-extraction mode string derived from :attr:`mode`."""
+        return "llm_assisted" if self.mode is MemoryMode.llm_assisted else "gliner2"
+
+    @property
+    def retrieval_mode(self) -> str:
+        """Legacy retrieval mode string derived from :attr:`mode`."""
+        return "agentic" if self.mode is MemoryMode.llm_assisted else "deterministic"
 
     def check_production_secrets(self) -> None:
         """Raise if running in production with default credentials.

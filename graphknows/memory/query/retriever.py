@@ -23,6 +23,7 @@ from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
 from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 from graphknows.memory.stores.embedder import embed
+from graphknows.memory.temporal import query_date_candidates
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +41,32 @@ _STRUCTURAL_REL_TYPES = frozenset(
 )
 
 
+_Q_STRIP = re.compile(
+    r"^(?:what(?:\s+(?:is|are|was|were|do|does|did|would|could))?|"
+    r"when(?:\s+(?:did|was|were|is|are))?|"
+    r"where(?:\s+(?:did|was|were|is|are))?|"
+    r"who(?:\s+(?:is|are|was|were))?|"
+    r"which(?:\s+(?:is|are|was|were))?|"
+    r"how(?:\s+(?:many|much|long|often|did|was|were|is|are))?|"
+    r"why(?:\s+(?:did|was|were|is|are))?|"
+    r"(?:did|does|do|was|were|is|are|has|have|had|would|could|should))\s+",
+    re.IGNORECASE,
+)
+
+
+def _declarative_variant(question: str) -> str | None:
+    """Strip interrogative prefix to produce a keyword-dense form closer to answer text.
+
+    'What is Caroline's profession?' → 'Caroline's profession'
+    Embedding the declarative form gets the ANN closer to how answers appear in chunks.
+    """
+    q = question.strip().rstrip("?").strip()
+    stripped = _Q_STRIP.sub("", q, count=1).strip()
+    if stripped and stripped.lower() != q.lower() and len(stripped) >= 5:
+        return stripped
+    return None
+
+
 class DETRetriever(BaseGraphRetriever):
     """Deterministic three-collector hybrid retriever."""
 
@@ -49,11 +76,14 @@ class DETRetriever(BaseGraphRetriever):
         neo: Any,
         mg: ArcadeDBSTMStore,
         embed_model: str = "openai/text-embedding-3-small",
+        fusion_alpha: float = 0.0,
     ) -> None:
         self.pg = pg
         self.neo = neo
         self.mg = mg
         self.embed_model = embed_model
+        # Score-aware fusion tiebreaker weight (0 = pure rank-based RRF).
+        self.fusion_alpha = fusion_alpha
 
     async def retrieve(
         self,
@@ -71,8 +101,15 @@ class DETRetriever(BaseGraphRetriever):
             top_k,
         )
 
-        emb_array = await asyncio.to_thread(embed, [query], self.embed_model)
+        # Embed original query + optional declarative variant in one batch call.
+        var_text = _declarative_variant(query)
+        queries = [query, var_text] if var_text else [query]
+        emb_array = await asyncio.to_thread(embed, queries, self.embed_model)
         emb = emb_array[0].tolist()
+        emb2: list[float] | None = emb_array[1].tolist() if var_text else None
+        if emb2:
+            log.debug("Query variant: %r", var_text)
+
         # words_graph: include 3-char tokens (month names, short proper nouns) for
         # entity/graph matching where substring-of-name is the lookup key.
         # words: >3-char only for full-text search to reduce noise.
@@ -82,15 +119,23 @@ class DETRetriever(BaseGraphRetriever):
         gather_results = await asyncio.gather(
             self._stm_entity_boost(words_graph, session_id, top_k),
             self._ltm_entity_traversal(words_graph, session_id, top_k),
-            self._semantic_ann(emb, session_id, scope, top_k),
+            self._semantic_ann(emb, session_id, scope, top_k, emb2=emb2),
             self._stm_full_text(words, session_id, top_k),
             self._ltm_full_text(words, session_id, scope, top_k),
+            self._ltm_temporal_traversal(query, session_id, scope, top_k),
             return_exceptions=True,
         )
-        src_stm, src_ltm, src_semantic, src_text, src_ltm_text = gather_results  # type: ignore[misc]
+        (
+            src_stm,
+            src_ltm,
+            src_semantic,
+            src_text,
+            src_ltm_text,
+            src_temporal,
+        ) = gather_results  # type: ignore[misc]
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
-        for src in (src_stm, src_ltm, src_semantic, src_text, src_ltm_text):
+        for src in (src_stm, src_ltm, src_semantic, src_text, src_ltm_text, src_temporal):
             if isinstance(src, Exception):
                 log.warning("Retrieval source error: %s", src)
                 continue
@@ -320,7 +365,8 @@ class DETRetriever(BaseGraphRetriever):
                 _add_result(
                     result,
                     row["chunk_id"],
-                    rrf_score(rank),
+                    # boost=2: entity hits are high-precision; outcompete pure-ANN noise
+                    rrf_score(rank, boost=2.0),
                     {
                         "text": row["text"],
                         "entities": row["entities"],
@@ -448,52 +494,128 @@ class DETRetriever(BaseGraphRetriever):
             log.warning("LTM full-text search failed: %s", exc)
         return result
 
+    async def _ltm_temporal_traversal(
+        self,
+        query: str,
+        session_id: str,
+        scope: str,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Match chunks linked to canonical TEMPORAL nodes for dates in the query.
+
+        Activates only when the query contains a resolvable date; otherwise it is
+        a no-op.  Matches both exact ISO dates and year-prefix dates so a query
+        mentioning a year recalls finer-grained dates within it.
+        """
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        if scope not in ("ltm", "both"):
+            return result
+        candidates = query_date_candidates(query)
+        if not candidates:
+            return result
+        # Dynamic WHERE: exact iso match, or year-prefix match for 4-digit years.
+        safe = [c.replace("'", "") for c in candidates]
+        conds = []
+        for c in safe:
+            conds.append(f"d.iso = '{c}'")
+            if len(c) == 4 and c.isdigit():
+                conds.append(f"d.iso STARTS WITH '{c}-'")
+        where_iso = " OR ".join(conds)
+        try:
+            if session_id:
+                cypher = (
+                    f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
+                    f"-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
+                    f"WHERE {where_iso} "
+                    f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
+                )
+                rows = await self.neo._qry(cypher, top_k=top_k, sid=session_id)
+            else:
+                cypher = (
+                    f"MATCH (c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
+                    f"WHERE {where_iso} "
+                    f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
+                )
+                rows = await self.neo._qry(cypher, top_k=top_k)
+            for rank, row in enumerate(rows):
+                _add_result(
+                    result,
+                    row["chunk_id"],
+                    rrf_score(rank, RRF_RELATION_BOOST),
+                    {
+                        "text": row["text"],
+                        "entities": [],
+                        "sources": {"ltm_temporal"},
+                        "doc_id": "",
+                        "metadata": {},
+                    },
+                )
+        except Exception as exc:
+            log.warning("LTM temporal traversal failed: %s", exc)
+        return result
+
     async def _semantic_ann(
         self,
         emb: list[float],
         session_id: str,
         scope: str,
         top_k: int,
+        emb2: list[float] | None = None,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         k = top_k * 2
 
-        coros: list[Any] = []
-        labels: list[str] = []
-        if scope in ("stm", "both") and session_id:
-            coros.append(self.pg.search_stm_chunks(session_id, emb, top_k=k))
-            labels.append("stm_chunk")
-            coros.append(self.pg.search_stm_turns(session_id, emb, top_k=k))
-            labels.append("stm_turn")
-        if scope in ("ltm", "both"):
-            # Pass session_id so the vector store applies session-scoped over-fetching
-            # (k_pre = max(top_k * 20, 200)) and post-filters by session.  This prevents
-            # cross-session contamination when multiple sessions coexist in LTM.
-            ltm_sid = session_id or None
-            coros.append(self.pg.search_ltm_chunks(emb, top_k=k, session_id=ltm_sid))
-            labels.append("ltm_chunk")
-            coros.append(self.pg.search_ltm_turns(emb, top_k=k, session_id=ltm_sid))
-            labels.append("ltm_turn")
+        def _build_coros(
+            embedding: list[float], tag: str
+        ) -> tuple[list[Any], list[tuple[str, str]]]:
+            coros: list[Any] = []
+            tagged: list[tuple[str, str]] = []
+            if scope in ("stm", "both") and session_id:
+                coros.append(self.pg.search_stm_chunks(session_id, embedding, top_k=k))
+                tagged.append(("stm_chunk", tag))
+                coros.append(self.pg.search_stm_turns(session_id, embedding, top_k=k))
+                tagged.append(("stm_turn", tag))
+            if scope in ("ltm", "both"):
+                # Pass session_id so the vector store applies session-scoped over-fetching
+                # (k_pre = max(top_k * 20, 200)) and post-filters by session.  This prevents
+                # cross-session contamination when multiple sessions coexist in LTM.
+                ltm_sid = session_id or None
+                coros.append(self.pg.search_ltm_chunks(embedding, top_k=k, session_id=ltm_sid))
+                tagged.append(("ltm_chunk", tag))
+                coros.append(self.pg.search_ltm_turns(embedding, top_k=k, session_id=ltm_sid))
+                tagged.append(("ltm_turn", tag))
+            return coros, tagged
 
-        if not coros:
+        coros1, tagged1 = _build_coros(emb, "semantic")
+        coros2, tagged2 = _build_coros(emb2, "semantic2") if emb2 is not None else ([], [])
+
+        all_coros = coros1 + coros2
+        all_tagged = tagged1 + tagged2
+
+        if not all_coros:
             return result
 
-        all_rows = await asyncio.gather(*coros, return_exceptions=True)
-        for label, rows in zip(labels, all_rows, strict=False):
+        all_rows = await asyncio.gather(*all_coros, return_exceptions=True)
+        for (label, source_tag), rows in zip(all_tagged, all_rows, strict=False):
             if isinstance(rows, Exception):
                 log.warning("ANN %s failed: %s", label, rows)
                 continue
             for rank, row in enumerate(rows):
                 metadata = row.get("metadata", {}) or {}
                 cid = row["id"]
+                # Score-aware fusion: blend a small cosine-similarity term onto the
+                # rank-based RRF score so calibrated similarity breaks ties without
+                # overriding multi-source agreement (alpha=0 → pure RRF).
+                cosine = float(row.get("cosine_score", 0.0) or 0.0)
+                score = rrf_score(rank) + self.fusion_alpha * cosine
                 _add_result(
                     result,
                     cid,
-                    rrf_score(rank),
+                    score,
                     {
                         "text": row.get("text", ""),
                         "entities": metadata.get("entity_names", []),
-                        "sources": {"semantic"},
+                        "sources": {source_tag},
                         "doc_id": row.get("file_id", row.get("doc_id", "")),
                         "metadata": metadata,
                     },

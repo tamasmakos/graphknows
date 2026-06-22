@@ -25,7 +25,7 @@ def _make_svc():
 
 
 def _make_options(user_id="u1", agent_id="a1", run_id="r1", infer=True):
-    from graphknows.memory.adapter_types import MemoryClass
+    from graphknows.memory.models.memory_class import MemoryClass
     from graphknows.memory.models.ingest_options import IngestOptions, MemoryScope
 
     return IngestOptions(

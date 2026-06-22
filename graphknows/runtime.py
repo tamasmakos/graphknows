@@ -56,9 +56,11 @@ def _format_fused_hits(
             "score": r.get("rrf_score", 0.0),
             "cosine_score": r.get("rrf_score", 0.0),
             "type": r.get("sources", ""),
+            "sources": r.get("sources", ""),
             "text": _clean_recall_text(r.get("text", "")),
             "session_id": session_id,
             "entities": r.get("entities", []),
+            "metadata": r.get("metadata", {}),
         }
         for r in fused_results
     ]
@@ -122,7 +124,9 @@ class GraphKnowsRuntime:
         else:
             from graphknows.memory.query.retriever import DETRetriever
 
-            self._retriever = DETRetriever(pg=pg, neo=neo, mg=mg, embed_model=s.embed_model)
+            self._retriever = DETRetriever(
+                pg=pg, neo=neo, mg=mg, embed_model=s.embed_model, fusion_alpha=s.fusion_alpha
+            )
         return self._retriever
 
     async def doctor(self) -> dict[str, Any]:
@@ -169,7 +173,7 @@ class GraphKnowsRuntime:
             messages = text
 
         from graphknows.config.builders.stores import build_stm_service
-        from graphknows.memory.adapter_types import MemoryClass
+        from graphknows.memory.models.memory_class import MemoryClass
         from graphknows.memory.models.ingest_options import IngestOptions
         from graphknows.memory.models.message import normalize_messages
         from graphknows.memory.models.scope import MemoryScope
@@ -210,6 +214,7 @@ class GraphKnowsRuntime:
                 messages,  # type: ignore[arg-type]
                 session_id=scope.to_session_id(),
                 title=title,
+                metadata=metadata or {},
             )
             return {
                 "file_id": result.file_id,
@@ -303,7 +308,10 @@ class GraphKnowsRuntime:
             errors.append(f"arcadedb stm: {exc}")
 
     async def _purge_ltm(self, session_id: str, errors: list[str]) -> None:
-        from graphknows.config.builders.stores import build_arcadedb_ltm_store
+        from graphknows.config.builders.stores import (
+            build_arcadedb_ltm_store,
+            build_arcadedb_vector_store,
+        )
 
         try:
             ltm_store = build_arcadedb_ltm_store(self.settings)
@@ -313,6 +321,14 @@ class GraphKnowsRuntime:
                     await self._delete_ltm_session(ltm_store, session_id)
                 else:
                     await ltm_store._c.drop_database("ltm")
+                    # Recreate both schemas immediately so the next flush can
+                    # write without a 503 (drop removes all DDL).
+                    await ltm_store.ensure_schema()
+                    # vec_store.connect() creates its own client connection,
+                    # recreates the ltm DB (idempotent), and adds the vector DDL.
+                    vec_store = build_arcadedb_vector_store(self.settings)
+                    await vec_store.connect()
+                    await vec_store.close()
             finally:
                 await ltm_store._c.close()
         except Exception as exc:

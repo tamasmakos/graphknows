@@ -13,11 +13,12 @@ import asyncio
 import contextlib
 import hashlib
 import logging
-import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from graphknows.memory.models.gds import CommunityResult
+from graphknows.memory.stores.arcadedb._labels import _safe_rel_label
 from graphknows.memory.stores.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
@@ -33,34 +34,6 @@ UTC = UTC
 
 def _entity_node_id(name: str) -> str:
     return str(uuid.uuid5(_GK_NS, f"entity:{name.strip().upper()}"))
-
-
-_VERTEX_TYPE_NAMES: frozenset[str] = frozenset(
-    {
-        "SESSION",
-        "FILE",
-        "CHUNK",
-        "ENTITY",
-        "DIALOG",
-        "TURN",
-        "TOPIC",
-        "SEGMENT",
-        "DOC",
-        "SESSIONENTITY",
-        "V",
-        "E",
-    }
-)
-
-
-def _safe_rel_label(raw: str) -> str:
-    label = raw.upper().replace("-", "_").replace(" ", "_")
-    label = re.sub(r"[^\w]", "", label)
-    if not label or label[0].isdigit():
-        return ""
-    if label in _VERTEX_TYPE_NAMES:
-        label = f"REL_{label}"
-    return label
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +116,14 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY SESSIONENTITY.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY SESSIONENTITY.name IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON SESSIONENTITY(session_id)"),
+    # Canonical temporal nodes — one global node per resolved ISO date.
+    ("sql", "CREATE VERTEX TYPE TEMPORAL"),
+    ("sql", "CREATE PROPERTY TEMPORAL.iso IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY TEMPORAL.granularity IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON TEMPORAL(iso) UNIQUE"),
     # Edge types
     ("sql", "CREATE EDGE TYPE MENTIONS"),
+    ("sql", "CREATE EDGE TYPE MENTIONS_DATE"),
     ("sql", "CREATE EDGE TYPE HAS_CHUNK"),
     ("sql", "CREATE EDGE TYPE IN_SESSION"),
     ("sql", "CREATE EDGE TYPE HAS_TURN"),
@@ -270,6 +249,21 @@ class ArcadeDBLTMStore:
             nodes += 1
             edges += 1
 
+            # Canonical TEMPORAL nodes — global per ISO date, linked to the chunk.
+            for tref in (c.get("metadata") or {}).get("temporal") or []:
+                iso = str(tref.get("iso", "")).strip()
+                if not iso:
+                    continue
+                await self._cmd(
+                    "MERGE (d:TEMPORAL {iso: $iso}) SET d.granularity = $g "
+                    "WITH d MATCH (c:CHUNK {id: $cid}) MERGE (c)-[:MENTIONS_DATE]->(d)",
+                    iso=iso,
+                    g=str(tref.get("granularity", "")),
+                    cid=c["id"],
+                )
+                nodes += 1
+                edges += 1
+
         # ENTITY nodes + MENTIONS edges
         written: set[str] = set()
         for ce in stm_data.get("chunk_entity_edges", []):
@@ -388,7 +382,13 @@ class ArcadeDBLTMStore:
         }
         canonical: dict[str, str] = {k.upper().replace("_", " "): k for k in entity_by_name}
         all_triplets: list[tuple[str, str, str, dict]] = []
-        for chunk in stm_data.get("chunks", []):
+        chunks = stm_data.get("chunks", [])
+        # Cap LLM calls to avoid MCP timeout (120 s). Pick the longest chunks
+        # (most content) so we maximise coverage within the budget.
+        _MAX_CHUNKS = 10
+        if len(chunks) > _MAX_CHUNKS:
+            chunks = sorted(chunks, key=lambda c: len(c.get("text", "")), reverse=True)[:_MAX_CHUNKS]
+        for chunk in chunks:
             relations, nodes_data, _ = await self._relation_extractor.extract_relations(
                 text=chunk["text"]
             )
@@ -432,6 +432,23 @@ class ArcadeDBLTMStore:
     # Topic communities + summarization
     # ------------------------------------------------------------------
 
+    async def detect_communities(self) -> CommunityResult:
+        """Detect communities and write ``community_id`` back to ENTITY nodes.
+
+        Runs in ALL relation-extraction modes (llm-free and llm-assisted). Its
+        sole job is to cluster the entity-relation graph and persist the cluster
+        id on each entity, so retrieval can weight chunks by community
+        (``_community_boost``). Topic summarization (LLM) is a separate,
+        llm-assisted-only step layered on top of these communities.
+        """
+        communities, modularity, silhouette, algorithm = await self._topic_communities()
+        return CommunityResult(
+            community_count=sum(1 for members in communities.values() if len(members) >= 2),
+            modularity=modularity or 0.0,
+            algorithm_used=algorithm,
+            silhouette_cosine=silhouette,
+        )
+
     async def _topic_communities(
         self,
     ) -> tuple[dict[int, list[str]], float | None, float | None, str]:
@@ -457,9 +474,14 @@ class ArcadeDBLTMStore:
             logger.warning("igraph/leidenalg not available; skipping community detection")
             return {}, None, None, "none"
 
+        # Build the community graph from entity CO-OCCURRENCE in chunks rather
+        # than from typed relation edges. Co-occurrence is label-independent, so
+        # community detection works in every mode and is unaffected by the
+        # ontology relation filter (which removes noisy typed edges).
         rel_rows = await self._qry(
-            "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
-            "RETURN a.name AS a, b.name AS b, coalesce(r.weight, 1.0) AS weight"
+            "MATCH (c:CHUNK)-[:MENTIONS]->(a:ENTITY), (c)-[:MENTIONS]->(b:ENTITY) "
+            "WHERE a.name < b.name "
+            "RETURN a.name AS a, b.name AS b, count(DISTINCT c) AS weight"
         )
         if not rel_rows:
             return {}, None, None, "leidenalg"

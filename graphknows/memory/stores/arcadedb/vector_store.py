@@ -14,6 +14,7 @@ ArcadeDB constraints:
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 from typing import Any
 
@@ -38,7 +39,9 @@ _STM_EMB_DDL: list[tuple[str, str]] = [
         f"CREATE INDEX IF NOT EXISTS ON CHUNK(embedding) LSM_VECTOR METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
     ),
     ("sql", "CREATE PROPERTY CHUNK.memory_class IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY CHUNK.metadata IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TURN.embedding IF NOT EXISTS LIST"),
+    ("sql", "CREATE PROPERTY TURN.metadata IF NOT EXISTS STRING"),
     (
         "sql",
         f"CREATE INDEX IF NOT EXISTS ON TURN(embedding) LSM_VECTOR METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
@@ -66,6 +69,7 @@ _LTM_BASE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY CHUNK.community_id IF NOT EXISTS INTEGER"),
     ("sql", "CREATE PROPERTY CHUNK.community_weight IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY CHUNK.embedding IF NOT EXISTS LIST"),
+    ("sql", "CREATE PROPERTY CHUNK.metadata IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON CHUNK(id) UNIQUE"),
     ("sql", "CREATE INDEX ON CHUNK(session_id)"),
     (
@@ -82,6 +86,7 @@ _LTM_BASE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TURN.community_id IF NOT EXISTS INTEGER"),
     ("sql", "CREATE PROPERTY TURN.community_weight IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY TURN.embedding IF NOT EXISTS LIST"),
+    ("sql", "CREATE PROPERTY TURN.metadata IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON TURN(id) UNIQUE"),
     ("sql", "CREATE INDEX ON TURN(session_id)"),
     (
@@ -115,6 +120,29 @@ _LTM_BASE_DDL: list[tuple[str, str]] = [
 def _emb_sql(emb: list[float]) -> str:
     """Format embedding list as ArcadeDB SQL array literal."""
     return "[" + ",".join(str(x) for x in emb) + "]"
+
+
+def _dump_meta(metadata: dict[str, Any] | None) -> str:
+    """Serialise a chunk/turn metadata dict to a JSON string for storage."""
+    if not metadata:
+        return ""
+    try:
+        return json.dumps(metadata, default=str)
+    except (TypeError, ValueError):
+        return ""
+
+
+def _load_meta(raw: Any) -> dict[str, Any]:
+    """Parse a stored metadata JSON string back into a dict (lenient)."""
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
@@ -184,22 +212,25 @@ class ArcadeDBVectorStore:
     async def _set_embedding(
         self, db: str, vertex_type: str, entity_id: str, emb: list[float]
     ) -> None:
-        """SQL UPDATE to set embedding on an existing vertex."""
+        """Set embedding on a vertex matched by id.
+
+        The match key is passed as a Cypher parameter (handles quotes/newlines/
+        backslashes safely); the embedding stays an inline literal because LIST
+        params conflict with the LSM_VECTOR index.
+        """
         if not emb:
             return
-        safe_id = entity_id.replace("'", "''")
-        stmt = f"UPDATE {vertex_type} SET embedding = {_emb_sql(emb)} WHERE id = '{safe_id}'"  # nosec B608
-        await self._c.command(db, stmt, language="sql")
+        stmt = f"MATCH (n:{vertex_type} {{id: $key}}) SET n.embedding = {_emb_sql(emb)}"  # nosec B608
+        await self._c.command(db, stmt, params={"key": entity_id})
 
     async def _set_embedding_by_name(
         self, db: str, vertex_type: str, name: str, emb: list[float]
     ) -> None:
-        """SQL UPDATE to set embedding on a vertex matched by name."""
+        """Set embedding on a vertex matched by name (see :meth:`_set_embedding`)."""
         if not emb:
             return
-        safe_name = name.replace("'", "''")
-        stmt = f"UPDATE {vertex_type} SET embedding = {_emb_sql(emb)} WHERE name = '{safe_name}'"  # nosec B608
-        await self._c.command(db, stmt, language="sql")
+        stmt = f"MATCH (n:{vertex_type} {{name: $key}}) SET n.embedding = {_emb_sql(emb)}"  # nosec B608
+        await self._c.command(db, stmt, params={"key": name})
 
     def _dedup_rows(self, rows: list[dict]) -> list[dict]:
         """Deduplicate vectorNeighbors results by @rid."""
@@ -223,7 +254,8 @@ class ArcadeDBVectorStore:
         await self._c.command(
             _STM_DB,
             "MERGE (n:CHUNK {id: $id}) SET n.session_id = $sid, n.text = $text, "
-            "n.file_id = $fid, n.heading_path = $hp, n.memory_class = $mc",
+            "n.file_id = $fid, n.heading_path = $hp, n.memory_class = $mc, "
+            "n.metadata = $meta",
             params={
                 "id": cid,
                 "sid": chunk.get("session_id", ""),
@@ -231,6 +263,7 @@ class ArcadeDBVectorStore:
                 "fid": chunk.get("file_id") or "",
                 "hp": chunk.get("heading_path") or "",
                 "mc": mc,
+                "meta": _dump_meta(chunk.get("metadata")),
             },
         )
         if chunk.get("embedding"):
@@ -242,7 +275,8 @@ class ArcadeDBVectorStore:
         await self._c.command(
             _STM_DB,
             "MERGE (n:TURN {id: $id}) SET n.session_id = $sid, n.role = $role, "
-            "n.text = $text, n.dialog_id = $did, n.turn_index = $ti",
+            "n.text = $text, n.dialog_id = $did, n.turn_index = $ti, "
+            "n.metadata = $meta",
             params={
                 "id": tid,
                 "sid": turn.get("session_id", ""),
@@ -250,6 +284,7 @@ class ArcadeDBVectorStore:
                 "text": turn.get("text", ""),
                 "did": turn.get("dialog_id") or "",
                 "ti": turn.get("turn_index") or 0,
+                "meta": _dump_meta(turn.get("metadata")),
             },
         )
         if turn.get("embedding"):
@@ -288,7 +323,7 @@ class ArcadeDBVectorStore:
                     "file_id": r.get("file_id") or "",
                     "text": r.get("text", ""),
                     "heading_path": r.get("heading_path") or "",
-                    "metadata": {},
+                    "metadata": _load_meta(r.get("metadata")),
                     "cosine_score": max(0.0, 1.0 - dist),
                 }
             )
@@ -323,7 +358,7 @@ class ArcadeDBVectorStore:
                     "turn_index": r.get("turn_index"),
                     "role": r.get("role", ""),
                     "text": r.get("text", ""),
-                    "metadata": {},
+                    "metadata": _load_meta(r.get("metadata")),
                     "cosine_score": max(0.0, 1.0 - dist),
                 }
             )
@@ -364,7 +399,7 @@ class ArcadeDBVectorStore:
                     "file_id": r.get("file_id") or "",
                     "text": r.get("text", ""),
                     "heading_path": r.get("heading_path") or "",
-                    "metadata": {},
+                    "metadata": _load_meta(r.get("metadata")),
                     "cosine_score": max(0.0, 1.0 - dist),
                 }
             )
@@ -402,7 +437,7 @@ class ArcadeDBVectorStore:
                     "turn_index": r.get("turn_index"),
                     "role": r.get("role", ""),
                     "text": r.get("text", ""),
-                    "metadata": {},
+                    "metadata": _load_meta(r.get("metadata")),
                     "cosine_score": max(0.0, 1.0 - dist),
                 }
             )
@@ -479,7 +514,8 @@ class ArcadeDBVectorStore:
                 rows = await self._c.query(
                     db,
                     "MATCH (n:CHUNK) WHERE n.id IN $ids RETURN n.id AS id, "
-                    "n.file_id AS file_id, n.text AS text, n.memory_class AS memory_class",
+                    "n.file_id AS file_id, n.text AS text, "
+                    "n.memory_class AS memory_class, n.metadata AS metadata",
                     params={"ids": chunk_ids},
                 )
             except Exception:
@@ -487,10 +523,12 @@ class ArcadeDBVectorStore:
             for r in rows:
                 cid = r.get("id", "")
                 if cid and cid not in result:
+                    meta = _load_meta(r.get("metadata"))
+                    meta.setdefault("memory_class", r.get("memory_class") or "raw_evidence")
                     result[cid] = {
                         "doc_id": r.get("file_id") or "",
                         "text": r.get("text", ""),
-                        "metadata": {"memory_class": r.get("memory_class") or "raw_evidence"},
+                        "metadata": meta,
                     }
         return result
 
