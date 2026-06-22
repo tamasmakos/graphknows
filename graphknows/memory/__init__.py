@@ -1,23 +1,8 @@
 # Memory package — STM ingestion, dialog writing, and LTM flush
 
-from graphknows.memory.adapter import (
-    AgentMemoryAdapter,
-    FlushResult,
-    GraphknowsAdapter,
-    GraphknowsMemoryAdapter,
-    MemoryStats,
-    RecallHit,
-)
-from graphknows.memory.adapter_types import (
-    AdapterCapabilities,
-    ArtifactRecord,
-    MemoryClass,
-    PromoteOptions,
-    RecallRequest,
-    TurnRecord,
-)
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.models.ingest_options import IngestOptions
+from graphknows.memory.models.memory_class import MemoryClass
 from graphknows.memory.models.message import Message, MessageInput, Role, normalize_messages
 from graphknows.memory.models.scope import MemoryScope
 from graphknows.memory.query import DETRetriever, RetrievalContext
@@ -30,30 +15,19 @@ from graphknows.memory.stores.arcadedb import (
 from graphknows.memory.stores.embedder import embed, embed_one, get_embedder
 
 __all__ = [
-    "AdapterCapabilities",
-    "AgentMemoryAdapter",
     "ArcadeDBClient",
     "ArcadeDBLTMStore",
     "ArcadeDBSTMStore",
     "ArcadeDBVectorStore",
-    "ArtifactRecord",
     "DETRetriever",
-    "FlushResult",
-    "GraphknowsAdapter",
-    "GraphknowsMemoryAdapter",
     "IngestOptions",
     "IngestResult",
     "MemoryClass",
     "MemoryScope",
-    "MemoryStats",
     "Message",
     "MessageInput",
-    "PromoteOptions",
-    "RecallHit",
-    "RecallRequest",
     "RetrievalContext",
     "Role",
-    "TurnRecord",
     "embed",
     "embed_one",
     "get_embedder",

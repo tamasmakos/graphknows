@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from graphknows.memory.adapter_types import MemoryClass
 from graphknows.memory.models.contracts import (
     CommunityAssignment,
-    MemoryRecord,
-    RetrievalHit,
     SessionSnapshot,
 )
 from graphknows.memory.models.promotion import PromotionRequest
@@ -47,29 +44,7 @@ def test_promotion_request_allows_llm_assisted_topic_enrichment() -> None:
     assert policy.run_topics is True
 
 
-def test_memory_record_carries_community_metadata() -> None:
-    record = MemoryRecord(
-        id="c1",
-        session_id="s1",
-        text="hello",
-        memory_class=MemoryClass.fact,
-        community_id=4,
-        community_weight=2.5,
-    )
-
-    assert record.kind == "chunk"
-    assert record.community_id == 4
-    assert record.community_weight == 2.5
-
-
-def test_retrieval_hit_and_community_assignment_contracts() -> None:
-    hit = RetrievalHit(
-        chunk_id="c1",
-        text="policy",
-        source="semantic",
-        rank=0,
-        metadata={"community_id": 1, "community_weight": 2.0},
-    )
+def test_community_assignment_contract() -> None:
     assignment = CommunityAssignment(
         community_id=1,
         entity_names=["EU"],
@@ -78,5 +53,5 @@ def test_retrieval_hit_and_community_assignment_contracts() -> None:
         algorithm="leiden",
     )
 
-    assert hit.metadata["community_id"] == assignment.community_id
+    assert assignment.community_id == 1
     assert assignment.chunk_ids == ["c1"]

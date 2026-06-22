@@ -1,38 +1,22 @@
 """graphknows — unified agentic memory as an importable library.
 
 Any agent project can integrate graphknows without HTTP, hardcoded endpoints,
-or framework-specific glue::
+or framework-specific glue. ``GraphKnowsRuntime`` is the single transport-neutral
+composition root for all memory operations::
 
-    from graphknows import GraphKnows
+    from graphknows import GraphKnowsRuntime
 
-    async with GraphKnows.from_env() as gk:
-        # Framework-agnostic tool list (name + description + JSON Schema + async callable)
-        tools = gk.tools          # list[GraphKnowsTool]
+    rt = GraphKnowsRuntime()                       # builds from env / .env
+    await rt.ingest_memory("some text", session_id="s1")
+    hits = await rt.recall_memory("my query", session_id="s1")
 
-        # Direct programmatic access
-        ctx = await gk.retriever.retrieve("my query", session_id="s1")
-
-Wrapping tools for a specific framework takes one line by the caller:
-
-    # LangChain
-    lc_tools = [StructuredTool.from_function(t.fn, name=t.name, description=t.description)
-                for t in gk.tools]
-
-    # OpenAI Agents SDK
-    oa_tools = [FunctionTool(t.fn, name=t.name, description=t.description)
-                for t in gk.tools]
-
-    # PydanticAI
-    pa_tools = [Tool(t.fn, name=t.name, description=t.description) for t in gk.tools]
-
-No agent framework is imported by this package.
+The same runtime backs the MCP stdio server and the web Memory Mirror, so every
+transport sees identical behaviour.
 """
 
 from __future__ import annotations
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.container import GraphKnowsContainer
-from graphknows.mcp.tool import GraphKnowsTool
 from graphknows.memory.query import DETRetriever, RetrievalContext
 from graphknows.memory.stores.arcadedb import (
     ArcadeDBClient,
@@ -41,10 +25,7 @@ from graphknows.memory.stores.arcadedb import (
     ArcadeDBVectorStore,
 )
 from graphknows.memory.stores.embedder import embed, embed_one, get_embedder
-
-# Ergonomic top-level alias — the most common import pattern:
-#   from graphknows import GraphKnows
-GraphKnows = GraphKnowsContainer
+from graphknows.runtime import GraphKnowsRuntime
 
 __all__ = [
     "ArcadeDBClient",
@@ -52,10 +33,8 @@ __all__ = [
     "ArcadeDBSTMStore",
     "ArcadeDBVectorStore",
     "DETRetriever",
-    "GraphKnows",
-    "GraphKnowsContainer",
+    "GraphKnowsRuntime",
     "GraphKnowsSettings",
-    "GraphKnowsTool",
     "RetrievalContext",
     "embed",
     "embed_one",

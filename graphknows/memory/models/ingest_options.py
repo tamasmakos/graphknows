@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from graphknows.memory.adapter_types import MemoryClass
+from graphknows.memory.models.memory_class import MemoryClass
 from graphknows.memory.models.scope import MemoryScope
 
 

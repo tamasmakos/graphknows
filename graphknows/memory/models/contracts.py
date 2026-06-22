@@ -2,56 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
-
-from graphknows.memory.adapter_types import MemoryClass
-
-
-class ExtractedEntity(BaseModel):
-    """Entity extracted from one memory record."""
-
-    name: str
-    type: str = "ENTITY"
-    confidence: float = 1.0
-    aliases: list[str] = Field(default_factory=list)
-
-
-class ExtractedRelation(BaseModel):
-    """Relation extracted from one memory record."""
-
-    source: str
-    relation: str
-    target: str
-    confidence: float = 0.5
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ExtractionResult(BaseModel):
-    """Normalized extraction result used across extractor implementations."""
-
-    entities: list[ExtractedEntity] = Field(default_factory=list)
-    relations: list[ExtractedRelation] = Field(default_factory=list)
-
-
-class MemoryRecord(BaseModel):
-    """One normalized text unit stored in memory."""
-
-    id: str
-    session_id: str
-    text: str
-    kind: Literal["chunk", "turn"] = "chunk"
-    memory_class: MemoryClass = MemoryClass.raw_evidence
-    file_id: str = ""
-    dialog_id: str = ""
-    role: str = ""
-    heading_path: str = ""
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    entities: list[ExtractedEntity] = Field(default_factory=list)
-    relations: list[ExtractedRelation] = Field(default_factory=list)
-    community_id: int | None = None
-    community_weight: float | None = None
 
 
 class CommunityAssignment(BaseModel):
@@ -98,16 +51,3 @@ class PromotionAudit(BaseModel):
     entity_aliases: dict[str, list[str]] = Field(default_factory=dict)
     merged_entities: int = 0
     communities: list[CommunityAssignment] = Field(default_factory=list)
-
-
-class RetrievalHit(BaseModel):
-    """Common hit model emitted by deterministic retrieval collectors."""
-
-    chunk_id: str
-    text: str = ""
-    source: Literal["stm_graph", "ltm_graph", "semantic"] = "semantic"
-    rank: int = 0
-    doc_id: str = ""
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    entities: list[Any] = Field(default_factory=list)
-    boost: float = 1.0
