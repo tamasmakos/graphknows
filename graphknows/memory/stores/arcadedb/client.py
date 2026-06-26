@@ -20,6 +20,26 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _raise_for_status(r: httpx.Response) -> None:
+    """Like ``Response.raise_for_status`` but include the response body.
+
+    ArcadeDB returns the real error (``"detail"`` / ``"exception"``) in the
+    body; the default httpx message only carries the status code, which hides
+    idempotent signals like "already exists" from callers that match on them.
+    """
+    if r.is_success:
+        return
+    try:
+        body = r.text
+    except Exception:  # pragma: no cover - body already consumed/streamed
+        body = ""
+    raise httpx.HTTPStatusError(
+        f"{r.status_code} {r.reason_phrase} for {r.request.url}: {body}",
+        request=r.request,
+        response=r,
+    )
+
+
 class ArcadeDBClient:
     """Async REST client for ArcadeDB.
 
@@ -41,10 +61,14 @@ class ArcadeDBClient:
 
     async def connect(self) -> None:
         """Open the underlying httpx connection pool."""
+        transport = httpx.AsyncHTTPTransport(retries=3)
         self._client = httpx.AsyncClient(
             auth=self._auth,
-            timeout=30.0,
+            # Separate connect vs. read timeouts: fast-fail on connection issues,
+            # allow longer reads for large Cypher result sets.
+            timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0),
             headers={"Content-Type": "application/json"},
+            transport=transport,
         )
 
     async def close(self) -> None:
@@ -68,7 +92,7 @@ class ArcadeDBClient:
             f"{self._base}/api/v1/server",
             json={"command": command},
         )
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json()
 
     async def create_database(self, name: str) -> None:
@@ -120,7 +144,7 @@ class ArcadeDBClient:
             json=body,
             headers=headers,
         )
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json().get("result", [])
 
     async def query(
@@ -145,7 +169,7 @@ class ArcadeDBClient:
             f"{self._base}/api/v1/query/{db}",
             json=body,
         )
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json().get("result", [])
 
     # ------------------------------------------------------------------
@@ -155,7 +179,7 @@ class ArcadeDBClient:
     async def begin(self, db: str) -> str:
         """Begin a transaction and return the ``arcadedb-session-id`` token."""
         r = await self._c().post(f"{self._base}/api/v1/begin/{db}")
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.headers["arcadedb-session-id"]
 
     async def commit(self, db: str, session_id: str) -> None:
@@ -164,7 +188,7 @@ class ArcadeDBClient:
             f"{self._base}/api/v1/commit/{db}",
             headers={"arcadedb-session-id": session_id},
         )
-        r.raise_for_status()
+        _raise_for_status(r)
 
     async def rollback(self, db: str, session_id: str) -> None:
         """Rollback a transaction (best-effort)."""

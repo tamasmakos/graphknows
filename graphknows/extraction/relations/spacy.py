@@ -89,7 +89,6 @@ from __future__ import annotations
 
 import logging
 import re
-from functools import lru_cache
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -463,7 +462,7 @@ def _overlaps(a: str, b: str) -> bool:
 def _ground_span(
     span_text: str,
     gliner_entities: list[dict[str, Any]],
-    spacy_ent_map: dict[tuple[int, int], str],
+    spacy_ent_map: dict[tuple[int, int], tuple[str, str]],
     default_label: str = "ENTITY",
 ) -> tuple[str, str]:
     """Align a dep-extracted span with a GLiNER2 entity. Return (text, label)."""
@@ -486,17 +485,16 @@ def _ground_span(
         return canonical, label
 
     # Fallback: SpaCy NER type
-    for (start, end), ner_type in spacy_ent_map.items():
-        span_lower = span_text.lower()
-        if _overlaps(span_text, span_lower):
+    for ner_type, ent_surface in spacy_ent_map.values():
+        if _overlaps(span_text, ent_surface):
             mapped = _SPACY_NER_TO_LABEL.get(ner_type, default_label)
             return span_text.strip(), mapped
 
     return span_text.strip(), default_label
 
 
-def _build_spacy_ent_map(doc: Any) -> dict[tuple[int, int], str]:
-    return {(ent.start, ent.end): ent.label_ for ent in doc.ents}
+def _build_spacy_ent_map(doc: Any) -> dict[tuple[int, int], tuple[str, str]]:
+    return {(ent.start, ent.end): (ent.label_, ent.text) for ent in doc.ents}
 
 
 # ---------------------------------------------------------------------------

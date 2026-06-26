@@ -13,7 +13,6 @@ ArcadeDB constraints:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from typing import Any
@@ -623,38 +622,62 @@ class ArcadeDBVectorStore:
                 f"RETURN n.id AS id, n.session_id AS session_id, n.text AS text, "
                 f"n.file_id AS file_id, n.heading_path AS heading_path, "
                 f"n.dialog_id AS dialog_id, n.turn_index AS turn_index, "
-                f"n.role AS role, n.embedding AS embedding, n.memory_class AS memory_class",
+                f"n.role AS role, n.embedding AS embedding, n.memory_class AS memory_class, "
+                f"n.metadata AS metadata",
                 params={"sid": session_id},
             )
         except Exception as exc:
             logger.warning("promote_to_ltm read %s: %s", vtype, exc)
             return 0
 
-        count = 0
+        # Separate rows with/without non-id props to build two UNWIND batches.
+        # Embedding writes must remain per-item (SQL literal constraint).
+        rows_with_props: list[dict] = []
+        rows_id_only: list[str] = []
         for r in rows:
             rid = r.get("id", "")
             if not rid:
                 continue
-            # MERGE in LTM (without embedding)
             props = {
                 k: v
                 for k, v in r.items()
                 if v is not None and not k.startswith("@") and k != "embedding"
             }
-            set_clauses = ", ".join(f"n.{k} = ${k}" for k in props if k != "id")
-            if set_clauses:
-                await self._c.command(
-                    _LTM_DB,
-                    f"MERGE (n:{vtype} {{id: $id}}) SET {set_clauses}",
-                    params={"id": rid, **props},
-                )
+            if len(props) > 1:  # more than just "id"
+                rows_with_props.append({"id": rid, **props})
             else:
+                rows_id_only.append(rid)
+
+        tx = await self._c.begin(_LTM_DB)
+        try:
+            if rows_with_props:
+                # Build a generic SET from the union of all property keys present.
+                all_keys = {k for row in rows_with_props for k in row if k != "id"}
+                set_clauses = ", ".join(f"n.{k} = row.{k}" for k in sorted(all_keys))
                 await self._c.command(
                     _LTM_DB,
-                    f"MERGE (n:{vtype} {{id: $id}})",
-                    params={"id": rid},
+                    f"UNWIND $rows AS row MERGE (n:{vtype} {{id: row.id}}) SET {set_clauses}",
+                    params={"rows": rows_with_props},
+                    session_id=tx,
                 )
-            # Set embedding via SQL
+            if rows_id_only:
+                await self._c.command(
+                    _LTM_DB,
+                    f"UNWIND $rows AS row MERGE (n:{vtype} {{id: row}})",
+                    params={"rows": rows_id_only},
+                    session_id=tx,
+                )
+            await self._c.commit(_LTM_DB, tx)
+        except Exception:
+            await self._c.rollback(_LTM_DB, tx)
+            raise
+
+        # Embedding writes are per-item (SQL literal, cannot be batched via params).
+        count = 0
+        for r in rows:
+            rid = r.get("id", "")
+            if not rid:
+                continue
             emb = r.get("embedding")
             if emb:
                 await self._set_embedding(_LTM_DB, vtype, rid, emb)
@@ -667,41 +690,66 @@ class ArcadeDBVectorStore:
 
     async def upsert_chunks(self, session_id: str, chunks: list[dict[str, Any]]) -> None:
         """Upsert chunks into LTM."""
+        rows = [
+            {
+                "id": c["id"],
+                "sid": session_id,
+                "text": c.get("text", ""),
+                "fid": c.get("doc_id", ""),
+                "meta": _dump_meta(c.get("metadata")),
+            }
+            for c in chunks
+            if c.get("id")
+        ]
+        if rows:
+            tx = await self._c.begin(_LTM_DB)
+            try:
+                await self._c.command(
+                    _LTM_DB,
+                    "UNWIND $rows AS row MERGE (n:CHUNK {id: row.id}) "
+                    "SET n.session_id = row.sid, n.text = row.text, "
+                    "n.file_id = row.fid, n.metadata = row.meta",
+                    params={"rows": rows},
+                    session_id=tx,
+                )
+                await self._c.commit(_LTM_DB, tx)
+            except Exception:
+                await self._c.rollback(_LTM_DB, tx)
+                raise
+        # Embedding writes are per-item (SQL literal, cannot be batched via params).
         for c in chunks:
-            cid = c.get("id", "")
-            if not cid:
-                continue
-            await self._c.command(
-                _LTM_DB,
-                "MERGE (n:CHUNK {id: $id}) SET n.session_id = $sid, n.text = $text, "
-                "n.file_id = $fid",
-                params={
-                    "id": cid,
-                    "sid": session_id,
-                    "text": c.get("text", ""),
-                    "fid": c.get("doc_id", ""),
-                },
-            )
-            if c.get("embedding"):
-                await self._set_embedding(_LTM_DB, "CHUNK", cid, c["embedding"])
+            if c.get("id") and c.get("embedding"):
+                await self._set_embedding(_LTM_DB, "CHUNK", c["id"], c["embedding"])
 
     async def upsert_entities(self, entities: list[dict[str, Any]]) -> None:
         """Upsert corpus-level entity embeddings."""
+        rows = [
+            {
+                "name": e["name"],
+                "label": e.get("label", "Entity"),
+                "cc": e.get("chunk_count", 0),
+            }
+            for e in entities
+            if e.get("name")
+        ]
+        if rows:
+            tx = await self._c.begin(_LTM_DB)
+            try:
+                await self._c.command(
+                    _LTM_DB,
+                    "UNWIND $rows AS row MERGE (n:ENTITY {name: row.name}) "
+                    "SET n.label = row.label, n.chunk_count = row.cc",
+                    params={"rows": rows},
+                    session_id=tx,
+                )
+                await self._c.commit(_LTM_DB, tx)
+            except Exception:
+                await self._c.rollback(_LTM_DB, tx)
+                raise
+        # Embedding writes are per-item (SQL literal, cannot be batched via params).
         for e in entities:
-            name = e.get("name", "")
-            if not name:
-                continue
-            await self._c.command(
-                _LTM_DB,
-                "MERGE (n:ENTITY {name: $name}) SET n.label = $label, n.chunk_count = $cc",
-                params={
-                    "name": name,
-                    "label": e.get("label", "Entity"),
-                    "cc": e.get("chunk_count", 0),
-                },
-            )
-            if e.get("embedding"):
-                await self._set_embedding_by_name(_LTM_DB, "ENTITY", name, e["embedding"])
+            if e.get("name") and e.get("embedding"):
+                await self._set_embedding_by_name(_LTM_DB, "ENTITY", e["name"], e["embedding"])
 
     async def write_ltm_topic(self, topic: dict[str, Any]) -> None:
         """Upsert a topic into LTM."""
@@ -728,25 +776,39 @@ class ArcadeDBVectorStore:
         """Write community metadata onto LTM CHUNK and TURN vertices."""
         if not assignments:
             return
+
+        # Flatten all chunk/turn rows across assignments into two lists.
+        chunk_rows: list[dict[str, Any]] = []
+        turn_rows: list[dict[str, Any]] = []
         for assignment in assignments:
             community_id = assignment.get("community_id")
             weight = float(assignment.get("weight", 1.0))
-            chunk_ids = assignment.get("chunk_ids") or []
-            turn_ids = assignment.get("turn_ids") or []
+            for cid in assignment.get("chunk_ids") or []:
+                chunk_rows.append({"id": cid, "sid": session_id, "cid": community_id, "w": weight})
+            for tid in assignment.get("turn_ids") or []:
+                turn_rows.append({"id": tid, "sid": session_id, "cid": community_id, "w": weight})
 
-            for cid in chunk_ids:
-                with contextlib.suppress(Exception):
-                    await self._c.command(
-                        _LTM_DB,
-                        "MATCH (n:CHUNK {id: $id, session_id: $sid}) "
-                        "SET n.community_id = $cid, n.community_weight = $w",
-                        params={"id": cid, "sid": session_id, "cid": community_id, "w": weight},
-                    )
-            for tid in turn_ids:
-                with contextlib.suppress(Exception):
-                    await self._c.command(
-                        _LTM_DB,
-                        "MATCH (n:TURN {id: $id, session_id: $sid}) "
-                        "SET n.community_id = $cid, n.community_weight = $w",
-                        params={"id": tid, "sid": session_id, "cid": community_id, "w": weight},
-                    )
+        tx = await self._c.begin(_LTM_DB)
+        try:
+            if chunk_rows:
+                await self._c.command(
+                    _LTM_DB,
+                    "UNWIND $rows AS row "
+                    "MATCH (n:CHUNK {id: row.id, session_id: row.sid}) "
+                    "SET n.community_id = row.cid, n.community_weight = row.w",
+                    params={"rows": chunk_rows},
+                    session_id=tx,
+                )
+            if turn_rows:
+                await self._c.command(
+                    _LTM_DB,
+                    "UNWIND $rows AS row "
+                    "MATCH (n:TURN {id: row.id, session_id: row.sid}) "
+                    "SET n.community_id = row.cid, n.community_weight = row.w",
+                    params={"rows": turn_rows},
+                    session_id=tx,
+                )
+            await self._c.commit(_LTM_DB, tx)
+        except Exception:
+            await self._c.rollback(_LTM_DB, tx)
+            raise

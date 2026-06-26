@@ -23,8 +23,8 @@ from graphknows.config.llm import (
     _get_openrouter_api_key,
     normalize_openrouter_model,
 )
-from graphknows.extraction.utils import standardize_label
 from graphknows.extraction.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
+from graphknows.extraction.utils import standardize_label
 
 log = logging.getLogger(__name__)
 
@@ -120,11 +120,6 @@ def _is_empty_lm_response_error(exc: Exception) -> bool:
             "empty or null response",
             "failed to parse the lm response",
             "did not include triplets",
-            # Malformed/incomplete triplets (often from reasoning-model output
-            # truncated at max_tokens) raise pydantic ValidationError. Treat as
-            # "no parseable relations" instead of aborting the whole ingest.
-            "validation error",
-            "field required",
         )
     )
 
@@ -355,7 +350,12 @@ class DSPyExtractor(BaseExtractor):
             allowed_norm = set(ontology_relation_types)
 
             for triplet in triplets:
-                raw = self._extract_triplet_fields(triplet)
+                try:
+                    raw = self._extract_triplet_fields(triplet)
+                except Exception as item_exc:
+                    log.debug("Skipping malformed triplet item: %s", item_exc)
+                    triplet_decisions.append({"kept": False, "drop_reason": "malformed_item"})
+                    continue
                 raw_triplets.append(raw)
 
                 valid, drop_reason = self._triplet_is_valid(raw, allowed_norm)
@@ -406,6 +406,32 @@ class DSPyExtractor(BaseExtractor):
                         "error": str(e),
                     },
                 )
+            # Pydantic ValidationError during DSPy list parsing: one or more
+            # triplets were malformed.  Log and return empty so the chunk is not
+            # lost entirely from the ingest pipeline.  Individual malformed items
+            # inside a successfully-parsed list are already handled per-item above.
+            try:
+                from pydantic import ValidationError as _PydanticValidationError
+
+                if isinstance(e, _PydanticValidationError):
+                    log.warning(
+                        "DSPy pydantic validation error — skipping malformed triplets: %s",
+                        e,
+                    )
+                    return (
+                        [],
+                        [],
+                        {
+                            "raw_triplets": [],
+                            "triplet_decisions": [],
+                            "ontology_classes": ontology_classes,
+                            "ontology_relation_types": ontology_relation_types,
+                            "error_type": "validation_error",
+                            "error": str(e),
+                        },
+                    )
+            except ImportError:
+                pass
             raise RuntimeError(f"DSPy relation extraction failed: {e}") from e
 
 

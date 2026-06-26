@@ -98,6 +98,8 @@ class CodeParser(BaseParser):
                     )
                 )
 
+        if not segments:
+            return self._parse_generic(text, source_id, title, lang, source_hint)
         return segments
 
     def _parse_generic(

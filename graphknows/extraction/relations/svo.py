@@ -26,29 +26,66 @@ from graphknows.extraction.relations.spacy import _has_negation, get_spacy_nlp
 # ---------------------------------------------------------------------------
 VERB_RELATION: dict[str, str] = {
     # movement / attendance
-    "go": "WENT_TO", "visit": "WENT_TO", "travel": "WENT_TO", "come": "WENT_TO",
-    "attend": "ATTENDED", "move": "MOVED_TO", "join": "JOINED",
+    "go": "WENT_TO",
+    "visit": "WENT_TO",
+    "travel": "WENT_TO",
+    "come": "WENT_TO",
+    "attend": "ATTENDED",
+    "move": "MOVED_TO",
+    "join": "JOINED",
     # activities / doing / creating
-    "do": "DID", "run": "DID", "play": "DID", "paint": "DID", "practice": "DID",
-    "host": "DID", "organize": "DID", "read": "DID", "watch": "DID", "carve": "DID",
-    "make": "MADE", "build": "MADE", "create": "MADE", "write": "MADE", "cook": "MADE",
-    "start": "STARTED", "continue": "PURSUES", "pursue": "PURSUES",
-    "study": "STUDIES", "prioritize": "PRIORITIZES",
+    "do": "DID",
+    "run": "DID",
+    "play": "DID",
+    "paint": "DID",
+    "practice": "DID",
+    "host": "DID",
+    "organize": "DID",
+    "read": "DID",
+    "watch": "DID",
+    "carve": "DID",
+    "make": "MADE",
+    "build": "MADE",
+    "create": "MADE",
+    "write": "MADE",
+    "cook": "MADE",
+    "start": "STARTED",
+    "continue": "PURSUES",
+    "pursue": "PURSUES",
+    "study": "STUDIES",
+    "prioritize": "PRIORITIZES",
     # preferences
-    "like": "LIKES", "love": "LIKES", "enjoy": "LIKES", "adore": "LIKES",
+    "like": "LIKES",
+    "love": "LIKES",
+    "enjoy": "LIKES",
+    "adore": "LIKES",
     "prefer": "PREFERS",
     # desires / plans
-    "want": "WANTS", "hope": "WANTS", "wish": "WANTS",
-    "plan": "PLANS_TO", "intend": "PLANS_TO", "aim": "PLANS_TO",
-    "decide": "DECIDED", "choose": "DECIDED",
+    "want": "WANTS",
+    "hope": "WANTS",
+    "wish": "WANTS",
+    "plan": "PLANS_TO",
+    "intend": "PLANS_TO",
+    "aim": "PLANS_TO",
+    "decide": "DECIDED",
+    "choose": "DECIDED",
     # possession
-    "have": "HAS", "own": "HAS", "keep": "HAS", "get": "GOT", "buy": "GOT",
+    "have": "HAS",
+    "own": "HAS",
+    "keep": "HAS",
+    "get": "GOT",
+    "buy": "GOT",
     "adopt": "ADOPTED",
     # emotion
-    "feel": "FEELS", "miss": "FEELS", "cherish": "FEELS", "fear": "FEELS",
+    "feel": "FEELS",
+    "miss": "FEELS",
+    "cherish": "FEELS",
+    "fear": "FEELS",
     "worry": "FEELS",
     # work / knowledge
-    "work": "WORKS_ON", "know": "KNOWS", "meet": "MET",
+    "work": "WORKS_ON",
+    "know": "KNOWS",
+    "meet": "MET",
 }
 
 # Copular "be" + noun phrase -> identity/role.
@@ -65,11 +102,45 @@ _DET_RE = re.compile(r"^(a|an|the|my|your|his|her|their|our|some|any|that|this)\
 _FIRST_PERSON = frozenset({"i", "me", "my", "myself", "mine", "i'm", "im"})
 _SECOND_PERSON = frozenset({"you", "your", "yours", "u"})
 _DISCOURSE = frozenset(
-    {"it", "that", "this", "these", "those", "which", "there", "here", "what",
-     "who", "they", "we", "one", "everyone", "something", "anyone", "nothing"}
+    {
+        "it",
+        "that",
+        "this",
+        "these",
+        "those",
+        "which",
+        "there",
+        "here",
+        "what",
+        "who",
+        "they",
+        "we",
+        "one",
+        "everyone",
+        "something",
+        "anyone",
+        "nothing",
+    }
 )
-_FILLER_OBJ = frozenset({"you", "me", "them", "us", "him", "her", "best", "thing",
-                         "lot", "stuff", "way", "kind", "sort", "part", "bit"})
+_FILLER_OBJ = frozenset(
+    {
+        "you",
+        "me",
+        "them",
+        "us",
+        "him",
+        "her",
+        "best",
+        "thing",
+        "lot",
+        "stuff",
+        "way",
+        "kind",
+        "sort",
+        "part",
+        "bit",
+    }
+)
 _NOISE_LABELS = frozenset({"TIME", "DATE", "CARDINAL", "ORDINAL", "PERCENT", "MONEY", "QUANTITY"})
 _BARE_NUM = re.compile(r"^[\W\d]+$")
 
@@ -78,14 +149,17 @@ def _speaker_units(text: str) -> tuple[list[tuple[str | None, str]], set[str]]:
     """Split a transcript into (speaker, content) turns; ``(None, text)`` for prose.
 
     Robust to space-flattened text: turns are delimited by the universal
-    ``Name:`` marker, and only names recurring >=2 times are treated as real
-    speakers (filters stray "Word:" false positives).
+    ``Name:`` marker.  A name is accepted as a real speaker if it appears at
+    the very start of a line/text (threshold = 1 occurrence) or recurs >=2
+    times anywhere, to avoid misclassifying mid-sentence colons in prose.
     """
+    _LINE_START_RE = re.compile(r"(?:^|\n)([A-Z][A-Za-z''.-]+(?:\s[A-Z][A-Za-z''.-]+)?):\s")
+    line_start_names: set[str] = {m.group(1).strip() for m in _LINE_START_RE.finditer(text)}
     matches = list(_TURN_RE.finditer(text))
     freq: dict[str, int] = {}
     for m in matches:
         freq[m.group(1).strip()] = freq.get(m.group(1).strip(), 0) + 1
-    speakers = {name for name, n in freq.items() if n >= 2}
+    speakers = {name for name, n in freq.items() if n >= 2 or name in line_start_names}
     if not speakers:
         return [(None, text)], set()
 
@@ -130,14 +204,16 @@ def extract_svo_relations(
             return False
         if t in speakers or any(t == s.lower() for s in speakers):
             return True
-        return any(t == n or (len(t) > 3 and t in n) or (len(n) > 3 and n in t) for n in entity_names)
+        return any(
+            t == n or (len(t) > 3 and t in n) or (len(n) > 3 and n in t) for n in entity_names
+        )
 
     def resolve(token_text: str, speaker: str | None, others: set[str]) -> str:
         t = token_text.lower().strip()
         if speaker and t in _FIRST_PERSON:
             return speaker
         if speaker and t in _SECOND_PERSON:
-            return next(iter(others), token_text)
+            return next(iter(sorted(others)), token_text)
         return token_text
 
     triples: list[dict[str, Any]] = []
@@ -179,7 +255,12 @@ def extract_svo_relations(
                         continue  # object must be a noun phrase, not adj/pronoun
                     obj = _clean_obj(ospan.text)
                     ol = obj.lower()
-                    if len(obj) < 3 or ol in _DISCOURSE or ol in _FILLER_OBJ or _BARE_NUM.match(obj):
+                    if (
+                        len(obj) < 3
+                        or ol in _DISCOURSE
+                        or ol in _FILLER_OBJ
+                        or _BARE_NUM.match(obj)
+                    ):
                         continue
                     key = (src.lower(), relation, ol)
                     if key in seen:

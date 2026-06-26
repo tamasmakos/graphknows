@@ -62,18 +62,32 @@ _SCHEMA_DDL = [
     "CREATE EDGE TYPE HAS_TURN IF NOT EXISTS",
     "CREATE EDGE TYPE MENTIONS IF NOT EXISTS",
     "CREATE EDGE TYPE NEXT IF NOT EXISTS",
+    # Properties — must be declared before indexing them (ArcadeDB requires the
+    # property to exist on the type before CREATE INDEX).
+    "CREATE PROPERTY SESSION.id IF NOT EXISTS STRING",
+    "CREATE PROPERTY FILE.id IF NOT EXISTS STRING",
+    "CREATE PROPERTY CHUNK.id IF NOT EXISTS STRING",
+    "CREATE PROPERTY CHUNK.session_id IF NOT EXISTS STRING",
+    "CREATE PROPERTY ENTITY.name IF NOT EXISTS STRING",
+    "CREATE PROPERTY ENTITY.session_id IF NOT EXISTS STRING",
+    "CREATE PROPERTY DIALOG.id IF NOT EXISTS STRING",
+    "CREATE PROPERTY DIALOG.session_id IF NOT EXISTS STRING",
+    "CREATE PROPERTY TURN.id IF NOT EXISTS STRING",
+    "CREATE PROPERTY TURN.session_id IF NOT EXISTS STRING",
     # Indexes — ArcadeDB SQL does not support IF NOT EXISTS for CREATE INDEX;
-    # duplicate errors are caught and ignored in ensure_schema().
-    "CREATE INDEX ON SESSION(id)",
-    "CREATE INDEX ON FILE(id)",
+    # duplicate errors are caught and ignored in ensure_schema(). An index type
+    # (UNIQUE | NOTUNIQUE) is mandatory: id keys are UNIQUE, secondary lookups
+    # NOTUNIQUE.
+    "CREATE INDEX ON SESSION(id) UNIQUE",
+    "CREATE INDEX ON FILE(id) UNIQUE",
     "CREATE INDEX ON CHUNK(id) UNIQUE",
-    "CREATE INDEX ON CHUNK(session_id)",
+    "CREATE INDEX ON CHUNK(session_id) NOTUNIQUE",
     "CREATE INDEX ON ENTITY(name) UNIQUE",
-    "CREATE INDEX ON ENTITY(session_id)",
+    "CREATE INDEX ON ENTITY(session_id) NOTUNIQUE",
     "CREATE INDEX ON DIALOG(id) UNIQUE",
-    "CREATE INDEX ON DIALOG(session_id)",
+    "CREATE INDEX ON DIALOG(session_id) NOTUNIQUE",
     "CREATE INDEX ON TURN(id) UNIQUE",
-    "CREATE INDEX ON TURN(session_id)",
+    "CREATE INDEX ON TURN(session_id) NOTUNIQUE",
 ]
 
 
@@ -104,8 +118,13 @@ class ArcadeDBSTMStore:
         for stmt in _SCHEMA_DDL:
             try:
                 await self._c.command(self._db, stmt, language="sql")
-            except Exception:
-                logger.debug("STM schema DDL skipped: %s", stmt, exc_info=True)
+            except Exception as exc:
+                exc_s = str(exc).lower()
+                if "already exists" in exc_s or "duplicate" in exc_s:
+                    logger.debug("STM schema DDL already exists (idempotent): %s", stmt[:60])
+                else:
+                    logger.warning("STM schema DDL failed: %s | %s", stmt[:60], exc)
+                    raise
 
     # ------------------------------------------------------------------
     # Session metadata
@@ -495,7 +514,14 @@ class ArcadeDBSTMStore:
         if not entity_names:
             return []
         safe = [n.replace("'", "") for n in entity_names]
-        where_parts = " OR ".join(f"toLower(e.name) CONTAINS '{n}'" for n in safe)
+        # Short tokens (< 5 chars) use exact match to avoid substring false positives
+        # (e.g. "war" matching "edward", "warren").  Longer tokens use CONTAINS.
+        where_parts = " OR ".join(
+            f"toLower(e.name) = '{n.lower()}'"
+            if len(n) < 5
+            else f"toLower(e.name) CONTAINS '{n.lower()}'"
+            for n in safe
+        )
         rows = await self._c.query(
             self._db,
             f"MATCH (e:ENTITY {{session_id: $sid}}) WHERE {where_parts} "

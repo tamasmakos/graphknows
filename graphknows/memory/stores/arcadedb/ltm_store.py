@@ -10,7 +10,6 @@ write_topic_summaries.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import logging
 import uuid
@@ -67,7 +66,7 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY ENTITY.contributing_session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY ENTITY.merged_session_count IF NOT EXISTS INTEGER"),
     ("sql", "CREATE INDEX ON ENTITY(name) UNIQUE"),
-    ("sql", "CREATE INDEX ON ENTITY(id)"),
+    ("sql", "CREATE INDEX ON ENTITY(id) NOTUNIQUE"),
     ("sql", "CREATE VERTEX TYPE CHUNK"),
     ("sql", "CREATE PROPERTY CHUNK.id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY CHUNK.session_id IF NOT EXISTS STRING"),
@@ -76,7 +75,7 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY CHUNK.chunk_index IF NOT EXISTS INTEGER"),
     ("sql", "CREATE PROPERTY CHUNK.file_id IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON CHUNK(id) UNIQUE"),
-    ("sql", "CREATE INDEX ON CHUNK(session_id)"),
+    ("sql", "CREATE INDEX ON CHUNK(session_id) NOTUNIQUE"),
     ("sql", "CREATE VERTEX TYPE TOPIC"),
     ("sql", "CREATE PROPERTY TOPIC.id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TOPIC.topic_id IF NOT EXISTS STRING"),
@@ -92,7 +91,7 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TOPIC.community_algorithm IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TOPIC.silhouette IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE INDEX ON TOPIC(id) UNIQUE"),
-    ("sql", "CREATE INDEX ON TOPIC(community_id)"),
+    ("sql", "CREATE INDEX ON TOPIC(community_id) NOTUNIQUE"),
     ("sql", "CREATE VERTEX TYPE FILE"),
     ("sql", "CREATE PROPERTY FILE.id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FILE.title IF NOT EXISTS STRING"),
@@ -126,7 +125,7 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY SESSIONENTITY.id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY SESSIONENTITY.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY SESSIONENTITY.name IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON SESSIONENTITY(session_id)"),
+    ("sql", "CREATE INDEX ON SESSIONENTITY(session_id) NOTUNIQUE"),
     # Canonical temporal nodes — one global node per resolved ISO date.
     ("sql", "CREATE VERTEX TYPE TEMPORAL"),
     ("sql", "CREATE PROPERTY TEMPORAL.iso IF NOT EXISTS STRING"),
@@ -180,8 +179,12 @@ class ArcadeDBLTMStore:
             try:
                 await self._c.command(_LTM_DB, stmt, language=lang)
             except Exception as exc:
-                if "already exists" not in str(exc).lower():
-                    logger.debug("LTM DDL (non-fatal): %s | %s", stmt[:60], exc)
+                exc_s = str(exc).lower()
+                if "already exists" in exc_s or "duplicate" in exc_s:
+                    pass  # idempotent re-creation — expected
+                else:
+                    logger.warning("LTM DDL failed (non-idempotent): %s | %s", stmt[:60], exc)
+                    raise
         logger.info("ArcadeDBLTMStore schema ensured")
 
     # keep legacy name used by container/builder
@@ -208,7 +211,12 @@ class ArcadeDBLTMStore:
             await self._c.command(_LTM_DB, f"CREATE EDGE TYPE {safe} IF NOT EXISTS", language="sql")
             self._declared_edge_types.add(edge_type)
         except Exception as exc:
-            logger.debug("ensure_edge_type %s: %s", safe, exc)
+            exc_s = str(exc).lower()
+            if "already exists" in exc_s or "duplicate" in exc_s:
+                self._declared_edge_types.add(edge_type)
+            else:
+                logger.warning("ensure_edge_type %s failed: %s", safe, exc)
+                raise
 
     # ------------------------------------------------------------------
     # Session subgraph write (main flush path)
@@ -217,12 +225,29 @@ class ArcadeDBLTMStore:
     async def write_session_subgraph(
         self, session_id: str, stm_data: dict[str, Any]
     ) -> dict[str, int]:
-        """MERGE full STM subgraph into LTM. Returns {nodes, edges}."""
+        """MERGE full STM subgraph into LTM. Returns {nodes, edges}.
+
+        Writes are auto-committed per element. A single enclosing transaction
+        is NOT used: the flush runs in a worker-thread event loop
+        (``runtime.flush_memory`` → ``run_in_executor``) while the ArcadeDB
+        client is bound to the server's main loop, so a begin/commit pair would
+        land on different connections and ArcadeDB would discard the
+        transaction's writes silently. Relation edge types are pre-declared via
+        ``_ensure_edge_type`` before first use.
+        """
         now = datetime.now(UTC).isoformat()
         nodes = edges = 0
         entity_by_name: dict[str, dict[str, Any]] = {
             e["name"]: e for e in stm_data.get("entities", [])
         }
+
+        # Pre-declare relation edge types (DDL auto-commits).
+        for r in stm_data.get("relation_edges", []):
+            rel = r.get("relation")
+            if rel:
+                safe = _safe_rel_label(rel)
+                if safe:
+                    await self._ensure_edge_type(safe)
 
         # SESSION node
         await self._cmd(
@@ -361,7 +386,6 @@ class ArcadeDBLTMStore:
             safe = _safe_rel_label(rel)
             if not safe:
                 continue
-            await self._ensure_edge_type(safe)
             await self._cmd(
                 f"MERGE (a:ENTITY {{name: $src}}) "
                 f"MERGE (b:ENTITY {{name: $tgt}}) "
@@ -398,7 +422,9 @@ class ArcadeDBLTMStore:
         # (most content) so we maximise coverage within the budget.
         _MAX_CHUNKS = 10
         if len(chunks) > _MAX_CHUNKS:
-            chunks = sorted(chunks, key=lambda c: len(c.get("text", "")), reverse=True)[:_MAX_CHUNKS]
+            chunks = sorted(chunks, key=lambda c: len(c.get("text", "")), reverse=True)[
+                :_MAX_CHUNKS
+            ]
         for chunk in chunks:
             relations, nodes_data, _ = await self._relation_extractor.extract_relations(
                 text=chunk["text"]
@@ -510,11 +536,15 @@ class ArcadeDBLTMStore:
     async def _write_community_ids(self, communities: dict[int, list[str]]) -> None:
         for cid, members in communities.items():
             for name in members:
-                with contextlib.suppress(Exception):
+                try:
                     await self._cmd(
                         "MATCH (e:ENTITY {name: $name}) SET e.community_id = $cid",
                         name=name,
                         cid=cid,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "_write_community_ids failed for %r (cid=%s): %s", name, cid, exc
                     )
 
     async def _entity_graph(
@@ -731,7 +761,7 @@ class ArcadeDBLTMStore:
 
                     embedding = await asyncio.to_thread(embed_one, emb_text)
                 except Exception as exc:
-                    log.debug("topic embed failed: %s", exc)
+                    logger.debug("topic embed failed: %s", exc)
             topic = {
                 "id": topic_id,
                 "topic_id": topic_id,
@@ -752,12 +782,14 @@ class ArcadeDBLTMStore:
 
             # IN_TOPIC edges
             for name in members:
-                with contextlib.suppress(Exception):
+                try:
                     await self._cmd(
                         "MATCH (tp:TOPIC {id: $tid}), (e:ENTITY {name: $name}) MERGE (e)-[:IN_TOPIC]->(tp)",
                         tid=topic_id,
                         name=name,
                     )
+                except Exception as exc:
+                    logger.warning("IN_TOPIC edge failed for %r -> %s: %s", name, topic_id, exc)
 
             # Write to vector store if provided
             if pg_store is not None:
@@ -1065,14 +1097,19 @@ class ArcadeDBLTMStore:
         return row
 
     def get_entity_by_name(self, name: str) -> dict[str, Any] | None:
-        """Sync wrapper — runs async query in a new event loop or current loop."""
+        """Sync wrapper — runs async query in a new event loop or worker thread."""
         import asyncio as _asyncio
+        import concurrent.futures
 
         try:
-            loop = _asyncio.get_running_loop()
+            _asyncio.get_running_loop()
         except RuntimeError:
             return _asyncio.run(self._get_entity_by_name_async(name))
-        return loop.run_until_complete(self._get_entity_by_name_async(name))
+        # A loop is already running; offload to a worker thread to avoid
+        # RuntimeError("This event loop is already running").
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_asyncio.run, self._get_entity_by_name_async(name))
+            return future.result()
 
     async def _get_entity_by_name_async(self, name: str) -> dict[str, Any] | None:
         rows = await self._qry(
@@ -1092,12 +1129,17 @@ class ArcadeDBLTMStore:
 
     def list_topic_nodes(self, min_entities: int = 3) -> list[dict[str, Any]]:
         import asyncio as _asyncio
+        import concurrent.futures
 
         try:
-            loop = _asyncio.get_running_loop()
+            _asyncio.get_running_loop()
         except RuntimeError:
             return _asyncio.run(self._list_topic_nodes_async(min_entities))
-        return loop.run_until_complete(self._list_topic_nodes_async(min_entities))
+        # A loop is already running; offload to a worker thread to avoid
+        # RuntimeError("This event loop is already running").
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_asyncio.run, self._list_topic_nodes_async(min_entities))
+            return future.result()
 
     async def _list_topic_nodes_async(self, min_entities: int) -> list[dict[str, Any]]:
         rows = await self._qry(
