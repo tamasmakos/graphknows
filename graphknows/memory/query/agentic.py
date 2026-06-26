@@ -127,8 +127,23 @@ class AgenticRetriever(BaseGraphRetriever):
 
             emb_array = bg_run(asyncio.to_thread(embed, [query], embed_model))
             emb = emb_array[0].tolist()
-            actual_sid = session_id if scope == "stm" else ""
-            results = bg_run(pg_bridge.search_chunks(emb, session_id=actual_sid, k=top_k))
+            # scope='stm'  → STM only (session-scoped)
+            # scope='ltm'  → LTM only (no session filter)
+            # scope='both' → merge STM + LTM, dedup by chunk_id
+            if scope == "stm":
+                results = bg_run(pg_bridge.search_chunks(emb, session_id=session_id, k=top_k))
+            elif scope == "ltm":
+                results = bg_run(pg_bridge.search_chunks(emb, session_id="", k=top_k))
+            else:  # 'both'
+                stm_res = bg_run(pg_bridge.search_chunks(emb, session_id=session_id, k=top_k))
+                ltm_res = bg_run(pg_bridge.search_chunks(emb, session_id="", k=top_k))
+                _seen: set[str] = set()
+                results = []
+                for _r in stm_res + ltm_res:
+                    if _r["chunk_id"] not in _seen:
+                        _seen.add(_r["chunk_id"])
+                        results.append(_r)
+                results = results[:top_k]
             # Do NOT add to collected — these are covered by the explicit fallback
             # vector search in retrieve(). collected is reserved for graph-traversal
             # chunks that pure vector search cannot find.
@@ -290,8 +305,7 @@ class AgenticRetriever(BaseGraphRetriever):
             return scored
         try:
             rows = await self._neo._qry(
-                "MATCH (c:CHUNK) WHERE c.id IN $ids "
-                "RETURN c.id AS id, c.community_weight AS w",
+                "MATCH (c:CHUNK) WHERE c.id IN $ids RETURN c.id AS id, c.community_weight AS w",
                 ids=ids,
             )
         except Exception as exc:
@@ -348,12 +362,23 @@ class AgenticRetriever(BaseGraphRetriever):
             ):
                 react_chunks[cid] = r
 
-        # Query-relevant vector search. The eval flushes to LTM and purges STM, so
-        # "both"/"ltm" must search LTM (empty session_id); only "stm" stays scoped.
+        # Query-relevant vector search covering both tiers when scope='both'.
         emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
         emb = emb_array[0].tolist()
-        fallback_sid = session_id if scope == "stm" else ""
-        vector_chunks = await self._pg.search_chunks(emb, session_id=fallback_sid, k=top_k)
+        if scope == "stm":
+            vector_chunks = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
+        elif scope == "ltm":
+            vector_chunks = await self._pg.search_chunks(emb, session_id="", k=top_k)
+        else:  # 'both'
+            _stm = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
+            _ltm = await self._pg.search_chunks(emb, session_id="", k=top_k)
+            _seen_v: set[str] = set()
+            vector_chunks = []
+            for _r in _stm + _ltm:
+                if _r["chunk_id"] not in _seen_v:
+                    _seen_v.add(_r["chunk_id"])
+                    vector_chunks.append(_r)
+            vector_chunks = vector_chunks[:top_k]
 
         # RRF-fuse the two channels by rank, not raw score: entity-graph cosine
         # scores saturate near 1.0 and would otherwise crowd out the genuinely
@@ -367,7 +392,10 @@ class AgenticRetriever(BaseGraphRetriever):
             for rank, r in enumerate(channel):
                 cid = r["chunk_id"]
                 prev = fused_scores.get(cid)
-                fused_scores[cid] = (rrf_score(rank) + (prev[0] if prev else 0.0), prev[1] if prev else r)
+                fused_scores[cid] = (
+                    rrf_score(rank) + (prev[0] if prev else 0.0),
+                    prev[1] if prev else r,
+                )
         # Community-weighted re-rank (llm_assisted only): GDS writes
         # CHUNK.community_weight, so chunks in denser, more cohesive communities
         # outrank incidental mentions. No-op when weights are absent.

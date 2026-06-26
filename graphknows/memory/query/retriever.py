@@ -145,7 +145,15 @@ class DETRetriever(BaseGraphRetriever):
         ) = gather_results  # type: ignore[misc]
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
-        for src in (src_stm, src_ltm, src_semantic, src_text, src_ltm_text, src_temporal, src_topic):
+        for src in (
+            src_stm,
+            src_ltm,
+            src_semantic,
+            src_text,
+            src_ltm_text,
+            src_temporal,
+            src_topic,
+        ):
             if isinstance(src, Exception):
                 log.warning("Retrieval source error: %s", src)
                 continue
@@ -159,15 +167,26 @@ class DETRetriever(BaseGraphRetriever):
                 else:
                     combined[cid] = (score, info)
 
-        ranked = sorted(combined.items(), key=lambda x: -x[1][0])[:top_k]
-        needs_fetch = [cid for cid, (_, info) in ranked if not info.get("metadata")]
-        text_map = await self.pg.get_chunks_by_ids(needs_fetch) if needs_fetch else {}
+        # Fetch metadata for all candidates that lack it so shaping can run
+        # before we cut to top_k — shaping affects ordering, not just display.
+        needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
+        text_map = await self.pg.get_chunks_by_ids(needs_meta) if needs_meta else {}
 
-        fused: list[dict[str, Any]] = []
-        for rank_i, (cid, (base_score, info)) in enumerate(ranked):
+        # Apply _community_boost and _shape_score to every candidate BEFORE
+        # sorting so the final order reflects the shaped score.
+        shaped_combined: list[tuple[str, float, dict[str, Any], dict[str, Any]]] = []
+        for cid, (base_score, info) in combined.items():
             fc = text_map.get(cid, {})
             meta = fc.get("metadata") or info.get("metadata") or {}
             shaped = _shape_score(base_score * _community_boost(meta), meta.get("memory_class"))
+            shaped_combined.append((cid, shaped, info, fc))
+
+        shaped_combined.sort(key=lambda x: -x[1])
+        ranked_shaped = shaped_combined[:top_k]
+
+        fused: list[dict[str, Any]] = []
+        for rank_i, (cid, shaped, info, fc) in enumerate(ranked_shaped):
+            meta = fc.get("metadata") or info.get("metadata") or {}
             ents = info.get("entities", [])
             fused.append(
                 {
@@ -333,7 +352,12 @@ class DETRetriever(BaseGraphRetriever):
         """
         if not safe_words:
             return []
-        where_entity = " OR ".join(f"toLower(e.name) CONTAINS '{w}'" for w in safe_words)
+        # Short tokens (< 5 chars) use exact match to avoid false substring hits
+        # (e.g. "jan" matching "January", "bob" matching "nobody").
+        where_entity = " OR ".join(
+            f"toLower(e.name) CONTAINS '{w}'" if len(w) >= 5 else f"toLower(e.name) = '{w}'"
+            for w in safe_words
+        )
         try:
             total_rows = await self.neo._qry("MATCH (c:CHUNK) RETURN count(c) AS n")
             total = int(total_rows[0]["n"]) if total_rows else 0
@@ -713,30 +737,41 @@ class DETRetriever(BaseGraphRetriever):
             return result
 
         all_rows = await asyncio.gather(*all_coros, return_exceptions=True)
-        for (label, source_tag), rows in zip(all_tagged, all_rows, strict=False):
+
+        # First pass: collect the best (minimum) rank per chunk across all ANN
+        # passes (original query + declarative variant, stm/ltm sub-calls).
+        # This prevents a chunk surfaced by both embeddings from receiving 2x
+        # RRF mass from a single logical 'semantic' source.
+        best_rank: dict[str, int] = {}
+        best_row: dict[str, dict] = {}
+        for (_label, _source_tag), rows in zip(all_tagged, all_rows, strict=False):
             if isinstance(rows, Exception):
-                log.warning("ANN %s failed: %s", label, rows)
+                log.warning("ANN %s failed: %s", _label, rows)
                 continue
             for rank, row in enumerate(rows):
-                metadata = row.get("metadata", {}) or {}
                 cid = row["id"]
-                # Score-aware fusion: blend a small cosine-similarity term onto the
-                # rank-based RRF score so calibrated similarity breaks ties without
-                # overriding multi-source agreement (alpha=0 → pure RRF).
-                cosine = float(row.get("cosine_score", 0.0) or 0.0)
-                score = rrf_score(rank) + self.fusion_alpha * cosine
-                _add_result(
-                    result,
-                    cid,
-                    score,
-                    {
-                        "text": row.get("text", ""),
-                        "entities": metadata.get("entity_names", []),
-                        "sources": {source_tag},
-                        "doc_id": row.get("file_id", row.get("doc_id", "")),
-                        "metadata": metadata,
-                    },
-                )
+                if cid not in best_rank or rank < best_rank[cid]:
+                    best_rank[cid] = rank
+                    best_row[cid] = row
+
+        # Second pass: emit ONE RRF contribution per chunk for the semantic source.
+        for cid, rank in best_rank.items():
+            row = best_row[cid]
+            metadata = row.get("metadata", {}) or {}
+            cosine = float(row.get("cosine_score", 0.0) or 0.0)
+            score = rrf_score(rank) + self.fusion_alpha * cosine
+            _add_result(
+                result,
+                cid,
+                score,
+                {
+                    "text": row.get("text", ""),
+                    "entities": metadata.get("entity_names", []),
+                    "sources": {"semantic"},
+                    "doc_id": row.get("file_id", row.get("doc_id", "")),
+                    "metadata": metadata,
+                },
+            )
         return result
 
 
