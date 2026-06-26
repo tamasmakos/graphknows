@@ -101,8 +101,10 @@ class GraphKnowsSettings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # .env file takes priority over container/shell env vars so that the
-        # repo .env is always the source of truth for model names and API keys.
+        """Order settings sources so the repo .env wins over container/shell env.
+
+        The .env file is the source of truth for model names and API keys.
+        """
         return init_settings, dotenv_settings, env_settings, file_secret_settings
 
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
@@ -159,19 +161,20 @@ class GraphKnowsSettings(BaseSettings):
                 env.get("OPENROUTER_API_KEY") or env.get("OPEN_ROUTER_API")
             )
 
-        # Push credentials and model names into os.environ so any code that reads
-        # os.environ directly (embedder.py, generator.py, judge.py) gets .env values.
-        if self.openrouter_api_key:
-            os.environ["OPENROUTER_API_KEY"] = self.openrouter_api_key
-            os.environ["OPEN_ROUTER_API"] = self.openrouter_api_key
-        if self.llm_model:
-            os.environ["LLM_MODEL"] = self.llm_model
-        if self.extraction_model:
-            os.environ["EXTRACTION_MODEL"] = self.extraction_model
-        if self.summarization_model:
-            os.environ["SUMMARISATION_MODEL"] = self.summarization_model
-        if self.embed_model:
-            os.environ["EMBED_MODEL"] = self.embed_model
+        # NOTE: os.environ writes were removed from this validator (Finding 5 —
+        # model validators must be side-effect-free and config is the bottom
+        # layer that other modules must not depend on via globals).
+        #
+        # Remaining os.environ readers for these keys:
+        #   - graphknows/memory/stores/embedder.py — reads EMBED_MODEL at
+        #     module-import time and OPENROUTER_API_KEY inside
+        #     _openrouter_api_key(); the embedder has its own _repo_env_key()
+        #     fallback that reads the repo .env directly.
+        #   - graphknows/config/llm.py — reads OPENROUTER_API_KEY/OPEN_ROUTER_API
+        #     as a last-resort fallback; callers should pass openrouter_api_key
+        #     via the config dict (builders/stores.py already does this).
+        #   - evaluation/ scripts — read LLM_MODEL/OPENROUTER_API_KEY directly;
+        #     those scripts must ensure the .env is loaded before importing.
 
         # Back-compat: derive the single mode from legacy env vars when MODE is
         # not set, so callers still exporting RELATION_EXTRACTION_MODE/RETRIEVAL_MODE
@@ -208,4 +211,4 @@ class GraphKnowsSettings(BaseSettings):
             raise ValueError("ARCADEDB_PASSWORD is still the development default.")
 
 
-from graphknows.config.health import check_backends, get_version  # noqa: F401, E402
+from graphknows.config.health import get_version  # noqa: F401, E402

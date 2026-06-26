@@ -92,6 +92,8 @@ class GraphKnowsRuntime:
 
         for store in self._retriever_stores:
             with contextlib.suppress(Exception):
+                # TODO(Finding 3): replace store._c.close() with a public
+                # close() / disconnect() method once memory.stores exposes one.
                 await store._c.close()
         self._retriever = None
         self._retriever_stores = []
@@ -112,6 +114,8 @@ class GraphKnowsRuntime:
         mg = build_arcadedb_stm_store(s)
         await asyncio.gather(
             pg.connect(),  # vector: connect + ensure_schema
+            # TODO(Finding 3): replace ._c.connect() with a public connect()
+            # on LTMStore/STMStore once memory.stores exposes one.
             neo._c.connect(),
             mg._c.connect(),
         )
@@ -131,21 +135,80 @@ class GraphKnowsRuntime:
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity."""
-        from graphknows.config.health import check_backends
+        from graphknows.config.builders.stores import build_arcadedb_client
+        from graphknows.config.health import get_version
 
-        result = await check_backends(self.settings)
+        result: dict[str, Any] = {"version": get_version()}
+        try:
+            c = build_arcadedb_client(self.settings)
+            await c.connect()
+            result["arcadedb_stm"] = await c.database_exists("stm")
+            result["arcadedb_ltm"] = await c.database_exists("ltm")
+            await c.close()
+        except Exception as exc:
+            result["arcadedb_stm"] = str(exc)
+            result["arcadedb_ltm"] = str(exc)
         result["pid"] = os.getpid()
         return result
 
     async def stats(self, session_id: str = "") -> dict[str, Any]:
         """Return STM and LTM memory statistics."""
-        from graphknows.config.health import get_memory_stats
+        from graphknows.config.builders.stores import build_arcadedb_client
 
-        return await get_memory_stats(self.settings, session_id=session_id)
+        c = build_arcadedb_client(self.settings)
+        await c.connect()
+        try:
+            if session_id:
+                sid = session_id
+                stm_chunks = await c.query(
+                    "stm",
+                    "MATCH (n:CHUNK {session_id: $sid}) RETURN count(n) AS c",
+                    params={"sid": sid},
+                )
+                stm_turns = await c.query(
+                    "stm",
+                    "MATCH (n:TURN {session_id: $sid}) RETURN count(n) AS c",
+                    params={"sid": sid},
+                )
+                ltm_chunks = await c.query(
+                    "ltm",
+                    "MATCH (n:CHUNK {session_id: $sid}) RETURN count(n) AS c",
+                    params={"sid": sid},
+                )
+                ltm_turns = await c.query(
+                    "ltm",
+                    "MATCH (n:TURN {session_id: $sid}) RETURN count(n) AS c",
+                    params={"sid": sid},
+                )
+            else:
+                stm_chunks = await c.query("stm", "MATCH (n:CHUNK) RETURN count(n) AS c")
+                stm_turns = await c.query("stm", "MATCH (n:TURN) RETURN count(n) AS c")
+                ltm_chunks = await c.query("ltm", "MATCH (n:CHUNK) RETURN count(n) AS c")
+                ltm_turns = await c.query("ltm", "MATCH (n:TURN) RETURN count(n) AS c")
+
+            ltm_entities = await c.query("ltm", "MATCH (n:ENTITY) RETURN count(n) AS c")
+            ltm_topics = await c.query("ltm", "MATCH (n:TOPIC) RETURN count(n) AS c")
+            ltm_sessions = await c.query("ltm", "MATCH (n:SESSION) RETURN count(n) AS c")
+
+            def _n(rows: list[dict[str, Any]]) -> int:
+                return int(rows[0].get("c") or 0) if rows else 0
+
+            return {
+                "stm": {"chunks": _n(stm_chunks), "turns": _n(stm_turns)},
+                "ltm": {
+                    "sessions": _n(ltm_sessions),
+                    "entities": _n(ltm_entities),
+                    "topics": _n(ltm_topics),
+                    "chunks": _n(ltm_chunks),
+                    "turns": _n(ltm_turns),
+                },
+            }
+        finally:
+            await c.close()
 
     def mirror(self, session_id: str = "", scope: str = "ltm") -> dict[str, Any]:
         """Return Memory Mirror URL metadata."""
-        from graphknows.web.links import mirror_url
+        from graphknows.config.links import mirror_url
 
         selected_scope = scope if scope in {"stm", "ltm"} else "ltm"
         return {
@@ -173,8 +236,8 @@ class GraphKnowsRuntime:
             messages = text
 
         from graphknows.config.builders.stores import build_stm_service
-        from graphknows.memory.models.memory_class import MemoryClass
         from graphknows.memory.models.ingest_options import IngestOptions
+        from graphknows.memory.models.memory_class import MemoryClass
         from graphknows.memory.models.message import normalize_messages
         from graphknows.memory.models.scope import MemoryScope
         from graphknows.memory.stm._async_bridge import _run as _bg_run
@@ -296,6 +359,8 @@ class GraphKnowsRuntime:
         }
 
     async def _purge_stm(self, session_id: str, errors: list[str]) -> None:
+        # TODO(Finding 3): ._c.connect/close/drop_database are private ArcadeDBClient
+        # attrs. Replace with public store methods once memory.stores exposes them.
         from graphknows.config.builders.stores import build_arcadedb_stm_store
 
         try:
@@ -312,6 +377,8 @@ class GraphKnowsRuntime:
             errors.append(f"arcadedb stm: {exc}")
 
     async def _purge_ltm(self, session_id: str, errors: list[str]) -> None:
+        # TODO(Finding 3): ._c.connect/close and ._cmd are private store attrs.
+        # Replace with public methods once memory.stores exposes them.
         from graphknows.config.builders.stores import (
             build_arcadedb_ltm_store,
             build_arcadedb_vector_store,
@@ -346,8 +413,17 @@ class GraphKnowsRuntime:
         import contextlib
 
         labels = (
-            "CHUNK", "TURN", "ENTITY", "TOPIC", "DIALOG", "FILE",
-            "SESSION", "TEMPORAL", "SEGMENT", "DOC", "SESSIONENTITY",
+            "CHUNK",
+            "TURN",
+            "ENTITY",
+            "TOPIC",
+            "DIALOG",
+            "FILE",
+            "SESSION",
+            "TEMPORAL",
+            "SEGMENT",
+            "DOC",
+            "SESSIONENTITY",
         )
         for label in labels:
             with contextlib.suppress(Exception):

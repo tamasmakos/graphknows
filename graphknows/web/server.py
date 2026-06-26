@@ -293,10 +293,13 @@ async def graph(request: Request) -> JSONResponse:
                     status_code=400,
                 )
             stm = build_arcadedb_stm_store(get_settings())
+            # TODO(Finding 3): ._c is a private attr; replace with a public
+            # connect/close once memory.stores exposes them.
+            await stm._c.connect()
             try:
                 raw = await stm.get_session_graph(session_id)
             finally:
-                stm.close()
+                await stm._c.close()
             return JSONResponse(_normalise_stm_graph(raw, limit))
 
         if scope != "ltm":
