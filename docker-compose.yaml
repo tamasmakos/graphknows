@@ -15,7 +15,8 @@ services:
       - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2480/api/v1/ready"]
+      # The arcadedb image ships wget, not curl — curl exec-fails every probe.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2480/api/v1/ready"]
       interval: 10s
       timeout: 5s
       retries: 10

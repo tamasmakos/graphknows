@@ -45,7 +45,9 @@ USER graphknows
 
 EXPOSE 8800
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+# Timeout raised to 15s: the probe cold-starts a Python interpreter each run and
+# was timing out under CPU load (endpoint itself returns 200), flapping unhealthy.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8800/api/health')" || exit 1
 
 CMD ["graphknows-web"]
