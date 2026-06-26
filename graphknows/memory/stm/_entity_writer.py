@@ -7,8 +7,52 @@ difference — callers supply a lambda that calls the appropriate edge method.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
+
+# spaCy NER labels that are numeric/temporal noise as graph entities. Dates and
+# times are captured separately as canonical TEMPORAL nodes; numbers/percents/
+# money saturate the entity graph and pollute community/topic membership without
+# ever serving as useful retrieval discriminators.
+_NON_GRAPH_ENTITY_TYPES = frozenset(
+    {"DATE", "TIME", "CARDINAL", "ORDINAL", "PERCENT", "MONEY", "QUANTITY"}
+)
+
+# GLiNER often leaves date/time/number spans UNTYPED (type=None), so the type
+# allowlist above misses them and they leak in as ENTITY nodes (e.g. "23 July
+# 2023", "10:31 am", "2023") — corpus-polluting noise that also corrupts
+# community detection. This pattern catches them by SHAPE. It requires a digit
+# alongside any month word, so real person/place names ("May", "June") survive.
+_TEMPORAL_NAME_RE = re.compile(
+    r"^("
+    r"[\W\d]+"  # bare numbers / punctuation / "10:31" / "100" / "4"
+    r"|\d{1,2}:\d{2}\s*[ap]\.?m\.?"  # 10:31 am
+    r"|\d{1,2}\s*[ap]\.?m\.?"  # 10 am / 10am
+    r"|\d{1,4}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*(?:\s+\d{1,4})?"  # 23 July (2023)
+    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,4}"  # July 2023
+    r"|\d{4}"  # bare year
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _is_temporal_or_numeric_name(name: str) -> bool:
+    return bool(_TEMPORAL_NAME_RE.match((name or "").strip()))
+
+
+def graph_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop numeric/temporal spans that should not become ENTITY nodes.
+
+    Filters by spaCy/GLiNER type AND by name shape — the latter catches the
+    common case where the extractor leaves a date/time/number untyped.
+    """
+    return [
+        e
+        for e in entities
+        if (e.get("type") or "").upper() not in _NON_GRAPH_ENTITY_TYPES
+        and not _is_temporal_or_numeric_name(e.get("name", ""))
+    ]
 
 
 def write_entity_nodes_and_edges(
@@ -30,7 +74,7 @@ def write_entity_nodes_and_edges(
         _run: Synchronous bridge for async store calls.
     """
     entity_count = 0
-    for ent in entities:
+    for ent in graph_entities(entities):
         _run(
             mg.write_entity_node(
                 session_id=session_id,

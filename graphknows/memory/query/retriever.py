@@ -67,6 +67,14 @@ def _declarative_variant(question: str) -> str | None:
     return None
 
 
+# Entities mentioned in more than this fraction of the corpus carry no
+# discriminative signal (the conversation participants appear in nearly every
+# chunk), so seeding entity traversal on them floods recall with the whole
+# conversation. Such entities are dropped from traversal — the semantic and
+# full-text channels still cover their chunks.
+_ENTITY_SATURATION_RATIO: float = 0.5
+
+
 class DETRetriever(BaseGraphRetriever):
     """Deterministic three-collector hybrid retriever."""
 
@@ -75,7 +83,7 @@ class DETRetriever(BaseGraphRetriever):
         pg: IVectorDb,
         neo: Any,
         mg: ArcadeDBSTMStore,
-        embed_model: str = "openai/text-embedding-3-small",
+        embed_model: str = "",
         fusion_alpha: float = 0.0,
     ) -> None:
         self.pg = pg
@@ -123,6 +131,7 @@ class DETRetriever(BaseGraphRetriever):
             self._stm_full_text(words, session_id, top_k),
             self._ltm_full_text(words, session_id, scope, top_k),
             self._ltm_temporal_traversal(query, session_id, scope, top_k),
+            self._ltm_topic_match(emb, session_id, scope, top_k),
             return_exceptions=True,
         )
         (
@@ -132,10 +141,11 @@ class DETRetriever(BaseGraphRetriever):
             src_text,
             src_ltm_text,
             src_temporal,
+            src_topic,
         ) = gather_results  # type: ignore[misc]
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
-        for src in (src_stm, src_ltm, src_semantic, src_text, src_ltm_text, src_temporal):
+        for src in (src_stm, src_ltm, src_semantic, src_text, src_ltm_text, src_temporal, src_topic):
             if isinstance(src, Exception):
                 log.warning("Retrieval source error: %s", src)
                 continue
@@ -308,6 +318,38 @@ class DETRetriever(BaseGraphRetriever):
             log.warning("STM full-text search failed: %s", exc)
         return result
 
+    async def _discriminative_entities(
+        self, safe_words: list[str], session_filter: str | None
+    ) -> list[str]:
+        """Query-matched entity names, minus saturated (non-discriminative) ones.
+
+        An entity mentioned in more than ``_ENTITY_SATURATION_RATIO`` of the corpus
+        (e.g. the two conversation participants) matches nearly every chunk, so
+        seeding traversal on it buries the query-specific chunk under the whole
+        conversation. Those are dropped so traversal seeds on specific entities
+        (adoption, violin, church). Returns ``[]`` when nothing discriminative
+        matched — callers then rely on the semantic/full-text channels, which
+        already cover those chunks.
+        """
+        if not safe_words:
+            return []
+        where_entity = " OR ".join(f"toLower(e.name) CONTAINS '{w}'" for w in safe_words)
+        try:
+            total_rows = await self.neo._qry("MATCH (c:CHUNK) RETURN count(c) AS n")
+            total = int(total_rows[0]["n"]) if total_rows else 0
+            if total <= 0:
+                return []
+            deg_rows = await self.neo._qry(
+                f"MATCH (e:ENTITY) WHERE {where_entity} "
+                f"MATCH (e)<-[:MENTIONS]-(c:CHUNK) "
+                f"RETURN e.name AS name, count(DISTINCT c) AS deg"
+            )
+        except Exception as exc:
+            log.debug("discriminative-entity filter unavailable (%s); skipping traversal", exc)
+            return []
+        cap = max(1, int(_ENTITY_SATURATION_RATIO * total))
+        return [r["name"] for r in deg_rows if r.get("name") and int(r.get("deg") or 0) <= cap]
+
     async def _ltm_entity_traversal(
         self,
         words: list[str],
@@ -328,7 +370,7 @@ class DETRetriever(BaseGraphRetriever):
         session_filter: str | None,
         top_k: int,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
-        """Entity-graph traversal against LTM.
+        """Entity-graph traversal against LTM, seeded on discriminative entities.
 
         Uses dynamic OR conditions in place of the any() list predicate —
         ArcadeDB's openCypher does not support any(x IN $list WHERE ...) syntax.
@@ -336,9 +378,13 @@ class DETRetriever(BaseGraphRetriever):
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if not words:
             return result
-        # Build safe dynamic WHERE clause: toLower(e.name) CONTAINS 'w1' OR ...
         safe = [w.replace("'", "") for w in words]
-        where_entity = " OR ".join(f"toLower(e.name) CONTAINS '{w}'" for w in safe)
+        disc = await self._discriminative_entities(safe, session_filter)
+        if not disc:
+            return result
+        safe_names = [n.replace("'", "") for n in disc]
+        # Exact-match the (already query-matched, non-saturated) entity names.
+        where_entity = " OR ".join(f"e.name = '{n}'" for n in safe_names)
         try:
             if session_filter:
                 cypher = (
@@ -376,7 +422,7 @@ class DETRetriever(BaseGraphRetriever):
                     },
                 )
 
-            await self._run_relation_expansion_async(result, words, safe, session_filter, top_k)
+            await self._run_relation_expansion_async(result, safe_names, session_filter, top_k)
         except Exception as exc:
             log.warning("LTM entity traversal error: %s", exc)
         return result
@@ -384,19 +430,19 @@ class DETRetriever(BaseGraphRetriever):
     async def _run_relation_expansion_async(
         self,
         result: dict[str, tuple[float, dict[str, Any]]],
-        words: list[str],
-        safe_words: list[str],
+        seed_names: list[str],
         session_filter: str | None,
         top_k: int,
     ) -> None:
-        """2-hop relation expansion from seeded entities to neighbour chunks.
+        """2-hop relation expansion from the discriminative seed entities to
+        neighbour chunks.
 
         Replaces any()/NONE() list predicates (unsupported in ArcadeDB Cypher)
         with dynamic OR WHERE conditions. Structural edge types are excluded via
         a NOT IN list embedded in the Cypher string.
         """
         try:
-            where_entity = " OR ".join(f"toLower(e.name) CONTAINS '{w}'" for w in safe_words)
+            where_entity = " OR ".join(f"e.name = '{n}'" for n in seed_names)
             # Embed skip-types as a literal list in Cypher rather than a $param list,
             # because ArcadeDB does not support IN $list for type() comparisons.
             skip_list = ", ".join(f"'{t}'" for t in sorted(_STRUCTURAL_REL_TYPES))
@@ -552,6 +598,77 @@ class DETRetriever(BaseGraphRetriever):
                 )
         except Exception as exc:
             log.warning("LTM temporal traversal failed: %s", exc)
+        return result
+
+    async def _ltm_topic_match(
+        self,
+        emb: list[float],
+        session_id: str,
+        scope: str,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Semantic topic match → inject the topic summary + member-entity chunks.
+
+        Topics are pre-aggregated community summaries; matching one surfaces
+        high-level multi-entity context (good for synthesis/multi-hop) plus the
+        chunks of its member entities. No-op when no topics exist (e.g. llm-free
+        without topic creation), so it never regresses the base pipeline.
+        """
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        if scope not in ("ltm", "both"):
+            return result
+        searcher = getattr(self.pg, "search_topics", None)
+        if not callable(searcher):
+            return result
+        try:
+            topics = await searcher(emb, k=2)
+        except Exception as exc:
+            log.debug("topic match skipped: %s", exc)
+            return result
+        for t_rank, topic in enumerate(topics):
+            summary = (topic.get("summary") or "").strip()
+            label = (topic.get("label") or "").strip()
+            tid = topic.get("topic_id") or ""
+            if summary:
+                # Inject the topic summary itself as a synthetic passage.
+                _add_result(
+                    result,
+                    f"topic:{tid}",
+                    rrf_score(t_rank, boost=1.5),
+                    {
+                        "text": f"[Topic: {label}] {summary}" if label else summary,
+                        "entities": [],
+                        "sources": {"ltm_topic"},
+                        "doc_id": "",
+                        "metadata": {"is_topic_summary": True},
+                    },
+                )
+            if not tid:
+                continue
+            try:
+                rows = await self.neo._qry(
+                    "MATCH (t:TOPIC {id: $tid})<-[:IN_TOPIC]-(e:ENTITY) "
+                    "MATCH (c:CHUNK)-[:MENTIONS]->(e) "
+                    "RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $k",
+                    tid=tid,
+                    k=top_k,
+                )
+            except Exception as exc:
+                log.debug("topic member traversal skipped: %s", exc)
+                continue
+            for rank, row in enumerate(rows):
+                _add_result(
+                    result,
+                    row["chunk_id"],
+                    rrf_score(rank, boost=1.0),
+                    {
+                        "text": row["text"],
+                        "entities": [],
+                        "sources": {"ltm_topic"},
+                        "doc_id": "",
+                        "metadata": {},
+                    },
+                )
         return result
 
     async def _semantic_ann(

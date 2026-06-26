@@ -18,7 +18,7 @@ from dotenv import dotenv_values
 
 log = logging.getLogger(__name__)
 
-EMBED_MODEL: str = "openai/text-embedding-3-small"
+EMBED_MODEL: str = os.environ.get("EMBED_MODEL", "openai/text-embedding-3-small")
 EMBED_DIM: int = 1536  # text-embedding-3-small output dimension
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/embeddings"
 

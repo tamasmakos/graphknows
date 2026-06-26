@@ -120,6 +120,11 @@ def _is_empty_lm_response_error(exc: Exception) -> bool:
             "empty or null response",
             "failed to parse the lm response",
             "did not include triplets",
+            # Malformed/incomplete triplets (often from reasoning-model output
+            # truncated at max_tokens) raise pydantic ValidationError. Treat as
+            # "no parseable relations" instead of aborting the whole ingest.
+            "validation error",
+            "field required",
         )
     )
 
@@ -225,7 +230,6 @@ class DSPyExtractor(BaseExtractor):
             llm_config.get("extraction_model")
             or llm_config.get("base_model")
             or llm_config.get("model")
-            or "moonshotai/kimi-k2"
         )
 
         api_key = _get_openrouter_api_key(config)

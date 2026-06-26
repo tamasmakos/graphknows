@@ -36,12 +36,19 @@ class PromotionRequest(BaseModel, frozen=True):
     topic_mode: TopicMode | None = None
 
     def resolve_policy(self, relation_extraction_mode: str = "gliner2") -> PromotionPolicy:
-        """Resolve request into the canonical PromotionPolicy."""
+        """Resolve request into the canonical PromotionPolicy.
+
+        Community detection (GDS) and topic summarization are llm_assisted-only.
+        In llm_free they produce no retrieved context — no topics are created and
+        the community weight is never consumed — so running them only burns ingest
+        time. GDS is therefore tied to the topic mode: it runs exactly when
+        llm_assisted topics + community-weighted fusion need ``community_id``.
+        """
         topic_mode = self.topic_mode
         if topic_mode is None:
             topic_mode = "llm_assisted" if relation_extraction_mode == "llm_assisted" else "off"
         return PromotionPolicy(
-            run_gds=self.run_gds,
+            run_gds=self.run_gds and topic_mode == "llm_assisted",
             clear_stm=self.clear_stm,
             merge_entities=self.merge_entities,
             topic_mode=topic_mode,

@@ -27,6 +27,17 @@ _LTM_DB = "ltm"
 _GK_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 UTC = UTC
 
+# Community detection via ArcadeDB node2vec embeddings.
+_N2V_DIM = 64
+_N2V_KNN = 4
+_N2V_MIN_SIM = 0.5
+# Structural/provenance edge types excluded when reading the entity-relation graph
+# (we want semantic relations, not graph plumbing).
+_NON_COMMUNITY_EDGE_TYPES = (
+    "['MENTIONS','HAS_CHUNK','IN_SESSION','IN_TOPIC','IN_COMMUNITY','HAS_TURN',"
+    "'HAS_ENTITY','CO_OCCURS','APPEARED_IN','MENTIONS_DATE','NEXT','CONTAINS_DOC']"
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -237,7 +248,7 @@ class ArcadeDBLTMStore:
         for c in stm_data.get("chunks", []):
             await self._cmd(
                 "MERGE (c:CHUNK {id: $cid}) SET c.text = $text, c.heading_path = $hp, "
-                "c.chunk_index = $ci, c.session_id = $sid "
+                "c.chunk_index = $ci, c.session_id = $sid, c.file_id = $fid "
                 "WITH c MATCH (f:FILE {id: $fid}) MERGE (f)-[:HAS_CHUNK]->(c)",
                 cid=c["id"],
                 text=c.get("text", ""),
@@ -452,7 +463,13 @@ class ArcadeDBLTMStore:
     async def _topic_communities(
         self,
     ) -> tuple[dict[int, list[str]], float | None, float | None, str]:
-        """Return communities from GDS community_id or Python Leiden fallback."""
+        """Detect entity communities and return (communities, modularity, silhouette, algorithm).
+
+        Primary path clusters the entity graph built from ArcadeDB ``node2vec``
+        embeddings (which encode each entity's relations + co-occurrence) — this
+        gives high, meaningful modularity. Falls back to chunk co-occurrence Leiden
+        when node2vec is unavailable.
+        """
         gds_rows = await self._qry(
             "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
             "RETURN e.community_id AS cid, collect(DISTINCT e.name) AS members"
@@ -464,9 +481,9 @@ class ArcadeDBLTMStore:
             if cid is not None:
                 gds_communities[int(cid)] = sorted(n for n in members if n)
         if any(len(m) >= 2 for m in gds_communities.values()):
-            return gds_communities, None, None, "gds_leiden"
+            modularity = await self._partition_modularity(gds_communities)
+            return gds_communities, modularity, None, "gds_leiden"
 
-        # Python Leiden fallback
         try:
             import igraph as ig
             import leidenalg
@@ -474,23 +491,122 @@ class ArcadeDBLTMStore:
             logger.warning("igraph/leidenalg not available; skipping community detection")
             return {}, None, None, "none"
 
-        # Build the community graph from entity CO-OCCURRENCE in chunks rather
-        # than from typed relation edges. Co-occurrence is label-independent, so
-        # community detection works in every mode and is unaffected by the
-        # ontology relation filter (which removes noisy typed edges).
+        graph = await self._entity_graph()
+        if graph is None or not graph[1]:
+            return {}, None, None, "none"
+        names, edge_pairs, weights, algorithm = graph
+        g = ig.Graph(n=len(names), directed=False)
+        g.vs["name"] = names
+        g.add_edges(edge_pairs)
+        partition = leidenalg.find_partition(
+            g, leidenalg.ModularityVertexPartition, weights=weights if weights else None, seed=42
+        )
+        communities: dict[int, list[str]] = {
+            i: sorted(g.vs[vi]["name"] for vi in partition[i]) for i in range(len(partition))
+        }
+        await self._write_community_ids(communities)
+        return communities, float(partition.modularity), None, algorithm
+
+    async def _write_community_ids(self, communities: dict[int, list[str]]) -> None:
+        for cid, members in communities.items():
+            for name in members:
+                with contextlib.suppress(Exception):
+                    await self._cmd(
+                        "MATCH (e:ENTITY {name: $name}) SET e.community_id = $cid",
+                        name=name,
+                        cid=cid,
+                    )
+
+    async def _entity_graph(
+        self,
+    ) -> tuple[list[str], list[tuple[int, int]], list[float], str] | None:
+        """Build the community-detection graph: node2vec kNN + typed relations.
+
+        Returns (names, edge_pairs, weights, algorithm) or None. node2vec runs over
+        the whole LTM graph so each entity embedding reflects both its relation
+        edges and its chunk context; a kNN graph over those embeddings has real
+        structure where the near-complete co-occurrence graph did not. The explicit
+        typed relation edges are added on top. Falls back to co-occurrence when
+        node2vec/numpy are unavailable.
+        """
+        try:
+            import numpy as np
+        except ImportError:
+            return await self._cooccurrence_graph()
+        try:
+            rows = await self._qry(
+                f"CALL algo.node2vec({{walkLength:20,walks:20,dimensions:{_N2V_DIM}}}) "
+                "YIELD node, embedding WHERE node.name IS NOT NULL "
+                "RETURN node.name AS name, embedding"
+            )
+        except Exception as exc:
+            logger.info("node2vec unavailable (%s); using co-occurrence", exc)
+            return await self._cooccurrence_graph()
+        rows = [r for r in rows if r.get("name") and r.get("embedding")]
+        if len(rows) < 3:
+            return await self._cooccurrence_graph()
+
+        names = [r["name"] for r in rows]
+        name_idx = {n: i for i, n in enumerate(names)}
+        mat = np.asarray([r["embedding"] for r in rows], dtype=float)
+        mat = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)
+        sim = mat @ mat.T
+
+        edges: list[tuple[int, int]] = []
+        weights: list[float] = []
+        seen: set[tuple[int, int]] = set()
+
+        def _add(i: int, j: int, w: float) -> None:
+            if i == j:
+                return
+            key = (i, j) if i < j else (j, i)
+            if key in seen:
+                return
+            seen.add(key)
+            edges.append((i, j))
+            weights.append(float(w))
+
+        # kNN over node2vec embeddings.
+        for i in range(len(names)):
+            order = np.argsort(-sim[i])
+            count = 0
+            for j in order:
+                if j == i:
+                    continue
+                if sim[i][j] < _N2V_MIN_SIM:
+                    break
+                _add(i, int(j), sim[i][j])
+                count += 1
+                if count >= _N2V_KNN:
+                    break
+
+        # Explicit typed relation edges (structural signal).
+        rel_rows = await self._qry(
+            "MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE a.name < b.name "
+            f"AND NOT type(r) IN {_NON_COMMUNITY_EDGE_TYPES} "
+            "RETURN DISTINCT a.name AS a, b.name AS b"
+        )
+        for r in rel_rows:
+            ai, bi = name_idx.get(r["a"]), name_idx.get(r["b"])
+            if ai is not None and bi is not None:
+                _add(ai, bi, max(_N2V_MIN_SIM, float(sim[ai][bi])))
+
+        return names, edges, weights, "node2vec"
+
+    async def _cooccurrence_graph(
+        self,
+    ) -> tuple[list[str], list[tuple[int, int]], list[float], str] | None:
+        """Fallback community graph from entity co-occurrence in chunks."""
         rel_rows = await self._qry(
             "MATCH (c:CHUNK)-[:MENTIONS]->(a:ENTITY), (c)-[:MENTIONS]->(b:ENTITY) "
             "WHERE a.name < b.name "
             "RETURN a.name AS a, b.name AS b, count(DISTINCT c) AS weight"
         )
         if not rel_rows:
-            return {}, None, None, "leidenalg"
-
+            return None
         names = sorted({r["a"] for r in rel_rows} | {r["b"] for r in rel_rows})
         name_idx = {n: i for i, n in enumerate(names)}
-        g = ig.Graph(n=len(names), directed=False)
-        g.vs["name"] = names
-        edge_pairs: list[tuple[int, int]] = []
+        edges: list[tuple[int, int]] = []
         weights: list[float] = []
         seen: set[tuple[int, int]] = set()
         for r in rel_rows:
@@ -501,30 +617,39 @@ class ArcadeDBLTMStore:
             if key in seen:
                 continue
             seen.add(key)
-            edge_pairs.append((ai, bi))
+            edges.append((ai, bi))
             weights.append(max(0.0, float(r["weight"])))
+        return names, edges, weights, "leidenalg"
+
+    async def _partition_modularity(self, communities: dict[int, list[str]]) -> float | None:
+        """Modularity of a given partition over the node2vec/co-occurrence graph."""
+        try:
+            import igraph as ig
+        except ImportError:
+            return None
+        graph = await self._entity_graph()
+        if graph is None:
+            return None
+        names, edge_pairs, weights, _ = graph
+        name_to_comm: dict[str, int] = {
+            name: cid for cid, members in communities.items() for name in members
+        }
+        g = ig.Graph(n=len(names), directed=False)
         if edge_pairs:
             g.add_edges(edge_pairs)
-
-        partition = leidenalg.find_partition(
-            g, leidenalg.ModularityVertexPartition, weights=weights if weights else None
-        )
-        communities: dict[int, list[str]] = {
-            i: sorted(g.vs[vi]["name"] for vi in partition[i]) for i in range(len(partition))
-        }
-        modularity = float(partition.quality())
-
-        # Write community_id back to ENTITY nodes
-        for cid, members in communities.items():
-            for name in members:
-                with contextlib.suppress(Exception):
-                    await self._cmd(
-                        "MATCH (e:ENTITY {name: $name}) SET e.community_id = $cid",
-                        name=name,
-                        cid=cid,
-                    )
-
-        return communities, modularity, None, "leidenalg"
+        next_id = (max(communities) if communities else -1) + 1
+        membership: list[int] = []
+        for name in names:
+            if name in name_to_comm:
+                membership.append(name_to_comm[name])
+            else:
+                membership.append(next_id)
+                next_id += 1
+        try:
+            return float(g.modularity(membership, weights=weights if weights else None))
+        except Exception as exc:
+            logger.debug("modularity computation failed: %s", exc)
+            return None
 
     async def write_topic_summaries(
         self,
@@ -594,11 +719,25 @@ class ArcadeDBLTMStore:
                     logger.warning("topic summarizer failed: %s", exc)
 
             topic_id = str(uuid.uuid5(_GK_NS, f"topic:{session_id}:{comm_id}"))
+            # Embed the topic so it is matchable by semantic retrieval. A topic
+            # summary is pre-aggregated multi-entity content — exactly the high-
+            # level context that synthesis/multi-hop questions need. Falls back to
+            # the member-name bag when there is no LLM summary (llm-free).
+            embedding: list[float] = []
+            emb_text = f"{title}. {summary}".strip().strip(".").strip() or ", ".join(members[:20])
+            if emb_text:
+                try:
+                    from graphknows.memory.stores.embedder import embed_one
+
+                    embedding = await asyncio.to_thread(embed_one, emb_text)
+                except Exception as exc:
+                    log.debug("topic embed failed: %s", exc)
             topic = {
                 "id": topic_id,
                 "topic_id": topic_id,
                 "label": title,
                 "summary": summary,
+                "embedding": embedding,
                 "community_id": comm_id,
                 "community_hash": comm_hash,
                 "entity_count": len(members),

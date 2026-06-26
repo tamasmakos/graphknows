@@ -20,7 +20,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from graphknows.config.env_loader import load_env_file
 
@@ -87,9 +87,23 @@ class GraphKnowsSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=".env",
+        env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # .env file takes priority over container/shell env vars so that the
+        # repo .env is always the source of truth for model names and API keys.
+        return init_settings, dotenv_settings, env_settings, file_secret_settings
 
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
     graphknows_port: int = Field(default=8025, alias="GRAPHKNOWS_PORT")
@@ -106,12 +120,12 @@ class GraphKnowsSettings(BaseSettings):
     session_ttl_minutes: int = Field(default=60, alias="SESSION_TTL_MINUTES")
 
     # LLM
-    llm_model: str = Field(default="moonshotai/kimi-k2", alias="LLM_MODEL")
+    llm_model: str = Field(default="", alias="LLM_MODEL")
     llm_provider: str = Field(default="openrouter", alias="LLM_PROVIDER")
     llm_temperature: float = Field(default=0.0, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
-    extraction_model: str = Field(default="moonshotai/kimi-k2", alias="EXTRACTION_MODEL")
+    extraction_model: str = Field(default="", alias="EXTRACTION_MODEL")
 
     # Chunking
     chunk_size: int = Field(default=1200, alias="CHUNK_SIZE")
@@ -131,7 +145,7 @@ class GraphKnowsSettings(BaseSettings):
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
     # Summarisation
-    summarization_model: str = Field(default="moonshotai/kimi-k2", alias="SUMMARISATION_MODEL")
+    summarization_model: str = Field(default="", alias="SUMMARISATION_MODEL")
 
     @model_validator(mode="after")
     def _populate_from_repo_env(self) -> GraphKnowsSettings:
@@ -145,12 +159,19 @@ class GraphKnowsSettings(BaseSettings):
                 env.get("OPENROUTER_API_KEY") or env.get("OPEN_ROUTER_API")
             )
 
-        # Push credentials into os.environ so embedder.py (and any other code that
-        # reads os.environ directly) picks them up without requiring its own dotenv load.
-        if self.openrouter_api_key and not os.environ.get("OPENROUTER_API_KEY"):
+        # Push credentials and model names into os.environ so any code that reads
+        # os.environ directly (embedder.py, generator.py, judge.py) gets .env values.
+        if self.openrouter_api_key:
             os.environ["OPENROUTER_API_KEY"] = self.openrouter_api_key
-        if self.openrouter_api_key and not os.environ.get("OPEN_ROUTER_API"):
             os.environ["OPEN_ROUTER_API"] = self.openrouter_api_key
+        if self.llm_model:
+            os.environ["LLM_MODEL"] = self.llm_model
+        if self.extraction_model:
+            os.environ["EXTRACTION_MODEL"] = self.extraction_model
+        if self.summarization_model:
+            os.environ["SUMMARISATION_MODEL"] = self.summarization_model
+        if self.embed_model:
+            os.environ["EMBED_MODEL"] = self.embed_model
 
         # Back-compat: derive the single mode from legacy env vars when MODE is
         # not set, so callers still exporting RELATION_EXTRACTION_MODE/RETRIEVAL_MODE

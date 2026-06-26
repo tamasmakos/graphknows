@@ -17,7 +17,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _MASKED_SECRET = "**********"
-_DEFAULT_MODEL = "moonshotai/kimi-k2"
+_DEFAULT_MODEL = ""
 
 
 def _extract_secret(container: Any, key: str) -> str | None:

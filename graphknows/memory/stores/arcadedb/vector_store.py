@@ -500,6 +500,33 @@ class ArcadeDBVectorStore:
                 break
         return results
 
+    async def search_topics(self, query_emb: list[float], k: int = 5) -> list[dict[str, Any]]:
+        """ANN search on topic-summary embeddings (LTM)."""
+        if not query_emb:
+            return []
+        sql = _vec_search_sql("TOPIC[embedding]", query_emb, k * 2)
+        try:
+            rows = await self._c.query(_LTM_DB, sql, language="sql")
+        except Exception as exc:
+            logger.debug("search_topics failed (non-fatal): %s", exc)
+            return []
+        rows = self._dedup_rows(rows)
+        results = []
+        for r in rows:
+            dist = float(r.get("distance") or 1.0)
+            results.append(
+                {
+                    "topic_id": r.get("topic_id") or r.get("id", ""),
+                    "label": r.get("label", ""),
+                    "summary": r.get("summary", ""),
+                    "community_id": r.get("community_id"),
+                    "score": max(0.0, 1.0 - dist),
+                }
+            )
+            if len(results) >= k:
+                break
+        return results
+
     # ------------------------------------------------------------------
     # Bulk fetch by IDs
     # ------------------------------------------------------------------

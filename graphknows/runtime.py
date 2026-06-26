@@ -190,7 +190,11 @@ class GraphKnowsRuntime:
 
         service = build_stm_service(self.settings)
         try:
-            if is_conversation or (isinstance(messages, str) and not title):
+            # Only structured conversations go through the turn-based path. A plain
+            # string (even without a title) must go through the text/chunk path —
+            # the turn path creates no CHUNK nodes, leaving retrieval-over-chunks
+            # empty for bare-string ingests.
+            if is_conversation:
                 try:
                     resolved_class = MemoryClass(memory_class)
                 except ValueError:
@@ -320,19 +324,34 @@ class GraphKnowsRuntime:
                 if session_id:
                     await self._delete_ltm_session(ltm_store, session_id)
                 else:
-                    await ltm_store._c.drop_database("ltm")
-                    # Recreate both schemas immediately so the next flush can
-                    # write without a 503 (drop removes all DDL).
+                    # Do NOT drop+recreate the database. A freshly recreated DB
+                    # leaves the CHUNK(id) UNIQUE index unbuilt for the very next
+                    # flush, so MERGE stops deduping and the two flush write-paths
+                    # (graph subgraph-write + vector promote) insert duplicate,
+                    # half-un-embedded chunk nodes. Keep the schema/indexes and
+                    # delete all data instead.
                     await ltm_store.ensure_schema()
-                    # vec_store.connect() creates its own client connection,
-                    # recreates the ltm DB (idempotent), and adds the vector DDL.
                     vec_store = build_arcadedb_vector_store(self.settings)
                     await vec_store.connect()
                     await vec_store.close()
+                    await self._clear_ltm_all(ltm_store)
             finally:
                 await ltm_store._c.close()
         except Exception as exc:
             errors.append(f"arcadedb ltm: {exc}")
+
+    @staticmethod
+    async def _clear_ltm_all(ltm_store: Any) -> None:
+        """Delete all LTM data while preserving schema and indexes."""
+        import contextlib
+
+        labels = (
+            "CHUNK", "TURN", "ENTITY", "TOPIC", "DIALOG", "FILE",
+            "SESSION", "TEMPORAL", "SEGMENT", "DOC", "SESSIONENTITY",
+        )
+        for label in labels:
+            with contextlib.suppress(Exception):
+                await ltm_store._cmd(f"MATCH (n:{label}) DETACH DELETE n")
 
     @staticmethod
     async def _delete_ltm_session(ltm_store: Any, session_id: str) -> None:

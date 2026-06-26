@@ -163,8 +163,9 @@ class LTMPromotionPipeline:
     async def _run_gds(self, record: PromotionRecord) -> Any:
         """Run community detection and persist community_id on entities.
 
-        Mode-agnostic: runs for both llm-free and llm-assisted so the
-        community-weight retrieval signal exists in every mode.
+        Gated to llm_assisted by ``PromotionPolicy`` (``run_gds``): only the
+        llm_assisted retriever consumes ``community_id`` (topic summaries +
+        community-weighted fusion), so llm_free skips this entirely.
         """
         detect = getattr(self._neo, "detect_communities", None)
         if not callable(detect):

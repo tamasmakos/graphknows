@@ -27,7 +27,10 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
             "llm": {
                 "model": settings.extraction_model or settings.llm_model,
                 "temperature": settings.llm_temperature,
-                "max_tokens": settings.llm_max_tokens,
+                # Relation extraction needs headroom: reasoning models spend the
+                # budget on reasoning_content and truncate the structured triplet
+                # output at 2048, producing malformed/empty JSON.
+                "max_tokens": max(settings.llm_max_tokens, 4096),
             },
             "infra": {"openrouter_api_key": settings.openrouter_api_key or ""},
             "ontology": {"file": ontology_file},
@@ -91,10 +94,16 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     """Build an STMService from settings."""
     from graphknows.memory.stm._async_bridge import _run
     from graphknows.memory.stm.service import STMService
+    from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+    from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
     from graphknows.memory.stores.embedder import embed_one
 
-    mg = build_arcadedb_stm_store(settings)
-    pg = build_arcadedb_vector_store(settings)
+    # Share ONE client across the graph + vector stores. Separate connections see
+    # each other's freshly-MERGEd CHUNK nodes only after an index-visibility lag,
+    # which lets the dual chunk-write paths create duplicate nodes under load.
+    client = build_arcadedb_client(settings)
+    mg = ArcadeDBSTMStore(client=client)
+    pg = ArcadeDBVectorStore(client=client)
     _run(mg._c.connect())
     _run(mg.ensure_schema())
     _run(pg.connect())  # connects client + ensures schema
@@ -115,10 +124,24 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
 def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     """Build an LTMPromotionPipeline from settings."""
     from graphknows.memory.flush import LTMPromotionPipeline
+    from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
+    from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+    from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
 
-    mg = build_arcadedb_stm_store(settings)
-    pg = build_arcadedb_vector_store(settings)
-    neo = build_arcadedb_ltm_store(settings)
+    # Share ONE client across the flush stores. The graph-write path
+    # (neo.write_session_subgraph) and the vector-promote path (pg.promote_to_ltm)
+    # both MERGE CHUNK by id; on separate connections a node created by one is not
+    # immediately visible to the other's CHUNK(id) unique index, so the MERGE
+    # stops deduping and writes duplicate, half-un-embedded chunk nodes.
+    client = build_arcadedb_client(settings)
+    mg = ArcadeDBSTMStore(client=client)
+    pg = ArcadeDBVectorStore(client=client)
+    relation_extractor = (
+        build_relation_extractor(settings)
+        if settings.relation_extraction_mode == "llm_assisted"
+        else None
+    )
+    neo = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
     key = settings.openrouter_api_key or ""
     return LTMPromotionPipeline(
         mg,

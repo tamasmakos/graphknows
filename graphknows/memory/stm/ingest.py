@@ -14,9 +14,29 @@ from graphknows.ingestion.parsers.registry import get_parser
 from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.stm._async_bridge import _run
-from graphknows.memory.stm._entity_writer import write_entity_nodes_and_edges, write_relation_edges
+from graphknows.memory.stm._entity_writer import (
+    graph_entities,
+    write_entity_nodes_and_edges,
+    write_relation_edges,
+)
 
 log = logging.getLogger("graphknows.memory.stm.ingest")
+
+# Relation endpoints that are dates/times/bare numbers are noise — and writing a
+# relation edge re-creates its endpoints as ENTITY nodes, which would otherwise
+# smuggle the numeric/temporal entities (dropped from the graph) back in.
+_NOISE_REL_LABELS = frozenset(
+    {"TIME", "DATE", "CARDINAL", "ORDINAL", "PERCENT", "MONEY", "QUANTITY"}
+)
+_BARE_NUM_RE = re.compile(r"^[\W\d]+$")
+
+
+def _noisy_endpoint(text: str, label: str) -> bool:
+    """True if a relation endpoint is a date/time/number rather than a real entity."""
+    if (label or "").upper() in _NOISE_REL_LABELS:
+        return True
+    t = (text or "").strip()
+    return not t or bool(_BARE_NUM_RE.match(t))
 
 
 class _STMIngestHandler:
@@ -128,7 +148,10 @@ class _STMIngestHandler:
         entity_count = 0
 
         self._ensure_session_and_file(session_id, parsed, metadata, t0)
-        for seg in parsed.segments:
+        for idx, seg in enumerate(parsed.segments):
+            # Preserve chunk order (was always None) so sequential/temporal
+            # reasoning and ordered context assembly have a stable index.
+            seg.metadata["chunk_index"] = idx
             chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
             clean = self._clean_text(seg.text)
             extraction = self._extract(clean)
@@ -144,7 +167,7 @@ class _STMIngestHandler:
                 clean,
                 seg,
                 embedding,
-                extraction.entities,
+                graph_entities(extraction.entities),
                 {**metadata, "temporal": temporal} if temporal else metadata,
             )
 
@@ -278,7 +301,13 @@ class _STMIngestHandler:
         # extract_relations returns (triplets, nodes, diagnostics).
         # Each triplet is (subject, relation, object, props_dict).
         if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            raw = _run(self._rel_extractor.extract_relations(text=clean_text))
+            try:
+                raw = _run(self._rel_extractor.extract_relations(text=clean_text))
+            except Exception as exc:
+                # Never let a relation-extractor failure abort ingestion of the
+                # whole document — the chunk is still embedded and graph-written.
+                log.warning("DSPy relation extraction skipped for chunk %s: %s", chunk_id[:8], exc)
+                raw = ([], [], {})
             dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
             for triplet in dspy_triplets:
                 subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
@@ -307,25 +336,33 @@ class _STMIngestHandler:
         text: str,
         gliner_entities: list[dict[str, Any]],
     ) -> None:
-        """Run SpaCy dep-pattern extraction and write triples to ArcadeDB STM.
+        """Extract universal SVO relations and write them to ArcadeDB STM.
 
-        Accepts GLiNER2 entity dicts in either graphgen format (text/label/ontology_label)
-        or memory-extractor format (name/type) — _ground_span handles both.
+        Uses the domain-agnostic SVO extractor (subject–predicate–object over the
+        dependency parse, with conversational participant resolution and a compact
+        relation taxonomy) rather than the narrow speech-act intentionality
+        patterns, which only fire on declarative prose. The extractor handles all
+        precision filtering (subject must be a real entity, noun-phrase objects,
+        questions/discourse pronouns dropped).
 
-        Soft-fails: SpaCy not installed, model not found, or parse errors are logged
-        at DEBUG level and do not interrupt the ingestion pipeline.
+        Soft-fails: missing spaCy model or parse errors are logged at DEBUG and do
+        not interrupt ingestion.
         """
         try:
-            from graphknows.extraction.relations.spacy import extract_intentional_relations
+            from graphknows.extraction.relations.svo import extract_svo_relations
 
-            triples = extract_intentional_relations(text, gliner_entities)
+            triples = extract_svo_relations(text, graph_entities(gliner_entities))
         except Exception as exc:
-            log.debug("SpaCy dep extraction skipped: %s", exc)
+            log.debug("SVO relation extraction skipped: %s", exc)
             return
-        triples = self._relation_filter.filter(triples, label_key="relation")
+
         written = 0
         for triple in triples:
             if triple.get("negated"):
+                continue
+            if _noisy_endpoint(triple["source"], triple.get("source_label", "")) or _noisy_endpoint(
+                triple["target"], triple.get("target_label", "")
+            ):
                 continue
             try:
                 _run(
@@ -334,14 +371,14 @@ class _STMIngestHandler:
                         subject_name=triple["source"],
                         relation_name=triple["relation"],
                         object_name=triple["target"],
-                        confidence=triple.get("confidence", 0.8),
+                        confidence=triple.get("confidence", 0.7),
                     )
                 )
                 written += 1
             except Exception as exc:
-                log.debug("SpaCy dep relation write error (non-fatal): %s", exc)
+                log.debug("SVO relation write error (non-fatal): %s", exc)
         if written:
-            log.debug("SpaCy dep patterns: %d triples written for session=%s", written, session_id)
+            log.debug("SVO relations: %d triples written for session=%s", written, session_id)
 
     def _write_chunk_to_pg(
         self,

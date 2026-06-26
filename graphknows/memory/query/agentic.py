@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "moonshotai/kimi-k2"
+_DEFAULT_MODEL = ""
 
 
 def _normalize_openrouter_model(model: str | None) -> str:
@@ -215,10 +215,34 @@ class AgenticRetriever(BaseGraphRetriever):
             if not words:
                 return []
             try:
-                return bg_run(neo._qry(cypher, words=words, top_k=top_k))
+                rows = bg_run(neo._qry(cypher, words=words, top_k=top_k))
             except Exception as exc:
                 log.warning("search_topics failed: %s", exc)
                 return []
+            # Push the matched topic summary AND its member-entity chunks into the
+            # collected buffer so they reach the answer context — a topic summary
+            # is pre-aggregated multi-entity content for synthesis/multi-hop.
+            for t in rows:
+                tid = t.get("topic_id") or ""
+                summ = (t.get("summary") or "").strip()
+                if summ and tid:
+                    collected.append(
+                        {
+                            "chunk_id": f"topic:{tid}",
+                            "doc_id": "",
+                            "text": f"[Topic: {t.get('label', '')}] {summ}",
+                            "cosine_score": 0.5,
+                        }
+                    )
+                for ename in (t.get("entities") or [])[:5]:
+                    try:
+                        for c in bg_run(neo.get_chunks_for_entity(ename, top_k=3)):
+                            cid = c.get("chunk_id", "")
+                            if cid:
+                                collected.append({**c, "cosine_score": 0.4})
+                    except Exception as exc:
+                        log.debug("topic member traversal skipped: %s", exc)
+            return rows
 
         # ---- DSPy signature and ReAct module --------------------------
         class RetrievalSignature(dspy_mod.Signature):  # type: ignore[misc, name-defined]
@@ -248,6 +272,41 @@ class AgenticRetriever(BaseGraphRetriever):
         self._last_session_id = session_id
         return self._react
 
+    async def _apply_community_weights(
+        self, scored: list[tuple[float, dict]]
+    ) -> list[tuple[float, dict]]:
+        """Scale fused RRF scores by each chunk's community weight.
+
+        GDS (llm_assisted) persists ``CHUNK.community_weight``; chunks in denser,
+        more cohesive communities are boosted (bounded 1-3x, matching the
+        DETRetriever ``_community_boost``). A single batched lookup keeps it cheap;
+        chunks without a weight (or synthetic ``topic:`` entries) are left at 1.0,
+        so this never regresses when GDS did not run.
+        """
+        if not scored:
+            return scored
+        ids = [r["chunk_id"] for _, r in scored if not str(r["chunk_id"]).startswith("topic:")]
+        if not ids:
+            return scored
+        try:
+            rows = await self._neo._qry(
+                "MATCH (c:CHUNK) WHERE c.id IN $ids "
+                "RETURN c.id AS id, c.community_weight AS w",
+                ids=ids,
+            )
+        except Exception as exc:
+            log.debug("community-weight lookup skipped: %s", exc)
+            return scored
+        weights = {r["id"]: r.get("w") for r in rows if r.get("w") is not None}
+        if not weights:
+            return scored
+        boosted: list[tuple[float, dict]] = []
+        for score, r in scored:
+            w = weights.get(r["chunk_id"])
+            boost = max(1.0, min(float(w), 3.0)) if w else 1.0
+            boosted.append((score * boost, r))
+        return boosted
+
     # ------------------------------------------------------------------
     # BaseGraphRetriever implementation
     # ------------------------------------------------------------------
@@ -260,6 +319,7 @@ class AgenticRetriever(BaseGraphRetriever):
         scope: str = "both",
     ) -> RetrievalContext:
         """Retrieve relevant context with DSPy ReAct and vector fallback."""
+        from graphknows.memory.query._rrf_common import rrf_score
         from graphknows.memory.query.context import ChunkMatch, RetrievalContext
         from graphknows.memory.stores.embedder import embed
 
@@ -288,44 +348,58 @@ class AgenticRetriever(BaseGraphRetriever):
             ):
                 react_chunks[cid] = r
 
-        # Fallback vector search fills gaps when ReAct found few chunks.
+        # Query-relevant vector search. The eval flushes to LTM and purges STM, so
+        # "both"/"ltm" must search LTM (empty session_id); only "stm" stays scoped.
         emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
         emb = emb_array[0].tolist()
-        fallback_sid = session_id if scope == "stm" else ("" if scope == "ltm" else session_id)
-        fallback_chunks = await self._pg.search_chunks(emb, session_id=fallback_sid, k=top_k)
+        fallback_sid = session_id if scope == "stm" else ""
+        vector_chunks = await self._pg.search_chunks(emb, session_id=fallback_sid, k=top_k)
 
-        # ReAct-found chunks rank first; fallback fills remaining slots.
-        react_set = set(react_chunks.keys())
-        fallback_only = [r for r in fallback_chunks if r["chunk_id"] not in react_set]
-        ranked = (
-            sorted(react_chunks.values(), key=lambda r: -r.get("cosine_score", 0.0))
-            + sorted(fallback_only, key=lambda r: -r.get("cosine_score", 0.0))
-        )[:top_k]
+        # RRF-fuse the two channels by rank, not raw score: entity-graph cosine
+        # scores saturate near 1.0 and would otherwise crowd out the genuinely
+        # query-relevant vector hits. Rank-based fusion keeps both competitive
+        # (same approach as DETRetriever).
+        fused_scores: dict[str, tuple[float, dict]] = {}
+        for channel in (
+            sorted(vector_chunks, key=lambda r: -r.get("cosine_score", 0.0)),
+            sorted(react_chunks.values(), key=lambda r: -r.get("cosine_score", 0.0)),
+        ):
+            for rank, r in enumerate(channel):
+                cid = r["chunk_id"]
+                prev = fused_scores.get(cid)
+                fused_scores[cid] = (rrf_score(rank) + (prev[0] if prev else 0.0), prev[1] if prev else r)
+        # Community-weighted re-rank (llm_assisted only): GDS writes
+        # CHUNK.community_weight, so chunks in denser, more cohesive communities
+        # outrank incidental mentions. No-op when weights are absent.
+        candidates = await self._apply_community_weights(list(fused_scores.values()))
+        ranked = sorted(candidates, key=lambda x: -x[0])[:top_k]
 
-        semantic_matches = [
-            ChunkMatch(
-                chunk_id=r["chunk_id"],
-                doc_id=r.get("doc_id", ""),
-                text=r.get("text", ""),
-                metadata={"cosine_score": r.get("cosine_score", 0.0), **r.get("metadata", {})},
-                entities=[],
-            )
-            for r in ranked
-        ]
         sources = "agentic" if not react_failed else "agentic-fallback"
-        fused = [
-            {
-                "chunk_id": cm.chunk_id,
-                "doc_id": cm.doc_id,
-                "text": cm.text,
-                "metadata": cm.metadata,
-                "rrf_score": cm.metadata.get("cosine_score", 0.0),
-                "sources": sources,
-                "rank": i + 1,
-                "entities": [],
-            }
-            for i, cm in enumerate(semantic_matches)
-        ]
+        semantic_matches: list[ChunkMatch] = []
+        fused: list[dict[str, Any]] = []
+        for i, (score, r) in enumerate(ranked):
+            meta = {"cosine_score": r.get("cosine_score", 0.0), **r.get("metadata", {})}
+            semantic_matches.append(
+                ChunkMatch(
+                    chunk_id=r["chunk_id"],
+                    doc_id=r.get("doc_id", ""),
+                    text=r.get("text", ""),
+                    metadata=meta,
+                    entities=[],
+                )
+            )
+            fused.append(
+                {
+                    "chunk_id": r["chunk_id"],
+                    "doc_id": r.get("doc_id", ""),
+                    "text": r.get("text", ""),
+                    "metadata": meta,
+                    "rrf_score": round(score, 6),
+                    "sources": sources,
+                    "rank": i + 1,
+                    "entities": [],
+                }
+            )
         return RetrievalContext(
             query=query,
             session_id=session_id,

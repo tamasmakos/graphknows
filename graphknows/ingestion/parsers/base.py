@@ -119,30 +119,60 @@ class BaseParser(ABC):
         body: str,
         max_tokens: int,
     ) -> list[tuple[str, str]]:
-        """Split a large section at sentence boundaries, packing to ``max_tokens``.
+        """Split a large section to ``<= max_tokens``, preserving line/turn boundaries.
 
-        Uses spaCy sentence segmentation so chunks never break a word or a
-        sentence. Sentences are packed greedily up to the token budget; this
-        works for prose (paragraphs) and dialogue (newline-delimited messages,
-        which have no blank-line paragraph boundaries) alike.
+        Dialogue turns are newline-delimited (``HH:MM | Speaker: text``). Packing by
+        line and re-joining with newlines keeps each turn intact and the speaker
+        structure readable — space-joining sentences was flattening turns into
+        multi-topic blobs, dropping the boundaries that line-anchored parsing and
+        readable retrieval depend on. Prose (a single long line/paragraph) and any
+        single over-long turn fall back to spaCy sentence packing so a chunk never
+        breaks a word.
         """
         from graphknows.ingestion.parsers._sentences import split_sentences
 
         heading_text = path.split(" / ")[-1].strip()
-        sentences = split_sentences(body)
-        result: list[tuple[str, str]] = []
-        buf_sentences: list[str] = []
+
+        def _toks(s: str) -> int:
+            return max(1, len(s) // APPROX_CHARS_PER_TOKEN)
+
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        if len(lines) > 1:
+            units, joiner = lines, "\n"  # dialogue: one unit per turn
+        else:
+            units, joiner = split_sentences(body), " "  # prose: sentence units
+
+        bodies: list[str] = []
+        buf: list[str] = []
         buf_tokens = 0
-        for sent in sentences:
-            sent_tokens = max(1, len(sent) // APPROX_CHARS_PER_TOKEN)
-            if buf_sentences and buf_tokens + sent_tokens > max_tokens:
-                body_text = " ".join(buf_sentences)
-                result.append((path, f"{heading_text}\n\n{body_text}" if heading_text else body_text))
-                buf_sentences = []
-                buf_tokens = 0
-            buf_sentences.append(sent)
-            buf_tokens += sent_tokens
-        if buf_sentences:
-            body_text = " ".join(buf_sentences)
-            result.append((path, f"{heading_text}\n\n{body_text}" if heading_text else body_text))
-        return result
+        for unit in units:
+            # A single unit over budget (a very long turn or prose run): flush the
+            # buffer, then sentence-split the unit so no chunk exceeds the budget.
+            if _toks(unit) > max_tokens:
+                if buf:
+                    bodies.append(joiner.join(buf))
+                    buf, buf_tokens = [], 0
+                sub: list[str] = []
+                sub_tokens = 0
+                for sent in split_sentences(unit):
+                    if sub and sub_tokens + _toks(sent) > max_tokens:
+                        bodies.append(" ".join(sub))
+                        sub, sub_tokens = [], 0
+                    sub.append(sent)
+                    sub_tokens += _toks(sent)
+                if sub:
+                    bodies.append(" ".join(sub))
+                continue
+            if buf and buf_tokens + _toks(unit) > max_tokens:
+                bodies.append(joiner.join(buf))
+                buf, buf_tokens = [], 0
+            buf.append(unit)
+            buf_tokens += _toks(unit)
+        if buf:
+            bodies.append(joiner.join(buf))
+
+        return [
+            (path, f"{heading_text}\n\n{b}" if heading_text else b)
+            for b in bodies
+            if b.strip()
+        ]
