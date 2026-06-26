@@ -75,8 +75,12 @@ def test_build_case_result_scores_token_f1() -> None:
         passages=[],
         probe=[],
         generated_answer="Prague",
+        gen_usage={"gen_total_tokens": 42},
+        judge_correct=True,
         ingest=IngestResult(chunks=3),
     )
     assert result.score == 1.0
     assert result.metrics["score_type"] == "token_f1"
+    assert result.metrics["judge_correct"] is True
+    assert result.metrics["gen_total_tokens"] == 42
     assert result.metrics["ingested_chunks"] == 3

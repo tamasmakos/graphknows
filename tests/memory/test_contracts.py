@@ -35,6 +35,8 @@ def test_promotion_request_defaults_to_topic_off_for_llm_free() -> None:
 
     assert policy.topic_mode == "off"
     assert policy.run_topics is False
+    # Community detection is inert in llm_free (no topics, weight unconsumed) — skip it.
+    assert policy.run_gds is False
 
 
 def test_promotion_request_allows_llm_assisted_topic_enrichment() -> None:
@@ -42,6 +44,8 @@ def test_promotion_request_allows_llm_assisted_topic_enrichment() -> None:
 
     assert policy.topic_mode == "llm_assisted"
     assert policy.run_topics is True
+    # GDS runs in llm_assisted: community_id feeds topics + community-weighted fusion.
+    assert policy.run_gds is True
 
 
 def test_community_assignment_contract() -> None:

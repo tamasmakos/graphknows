@@ -14,7 +14,7 @@ def _make_settings():
     settings = MagicMock()
     settings.embed_model = "openai/text-embedding-3-small"
     settings.extraction_model = None
-    settings.llm_model = "moonshotai/kimi-k2"
+    settings.llm_model = "test-model"
     settings.openrouter_api_key = "sk-test"
     settings.llm_temperature = 0.0
     settings.llm_max_tokens = 512

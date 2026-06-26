@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from evaluation.config import EvalConfig
-from evaluation.dataset import build_documents, dialogue_id, load_dialogues
+from evaluation.ingestion.locomo import build_documents, dialogue_id, load_dialogues
 
 _ROW = {
     "id": "conv-26-q0001",

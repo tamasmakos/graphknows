@@ -3,11 +3,35 @@
 from __future__ import annotations
 
 from evaluation.datamodels import RetrievedPassage
-from evaluation.scoring import answer_tokens, gold_max_overlap, gold_reachable, token_f1
+from evaluation.scoring import (
+    answer_tokens,
+    gold_max_overlap,
+    gold_reachable,
+    normalize_answer,
+    token_f1,
+)
 
 
 def test_token_f1_exact_match() -> None:
     assert token_f1("Prague", "Prague") == 1.0
+
+
+def test_normalize_answer_strips_articles_and_punctuation() -> None:
+    assert normalize_answer("The Cello!") == "cello"
+    assert normalize_answer("yes.") == "yes"
+    assert normalize_answer("a paediatric  nurse,") == "paediatric nurse"
+
+
+def test_token_f1_ignores_articles_and_punctuation() -> None:
+    # "the cello" vs "cello" is a perfect match after SQuAD normalization.
+    assert token_f1("the cello", "cello") == 1.0
+    assert token_f1("yes", "yes.") == 1.0
+
+
+def test_token_f1_multiset_counts_repeats() -> None:
+    # Multiset intersection: a single gold "no" should not be fully covered by
+    # a prediction repeating other tokens.
+    assert token_f1("paris", "paris paris paris") < 1.0
 
 
 def test_token_f1_penalises_verbosity() -> None:
