@@ -25,27 +25,54 @@ class ReportPaths:
 # Per-case CSV columns — numeric metrics first (easy to load into pandas/R),
 # then text fields last.
 _CSV_METRIC_KEYS = (
+    "judge_correct",
     "gold_max_token_overlap",
     "gold_reachable_at_20",
     "avg_hit_score",
     "recall_hit_count",
     "ltm_graph_hit_count",
+    # DSPy semantic metrics (populated when EVAL_DSPY_METRICS=1)
+    "semantic_f1",
+    "complete_and_grounded",
+    "completeness",
+    "groundedness",
     "ingested_chunks",
     "ingested_entities",
     "ltm_entity_count",
     "flush_nodes",
     "flush_edges",
+    # OpenRouter usage (per question)
+    "gen_prompt_tokens",
+    "gen_completion_tokens",
+    "gen_total_tokens",
+    "gen_cost_usd",
+    # OpenRouter usage (ingestion, llm_assisted only)
+    "ingest_prompt_tokens",
+    "ingest_completion_tokens",
+    "ingest_cost_usd",
 )
 
 
 def summarize(cases: list[CaseResult]) -> dict[str, Any]:
-    """Aggregate per-case scores and metrics into a run summary."""
+    """Aggregate per-case scores and metrics into a run summary.
+
+    Reports two headline numbers: ``avg_score`` (lexical token-F1) and
+    ``judge_accuracy`` (semantic LLM-judge correctness — the leaderboard metric).
+    """
     scores = [case.score for case in cases]
     avg_score = sum(scores) / len(scores) if scores else 0.0
 
     by_category: dict[str, list[float]] = {}
+    judge_by_category: dict[str, list[float]] = {}
     for case in cases:
-        by_category.setdefault(case.category or "uncategorized", []).append(case.score)
+        cat = case.category or "uncategorized"
+        by_category.setdefault(cat, []).append(case.score)
+        judge_by_category.setdefault(cat, []).append(
+            1.0 if case.metrics.get("judge_correct") else 0.0
+        )
+
+    judge_vals = [1.0 if case.metrics.get("judge_correct") else 0.0 for case in cases]
+    judge_accuracy = sum(judge_vals) / len(judge_vals) if judge_vals else 0.0
 
     metric_buckets: dict[str, list[float]] = {}
     for case in cases:
@@ -58,8 +85,12 @@ def summarize(cases: list[CaseResult]) -> dict[str, Any]:
     return {
         "case_count": len(cases),
         "avg_score": avg_score,
+        "judge_accuracy": judge_accuracy,
         "avg_score_by_category": {
             cat: sum(vals) / len(vals) for cat, vals in sorted(by_category.items())
+        },
+        "judge_accuracy_by_category": {
+            cat: sum(vals) / len(vals) for cat, vals in sorted(judge_by_category.items())
         },
         "metric_summary": {
             key: sum(vals) / len(vals) for key, vals in sorted(metric_buckets.items()) if vals
@@ -75,13 +106,15 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- Run ID: `{report['run_id']}`",
         f"- Generated: `{report['generated_at']}`",
         f"- Cases: `{summary['case_count']}`",
-        f"- Mean token-F1: `{summary['avg_score']:.3f}`",
+        f"- Mean token-F1 (lexical): `{summary['avg_score']:.3f}`",
+        f"- Judge accuracy (semantic): `{summary.get('judge_accuracy', 0.0):.3f}`",
         "",
-        "## Score by category",
+        "## Score by category (token-F1 | judge)",
         "",
     ]
+    judge_cat = summary.get("judge_accuracy_by_category", {})
     for cat, val in summary["avg_score_by_category"].items():
-        lines.append(f"- `{cat}`: `{val:.3f}`")
+        lines.append(f"- `{cat}`: F1 `{val:.3f}`  |  judge `{judge_cat.get(cat, 0.0):.3f}`")
     lines.extend(["", "## Aggregated metrics", ""])
     for key, val in summary["metric_summary"].items():
         lines.append(f"- `{key}`: `{val:.3f}`")

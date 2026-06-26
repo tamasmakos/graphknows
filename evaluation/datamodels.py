@@ -69,6 +69,10 @@ class IngestResult(BaseModel):
     flush_elapsed_s: float = 0.0
     flush_error_count: int = 0
     ltm_entity_count: int = 0
+    # LLM usage during ingestion (llm_assisted mode only; populated when MCP server returns usage)
+    ingest_prompt_tokens: int = 0
+    ingest_completion_tokens: int = 0
+    ingest_cost_usd: float = 0.0
 
 
 class CaseResult(BaseModel):
