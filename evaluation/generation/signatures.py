@@ -11,25 +11,34 @@ import dspy
 
 from evaluation.datamodels import RetrievedPassage
 
-_MAX_CONTEXT_CHARS = 8_000
+_MAX_CONTEXT_CHARS = 24_000
 
 
 class LoCoMoAnswerGeneration(dspy.Signature):
     """Answer a question about a long-running conversation between two people,
     using ONLY the retrieved conversation passages as the source of truth.
 
+    Reason fully over ALL the passages, then give the COMPLETE answer: include
+    every fact, qualifier, and list item the passages support for the question,
+    matching the gold's level of detail. Be concise — no framing, no explanation,
+    no reasoning in the answer — but NEVER at the cost of dropping a required
+    modifier or trailing clause. A correct-but-incomplete answer scores as wrong.
+
     Rules:
     1. EXTRACT, do not abstain. If any passage supports an answer — even stated
-       indirectly or via light inference — give that answer. Say "Unknown" ONLY
-       when no passage is topically related to the question.
-    2. Shortest correct answer: a name, date, place, number, or comma-separated
-       list. No framing words ("Sweden" not "my home country, Sweden"). For yes/no
-       inference questions, add a brief reason ("Yes, since she plays piano").
-    3. Resolve dates: convert purely relative phrases (e.g. "last year" → "2022",
-       "next month" → "June 2023"). But preserve period-anchored expressions as-is
-       (e.g. "the week before 27 June 2023" — do NOT reduce to "20 June 2023").
-       Resolve vague entity references ("my home country" → "Sweden").
-    4. Multi-item questions — list EVERY matching item found across all passages,
+       indirectly or via light inference — give it. Say "Unknown" ONLY when no
+       passage is topically related at all.
+    2. Strip framing words, keep substance. Give the bare value(s), but keep every
+       qualifier that is part of the answer ("transgender woman", not "transgender";
+       "counseling for transgender people", not "counseling"; "Sweden", not "my
+       home country, Sweden"; "by dancing", not "They both like to destress by
+       dancing together").
+    3. Yes/no questions: answer "yes" or "no" alone — do NOT append a reason.
+    4. Resolve dates: convert purely relative phrases ("last year" → "2022"). But
+       preserve period-anchored expressions as-is ("the week before 27 June 2023" —
+       do NOT reduce to "20 June 2023"). Resolve vague references ("my home country"
+       → "Sweden").
+    5. Multi-item questions — list EVERY matching item across all passages,
        comma-separated and deduplicated."""
 
     question: str = dspy.InputField(desc="A question about the two-person conversation.")
@@ -38,10 +47,10 @@ class LoCoMoAnswerGeneration(dspy.Signature):
     )
     answer: str = dspy.OutputField(
         desc=(
-            "Shortest correct answer: a name, date, place, number, or comma-separated list "
-            "(all references resolved); or a qualified yes/no for inference questions "
-            "('Yes, since she plays piano' / 'Likely no; since it went poorly'); "
-            "or 'Unknown' only if no passage is topically related."
+            "The complete bare answer: every gold-relevant fact and qualifier with "
+            "framing words stripped (a name, date, place, number, or comma-separated "
+            "list, references resolved); 'yes'/'no' alone for yes/no questions; or "
+            "'Unknown' only if no passage is topically related."
         )
     )
 
@@ -50,7 +59,7 @@ def demos() -> list[dspy.Example]:
     """Few-shot demos teaching extraction, inference, list aggregation, and date anchoring.
 
     These use invented people/facts that do NOT appear in the benchmark — they
-    teach answer *behaviour and format*, never leak benchmark answers.
+    teach answer *behaviour and format* (concise, complete bare values), never leak answers.
     """
     raw = [
         # Direct extraction — answer stated indirectly, do not over-abstain.
@@ -58,7 +67,7 @@ def demos() -> list[dspy.Example]:
             "What is Daniel's profession?",
             "[1] Daniel: After residency I finally settled in as a paediatric nurse "
             "at the city hospital. Daniel: the night shifts are tough but I love it.",
-            "Paediatric nurse",
+            "paediatric nurse",
         ),
         # Strip framing words — answer the bare value only.
         (
@@ -80,19 +89,19 @@ def demos() -> list[dspy.Example]:
             "in so well already.",
             "11 March 2023",
         ),
-        # Positive inference — infer from behavioral evidence and include brief reason.
+        # Yes/no inference — answer bare "yes", reason in thinking only, NOT in the answer.
         (
             "Would Alex consider himself athletic?",
             "[1] Alex: Ran my first 5K last Saturday, finished in 28 minutes!\n\n"
             "[2] Alex: Gym three times a week now — really feeling the progress.",
-            "Yes, since he runs regularly and goes to the gym",
+            "yes",
         ),
-        # Negative inference — do NOT abstain; infer from failure/obstacle context.
+        # Negative inference — bare "no", do not abstain, no appended reason.
         (
             "Would Marcus want to return to the same resort?",
             "[1] Marcus: That resort was honestly a disaster — dirty rooms, terrible food. "
             "I'd never book there again.",
-            "Likely no; since the experience was very negative",
+            "no",
         ),
     ]
     return [

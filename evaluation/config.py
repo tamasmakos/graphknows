@@ -30,18 +30,25 @@ class EvalConfig(BaseModel):
     data_root: Path = Path("evaluation/data/locomo")
     questions_file: str = "questions.jsonl"
     max_documents: int = 50
-    max_chars_per_document: int = 4000
+    # 8000 covers the longest LoCoMo session (7187 chars). At 4000, 24.6% of
+    # sessions were truncated — silently dropping 7.1% of all conversation text
+    # (and any gold evidence in the tail). This is the MISSING bucket in the
+    # retrieval probe.
+    max_chars_per_document: int = 8000
 
     # ── Retrieval ────────────────────────────────────────────────────────────
-    top_k: int = 5  # scored retrieval depth
-    gen_context_k: int = 8  # candidate pool handed to the generator
-    probe_k: int = 20  # gold-reachability probe depth
+    # "Full blast": feed every question the maximum retrieval depth (the retriever
+    # caps top_k at 25) and hand all of it to the generator — no per-question-type
+    # gating. Reachability@20 was only 55%, so we surface as much as we can.
+    top_k: int = 5  # scored retrieval depth (for the avg_hit_score diagnostic)
+    gen_context_k: int = 25  # passages handed to the generator (= probe_k)
+    probe_k: int = 25  # gold-reachability probe depth (retriever ceiling)
     recall_scope: str = "both"  # stm | ltm | both
     relation_extraction_mode: str = "gliner2"
     promote_to_ltm: bool = True
 
     # ── Generation ───────────────────────────────────────────────────────────
-    generation_model: str = ""  # → OPENROUTER_MODEL env or moonshotai/kimi-k2
+    generation_model: str = ""  # → LLM_MODEL from .env (required — no hardcoded fallback)
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
     session_prefix: str = "eval-locomo"
