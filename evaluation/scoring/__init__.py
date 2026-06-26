@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from evaluation.scoring.judge import LLMJudge
 from evaluation.scoring.metrics import (
     answer_tokens,
     gold_max_overlap,
     gold_reachable,
+    normalize_answer,
     token_f1,
 )
 
-__all__ = ["answer_tokens", "gold_max_overlap", "gold_reachable", "token_f1"]
+__all__ = [
+    "LLMJudge",
+    "answer_tokens",
+    "gold_max_overlap",
+    "gold_reachable",
+    "normalize_answer",
+    "token_f1",
+]
