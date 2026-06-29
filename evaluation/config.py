@@ -24,7 +24,7 @@ class EvalConfig(BaseModel):
 
     # ── MCP server ───────────────────────────────────────────────────────────
     command: str = "graphknows-mcp"
-    request_timeout_s: float = 900.0
+    request_timeout_s: float = 3600.0
 
     # ── Dataset ──────────────────────────────────────────────────────────────
     data_root: Path = Path("evaluation/data/locomo")
@@ -41,8 +41,18 @@ class EvalConfig(BaseModel):
     # caps top_k at 25) and hand all of it to the generator — no per-question-type
     # gating. Reachability@20 was only 55%, so we surface as much as we can.
     top_k: int = 5  # scored retrieval depth (for the avg_hit_score diagnostic)
-    gen_context_k: int = 25  # passages handed to the generator (= probe_k)
-    probe_k: int = 25  # gold-reachability probe depth (retriever ceiling)
+    # gen_context_k is the EXPENSIVE knob: generation input ≈ gen_context_k passages
+    # (~7.7k tokens/q at 50, ~3.9k at 25) and dominates credit spend. Keep it lean.
+    # probe_k stays 50 only to measure reach@50 as a FREE diagnostic (the retrieval
+    # call is deterministic/no-LLM; only the passages fed to the generator cost).
+    # With FUSION_ALPHA=0.05, reach@25=0.53 (> the 0.49 pre-tuning baseline), so 25
+    # keeps F1 above baseline at half the input cost of 50. A cosine rerank was tried
+    # to feed fewer (~12) but did NOT help: gold is spread across ranks 1-50, not
+    # buried-but-high-cosine, so reach@12 stayed ~0.41 for any rerank weight. Cutting
+    # below 25 trades F1 for cost on a real curve (reach@10=0.40, @25=0.53, @50=0.65);
+    # further reduction needs better retrieval RECALL (chunking/embeddings), not rerank.
+    gen_context_k: int = 25  # passages handed to the generator (head of the probe)
+    probe_k: int = 50  # gold-reachability probe depth (diagnostic only; not fed to LLM)
     recall_scope: str = "both"  # stm | ltm | both
     relation_extraction_mode: str = "gliner2"
     promote_to_ltm: bool = True
