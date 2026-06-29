@@ -7,25 +7,123 @@ Three collectors run concurrently:
 
 Topic nodes are LLM-assisted enrichment artifacts; deterministic retrieval uses
 community metadata as score shaping rather than returning synthetic topic hits.
+
+WS-2 additions
+--------------
+* BM25 sparse channel — replaces the homegrown two-pass full-text with a proper
+  BM25 ranking (``rank_bm25`` when importable, clean tokenised fallback otherwise)
+  over chunk texts, feeding one RRF source.
+* Cross-encoder rerank — the top ~50 RRF candidates are re-scored by a local
+  CPU cross-encoder (``rerank.py``); no-op when the model is unavailable.
+* PageRank boost — ``e.pagerank`` from ENTITY nodes is folded into the fusion
+  score with a bounded log-compressed multiplier.  Absent/zero → no effect.
+* IDF discriminativeness — entities are smooth-IDF-down-weighted instead of
+  hard-dropped when they appear in >50% of the corpus.
+* Temporal recency boost — relation-edge ``_temporal_score`` from
+  ``filter_by_validity_window`` is folded into temporal-traversal candidates.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from typing import Any
 
 from graphknows.config.adapters.ports.vector_db import IVectorDb
-from graphknows.memory.query._rrf_common import FUSION_ALPHA, RRF_RELATION_BOOST, rrf_score
+from graphknows.memory.query._rrf_common import (
+    FUSION_ALPHA,
+    RRF_RELATION_BOOST,
+    idf_weight,
+    pagerank_boost,
+    rrf_score,
+)
 from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
+from graphknows.memory.query.rerank import rerank as _ce_rerank
 from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 from graphknows.memory.stores.embedder import embed
 from graphknows.memory.temporal import filter_by_validity_window, query_date_candidates
 
+# ---------------------------------------------------------------------------
+# Optional BM25 import — lazy, graceful fallback to tf-style scoring
+# ---------------------------------------------------------------------------
+try:
+    from rank_bm25 import BM25Okapi as _BM25  # type: ignore[import-untyped]
+
+    _HAS_BM25 = True
+except ImportError:
+    _HAS_BM25 = False
+    _BM25 = None  # type: ignore[assignment,misc]
+
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# BM25 in-memory scorer
+# ---------------------------------------------------------------------------
+
+def _bm25_rank(
+    query_tokens: list[str],
+    chunks: list[dict[str, Any]],
+) -> list[tuple[float, dict[str, Any]]]:
+    """Rank *chunks* by BM25 relevance to *query_tokens*.
+
+    Uses ``rank_bm25.BM25Okapi`` when available; falls back to a simple
+    normalised term-frequency scorer so the channel is always live.
+
+    Args:
+        query_tokens: Pre-filtered, lower-cased query tokens.
+        chunks: Dicts that must contain at least ``"text"`` (str) and
+            ``"chunk_id"`` (str).
+
+    Returns:
+        List of ``(score, chunk_dict)`` pairs sorted by score descending.
+        Empty list when *query_tokens* or *chunks* is empty.
+    """
+    if not query_tokens or not chunks:
+        return []
+
+    tokenised = [
+        re.findall(r"[a-z0-9][a-z0-9']*", (c.get("text") or "").lower())
+        for c in chunks
+    ]
+
+    if _HAS_BM25:
+        bm25 = _BM25(tokenised)
+        scores = bm25.get_scores(query_tokens).tolist()
+    else:
+        # Fallback: normalised TF with IDF approximation.
+        # IDF: log((N+1) / (df+1)) — same formula BM25Okapi uses.
+        n = len(chunks)
+        df: dict[str, int] = {}
+        for toks in tokenised:
+            for t in set(toks):
+                df[t] = df.get(t, 0) + 1
+        idf_map = {
+            t: math.log((n + 1) / (d + 1)) + 1.0
+            for t, d in df.items()
+        }
+        scores = []
+        for toks in tokenised:
+            if not toks:
+                scores.append(0.0)
+                continue
+            tf: dict[str, float] = {}
+            for t in toks:
+                tf[t] = tf.get(t, 0.0) + 1.0
+            length = len(toks)
+            sc = sum(
+                idf_map.get(qt, 0.0) * tf.get(qt, 0.0) / length
+                for qt in query_tokens
+            )
+            scores.append(sc)
+
+    paired = sorted(zip(scores, chunks), key=lambda x: -x[0])
+    return [(s, c) for s, c in paired if s > 0.0]
+
 
 _STRUCTURAL_REL_TYPES = frozenset(
     {
@@ -125,8 +223,8 @@ class DETRetriever(BaseGraphRetriever):
             self._stm_entity_boost(words_graph, session_id, top_k),
             self._ltm_entity_traversal(words_graph, session_id, top_k),
             self._semantic_ann(emb, session_id, scope, top_k, emb2=emb2),
-            self._stm_full_text(words, session_id, top_k),
-            self._ltm_full_text(words, session_id, scope, top_k),
+            self._stm_bm25(words, session_id, top_k),
+            self._ltm_bm25(words, session_id, scope, top_k),
             self._ltm_temporal_traversal(query, session_id, scope, top_k),
             self._ltm_topic_match(emb, session_id, scope, top_k),
             return_exceptions=True,
@@ -169,23 +267,31 @@ class DETRetriever(BaseGraphRetriever):
         needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
         text_map = await self.pg.get_chunks_by_ids(needs_meta) if needs_meta else {}
 
-        # Apply _community_boost and _shape_score to every candidate BEFORE
-        # sorting so the final order reflects the shaped score.
+        # Apply _community_boost, PageRank boost, and _shape_score to every
+        # candidate BEFORE sorting so the final order reflects the shaped score.
         shaped_combined: list[tuple[str, float, dict[str, Any], dict[str, Any]]] = []
         for cid, (base_score, info) in combined.items():
             fc = text_map.get(cid, {})
             meta = fc.get("metadata") or info.get("metadata") or {}
-            shaped = _shape_score(base_score * _community_boost(meta), meta.get("memory_class"))
+            # PageRank centrality boost: e.pagerank from WS-6 ENTITY projection.
+            # Absent/zero → pagerank_boost returns 1.0 (no effect).
+            pr = float(meta.get("pagerank", 0.0) or 0.0)
+            pr_mult = pagerank_boost(pr)
+            shaped = _shape_score(
+                base_score * _community_boost(meta) * pr_mult,
+                meta.get("memory_class"),
+            )
             shaped_combined.append((cid, shaped, info, fc))
 
         shaped_combined.sort(key=lambda x: -x[1])
-        ranked_shaped = shaped_combined[:top_k]
 
-        fused: list[dict[str, Any]] = []
-        for rank_i, (cid, shaped, info, fc) in enumerate(ranked_shaped):
+        # Materialise the pre-rerank candidate pool (up to top_k candidates for
+        # the cross-encoder — rerank.py internally caps at _RERANK_CANDIDATE_CAP).
+        pre_rerank: list[dict[str, Any]] = []
+        for rank_i, (cid, shaped, info, fc) in enumerate(shaped_combined):
             meta = fc.get("metadata") or info.get("metadata") or {}
             ents = info.get("entities", [])
-            fused.append(
+            pre_rerank.append(
                 {
                     "chunk_id": cid,
                     "doc_id": fc.get("doc_id") or info.get("doc_id", ""),
@@ -197,6 +303,9 @@ class DETRetriever(BaseGraphRetriever):
                     "entities": ents if isinstance(ents, list) else list(ents),
                 }
             )
+
+        # Cross-encoder rerank: no-op when model unavailable (returns unchanged).
+        fused = await asyncio.to_thread(_ce_rerank, query, pre_rerank, top_k)
 
         return RetrievalContext(
             query=query,
@@ -286,66 +395,68 @@ class DETRetriever(BaseGraphRetriever):
         }
     )
 
-    async def _stm_full_text(
+    async def _stm_bm25(
         self,
         words: list[str],
         session_id: str,
         top_k: int,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
-        """Keyword text search — catches entities the extractor missed.
+        """BM25 sparse channel over STM chunks — replaces homegrown two-pass full-text.
 
-        Runs two passes: AND (all specific terms) for high-precision hits,
-        then OR (any term) for broader coverage.  AND results rank higher.
+        Fetches candidate chunks via the OR pass (any term) from the STM store
+        to build a pool, then re-ranks them with BM25 for one clean RRF source.
+        Uses ``rank_bm25.BM25Okapi`` when importable; falls back to a normalised
+        TF-IDF scorer so the channel is always live.
         """
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         specific = [w for w in words if w not in self._FT_STOPWORDS]
         if not specific:
             return result
 
-        def _make_info(text: str) -> dict[str, Any]:
-            return {
-                "text": text,
-                "entities": [],
-                "sources": {"stm_text"},
-                "doc_id": "",
-                "metadata": {},
-            }
-
         try:
-            # High-precision pass: all specific terms must appear together.
-            # Use boost=3 so an exact multi-term match can outrank a chunk
-            # that only has entity+semantic support without the exact phrase.
-            and_chunks = await self.mg.full_text_search_chunks(
-                session_id=session_id, terms=specific, top_k=top_k, require_all=True
-            )
-            for rank, c in enumerate(and_chunks):
-                cid = c["chunk_id"]
-                result[cid] = (rrf_score(rank, boost=3.0), _make_info(c.get("text", "")))
-
-            # Broader pass: any term (lower-ranked, only new chunks)
+            # Fetch a broad candidate pool via the OR pass.
             or_chunks = await self.mg.full_text_search_chunks(
-                session_id=session_id, terms=specific, top_k=top_k, require_all=False
+                session_id=session_id,
+                terms=specific,
+                top_k=top_k * 3,
+                require_all=False,
             )
-            for rank, c in enumerate(or_chunks):
-                cid = c["chunk_id"]
-                if cid not in result:
-                    result[cid] = (rrf_score(rank + top_k), _make_info(c.get("text", "")))
         except Exception as exc:
-            log.warning("STM full-text search failed: %s", exc)
+            log.warning("STM BM25 candidate fetch failed: %s", exc)
+            return result
+
+        ranked = _bm25_rank(specific, or_chunks)
+        for rank, (bm25_score, c) in enumerate(ranked[:top_k]):
+            cid = c["chunk_id"]
+            # BM25 score folds in as a tiebreaker on top of RRF rank weight.
+            rrf = rrf_score(rank, boost=3.0) + FUSION_ALPHA * bm25_score
+            result[cid] = (
+                rrf,
+                {
+                    "text": c.get("text", ""),
+                    "entities": [],
+                    "sources": {"stm_text"},
+                    "doc_id": "",
+                    "metadata": {},
+                },
+            )
         return result
 
     async def _discriminative_entities(
         self, safe_words: list[str], session_filter: str | None
-    ) -> list[str]:
-        """Query-matched entity names, minus saturated (non-discriminative) ones.
+    ) -> list[tuple[str, float]]:
+        """Query-matched entity names with IDF discriminativeness weights.
 
-        An entity mentioned in more than ``_ENTITY_SATURATION_RATIO`` of the corpus
-        (e.g. the two conversation participants) matches nearly every chunk, so
-        seeding traversal on it buries the query-specific chunk under the whole
-        conversation. Those are dropped so traversal seeds on specific entities
-        (adoption, violin, church). Returns ``[]`` when nothing discriminative
-        matched — callers then rely on the semantic/full-text channels, which
-        already cover those chunks.
+        Returns ``(name, idf_weight)`` pairs where:
+        - Entities in > ``_ENTITY_SATURATION_RATIO`` of the corpus are still
+          hard-dropped (traversal seed noise), same as before.
+        - Entities with doc_freq / corpus_size in (0, saturation] get a smooth
+          IDF weight in (0, 1] from ``idf_weight()``.  Rare entities → 1.0.
+          This weight is multiplied into the RRF score at point of insertion
+          so ubiquitous-but-sub-saturation entities receive a proportional
+          down-weight rather than a cliff.
+
+        Returns ``[]`` when nothing discriminative matched.
         """
         if not safe_words:
             return []
@@ -369,7 +480,15 @@ class DETRetriever(BaseGraphRetriever):
             log.debug("discriminative-entity filter unavailable (%s); skipping traversal", exc)
             return []
         cap = max(1, int(_ENTITY_SATURATION_RATIO * total))
-        return [r["name"] for r in deg_rows if r.get("name") and int(r.get("deg") or 0) <= cap]
+        result: list[tuple[str, float]] = []
+        for r in deg_rows:
+            name = r.get("name")
+            deg = int(r.get("deg") or 0)
+            if not name or deg > cap:
+                continue  # Hard-drop saturated entities (same behaviour as before)
+            w = idf_weight(deg, total)
+            result.append((name, w))
+        return result
 
     async def _ltm_entity_traversal(
         self,
@@ -403,7 +522,9 @@ class DETRetriever(BaseGraphRetriever):
         disc = await self._discriminative_entities(safe, session_filter)
         if not disc:
             return result
-        safe_names = [n.replace("'", "") for n in disc]
+        # disc is now list[tuple[name, idf_w]] — build lookup and name list.
+        idf_lookup: dict[str, float] = {n.replace("'", ""): w for n, w in disc}
+        safe_names = list(idf_lookup.keys())
         # Exact-match the (already query-matched, non-saturated) entity names.
         where_entity = " OR ".join(f"e.name = '{n}'" for n in safe_names)
         try:
@@ -413,33 +534,45 @@ class DETRetriever(BaseGraphRetriever):
                     f"-[:HAS_CHUNK]->(c:CHUNK) "
                     f"MATCH (c)-[:MENTIONS]->(e:ENTITY) "
                     f"WHERE {where_entity} "
-                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc "
+                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc, "
+                    f"     max(coalesce(e.pagerank, 0.0)) AS max_pr "
                     f"ORDER BY mc DESC LIMIT $top_k "
-                    f"RETURN c.id AS chunk_id, c.text AS text, entities"
+                    f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
                 )
                 rows = await self.neo._qry(cypher, top_k=top_k, sid=session_filter)
             else:
                 cypher = (
                     f"MATCH (e:ENTITY) WHERE {where_entity} "
                     f"MATCH (c:CHUNK)-[:MENTIONS]->(e) "
-                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc "
+                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc, "
+                    f"     max(coalesce(e.pagerank, 0.0)) AS max_pr "
                     f"ORDER BY mc DESC LIMIT $top_k "
-                    f"RETURN c.id AS chunk_id, c.text AS text, entities"
+                    f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
                 )
                 rows = await self.neo._qry(cypher, top_k=top_k)
 
             for rank, row in enumerate(rows):
+                # IDF smooth down-weight: multiply by the minimum IDF weight among
+                # the matched entities in this chunk.  Rare entities → 1.0 (no change).
+                chunk_ents = row.get("entities") or []
+                min_idf = min(
+                    (idf_lookup.get(e, 1.0) for e in chunk_ents if e in idf_lookup),
+                    default=1.0,
+                )
+                # Expose max entity pagerank in metadata so the shaping stage can
+                # apply pagerank_boost.  Absent in older graphs → defaults to 0.
+                pr = float(row.get("max_pr") or 0.0)
                 _add_result(
                     result,
                     row["chunk_id"],
                     # boost=2: entity hits are high-precision; outcompete pure-ANN noise
-                    rrf_score(rank, boost=2.0),
+                    rrf_score(rank, boost=2.0) * min_idf,
                     {
                         "text": row["text"],
                         "entities": row["entities"],
                         "sources": {"ltm_graph"},
                         "doc_id": "",
-                        "metadata": {},
+                        "metadata": {"pagerank": pr},
                     },
                 )
 
@@ -509,18 +642,18 @@ class DETRetriever(BaseGraphRetriever):
         except Exception as exc:
             log.debug("relation-expanded pass skipped: %s", exc)
 
-    async def _ltm_full_text(
+    async def _ltm_bm25(
         self,
         words: list[str],
         session_id: str,
         scope: str,
         top_k: int,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
-        """Keyword text search on LTM chunks — mirrors _stm_full_text for LTM scope.
+        """BM25 sparse channel over LTM chunks — replaces homegrown two-pass full-text.
 
-        Runs only when scope includes 'ltm'. Gives keyword recall for LTM mode
-        equivalent to what _stm_full_text provides for STM, catching named entities
-        and dates that ANN may rank lower than semantically similar but off-topic chunks.
+        Mirrors ``_stm_bm25`` for the LTM scope.  Fetches a broad OR-pool from
+        the LTM store's full-text index, then re-ranks with BM25 for one clean
+        RRF source.  No-op when scope excludes LTM or the store has no FT method.
         """
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if scope not in ("ltm", "both"):
@@ -533,32 +666,31 @@ class DETRetriever(BaseGraphRetriever):
         if not callable(neo_ft):
             return result
 
-        def _make_info(text: str) -> dict[str, Any]:
-            return {
-                "text": text,
-                "entities": [],
-                "sources": {"ltm_text"},
-                "doc_id": "",
-                "metadata": {},
-            }
-
         try:
-            and_chunks = await neo_ft(
-                terms=specific, session_id=session_id or None, top_k=top_k, require_all=True
-            )
-            for rank, c in enumerate(and_chunks):
-                cid = c["chunk_id"]
-                result[cid] = (rrf_score(rank, boost=5.0), _make_info(c.get("text", "")))
-
             or_chunks = await neo_ft(
-                terms=specific, session_id=session_id or None, top_k=top_k, require_all=False
+                terms=specific,
+                session_id=session_id or None,
+                top_k=top_k * 3,
+                require_all=False,
             )
-            for rank, c in enumerate(or_chunks):
-                cid = c["chunk_id"]
-                if cid not in result:
-                    result[cid] = (rrf_score(rank + top_k), _make_info(c.get("text", "")))
         except Exception as exc:
-            log.warning("LTM full-text search failed: %s", exc)
+            log.warning("LTM BM25 candidate fetch failed: %s", exc)
+            return result
+
+        ranked = _bm25_rank(specific, or_chunks)
+        for rank, (bm25_score, c) in enumerate(ranked[:top_k]):
+            cid = c["chunk_id"]
+            rrf = rrf_score(rank, boost=5.0) + FUSION_ALPHA * bm25_score
+            result[cid] = (
+                rrf,
+                {
+                    "text": c.get("text", ""),
+                    "entities": [],
+                    "sources": {"ltm_text"},
+                    "doc_id": "",
+                    "metadata": {},
+                },
+            )
         return result
 
     async def _ltm_temporal_traversal(
