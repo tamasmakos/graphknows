@@ -23,7 +23,7 @@ from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
 from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 from graphknows.memory.stores.embedder import embed
-from graphknows.memory.temporal import query_date_candidates
+from graphknows.memory.temporal import filter_by_validity_window, query_date_candidates
 
 log = logging.getLogger(__name__)
 
@@ -568,11 +568,18 @@ class DETRetriever(BaseGraphRetriever):
         scope: str,
         top_k: int,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
-        """Match chunks linked to canonical TEMPORAL nodes for dates in the query.
+        """Match chunks and relation edges by bi-temporal validity window.
 
-        Activates only when the query contains a resolvable date; otherwise it is
-        a no-op.  Matches both exact ISO dates and year-prefix dates so a query
-        mentioning a year recalls finer-grained dates within it.
+        Two passes:
+        1. TEMPORAL-node pass — chunks linked to canonical TEMPORAL nodes via
+           MENTIONS_DATE edges.  Activates only when the query contains a
+           resolvable date.  Unchanged from the original implementation.
+        2. Relation-edge validity pass — find entity chunks whose relation edges
+           have a ``valid_at`` / ``invalid_at`` window overlapping the queried
+           date.  Uses ``filter_by_validity_window`` from ``temporal.py`` to apply
+           the as-of filter and attach a ``_temporal_score`` recency boost.
+
+        Both passes are no-ops when no resolvable date is found in the query.
         """
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if scope not in ("ltm", "both"):
@@ -580,6 +587,7 @@ class DETRetriever(BaseGraphRetriever):
         candidates = query_date_candidates(query)
         if not candidates:
             return result
+
         # Dynamic WHERE: exact iso match, or year-prefix match for 4-digit years.
         safe = [c.replace("'", "") for c in candidates]
         conds = []
@@ -588,6 +596,8 @@ class DETRetriever(BaseGraphRetriever):
             if len(c) == 4 and c.isdigit():
                 conds.append(f"d.iso STARTS WITH '{c}-'")
         where_iso = " OR ".join(conds)
+
+        # Pass 1: canonical TEMPORAL node → chunk traversal (existing machinery).
         try:
             if session_id:
                 cypher = (
@@ -618,8 +628,91 @@ class DETRetriever(BaseGraphRetriever):
                     },
                 )
         except Exception as exc:
-            log.warning("LTM temporal traversal failed: %s", exc)
+            log.warning("LTM temporal traversal (TEMPORAL node pass) failed: %s", exc)
+
+        # Pass 2: relation-edge validity window — find chunks whose relation edges
+        # have a valid_at within the queried date window.  Only activates when
+        # relation edges carry bi-temporal metadata (WS-5 forward path).
+        # Uses the first candidate date as the as-of anchor.
+        as_of_iso = candidates[0] if candidates else None
+        try:
+            rel_rows = await self._ltm_relation_validity_pass(
+                as_of_iso, session_id, top_k
+            )
+            for rank, row in enumerate(rel_rows):
+                temporal_score: float = row.get("_temporal_score", 0.5)
+                _add_result(
+                    result,
+                    row["chunk_id"],
+                    # Multiply RRF base by a small temporal recency boost (0–1).
+                    rrf_score(rank, RRF_RELATION_BOOST) * (1.0 + 0.5 * temporal_score),
+                    {
+                        "text": row.get("text", ""),
+                        "entities": [],
+                        "sources": {"ltm_temporal_rel"},
+                        "doc_id": "",
+                        "metadata": {},
+                    },
+                )
+        except Exception as exc:
+            log.debug("LTM temporal traversal (relation validity pass) skipped: %s", exc)
+
         return result
+
+    async def _ltm_relation_validity_pass(
+        self,
+        as_of_iso: str | None,
+        session_id: str,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch relation edges with bi-temporal metadata and apply validity filter.
+
+        Returns chunk dicts enriched with ``_temporal_score`` for use in the
+        temporal traversal boost.  Soft-fails to an empty list when the LTM store
+        does not yet have bi-temporal relation edges (graceful degradation).
+        """
+        if not as_of_iso:
+            return []
+        # Fetch relation edges that have valid_at set.
+        try:
+            if session_id:
+                edge_rows = await self.neo._qry(
+                    "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                    "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
+                    "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
+                    "WHERE c.session_id = $sid "
+                    "RETURN c.id AS chunk_id, c.text AS text, "
+                    "       r.valid_at AS valid_at, r.invalid_at AS invalid_at, "
+                    "       r.created_at AS created_at "
+                    "LIMIT $top_k",
+                    sid=session_id,
+                    top_k=top_k * 2,
+                )
+            else:
+                edge_rows = await self.neo._qry(
+                    "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                    "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
+                    "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
+                    "RETURN c.id AS chunk_id, c.text AS text, "
+                    "       r.valid_at AS valid_at, r.invalid_at AS invalid_at, "
+                    "       r.created_at AS created_at "
+                    "LIMIT $top_k",
+                    top_k=top_k * 2,
+                )
+        except Exception as exc:
+            log.debug("relation validity fetch skipped: %s", exc)
+            return []
+
+        if not edge_rows:
+            return []
+
+        # Apply bi-temporal window filter from temporal.py.
+        filtered = filter_by_validity_window(
+            [dict(r) for r in edge_rows],
+            as_of=as_of_iso,
+            include_open=True,
+        )
+        return filtered[:top_k]
 
     async def _ltm_topic_match(
         self,

@@ -144,7 +144,35 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE APPEARED_IN"),
     ("sql", "CREATE EDGE TYPE CONTAINS_DOC"),
     ("sql", "CREATE EDGE TYPE HAS_ENTITY"),
+    # Bi-temporal base edge type — all dynamic relation edges inherit these property
+    # declarations through the ArcadeDB EDGE super-type.  Declaring them on the E
+    # (base edge) type means they propagate without per-type DDL.
+    ("sql", "CREATE PROPERTY E.valid_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY E.invalid_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY E.created_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY E.is_current IF NOT EXISTS BOOLEAN"),
 ]
+
+
+# Single-valued predicates: when a newer edge for the same (source, predicate)
+# arrives pointing to a different object, the older edge is tombstoned by
+# setting invalid_at instead of deleted.  Only include predicates that are
+# genuinely single-valued in the world (a person has one current employer, one
+# current city, etc.).
+_LTM_SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
+    {
+        "WORKS_AS",
+        "WORKS_AT",
+        "EMPLOYED_BY",
+        "LIVES_IN",
+        "LOCATED_IN",
+        "BASED_IN",
+        "MARRIED_TO",
+        "AFFILIATED_WITH",
+        "BELONGS_TO",
+        "LED_BY",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +245,32 @@ class ArcadeDBLTMStore:
             else:
                 logger.warning("ensure_edge_type %s failed: %s", safe, exc)
                 raise
+
+    async def _supersede_ltm_edge(
+        self, safe_rel: str, src: str, tgt: str, now: str
+    ) -> None:
+        """Tombstone any current LTM relation edge for (src, predicate) that points
+        to a different target.
+
+        Called only for single-valued predicates (defined in _LTM_SINGLE_VALUED_RELATIONS).
+        Sets ``invalid_at`` to *now* and ``is_current`` to false on the superseded edge
+        instead of deleting it, preserving the historical record.
+        """
+        try:
+            await self._cmd(
+                f"MATCH (a:ENTITY {{name: $src}})"
+                f"-[r:{safe_rel} {{is_current: true}}]"
+                f"->(b:ENTITY) "
+                f"WHERE toLower(b.name) <> toLower($tgt) "
+                f"SET r.invalid_at = $now, r.is_current = false",
+                src=src,
+                tgt=tgt,
+                now=now,
+            )
+        except Exception as exc:
+            logger.debug(
+                "_supersede_ltm_edge %s (%s → ≠%s) skipped: %s", safe_rel, src, tgt, exc
+            )
 
     # ------------------------------------------------------------------
     # Session subgraph write (main flush path)
@@ -379,6 +433,11 @@ class ArcadeDBLTMStore:
             edges += 1
 
         # Relation edges from STM (bi-temporal)
+        # Each edge carries valid_at (world time), invalid_at (tombstone), and
+        # created_at (transaction/ingestion time).  valid_at comes from the STM
+        # edge (which in turn is populated from turn timestamps during STM ingest).
+        # For single-valued predicates a supersedence pass tombstones any existing
+        # current edge pointing to a different object before upserting the new one.
         for r in stm_data.get("relation_edges", []):
             src, rel, tgt = r.get("source"), r.get("relation"), r.get("target")
             if not (src and rel and tgt):
@@ -386,14 +445,30 @@ class ArcadeDBLTMStore:
             safe = _safe_rel_label(rel)
             if not safe:
                 continue
+
+            # Temporal metadata forwarded from STM edge (may be absent for legacy data).
+            edge_valid_at: str = str(r.get("valid_at") or r.get("valid_from") or "").strip()
+            edge_created_at: str = now
+
+            # Supersedence: tombstone older current edges for single-valued predicates.
+            if rel.upper() in _LTM_SINGLE_VALUED_RELATIONS:
+                await self._supersede_ltm_edge(safe, src, tgt, now)
+
             await self._cmd(
                 f"MERGE (a:ENTITY {{name: $src}}) "
                 f"MERGE (b:ENTITY {{name: $tgt}}) "
                 f"MERGE (a)-[r:{safe}]->(b) "
-                f"SET r.weight = coalesce(r.weight, 0) + 1, r.session_id = $sid",
+                f"SET r.weight = coalesce(r.weight, 0) + 1, "
+                f"    r.session_id = $sid, "
+                f"    r.valid_at = coalesce(r.valid_at, $valid_at), "
+                f"    r.invalid_at = null, "
+                f"    r.is_current = true, "
+                f"    r.created_at = coalesce(r.created_at, $created_at)",
                 src=src,
                 tgt=tgt,
                 sid=session_id,
+                valid_at=edge_valid_at or None,
+                created_at=edge_created_at,
             )
             edges += 1
 
@@ -441,6 +516,7 @@ class ArcadeDBLTMStore:
                         (item[0], item[1], item[2], item[3] if len(item) > 3 else {})
                     )
 
+        now_ts = datetime.now(UTC).isoformat()
         edges = 0
         for src, rel, tgt, _meta in all_triplets:
             safe = _safe_rel_label(rel)
@@ -449,18 +525,27 @@ class ArcadeDBLTMStore:
             src_canon = canonical.get(src.upper().replace("_", " "), src)
             tgt_canon = canonical.get(tgt.upper().replace("_", " "), tgt)
             await self._ensure_edge_type(safe)
+            # Supersede single-valued predicates before upserting.
+            if rel.upper() in _LTM_SINGLE_VALUED_RELATIONS:
+                await self._supersede_ltm_edge(safe, src_canon, tgt_canon, now_ts)
             await self._cmd(
                 f"MERGE (a:ENTITY {{name: $src}}) "
                 f"SET a.type = coalesce(a.type, $src_t) "
                 f"MERGE (b:ENTITY {{name: $tgt}}) "
                 f"SET b.type = coalesce(b.type, $tgt_t) "
                 f"MERGE (a)-[r:{safe}]->(b) "
-                f"SET r.weight = coalesce(r.weight, 0) + 1, r.session_id = $sid",
+                f"SET r.weight = coalesce(r.weight, 0) + 1, "
+                f"    r.session_id = $sid, "
+                f"    r.valid_at = coalesce(r.valid_at, null), "
+                f"    r.invalid_at = null, "
+                f"    r.is_current = true, "
+                f"    r.created_at = coalesce(r.created_at, $now)",
                 src=src_canon,
                 tgt=tgt_canon,
                 sid=session_id,
                 src_t=entity_by_name.get(src_canon, {}).get("type", "ENTITY"),
                 tgt_t=entity_by_name.get(tgt_canon, {}).get("type", "ENTITY"),
+                now=now_ts,
             )
             edges += 1
         return edges

@@ -34,10 +34,23 @@ def _parse_chunk_metadata(raw: Any) -> dict[str, Any]:
 
 
 # Known single-valued relation types — a new fact tombstones the old one.
+# Must stay in sync with _LTM_SINGLE_VALUED_RELATIONS in ltm_store.py.
+# Only include predicates that are genuinely single-valued in the world
+# (a person holds one current job, lives in one city at a time, etc.).
 _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
     {
-        "AFFILIATED_WITH",
+        # Core single-valued predicates (both STM and LTM)
+        "WORKS_AS",
+        "WORKS_AT",
+        "EMPLOYED_BY",
+        "LIVES_IN",
         "LOCATED_IN",
+        "BASED_IN",
+        "MARRIED_TO",
+        "AFFILIATED_WITH",
+        "BELONGS_TO",
+        "LED_BY",
+        # Additional single-valued predicates (structural)
         "PART_OF",
         "PRODUCED_BY",
         "PRECEDED_BY",
@@ -784,7 +797,8 @@ class ArcadeDBSTMStore:
             MATCH (a:ENTITY {session_id: $sid})-[r]->(b:ENTITY {session_id: $sid})
             WHERE r.session_id = $sid AND r.is_current = true AND type(r) <> 'REL'
             RETURN a.name AS source, type(r) AS relation,
-                   b.name AS target, r.confidence AS confidence
+                   b.name AS target, r.confidence AS confidence,
+                   r.valid_from AS valid_at, r.created_at AS created_at
             """,
             params={"sid": session_id},
         )
@@ -794,6 +808,9 @@ class ArcadeDBSTMStore:
                 "relation": r["relation"],
                 "target": r["target"],
                 "confidence": r["confidence"],
+                # Forward bi-temporal metadata to the LTM flush path.
+                "valid_at": r.get("valid_at") or "",
+                "created_at": r.get("created_at") or "",
             }
             for r in relation_rows
         ]
