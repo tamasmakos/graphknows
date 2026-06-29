@@ -26,6 +26,8 @@ class GraphknowsMCPClient:
 
     _proc: asyncio.subprocess.Process | None = field(default=None, init=False, repr=False)
     _request_id: int = field(default=0, init=False)
+    _pending: dict[int, asyncio.Future[dict[str, Any]]] = field(default_factory=dict, init=False, repr=False)
+    _reader_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
 
     async def __aenter__(self) -> GraphknowsMCPClient:
         await self.start()
@@ -59,6 +61,7 @@ class GraphknowsMCPClient:
             env=env,
             limit=4 * 1024 * 1024,  # 4 MB — large responses (top_k=20) exceed the 64KB default
         )
+        self._reader_task = asyncio.create_task(self._read_loop())
         if self.initialize:
             await self.request(
                 "initialize",
@@ -72,6 +75,19 @@ class GraphknowsMCPClient:
 
     async def close(self) -> None:
         """Terminate the MCP subprocess."""
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._reader_task = None
+        # Fail any futures still waiting
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(MCPClientError("MCP client closed"))
+        self._pending.clear()
+
         proc = self._proc
         self._proc = None
         if proc is None:
@@ -90,30 +106,64 @@ class GraphknowsMCPClient:
         payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         self._write_payload(proc, payload)
 
+    async def _read_loop(self) -> None:
+        """Background task: own proc.stdout and dispatch responses to waiting futures."""
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                # EOF — server closed stdout
+                stderr = await self._read_stderr_tail(proc)
+                err = MCPClientError(f"MCP server closed stdout. stderr: {stderr}")
+                for fut in self._pending.values():
+                    if not fut.done():
+                        fut.set_exception(err)
+                self._pending.clear()
+                return
+            try:
+                response = json.loads(line.decode("utf-8"))
+            except json.JSONDecodeError:
+                continue  # malformed line — skip, don't kill the reader
+            rid = response.get("id")
+            if rid is None:
+                continue  # notification or response without id
+            fut = self._pending.get(rid)
+            if fut is None:
+                continue  # no one waiting — ignore
+            if not fut.done():
+                fut.set_result(response)
+
     async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Send a JSON-RPC request and return the response result."""
         proc = self._require_proc()
         self._request_id += 1
         request_id = self._request_id
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self._pending[request_id] = fut
         payload = {
             "jsonrpc": "2.0",
             "id": request_id,
             "method": method,
             "params": params or {},
         }
-        self._write_payload(proc, payload)
+        try:
+            self._write_payload(proc, payload)
+            response = await asyncio.wait_for(fut, timeout=self.request_timeout_s)
+        except asyncio.TimeoutError:
+            self._pending.pop(request_id, None)
+            raise
+        except BaseException:
+            self._pending.pop(request_id, None)
+            raise
+        else:
+            self._pending.pop(request_id, None)
 
-        while True:
-            line = await asyncio.wait_for(proc.stdout.readline(), timeout=self.request_timeout_s)
-            if not line:
-                stderr = await self._read_stderr_tail(proc)
-                raise MCPClientError(f"MCP server closed stdout. stderr: {stderr}")
-            response = json.loads(line.decode("utf-8"))
-            if response.get("id") != request_id:
-                continue
-            if "error" in response:
-                raise MCPClientError(json.dumps(response["error"], sort_keys=True))
-            return response.get("result")
+        if "error" in response:
+            raise MCPClientError(json.dumps(response["error"], sort_keys=True))
+        return response.get("result")
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return MCP tool metadata."""

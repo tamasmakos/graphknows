@@ -28,9 +28,10 @@ log = logging.getLogger(__name__)
 class AnswerGenerator:
     """Calls ``dspy.Predict(LoCoMoAnswerGeneration)`` for each (question, passages) pair.
 
-    Initialize once per evaluation run and reuse across questions. The DSPy call
-    is synchronous internally; :meth:`generate` is async via ``asyncio.to_thread``
-    to avoid blocking the eval event loop.
+    Initialize once per evaluation run and reuse across questions. :meth:`generate`
+    uses DSPy's native async (``acall``) so concurrent questions multiplex on the
+    event loop — calling the shared module from many ``asyncio.to_thread`` threads
+    instead races DSPy's per-call state and corrupts answers.
     """
 
     def __init__(
@@ -84,21 +85,33 @@ class AnswerGenerator:
             self._lms[max_tokens] = lm
         return lm
 
-    def _generate_sync(self, question: str, context: str, max_tokens: int) -> tuple[str, dict]:
+    async def _generate_async(self, question: str, context: str, max_tokens: int) -> tuple[str, dict]:
+        # Native DSPy async so concurrent questions share the module safely on one
+        # event loop. Per-call usage comes from track_usage + pred.get_lm_usage()
+        # because indexing the shared lm.history is not concurrency-safe.
         lm = self._lm(max_tokens)
-        history_len_before = len(lm.history)
-        with dspy.settings.context(lm=lm):
-            pred = self._predictor(question=question, retrieved_context=context)
+        with dspy.settings.context(lm=lm, track_usage=True):
+            pred = await self._predictor.acall(question=question, retrieved_context=context)
         answer = str(getattr(pred, "answer", None) or "Unknown").strip()
         usage: dict = {}
-        if len(lm.history) > history_len_before:
-            entry = lm.history[-1]
-            raw = entry.get("usage", {})
+        try:
+            per_model = pred.get_lm_usage() or {}
+        except Exception:  # noqa: BLE001 — usage is diagnostic; never fail a generation over it
+            per_model = {}
+        agg: dict[str, float] = {}
+        for model_usage in per_model.values():
+            if isinstance(model_usage, dict):
+                for k, v in model_usage.items():
+                    if isinstance(v, (int, float)):
+                        agg[k] = agg.get(k, 0) + v
+        if agg:
             usage = {
-                "gen_prompt_tokens": int(raw.get("prompt_tokens", 0)),
-                "gen_completion_tokens": int(raw.get("completion_tokens", 0)),
-                "gen_total_tokens": int(raw.get("total_tokens", 0)),
-                "gen_cost_usd": float(entry.get("cost") or 0.0),
+                "gen_prompt_tokens": int(agg.get("prompt_tokens", 0)),
+                "gen_completion_tokens": int(agg.get("completion_tokens", 0)),
+                "gen_total_tokens": int(agg.get("total_tokens", 0)),
+                # get_lm_usage exposes tokens but not cost; the old per-call cost read
+                # from the shared lm.history, which is unsafe under concurrency.
+                "gen_cost_usd": 0.0,
             }
         return answer, usage
 
@@ -115,7 +128,7 @@ class AnswerGenerator:
         for budget in (self._max_tokens, self._max_tokens * 4):
             for attempt in range(6):
                 try:
-                    return await asyncio.to_thread(self._generate_sync, question, context, budget)
+                    return await self._generate_async(question, context, budget)
                 except Exception as exc:
                     msg = str(exc).lower()
                     if "402" in msg or "credits" in msg or "payment" in msg:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -16,6 +17,7 @@ from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.stm._async_bridge import _run
 from graphknows.memory.stm._entity_writer import (
     graph_entities,
+    write_chunk_entities_and_edges_bulk,
     write_entity_nodes_and_edges,
     write_relation_edges,
 )
@@ -145,22 +147,66 @@ class _STMIngestHandler:
         self, parsed: ParsedFile, session_id: str, metadata: dict[str, Any]
     ) -> IngestResult:
         t0 = time.monotonic()
-        entity_count = 0
 
         self._ensure_session_and_file(session_id, parsed, metadata, t0)
+
+        # Pre-compute cleaned texts so they are identical for both embedding and
+        # writing (no double-clean).
+        cleaned_texts = [self._clean_text(seg.text) for seg in parsed.segments]
+
+        # Batch all embeddings in one HTTP round-trip when using the default
+        # embed_one function.  If embed_fn has been overridden (e.g. in tests),
+        # fall back to per-chunk calls to preserve the injection contract.
+        use_batch = False
+        batch_embeddings: list[list[float]] = []
+        if cleaned_texts:
+            from graphknows.memory.stores.embedder import embed as embed_batch
+            from graphknows.memory.stores.embedder import embed_one
+
+            if self._embed_fn is embed_one:
+                use_batch = True
+                import numpy as np  # embed_batch returns np.ndarray
+
+                arr: np.ndarray = embed_batch(cleaned_texts)
+                batch_embeddings = [arr[i].tolist() for i in range(len(cleaned_texts))]
+
+        # Bounded chunk-level concurrency.  Each chunk coroutine runs extraction
+        # (CPU/model I/O) and DB writes concurrently; a semaphore caps parallelism.
+        # All chunks are dispatched via a SINGLE _run(asyncio.gather(...)) so that
+        # every await inside the coroutines lands on the SAME background event loop
+        # that _run manages — no nested _run calls, no cross-loop executor issues.
+        # Default 1 (sequential): the ENTITY(name) index is UNIQUE, so concurrent
+        # MERGEs of a shared entity name across chunks can race on the unique key.
+        # Opt into parallelism (e.g. for the LLM-heavy llm_assisted ingest) by
+        # setting INGEST_CHUNK_CONCURRENCY>1 after validating it for your store.
+        cap = int(os.environ.get("INGEST_CHUNK_CONCURRENCY", "1"))
+
+        # Set chunk_index before building coroutines (captured by value via idx).
         for idx, seg in enumerate(parsed.segments):
-            # Preserve chunk order (was always None) so sequential/temporal
-            # reasoning and ordered context assembly have a stable index.
             seg.metadata["chunk_index"] = idx
-            chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
-            clean = self._clean_text(seg.text)
-            extraction = self._extract(clean)
-            embedding: list[float] = self._embed_fn(clean)
+
+        async def _process_chunk(idx: int) -> int:
+            """Run extraction + graph + vector writes for chunk at *idx*.
+
+            Returns the entity count for this chunk.
+            """
+            seg = parsed.segments[idx]
+            clean = cleaned_texts[idx]
+            embedding: list[float] = (
+                batch_embeddings[idx] if use_batch else self._embed_fn(clean)
+            )
+            # Wrap synchronous GLiNER2 extraction in a thread so concurrent
+            # chunks overlap their model/network I/O with DB writes.
+            extraction = await asyncio.to_thread(self._extract, clean)
             temporal = self._resolve_temporal(extraction.entities, seg, metadata)
-            entity_count += self._write_chunk_to_mg(
+            chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
+
+            # Await store methods directly — no nested _run; we are already
+            # executing inside the background loop.
+            ec = await self._write_chunk_to_mg_async(
                 session_id, parsed.source_id, chunk_id, clean, seg, extraction, temporal
             )
-            self._write_chunk_to_pg(
+            await self._write_chunk_to_pg_async(
                 session_id,
                 parsed.source_id,
                 chunk_id,
@@ -170,6 +216,21 @@ class _STMIngestHandler:
                 graph_entities(extraction.entities),
                 {**metadata, "temporal": temporal} if temporal else metadata,
             )
+            return ec
+
+        async def _run_all() -> list[int]:
+            sem = asyncio.Semaphore(cap)
+
+            async def _with_sem(idx: int) -> int:
+                async with sem:
+                    return await _process_chunk(idx)
+
+            return list(
+                await asyncio.gather(*[_with_sem(i) for i in range(len(parsed.segments))])
+            )
+
+        counts: list[int] = _run(_run_all())
+        entity_count = sum(counts)
 
         elapsed = time.monotonic() - t0
         log.info(
@@ -263,6 +324,8 @@ class _STMIngestHandler:
     ) -> int:
         """Write CHUNK node, entity nodes/edges, and relation edges to ArcadeDB STM.
 
+        Sync bridge version — used by callers outside the concurrent chunk path
+        (retained for any future callers; not used by _ingest_parsed).
         Returns the entity count for this chunk.
         """
         chunk_metadata = {**seg.metadata, "temporal": temporal} if temporal else seg.metadata
@@ -329,6 +392,124 @@ class _STMIngestHandler:
                 len(dspy_triplets),
             )
         return entity_count
+
+    async def _write_chunk_to_mg_async(
+        self,
+        session_id: str,
+        source_id: str,
+        chunk_id: str,
+        clean_text: str,
+        seg: Any,
+        extraction: ExtractionResult,
+        temporal: list[dict[str, str]] | None = None,
+    ) -> int:
+        """Async version of _write_chunk_to_mg for the concurrent chunk path.
+
+        Awaits store methods directly — must only be called from within a
+        coroutine already running on the background event loop (i.e. inside
+        the gather dispatched by _run(_run_all())).  DO NOT call via _run()
+        as that would nest _run calls and deadlock the single background loop.
+
+        Returns the entity count for this chunk.
+        """
+        chunk_metadata = {**seg.metadata, "temporal": temporal} if temporal else seg.metadata
+        await self._mg.write_chunk_node(
+            session_id=session_id,
+            file_id=source_id,
+            chunk_id=chunk_id,
+            text=clean_text,
+            heading_path=seg.heading_path,
+            metadata=chunk_metadata,
+        )
+        # Bulk entity write: CHUNK node must exist before edges (written above).
+        entity_count = await write_chunk_entities_and_edges_bulk(
+            mg=self._mg,
+            session_id=session_id,
+            chunk_id=chunk_id,
+            entities=extraction.entities,
+        )
+        # GLiNER2 relations — ontology-filtered, then written sequentially.
+        # Relation writes use transactions with tombstoning logic; leave sequential.
+        gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
+        for rel in gliner_relations:
+            await self._mg.write_relation_edge(
+                session_id=session_id,
+                subject_name=rel["head"],
+                relation_name=rel["relation"],
+                object_name=rel["tail"],
+                confidence=rel.get("score", 0.5),
+            )
+
+        # SpaCy dep-pattern relations — soft-fail, written sequentially.
+        if self._spacy_relations:
+            await self._write_spacy_dep_relations_async(session_id, clean_text, extraction.entities)
+
+        # DSPy ontology-guided relation extraction (llm_assisted mode only).
+        if self._rel_extractor is not None and len(extraction.entities) >= 2:
+            try:
+                raw = await self._rel_extractor.extract_relations(text=clean_text)
+            except Exception as exc:
+                log.warning("DSPy relation extraction skipped for chunk %s: %s", chunk_id[:8], exc)
+                raw = ([], [], {})
+            dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
+            for triplet in dspy_triplets:
+                subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
+                props = triplet[3] if len(triplet) > 3 else {}
+                confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
+                await self._mg.write_relation_edge(
+                    session_id=session_id,
+                    subject_name=subj,
+                    relation_name=rel_name,
+                    object_name=obj,
+                    confidence=confidence,
+                )
+            log.debug(
+                "DSPy extraction session=%s chunk=%s: %d triples",
+                session_id,
+                chunk_id[:8],
+                len(dspy_triplets),
+            )
+        return entity_count
+
+    async def _write_spacy_dep_relations_async(
+        self,
+        session_id: str,
+        text: str,
+        gliner_entities: list[dict[str, Any]],
+    ) -> None:
+        """Async version of _write_spacy_dep_relations for the concurrent chunk path.
+
+        Semantics identical to the sync version; awaits write_relation_edge directly.
+        """
+        try:
+            from graphknows.extraction.relations.svo import extract_svo_relations
+
+            triples = extract_svo_relations(text, graph_entities(gliner_entities))
+        except Exception as exc:
+            log.debug("SVO relation extraction skipped: %s", exc)
+            return
+
+        written = 0
+        for triple in triples:
+            if triple.get("negated"):
+                continue
+            if _noisy_endpoint(
+                triple["source"], triple.get("source_label", "")
+            ) or _noisy_endpoint(triple["target"], triple.get("target_label", "")):
+                continue
+            try:
+                await self._mg.write_relation_edge(
+                    session_id=session_id,
+                    subject_name=triple["source"],
+                    relation_name=triple["relation"],
+                    object_name=triple["target"],
+                    confidence=triple.get("confidence", 0.7),
+                )
+                written += 1
+            except Exception as exc:
+                log.debug("SVO relation write error (non-fatal): %s", exc)
+        if written:
+            log.debug("SVO relations: %d triples written for session=%s", written, session_id)
 
     def _write_spacy_dep_relations(
         self,
@@ -409,4 +590,34 @@ class _STMIngestHandler:
                     },
                 }
             )
+        )
+
+    async def _write_chunk_to_pg_async(
+        self,
+        session_id: str,
+        source_id: str,
+        chunk_id: str,
+        clean_text: str,
+        seg: Any,
+        embedding: list[float],
+        entities: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Async version of _write_chunk_to_pg for the concurrent chunk path."""
+        await self._pg.write_stm_chunk(
+            {
+                "id": chunk_id,
+                "session_id": session_id,
+                "file_id": source_id,
+                "text": clean_text,
+                "heading_path": seg.heading_path,
+                "embedding": embedding,
+                "metadata": {
+                    **seg.metadata,
+                    **metadata,
+                    "atom_type": seg.metadata.get("atom_type", "text"),
+                    "memory_class": seg.metadata.get("memory_class", "raw_evidence"),
+                    "entity_names": [e["name"] for e in entities],
+                },
+            }
         )

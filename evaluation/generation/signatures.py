@@ -19,10 +19,12 @@ class LoCoMoAnswerGeneration(dspy.Signature):
     using ONLY the retrieved conversation passages as the source of truth.
 
     Reason fully over ALL the passages, then give the COMPLETE answer: include
-    every fact, qualifier, and list item the passages support for the question,
-    matching the gold's level of detail. Be concise — no framing, no explanation,
-    no reasoning in the answer — but NEVER at the cost of dropping a required
-    modifier or trailing clause. A correct-but-incomplete answer scores as wrong.
+    every fact, qualifier, and list item the passages support FOR THIS QUESTION,
+    and nothing else. Match the gold's level of detail. Be concise — no framing,
+    no explanation, no reasoning in the answer — but NEVER at the cost of dropping
+    a required modifier or trailing clause. Both kinds of error count against you:
+    a missing required item AND an extra unsupported/off-target item make the
+    answer wrong.
 
     Rules:
     1. EXTRACT, do not abstain. If any passage supports an answer — even stated
@@ -39,7 +41,14 @@ class LoCoMoAnswerGeneration(dspy.Signature):
        do NOT reduce to "20 June 2023"). Resolve vague references ("my home country"
        → "Sweden").
     5. Multi-item questions — list EVERY matching item across all passages,
-       comma-separated and deduplicated."""
+       comma-separated and deduplicated.
+    6. ANSWER THE EXACT SUBJECT ASKED. If the question asks what someone's KIDS
+       like, give only what the kids like — not what the whole family or the parent
+       likes. Do not widen the scope to fill out a list.
+    7. GROUND EVERY ITEM. Include an item ONLY if a passage explicitly states it for
+       this subject. Never add plausible-but-unstated items (no "hiking" or
+       "marshmallows" unless a passage says so). When unsure an item belongs, leave
+       it out — a padded list scores worse than a short exact one."""
 
     question: str = dspy.InputField(desc="A question about the two-person conversation.")
     retrieved_context: str = dspy.InputField(

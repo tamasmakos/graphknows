@@ -280,6 +280,73 @@ class ArcadeDBSTMStore:
             params={"cid": chunk_id, "name": entity_name, "sid": session_id},
         )
 
+    async def write_chunk_entities_bulk(
+        self,
+        *,
+        session_id: str,
+        chunk_id: str,
+        entities: list[dict],
+    ) -> None:
+        """Upsert all entity nodes and CHUNK→ENTITY edges for a chunk in fewer round-trips.
+
+        Merges all ENTITY nodes in one UNWIND statement and all MENTIONS edges in
+        a second — two HTTP calls instead of 2*N.  Semantics are identical to
+        calling write_entity_node + write_chunk_entity_edge for each entity:
+
+        * Same MERGE key: (name, session_id)
+        * Same confidence-max logic (CASE WHEN conf > coalesce(existing, 0))
+        * Same MENTIONS edge from the CHUNK to each ENTITY
+
+        List parameters with UNWIND are supported by the ArcadeDB HTTP client
+        (params are JSON-serialised — see preview_session_merge's ``UNWIND $names``).
+        A single statement either applies fully or errors loudly, so unlike a
+        hand-concatenated multi-MERGE string it cannot silently drop writes.
+
+        Args:
+            session_id: Session namespace.
+            chunk_id: The CHUNK node id these entities belong to.
+            entities: Filtered entity dicts (already passed through graph_entities).
+                Each must have "name"; optionally "type" and "score".
+        """
+        if not entities:
+            return
+
+        rows: list[dict[str, Any]] = []
+        names: list[str] = []
+        for e in entities:
+            name = e["name"]
+            score = e.get("score", 1.0)
+            conf = float(score) if isinstance(score, (int, float)) else 1.0
+            rows.append({"name": name, "etype": e.get("type") or "ENTITY", "conf": conf})
+            names.append(name)
+
+        # Pass 1: upsert all ENTITY nodes (mirror write_entity_node exactly).
+        await self._c.command(
+            self._db,
+            """
+            UNWIND $rows AS row
+            MERGE (e:ENTITY {name: row.name, session_id: $sid})
+            SET e.type = row.etype,
+                e.confidence = CASE
+                    WHEN row.conf > coalesce(e.confidence, 0) THEN row.conf
+                    ELSE e.confidence
+                END
+            """,
+            params={"rows": rows, "sid": session_id},
+        )
+
+        # Pass 2: MENTIONS edges (mirror write_chunk_entity_edge exactly).
+        await self._c.command(
+            self._db,
+            """
+            MATCH (c:CHUNK {id: $cid})
+            UNWIND $names AS nm
+            MATCH (e:ENTITY {name: nm, session_id: $sid})
+            MERGE (c)-[:MENTIONS]->(e)
+            """,
+            params={"cid": chunk_id, "names": names, "sid": session_id},
+        )
+
     # ------------------------------------------------------------------
     # Dialog and turn nodes
     # ------------------------------------------------------------------

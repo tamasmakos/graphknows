@@ -6,7 +6,9 @@ returns a typed :class:`IngestResult` aggregating chunk/entity/graph counts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from typing import Any
 
 from evaluation.client import GraphknowsMCPClient
@@ -24,19 +26,32 @@ class Ingestor:
         self._config = config
 
     async def ingest(self, session_id: str, documents: list[EvalDocument]) -> IngestResult:
-        """Ingest all documents, then optionally flush the session to LTM."""
-        outputs: list[dict[str, Any]] = []
-        for index, doc in enumerate(documents):
-            result = await self._client.call_tool(
-                "memory_ingest",
-                {
-                    "text": doc.text,
-                    "session_id": session_id,
-                    "title": doc.title or f"{session_id}-doc-{index}",
-                    "metadata": {"anchor_date": doc.anchor_date},
-                },
-            )
-            outputs.append(result if isinstance(result, dict) else {"result": result})
+        """Ingest all documents (concurrency opt-in), then optionally flush to LTM.
+
+        Default 1 (sequential): concurrent docs write the same session graph, and
+        the ENTITY(name) UNIQUE index makes parallel MERGE of a shared entity name
+        race — measured to degrade retrieval F1. Raise EVAL_INGEST_CONCURRENCY only
+        once the STM write path serializes per-entity MERGEs.
+        """
+        cap = int(os.environ.get("EVAL_INGEST_CONCURRENCY", "1"))
+        sem = asyncio.Semaphore(cap)
+
+        async def _ingest_one(index: int, doc: EvalDocument) -> dict[str, Any]:
+            async with sem:
+                result = await self._client.call_tool(
+                    "memory_ingest",
+                    {
+                        "text": doc.text,
+                        "session_id": session_id,
+                        "title": doc.title or f"{session_id}-doc-{index}",
+                        "metadata": {"anchor_date": doc.anchor_date},
+                    },
+                )
+            return result if isinstance(result, dict) else {"result": result}
+
+        outputs: list[dict[str, Any]] = await asyncio.gather(
+            *[_ingest_one(i, d) for i, d in enumerate(documents)]
+        )
 
         ingest = IngestResult(
             documents=len(outputs),
