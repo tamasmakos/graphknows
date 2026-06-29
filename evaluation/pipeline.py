@@ -1,14 +1,13 @@
 """The LoCoMo evaluation pipeline.
 
 One workflow, run per dialogue: ingest the dialogue's sessions once, then for
-each question retrieve → generate → score (symmetric token F1 vs gold). See
-:mod:`evaluation.config` for the single hardcoded configuration.
+each question retrieve → generate → score with DSPy SemanticF1 (headline) and
+token-F1 (diagnostic). See :mod:`evaluation.config` for configuration.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 
 from evaluation.client import GraphknowsMCPClient
@@ -21,11 +20,18 @@ from evaluation.datamodels import (
     RunReport,
 )
 from evaluation.dataset import load_dialogues
-from evaluation.generation import AnswerGenerator
 from evaluation.ingestion import Ingestor
 from evaluation.reporting import summarize, write_report
 from evaluation.retrieval import Retriever
-from evaluation.scoring import LLMJudge, gold_max_overlap, gold_reachable, token_f1
+from evaluation.scoring import gold_max_overlap, gold_reachable, token_f1
+
+# Deferred imports for dspy-dependent modules so that importing evaluation.pipeline
+# for its non-dspy helpers (_build_case_result etc.) works even when dspy is absent.
+# The actual import happens inside run_evaluation() / _run_dialogue() at call time.
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # pragma: no cover
+    from evaluation.generation import AnswerGenerator  # noqa: F401
+    from evaluation.scoring.dspy_metrics import DspyMetricScorer  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -46,9 +52,8 @@ def _checkpoint(run_id: str, config: EvalConfig, cases: list[CaseResult]) -> Non
 
 def _evaluation_env(config: EvalConfig) -> dict[str, str]:
     """Environment overrides handed to the MCP subprocess."""
+    import os
     env: dict[str, str] = {}
-    # Propagate the ontology file only when already set; otherwise the extractor
-    # uses its open-domain relation-type defaults.
     if os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE"):
         env["GRAPHKNOWS_ONTOLOGY_FILE"] = os.environ["GRAPHKNOWS_ONTOLOGY_FILE"]
     return env
@@ -68,11 +73,10 @@ def _build_case_result(
     probe: list,
     generated_answer: str,
     gen_usage: dict,
-    judge_correct: bool,
     ingest: IngestResult,
-    dspy_metrics: dict | None = None,
+    semantic_f1: float = 0.0,
 ) -> CaseResult:
-    score = token_f1(case.gold, generated_answer)
+    tok_f1 = token_f1(case.gold, generated_answer)
     return CaseResult(
         case_id=case.case_id,
         question=case.question,
@@ -81,10 +85,11 @@ def _build_case_result(
         dialogue_id=case.dialogue_id,
         passages=passages,
         generated_answer=generated_answer,
-        score=score,
+        score=semantic_f1,  # headline: SemanticF1
         metrics={
-            "score_type": "token_f1",
-            "judge_correct": judge_correct,
+            "score_type": "semantic_f1",
+            "semantic_f1": semantic_f1,
+            "token_f1": tok_f1,  # diagnostic secondary column
             "gold_max_token_overlap": round(gold_max_overlap(case.gold, probe), 3),
             "gold_reachable_at_20": gold_reachable(case.gold, probe),
             "avg_hit_score": _avg_score(passages),
@@ -101,7 +106,6 @@ def _build_case_result(
             "ingest_completion_tokens": ingest.ingest_completion_tokens,
             "ingest_cost_usd": ingest.ingest_cost_usd,
             **gen_usage,
-            **(dspy_metrics or {}),
         },
         metadata={
             "session_id": session_id,
@@ -120,10 +124,9 @@ async def _run_dialogue(
     ingestor: Ingestor,
     retriever: Retriever,
     generator: AnswerGenerator,
-    judge: LLMJudge,
+    dspy_scorer: DspyMetricScorer,
     client: GraphknowsMCPClient,
     progress: tuple[int, int],
-    dspy_scorer: object | None = None,
     on_progress: "Callable[[list[CaseResult]], None] | None" = None,
 ) -> list[CaseResult]:
     """Ingest one dialogue, then retrieve+generate+score each of its questions."""
@@ -141,20 +144,14 @@ async def _run_dialogue(
         )
 
         for case in dialogue.cases:
-            # One retrieval at probe depth; the scored top_k passages are its head.
-            # (A second k=top_k query would re-run the whole retriever — expensive
-            # for the agentic ReAct path — for an identically-ranked prefix.)
             probe = await retriever.query(session_id, case.question, k=config.probe_k)
             passages = probe[: config.top_k]
             context_passages = probe[: config.gen_context_k]
             answer, gen_usage = await generator.generate(case.question, context_passages)
-            judge_correct = await judge.judge(case.question, case.gold, answer)
 
-            dspy_metrics: dict | None = None
-            if dspy_scorer is not None:
-                context = "\n\n".join(p.text for p in context_passages)
-                scores = await dspy_scorer.score(case.question, case.gold, answer, context)
-                dspy_metrics = scores.as_metrics()
+            # SemanticF1 is the headline metric — always computed.
+            scores = await dspy_scorer.score(case.question, case.gold, answer)
+            semantic_f1 = scores.semantic_f1
 
             result = _build_case_result(
                 case,
@@ -164,22 +161,19 @@ async def _run_dialogue(
                 probe=probe,
                 generated_answer=answer,
                 gen_usage=gen_usage,
-                judge_correct=judge_correct,
                 ingest=ingest,
-                dspy_metrics=dspy_metrics,
+                semantic_f1=semantic_f1,
             )
             results.append(result)
 
             case_idx += 1
             preview = answer[:50].replace("\n", " ")
+            tok_f1_val = result.metrics.get("token_f1", 0.0)
             print(
-                f"  [{case_idx:3d}/{total}] {case.case_id}  F1={result.score:.3f}  "
-                f"judge={'Y' if judge_correct else 'N'}  gen={preview!r}",
+                f"  [{case_idx:3d}/{total}] {case.case_id}  "
+                f"semF1={semantic_f1:.3f}  tokF1={tok_f1_val:.3f}  gen={preview!r}",
                 flush=True,
             )
-            # Intra-dialogue checkpoint: large dialogues (conv-26 has 152 cases)
-            # would otherwise only persist at the end. Save every 30 cases so an
-            # unexpected crash never loses a long dialogue's progress.
             if on_progress is not None and len(results) % 30 == 0:
                 on_progress(results)
     finally:
@@ -191,16 +185,12 @@ async def _run_dialogue(
 
 async def run_evaluation(config: EvalConfig, *, run_id: str, limit: int, offset: int) -> RunReport:
     """Run the LoCoMo evaluation and return a populated :class:`RunReport`."""
-    generator = AnswerGenerator(model=config.generation_model or None)
-    judge = LLMJudge(model=config.generation_model or None)
-    # Optional inline DSPy semantic scoring (SemanticF1 + CompleteAndGrounded).
-    # Off by default; enable with EVAL_DSPY_METRICS=1 to score each case inline.
-    dspy_scorer = None
-    if os.environ.get("EVAL_DSPY_METRICS"):
-        from evaluation.scoring.dspy_metrics import DspyMetricScorer
+    from evaluation.generation import AnswerGenerator  # noqa: PLC0415
+    from evaluation.scoring.dspy_metrics import DspyMetricScorer  # noqa: PLC0415
 
-        dspy_scorer = DspyMetricScorer(model=config.generation_model or None)
-        log.info("Inline DSPy metrics enabled (SemanticF1 + CompleteAndGrounded)")
+    generator = AnswerGenerator(model=config.generation_model or None)
+    dspy_scorer = DspyMetricScorer(model=config.generation_model or None)
+    log.info("SemanticF1 scorer ready (headline metric)")
     dialogues = load_dialogues(config, limit=limit, offset=offset)
     total = sum(len(d.cases) for d in dialogues)
 
@@ -218,7 +208,6 @@ async def run_evaluation(config: EvalConfig, *, run_id: str, limit: int, offset:
         retriever = Retriever(client, config)
 
         for i, dialogue in enumerate(dialogues, 1):
-            # Checkpoint prior dialogues + this dialogue's progress-so-far.
             def _progress_ckpt(partial: list[CaseResult], _done: list[CaseResult] = cases) -> None:
                 _checkpoint(run_id, config, _done + partial)
 
@@ -230,16 +219,12 @@ async def run_evaluation(config: EvalConfig, *, run_id: str, limit: int, offset:
                     ingestor=ingestor,
                     retriever=retriever,
                     generator=generator,
-                    judge=judge,
+                    dspy_scorer=dspy_scorer,
                     client=client,
                     progress=(len(cases), total),
-                    dspy_scorer=dspy_scorer,
                     on_progress=_progress_ckpt,
                 )
-            except Exception as exc:  # noqa: BLE001 — unattended runs must end with a valid report
-                # Any dialogue-level failure (out of credits, MCP timeout, store
-                # error) stops the run cleanly with whatever is already checkpointed,
-                # rather than crashing a multi-hour run with an unhandled exception.
+            except Exception as exc:  # noqa: BLE001
                 if _is_credit_exhaustion(exc):
                     log.error("Stopping after %d/%d dialogues — OpenRouter credits exhausted: %s",
                               i - 1, len(dialogues), exc)

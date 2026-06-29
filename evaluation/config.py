@@ -1,8 +1,11 @@
 """The single hardcoded LoCoMo evaluation workflow.
 
-There is exactly one supported configuration — the generation-mode,
-paper-comparable token-F1 pipeline (gliner2 extraction, promote-to-LTM,
-DSPy answer generation). The CLI only overrides ``limit``/``offset``;
+There is exactly one supported configuration — the generation-mode pipeline
+(gliner2 extraction, promote-to-LTM, DSPy answer generation) scored with
+**DSPy SemanticF1** as the headline metric and lexical token-F1 as a cheap
+diagnostic secondary column. No flag matrix; no metric toggle.
+
+The CLI overrides ``limit``, ``offset``, ``mode``, and ``--compare``;
 everything else lives here. Edit this file to change the workflow.
 """
 

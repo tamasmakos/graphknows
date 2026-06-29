@@ -60,7 +60,7 @@ async def test_retriever_parses_passages() -> None:
     assert passages[0].is_ltm_graph is True
 
 
-def test_build_case_result_scores_token_f1() -> None:
+def test_build_case_result_uses_semantic_f1_as_headline() -> None:
     case = LocomoCase(
         case_id="conv-26-q0001",
         dialogue_id="conv-26",
@@ -76,11 +76,17 @@ def test_build_case_result_scores_token_f1() -> None:
         probe=[],
         generated_answer="Prague",
         gen_usage={"gen_total_tokens": 42},
-        judge_correct=True,
         ingest=IngestResult(chunks=3),
+        semantic_f1=0.85,
     )
-    assert result.score == 1.0
-    assert result.metrics["score_type"] == "token_f1"
-    assert result.metrics["judge_correct"] is True
+    # Headline score is SemanticF1, not token-F1.
+    assert result.score == 0.85
+    assert result.metrics["score_type"] == "semantic_f1"
+    assert result.metrics["semantic_f1"] == 0.85
+    # token_f1 is still present as a diagnostic column.
+    assert "token_f1" in result.metrics
+    assert result.metrics["token_f1"] == 1.0  # exact match → token-F1 = 1.0
     assert result.metrics["gen_total_tokens"] == 42
     assert result.metrics["ingested_chunks"] == 3
+    # judge_correct is gone.
+    assert "judge_correct" not in result.metrics

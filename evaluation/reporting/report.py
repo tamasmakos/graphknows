@@ -1,4 +1,10 @@
-"""Report writers for LoCoMo evaluation runs (JSON + CSV + Markdown)."""
+"""Report writers for LoCoMo evaluation runs (JSON + CSV + Markdown).
+
+Headline metric: mean DSPy SemanticF1 across all cases.
+Secondary diagnostic: token-F1 (lexical, cheap, no LLM call).
+Per-category SemanticF1 breakdown covers the five LoCoMo question types:
+single_hop, multi_hop, temporal, open_domain, adversarial.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +16,15 @@ from pathlib import Path
 from typing import Any
 
 from evaluation.datamodels import CaseResult, RunReport
+
+# The five canonical LoCoMo question categories for the per-category breakdown.
+LOCOMO_CATEGORIES = (
+    "single_hop",
+    "multi_hop",
+    "temporal",
+    "open_domain",
+    "adversarial",
+)
 
 
 @dataclass(frozen=True)
@@ -23,19 +38,16 @@ class ReportPaths:
 
 
 # Per-case CSV columns — numeric metrics first (easy to load into pandas/R),
-# then text fields last.
+# then text fields last. SemanticF1 is first (headline); token_f1 is the
+# diagnostic secondary column.
 _CSV_METRIC_KEYS = (
-    "judge_correct",
+    "semantic_f1",       # headline — DSPy LLM-estimated F1
+    "token_f1",          # diagnostic — SQuAD lexical F1 (no LLM)
     "gold_max_token_overlap",
     "gold_reachable_at_20",
     "avg_hit_score",
     "recall_hit_count",
     "ltm_graph_hit_count",
-    # DSPy semantic metrics (populated when EVAL_DSPY_METRICS=1)
-    "semantic_f1",
-    "complete_and_grounded",
-    "completeness",
-    "groundedness",
     "ingested_chunks",
     "ingested_entities",
     "ltm_entity_count",
@@ -53,27 +65,40 @@ _CSV_METRIC_KEYS = (
 )
 
 
+def _mean(vals: list[float]) -> float:
+    return sum(vals) / len(vals) if vals else 0.0
+
+
 def summarize(cases: list[CaseResult]) -> dict[str, Any]:
     """Aggregate per-case scores and metrics into a run summary.
 
-    Reports two headline numbers: ``avg_score`` (lexical token-F1) and
-    ``judge_accuracy`` (semantic LLM-judge correctness — the leaderboard metric).
+    Headline: ``mean_semantic_f1`` — DSPy SemanticF1, the single honest metric.
+    Diagnostic: ``mean_token_f1`` — lexical token-F1.
+    Per-category SemanticF1 breakdown is included for systematic review.
     """
-    scores = [case.score for case in cases]
-    avg_score = sum(scores) / len(scores) if scores else 0.0
+    # SemanticF1 — pulled from metrics dict (populated by the pipeline scorer).
+    sf1_vals = [
+        float(case.metrics.get("semantic_f1", case.score))
+        for case in cases
+    ]
+    tok_f1_vals = [
+        float(case.metrics.get("token_f1", 0.0))
+        for case in cases
+    ]
 
-    by_category: dict[str, list[float]] = {}
-    judge_by_category: dict[str, list[float]] = {}
+    # Per-category SemanticF1 breakdown.
+    sf1_by_cat: dict[str, list[float]] = {}
+    tok_f1_by_cat: dict[str, list[float]] = {}
     for case in cases:
         cat = case.category or "uncategorized"
-        by_category.setdefault(cat, []).append(case.score)
-        judge_by_category.setdefault(cat, []).append(
-            1.0 if case.metrics.get("judge_correct") else 0.0
+        sf1_by_cat.setdefault(cat, []).append(
+            float(case.metrics.get("semantic_f1", case.score))
+        )
+        tok_f1_by_cat.setdefault(cat, []).append(
+            float(case.metrics.get("token_f1", 0.0))
         )
 
-    judge_vals = [1.0 if case.metrics.get("judge_correct") else 0.0 for case in cases]
-    judge_accuracy = sum(judge_vals) / len(judge_vals) if judge_vals else 0.0
-
+    # General numeric metric summary (averages of all numeric fields).
     metric_buckets: dict[str, list[float]] = {}
     for case in cases:
         for key, value in case.metrics.items():
@@ -84,16 +109,26 @@ def summarize(cases: list[CaseResult]) -> dict[str, Any]:
 
     return {
         "case_count": len(cases),
-        "avg_score": avg_score,
-        "judge_accuracy": judge_accuracy,
-        "avg_score_by_category": {
-            cat: sum(vals) / len(vals) for cat, vals in sorted(by_category.items())
+        # Headline
+        "mean_semantic_f1": round(_mean(sf1_vals), 4),
+        # Diagnostic
+        "mean_token_f1": round(_mean(tok_f1_vals), 4),
+        # Legacy alias kept for backward compatibility with older report readers.
+        "avg_score": round(_mean(sf1_vals), 4),
+        # Per-category SemanticF1
+        "semantic_f1_by_category": {
+            cat: round(_mean(vals), 4)
+            for cat, vals in sorted(sf1_by_cat.items())
         },
-        "judge_accuracy_by_category": {
-            cat: sum(vals) / len(vals) for cat, vals in sorted(judge_by_category.items())
+        # Per-category token-F1 (diagnostic)
+        "token_f1_by_category": {
+            cat: round(_mean(vals), 4)
+            for cat, vals in sorted(tok_f1_by_cat.items())
         },
         "metric_summary": {
-            key: sum(vals) / len(vals) for key, vals in sorted(metric_buckets.items()) if vals
+            key: round(_mean(vals), 4)
+            for key, vals in sorted(metric_buckets.items())
+            if vals
         },
     }
 
@@ -106,18 +141,22 @@ def _render_markdown(report: dict[str, Any]) -> str:
         f"- Run ID: `{report['run_id']}`",
         f"- Generated: `{report['generated_at']}`",
         f"- Cases: `{summary['case_count']}`",
-        f"- Mean token-F1 (lexical): `{summary['avg_score']:.3f}`",
-        f"- Judge accuracy (semantic): `{summary.get('judge_accuracy', 0.0):.3f}`",
         "",
-        "## Score by category (token-F1 | judge)",
+        "## Headline metric",
+        "",
+        f"**Mean SemanticF1**: `{summary.get('mean_semantic_f1', 0.0):.3f}`  "
+        f"_(diagnostic token-F1: `{summary.get('mean_token_f1', 0.0):.3f}`)_",
+        "",
+        "## SemanticF1 by category",
         "",
     ]
-    judge_cat = summary.get("judge_accuracy_by_category", {})
-    for cat, val in summary["avg_score_by_category"].items():
-        lines.append(f"- `{cat}`: F1 `{val:.3f}`  |  judge `{judge_cat.get(cat, 0.0):.3f}`")
+    tok_cat = summary.get("token_f1_by_category", {})
+    for cat, sf1 in summary.get("semantic_f1_by_category", {}).items():
+        tok = tok_cat.get(cat, 0.0)
+        lines.append(f"- `{cat}`: SemanticF1 `{sf1:.3f}`  |  token-F1 `{tok:.3f}`")
     lines.extend(["", "## Aggregated metrics", ""])
-    for key, val in summary["metric_summary"].items():
-        lines.append(f"- `{key}`: `{val:.3f}`")
+    for key, val in summary.get("metric_summary", {}).items():
+        lines.append(f"- `{key}`: `{val:.4f}`")
     lines.extend(["", "## Cases", ""])
     for case in report["cases"]:
         metrics = case.get("metrics", {})
@@ -135,7 +174,9 @@ def _render_markdown(report: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"**Gold**: `{case['gold']}`")
         lines.append(f"**Generated**: `{case['generated_answer']}`")
-        lines.append(f"- token-F1: `{case['score']:.3f}`")
+        sf1 = metrics.get("semantic_f1", case.get("score", 0.0))
+        tok = metrics.get("token_f1", 0.0)
+        lines.append(f"- SemanticF1: `{sf1:.3f}`  token-F1: `{tok:.3f}`")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -196,3 +237,49 @@ def write_report(run: RunReport) -> ReportPaths:
     return ReportPaths(
         output_dir=out, json_path=json_path, csv_path=csv_path, markdown_path=markdown_path
     )
+
+
+def compare_modes(
+    llm_free_cases: list[CaseResult],
+    llm_assisted_cases: list[CaseResult],
+) -> str:
+    """Return a side-by-side per-category SemanticF1 comparison table (Markdown).
+
+    Used by ``--compare`` in the CLI to produce the systematic-review surface.
+    """
+    def _cat_sf1(cases: list[CaseResult]) -> dict[str, float]:
+        by_cat: dict[str, list[float]] = {}
+        for case in cases:
+            cat = case.category or "uncategorized"
+            by_cat.setdefault(cat, []).append(
+                float(case.metrics.get("semantic_f1", case.score))
+            )
+        return {cat: round(_mean(vals), 4) for cat, vals in sorted(by_cat.items())}
+
+    free_sf1 = _cat_sf1(llm_free_cases)
+    asst_sf1 = _cat_sf1(llm_assisted_cases)
+    all_cats = sorted(set(free_sf1) | set(asst_sf1))
+
+    free_overall = round(_mean([float(c.metrics.get("semantic_f1", c.score)) for c in llm_free_cases]), 4)
+    asst_overall = round(_mean([float(c.metrics.get("semantic_f1", c.score)) for c in llm_assisted_cases]), 4)
+
+    lines = [
+        "# SemanticF1 Mode Comparison",
+        "",
+        f"| Category | llm_free | llm_assisted | Δ (assisted − free) |",
+        f"|----------|----------|--------------|---------------------|",
+    ]
+    for cat in all_cats:
+        f = free_sf1.get(cat, 0.0)
+        a = asst_sf1.get(cat, 0.0)
+        delta = a - f
+        sign = "+" if delta >= 0 else ""
+        lines.append(f"| `{cat}` | {f:.3f} | {a:.3f} | {sign}{delta:.3f} |")
+
+    # Totals row
+    delta_overall = asst_overall - free_overall
+    sign_overall = "+" if delta_overall >= 0 else ""
+    lines.append(f"| **Overall** | **{free_overall:.3f}** | **{asst_overall:.3f}** | **{sign_overall}{delta_overall:.3f}** |")
+    lines.append("")
+    lines.append(f"_llm_free n={len(llm_free_cases)}  llm_assisted n={len(llm_assisted_cases)}_")
+    return "\n".join(lines) + "\n"

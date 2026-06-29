@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from evaluation.reporting.report import ReportPaths, summarize, write_report
+from evaluation.reporting.report import ReportPaths, compare_modes, summarize, write_report
 
-__all__ = ["ReportPaths", "summarize", "write_report"]
+__all__ = ["ReportPaths", "compare_modes", "summarize", "write_report"]

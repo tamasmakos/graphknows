@@ -1,7 +1,12 @@
 """Command-line entrypoint: ``python -m evaluation``.
 
-The only knobs are ``--limit`` / ``--offset`` (which slice of the question set
-to run). Everything else is the hardcoded workflow in :mod:`evaluation.config`.
+Knobs:
+  --limit / --offset  slice of the question set to run
+  --mode              llm_free | llm_assisted (default: llm_free)
+  --compare           run BOTH modes over the same questions and write a
+                      side-by-side per-category SemanticF1 table
+
+Everything else is in :mod:`evaluation.config`.
 """
 
 from __future__ import annotations
@@ -10,12 +15,13 @@ import argparse
 import asyncio
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from evaluation.config import EvalConfig
 from evaluation.pipeline import run_evaluation
-from evaluation.reporting import write_report
+from evaluation.reporting import compare_modes, write_report
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -28,26 +34,87 @@ def _build_parser() -> argparse.ArgumentParser:
         default="llm_free",
         help="MemoryMode passed to the MCP server (controls extraction + retrieval).",
     )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help=(
+            "Run BOTH llm_free and llm_assisted over the same questions and write a "
+            "side-by-side per-category SemanticF1 comparison table. Ignores --mode."
+        ),
+    )
     return parser
 
 
+async def _run_one(
+    mode: str,
+    gen_model: str,
+    limit: int,
+    offset: int,
+    ts: str,
+) -> "tuple[object, object]":
+    """Run a single mode and return (RunReport, ReportPaths)."""
+    os.environ["MODE"] = mode
+    config = EvalConfig(generation_model=gen_model)
+    run_id = f"eval-{mode}-{ts}"
+    run = await run_evaluation(config, run_id=run_id, limit=limit, offset=offset)
+    paths = write_report(run)
+    return run, paths
+
+
 async def _amain(argv: list[str] | None = None) -> int:
-    load_dotenv(override=True)  # .env wins over the container/shell env (stale model footgun)
+    load_dotenv(override=True)
     args = _build_parser().parse_args(argv)
-    os.environ["MODE"] = args.mode
-    # Resolve the generation+judge model from .env explicitly and pass it through,
-    # so a stale shell/compose LLM_MODEL can never silently leak into the run.
+
     gen_model = os.environ.get("LLM_MODEL", "").strip()
     if not gen_model:
         raise SystemExit("LLM_MODEL is not set in .env — set it before running the evaluation.")
+
+    ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+
+    if args.compare:
+        print(
+            f"[eval] --compare: running llm_free + llm_assisted  "
+            f"limit={args.limit} offset={args.offset}  model={gen_model}"
+        )
+
+        run_free, paths_free = await _run_one("llm_free", gen_model, args.limit, args.offset, ts)
+        run_asst, paths_asst = await _run_one("llm_assisted", gen_model, args.limit, args.offset, ts)
+
+        table = compare_modes(run_free.cases, run_asst.cases)
+
+        compare_path = Path(EvalConfig().output_dir) / f"compare-{ts}.md"
+        compare_path.parent.mkdir(parents=True, exist_ok=True)
+        compare_path.write_text(table, encoding="utf-8")
+
+        print("\n" + table)
+        print(f"\nllm_free     SemanticF1: {run_free.summary.get('mean_semantic_f1', 0.0):.3f}  "
+              f"over {run_free.summary['case_count']} cases")
+        print(f"llm_assisted SemanticF1: {run_asst.summary.get('mean_semantic_f1', 0.0):.3f}  "
+              f"over {run_asst.summary['case_count']} cases")
+        print(f"\nComparison table: {compare_path}")
+        print(f"llm_free  reports: {paths_free.json_path}")
+        print(f"llm_asst  reports: {paths_asst.json_path}")
+        return 0
+
+    # Single-mode run.
+    os.environ["MODE"] = args.mode
     config = EvalConfig(generation_model=gen_model)
-    print(f"[eval] mode={args.mode}  generation+judge model={gen_model}  (from .env)")
-    run_id = f"eval-{args.mode}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    print(f"[eval] mode={args.mode}  model={gen_model}  (from .env)")
+    run_id = f"eval-{args.mode}-{ts}"
 
     run = await run_evaluation(config, run_id=run_id, limit=args.limit, offset=args.offset)
     paths = write_report(run)
 
-    print(f"\nMean token-F1: {run.summary['avg_score']:.3f} over {run.summary['case_count']} cases")
+    print(
+        f"\nMean SemanticF1: {run.summary.get('mean_semantic_f1', 0.0):.3f}  "
+        f"(token-F1: {run.summary.get('mean_token_f1', 0.0):.3f})  "
+        f"over {run.summary['case_count']} cases"
+    )
+    sf1_cat = run.summary.get("semantic_f1_by_category", {})
+    if sf1_cat:
+        print("SemanticF1 by category:")
+        for cat, val in sf1_cat.items():
+            print(f"  {cat}: {val:.3f}")
     print(paths.json_path)
     print(paths.csv_path)
     print(paths.markdown_path)
