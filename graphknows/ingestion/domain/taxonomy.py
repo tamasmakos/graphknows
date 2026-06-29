@@ -108,11 +108,12 @@ def load_taxonomy(path: str) -> TaxonomyConfig:
 
 
 def get_default_taxonomy() -> TaxonomyConfig:
-    """Return the bundled ``generic`` taxonomy (loaded from the package YAML).
+    """Return the bundled ``conversational`` taxonomy (loaded from the package YAML).
 
     This is the default taxonomy used when no ``GRAPHKNOWS_TAXONOMY_FILE`` env var is set.
-    To select the EU politics taxonomy instead, set the env var to an absolute path to
-    ``taxonomy.eu-politics.yaml``.
+    It is tuned for personal multi-session dialogue (people, relationships, preferences,
+    events, possessions, places, dates).  To use a different taxonomy, set
+    ``GRAPHKNOWS_TAXONOMY_FILE`` to an absolute path to any ``.yaml`` file.
     """
     env_path = os.environ.get("GRAPHKNOWS_TAXONOMY_FILE")
     if env_path:
@@ -120,7 +121,7 @@ def get_default_taxonomy() -> TaxonomyConfig:
             raise ValueError("GRAPHKNOWS_TAXONOMY_FILE must be an absolute path to a YAML file")
         yaml_path = Path(env_path)
     else:
-        yaml_path = Path(__file__).parent / "taxonomy.intentionality.yaml"
+        yaml_path = Path(__file__).parent / "taxonomy.conversational.yaml"
     return load_taxonomy(str(yaml_path))
 
 

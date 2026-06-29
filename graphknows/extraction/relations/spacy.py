@@ -62,6 +62,21 @@ I  Discourse connective entailment (Stratum V — deductive reasoning):
      e.g. "The experiment failed; therefore the study was invalid"
           → "The experiment failed" ENTAILS "the study was invalid"
 
+J  First-person preference statement (conversational dialogue):
+     "I" nsubj + love/like/enjoy/hate/prefer/dislike + dobj
+     e.g. "I love Italian food" → speaker likes "Italian food"
+          "I hate loud music"   → speaker dislikes "loud music"
+
+K  First-person possession statement (conversational dialogue):
+     "my" poss + noun-head
+     e.g. "my dog Max"  → speaker owns "Max"
+     "I have a car"     → speaker owns "a car"
+
+L  First-person relationship statement (conversational dialogue):
+     "my" poss + kinship/social-role noun (sister/friend/wife…)
+     e.g. "my sister Lisa" → speaker family_of "Lisa"
+          "my friend Tom"  → speaker friend_of "Tom"
+
 Entity grounding
 ----------------
 For each argument span, overlap-match against GLiNER2 entities by text.
@@ -355,6 +370,39 @@ _CAUSAL_MARKS: frozenset[str] = frozenset({"because", "since"})
 _ENTAILMENT_CONNECTIVES: frozenset[str] = frozenset(
     {"therefore", "thus", "hence", "consequently", "accordingly", "ergo"}
 )
+
+# ---------------------------------------------------------------------------
+# Conversational dialogue: first-person pattern vocabulary
+# ---------------------------------------------------------------------------
+
+# Preference verbs that express likes (→ "likes" predicate)
+_LIKE_VERBS: frozenset[str] = frozenset({"love", "like", "enjoy", "adore", "appreciate", "prefer"})
+
+# Preference verbs that express dislikes (→ "dislikes" predicate, optionally negated)
+_DISLIKE_VERBS: frozenset[str] = frozenset({"hate", "dislike", "detest", "despise", "loathe"})
+
+# Kinship / family role nouns (→ "family_of" predicate)
+_KINSHIP_NOUNS: frozenset[str] = frozenset({
+    "mother", "father", "mom", "dad", "mum", "sister", "brother",
+    "daughter", "son", "grandmother", "grandfather", "grandma", "grandpa",
+    "aunt", "uncle", "cousin", "niece", "nephew",
+    "wife", "husband", "spouse",
+    "stepmother", "stepfather", "stepsister", "stepbrother",
+})
+
+# Social-role nouns where the relationship predicate is "friend_of"
+_FRIEND_NOUNS: frozenset[str] = frozenset({
+    "friend", "buddy", "pal", "mate", "bestie", "roommate", "flatmate",
+    "best friend", "childhood friend",
+})
+
+# Social-role nouns where the relationship predicate is "partner_of"
+_PARTNER_NOUNS: frozenset[str] = frozenset({
+    "boyfriend", "girlfriend", "partner", "fiancé", "fiancee", "fiance", "fiancée",
+})
+
+# Possession verbs (→ "owns" predicate)
+_HAVE_VERBS: frozenset[str] = frozenset({"have", "own", "possess", "got"})
 
 # SpaCy NER type → intentionality label fallback
 _SPACY_NER_TO_LABEL: dict[str, str] = {
@@ -1058,6 +1106,257 @@ def _pattern_I(
 
 
 # ---------------------------------------------------------------------------
+# Conversational dialogue pattern extractors (J, K, L)
+# ---------------------------------------------------------------------------
+
+_SPEAKER_LABEL = "PERSON"
+_PREFERENCE_LABEL = "PREFERENCE"
+_POSSESSION_LABEL = "POSSESSION"
+
+
+def _pattern_J(
+    sent: Any,
+    doc: Any,
+    gliner_entities: list[dict],
+    spacy_ent_map: dict,
+) -> list[dict[str, Any]]:
+    """First-person preference: 'I love/like/hate X' → speaker likes/dislikes X.
+
+    Matches sentences where the grammatical subject is a first-person pronoun
+    ("I") attached to a preference or dislike verb, and emits a triple using
+    the conversational taxonomy predicates "likes" or "dislikes".
+    """
+    results: list[dict] = []
+    sent_text = sent.text.strip()
+
+    for token in sent:
+        if token.pos_ not in ("VERB", "AUX"):
+            continue
+        lemma = (token.lemma_ or token.text).lower()
+        if lemma not in _LIKE_VERBS and lemma not in _DISLIKE_VERBS:
+            continue
+
+        # Require a first-person subject
+        first_person_subj = next(
+            (
+                c
+                for c in token.children
+                if c.dep_ in ("nsubj", "nsubjpass")
+                and c.pos_ == "PRON"
+                and (c.lemma_ or c.text).lower() == "i"
+            ),
+            None,
+        )
+        if first_person_subj is None:
+            continue
+
+        relation = "likes" if lemma in _LIKE_VERBS else "dislikes"
+        negated = _has_negation(token)
+        # A negated like ("I don't like X") flips to "dislikes" and vice-versa
+        if negated:
+            relation = "dislikes" if relation == "likes" else "likes"
+
+        # Collect direct objects and prepositional objects (e.g. "I love going to X")
+        dobjs = [c for c in token.children if c.dep_ == "dobj"]
+        xcomps = [c for c in token.children if c.dep_ == "xcomp"]
+
+        for obj_tok in dobjs:
+            tgt_text = _span_text(doc, obj_tok)
+            tgt_text, tgt_label = _ground_span(
+                tgt_text, gliner_entities, spacy_ent_map, _PREFERENCE_LABEL
+            )
+            results.append(
+                _triple(
+                    "I",
+                    _SPEAKER_LABEL,
+                    relation,
+                    tgt_text,
+                    tgt_label,
+                    sent_text,
+                    0.85,
+                    "J-preference-dobj",
+                    False,  # negation already folded into relation
+                )
+            )
+
+        for xc in xcomps:
+            raw = _span_text(doc, xc)
+            tgt_text = re.sub(r"^to\s+", "", raw, flags=re.IGNORECASE)
+            results.append(
+                _triple(
+                    "I",
+                    _SPEAKER_LABEL,
+                    relation,
+                    tgt_text,
+                    _PREFERENCE_LABEL,
+                    sent_text,
+                    0.80,
+                    "J-preference-xcomp",
+                    False,
+                )
+            )
+
+    return results
+
+
+def _pattern_K(
+    sent: Any,
+    doc: Any,
+    gliner_entities: list[dict],
+    spacy_ent_map: dict,
+) -> list[dict[str, Any]]:
+    """First-person possession: 'my <noun>' or 'I have X' → speaker owns X.
+
+    Two sub-patterns:
+    - Possessive determiner: the token "my" (poss dep) modifying a noun that is
+      NOT a kinship/social-role noun (those are handled by pattern L).
+    - Explicit have verb: 'I have/own/possess a <noun>'.
+    """
+    results: list[dict] = []
+    sent_text = sent.text.strip()
+
+    # Sub-pattern K1: "my <noun>" (poss determiner)
+    for token in sent:
+        if token.dep_ == "poss" and (token.lemma_ or token.text).lower() == "my":
+            head = token.head
+            if head.pos_ not in ("NOUN", "PROPN"):
+                continue
+            head_lemma = (head.lemma_ or head.text).lower()
+            # Skip kinship and social nouns — pattern L handles those
+            if head_lemma in _KINSHIP_NOUNS or head_lemma in _FRIEND_NOUNS or head_lemma in _PARTNER_NOUNS:
+                continue
+            tgt_text = _span_text(doc, head)
+            tgt_text, tgt_label = _ground_span(
+                tgt_text, gliner_entities, spacy_ent_map, _POSSESSION_LABEL
+            )
+            results.append(
+                _triple(
+                    "I",
+                    _SPEAKER_LABEL,
+                    "owns",
+                    tgt_text,
+                    tgt_label,
+                    sent_text,
+                    0.75,
+                    "K-possession-poss",
+                )
+            )
+
+    # Sub-pattern K2: "I have/own X" (have + first-person nsubj)
+    for token in sent:
+        if token.pos_ not in ("VERB",):
+            continue
+        lemma = (token.lemma_ or token.text).lower()
+        if lemma not in _HAVE_VERBS:
+            continue
+        first_person_subj = next(
+            (
+                c
+                for c in token.children
+                if c.dep_ in ("nsubj",)
+                and c.pos_ == "PRON"
+                and (c.lemma_ or c.text).lower() == "i"
+            ),
+            None,
+        )
+        if first_person_subj is None:
+            continue
+        dobjs = [c for c in token.children if c.dep_ == "dobj"]
+        for obj_tok in dobjs:
+            tgt_text = _span_text(doc, obj_tok)
+            tgt_text, tgt_label = _ground_span(
+                tgt_text, gliner_entities, spacy_ent_map, _POSSESSION_LABEL
+            )
+            results.append(
+                _triple(
+                    "I",
+                    _SPEAKER_LABEL,
+                    "owns",
+                    tgt_text,
+                    tgt_label,
+                    sent_text,
+                    0.80,
+                    "K-possession-have",
+                )
+            )
+
+    return results
+
+
+def _pattern_L(
+    sent: Any,
+    doc: Any,
+    gliner_entities: list[dict],
+    spacy_ent_map: dict,
+) -> list[dict[str, Any]]:
+    """First-person relationship: 'my sister/friend/wife [Name]' → speaker rel Name.
+
+    Matches a possessive "my" followed by a kinship, friendship, or partner noun.
+    If the noun has an appositive or a compound proper-noun child, that becomes
+    the target (the person's name); otherwise the role noun itself is the target.
+
+    Emits one of three conversational predicates:
+      - "family_of"  for kinship nouns
+      - "friend_of"  for friendship nouns
+      - "partner_of" for partner/spouse nouns
+    """
+    results: list[dict] = []
+    sent_text = sent.text.strip()
+
+    for token in sent:
+        if token.dep_ != "poss" or (token.lemma_ or token.text).lower() != "my":
+            continue
+        head = token.head
+        if head.pos_ not in ("NOUN", "PROPN"):
+            continue
+        head_lemma = (head.lemma_ or head.text).lower()
+
+        if head_lemma in _KINSHIP_NOUNS:
+            relation = "family_of"
+        elif head_lemma in _FRIEND_NOUNS:
+            relation = "friend_of"
+        elif head_lemma in _PARTNER_NOUNS:
+            relation = "partner_of"
+        else:
+            continue
+
+        # Try to find the person's name: appositive child or compound PROPN child
+        name_tok = next(
+            (c for c in head.children if c.dep_ == "appos" and c.pos_ == "PROPN"),
+            None,
+        )
+        if name_tok is None:
+            name_tok = next(
+                (c for c in head.children if c.dep_ == "compound" and c.pos_ == "PROPN"),
+                None,
+            )
+
+        if name_tok is not None:
+            tgt_text = _span_text(doc, name_tok)
+        else:
+            # Use the role noun subtree (e.g. "my sister" with no name)
+            tgt_text = _span_text(doc, head)
+
+        tgt_text, tgt_label = _ground_span(
+            tgt_text, gliner_entities, spacy_ent_map, _SPEAKER_LABEL
+        )
+        results.append(
+            _triple(
+                "I",
+                _SPEAKER_LABEL,
+                relation,
+                tgt_text,
+                tgt_label,
+                sent_text,
+                0.80,
+                "L-relationship",
+            )
+        )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -1095,6 +1394,9 @@ def extract_intentional_relations(
             _pattern_G,
             _pattern_H,
             _pattern_I,
+            _pattern_J,
+            _pattern_K,
+            _pattern_L,
         ):
             for t in fn(sent, doc, gliner_entities, spacy_ent_map):
                 key = (_norm(t["source"]).lower(), t["relation"], _norm(t["target"]).lower())

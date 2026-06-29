@@ -26,109 +26,50 @@ if TYPE_CHECKING:
 # Label taxonomy
 # ---------------------------------------------------------------------------
 
+def _build_group_rules_from_taxonomy(taxonomy: "TaxonomyConfig") -> dict[str, list[str]]:
+    """Derive group-rules dict from a taxonomy's entity_groups (children lists)."""
+    return {k: list(v.children) for k, v in taxonomy.entity_groups.items()}
+
+
+def _build_aliases_from_taxonomy(taxonomy: "TaxonomyConfig") -> dict[str, list[str]]:
+    """Derive top-level alias dict from a taxonomy's entity_groups (aliases lists)."""
+    return {k: list(v.aliases) for k, v in taxonomy.entity_groups.items()}
+
+
+# ---------------------------------------------------------------------------
+# Generic fallback constants (domain-neutral; used only when no taxonomy is
+# available — the taxonomy YAML is the canonical source of truth per the
+# module docstring warning against hardcoded domain names).
+# ---------------------------------------------------------------------------
+
 DEFAULT_GROUP_RULES: dict[str, list[str]] = {
-    "PERSON": ["PERSON", "POLITICIAN", "COMMISSIONER", "PRESIDENT", "CHAIRPERSON"],
-    "ORGANIZATION": [
-        "ORGANIZATION",
-        "POLITICAL_PARTY",
-        "INSTITUTION",
-        "AGENCY",
-        "COMMISSION",
-        "PARLIAMENT",
-        "COUNCIL",
-        "BANK",
-    ],
-    "LOCATION": ["LOCATION", "COUNTRY", "CITY", "REGION", "PLACE", "CAPITAL"],
-    "POLICY": ["POLICY", "REGULATION", "LAW", "DIRECTIVE", "TREATY", "FRAMEWORK"],
-    "EVENT": ["EVENT", "SUMMIT", "MEETING", "ELECTION", "CRISIS", "WAR", "DEBATE"],
+    "PERSON": ["PERSON", "INDIVIDUAL", "NAMED_PERSON"],
+    "ORGANIZATION": ["ORGANIZATION", "COMPANY", "INSTITUTION", "CLUB", "TEAM", "SCHOOL"],
+    "LOCATION": ["LOCATION", "CITY", "COUNTRY", "PLACE", "REGION", "VENUE"],
+    "EVENT": ["EVENT", "OCCASION", "MILESTONE", "APPOINTMENT"],
+    "ATTRIBUTE": ["ATTRIBUTE", "TRAIT", "SKILL", "PROFESSION"],
 }
 
 TOP_LEVEL_ALIASES: dict[str, list[str]] = {
-    "PERSON": ["person", "president", "commissioner", "leader", "prime minister", "speaker"],
-    "ORGANIZATION": [
-        "organization",
-        "commission",
-        "parliament",
-        "council",
-        "party",
-        "agency",
-        "bank",
-        "kremlin",
-        "army",
-        "military",
-        "union",
-    ],
-    "LOCATION": [
-        "location",
-        "country",
-        "city",
-        "region",
-        "brussels",
-        "france",
-        "germany",
-        "ukraine",
-        "mediterranean",
-        "europe",
-    ],
-    "POLICY": [
-        "policy",
-        "regulation",
-        "law",
-        "directive",
-        "framework",
-        "migration",
-        "climate",
-        "sanctions",
-        "aid",
-        "health",
-        "security",
-        "energy",
-        "defence",
-        "defense",
-    ],
-    "EVENT": ["event", "summit", "meeting", "election", "crisis", "war", "debate", "conference"],
+    "PERSON": ["person", "man", "woman", "individual", "someone"],
+    "ORGANIZATION": ["organization", "company", "institution", "club", "team", "school"],
+    "LOCATION": ["location", "place", "city", "town", "country", "region"],
+    "EVENT": ["event", "occasion", "meeting", "appointment", "gathering"],
+    "ATTRIBUTE": ["attribute", "trait", "skill", "profession", "job"],
 }
 
 # Fallback candidate-label hints used when no taxonomy is provided
 DEFAULT_CANDIDATE_HINTS: dict[str, list[str]] = {
-    "PERSON": ["prime minister", "president", "speaker", "leader"],
-    "ORGANIZATION": [
-        "kremlin",
-        "army",
-        "military",
-        "parliament",
-        "commission",
-        "bank",
-        "union",
-    ],
-    "LOCATION": ["ukraine", "italy", "mediterranean", "europe", "eurozone"],
-    "POLICY": [
-        "sanctions",
-        "aid",
-        "migration",
-        "climate",
-        "health",
-        "security",
-        "energy",
-        "policy",
-    ],
-    "EVENT": ["invasion", "conference", "debate", "crisis", "war"],
+    "PERSON": ["person", "man", "woman", "individual"],
+    "ORGANIZATION": ["company", "institution", "club", "team"],
+    "LOCATION": ["city", "country", "place", "region"],
+    "EVENT": ["event", "meeting", "occasion", "appointment"],
+    "ATTRIBUTE": ["job", "skill", "trait", "profession"],
 }
 
-# Hard overrides that bypass the normal child-alias scoring
-POLITICAL_TYPE_OVERRIDES: dict[str, str] = {
-    "KREMLIN": "ORGANIZATION",
-    "RUSSIAN_ARMY": "ORGANIZATION",
-    "SANCTIONS": "POLICY_INSTRUMENT",
-    "AID": "POLICY_INSTRUMENT",
-    "ENERGY_DEPENDENCE": "POLICY_INSTRUMENT",
-    "SECURITY_AND_DEFENCE_UNION": "POLICY_INSTRUMENT",
-    "MIGRATION": "POLICY_INSTRUMENT",
-    "CLIMATE": "POLICY_INSTRUMENT",
-    "HEALTH": "POLICY_INSTRUMENT",
-    "SECURITY": "POLICY_INSTRUMENT",
-    "POLICY_CHANGES": "POLICY_INSTRUMENT",
-}
+# Hard overrides that bypass the normal child-alias scoring (domain-neutral fallback).
+# When a taxonomy is active its own overrides dict is used instead.
+POLITICAL_TYPE_OVERRIDES: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -197,11 +138,11 @@ def build_gliner2_schema(
         ``{"entities": {label_lower: description, ...}}``
     """
     _defaults: dict[str, str] = {
-        "PERSON": "A named person, political leader, office-holder, or individual speaker.",
-        "ORGANIZATION": "An institution, parliament, commission, party, bank, or agency.",
-        "LOCATION": "A named place, city, region, country, or geopolitical location.",
-        "POLICY": "A named policy, directive, regulation, treaty, or governance framework.",
-        "EVENT": "A summit, election, crisis, war, debate, or named political event.",
+        "PERSON": "A named individual person or referred-to human being.",
+        "ORGANIZATION": "A named institution, company, club, team, school, or other organized group.",
+        "LOCATION": "A named place, city, region, country, building, or geographic area.",
+        "EVENT": "A bounded occurrence: meeting, occasion, milestone, appointment, or gathering.",
+        "ATTRIBUTE": "A personal attribute, trait, skill, profession, or stable characteristic.",
     }
     if taxonomy is not None:
         taxonomy_descs = {

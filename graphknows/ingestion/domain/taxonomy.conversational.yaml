@@ -1,0 +1,613 @@
+# Conversational Taxonomy for Personal Multi-Session Dialogue
+# ---------------------------------------------------------------------------
+# Tuned for the LoCoMo benchmark and similar personal conversation corpora:
+# people, relationships, preferences, events, possessions, places, dates.
+#
+# Design goal: deterministic entity/relation extraction without a language model.
+# Every label is grounded in surface features of everyday dialogue.
+#
+# Schema: graphknows/ingestion/domain/taxonomy.py → TaxonomyConfig
+# ---------------------------------------------------------------------------
+
+name: conversational
+version: "1.0"
+
+# ---------------------------------------------------------------------------
+# Entity groups — 12 groups covering personal dialogue content
+# ---------------------------------------------------------------------------
+
+entity_groups:
+
+  # ── People ─────────────────────────────────────────────────────────────────
+  PERSON:
+    children:
+      - PERSON
+      - INDIVIDUAL
+      - NAMED_PERSON
+    aliases:
+      - person
+      - man
+      - woman
+      - guy
+      - girl
+      - boy
+      - someone
+      - friend
+      - colleague
+      - neighbour
+      - neighbor
+    description: >
+      A named or referred-to individual person in a personal conversation.
+      Includes the speaker, the listener, and any third parties mentioned
+      by name or by pronoun when clearly identified. Examples: "Alice",
+      "my boss Tom", "the doctor".
+    classification_tokens:
+      - MR
+      - MRS
+      - MS
+      - DR
+      - PROF
+    classification_patterns:
+      - "^[A-Z][A-Z_]*$"
+    min_ner_confidence: 0.0
+
+  # ── Interpersonal relationships ────────────────────────────────────────────
+  RELATIONSHIP:
+    children:
+      - RELATIONSHIP
+      - FAMILY_ROLE
+      - SOCIAL_ROLE
+    aliases:
+      - mother
+      - father
+      - parent
+      - sister
+      - brother
+      - sibling
+      - daughter
+      - son
+      - child
+      - grandparent
+      - grandmother
+      - grandfather
+      - aunt
+      - uncle
+      - cousin
+      - husband
+      - wife
+      - spouse
+      - partner
+      - boyfriend
+      - girlfriend
+      - friend
+      - best friend
+      - coworker
+      - colleague
+      - boss
+      - manager
+      - neighbour
+      - neighbor
+      - roommate
+      - flatmate
+    description: >
+      A named interpersonal relationship role between two people, typically
+      expressed using kinship or social-role terms. Examples: "my sister Lisa",
+      "her boyfriend", "his boss Mark", "my best friend".
+    classification_tokens:
+      - SISTER
+      - BROTHER
+      - MOTHER
+      - FATHER
+      - FRIEND
+      - HUSBAND
+      - WIFE
+      - PARTNER
+      - COUSIN
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Life events ────────────────────────────────────────────────────────────
+  EVENT:
+    children:
+      - EVENT
+      - OCCASION
+      - MILESTONE
+      - APPOINTMENT
+      - SOCIAL_EVENT
+    aliases:
+      - event
+      - occasion
+      - birthday
+      - wedding
+      - graduation
+      - anniversary
+      - party
+      - trip
+      - holiday
+      - vacation
+      - meeting
+      - appointment
+      - concert
+      - festival
+      - ceremony
+      - funeral
+      - interview
+      - exam
+      - game
+      - match
+    description: >
+      A bounded personal or social occurrence: a life milestone, social
+      gathering, appointment, trip, or other notable happening. Examples:
+      "her birthday party", "our wedding anniversary", "the job interview",
+      "last summer's trip to Greece".
+    classification_tokens:
+      - BIRTHDAY
+      - WEDDING
+      - GRADUATION
+      - ANNIVERSARY
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Activities and hobbies ─────────────────────────────────────────────────
+  ACTIVITY:
+    children:
+      - ACTIVITY
+      - HOBBY
+      - SPORT
+      - PASTIME
+      - ROUTINE
+    aliases:
+      - activity
+      - hobby
+      - sport
+      - exercise
+      - cooking
+      - reading
+      - gaming
+      - hiking
+      - running
+      - swimming
+      - painting
+      - gardening
+      - yoga
+      - cycling
+      - singing
+      - dancing
+      - photography
+      - travelling
+      - traveling
+      - shopping
+      - volunteering
+    description: >
+      A recurring activity, hobby, sport, or pastime that a person engages
+      in. Distinct from one-off events; emphasises the ongoing nature.
+      Examples: "playing chess every Sunday", "her yoga practice", "his
+      love of hiking".
+    classification_tokens:
+      - HOBBY
+      - SPORT
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Preferences, opinions, likes and dislikes ──────────────────────────────
+  PREFERENCE:
+    children:
+      - PREFERENCE
+      - LIKE
+      - DISLIKE
+      - OPINION
+      - TASTE
+    aliases:
+      - preference
+      - favourite
+      - favorite
+      - like
+      - dislike
+      - love
+      - hate
+      - enjoy
+      - prefer
+      - opinion
+      - taste
+      - interest
+      - passion
+      - aversion
+    description: >
+      An expressed personal preference, taste, opinion, like, or dislike.
+      Covers food, music, films, books, activities, and any other domain
+      of personal taste. Examples: "loves Italian food", "hates loud
+      music", "prefers tea over coffee", "thinks Python is great".
+    classification_tokens:
+      - FAVOURITE
+      - FAVORITE
+      - PREFERENCE
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Possessions and owned objects ──────────────────────────────────────────
+  POSSESSION:
+    children:
+      - POSSESSION
+      - OBJECT
+      - VEHICLE
+      - DEVICE
+      - PET
+    aliases:
+      - car
+      - bike
+      - bicycle
+      - motorbike
+      - motorcycle
+      - phone
+      - laptop
+      - computer
+      - camera
+      - guitar
+      - piano
+      - instrument
+      - dog
+      - cat
+      - pet
+      - house
+      - apartment
+      - flat
+      - boat
+      - watch
+      - book
+      - item
+      - possession
+      - belonging
+    description: >
+      A physical object, vehicle, device, or pet that is owned or closely
+      associated with a person. Examples: "his old Volkswagen", "her rescue
+      cat Milo", "my first guitar", "the laptop I bought last year".
+    classification_tokens:
+      - DOG
+      - CAT
+      - CAR
+      - BIKE
+      - PHONE
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Places and locations ───────────────────────────────────────────────────
+  LOCATION:
+    children:
+      - LOCATION
+      - CITY
+      - COUNTRY
+      - PLACE
+      - NEIGHBOURHOOD
+      - BUILDING
+      - VENUE
+    aliases:
+      - location
+      - place
+      - city
+      - town
+      - village
+      - country
+      - neighbourhood
+      - neighborhood
+      - street
+      - district
+      - region
+      - area
+      - park
+      - restaurant
+      - cafe
+      - school
+      - university
+      - college
+      - hospital
+      - office
+      - gym
+      - home
+    description: >
+      Any named or described physical place: a city, country, neighbourhood,
+      building, venue, or geographic area. Includes places of residence,
+      work, and recreation. Examples: "downtown Toronto", "the coffee shop
+      on Main Street", "our old apartment", "Rome".
+    classification_tokens:
+      - CITY
+      - TOWN
+      - COUNTRY
+      - STREET
+      - AVENUE
+      - BOULEVARD
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Organizations and institutions ─────────────────────────────────────────
+  ORGANIZATION:
+    children:
+      - ORGANIZATION
+      - COMPANY
+      - SCHOOL
+      - CLUB
+      - TEAM
+    aliases:
+      - organization
+      - company
+      - firm
+      - employer
+      - workplace
+      - school
+      - university
+      - college
+      - club
+      - team
+      - group
+      - band
+      - association
+      - society
+    description: >
+      A named institution, company, club, team, or other organized group
+      relevant to a person's life. Examples: "Google", "the local chess
+      club", "Manchester United", "Harvard", "her book group".
+    classification_tokens:
+      - UNIVERSITY
+      - COLLEGE
+      - SCHOOL
+      - COMPANY
+      - CLUB
+      - TEAM
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Temporal references ────────────────────────────────────────────────────
+  TEMPORAL:
+    children:
+      - TEMPORAL
+      - DATE
+      - TIME
+      - DURATION
+      - PERIOD
+    aliases:
+      - date
+      - time
+      - year
+      - month
+      - week
+      - day
+      - morning
+      - afternoon
+      - evening
+      - night
+      - yesterday
+      - today
+      - tomorrow
+      - last year
+      - next year
+      - ago
+      - soon
+      - recently
+      - always
+      - never
+      - sometimes
+    description: >
+      Any temporal reference: a specific date, time, duration, or period.
+      Covers absolute dates and relative time expressions as they appear
+      in everyday conversation. Examples: "last Tuesday", "three years ago",
+      "every Friday evening", "in the summer of 2019".
+    classification_tokens:
+      - MONDAY
+      - TUESDAY
+      - WEDNESDAY
+      - THURSDAY
+      - FRIDAY
+      - SATURDAY
+      - SUNDAY
+      - JANUARY
+      - FEBRUARY
+      - MARCH
+      - APRIL
+      - JUNE
+      - JULY
+      - AUGUST
+      - SEPTEMBER
+      - OCTOBER
+      - NOVEMBER
+      - DECEMBER
+    classification_patterns:
+      - "\\d{4}"
+    min_ner_confidence: 0.0
+
+  # ── Emotions and feelings ──────────────────────────────────────────────────
+  EMOTION:
+    children:
+      - EMOTION
+      - FEELING
+      - MOOD
+    aliases:
+      - emotion
+      - feeling
+      - mood
+      - happy
+      - sad
+      - angry
+      - excited
+      - anxious
+      - nervous
+      - scared
+      - proud
+      - embarrassed
+      - grateful
+      - disappointed
+      - lonely
+      - content
+      - frustrated
+      - overwhelmed
+      - surprised
+      - jealous
+    description: >
+      An explicitly described emotional state or feeling attributed to a
+      person. Examples: "feeling anxious about the exam", "so proud of
+      her daughter", "really disappointed", "happy to be home".
+    classification_tokens:
+      - EMOTION
+      - FEELING
+      - MOOD
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Personal attributes and traits ─────────────────────────────────────────
+  ATTRIBUTE:
+    children:
+      - ATTRIBUTE
+      - TRAIT
+      - CHARACTERISTIC
+      - SKILL
+      - PROFESSION
+    aliases:
+      - attribute
+      - trait
+      - characteristic
+      - skill
+      - profession
+      - job
+      - occupation
+      - career
+      - role
+      - nationality
+      - language
+      - personality
+      - vegetarian
+      - vegan
+      - introvert
+      - extrovert
+    description: >
+      A personal attribute, character trait, professional role, skill, or
+      stable characteristic of a person. Examples: "works as a nurse",
+      "speaks three languages", "is an introvert", "has a degree in
+      economics", "is vegetarian".
+    classification_tokens:
+      - PROFESSION
+      - SKILL
+      - TRAIT
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+  # ── Goals and plans ────────────────────────────────────────────────────────
+  GOAL:
+    children:
+      - GOAL
+      - PLAN
+      - ASPIRATION
+      - INTENTION
+    aliases:
+      - goal
+      - plan
+      - aspiration
+      - intention
+      - dream
+      - ambition
+      - wish
+      - hope
+      - aim
+      - target
+      - resolution
+      - to-do
+    description: >
+      A stated personal goal, plan, aspiration, or intended future action.
+      Examples: "wants to move to Berlin", "planning to start a business",
+      "hopes to run a marathon", "New Year's resolution to read more".
+    classification_tokens:
+      - GOAL
+      - PLAN
+      - ASPIRATION
+    classification_patterns: []
+    min_ner_confidence: 0.0
+
+# ---------------------------------------------------------------------------
+# Hard overrides — bypass scoring; normalised entity name → canonical label
+# ---------------------------------------------------------------------------
+
+overrides: {}
+
+# ---------------------------------------------------------------------------
+# Relation types — 13 predicates covering personal dialogue semantics
+# ---------------------------------------------------------------------------
+
+relation_types:
+  # Residence / location
+  - lives_in
+  # Profession / role
+  - works_as
+  # Social relationships
+  - friend_of
+  - family_of
+  - partner_of
+  # Events
+  - attended
+  # Ownership
+  - owns
+  # Preferences
+  - likes
+  - dislikes
+  # Future intentions
+  - plans_to
+  # Temporal grounding
+  - happened_on
+  # Spatial grounding
+  - located_in
+  # Membership
+  - member_of
+
+# ---------------------------------------------------------------------------
+# Graph hierarchy — structural backbone (shared with other taxonomies)
+# ---------------------------------------------------------------------------
+
+hierarchy:
+  SEGMENT:
+    edges:
+      - CONTAINS_DOC
+    properties:
+      - segment_id
+      - ingested_at
+      - run_id
+      - taxonomy_name
+  DOC:
+    edges:
+      - HAS_PASSAGE
+    properties:
+      - id
+      - name
+      - node_type
+      - ontology_class
+  PASSAGE:
+    edges:
+      - HAS_CHUNK
+    properties:
+      - id
+      - doc_id
+      - passage_idx
+      - content
+  CHUNK:
+    edges:
+      - MENTIONS
+    properties:
+      - id
+      - doc_id
+      - text
+      - length
+  ENTITY:
+    edges:
+      - IN_COMMUNITY
+      - RELATION
+      - CO_OCCURS
+    properties:
+      - id
+      - name
+      - label
+      - ontology_class
+      - ingested_at
+      - contributing_session_id
+      - merged_session_count
+  TOPIC:
+    edges: []
+    properties:
+      - id
+      - label
+      - summary
+      - community_id
