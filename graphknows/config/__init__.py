@@ -140,10 +140,13 @@ class GraphKnowsSettings(BaseSettings):
     mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="MODE")
     # spaCy dependency-pattern relations are LLM-free; toggle for development.
     spacy_relations: bool = Field(default=True, alias="SPACY_RELATIONS")
-    # Score-aware fusion: weight applied to normalised cosine similarity as a
-    # tiebreaker on top of rank-based RRF in the semantic collector. 0 disables
-    # (pure RRF); small values break ties without overriding multi-source agreement.
-    fusion_alpha: float = Field(default=0.005, alias="FUSION_ALPHA")
+    # Score-aware fusion: weight applied to normalised cosine similarity on top of
+    # rank-based RRF in the semantic collector. 0 = pure RRF. Raised 0.005→0.05
+    # after a retrieval-probe sweep on conv-26 (152q): reach@25 0.493→0.526, with
+    # knowledge_synthesis 0.50→0.59 — relevance was under-weighted vs multi-source
+    # agreement, burying semantically-on-point chunks below rank 25. Above ~0.1 it
+    # over-weights cosine and degrades temporal recall.
+    fusion_alpha: float = Field(default=0.05, alias="FUSION_ALPHA")
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
     # Summarisation

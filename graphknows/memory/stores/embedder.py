@@ -7,6 +7,7 @@ directly — no zero-vector fallbacks, no silent degradation.
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from pathlib import Path
@@ -106,8 +107,17 @@ def embed(texts: list[str], model_name: str = EMBED_MODEL) -> np.ndarray:
     return np.array(vecs, dtype=np.float32)
 
 
+@functools.lru_cache(maxsize=4096)
+def _embed_one_cached(text: str, model_name: str) -> tuple[float, ...]:
+    """LRU-cached single-text embedding keyed by (text, model_name)."""
+    return tuple(embed([text], model_name)[0].tolist())
+
+
 def embed_one(text: str, model_name: str = EMBED_MODEL) -> list[float]:
     """Embed a single string and return a plain float list.
+
+    Repeated calls with identical ``(text, model_name)`` hit an in-process
+    LRU cache (max 4096 entries) instead of making a network round-trip.
 
     Args:
         text: Input string.
@@ -120,7 +130,7 @@ def embed_one(text: str, model_name: str = EMBED_MODEL) -> list[float]:
         RuntimeError: If ``OPENROUTER_API_KEY`` is not set.
         httpx.HTTPStatusError: On HTTP errors from the OpenRouter API.
     """
-    return embed([text], model_name)[0].tolist()
+    return list(_embed_one_cached(text, model_name))
 
 
 def get_embedder(model_name: str = EMBED_MODEL) -> Any:

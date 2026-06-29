@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Coroutine
 
 # spaCy NER labels that are numeric/temporal noise as graph entities. Dates and
 # times are captured separately as canonical TEMPORAL nodes; numbers/percents/
@@ -86,6 +86,41 @@ def write_entity_nodes_and_edges(
         edge_writer(ent)
         entity_count += 1
     return entity_count
+
+
+async def write_chunk_entities_and_edges_bulk(
+    mg: Any,
+    session_id: str,
+    chunk_id: str,
+    entities: list[dict[str, Any]],
+) -> int:
+    """Write all entity nodes + CHUNK→ENTITY edges for one chunk via bulk store method.
+
+    This is the async (await-native) counterpart to write_entity_nodes_and_edges,
+    designed for the concurrent chunk path in _ingest_parsed where coroutines
+    await store methods directly (no _run nesting).  It applies the same
+    graph_entities filter and returns the same entity count.
+
+    The existing write_entity_nodes_and_edges function is left intact for the
+    DialogCapture (turn) path which uses the _run sync bridge.
+
+    Args:
+        mg: ArcadeDBSTMStore instance.
+        session_id: Session namespace.
+        chunk_id: The CHUNK node id to link entities to.
+        entities: Raw extraction entities (will be filtered by graph_entities).
+
+    Returns:
+        Number of graph entities written.
+    """
+    filtered = graph_entities(entities)
+    if filtered:
+        await mg.write_chunk_entities_bulk(
+            session_id=session_id,
+            chunk_id=chunk_id,
+            entities=filtered,
+        )
+    return len(filtered)
 
 
 def write_relation_edges(

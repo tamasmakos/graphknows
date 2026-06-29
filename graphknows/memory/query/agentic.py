@@ -182,20 +182,50 @@ class AgenticRetriever(BaseGraphRetriever):
             emb_array = bg_run(asyncio.to_thread(embed, [query], embed_model))
             emb = emb_array[0].tolist()
             entity_rows = bg_run(pg_bridge.search_entities(emb, k=min(top_k, 10)))
+            # Build a name→score map for annotation after the batched fetch.
+            name_to_score: dict[str, float] = {}
+            for ent in entity_rows:
+                name = ent.get("name", "")
+                if name:
+                    name_to_score[name] = ent.get("score", 0.0)
+            if not name_to_score:
+                return []
+            # One batched query for all entity names (mirrors retriever.py convention:
+            # dynamic OR conditions — ArcadeDB openCypher does not support list IN).
+            safe_names = [n.replace("'", "") for n in name_to_score]
+            where_clause = " OR ".join(f"toLower(e.name) = toLower('{n}')" for n in safe_names)
+            per_entity_k = min(5, max(1, top_k))
+            cypher = (
+                f"MATCH (ch:CHUNK)-[:MENTIONS]->(e:ENTITY) "
+                f"WHERE {where_clause} "
+                f"OPTIONAL MATCH (f:FILE)-[:HAS_CHUNK]->(ch) "
+                f"RETURN ch.id AS chunk_id, coalesce(ch.file_id, f.id, '') AS doc_id, "
+                f"ch.text AS text, e.name AS entity_name "
+                f"LIMIT $k"
+            )
+            try:
+                raw_rows = bg_run(neo._qry(cypher, k=per_entity_k * len(safe_names)))
+            except Exception as exc:
+                log.warning("search_ltm_graph batched query failed: %s", exc)
+                return []
             chunks: list[dict] = []
             seen: set[str] = set()
-            for ent in entity_rows:
-                entity_name = ent.get("name", "")
-                if not entity_name:
+            for r in raw_rows:
+                cid = r.get("chunk_id", "")
+                if not cid or cid in seen:
                     continue
-                entity_chunks = bg_run(neo.get_chunks_for_entity(entity_name, top_k=5))
-                for c in entity_chunks:
-                    cid = c.get("chunk_id", "")
-                    if cid and cid not in seen:
-                        seen.add(cid)
-                        row = {**c, "entity": entity_name, "cosine_score": ent.get("score", 0.0)}
-                        chunks.append(row)
-                        collected.append(row)
+                seen.add(cid)
+                ename = r.get("entity_name", "")
+                score = name_to_score.get(ename, 0.0)
+                row = {
+                    "chunk_id": cid,
+                    "doc_id": r.get("doc_id", ""),
+                    "text": r.get("text", ""),
+                    "entity": ename,
+                    "cosine_score": score,
+                }
+                chunks.append(row)
+                collected.append(row)
                 if len(chunks) >= top_k:
                     break
             return chunks[:top_k]
@@ -249,14 +279,40 @@ class AgenticRetriever(BaseGraphRetriever):
                             "cosine_score": 0.5,
                         }
                     )
+            # Collect all member entity names across all matched topics, then fetch
+            # their chunks in ONE batched query instead of N*M individual calls.
+            all_member_names: list[str] = []
+            seen_member: set[str] = set()
+            for t in rows:
                 for ename in (t.get("entities") or [])[:5]:
-                    try:
-                        for c in bg_run(neo.get_chunks_for_entity(ename, top_k=3)):
-                            cid = c.get("chunk_id", "")
-                            if cid:
-                                collected.append({**c, "cosine_score": 0.4})
-                    except Exception as exc:
-                        log.debug("topic member traversal skipped: %s", exc)
+                    if ename and ename not in seen_member:
+                        seen_member.add(ename)
+                        all_member_names.append(ename)
+            if all_member_names:
+                safe_members = [n.replace("'", "") for n in all_member_names]
+                where_members = " OR ".join(
+                    f"toLower(e.name) = toLower('{n}')" for n in safe_members
+                )
+                member_cypher = (
+                    f"MATCH (ch:CHUNK)-[:MENTIONS]->(e:ENTITY) "
+                    f"WHERE {where_members} "
+                    f"OPTIONAL MATCH (f:FILE)-[:HAS_CHUNK]->(ch) "
+                    f"RETURN ch.id AS chunk_id, coalesce(ch.file_id, f.id, '') AS doc_id, "
+                    f"ch.text AS text "
+                    f"LIMIT $k"
+                )
+                try:
+                    member_rows = bg_run(
+                        neo._qry(member_cypher, k=3 * len(safe_members))
+                    )
+                    seen_cids: set[str] = set()
+                    for c in member_rows:
+                        cid = c.get("chunk_id", "")
+                        if cid and cid not in seen_cids:
+                            seen_cids.add(cid)
+                            collected.append({**c, "cosine_score": 0.4})
+                except Exception as exc:
+                    log.debug("topic member traversal skipped: %s", exc)
             return rows
 
         # ---- DSPy signature and ReAct module --------------------------

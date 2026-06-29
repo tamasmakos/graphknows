@@ -255,37 +255,56 @@ class ArcadeDBLTMStore:
         )
         nodes += 1
 
-        # FILE nodes
-        for f in stm_data.get("files", []):
+        # FILE nodes — batch all files in one UNWIND command.
+        files = stm_data.get("files", [])
+        if files:
+            file_rows = [
+                {
+                    "fid": f["id"],
+                    "title": f.get("title", ""),
+                    "pn": f.get("parser_name", ""),
+                    "sh": f.get("source_hint", ""),
+                }
+                for f in files
+            ]
             await self._cmd(
-                "MERGE (f:FILE {id: $fid}) SET f.title = $title, f.parser_name = $pn, f.source_hint = $sh "
+                "UNWIND $rows AS row "
+                "MERGE (f:FILE {id: row.fid}) SET f.title = row.title, f.parser_name = row.pn, f.source_hint = row.sh "
                 "WITH f MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(f)",
-                fid=f["id"],
-                title=f.get("title", ""),
-                pn=f.get("parser_name", ""),
-                sh=f.get("source_hint", ""),
+                rows=file_rows,
                 sid=session_id,
             )
-            nodes += 1
-            edges += 1
+            nodes += len(files)
+            edges += len(files)
 
-        # CHUNK nodes — session_id stored directly so text search can filter by session
-        for c in stm_data.get("chunks", []):
+        # CHUNK nodes — session_id stored directly so text search can filter by session.
+        # Batch the CHUNK+HAS_CHUNK writes; keep TEMPORAL refs per-item (nested/conditional).
+        chunks = stm_data.get("chunks", [])
+        if chunks:
+            chunk_rows = [
+                {
+                    "cid": c["id"],
+                    "text": c.get("text", ""),
+                    "hp": c.get("heading_path", ""),
+                    "ci": c.get("chunk_index", 0),
+                    "fid": c.get("file_id", ""),
+                }
+                for c in chunks
+            ]
             await self._cmd(
-                "MERGE (c:CHUNK {id: $cid}) SET c.text = $text, c.heading_path = $hp, "
-                "c.chunk_index = $ci, c.session_id = $sid, c.file_id = $fid "
-                "WITH c MATCH (f:FILE {id: $fid}) MERGE (f)-[:HAS_CHUNK]->(c)",
-                cid=c["id"],
-                text=c.get("text", ""),
-                hp=c.get("heading_path", ""),
-                ci=c.get("chunk_index", 0),
-                fid=c.get("file_id", ""),
+                "UNWIND $rows AS row "
+                "MERGE (c:CHUNK {id: row.cid}) SET c.text = row.text, c.heading_path = row.hp, "
+                "c.chunk_index = row.ci, c.session_id = $sid, c.file_id = row.fid "
+                "WITH c, row MATCH (f:FILE {id: row.fid}) MERGE (f)-[:HAS_CHUNK]->(c)",
+                rows=chunk_rows,
                 sid=session_id,
             )
-            nodes += 1
-            edges += 1
+            nodes += len(chunks)
+            edges += len(chunks)
 
-            # Canonical TEMPORAL nodes — global per ISO date, linked to the chunk.
+        # Canonical TEMPORAL nodes — global per ISO date, linked to the chunk.
+        # Kept per-item: nested inside chunk loop with conditional iso check.
+        for c in chunks:
             for tref in (c.get("metadata") or {}).get("temporal") or []:
                 iso = str(tref.get("iso", "")).strip()
                 if not iso:
@@ -300,85 +319,116 @@ class ArcadeDBLTMStore:
                 nodes += 1
                 edges += 1
 
-        # ENTITY nodes + MENTIONS edges
+        # ENTITY nodes + MENTIONS edges.
+        # Collect new entity names respecting the cross-loop dedup set, batch MERGE them,
+        # then batch all MENTIONS edges.
         written: set[str] = set()
-        for ce in stm_data.get("chunk_entity_edges", []):
+        chunk_entity_edges = stm_data.get("chunk_entity_edges", [])
+        new_entities_ce: list[dict] = []
+        for ce in chunk_entity_edges:
             ename = ce["entity_name"]
-            em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
             if ename not in written:
-                await self._cmd(
-                    "MERGE (e:ENTITY {name: $n}) SET e.type = $t, e.confidence = $c",
-                    n=ename,
-                    t=em.get("type", "UNKNOWN"),
-                    c=em.get("confidence", 1.0),
+                em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
+                new_entities_ce.append(
+                    {"n": ename, "t": em.get("type", "UNKNOWN"), "c": em.get("confidence", 1.0)}
                 )
                 nodes += 1
                 written.add(ename)
+        if new_entities_ce:
             await self._cmd(
-                "MATCH (c:CHUNK {id: $cid}), (e:ENTITY {name: $n}) MERGE (c)-[:MENTIONS]->(e)",
-                cid=ce["chunk_id"],
-                n=ename,
+                "UNWIND $rows AS row MERGE (e:ENTITY {name: row.n}) SET e.type = row.t, e.confidence = row.c",
+                rows=new_entities_ce,
             )
-            edges += 1
-
-        # DIALOG nodes
-        for d in stm_data.get("dialogs", []):
+        if chunk_entity_edges:
+            mentions_rows = [{"cid": ce["chunk_id"], "n": ce["entity_name"]} for ce in chunk_entity_edges]
             await self._cmd(
-                "MERGE (d:DIALOG {id: $did}) SET d.session_id = $sid, d.started_at = $sa "
+                "UNWIND $rows AS row "
+                "MATCH (c:CHUNK {id: row.cid}), (e:ENTITY {name: row.n}) MERGE (c)-[:MENTIONS]->(e)",
+                rows=mentions_rows,
+            )
+            edges += len(chunk_entity_edges)
+
+        # DIALOG nodes — batch all in one UNWIND command.
+        dialogs = stm_data.get("dialogs", [])
+        if dialogs:
+            dialog_rows = [
+                {"did": d["id"], "sa": d.get("started_at", "")}
+                for d in dialogs
+            ]
+            await self._cmd(
+                "UNWIND $rows AS row "
+                "MERGE (d:DIALOG {id: row.did}) SET d.session_id = $sid, d.started_at = row.sa "
                 "WITH d MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(d)",
-                did=d["id"],
+                rows=dialog_rows,
                 sid=session_id,
-                sa=d.get("started_at", ""),
             )
-            nodes += 1
-            edges += 1
+            nodes += len(dialogs)
+            edges += len(dialogs)
 
-        # TURN nodes + HAS_TURN edges
-        for t in stm_data.get("turns", []):
+        # TURN nodes + HAS_TURN edges — batch in one UNWIND command.
+        turns = stm_data.get("turns", [])
+        if turns:
+            turn_rows = [
+                {
+                    "tid": t["id"],
+                    "ti": t.get("turn_index", 0),
+                    "r": t.get("role", "unknown"),
+                    "txt": t.get("text", ""),
+                    "did": t.get("dialog_id", ""),
+                }
+                for t in turns
+            ]
             await self._cmd(
-                "MERGE (t:TURN {id: $tid}) SET t.session_id = $sid, t.turn_index = $ti, "
-                "t.role = $r, t.text = $txt "
-                "WITH t MATCH (d:DIALOG {id: $did}) MERGE (d)-[:HAS_TURN]->(t)",
-                tid=t["id"],
+                "UNWIND $rows AS row "
+                "MERGE (t:TURN {id: row.tid}) SET t.session_id = $sid, t.turn_index = row.ti, "
+                "t.role = row.r, t.text = row.txt "
+                "WITH t, row MATCH (d:DIALOG {id: row.did}) MERGE (d)-[:HAS_TURN]->(t)",
+                rows=turn_rows,
                 sid=session_id,
-                ti=t.get("turn_index", 0),
-                r=t.get("role", "unknown"),
-                txt=t.get("text", ""),
-                did=t.get("dialog_id", ""),
             )
-            nodes += 1
-            edges += 1
+            nodes += len(turns)
+            edges += len(turns)
 
-        # NEXT edges (turn sequence)
-        for ne in stm_data.get("next_edges", []):
+        # NEXT edges (turn sequence) — batch in one UNWIND command.
+        next_edges = stm_data.get("next_edges", [])
+        if next_edges:
+            next_rows = [{"a": ne["from_turn_id"], "b": ne["to_turn_id"]} for ne in next_edges]
             await self._cmd(
-                "MATCH (t1:TURN {id: $a}), (t2:TURN {id: $b}) MERGE (t1)-[:NEXT]->(t2)",
-                a=ne["from_turn_id"],
-                b=ne["to_turn_id"],
+                "UNWIND $rows AS row "
+                "MATCH (t1:TURN {id: row.a}), (t2:TURN {id: row.b}) MERGE (t1)-[:NEXT]->(t2)",
+                rows=next_rows,
             )
-            edges += 1
+            edges += len(next_edges)
 
-        # Turn-entity edges
-        for te in stm_data.get("turn_entity_edges", []):
+        # Turn-entity edges — same cross-loop dedup as chunk_entity_edges.
+        # Collect newly-seen entities, batch MERGE them, then batch HAS_ENTITY edges.
+        turn_entity_edges = stm_data.get("turn_entity_edges", [])
+        new_entities_te: list[dict] = []
+        for te in turn_entity_edges:
             ename = te["entity_name"]
-            em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
             if ename not in written:
-                await self._cmd(
-                    "MERGE (e:ENTITY {name: $n}) SET e.type = $t, e.confidence = $c",
-                    n=ename,
-                    t=em.get("type", "UNKNOWN"),
-                    c=em.get("confidence", 1.0),
+                em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
+                new_entities_te.append(
+                    {"n": ename, "t": em.get("type", "UNKNOWN"), "c": em.get("confidence", 1.0)}
                 )
                 nodes += 1
                 written.add(ename)
+        if new_entities_te:
             await self._cmd(
-                "MATCH (t:TURN {id: $tid}), (e:ENTITY {name: $n}) MERGE (t)-[:HAS_ENTITY]->(e)",
-                tid=te["turn_id"],
-                n=ename,
+                "UNWIND $rows AS row MERGE (e:ENTITY {name: row.n}) SET e.type = row.t, e.confidence = row.c",
+                rows=new_entities_te,
             )
-            edges += 1
+        if turn_entity_edges:
+            has_entity_rows = [{"tid": te["turn_id"], "n": te["entity_name"]} for te in turn_entity_edges]
+            await self._cmd(
+                "UNWIND $rows AS row "
+                "MATCH (t:TURN {id: row.tid}), (e:ENTITY {name: row.n}) MERGE (t)-[:HAS_ENTITY]->(e)",
+                rows=has_entity_rows,
+            )
+            edges += len(turn_entity_edges)
 
-        # Relation edges from STM (bi-temporal)
+        # Relation edges from STM (bi-temporal) — kept per-item: each edge has a
+        # dynamically-computed label so a single UNWIND template is not possible.
         for r in stm_data.get("relation_edges", []):
             src, rel, tgt = r.get("source"), r.get("relation"), r.get("target")
             if not (src and rel and tgt):
