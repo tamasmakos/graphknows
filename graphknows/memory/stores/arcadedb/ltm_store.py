@@ -151,6 +151,22 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY E.invalid_at IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY E.created_at IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY E.is_current IF NOT EXISTS BOOLEAN"),
+    # SEMANTIC vertex — canonical fact/preference nodes distilled from STM episodes.
+    # Distinct from CHUNK (raw evidence) and TOPIC (community summaries).
+    ("sql", "CREATE VERTEX TYPE SEMANTIC"),
+    ("sql", "CREATE PROPERTY SEMANTIC.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMANTIC.subject IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMANTIC.predicate IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMANTIC.object IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMANTIC.confidence IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY SEMANTIC.memory_class IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMANTIC.source_session_ids IF NOT EXISTS LIST"),
+    ("sql", "CREATE PROPERTY SEMANTIC.created_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMANTIC.updated_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON SEMANTIC(id) UNIQUE"),
+    ("sql", "CREATE INDEX ON SEMANTIC(subject) NOTUNIQUE"),
+    # Edge: ENTITY -[:HAS_SEMANTIC]-> SEMANTIC
+    ("sql", "CREATE EDGE TYPE HAS_SEMANTIC"),
 ]
 
 
@@ -173,6 +189,12 @@ _LTM_SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
         "LED_BY",
     }
 )
+
+
+# Pruning: tombstoned (is_current=false) relation edges older than this many
+# days are eligible for removal.  Conservative default — only stale superseded
+# edges are touched; still-current edges are never pruned.
+_TOMBSTONE_RETENTION_DAYS: int = 90
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +495,292 @@ class ArcadeDBLTMStore:
             edges += 1
 
         return {"nodes": nodes, "edges": edges}
+
+    # ------------------------------------------------------------------
+    # SEMANTIC fact upsert
+    # ------------------------------------------------------------------
+
+    async def upsert_semantic_facts(
+        self,
+        session_id: str,
+        facts: list[dict[str, Any]],
+    ) -> int:
+        """MERGE canonical SEMANTIC fact/preference nodes and link to their subject entity.
+
+        Each fact dict must have: id, subject, predicate, object, confidence,
+        memory_class, created_at, updated_at.  source_session_ids is merged
+        (new session appended if not already present).
+
+        Returns the number of SEMANTIC nodes written.
+        """
+        if not facts:
+            return 0
+        written = 0
+        for fact in facts:
+            fid = fact.get("id", "")
+            if not fid:
+                continue
+            try:
+                # MERGE on stable id; on match update confidence (max) and
+                # updated_at; always keep created_at from first write.
+                await self._cmd(
+                    "MERGE (s:SEMANTIC {id: $id}) "
+                    "SET s.subject = $subject, "
+                    "    s.predicate = $predicate, "
+                    "    s.object = $object, "
+                    "    s.confidence = CASE WHEN s.confidence IS NULL OR $conf > s.confidence "
+                    "                        THEN $conf ELSE s.confidence END, "
+                    "    s.memory_class = $mc, "
+                    "    s.updated_at = $updated_at, "
+                    "    s.created_at = coalesce(s.created_at, $created_at)",
+                    id=fid,
+                    subject=fact.get("subject", ""),
+                    predicate=fact.get("predicate", ""),
+                    object=fact.get("object", ""),
+                    conf=float(fact.get("confidence", 1.0) or 1.0),
+                    mc=fact.get("memory_class", "fact"),
+                    updated_at=fact.get("updated_at", ""),
+                    created_at=fact.get("created_at", ""),
+                )
+                # Link subject ENTITY to its SEMANTIC nodes.
+                subject = fact.get("subject", "")
+                if subject:
+                    try:
+                        await self._cmd(
+                            "MATCH (e:ENTITY {name: $name}), (s:SEMANTIC {id: $sid}) "
+                            "MERGE (e)-[:HAS_SEMANTIC]->(s)",
+                            name=subject,
+                            sid=fid,
+                        )
+                    except Exception as link_exc:
+                        logger.debug(
+                            "HAS_SEMANTIC edge skipped for %r → %s: %s", subject, fid, link_exc
+                        )
+                written += 1
+            except Exception as exc:
+                logger.warning("upsert_semantic_facts: fact %s failed: %s", fid, exc)
+
+        logger.info(
+            "upsert_semantic_facts session=%s: %d/%d SEMANTIC nodes written",
+            session_id,
+            written,
+            len(facts),
+        )
+        return written
+
+    # ------------------------------------------------------------------
+    # PageRank / centrality persistence
+    # ------------------------------------------------------------------
+
+    async def persist_centrality(
+        self,
+        centrality: dict[str, dict[str, float]],
+    ) -> int:
+        """Write PageRank and optional degree/betweenness onto ENTITY nodes.
+
+        Args:
+            centrality: Mapping of entity_name → {pagerank, degree_centrality,
+                        betweenness}.  Unknown keys are ignored.  All values
+                        are stored as DOUBLE on the ENTITY node so that WS-2
+                        retrieval can read ``e.pagerank`` without special-casing
+                        absent nodes (the property simply won't exist until
+                        this method is called at least once).
+
+        Returns:
+            Number of ENTITY nodes updated.
+        """
+        if not centrality:
+            return 0
+        updated = 0
+        for name, scores in centrality.items():
+            if not name:
+                continue
+            pagerank = scores.get("pagerank")
+            degree = scores.get("degree_centrality")
+            betweenness = scores.get("betweenness")
+            # Build a SET clause only for present scores to avoid overwriting
+            # previously computed values with None.
+            parts: list[str] = []
+            params: dict[str, Any] = {"name": name}
+            if pagerank is not None:
+                parts.append("e.pagerank = $pr")
+                params["pr"] = float(pagerank)
+            if degree is not None:
+                parts.append("e.degree_centrality = $deg")
+                params["deg"] = float(degree)
+            if betweenness is not None:
+                parts.append("e.betweenness = $bet")
+                params["bet"] = float(betweenness)
+            if not parts:
+                continue
+            set_clause = ", ".join(parts)
+            try:
+                await self._cmd(
+                    f"MATCH (e:ENTITY {{name: $name}}) SET {set_clause}",
+                    **params,
+                )
+                updated += 1
+            except Exception as exc:
+                logger.warning("persist_centrality: entity %r failed: %s", name, exc)
+
+        logger.info("persist_centrality: updated %d ENTITY nodes", updated)
+        return updated
+
+    async def compute_and_persist_pagerank(self) -> int:
+        """Compute a lightweight in-process PageRank from the entity-relation graph
+        and persist it on ENTITY nodes.
+
+        This runs after the entity graph is fully written but before GDS/topics.
+        It uses the same entity graph as community detection (relation edges +
+        co-occurrence).  Falls back gracefully when numpy is unavailable.
+
+        Returns:
+            Number of ENTITY nodes updated with pagerank scores.
+        """
+        try:
+            import numpy as np
+        except ImportError:
+            logger.info("compute_and_persist_pagerank: numpy unavailable, skipping")
+            return 0
+
+        # Fetch all entity names and directed relation edges.
+        try:
+            entity_rows = await self._qry(
+                "MATCH (e:ENTITY) RETURN e.name AS name WHERE e.name IS NOT NULL"
+            )
+            edge_rows = await self._qry(
+                "MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE r.is_current = true OR r.is_current IS NULL "
+                f"AND NOT type(r) IN {_NON_COMMUNITY_EDGE_TYPES} "
+                "RETURN DISTINCT a.name AS src, b.name AS tgt, "
+                "coalesce(r.weight, 1.0) AS w"
+            )
+        except Exception as exc:
+            logger.warning("compute_and_persist_pagerank: graph query failed: %s", exc)
+            return 0
+
+        names = [r["name"] for r in entity_rows if r.get("name")]
+        if not names:
+            return 0
+        name_idx = {n: i for i, n in enumerate(names)}
+        n = len(names)
+
+        # Build adjacency matrix.
+        adj = np.zeros((n, n), dtype=float)
+        for row in edge_rows:
+            src, tgt = row.get("src"), row.get("tgt")
+            w = float(row.get("w") or 1.0)
+            si, ti = name_idx.get(src), name_idx.get(tgt)  # type: ignore[arg-type]
+            if si is not None and ti is not None and si != ti:
+                adj[si][ti] += w
+
+        # Column-normalise (dangling nodes get uniform 1/n).
+        col_sum = adj.sum(axis=0)
+        dangling = col_sum == 0
+        col_sum[dangling] = 1.0
+        adj = adj / col_sum
+
+        # Power iteration (damping=0.85, max 50 iters).
+        damping = 0.85
+        rank = np.full(n, 1.0 / n)
+        dangling_nodes = np.where(adj.sum(axis=0) == 0)[0]
+        for _ in range(50):
+            dangling_sum = rank[dangling_nodes].sum() / n if len(dangling_nodes) else 0.0
+            new_rank = (1 - damping) / n + damping * (adj @ rank + dangling_sum)
+            if np.linalg.norm(new_rank - rank, 1) < 1e-6:
+                break
+            rank = new_rank
+        rank = new_rank  # type: ignore[possibly-undefined]
+
+        # Degree centrality (out-degree / (n-1)).
+        out_degree = (adj > 0).sum(axis=1).astype(float)
+        degree_centrality = out_degree / max(n - 1, 1)
+
+        centrality = {
+            names[i]: {
+                "pagerank": float(rank[i]),
+                "degree_centrality": float(degree_centrality[i]),
+            }
+            for i in range(n)
+        }
+        return await self.persist_centrality(centrality)
+
+    # ------------------------------------------------------------------
+    # Graph pruning / cleaning
+    # ------------------------------------------------------------------
+
+    async def prune_tombstoned_edges(
+        self,
+        retention_days: int = _TOMBSTONE_RETENTION_DAYS,
+    ) -> int:
+        """Remove relation edges that have been tombstoned beyond the retention window.
+
+        Only edges where ALL of the following are true are deleted:
+        - ``is_current = false``  (tombstoned by WS-5 supersedence)
+        - ``invalid_at`` is set and older than ``now - retention_days``
+
+        Still-current edges (``is_current = true`` or ``is_current IS NULL``) are
+        NEVER touched.  This is intentionally conservative: the window is long
+        (default 90 days) and the filter is strict.
+
+        Returns:
+            Number of edges deleted.
+        """
+        from datetime import timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+        deleted = 0
+        try:
+            rows = await self._cmd(
+                "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                "WHERE r.is_current = false "
+                "AND r.invalid_at IS NOT NULL "
+                "AND r.invalid_at < $cutoff "
+                "DELETE r "
+                "RETURN count(r) AS deleted",
+                cutoff=cutoff,
+            )
+            deleted = int((rows[0].get("deleted") or 0) if rows else 0)
+        except Exception as exc:
+            logger.warning("prune_tombstoned_edges failed (non-fatal): %s", exc)
+            return 0
+
+        logger.info(
+            "prune_tombstoned_edges: deleted %d tombstoned edges older than %d days (cutoff=%s)",
+            deleted,
+            retention_days,
+            cutoff,
+        )
+        return deleted
+
+    async def prune_duplicate_edges(self) -> int:
+        """Remove low-confidence duplicate non-current relation edges.
+
+        Targets structural duplicates: parallel edges of the same type between
+        the same pair of ENTITY nodes where ``is_current = false`` and
+        ``confidence < 0.3`` (or weight < 0.5).  These arise when the same
+        fact was extracted multiple times before supersedence — once tombstoned
+        they add no value.
+
+        Returns:
+            Number of edges deleted.
+        """
+        deleted = 0
+        try:
+            rows = await self._cmd(
+                "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                "WHERE r.is_current = false "
+                "AND (r.weight IS NOT NULL AND r.weight < 0.5 "
+                "     OR r.confidence IS NOT NULL AND r.confidence < 0.3) "
+                "DELETE r "
+                "RETURN count(r) AS deleted",
+            )
+            deleted = int((rows[0].get("deleted") or 0) if rows else 0)
+        except Exception as exc:
+            logger.warning("prune_duplicate_edges failed (non-fatal): %s", exc)
+            return 0
+
+        logger.info("prune_duplicate_edges: deleted %d low-confidence tombstoned edges", deleted)
+        return deleted
 
     # ------------------------------------------------------------------
     # Relation extraction (LLM-assisted mode)
