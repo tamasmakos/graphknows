@@ -124,6 +124,28 @@ class OntologyRouter:
         )
         return best
 
+    def select_rdf_file(self, text: str, alpha: float = _DEFAULT_ALPHA) -> str | None:
+        """Select the best ontology and return its primary RDF file path, if any.
+
+        This is a convenience wrapper that combines :meth:`select` with a
+        registry lookup so callers can directly feed the result into
+        :func:`~graphknows.extraction.ontology.loader.load_rdf_ontology_file`.
+
+        Returns:
+            Absolute path string to the RDF/OWL/Turtle file, or ``None`` if the
+            selected ontology has no file entries in the registry.
+        """
+        self._ensure_ready()
+        manifest = self.select(text, alpha=alpha)
+        # The OntologyLoader internal registry holds the raw dicts; look up files.
+        raw_entries = self._loader._registry  # type: ignore[attr-defined]
+        entry = next((e for e in raw_entries if e.get("id") == manifest.id), None)
+        if not entry or not entry.get("files"):
+            return None
+        first_file = entry["files"][0]
+        root = self._loader._root  # type: ignore[attr-defined]
+        return str(root / first_file)
+
     def select_multi(
         self, text: str, top_k: int = 2, alpha: float = _DEFAULT_ALPHA
     ) -> list[OntologyManifest]:

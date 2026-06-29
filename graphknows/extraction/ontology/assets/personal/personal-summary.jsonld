@@ -1,0 +1,79 @@
+{
+  "@context": {
+    "@vocab": "https://graphknows.io/ontology/personal#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
+  },
+  "@id": "personal-summary",
+  "classes": [
+    "Person",
+    "Relationship",
+    "Event",
+    "Activity",
+    "Preference",
+    "Possession",
+    "Place",
+    "Organization",
+    "TimePoint",
+    "Emotion",
+    "Goal"
+  ],
+  "properties": [
+    "lives_in",
+    "works_as",
+    "friend_of",
+    "family_of",
+    "partner_of",
+    "attended",
+    "owns",
+    "likes",
+    "dislikes",
+    "plans_to",
+    "happened_on",
+    "located_in",
+    "member_of"
+  ],
+  "class_definitions": {
+    "Person": "A human individual referenced in conversation",
+    "Relationship": "A named interpersonal bond or social tie between two persons",
+    "Event": "A discrete occurrence that a person attended or experienced",
+    "Activity": "An ongoing or habitual action performed by a person",
+    "Preference": "A stated like, dislike, interest, or aversion",
+    "Possession": "A physical or digital item owned by a person",
+    "Place": "A geographic location referenced in conversation",
+    "Organization": "A company, institution, club, or group",
+    "TimePoint": "A specific date, time, or temporal reference",
+    "Emotion": "An emotional state expressed by a person",
+    "Goal": "A personal aspiration or intention"
+  },
+  "property_definitions": {
+    "lives_in": {"domain": "Person", "range": "Place", "description": "Person resides at a place"},
+    "works_as": {"domain": "Person", "range": "Organization", "description": "Person works at an organization"},
+    "friend_of": {"domain": "Person", "range": "Person", "description": "Person considers another a friend"},
+    "family_of": {"domain": "Person", "range": "Person", "description": "Person is a family member of another"},
+    "partner_of": {"domain": "Person", "range": "Person", "description": "Person is the romantic partner of another"},
+    "attended": {"domain": "Person", "range": "Event", "description": "Person participated in an event"},
+    "owns": {"domain": "Person", "range": "Possession", "description": "Person possesses an item"},
+    "likes": {"domain": "Person", "range": "Preference", "description": "Person has a positive preference"},
+    "dislikes": {"domain": "Person", "range": "Preference", "description": "Person has a negative preference"},
+    "plans_to": {"domain": "Person", "range": "Goal", "description": "Person has an intention or plan"},
+    "happened_on": {"domain": "Event", "range": "TimePoint", "description": "Event occurred at a time point"},
+    "located_in": {"domain": "Event", "range": "Place", "description": "Event took place at a location"},
+    "member_of": {"domain": "Person", "range": "Organization", "description": "Person is a member of an organization"}
+  },
+  "typical_relations": [
+    {"subject": "Person", "predicate": "friend_of", "object": "Person"},
+    {"subject": "Person", "predicate": "family_of", "object": "Person"},
+    {"subject": "Person", "predicate": "partner_of", "object": "Person"},
+    {"subject": "Person", "predicate": "lives_in", "object": "Place"},
+    {"subject": "Person", "predicate": "works_as", "object": "Organization"},
+    {"subject": "Person", "predicate": "attended", "object": "Event"},
+    {"subject": "Person", "predicate": "owns", "object": "Possession"},
+    {"subject": "Person", "predicate": "likes", "object": "Preference"},
+    {"subject": "Person", "predicate": "dislikes", "object": "Preference"},
+    {"subject": "Person", "predicate": "plans_to", "object": "Goal"},
+    {"subject": "Person", "predicate": "member_of", "object": "Organization"},
+    {"subject": "Event", "predicate": "happened_on", "object": "TimePoint"},
+    {"subject": "Event", "predicate": "located_in", "object": "Place"}
+  ]
+}

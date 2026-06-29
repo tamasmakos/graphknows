@@ -7,6 +7,16 @@ Public symbols:
 - :class:`DSPyExtractor` — DSPy + OpenRouter implementation.
 - :func:`get_extractor` — factory that returns a ``DSPyExtractor``.
 - :class:`GraphExtractorModule` — DSPy module for triple extraction.
+
+Extract-then-map
+~~~~~~~~~~~~~~~~
+After the LLM produces free-form predicate labels, each label is mapped to
+the closest controlled-vocabulary property from the loaded RDF/OWL ontology
+using :class:`~graphknows.extraction.ontology.relation_filter.OntologyPredicateMapper`.
+Triples whose predicate cannot be mapped above the similarity threshold are
+dropped.  This two-stage approach (generate then constrain) lets the LLM
+surface near-miss labels ("is friends with" → ``friend_of``) while still
+enforcing ontology discipline.
 """
 
 from __future__ import annotations
@@ -24,9 +34,86 @@ from graphknows.config.llm import (
     normalize_openrouter_model,
 )
 from graphknows.extraction.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
+from graphknows.extraction.ontology.relation_filter import OntologyPredicateMapper
 from graphknows.extraction.utils import standardize_label
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Ontology context enrichment
+# ---------------------------------------------------------------------------
+
+
+def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
+    """Build a SKOS-enriched context string from an RDF/OWL ontology manifest.
+
+    Extends the basic ``{"classes": [...], "properties": [...]}`` context from
+    :func:`~graphknows.extraction.ontology.loader.load_rdf_ontology_file` with
+    per-property domain/range and SKOS ``prefLabel``/``definition`` where
+    available.  This gives the DSPy LLM structured signal about *what each
+    relation means* and *which entity types it connects*.
+
+    Falls back to the manifest's raw context string when rdflib is unavailable
+    or the ontology file cannot be parsed.
+    """
+    import json
+
+    try:
+        import rdflib
+        from rdflib import OWL, RDF, RDFS
+        from rdflib.namespace import SKOS
+
+        path = manifest.file_path
+        graph = rdflib.Graph()
+        graph.parse(path)
+
+        def _label(node: object) -> str:
+            lbl = graph.value(node, RDFS.label)  # type: ignore[arg-type]
+            if lbl:
+                return str(lbl)
+            s = str(node)
+            if "#" in s:
+                return s.rsplit("#", 1)[-1]
+            if "/" in s:
+                return s.rstrip("/").rsplit("/", 1)[-1]
+            return s
+
+        property_nodes = (
+            set(graph.subjects(RDF.type, OWL.ObjectProperty))
+            | set(graph.subjects(RDF.type, OWL.DatatypeProperty))
+            | set(graph.subjects(RDF.type, RDF.Property))
+        )
+
+        enriched_props: list[dict] = []
+        for prop in property_nodes:
+            prop_label = _label(prop)
+            if not prop_label:
+                continue
+            entry: dict = {"label": prop_label}
+            domain = graph.value(prop, RDFS.domain)  # type: ignore[arg-type]
+            if domain:
+                entry["domain"] = _label(domain)
+            rng = graph.value(prop, RDFS.range)  # type: ignore[arg-type]
+            if rng:
+                entry["range"] = _label(rng)
+            pref = graph.value(prop, SKOS.prefLabel)  # type: ignore[arg-type]
+            if pref:
+                entry["prefLabel"] = str(pref)
+            defn = graph.value(prop, SKOS.definition)  # type: ignore[arg-type]
+            if defn:
+                entry["definition"] = str(defn)
+            enriched_props.append(entry)
+
+        enriched_props.sort(key=lambda p: p["label"])
+
+        base = json.loads(manifest.context)
+        base["properties_detail"] = enriched_props
+        return json.dumps(base, ensure_ascii=False)
+
+    except Exception as exc:
+        log.debug("Could not build enriched ontology context: %s — using base context", exc)
+        return manifest.context
+
 
 # ---------------------------------------------------------------------------
 # DSPy signature & module
@@ -48,32 +135,45 @@ class Triplet(BaseModel):
 
 
 class EntityRelation(dspy.Signature):
-    """Extract RDF-constrained relation triplets from text.
+    """Extract RDF-constrained relation triplets from text using the provided ontology.
 
     Rules:
-    - The *relation* field MUST be chosen from ontology_relation_types.
-      Do NOT invent new relation labels.
-    - Be generous: include all plausible relations supported by the text.
-    - Set confidence >= 0.5 for relations clearly supported by the text.
+    - The *relation* field MUST be one of the labels in ontology_relation_types.
+      Prefer the closest ontology label — if the text says "is friends with",
+      emit "friend_of". Do NOT invent new relation labels.
+    - The *source_type* and *target_type* fields MUST be one of the labels in
+      ontology_classes.  Use the domain/range annotations in ontology_context to
+      choose correct types (e.g. friend_of: domain=Person, range=Person).
+    - Be generous: include all plausible relations clearly supported by the text.
+    - Set confidence >= 0.5 for relations directly evidenced by the text.
     """
 
     text: str = dspy.InputField(desc="Input text to analyse.")
     ontology_context: str = dspy.InputField(
-        desc="Compact JSON context parsed directly from the configured RDF/OWL ontology file."
+        desc=(
+            "JSON context from the RDF/OWL ontology.  Contains 'classes', 'properties', and "
+            "'properties_detail' (list of {label, domain, range, definition} dicts) — use the "
+            "domain/range fields to assign correct source_type/target_type values."
+        )
     )
     ontology_classes: list[str] = dspy.InputField(
-        desc="Allowed entity class labels parsed directly from the RDF/OWL ontology file."
+        desc=(
+            "Allowed entity class labels from the RDF/OWL ontology.  "
+            "Use ONLY these as source_type and target_type values."
+        )
     )
     ontology_relation_types: list[str] = dspy.InputField(
         desc=(
-            "Exhaustive list of permitted relation labels parsed from RDF/OWL properties. "
-            "The relation field in every output triplet MUST be one of these."
+            "Exhaustive list of permitted relation labels from the RDF/OWL ontology properties. "
+            "The relation field in every output triplet MUST be one of these exact strings. "
+            "Choose the closest matching label — do NOT invent new ones."
         )
     )
     triplets: list[Triplet] = dspy.OutputField(
         desc=(
-            "Verified relation triplets grounded in the text and RDF/OWL ontology. "
-            "Every triplet relation must be one of ontology_relation_types."
+            "Verified relation triplets grounded in the text and constrained by the RDF/OWL "
+            "ontology.  Every triplet's relation must be one of ontology_relation_types, and "
+            "source_type/target_type must be one of ontology_classes."
         )
     )
 
@@ -238,7 +338,15 @@ class DSPyExtractor(BaseExtractor):
         self._configure_lm(api_key, model)
 
     def _load_ontology(self, ontology_config: dict[str, Any]) -> None:
-        """Load RDF ontology labels, falling back to open-domain defaults."""
+        """Load RDF ontology labels, falling back to open-domain defaults.
+
+        Also builds an :class:`OntologyPredicateMapper` for the extract-then-map
+        step.  When an ontology file is configured, the mapper constrains
+        free-form LLM predicates to the ontology's controlled vocabulary.  When
+        no ontology file is given, the mapper is built from the open-domain
+        relation type list so extract-then-map still applies (with relaxed
+        similarity matching because the open-domain list is large).
+        """
         ontology_file = str(ontology_config.get("file") or "").strip()
         if ontology_file:
             self._ontology: RdfOntologyManifest | None = load_rdf_ontology_file(ontology_file)
@@ -250,10 +358,23 @@ class DSPyExtractor(BaseExtractor):
             ]
             if not self._ontology_classes or not self._ontology_relation_types:
                 raise ValueError(f"RDF ontology file produced no DSPy labels: {ontology_file}")
+            # Build the extract-then-map predicate mapper from the ontology labels.
+            # The raw (non-standardized) property labels are used so the mapper
+            # can match surface forms like "is friends with" → "friend_of".
+            self._predicate_mapper: OntologyPredicateMapper = OntologyPredicateMapper(
+                self._ontology.property_labels
+            )
+            # Build the enriched SKOS context for the DSPy LLM prompt.
+            self._ontology_enriched_context: str = _build_enriched_ontology_context(self._ontology)
         else:
             self._ontology = None
             self._ontology_classes = _OPEN_DOMAIN_CLASSES
             self._ontology_relation_types = _OPEN_DOMAIN_RELATION_TYPES
+            self._predicate_mapper = OntologyPredicateMapper(
+                _OPEN_DOMAIN_RELATION_TYPES,
+                min_similarity=0.35,  # Slightly higher threshold for the open-domain list
+            )
+            self._ontology_enriched_context = ""
             log.info("DSPyExtractor: no ontology file — using open-domain relation types")
 
     def _configure_lm(self, api_key: str, model: str) -> None:
@@ -297,6 +418,41 @@ class DSPyExtractor(BaseExtractor):
             return False, "relation_type_not_in_rdf_ontology"
         return True, None
 
+    def _apply_extract_then_map(
+        self, raw: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Map a raw triplet's predicate to the closest ontology property.
+
+        This is the extract-then-map step: the LLM is allowed to emit free-form
+        predicates, and we post-hoc map each to the closest controlled-vocabulary
+        property using :class:`OntologyPredicateMapper`.
+
+        Returns:
+            ``(mapped_raw, drop_reason)`` where ``mapped_raw`` is the triplet
+            dict with the ``relation`` field replaced by the canonical label,
+            and ``drop_reason`` is set (and ``mapped_raw`` is ``None``) when
+            the predicate cannot be mapped above the similarity threshold.
+        """
+        original_relation = raw.get("relation", "")
+        # Guard: _predicate_mapper may not be set if the extractor was created
+        # via __new__ without __init__ (e.g. in unit tests with manual attribute setup).
+        predicate_mapper = getattr(self, "_predicate_mapper", None)
+        if predicate_mapper is None:
+            # No mapper — pass the relation through unchanged (no constraint).
+            return dict(raw), None
+        canonical, score = predicate_mapper.map_predicate(original_relation)
+        if canonical is None:
+            return None, f"predicate_unmappable(score={score:.3f})"
+        mapped = dict(raw)
+        mapped["relation"] = canonical
+        if canonical != original_relation:
+            mapped["_mapped_from"] = original_relation
+            mapped["_map_score"] = round(score, 4)
+            log.debug(
+                "extract-then-map: '%s' → '%s' (score=%.3f)", original_relation, canonical, score
+            )
+        return mapped, None
+
     def _normalize_triplet(
         self, raw: dict[str, Any]
     ) -> tuple[str, str, str, str, str, dict[str, Any]]:
@@ -328,7 +484,13 @@ class DSPyExtractor(BaseExtractor):
 
         try:
             lm = self._lm
-            ontology_context = self._ontology.context if self._ontology is not None else ""
+            # Use the SKOS-enriched context when available; it carries per-property
+            # domain/range/definition so the LLM makes better typing decisions.
+            # Fallback: use the raw manifest context or empty string (supports tests
+            # that build DSPyExtractor via __new__ without calling __init__).
+            ontology_context = getattr(self, "_ontology_enriched_context", None) or (
+                self._ontology.context if self._ontology is not None else ""
+            )
 
             def _extract_sync() -> Any:
                 with dspy.settings.context(lm=lm):
@@ -358,15 +520,42 @@ class DSPyExtractor(BaseExtractor):
                     continue
                 raw_triplets.append(raw)
 
-                valid, drop_reason = self._triplet_is_valid(raw, allowed_norm)
-                if not valid:
-                    triplet_decisions.append({**raw, "kept": False, "drop_reason": drop_reason})
+                # --- Step 1: require source, relation, target fields ----------
+                if not (raw.get("source") and raw.get("relation") and raw.get("target")):
+                    triplet_decisions.append(
+                        {**raw, "kept": False, "drop_reason": "missing_triplet_field"}
+                    )
                     continue
 
-                triplet_decisions.append({**raw, "kept": True, "drop_reason": None})
+                # --- Step 2: extract-then-map --------------------------------
+                # Map the free-form LLM predicate to the closest controlled-
+                # vocabulary property.  If unmappable, drop the triple.
+                mapped_raw, map_drop_reason = self._apply_extract_then_map(raw)
+                if mapped_raw is None:
+                    triplet_decisions.append(
+                        {**raw, "kept": False, "drop_reason": map_drop_reason or "extract_then_map_failed"}
+                    )
+                    continue
+
+                # --- Step 3: final ontology membership check -----------------
+                # After mapping, the canonical relation *should* always be in
+                # allowed_norm, but we verify to guard against edge cases.
+                valid, drop_reason = self._triplet_is_valid(mapped_raw, allowed_norm)
+                if not valid:
+                    triplet_decisions.append(
+                        {**mapped_raw, "kept": False, "drop_reason": drop_reason}
+                    )
+                    continue
+
+                triplet_decisions.append({**mapped_raw, "kept": True, "drop_reason": None})
                 source, relation, target, source_type, target_type, props = self._normalize_triplet(
-                    raw
+                    mapped_raw
                 )
+                # Surface the mapping metadata in edge properties when the
+                # predicate was remapped from a free-form LLM label.
+                if "_mapped_from" in mapped_raw:
+                    props["_mapped_from"] = mapped_raw["_mapped_from"]
+                    props["_map_score"] = mapped_raw.get("_map_score")
                 relations.append((source, relation, target, props))
 
                 if source not in seen_nodes:

@@ -1,0 +1,193 @@
+@prefix : <https://graphknows.io/ontology/personal#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+# ============================================================
+# Ontology header
+# ============================================================
+
+<https://graphknows.io/ontology/personal>
+    a owl:Ontology ;
+    rdfs:label "Personal Conversational Ontology" ;
+    rdfs:comment "Lightweight ontology for extracting structured knowledge from personal dialogues, life narratives, and conversational text (e.g. LoCoMo-style datasets)." .
+
+# ============================================================
+# Classes
+# ============================================================
+
+:Person
+    a owl:Class ;
+    rdfs:label "Person" ;
+    skos:prefLabel "Person" ;
+    skos:definition "A human individual referenced in conversation — may be the speaker, addressee, or a third party." .
+
+:Relationship
+    a owl:Class ;
+    rdfs:label "Relationship" ;
+    skos:prefLabel "Relationship" ;
+    skos:definition "A named interpersonal bond or social tie between two persons (e.g. friendship, family, partnership)." .
+
+:Event
+    a owl:Class ;
+    rdfs:label "Event" ;
+    skos:prefLabel "Event" ;
+    skos:definition "A discrete occurrence that a person attended, experienced, or is planning — with an implicit or explicit time anchor." .
+
+:Activity
+    a owl:Class ;
+    rdfs:label "Activity" ;
+    skos:prefLabel "Activity" ;
+    skos:definition "An ongoing or habitual action or behaviour performed by a person (e.g. running, cooking, studying)." .
+
+:Preference
+    a owl:Class ;
+    rdfs:label "Preference" ;
+    skos:prefLabel "Preference" ;
+    skos:definition "A stated or implied like, dislike, interest, or aversion held by a person toward an object, topic, or activity." .
+
+:Possession
+    a owl:Class ;
+    rdfs:label "Possession" ;
+    skos:prefLabel "Possession" ;
+    skos:definition "A physical or digital item owned, used, or controlled by a person." .
+
+:Place
+    a owl:Class ;
+    rdfs:label "Place" ;
+    skos:prefLabel "Place" ;
+    skos:definition "A geographic location — city, country, neighbourhood, venue, or abstract region — referenced in conversation." .
+
+:Organization
+    a owl:Class ;
+    rdfs:label "Organization" ;
+    skos:prefLabel "Organization" ;
+    skos:definition "A company, institution, club, team, or social group that a person is or was affiliated with." .
+
+:TimePoint
+    a owl:Class ;
+    rdfs:label "TimePoint" ;
+    skos:prefLabel "TimePoint" ;
+    skos:definition "A specific date, time, period, or temporal reference (e.g. 'last Tuesday', 'next summer', '2022')." .
+
+:Emotion
+    a owl:Class ;
+    rdfs:label "Emotion" ;
+    skos:prefLabel "Emotion" ;
+    skos:definition "An emotional state or sentiment experienced or expressed by a person (e.g. happy, anxious, proud)." .
+
+:Goal
+    a owl:Class ;
+    rdfs:label "Goal" ;
+    skos:prefLabel "Goal" ;
+    skos:definition "A personal aspiration, intention, or plan that a person wishes to achieve in the future." .
+
+# ============================================================
+# Object Properties
+# ============================================================
+
+:lives_in
+    a owl:ObjectProperty ;
+    rdfs:label "lives_in" ;
+    rdfs:domain :Person ;
+    rdfs:range :Place ;
+    skos:prefLabel "lives_in" ;
+    skos:definition "The person resides at or in the specified place." .
+
+:works_as
+    a owl:ObjectProperty ;
+    rdfs:label "works_as" ;
+    rdfs:domain :Person ;
+    rdfs:range :Organization ;
+    skos:prefLabel "works_as" ;
+    skos:definition "The person is employed at or works for the specified organization, or holds the specified role." .
+
+:friend_of
+    a owl:ObjectProperty ;
+    rdfs:label "friend_of" ;
+    rdfs:domain :Person ;
+    rdfs:range :Person ;
+    skos:prefLabel "friend_of" ;
+    skos:definition "The source person considers the target person a friend." .
+
+:family_of
+    a owl:ObjectProperty ;
+    rdfs:label "family_of" ;
+    rdfs:domain :Person ;
+    rdfs:range :Person ;
+    skos:prefLabel "family_of" ;
+    skos:definition "The source person is a family member of the target person (sibling, parent, child, cousin, etc.)." .
+
+:partner_of
+    a owl:ObjectProperty ;
+    rdfs:label "partner_of" ;
+    rdfs:domain :Person ;
+    rdfs:range :Person ;
+    skos:prefLabel "partner_of" ;
+    skos:definition "The source person is the romantic or life partner of the target person." .
+
+:attended
+    a owl:ObjectProperty ;
+    rdfs:label "attended" ;
+    rdfs:domain :Person ;
+    rdfs:range :Event ;
+    skos:prefLabel "attended" ;
+    skos:definition "The person participated in or was present at the specified event." .
+
+:owns
+    a owl:ObjectProperty ;
+    rdfs:label "owns" ;
+    rdfs:domain :Person ;
+    rdfs:range :Possession ;
+    skos:prefLabel "owns" ;
+    skos:definition "The person possesses or controls the specified item." .
+
+:likes
+    a owl:ObjectProperty ;
+    rdfs:label "likes" ;
+    rdfs:domain :Person ;
+    rdfs:range :Preference ;
+    skos:prefLabel "likes" ;
+    skos:definition "The person expresses a positive sentiment or preference toward the target." .
+
+:dislikes
+    a owl:ObjectProperty ;
+    rdfs:label "dislikes" ;
+    rdfs:domain :Person ;
+    rdfs:range :Preference ;
+    skos:prefLabel "dislikes" ;
+    skos:definition "The person expresses a negative sentiment or aversion toward the target." .
+
+:plans_to
+    a owl:ObjectProperty ;
+    rdfs:label "plans_to" ;
+    rdfs:domain :Person ;
+    rdfs:range :Goal ;
+    skos:prefLabel "plans_to" ;
+    skos:definition "The person has a stated intention or plan to pursue the specified goal or activity." .
+
+:happened_on
+    a owl:ObjectProperty ;
+    rdfs:label "happened_on" ;
+    rdfs:domain :Event ;
+    rdfs:range :TimePoint ;
+    skos:prefLabel "happened_on" ;
+    skos:definition "The event occurred at or during the specified time point." .
+
+:located_in
+    a owl:ObjectProperty ;
+    rdfs:label "located_in" ;
+    rdfs:domain :Event ;
+    rdfs:range :Place ;
+    skos:prefLabel "located_in" ;
+    skos:definition "The event or activity took place at the specified location." .
+
+:member_of
+    a owl:ObjectProperty ;
+    rdfs:label "member_of" ;
+    rdfs:domain :Person ;
+    rdfs:range :Organization ;
+    skos:prefLabel "member_of" ;
+    skos:definition "The person is or was a member of the specified organization or group." .
