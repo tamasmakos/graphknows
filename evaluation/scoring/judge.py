@@ -44,7 +44,7 @@ class LoCoMoJudge(dspy.Signature):
 class LLMJudge:
     """Per-case semantic correctness verdict via an OpenRouter LLM.
 
-    Initialize once per run and reuse. ``judge`` is async (``asyncio.to_thread``)
+    Initialize once per run and reuse. ``judge`` is async (DSPy native ``acall``)
     and rate-limit aware, mirroring :class:`~evaluation.generation.generator.AnswerGenerator`.
     """
 
@@ -77,16 +77,20 @@ class LLMJudge:
         self._predictor = dspy.Predict(LoCoMoJudge)
         log.info("LLMJudge ready with model %s (majority-of-%d)", model_str, self._samples)
 
-    def _judge_sync(self, question: str, gold: str, predicted: str) -> bool:
-        with dspy.settings.context(lm=self._lm):
-            pred = self._predictor(question=question, gold_answer=gold, predicted_answer=predicted)
-        return str(getattr(pred, "correct", "")).strip().lower().startswith("y")
-
     async def _judge_once(self, question: str, gold: str, predicted: str) -> bool:
-        """One rate-limit-aware verdict. Parse failures score as incorrect."""
+        """One rate-limit-aware verdict. Parse failures score as incorrect.
+
+        Uses DSPy native async (``acall``) so concurrent samples/questions share
+        the judge module safely on the event loop, rather than racing it across
+        ``asyncio.to_thread`` threads.
+        """
         for attempt in range(6):
             try:
-                return await asyncio.to_thread(self._judge_sync, question, gold, predicted)
+                with dspy.settings.context(lm=self._lm):
+                    pred = await self._predictor.acall(
+                        question=question, gold_answer=gold, predicted_answer=predicted
+                    )
+                return str(getattr(pred, "correct", "")).strip().lower().startswith("y")
             except Exception as exc:
                 msg = str(exc).lower()
                 if "402" in msg or "credits" in msg or "payment" in msg:
@@ -109,13 +113,8 @@ class LLMJudge:
         """Return the majority verdict on whether *predicted* is correct for *gold*."""
         if not predicted or predicted.strip().lower().startswith("unknown"):
             return False
-        needed = self._samples // 2 + 1
-        yes = no = 0
-        for _ in range(self._samples):
-            if await self._judge_once(question, gold, predicted):
-                yes += 1
-            else:
-                no += 1
-            if yes >= needed or no >= needed:  # early exit: outcome already decided
-                break
-        return yes >= needed
+        results = await asyncio.gather(
+            *[self._judge_once(question, gold, predicted) for _ in range(self._samples)]
+        )
+        yes = sum(1 for r in results if r)
+        return yes > self._samples // 2

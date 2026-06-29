@@ -88,7 +88,7 @@ def _build_openrouter_lm(model: str | None, api_key: str | None) -> dspy.LM:
 class DspyMetricScorer:
     """Scores (question, gold, answer, context) with SemanticF1 + CompleteAndGrounded.
 
-    Initialize once per run and reuse. ``score`` is async (``asyncio.to_thread``)
+    Initialize once per run and reuse. ``score`` is async (DSPy native ``acall``)
     and rate-limit aware, matching the other graphknows scorers. On any LM error
     that survives retries the affected score is returned as 0.0 so a single bad
     case never crashes the run — but the failure is logged so silent degradation
@@ -113,19 +113,21 @@ class DspyMetricScorer:
         log.info("DspyMetricScorer ready (SemanticF1 + CompleteAndGrounded)")
 
     # ------------------------------------------------------------------
-    def _score_sync(self, question: str, gold: str, predicted: str, context: str) -> DspyScores:
+    async def _score_async(self, question: str, gold: str, predicted: str, context: str) -> DspyScores:
+        # Native DSPy async (acall) — safe to run concurrently across cases, unlike
+        # calling the shared metric modules from asyncio.to_thread threads.
         example = dspy.Example(question=question, response=gold).with_inputs("question")
         pred = dspy.Prediction(response=predicted or "Unknown", context=context or "")
         with dspy.settings.context(lm=self._lm):
             # SemanticF1: answer-vs-gold semantic F1.
-            sf1 = float(self._semantic_f1(example, pred).score)
+            sf1 = float((await self._semantic_f1.acall(example, pred)).score)
             # CompleteAndGrounded: re-run the two sub-modules directly so the
             # individual completeness/groundedness sub-scores can be reported,
             # then combine with the library's own f1.
-            comp = self._complete_grounded.completeness_module(
+            comp = await self._complete_grounded.completeness_module.acall(
                 question=question, ground_truth=gold, system_response=pred.response
             )
-            grnd = self._complete_grounded.groundedness_module(
+            grnd = await self._complete_grounded.groundedness_module.acall(
                 question=question, retrieved_context=pred.context, system_response=pred.response
             )
             from dspy.evaluate.auto_evaluation import f1_score
@@ -146,9 +148,7 @@ class DspyMetricScorer:
         """Return both DSPy metric scores for one case (rate-limit aware)."""
         for attempt in range(6):
             try:
-                return await asyncio.to_thread(
-                    self._score_sync, question, gold, predicted, context
-                )
+                return await self._score_async(question, gold, predicted, context)
             except Exception as exc:  # noqa: BLE001 - we classify and re-raise hard errors
                 msg = str(exc).lower()
                 if "402" in msg or "credits" in msg or "payment" in msg:
