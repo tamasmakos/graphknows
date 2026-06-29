@@ -17,7 +17,7 @@ LTM tools:
   ltm_topics      — list topics by entity threshold
 
 Retrieval:
-  memory_query    — unified retrieval (deterministic or agentic via RETRIEVAL_MODE)
+  memory_query    — unified retrieval (deterministic or agentic, driven by MODE)
 
 Corpus:
   corpus_ingest   — batch document ingestion into LTM knowledge graph

@@ -59,13 +59,11 @@ def build_arcadedb_stm_store(settings: GraphKnowsSettings) -> ArcadeDBSTMStore:
 
 def build_arcadedb_ltm_store(settings: GraphKnowsSettings) -> ArcadeDBLTMStore:
     """Build an ArcadeDBLTMStore from settings."""
+    from graphknows.config.profiles import get_profile
     from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
 
-    relation_extractor = (
-        build_relation_extractor(settings)
-        if settings.relation_extraction_mode == "llm_assisted"
-        else None
-    )
+    profile = get_profile(settings)
+    relation_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
     client = build_arcadedb_client(settings)
     return ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
 
@@ -108,21 +106,24 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     _run(mg.ensure_schema())
     _run(pg.connect())  # connects client + ensures schema
 
-    mode = settings.relation_extraction_mode
-    extractor = _build_entity_extractor(mode)
-    rel_extractor = build_relation_extractor(settings) if mode == "llm_assisted" else None
+    from graphknows.config.profiles import get_profile
+
+    profile = get_profile(settings)
+    extractor = _build_entity_extractor("llm_assisted" if profile.extraction_uses_llm else "gliner2")
+    rel_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
     return STMService(
         mg,
         pg,
         extractor,
         embed_fn=embed_one,
         rel_extractor=rel_extractor,
-        spacy_relations=settings.spacy_relations,
+        spacy_relations=not profile.extraction_uses_llm,
     )
 
 
 def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     """Build an LTMPromotionPipeline from settings."""
+    from graphknows.config.profiles import get_profile
     from graphknows.memory.flush import LTMPromotionPipeline
     from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
     from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
@@ -133,14 +134,12 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     # both MERGE CHUNK by id; on separate connections a node created by one is not
     # immediately visible to the other's CHUNK(id) unique index, so the MERGE
     # stops deduping and writes duplicate, half-un-embedded chunk nodes.
+
+    profile = get_profile(settings)
     client = build_arcadedb_client(settings)
     mg = ArcadeDBSTMStore(client=client)
     pg = ArcadeDBVectorStore(client=client)
-    relation_extractor = (
-        build_relation_extractor(settings)
-        if settings.relation_extraction_mode == "llm_assisted"
-        else None
-    )
+    relation_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
     neo = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
     key = settings.openrouter_api_key or ""
     return LTMPromotionPipeline(
@@ -148,21 +147,22 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
         pg,
         neo,
         openrouter_key=key,
-        relation_extraction_mode=settings.relation_extraction_mode,
+        extraction_uses_llm=profile.extraction_uses_llm,
     )
 
 
 def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     """Build a CorpusIngestWorkflow from settings."""
+    from graphknows.config.profiles import get_profile
     from graphknows.memory.stores.embedder import embed_one
     from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
 
+    profile = get_profile(settings)
     mg = build_arcadedb_stm_store(settings)
     pg = build_arcadedb_vector_store(settings)
     flush_pg = build_arcadedb_vector_store(settings)
     neo = build_arcadedb_ltm_store(settings)
-    mode = settings.relation_extraction_mode
-    extractor = _build_entity_extractor(mode)
+    extractor = _build_entity_extractor("llm_assisted" if profile.extraction_uses_llm else "gliner2")
     key = settings.openrouter_api_key or ""
     return CorpusIngestWorkflow(
         mg_store=mg,
@@ -172,6 +172,6 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
         embed_fn=embed_one,
         openrouter_key=key,
         rel_extractor=None,
-        relation_extraction_mode=mode,
+        extraction_uses_llm=profile.extraction_uses_llm,
         flush_pg_store=flush_pg,
     )

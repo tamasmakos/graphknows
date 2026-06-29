@@ -15,7 +15,6 @@ Example:
 
 from __future__ import annotations
 
-import os
 from enum import StrEnum
 from pathlib import Path
 
@@ -122,7 +121,7 @@ class GraphKnowsSettings(BaseSettings):
     session_ttl_minutes: int = Field(default=60, alias="SESSION_TTL_MINUTES")
 
     # LLM
-    llm_model: str = Field(default="", alias="LLM_MODEL")
+    llm_model: str = Field(default="deepseek/deepseek-v4-flash", alias="LLM_MODEL")
     llm_provider: str = Field(default="openrouter", alias="LLM_PROVIDER")
     llm_temperature: float = Field(default=0.0, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
@@ -138,12 +137,6 @@ class GraphKnowsSettings(BaseSettings):
     gliner_threshold: float = Field(default=0.5, alias="GLINER_THRESHOLD")
     # Single mode switch driving both extraction and retrieval.
     mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="MODE")
-    # spaCy dependency-pattern relations are LLM-free; toggle for development.
-    spacy_relations: bool = Field(default=True, alias="SPACY_RELATIONS")
-    # Score-aware fusion: weight applied to normalised cosine similarity as a
-    # tiebreaker on top of rank-based RRF in the semantic collector. 0 disables
-    # (pure RRF); small values break ties without overriding multi-source agreement.
-    fusion_alpha: float = Field(default=0.005, alias="FUSION_ALPHA")
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
     # Summarisation
@@ -176,28 +169,7 @@ class GraphKnowsSettings(BaseSettings):
         #   - evaluation/ scripts — read LLM_MODEL/OPENROUTER_API_KEY directly;
         #     those scripts must ensure the .env is loaded before importing.
 
-        # Back-compat: derive the single mode from legacy env vars when MODE is
-        # not set, so callers still exporting RELATION_EXTRACTION_MODE/RETRIEVAL_MODE
-        # (e.g. the evaluation harness) keep working.
-        if "MODE" not in os.environ and "MODE" not in env:
-            legacy_rel = os.environ.get("RELATION_EXTRACTION_MODE") or env.get(
-                "RELATION_EXTRACTION_MODE"
-            )
-            legacy_ret = os.environ.get("RETRIEVAL_MODE") or env.get("RETRIEVAL_MODE")
-            if legacy_rel == "llm_assisted" or legacy_ret == "agentic":
-                self.mode = MemoryMode.llm_assisted
-
         return self
-
-    @property
-    def relation_extraction_mode(self) -> str:
-        """Legacy relation-extraction mode string derived from :attr:`mode`."""
-        return "llm_assisted" if self.mode is MemoryMode.llm_assisted else "gliner2"
-
-    @property
-    def retrieval_mode(self) -> str:
-        """Legacy retrieval mode string derived from :attr:`mode`."""
-        return "agentic" if self.mode is MemoryMode.llm_assisted else "deterministic"
 
     def check_production_secrets(self) -> None:
         """Raise if running in production with default credentials.

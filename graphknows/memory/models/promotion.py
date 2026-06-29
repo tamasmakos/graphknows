@@ -35,7 +35,7 @@ class PromotionRequest(BaseModel, frozen=True):
     merge_entities: bool = True
     topic_mode: TopicMode | None = None
 
-    def resolve_policy(self, relation_extraction_mode: str = "gliner2") -> PromotionPolicy:
+    def resolve_policy(self, extraction_uses_llm: bool = False) -> PromotionPolicy:
         """Resolve request into the canonical PromotionPolicy.
 
         Community detection (GDS) and topic summarization are llm_assisted-only.
@@ -46,7 +46,7 @@ class PromotionRequest(BaseModel, frozen=True):
         """
         topic_mode = self.topic_mode
         if topic_mode is None:
-            topic_mode = "llm_assisted" if relation_extraction_mode == "llm_assisted" else "off"
+            topic_mode = "llm_assisted" if extraction_uses_llm else "off"
         return PromotionPolicy(
             run_gds=self.run_gds and topic_mode == "llm_assisted",
             clear_stm=self.clear_stm,

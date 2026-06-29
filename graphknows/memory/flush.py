@@ -38,15 +38,15 @@ class LTMPromotionPipeline:
         pg_store: IVectorDb,
         neo_store: Any,
         openrouter_key: str = "",
-        llm_model: str = "meta-llama/llama-3.1-8b-instruct",
-        relation_extraction_mode: str = "gliner2",
+        llm_model: str = "",
+        extraction_uses_llm: bool = False,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
         self._neo = neo_store
         self._openrouter_key = openrouter_key
         self._llm_model = llm_model
-        self._relation_extraction_mode = relation_extraction_mode
+        self._extraction_uses_llm = extraction_uses_llm
         self._entity_resolution = EntityResolution()
 
     async def close(self) -> None:
@@ -69,7 +69,7 @@ class LTMPromotionPipeline:
         """
         t0 = time.monotonic()
         record = PromotionRecord(session_id=request.session_id)
-        policy = request.resolve_policy(self._relation_extraction_mode)
+        policy = request.resolve_policy(self._extraction_uses_llm)
         record.topic_mode = policy.topic_mode
 
         await self._ensure_stores_connected()
@@ -285,12 +285,11 @@ class LTMPromotionPipeline:
             if errors is not None:
                 errors.append(f"write_ltm_graph: {exc}")
 
-        if self._relation_extraction_mode != "llm_assisted":
+        if not self._extraction_uses_llm:
             log.info(
-                "_write_ltm_graph %s: relation_extraction_mode=%s; skipping "
+                "_write_ltm_graph %s: extraction_uses_llm=False; skipping "
                 "extract_and_write_relations (rel_edges=0)",
                 session_id,
-                self._relation_extraction_mode,
             )
             return {"nodes": nodes, "edges": edges}
 

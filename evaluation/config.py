@@ -44,7 +44,6 @@ class EvalConfig(BaseModel):
     gen_context_k: int = 25  # passages handed to the generator (= probe_k)
     probe_k: int = 25  # gold-reachability probe depth (retriever ceiling)
     recall_scope: str = "both"  # stm | ltm | both
-    relation_extraction_mode: str = "gliner2"
     promote_to_ltm: bool = True
 
     # ── Generation ───────────────────────────────────────────────────────────

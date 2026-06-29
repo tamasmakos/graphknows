@@ -121,7 +121,10 @@ class GraphKnowsRuntime:
         )
         await neo.ensure_schema()
         self._retriever_stores = [pg, neo, mg]
-        if s.retrieval_mode == "agentic":
+        from graphknows.config.profiles import get_profile
+
+        profile = get_profile(s)
+        if profile.retrieval == "agentic":
             from graphknows.memory.query.agentic import AgenticRetriever
 
             self._retriever = AgenticRetriever(settings=s, pg=pg, neo=neo, stm=mg)
@@ -129,7 +132,7 @@ class GraphKnowsRuntime:
             from graphknows.memory.query.retriever import DETRetriever
 
             self._retriever = DETRetriever(
-                pg=pg, neo=neo, mg=mg, embed_model=s.embed_model, fusion_alpha=s.fusion_alpha
+                pg=pg, neo=neo, mg=mg, embed_model=s.embed_model
             )
         return self._retriever
 

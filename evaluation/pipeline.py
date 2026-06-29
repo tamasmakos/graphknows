@@ -46,7 +46,7 @@ def _checkpoint(run_id: str, config: EvalConfig, cases: list[CaseResult]) -> Non
 
 def _evaluation_env(config: EvalConfig) -> dict[str, str]:
     """Environment overrides handed to the MCP subprocess."""
-    env = {"RELATION_EXTRACTION_MODE": config.relation_extraction_mode}
+    env: dict[str, str] = {}
     # Propagate the ontology file only when already set; otherwise the extractor
     # uses its open-domain relation-type defaults.
     if os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE"):
@@ -106,7 +106,6 @@ def _build_case_result(
         metadata={
             "session_id": session_id,
             "recall_scope": config.recall_scope,
-            "relation_extraction_mode": config.relation_extraction_mode,
             "promote_to_ltm": config.promote_to_ltm,
             "top_k": config.top_k,
         },

@@ -17,7 +17,7 @@ import re
 from typing import Any
 
 from graphknows.config.adapters.ports.vector_db import IVectorDb
-from graphknows.memory.query._rrf_common import RRF_RELATION_BOOST, rrf_score
+from graphknows.memory.query._rrf_common import FUSION_ALPHA, RRF_RELATION_BOOST, rrf_score
 from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
@@ -84,14 +84,11 @@ class DETRetriever(BaseGraphRetriever):
         neo: Any,
         mg: ArcadeDBSTMStore,
         embed_model: str = "",
-        fusion_alpha: float = 0.0,
     ) -> None:
         self.pg = pg
         self.neo = neo
         self.mg = mg
         self.embed_model = embed_model
-        # Score-aware fusion tiebreaker weight (0 = pure rank-based RRF).
-        self.fusion_alpha = fusion_alpha
 
     async def retrieve(
         self,
@@ -759,7 +756,7 @@ class DETRetriever(BaseGraphRetriever):
             row = best_row[cid]
             metadata = row.get("metadata", {}) or {}
             cosine = float(row.get("cosine_score", 0.0) or 0.0)
-            score = rrf_score(rank) + self.fusion_alpha * cosine
+            score = rrf_score(rank) + FUSION_ALPHA * cosine
             _add_result(
                 result,
                 cid,

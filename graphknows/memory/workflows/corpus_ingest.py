@@ -53,7 +53,7 @@ class CorpusIngestWorkflow:
         embed_fn: Any,
         openrouter_key: str = "",
         rel_extractor: Any = None,
-        relation_extraction_mode: str = "gliner2",
+        extraction_uses_llm: bool = False,
         flush_pg_store: Any | None = None,
     ) -> None:
         self._mg = mg_store
@@ -63,7 +63,7 @@ class CorpusIngestWorkflow:
         self._embed_fn = embed_fn
         self._openrouter_key = openrouter_key
         self._rel_extractor = rel_extractor
-        self._relation_extraction_mode = relation_extraction_mode
+        self._extraction_uses_llm = extraction_uses_llm
         self._flush_pg_store = flush_pg_store
 
     async def run(self, request: CorpusIngestRequest) -> CorpusIngestResult:
@@ -138,7 +138,7 @@ class CorpusIngestWorkflow:
             pg_store=flush_pg,
             neo_store=self._neo,
             openrouter_key=self._openrouter_key,
-            relation_extraction_mode=self._relation_extraction_mode,
+            extraction_uses_llm=self._extraction_uses_llm,
         )
         try:
             flush_result = await pipeline.promote(

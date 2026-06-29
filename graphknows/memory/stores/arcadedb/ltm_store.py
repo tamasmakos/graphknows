@@ -407,7 +407,7 @@ class ArcadeDBLTMStore:
         self,
         stm_data: dict[str, Any],
         openrouter_key: str,
-        llm_model: str = "openrouter/meta-llama/llama-3.1-8b-instruct",
+        llm_model: str = "",
         session_id: str = "",
     ) -> int:
         if self._relation_extractor is None:
