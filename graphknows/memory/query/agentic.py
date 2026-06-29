@@ -1,4 +1,21 @@
-"""AgenticRetriever — DSPy ReAct retriever extending BaseGraphRetriever."""
+"""AgenticRetriever — DSPy ReAct retriever extending BaseGraphRetriever.
+
+Architecture (WS-4):
+- A ``DETRetriever`` instance is constructed from the same stores as the
+  ``AgenticRetriever``.  The ReAct tools call ``DETRetriever.retrieve()`` as
+  the single per-hop retrieval primitive instead of going through weaker,
+  competing vector channels.
+- The separate weaker vector channel that previously ran in parallel with
+  ReAct has been removed.  All retrieval now flows through DETRetriever.
+- Query decomposition (``decompose.py``) optionally splits multi-hop
+  questions into atomic sub-questions before the ReAct loop runs.
+- Evidence is aggregated across hops with RRF (imported from
+  ``_rrf_common.rrf_score``; the file itself is not edited).
+- If the agent errors for any reason, the fallback is a plain
+  ``DETRetriever.retrieve()`` call — the strong deterministic path, not a
+  weaker vector search.
+- Reasoning hops are capped at 4 (MAX_REACT_HOPS).
+"""
 
 from __future__ import annotations
 
@@ -21,6 +38,9 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = ""
 
+# Maximum ReAct reasoning hops per sub-question.
+MAX_REACT_HOPS: int = 4
+
 
 def _normalize_openrouter_model(model: str | None) -> str:
     """Return *model* with an ``openrouter/`` prefix."""
@@ -28,7 +48,7 @@ def _normalize_openrouter_model(model: str | None) -> str:
         return f"openrouter/{_DEFAULT_MODEL}"
     clean = str(model)
     if clean.startswith("openrouter/"):
-        clean = clean[len("openrouter/") :]
+        clean = clean[len("openrouter/"):]
     return f"openrouter/{clean}"
 
 
@@ -42,9 +62,9 @@ def _require_dspy() -> Any:
 class AgenticRetriever(BaseGraphRetriever):
     """LLM-guided retriever over graphknows memory using DSPy ReAct.
 
-    Three synchronous tool closures wrap the three stores. Sync tools call
-    async store methods via the shared background loop from _async_bridge.
-    The main ``retrieve()`` method is fully async.
+    Each ReAct tool calls ``DETRetriever.retrieve()`` as the single per-hop
+    retrieval primitive.  Evidence gathered across hops is fused with RRF.
+    Falls back to ``DETRetriever.retrieve()`` directly if the agent errors.
 
     Inherits from BaseGraphRetriever so it is interchangeable with
     DETRetriever at the factory layer.
@@ -52,7 +72,7 @@ class AgenticRetriever(BaseGraphRetriever):
 
     def __init__(
         self,
-        settings: GraphKnowsSettings,
+        settings: "GraphKnowsSettings",
         pg: Any,
         neo: Any,
         stm: Any,
@@ -66,6 +86,8 @@ class AgenticRetriever(BaseGraphRetriever):
         self._pg_bridge: Any = None
         self._last_session_id: str | None = None
         self._collected_chunks: list[dict] = []
+        # DETRetriever instance — built once, shared across all retrieve() calls.
+        self._det: Any = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -91,181 +113,129 @@ class AgenticRetriever(BaseGraphRetriever):
         )
         return self._lm
 
+    def _get_det_retriever(self) -> Any:
+        """Return the cached DETRetriever instance, building it once from the same stores."""
+        if self._det is not None:
+            return self._det
+        from graphknows.memory.query.retriever import DETRetriever
+
+        self._det = DETRetriever(
+            pg=self._pg,
+            neo=self._neo,
+            mg=self._stm,
+            embed_model=self._settings.embed_model,
+        )
+        return self._det
+
     def _get_react(self, *, session_id: str = "") -> Any:
         """Build and cache the DSPy ReAct retriever for one session.
 
-        The LM is built once and reused. The ReAct module (which closes over
+        The LM is built once and reused.  The ReAct module (which closes over
         session_id via tool closures) is rebuilt only when the session changes.
+
+        Tools call ``DETRetriever.retrieve()`` as the single retrieval primitive
+        so the agent amplifies — not competes with — the deterministic path.
         """
         dspy_mod = _require_dspy()
         if self._react is not None and session_id == self._last_session_id:
             return self._react
 
         from graphknows.memory.stm._async_bridge import _run as bg_run
+        from graphknows.memory.temporal import filter_by_validity_window
 
-        pg_bridge = self._get_pg_bridge()
-        neo = self._neo
+        det = self._get_det_retriever()
         stm = self._stm
-        embed_model = self._settings.embed_model
         # Reuse or initialize the chunks buffer; closures below capture this reference.
         self._collected_chunks.clear()
         collected = self._collected_chunks
 
-        # ---- Tool 1: vector ANN chunk search --------------------------
-        def search_vectors(query: str, scope: str = "ltm", top_k: int = 10) -> list[dict]:
-            """Search the vector store for relevant text chunks.
+        # ---- Tool 1: DET-backed per-hop retrieval ----------------------
+        def retrieve(subquery: str, scope: str = "both", k: int = 10) -> list[dict]:
+            """Retrieve relevant chunks for a single atomic sub-question.
+
+            Delegates to the deterministic retriever (entity traversal + vector
+            ANN + full-text + temporal), which is the strongest available
+            retrieval primitive.
 
             Args:
-                query: Natural-language search query.
-                scope: 'stm' for short-term chunks, 'ltm' for all chunks.
-                top_k: Max results to return (default 10).
+                subquery: A single, atomic natural-language question.
+                scope: ``'stm'`` for short-term only, ``'ltm'`` for long-term
+                       only, or ``'both'`` (default).
+                k: Maximum results to return (default 10).
 
             Returns:
-                List of dicts with chunk_id, doc_id, text, cosine_score.
+                List of chunk dicts with chunk_id, doc_id, text, rrf_score.
             """
-            from graphknows.memory.stores.embedder import embed
-
-            emb_array = bg_run(asyncio.to_thread(embed, [query], embed_model))
-            emb = emb_array[0].tolist()
-            # scope='stm'  → STM only (session-scoped)
-            # scope='ltm'  → LTM only (no session filter)
-            # scope='both' → merge STM + LTM, dedup by chunk_id
-            if scope == "stm":
-                results = bg_run(pg_bridge.search_chunks(emb, session_id=session_id, k=top_k))
-            elif scope == "ltm":
-                results = bg_run(pg_bridge.search_chunks(emb, session_id="", k=top_k))
-            else:  # 'both'
-                stm_res = bg_run(pg_bridge.search_chunks(emb, session_id=session_id, k=top_k))
-                ltm_res = bg_run(pg_bridge.search_chunks(emb, session_id="", k=top_k))
-                _seen: set[str] = set()
-                results = []
-                for _r in stm_res + ltm_res:
-                    if _r["chunk_id"] not in _seen:
-                        _seen.add(_r["chunk_id"])
-                        results.append(_r)
-                results = results[:top_k]
-            # Do NOT add to collected — these are covered by the explicit fallback
-            # vector search in retrieve(). collected is reserved for graph-traversal
-            # chunks that pure vector search cannot find.
-            return results
-
-        # ---- Tool 2: STM entity lookup --------------------------------
-        def search_stm_graph(query: str) -> list[dict]:
-            """Search the short-term memory graph for entities matching the query.
-
-            Args:
-                query: Entity name or concept to look up in the STM graph.
-
-            Returns:
-                List of entity dicts whose name contains the query string.
-            """
-            result = bg_run(stm.get_session_graph(session_id=session_id))
-            nodes = result.get("nodes", [])
-            q_lower = query.lower()
-            return [n for n in nodes if q_lower in str(n.get("name", "")).lower()]
-
-        # ---- Tool 3: LTM entity + neighbor search ---------------------
-        def search_ltm_graph(query: str, top_k: int = 10) -> list[dict]:
-            """Search long-term memory for entity-linked chunks.
-
-            Uses ANN entity search followed by ArcadeDB graph traversal.
-
-            Args:
-                query: Natural-language query to find relevant entities.
-                top_k: Max chunk results to return (default 10).
-
-            Returns:
-                List of chunk dicts (chunk_id, doc_id, text, entity) for the found entities.
-            """
-            from graphknows.memory.stores.embedder import embed
-
-            emb_array = bg_run(asyncio.to_thread(embed, [query], embed_model))
-            emb = emb_array[0].tolist()
-            entity_rows = bg_run(pg_bridge.search_entities(emb, k=min(top_k, 10)))
-            chunks: list[dict] = []
-            seen: set[str] = set()
-            for ent in entity_rows:
-                entity_name = ent.get("name", "")
-                if not entity_name:
-                    continue
-                entity_chunks = bg_run(neo.get_chunks_for_entity(entity_name, top_k=5))
-                for c in entity_chunks:
-                    cid = c.get("chunk_id", "")
-                    if cid and cid not in seen:
-                        seen.add(cid)
-                        row = {**c, "entity": entity_name, "cosine_score": ent.get("score", 0.0)}
-                        chunks.append(row)
-                        collected.append(row)
-                if len(chunks) >= top_k:
-                    break
-            return chunks[:top_k]
-
-        # ---- Tool 4: TOPIC keyword search -----------------------------
-        def search_topics(query: str, top_k: int = 5) -> list[dict]:
-            """Search topic nodes in long-term memory by keyword match.
-
-            Args:
-                query: Keywords to match against topic entity names and summaries.
-                top_k: Maximum topics to return (default 5).
-
-            Returns:
-                List of dicts with topic_id, label, summary, entities, score.
-            """
-            cypher = """
-            UNWIND $words AS word
-            MATCH (e:ENTITY)
-            WHERE toLower(e.name) CONTAINS word
-            WITH collect(DISTINCT e.name) AS matched_names
-            MATCH (t:TOPIC)
-            OPTIONAL MATCH (e2)-[:IN_TOPIC]->(t)
-            WHERE e2.name IN matched_names
-            WITH t, collect(DISTINCT e2.name) AS matched_entities,
-                 count(DISTINCT e2) AS overlap
-            ORDER BY overlap DESC
-            LIMIT $top_k
-            RETURN t.id AS topic_id, t.label AS label, t.summary AS summary,
-                   matched_entities AS entities, overlap AS score
-            """
-            words = [w for w in query.lower().split() if len(w) > 3]
-            if not words:
-                return []
             try:
-                rows = bg_run(neo._qry(cypher, words=words, top_k=top_k))
+                ctx = bg_run(det.retrieve(subquery, session_id=session_id, top_k=k, scope=scope))
+                chunks = ctx.fused_results or []
+                for c in chunks:
+                    collected.append(c)
+                return chunks
             except Exception as exc:
-                log.warning("search_topics failed: %s", exc)
+                log.warning("retrieve tool failed for %r: %s", subquery, exc)
                 return []
-            # Push the matched topic summary AND its member-entity chunks into the
-            # collected buffer so they reach the answer context — a topic summary
-            # is pre-aggregated multi-entity content for synthesis/multi-hop.
-            for t in rows:
-                tid = t.get("topic_id") or ""
-                summ = (t.get("summary") or "").strip()
-                if summ and tid:
-                    collected.append(
-                        {
-                            "chunk_id": f"topic:{tid}",
-                            "doc_id": "",
-                            "text": f"[Topic: {t.get('label', '')}] {summ}",
-                            "cosine_score": 0.5,
-                        }
-                    )
-                for ename in (t.get("entities") or [])[:5]:
-                    try:
-                        for c in bg_run(neo.get_chunks_for_entity(ename, top_k=3)):
-                            cid = c.get("chunk_id", "")
-                            if cid:
-                                collected.append({**c, "cosine_score": 0.4})
-                    except Exception as exc:
-                        log.debug("topic member traversal skipped: %s", exc)
-            return rows
+
+        # ---- Tool 2: entity lookup (STM graph) ------------------------
+        def lookup_entity(name: str) -> list[dict]:
+            """Look up an entity by name in the short-term memory graph.
+
+            Args:
+                name: Entity name or partial name to look up in the STM graph.
+
+            Returns:
+                List of entity dicts whose name contains *name* (case-insensitive).
+            """
+            try:
+                result = bg_run(stm.get_session_graph(session_id=session_id))
+                nodes = result.get("nodes", [])
+                q_lower = name.lower()
+                return [n for n in nodes if q_lower in str(n.get("name", "")).lower()]
+            except Exception as exc:
+                log.warning("lookup_entity failed for %r: %s", name, exc)
+                return []
+
+        # ---- Tool 3: temporal window filter ---------------------------
+        def temporal_filter(window: str) -> list[dict]:
+            """Filter already-retrieved chunks by a bi-temporal validity window.
+
+            Applies ``filter_by_validity_window`` from the temporal module to
+            the evidence collected so far in this ReAct session, retaining only
+            chunks whose relation edges are valid at the requested date.
+
+            Args:
+                window: ISO date or datetime string (e.g. ``'2023-06'``) to use
+                        as the ``as_of`` anchor for temporal filtering.
+
+            Returns:
+                Filtered list of chunk dicts enriched with ``_temporal_score``
+                and ``_is_current``.  Returns all collected chunks unchanged
+                when ``window`` is empty or filtering fails.
+            """
+            if not window or not window.strip():
+                return list(collected)
+            try:
+                filtered = filter_by_validity_window(
+                    list(collected), as_of=window.strip(), include_open=True
+                )
+                return filtered
+            except Exception as exc:
+                log.warning("temporal_filter failed for window=%r: %s", window, exc)
+                return list(collected)
 
         # ---- DSPy signature and ReAct module --------------------------
         class RetrievalSignature(dspy_mod.Signature):  # type: ignore[misc, name-defined]
             """Retrieve the most relevant knowledge-graph context for a query.
 
-            Use the available tools to search across four retrieval sources:
-            semantic vectors, STM entity graph, LTM entity graph, and topic nodes.
-            Synthesize findings to identify the most relevant information.
+            Use the available tools to search for relevant information:
+            - ``retrieve(subquery, scope, k)``: Main retrieval tool — calls the
+              deterministic retriever (entity traversal, vector ANN, full-text,
+              temporal). Use this for each reasoning hop.
+            - ``lookup_entity(name)``: Look up a specific entity by name in the
+              short-term memory graph.
+            - ``temporal_filter(window)``: Filter collected evidence by a date
+              window (ISO string).
+            Synthesize findings across hops to produce the final answer context.
             """
 
             query: str = dspy_mod.InputField(
@@ -282,7 +252,8 @@ class AgenticRetriever(BaseGraphRetriever):
         with dspy_mod.settings.context(lm=lm):
             self._react = dspy_mod.ReAct(
                 RetrievalSignature,
-                tools=[search_vectors, search_stm_graph, search_ltm_graph, search_topics],
+                tools=[retrieve, lookup_entity, temporal_filter],
+                max_iters=MAX_REACT_HOPS,
             )
         self._last_session_id = session_id
         return self._react
@@ -331,78 +302,162 @@ class AgenticRetriever(BaseGraphRetriever):
         session_id: str,
         top_k: int = 10,
         scope: str = "both",
-    ) -> RetrievalContext:
-        """Retrieve relevant context with DSPy ReAct and vector fallback."""
+    ) -> "RetrievalContext":
+        """Retrieve relevant context with DSPy ReAct backed by DETRetriever.
+
+        Flow:
+        1. Decompose the query into atomic sub-questions (with deterministic
+           fallback to [query] when the LM is unavailable).
+        2. Run a DSPy ReAct loop (≤ MAX_REACT_HOPS hops) whose tools all
+           delegate to DETRetriever.retrieve() as the single retrieval primitive.
+        3. Aggregate evidence across hops with RRF fusion.
+        4. If the agent errors, fall back to a plain DETRetriever.retrieve() call.
+        """
         from graphknows.memory.query._rrf_common import rrf_score
         from graphknows.memory.query.context import ChunkMatch, RetrievalContext
-        from graphknows.memory.stores.embedder import embed
+        from graphknows.memory.query.decompose import decompose
 
-        # _get_react() reuses the existing ReAct module for same-session calls
-        # and clears _collected_chunks before each run.
-        react = self._get_react(session_id=session_id)
+        det = self._get_det_retriever()
+
+        # Step 1 — Decompose the query into atomic sub-questions.
         lm = self._get_lm()
+        try:
+            sub_questions = await asyncio.to_thread(decompose, query, lm=lm)
+        except Exception as exc:
+            log.debug("decompose call failed, using [query]: %s", exc)
+            sub_questions = [query]
+        if not sub_questions:
+            sub_questions = [query]
 
-        def _run_react() -> Any:
-            with dspy.settings.context(lm=lm):
-                return react(query=query, session_id=session_id)
+        # Step 2 — Run the ReAct loop; tools populate self._collected_chunks.
+        # _get_react() clears _collected_chunks before each new session build.
+        react = self._get_react(session_id=session_id)
+        self._collected_chunks.clear()
 
         react_failed = False
         try:
+            def _run_react() -> Any:
+                with dspy.settings.context(lm=lm):
+                    # Run one ReAct call per sub-question so each hop is
+                    # bounded by MAX_REACT_HOPS.  Tools push hits to
+                    # _collected_chunks for later aggregation.
+                    for sq in sub_questions:
+                        try:
+                            react(query=sq, session_id=session_id)
+                        except Exception as sq_exc:
+                            log.debug("ReAct sub-question %r failed: %s", sq, sq_exc)
+
             await asyncio.to_thread(_run_react)
         except Exception as exc:
             log.warning("DSPy ReAct retrieval failed: %s", exc)
             react_failed = True
 
-        # Dedup chunks gathered by ReAct tool calls, keeping highest cosine_score.
-        react_chunks: dict[str, dict] = {}
-        for r in self._collected_chunks:
-            cid = r["chunk_id"]
-            if cid not in react_chunks or r.get("cosine_score", 0) > react_chunks[cid].get(
-                "cosine_score", 0
-            ):
-                react_chunks[cid] = r
-
-        # Query-relevant vector search covering both tiers when scope='both'.
-        emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
-        emb = emb_array[0].tolist()
-        if scope == "stm":
-            vector_chunks = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
-        elif scope == "ltm":
-            vector_chunks = await self._pg.search_chunks(emb, session_id="", k=top_k)
-        else:  # 'both'
-            _stm = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
-            _ltm = await self._pg.search_chunks(emb, session_id="", k=top_k)
-            _seen_v: set[str] = set()
-            vector_chunks = []
-            for _r in _stm + _ltm:
-                if _r["chunk_id"] not in _seen_v:
-                    _seen_v.add(_r["chunk_id"])
-                    vector_chunks.append(_r)
-            vector_chunks = vector_chunks[:top_k]
-
-        # RRF-fuse the two channels by rank, not raw score: entity-graph cosine
-        # scores saturate near 1.0 and would otherwise crowd out the genuinely
-        # query-relevant vector hits. Rank-based fusion keeps both competitive
-        # (same approach as DETRetriever).
-        fused_scores: dict[str, tuple[float, dict]] = {}
-        for channel in (
-            sorted(vector_chunks, key=lambda r: -r.get("cosine_score", 0.0)),
-            sorted(react_chunks.values(), key=lambda r: -r.get("cosine_score", 0.0)),
-        ):
-            for rank, r in enumerate(channel):
-                cid = r["chunk_id"]
-                prev = fused_scores.get(cid)
-                fused_scores[cid] = (
-                    rrf_score(rank) + (prev[0] if prev else 0.0),
-                    prev[1] if prev else r,
+        # Step 3 — If agent failed completely, fall back to DETRetriever directly.
+        # Graceful degradation chain: ReAct → DETRetriever → pg.search_chunks.
+        if react_failed or not self._collected_chunks:
+            if react_failed:
+                log.info("Falling back to DETRetriever.retrieve() after agent failure.")
+            try:
+                fallback_ctx = await det.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
+                # Tag fallback results so the caller can distinguish them.
+                for r in fallback_ctx.fused_results:
+                    r["sources"] = "agentic-fallback"
+                return RetrievalContext(
+                    query=query,
+                    session_id=session_id,
+                    semantic_matches=fallback_ctx.semantic_matches,
+                    fused_results=fallback_ctx.fused_results,
+                    search_type="AGENTIC",
                 )
-        # Community-weighted re-rank (llm_assisted only): GDS writes
-        # CHUNK.community_weight, so chunks in denser, more cohesive communities
-        # outrank incidental mentions. No-op when weights are absent.
+            except Exception as fb_exc:
+                # Last-resort fallback: direct pg.search_chunks (simpler but always available).
+                log.warning("DETRetriever fallback failed (%s); using pg.search_chunks.", fb_exc)
+                try:
+                    from graphknows.memory.stores.embedder import embed
+
+                    emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
+                    emb = emb_array[0].tolist()
+                    if scope == "stm":
+                        vector_chunks = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
+                    elif scope == "ltm":
+                        vector_chunks = await self._pg.search_chunks(emb, session_id="", k=top_k)
+                    else:
+                        _stm_c = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
+                        _ltm_c = await self._pg.search_chunks(emb, session_id="", k=top_k)
+                        _seen_v: set[str] = set()
+                        vector_chunks = []
+                        for _r in _stm_c + _ltm_c:
+                            if _r["chunk_id"] not in _seen_v:
+                                _seen_v.add(_r["chunk_id"])
+                                vector_chunks.append(_r)
+                        vector_chunks = vector_chunks[:top_k]
+
+                    fused_fb: list[dict] = []
+                    for i, r in enumerate(vector_chunks):
+                        meta = {"cosine_score": r.get("cosine_score", 0.0), **r.get("metadata", {})}
+                        fused_fb.append(
+                            {
+                                "chunk_id": r["chunk_id"],
+                                "doc_id": r.get("doc_id", ""),
+                                "text": r.get("text", ""),
+                                "metadata": meta,
+                                "rrf_score": round(rrf_score(i), 6),
+                                "sources": "agentic-fallback",
+                                "rank": i + 1,
+                                "entities": [],
+                            }
+                        )
+                    return RetrievalContext(
+                        query=query,
+                        session_id=session_id,
+                        fused_results=fused_fb,
+                        search_type="AGENTIC",
+                    )
+                except Exception as last_exc:
+                    log.error("All fallbacks failed: %s", last_exc)
+                    return RetrievalContext(
+                        query=query,
+                        session_id=session_id,
+                        fused_results=[],
+                        search_type="AGENTIC",
+                    )
+
+        # Step 4 — Aggregate evidence across all ReAct hops with RRF.
+        # Deduplicate chunks from self._collected_chunks, keeping highest rrf_score.
+        hop_chunks: dict[str, dict] = {}
+        for r in self._collected_chunks:
+            cid = r.get("chunk_id", "")
+            if not cid:
+                continue
+            existing = hop_chunks.get(cid)
+            if existing is None:
+                hop_chunks[cid] = r
+            else:
+                # Keep the entry with the highest rrf_score (or cosine_score as tiebreak).
+                new_score = r.get("rrf_score", r.get("cosine_score", 0.0))
+                old_score = existing.get("rrf_score", existing.get("cosine_score", 0.0))
+                if new_score > old_score:
+                    hop_chunks[cid] = r
+
+        # RRF-fuse by rank (rank-based, not raw score, to keep channels competitive).
+        fused_scores: dict[str, tuple[float, dict]] = {}
+        sorted_hops = sorted(
+            hop_chunks.values(),
+            key=lambda r: -(r.get("rrf_score", r.get("cosine_score", 0.0))),
+        )
+        for rank, r in enumerate(sorted_hops):
+            cid = r["chunk_id"]
+            prev = fused_scores.get(cid)
+            fused_scores[cid] = (
+                rrf_score(rank) + (prev[0] if prev else 0.0),
+                prev[1] if prev else r,
+            )
+
+        # Community-weighted re-rank (llm_assisted only).
         candidates = await self._apply_community_weights(list(fused_scores.values()))
         ranked = sorted(candidates, key=lambda x: -x[0])[:top_k]
 
-        sources = "agentic" if not react_failed else "agentic-fallback"
+        sources = "agentic"
         semantic_matches: list[ChunkMatch] = []
         fused: list[dict[str, Any]] = []
         for i, (score, r) in enumerate(ranked):
@@ -425,7 +480,7 @@ class AgenticRetriever(BaseGraphRetriever):
                     "rrf_score": round(score, 6),
                     "sources": sources,
                     "rank": i + 1,
-                    "entities": [],
+                    "entities": r.get("entities", []),
                 }
             )
         return RetrievalContext(
