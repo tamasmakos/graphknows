@@ -144,13 +144,6 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE APPEARED_IN"),
     ("sql", "CREATE EDGE TYPE CONTAINS_DOC"),
     ("sql", "CREATE EDGE TYPE HAS_ENTITY"),
-    # Bi-temporal base edge type — all dynamic relation edges inherit these property
-    # declarations through the ArcadeDB EDGE super-type.  Declaring them on the E
-    # (base edge) type means they propagate without per-type DDL.
-    ("sql", "CREATE PROPERTY E.valid_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY E.invalid_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY E.created_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY E.is_current IF NOT EXISTS BOOLEAN"),
     # SEMANTIC vertex — canonical fact/preference nodes distilled from STM episodes.
     # Distinct from CHUNK (raw evidence) and TOPIC (community summaries).
     ("sql", "CREATE VERTEX TYPE SEMANTIC"),
