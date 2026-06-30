@@ -108,7 +108,10 @@ class AgenticRetriever(BaseGraphRetriever):
             api_key=self._settings.openrouter_api_key,
             api_base="https://openrouter.ai/api/v1",
             temperature=self._settings.llm_temperature,
-            max_tokens=self._settings.llm_max_tokens,
+            # deepseek-v4-flash is a reasoning model: it spends much of the budget
+            # on reasoning_content, so a small budget truncates the ReAct tool-call
+            # output and that hop silently yields no chunks. Give it headroom.
+            max_tokens=max(self._settings.llm_max_tokens, 8192),
             num_retries=1,
             timeout=120,  # per-request; without it litellm defaults to 6000s → a hung call wedges the run
         )
@@ -422,6 +425,17 @@ class AgenticRetriever(BaseGraphRetriever):
                         fused_results=[],
                         search_type="AGENTIC",
                     )
+
+        # Always add a direct DET pass on the VERBATIM query so the agentic
+        # context is a superset of the llm_free context — the ReAct loop can
+        # only add to it, never retrieve worse. This fixes agentic-specific
+        # over-abstention where ReAct reformulated the query and lost the gold
+        # chunk that the deterministic path on the literal question finds.
+        try:
+            base_ctx = await det.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
+            self._collected_chunks.extend(base_ctx.fused_results)
+        except Exception as exc:
+            log.debug("base DET pass skipped: %s", exc)
 
         # Step 4 — Aggregate evidence across all ReAct hops with RRF.
         # Deduplicate chunks from self._collected_chunks, keeping highest rrf_score.
