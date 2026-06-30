@@ -81,6 +81,7 @@ class AnswerGenerator:
                 max_tokens=max_tokens,
                 num_retries=0,  # retries handled in generate() so we can re-route via OpenRouter
                 cache=False,  # DSPy/litellm caches by default; identical outputs would mask changes
+                timeout=120,  # per-request; without it litellm defaults to 6000s → a hung call wedges the run
             )
             self._lms[max_tokens] = lm
         return lm
@@ -151,6 +152,12 @@ class AnswerGenerator:
                             budget, question[:60],
                         )
                         break
+                    elif "timeout" in msg or "timed out" in msg or "connection" in msg:
+                        # Transient: a hung/dropped request now fast-fails (timeout=120 on the LM).
+                        # Retry instead of aborting the whole run.
+                        wait = 5 * (attempt + 1)
+                        log.warning("Transient timeout on attempt %d/6, retrying in %ds: %s", attempt + 1, wait, exc)
+                        await asyncio.sleep(wait)
                     else:
                         raise
         log.error("Generation failed at every budget; abstaining: %s", question[:80])

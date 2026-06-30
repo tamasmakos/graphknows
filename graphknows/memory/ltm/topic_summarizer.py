@@ -72,6 +72,7 @@ class TopicSummarizer:
                 temperature=0.0,
                 max_tokens=1024,
                 num_retries=0,
+                timeout=120,  # per-request; without it litellm defaults to 6000s → a hung call wedges the run
             )
 
     async def summarize(

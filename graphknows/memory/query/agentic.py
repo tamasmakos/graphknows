@@ -110,6 +110,7 @@ class AgenticRetriever(BaseGraphRetriever):
             temperature=self._settings.llm_temperature,
             max_tokens=self._settings.llm_max_tokens,
             num_retries=1,
+            timeout=120,  # per-request; without it litellm defaults to 6000s → a hung call wedges the run
         )
         return self._lm
 

@@ -62,6 +62,7 @@ def _build_openrouter_lm(model: str | None, api_key: str | None) -> "dspy.LM":
         max_tokens=2048,
         num_retries=0,
         cache=False,
+        timeout=120,  # per-request; without it litellm defaults to 6000s → a hung call wedges the run
     )
 
 
@@ -117,6 +118,10 @@ class DspyMetricScorer:
                 elif "parse" in msg or "empty or null response" in msg:
                     log.warning("SemanticF1 parse failure; scoring 0.0: %s", question[:60])
                     return DspyScores(semantic_f1=0.0)
+                elif "timeout" in msg or "timed out" in msg or "connection" in msg:
+                    # Transient: a hung/dropped request now fast-fails (timeout=120 on the LM).
+                    # Retry instead of aborting the whole run.
+                    await asyncio.sleep(5 * (attempt + 1))
                 else:
                     raise
         log.error("SemanticF1 scoring failed after retries for: %s", question[:80])
