@@ -148,3 +148,49 @@ async def test_react_failure_falls_back_to_vector_search():
 
     assert any(r.get("text") == "fallback chunk" for r in ctx.fused_results)
     assert ctx.fused_results[0].get("sources") == "agentic-fallback"
+
+
+@pytest.mark.asyncio
+async def test_agentic_hit_scores_are_discriminative_not_flat():
+    """RC-1 regression guard: fused agentic hit-scores must preserve the
+    deterministic cosine-fused relevance magnitude (vary across passages), not
+    collapse to a flat positional-RRF curve that starves the generator of any
+    relevance signal. Pure positional RRF still varies trivially by rank, so we
+    assert the score SPREAD tracks the input relevance (≫ positional-only spread).
+    """
+    from graphknows.memory.query.context import RetrievalContext
+
+    retriever = _make_retriever()
+    hop_chunks = [
+        {"chunk_id": f"c{i}", "doc_id": "d", "text": f"t{i}", "metadata": {}, "rrf_score": s}
+        for i, s in enumerate([0.85, 0.42, 0.13, 0.04])
+    ]
+
+    def _fake_react(**kwargs):
+        retriever._collected_chunks.extend(hop_chunks)
+        return MagicMock()
+
+    # base DET pass adds nothing extra; community-weight lookup is a no-op.
+    det = MagicMock()
+    det.retrieve = AsyncMock(
+        return_value=RetrievalContext(
+            query="q", session_id="s1", fused_results=[], search_type="DET"
+        )
+    )
+    retriever._det = det
+    retriever._neo._qry = AsyncMock(return_value=[])
+
+    with (
+        patch.object(retriever, "_get_react", return_value=MagicMock(side_effect=_fake_react)),
+        patch.object(retriever, "_get_lm", return_value=MagicMock()),
+        patch("graphknows.memory.query.decompose.decompose", return_value=["q"]),
+        patch("asyncio.to_thread", side_effect=_fake_to_thread),
+    ):
+        ctx = await retriever.retrieve("q", session_id="s1", top_k=4)
+
+    scores = [r["rrf_score"] for r in ctx.fused_results]
+    assert len(scores) >= 2, f"expected multiple passages, got {scores}"
+    # Fix preserves DET relevance (top≈0.85, spread≈0.81); the old positional-only
+    # bug produced top≈1/61≈0.016 with spread≈0.0008.
+    assert max(scores) > 0.1, f"top hit-score collapsed to positional RRF: {scores}"
+    assert (max(scores) - min(scores)) > 0.1, f"hit-scores flat/non-discriminative: {scores}"

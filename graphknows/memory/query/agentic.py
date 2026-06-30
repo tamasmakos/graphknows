@@ -317,7 +317,7 @@ class AgenticRetriever(BaseGraphRetriever):
         3. Aggregate evidence across hops with RRF fusion.
         4. If the agent errors, fall back to a plain DETRetriever.retrieve() call.
         """
-        from graphknows.memory.query._rrf_common import rrf_score
+        from graphknows.memory.query._rrf_common import FUSION_ALPHA, rrf_score
         from graphknows.memory.query.context import ChunkMatch, RetrievalContext
         from graphknows.memory.query.decompose import decompose
 
@@ -454,7 +454,12 @@ class AgenticRetriever(BaseGraphRetriever):
                 if new_score > old_score:
                     hop_chunks[cid] = r
 
-        # RRF-fuse by rank (rank-based, not raw score, to keep channels competitive).
+        # Fuse hops, PRESERVING the deterministic relevance magnitude. Collapsing
+        # every chunk to pure positional rrf_score(rank) made the agentic
+        # hit-scores identical for every query (avg_hit stdev≈0), so the generator
+        # got no relevance cue and abstained even when the gold was in context.
+        # Keep each chunk's own cosine-fused DET score as the primary signal and
+        # add positional RRF only as a small tiebreak that respects cross-hop rank.
         fused_scores: dict[str, tuple[float, dict]] = {}
         sorted_hops = sorted(
             hop_chunks.values(),
@@ -462,11 +467,8 @@ class AgenticRetriever(BaseGraphRetriever):
         )
         for rank, r in enumerate(sorted_hops):
             cid = r["chunk_id"]
-            prev = fused_scores.get(cid)
-            fused_scores[cid] = (
-                rrf_score(rank) + (prev[0] if prev else 0.0),
-                prev[1] if prev else r,
-            )
+            base_rel = r.get("rrf_score", r.get("cosine_score", 0.0))
+            fused_scores[cid] = (base_rel + FUSION_ALPHA * rrf_score(rank), r)
 
         # Community-weighted re-rank (llm_assisted only).
         candidates = await self._apply_community_weights(list(fused_scores.values()))
