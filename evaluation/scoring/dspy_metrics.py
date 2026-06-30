@@ -40,8 +40,14 @@ class DspyScores:
         return {"semantic_f1": round(self.semantic_f1, 4)}
 
 
-def _build_openrouter_lm(model: str | None, api_key: str | None) -> "dspy.LM":
-    """Construct an OpenRouter-backed ``dspy.LM``."""
+def _build_openrouter_lm(
+    model: str | None,
+    api_key: str | None,
+    *,
+    temperature: float = 0.0,
+    max_tokens: int = 2048,
+) -> "dspy.LM":
+    """Construct an OpenRouter-backed ``dspy.LM`` for grading."""
     from graphknows.config.llm import _get_openrouter_api_key, normalize_openrouter_model
 
     resolved_key = api_key or _get_openrouter_api_key()
@@ -58,8 +64,8 @@ def _build_openrouter_lm(model: str | None, api_key: str | None) -> "dspy.LM":
         model=model_str,
         api_key=resolved_key,
         api_base="https://openrouter.ai/api/v1",
-        temperature=0.0,
-        max_tokens=2048,
+        temperature=temperature,
+        max_tokens=max_tokens,
         num_retries=0,
         cache=False,
         timeout=120,  # per-request; without it litellm defaults to 6000s → a hung call wedges the run
@@ -92,21 +98,35 @@ class DspyMetricScorer:
                 "dspy-ai is not installed. Install it to use DspyMetricScorer."
             )
         self._lm = lm or _build_openrouter_lm(model, api_key)
+        # Retry judge, used ONLY when the temp=0 judge truncates its own reasoning in
+        # a deterministic repetition loop. DSPy surfaces that truncation as a parse
+        # failure, which the scorer would otherwise record as 0.0 — mis-scoring a
+        # CORRECT answer and injecting ~5-8 pts of spurious run-to-run noise on
+        # long-answer conversations. A small temperature breaks the loop and the
+        # larger budget covers genuinely long reasoning; 97% of calls never hit it,
+        # so the metric stays temp=0-deterministic in the common case.
+        self._lm_retry = (
+            None if lm else _build_openrouter_lm(model, api_key, temperature=0.4, max_tokens=8192)
+        )
         self._semantic_f1 = _SemanticF1(threshold=threshold, decompositional=decompositional)
         log.info("DspyMetricScorer ready (SemanticF1)")
 
-    def _score_sync(self, question: str, gold: str, predicted: str) -> DspyScores:
+    def _score_sync(
+        self, question: str, gold: str, predicted: str, lm: "dspy.LM | None" = None
+    ) -> DspyScores:
         example = dspy.Example(question=question, response=gold).with_inputs("question")
         pred = dspy.Prediction(response=predicted or "Unknown")
-        with dspy.settings.context(lm=self._lm):
+        with dspy.settings.context(lm=lm or self._lm):
             sf1 = float(self._semantic_f1(example, pred).score)
         return DspyScores(semantic_f1=sf1)
 
     async def score(self, question: str, gold: str, predicted: str) -> DspyScores:
         """Return the SemanticF1 score for one case (rate-limit aware)."""
+        retried_temp = False
         for attempt in range(6):
             try:
-                return await asyncio.to_thread(self._score_sync, question, gold, predicted)
+                lm = self._lm_retry if (retried_temp and self._lm_retry is not None) else self._lm
+                return await asyncio.to_thread(self._score_sync, question, gold, predicted, lm)
             except Exception as exc:  # noqa: BLE001
                 msg = str(exc).lower()
                 if "402" in msg or "credits" in msg or "payment" in msg:
@@ -116,7 +136,21 @@ class DspyMetricScorer:
                 elif "400" in msg or "bad request" in msg or "invalid_request" in msg:
                     await asyncio.sleep(4 * (attempt + 1))
                 elif "parse" in msg or "empty or null response" in msg:
-                    log.warning("SemanticF1 parse failure; scoring 0.0: %s", question[:60])
+                    # The judge truncated its own reasoning (deterministic repetition
+                    # loop at temp=0) and DSPy couldn't parse the structured score.
+                    # Retry ONCE with a small-temperature judge to break the loop —
+                    # scoring a correct answer 0.0 here is the bug we are fixing.
+                    if not retried_temp and self._lm_retry is not None:
+                        log.warning(
+                            "SemanticF1 truncation/parse failure; retrying with temp>0 "
+                            "to break repetition: %s", question[:60],
+                        )
+                        retried_temp = True
+                        continue
+                    log.warning(
+                        "SemanticF1 parse failure after temp retry; scoring 0.0: %s",
+                        question[:60],
+                    )
                     return DspyScores(semantic_f1=0.0)
                 elif "timeout" in msg or "timed out" in msg or "connection" in msg:
                     # Transient: a hung/dropped request now fast-fails (timeout=120 on the LM).
