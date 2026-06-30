@@ -83,3 +83,5 @@ skills-lock.json
 .claude
 AGENTS.md
 .codegraph
+# local analysis scratch (not committed)
+.scratch/
