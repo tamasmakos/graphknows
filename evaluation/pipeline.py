@@ -8,6 +8,7 @@ token-F1 (diagnostic). See :mod:`evaluation.config` for configuration.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 
 from evaluation.client import GraphknowsMCPClient
@@ -36,6 +37,11 @@ if TYPE_CHECKING:  # pragma: no cover
 log = logging.getLogger(__name__)
 
 
+def select_gen_context_k(config: EvalConfig, mode: str | None) -> int:
+    """Return the number of passages to feed the generator based on run mode."""
+    return config.gen_context_k_free if mode == "llm_free" else config.gen_context_k
+
+
 def _is_credit_exhaustion(exc: Exception) -> bool:
     """True when *exc* is an OpenRouter out-of-credits error (vs a real bug)."""
     msg = str(exc).lower()
@@ -52,7 +58,6 @@ def _checkpoint(run_id: str, config: EvalConfig, cases: list[CaseResult]) -> Non
 
 def _evaluation_env(config: EvalConfig) -> dict[str, str]:
     """Environment overrides handed to the MCP subprocess."""
-    import os
     env: dict[str, str] = {}
     if os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE"):
         env["GRAPHKNOWS_ONTOLOGY_FILE"] = os.environ["GRAPHKNOWS_ONTOLOGY_FILE"]
@@ -146,7 +151,8 @@ async def _run_dialogue(
         for case in dialogue.cases:
             probe = await retriever.query(session_id, case.question, k=config.probe_k)
             passages = probe[: config.top_k]
-            context_passages = probe[: config.gen_context_k]
+            # passage count fed to generator is mode-specific (llm_free=50, llm_assisted=25)
+            context_passages = probe[: select_gen_context_k(config, os.environ.get("MODE"))]
             answer, gen_usage = await generator.generate(case.question, context_passages)
 
             # SemanticF1 is the headline metric — always computed.

@@ -54,7 +54,11 @@ class EvalConfig(BaseModel):
     # buried-but-high-cosine, so reach@12 stayed ~0.41 for any rerank weight. Cutting
     # below 25 trades F1 for cost on a real curve (reach@10=0.40, @25=0.53, @50=0.65);
     # further reduction needs better retrieval RECALL (chunking/embeddings), not rerank.
-    gen_context_k: int = 25  # passages handed to the generator (head of the probe)
+    gen_context_k: int = 25  # passages handed to the generator (llm_assisted / default).
+    # llm_free benefits from more passages (recall-bound; reach@50=0.65 > reach@25=0.53)
+    # while llm_assisted does not (extra distractors hurt agentic synthesis). The correct
+    # value is selected at runtime via select_gen_context_k() in pipeline.py.
+    gen_context_k_free: int = 50  # passages for llm_free mode (reach@50=0.65 > reach@25=0.53)
     probe_k: int = 50  # gold-reachability probe depth (diagnostic only; not fed to LLM)
     recall_scope: str = "both"  # stm | ltm | both
     promote_to_ltm: bool = True
