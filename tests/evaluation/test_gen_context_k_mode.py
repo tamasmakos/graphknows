@@ -8,7 +8,7 @@ def test_config_defaults():
     """EvalConfig default field values match the documented split."""
     cfg = EvalConfig()
     assert cfg.gen_context_k == 25, "llm_assisted / default should be 25"
-    assert cfg.gen_context_k_free == 50, "llm_free should be 50"
+    assert cfg.gen_context_k_free == 25, "llm_free efficiency default (equal accuracy to 50, -18% tokens)"
 
 
 def test_llm_free_mode_uses_free_value():

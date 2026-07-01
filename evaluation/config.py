@@ -58,7 +58,12 @@ class EvalConfig(BaseModel):
     # llm_free benefits from more passages (recall-bound; reach@50=0.65 > reach@25=0.53)
     # while llm_assisted does not (extra distractors hurt agentic synthesis). The correct
     # value is selected at runtime via select_gen_context_k() in pipeline.py.
-    gen_context_k_free: int = 50  # passages for llm_free mode (reach@50=0.65 > reach@25=0.53)
+    # EFFICIENCY, not accuracy: a k∈{50,25,15,10,5} sweep showed 25 and 50 are equal on
+    # SemanticF1 (0.713 vs 0.712 on a 40q conv-26 slice) while 25 cuts prompt tokens ~18%
+    # (~9.6k→~7.8k/query); below 25 accuracy declines (15→0.676, 10→0.653). 25 is the
+    # cheapest depth with no measured accuracy cost. (Slice-validated; re-verify on full
+    # convs before treating as accuracy-neutral there.)
+    gen_context_k_free: int = 25  # passages for llm_free mode (efficiency knee; see above)
     probe_k: int = 50  # gold-reachability probe depth (diagnostic only; not fed to LLM)
     recall_scope: str = "both"  # stm | ltm | both
     promote_to_ltm: bool = True
