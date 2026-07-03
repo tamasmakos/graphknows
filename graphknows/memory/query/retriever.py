@@ -267,6 +267,10 @@ class DETRetriever(BaseGraphRetriever):
             self._ltm_temporal_traversal(query, session_id, scope, top_k),
             self._ltm_topic_match(emb, session_id, scope, top_k),
         )
+        _COLLECTOR_NAMES = (
+            "stm_entity", "ltm_entity", "vector", "stm_bm25", "ltm_bm25", "temporal", "topic",
+        )
+        collectors_fired = {n: len(s) for n, s in zip(_COLLECTOR_NAMES, sources, strict=False)}
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
         for src in sources:
@@ -358,11 +362,35 @@ class DETRetriever(BaseGraphRetriever):
         ranked = await asyncio.to_thread(_ce_rerank, query, pre_rerank, len(pre_rerank))
         fused = self._blend_fact_support(ranked, fact_map, top_k)
 
+        # Transparency trace: how each surviving candidate scored, per signal.
+        shaped_by_cid = {cid: shaped for cid, shaped, _, _ in shaped_combined}
+        trace = {
+            "query": query,
+            "session_id": session_id,
+            "collectors_fired": collectors_fired,
+            "fact_support_on": bool(self._fact_support and fact_map),
+            "candidates": [
+                {
+                    "rank": fc["rank"],
+                    "chunk_id": fc["chunk_id"],
+                    "doc_id": fc.get("doc_id", ""),
+                    "sources": fc.get("sources", ""),
+                    "vector_relevance": round(shaped_by_cid.get(fc["chunk_id"], 0.0) / max_shaped, 4),
+                    "fact_support": round(_fact_sim(fact_map, fc["chunk_id"]), 4),
+                    "unified": fc.get("rrf_score", 0.0),
+                    "fact": fc.get("metadata", {}).get("fact", ""),
+                    "text": (fc.get("text", "") or "")[:200],
+                }
+                for fc in fused
+            ],
+        }
+
         return RetrievalContext(
             query=query,
             session_id=session_id,
             fused_results=fused,
             search_type="DET",
+            trace=trace,
         )
 
     def _blend_fact_support(

@@ -93,6 +93,10 @@ class RetrievalContext:
     semantic_matches: list[ChunkMatch] = field(default_factory=list)
     fused_results: list[dict] = field(default_factory=list)
     search_type: str = "HYBRID"
+    # Optional per-query retrieval trace for transparency: which collectors fired
+    # and each final candidate's per-signal scores (vector relevance, fact-support,
+    # unified) + provenance. Populated by DETRetriever; None elsewhere.
+    trace: dict | None = None
 
     # ------------------------------------------------------------------
     # Dict serialisation (JSON wire format for REST /search)
