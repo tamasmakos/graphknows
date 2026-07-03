@@ -618,6 +618,57 @@ class ArcadeDBSTMStore:
         )
         return [{"chunk_id": r["chunk_id"], "text": r["text"]} for r in rows]
 
+    async def query_fact_subjects(self, session_id: str) -> list[str]:
+        """Return distinct subjects of wired typed fact edges (ENTITY->ENTITY) in *session_id*.
+
+        Only edges that carry ``chunk_id`` provenance are considered, so this
+        surfaces the fact-graph the fact-lookup retrieval mode can route from.
+        """
+        rows = await self._c.query(
+            self._db,
+            "MATCH (a:ENTITY {session_id: $sid})-[r]->(b:ENTITY) "
+            "WHERE r.chunk_id IS NOT NULL AND r.chunk_id <> '' "
+            "RETURN DISTINCT a.name AS name",
+            params={"sid": session_id},
+        )
+        return [r["name"] for r in rows if r.get("name")]
+
+    async def query_facts_by_subjects(
+        self,
+        session_id: str,
+        subject_names: list[str],
+        top_k: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return wired fact edges whose subject is one of *subject_names* in *session_id*.
+
+        Each row is (subject, relation, object, chunk_id, evidence).
+        Uses dynamic OR conditions (ArcadeDB openCypher has no any() list
+        predicate). Only edges carrying ``chunk_id`` provenance are returned.
+        """
+        if not subject_names:
+            return []
+        safe = [n.replace("'", "") for n in subject_names]
+        where_parts = " OR ".join(f"a.name = '{n}'" for n in safe)
+        rows = await self._c.query(
+            self._db,
+            f"MATCH (a:ENTITY {{session_id: $sid}})-[r]->(b:ENTITY) "
+            f"WHERE ({where_parts}) AND r.chunk_id IS NOT NULL AND r.chunk_id <> '' "
+            f"RETURN a.name AS subject, type(r) AS relation, b.name AS object, "
+            f"       r.chunk_id AS chunk_id, r.fact AS evidence LIMIT $k",
+            params={"sid": session_id, "k": top_k},
+        )
+        return [
+            {
+                "subject": r["subject"],
+                "relation": r["relation"],
+                "object": r["object"],
+                "chunk_id": r["chunk_id"],
+                "evidence": r.get("evidence") or "",
+            }
+            for r in rows
+            if r.get("subject") and r.get("object")
+        ]
+
     async def full_text_search_chunks(
         self,
         session_id: str,

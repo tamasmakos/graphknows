@@ -42,6 +42,7 @@ from graphknows.memory.query._rrf_common import (
 from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
+from graphknows.memory.query.fact_lookup import fact_lookup
 from graphknows.memory.query.rerank import rerank as _ce_rerank
 from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 from graphknows.memory.stores.embedder import embed
@@ -172,6 +173,14 @@ def _declarative_variant(question: str) -> str | None:
 # full-text channels still cover their chunks.
 _ENTITY_SATURATION_RATIO: float = 0.5
 
+# Fact-lookup routing: a fact whose chunk the vector pool MISSED is promoted to
+# the front only when the fact clears this (high) similarity bar, and at most this
+# many are promoted. Promotion is the only routing step that can change recall, so
+# it is gated hard — noisy/low-similarity facts stay silent instead of displacing
+# vector hits. Annotation of already-retrieved chunks is unconditional (rank-neutral).
+_FACT_PROMOTE_MIN_SIM: float = 0.45
+_FACT_PROMOTE_MAX: int = 3
+
 
 class DETRetriever(BaseGraphRetriever):
     """Deterministic three-collector hybrid retriever."""
@@ -182,11 +191,19 @@ class DETRetriever(BaseGraphRetriever):
         neo: Any,
         mg: ArcadeDBSTMStore,
         embed_model: str = "",
+        enable_fact_promotion: bool = False,
     ) -> None:
         self.pg = pg
         self.neo = neo
         self.mg = mg
         self.embed_model = embed_model
+        # Fact-lookup always ANNOTATES chunks the vector pool already found (surfaces
+        # the fact triple + evidence to the generator, rank-neutral). PROMOTION of
+        # chunks the vector pool missed lifts recall but can evict vector hits when
+        # the router is imperfect — measured net-negative on retrieval-hit@k with the
+        # current router — so it is opt-in until a stronger router / generation eval
+        # justifies it.
+        self._fact_promote = enable_fact_promotion
 
     async def retrieve(
         self,
@@ -307,12 +324,106 @@ class DETRetriever(BaseGraphRetriever):
         # Cross-encoder rerank: no-op when model unavailable (returns unchanged).
         fused = await asyncio.to_thread(_ce_rerank, query, pre_rerank, top_k)
 
+        # Fact-lookup channel — subject-scoped, confidence-gated structured recall.
+        # Returns [] (silent) unless the query names a fact subject AND a wired fact
+        # is a confident answer, so it never dilutes the pool on queries it can't
+        # help; when it fires, its hits are ROUTED ahead of the vector pool.
+        try:
+            fact_hits = await fact_lookup(self.mg, query, session_id, emb, self.embed_model)
+        except Exception as exc:
+            log.debug("fact-lookup channel skipped: %s", exc)
+            fact_hits = []
+        if fact_hits:
+            fused = await self._route_fact_hits(fact_hits, fused, top_k)
+
         return RetrievalContext(
             query=query,
             session_id=session_id,
             fused_results=fused,
             search_type="DET",
         )
+
+    async def _route_fact_hits(
+        self,
+        fact_hits: list[dict[str, Any]],
+        fused: list[dict[str, Any]],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Route fact-lookup hits without evicting good vector hits.
+
+        A fact whose chunk the vector pool ALREADY found is annotated *in place*
+        (the fact triple + evidence is surfaced to the generator without changing
+        its rank), so nothing vector ranked well is displaced. Only facts pointing
+        at chunks the vector pool MISSED are promoted to the front — recovering
+        buried/absent gold. This makes the channel additive: it can lift recall,
+        not lower it. The result is re-ranked and capped at *top_k*.
+        """
+
+        def _triple(h: dict[str, Any]) -> str:
+            return f"{h['subject']} {h['relation'].replace('_', ' ').lower()} {h['object']}"
+
+        def _annot(h: dict[str, Any]) -> str:
+            ev = (h.get("evidence") or "").strip()
+            return f"[FACT] {_triple(h)}" + (f" — {ev}" if ev else "")
+
+        by_id = {fc["chunk_id"]: fc for fc in fused}
+
+        # (a) Facts on chunks already retrieved: annotate in place, no reordering.
+        recovered: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for h in fact_hits:
+            cid = h["chunk_id"]
+            if cid in seen:
+                continue
+            seen.add(cid)
+            if cid in by_id:
+                fc = by_id[cid]
+                body = fc.get("text", "")
+                if not body.startswith("[FACT]"):
+                    fc["text"] = f"{_annot(h)}\n{body}" if body else _annot(h)
+                srcs = {s for s in (fc.get("sources", "") or "").split(",") if s}
+                srcs.add("fact_lookup")
+                fc["sources"] = ",".join(sorted(srcs))
+                fc.setdefault("metadata", {})["fact"] = _triple(h)
+            else:
+                recovered.append(h)  # chunk the vector pool missed
+
+        # (b) Recovered chunks (vector missed) are promoted to the front — but only
+        # HIGH-confidence facts, capped, so noisy/low-similarity facts stay silent
+        # rather than displacing vector hits (promotion is the only step that can
+        # change recall; gate it hard to keep the channel additive, not lossy).
+        recovered = (
+            sorted(
+                (h for h in recovered if h["score"] >= _FACT_PROMOTE_MIN_SIM),
+                key=lambda h: -h["score"],
+            )[:_FACT_PROMOTE_MAX]
+            if self._fact_promote
+            else []
+        )
+        merged = list(fused)
+        if recovered:
+            text_map = await self.pg.get_chunks_by_ids([h["chunk_id"] for h in recovered])
+            new_entries = []
+            for h in recovered:
+                info = text_map.get(h["chunk_id"], {})
+                body = info.get("text", "")
+                new_entries.append(
+                    {
+                        "chunk_id": h["chunk_id"],
+                        "doc_id": info.get("doc_id", ""),
+                        "text": f"{_annot(h)}\n{body}" if body else _annot(h),
+                        "metadata": {**info.get("metadata", {}), "fact": _triple(h)},
+                        "rrf_score": round(float(h["score"]), 6),
+                        "sources": "fact_lookup",
+                        "rank": 0,
+                        "entities": [],
+                    }
+                )
+            merged = new_entries + merged
+
+        for i, fc in enumerate(merged):
+            fc["rank"] = i + 1
+        return merged[:top_k]
 
     async def execute_cypher(
         self,
