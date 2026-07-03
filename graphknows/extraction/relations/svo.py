@@ -216,6 +216,38 @@ def extract_svo_relations(
             return next(iter(sorted(others)), token_text)
         return token_text
 
+    # Canonicalization vocab. Subject aliases collapse against the *speaker* set
+    # only (participants), so real distinct entities are never merged; objects
+    # reuse an existing entity node's spelling by exact match.
+    _entity_orig = [e.get("name", "") for e in entities if e.get("name")]
+    _speaker_vocab = sorted(speakers, key=len, reverse=True)
+
+    def canon_subject(name: str) -> str:
+        """Collapse a person alias to its longest prefix-compatible participant name.
+
+        Generic (no hard-coded names): a short form is unified with a longer one
+        when either is a case-insensitive prefix of the other (e.g. a nickname of
+        a speaker). Longest match wins so fragments converge on one node.
+        """
+        nl = name.lower().strip()
+        if not nl:
+            return name
+        for cand in _speaker_vocab:
+            cl = cand.lower()
+            if cl != nl and (cl.startswith(nl) or nl.startswith(cl)):
+                return cand
+        return name
+
+    def canon_object(name: str) -> str:
+        """Reuse an existing entity node's canonical spelling for an object, when
+        the object matches one case-insensitively (exact match only, no fuzzy
+        merge, so distinct concepts are never conflated)."""
+        nl = name.lower().strip()
+        for cand in _entity_orig:
+            if cand.lower() == nl and cand != name:
+                return cand
+        return name
+
     triples: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
 
@@ -268,10 +300,10 @@ def extract_svo_relations(
                     seen.add(key)
                     triples.append(
                         {
-                            "source": src,
+                            "source": canon_subject(src),
                             "source_label": "ENTITY",
                             "relation": relation,
-                            "target": obj,
+                            "target": canon_object(obj),
                             "target_label": "CONCEPT",
                             "confidence": 0.7,
                             "evidence": content.strip(),

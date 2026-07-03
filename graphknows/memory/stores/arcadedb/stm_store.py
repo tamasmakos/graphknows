@@ -455,11 +455,16 @@ class ArcadeDBSTMStore:
         confidence: float = 0.5,
         valid_at: Any | None = None,
         created_at: Any | None = None,
+        chunk_id: str = "",
     ) -> None:
         """Write a bi-temporal relation edge between two named entities.
 
         For single-valued relation types any existing current edge pointing
         to a different object is tombstoned atomically within a transaction.
+
+        ``chunk_id`` records the source CHUNK the triple was extracted from and
+        ``fact`` the source sentence/clause, so structured retrieval can route a
+        fact back to its evidence passage. Both are first-write-wins.
         """
         safe = _safe_rel_label(relation_name)
         if not safe:
@@ -506,7 +511,8 @@ class ArcadeDBSTMStore:
                 MERGE (a:ENTITY {{name: $subject, session_id: $session_id}})
                 MERGE (b:ENTITY {{name: $object, session_id: $session_id}})
                 MERGE (a)-[r:{safe} {{session_id: $session_id}}]->(b)
-                SET r.fact       = $fact,
+                SET r.fact       = coalesce(r.fact, $fact),
+                    r.chunk_id   = coalesce(r.chunk_id, $chunk_id),
                     r.confidence = $confidence,
                     r.valid_from = coalesce(r.valid_from, $now),
                     r.valid_to   = null,
@@ -518,6 +524,7 @@ class ArcadeDBSTMStore:
                     "object": object_name,
                     "session_id": session_id,
                     "fact": fact,
+                    "chunk_id": chunk_id,
                     "confidence": confidence,
                     "now": now,
                 },

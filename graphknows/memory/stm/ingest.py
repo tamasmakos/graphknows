@@ -19,7 +19,6 @@ from graphknows.memory.stm._entity_writer import (
     graph_entities,
     write_chunk_entities_and_edges_bulk,
     write_entity_nodes_and_edges,
-    write_relation_edges,
 )
 
 log = logging.getLogger("graphknows.memory.stm.ingest")
@@ -354,11 +353,24 @@ class _STMIngestHandler:
         )
         # GLiNER2 relations — ontology-filtered, then written.
         gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
-        write_relation_edges(self._mg, session_id, gliner_relations, _run)
+        for rel in gliner_relations:
+            _run(
+                self._mg.write_relation_edge(
+                    session_id=session_id,
+                    subject_name=rel["head"],
+                    relation_name=rel["relation"],
+                    object_name=rel["tail"],
+                    fact=rel.get("evidence", "") or clean_text,
+                    confidence=rel.get("score", 0.5),
+                    chunk_id=chunk_id,
+                )
+            )
 
         # SpaCy dep-pattern relations (intentionality strata G/H/I) — toggleable, soft-fail.
         if self._spacy_relations:
-            self._write_spacy_dep_relations(session_id, clean_text, extraction.entities)
+            self._write_spacy_dep_relations(
+                session_id, clean_text, extraction.entities, chunk_id=chunk_id
+            )
 
         # DSPy ontology-guided relation extraction (llm_assisted mode only).
         # extract_relations returns (triplets, nodes, diagnostics).
@@ -376,13 +388,16 @@ class _STMIngestHandler:
                 subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
                 props = triplet[3] if len(triplet) > 3 else {}
                 confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
+                evidence = props.get("evidence", "") if isinstance(props, dict) else ""
                 _run(
                     self._mg.write_relation_edge(
                         session_id=session_id,
                         subject_name=subj,
                         relation_name=rel_name,
                         object_name=obj,
+                        fact=evidence or clean_text,
                         confidence=confidence,
+                        chunk_id=chunk_id,
                     )
                 )
             log.debug(
@@ -437,12 +452,16 @@ class _STMIngestHandler:
                 subject_name=rel["head"],
                 relation_name=rel["relation"],
                 object_name=rel["tail"],
+                fact=rel.get("evidence", "") or clean_text,
                 confidence=rel.get("score", 0.5),
+                chunk_id=chunk_id,
             )
 
         # SpaCy dep-pattern relations — soft-fail, written sequentially.
         if self._spacy_relations:
-            await self._write_spacy_dep_relations_async(session_id, clean_text, extraction.entities)
+            await self._write_spacy_dep_relations_async(
+                session_id, clean_text, extraction.entities, chunk_id=chunk_id
+            )
 
         # DSPy ontology-guided relation extraction (llm_assisted mode only).
         if self._rel_extractor is not None and len(extraction.entities) >= 2:
@@ -456,12 +475,15 @@ class _STMIngestHandler:
                 subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
                 props = triplet[3] if len(triplet) > 3 else {}
                 confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
+                evidence = props.get("evidence", "") if isinstance(props, dict) else ""
                 await self._mg.write_relation_edge(
                     session_id=session_id,
                     subject_name=subj,
                     relation_name=rel_name,
                     object_name=obj,
+                    fact=evidence or clean_text,
                     confidence=confidence,
+                    chunk_id=chunk_id,
                 )
             log.debug(
                 "DSPy extraction session=%s chunk=%s: %d triples",
@@ -476,6 +498,7 @@ class _STMIngestHandler:
         session_id: str,
         text: str,
         gliner_entities: list[dict[str, Any]],
+        chunk_id: str = "",
     ) -> None:
         """Async version of _write_spacy_dep_relations for the concurrent chunk path.
 
@@ -503,7 +526,9 @@ class _STMIngestHandler:
                     subject_name=triple["source"],
                     relation_name=triple["relation"],
                     object_name=triple["target"],
+                    fact=triple.get("evidence", "") or text,
                     confidence=triple.get("confidence", 0.7),
+                    chunk_id=chunk_id,
                 )
                 written += 1
             except Exception as exc:
@@ -516,6 +541,7 @@ class _STMIngestHandler:
         session_id: str,
         text: str,
         gliner_entities: list[dict[str, Any]],
+        chunk_id: str = "",
     ) -> None:
         """Extract universal SVO relations and write them to ArcadeDB STM.
 
@@ -552,7 +578,9 @@ class _STMIngestHandler:
                         subject_name=triple["source"],
                         relation_name=triple["relation"],
                         object_name=triple["target"],
+                        fact=triple.get("evidence", "") or text,
                         confidence=triple.get("confidence", 0.7),
+                        chunk_id=chunk_id,
                     )
                 )
                 written += 1
