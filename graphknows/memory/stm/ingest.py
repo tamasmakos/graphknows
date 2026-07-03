@@ -505,9 +505,11 @@ class _STMIngestHandler:
         Semantics identical to the sync version; awaits write_relation_edge directly.
         """
         try:
-            from graphknows.extraction.relations.svo import extract_svo_relations
+            from graphknows.extraction.relations.facts import extract_facts
 
-            triples = extract_svo_relations(text, graph_entities(gliner_entities))
+            triples = extract_facts(
+                text, graph_entities(gliner_entities), use_coref=False, use_patterns=True
+            )
         except Exception as exc:
             log.debug("SVO relation extraction skipped: %s", exc)
             return
@@ -556,9 +558,11 @@ class _STMIngestHandler:
         not interrupt ingestion.
         """
         try:
-            from graphknows.extraction.relations.svo import extract_svo_relations
+            from graphknows.extraction.relations.facts import extract_facts
 
-            triples = extract_svo_relations(text, graph_entities(gliner_entities))
+            triples = extract_facts(
+                text, graph_entities(gliner_entities), use_coref=False, use_patterns=True
+            )
         except Exception as exc:
             log.debug("SVO relation extraction skipped: %s", exc)
             return
