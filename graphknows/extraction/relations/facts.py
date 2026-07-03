@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from graphknows.extraction.relations.coref import resolve_coref
 from graphknows.extraction.relations.svo import (
     _COPULA,
     _DISCOURSE,
@@ -85,46 +86,6 @@ _EXTRA_VERBS: dict[str, str] = {
 # First-person plural resolves to the speaker too ("we celebrated" said by X → X).
 _FIRST_PERSON_PLURAL = frozenset({"we", "us", "our", "ours", "ourselves"})
 _VERB_REL = {**VERB_RELATION, **_EXTRA_VERBS}
-
-# Singular personal pronouns we resolve by recency to the nearest preceding named
-# person. Plural/neuter ("they/it") are left alone — resolving them to a person is
-# more often wrong than right and would inject attribution noise.
-_PERSON_PRON = frozenset({"he", "him", "his", "himself", "she", "her", "hers", "herself"})
-
-
-def resolve_coref(text: str, nlp: Any) -> str:
-    """Rewrite singular personal pronouns to the nearest preceding named person.
-
-    No model or network — a classic recency (Hobbs-lite) heuristic over the spaCy
-    parse. First/second person are left for speaker resolution; the current line's
-    ``Speaker:`` label is not used as an antecedent (a speaker rarely refers to
-    themselves in the third person). Conservative by design: only resolves when a
-    prior PERSON name exists, so unresolved pronouns are simply left as-is.
-    """
-    doc = nlp(text)
-    line_start = {0}
-    for i, ch in enumerate(text):
-        if ch == "\n":
-            line_start.add(i + 1)
-
-    repls: list[tuple[int, int, str]] = []
-    last_person: str | None = None
-    for tok in doc:
-        # A "Name:" at line start is a speaker label — track but do not let the
-        # very next third-person pronoun resolve to it.
-        is_label = tok.idx in line_start and tok.pos_ == "PROPN"
-        if tok.pos_ == "PROPN" and (tok.ent_type_ in ("PERSON", "") and tok.text[:1].isupper()):
-            if not is_label:
-                last_person = tok.text
-            else:
-                last_person = tok.text  # still a candidate for LATER pronouns
-        elif tok.lower_ in _PERSON_PRON and last_person is not None:
-            repls.append((tok.idx, tok.idx + len(tok.text), last_person))
-
-    for s, e, rep in sorted(repls, key=lambda x: -x[0]):  # right-to-left, offset-safe
-        text = text[:s] + rep + text[e:]
-    return text
-
 
 def _obj_texts(tok: Any, doc: Any, use_patterns: bool) -> list[str]:
     """Return cleaned object strings for a verb token (head-noun trimmed, conj-expanded)."""
@@ -186,7 +147,7 @@ def extract_facts(
     """
     nlp = get_spacy_nlp(spacy_model)
     if use_coref:
-        text = resolve_coref(text, nlp)
+        text = resolve_coref(text)
 
     units, speakers = _speaker_units(text)
     entity_names = [e.get("name", "").lower() for e in entities if e.get("name")]
