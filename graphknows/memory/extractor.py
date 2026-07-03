@@ -1,9 +1,10 @@
 """Dynamic spaCy-hinted GLiNER2 extractor for the memory ingestion pipeline.
 
-spaCy runs once per chunk and mines the schema GLiNER2 receives for that same
-chunk.  There is no taxonomy injection here: entity labels come from spaCy NER,
-and relation labels come from dependency-path lexical triggers between spaCy
-entity spans.
+spaCy runs once per chunk and mines the ENTITY schema GLiNER2 receives for that
+same chunk (entity labels come from spaCy NER). RELATION labels, by contrast,
+come from the configured taxonomy's canonical predicate vocabulary
+(schema-guided relation extraction), falling back to mined dependency-path
+triggers only when no taxonomy relation schema is available.
 """
 
 from __future__ import annotations
@@ -53,6 +54,24 @@ class _DynamicSchema:
     entity_spec: dict[str, dict[str, Any]]
     relation_spec: dict[str, str]
     label_to_type: dict[str, str]
+
+
+def _default_relation_schema() -> dict[str, str]:
+    """Load the configured taxonomy's relation schema (predicate -> description).
+
+    Soft-fails to an empty dict (miner-derived relations) if the taxonomy or its
+    descriptions are unavailable, so extraction never breaks on a config issue.
+    """
+    try:
+        from graphknows.ingestion.domain.taxonomy import (
+            build_relation_schema,
+            get_default_taxonomy,
+        )
+
+        return build_relation_schema(get_default_taxonomy())
+    except Exception as exc:  # pragma: no cover - config guard
+        log.warning("taxonomy relation schema unavailable, using mined lemmas: %s", exc)
+        return {}
 
 
 def _schema_label(value: str) -> str:
@@ -245,6 +264,11 @@ class GLiNER2EntityExtractor:
         self._gliner: Any | None = None
         self._model_loader = model_loader
         self._schema_miner = schema_miner or _SpacySchemaMiner(model_name=spacy_model)
+        # Relation schema comes from the configured taxonomy (conversational
+        # predicates + descriptions), not per-chunk mined lemmas — schema-guided
+        # relation extraction against a stable, canonical vocabulary. Entities
+        # stay dynamic (spaCy-mined). Empty schema -> fall back to mined lemmas.
+        self._relation_schema: dict[str, str] = _default_relation_schema()
 
     def _ensure_model_loaded(self) -> None:
         """Load GLiNER2 model on first extraction call."""
@@ -270,8 +294,9 @@ class GLiNER2EntityExtractor:
         schema = self._gliner.create_schema()
         if dynamic_schema.entity_spec:
             schema.entities(dynamic_schema.entity_spec)
-        if dynamic_schema.relation_spec:
-            schema.relations(dynamic_schema.relation_spec)
+        relation_spec = self._relation_schema or dynamic_schema.relation_spec
+        if relation_spec:
+            schema.relations(relation_spec)
         return schema
 
     def extract(self, text: str) -> ExtractionResult:
@@ -313,8 +338,8 @@ class GLiNER2EntityExtractor:
                 tail = triplet.get("tail", {})
                 src = head.get("text", "").strip()
                 tgt = tail.get("text", "").strip()
-                if not src or not tgt:
-                    continue
+                if not src or not tgt or src.lower() == tgt.lower():
+                    continue  # drop empty and self-relations (X -rel-> X is noise)
                 score = min(
                     float(head.get("confidence", 0.0)),
                     float(tail.get("confidence", 0.0)),

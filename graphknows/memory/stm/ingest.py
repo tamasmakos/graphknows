@@ -73,10 +73,17 @@ class _STMIngestHandler:
             self._embed_fn = embed_one
 
         # Ontology curation layer — applied AFTER extraction to drop relations
-        # whose label is not part of the configured ontology.
-        from graphknows.extraction.ontology.relation_filter import build_relation_filter
+        # whose label is not part of the configured taxonomy. The relation model
+        # now emits the taxonomy's canonical predicates, so the allow-list is the
+        # taxonomy vocabulary (not the unrelated schema-org property set, which
+        # silently dropped every conversational predicate).
+        from graphknows.extraction.ontology.relation_filter import RelationOntologyFilter
+        from graphknows.ingestion.domain.taxonomy import get_default_taxonomy
 
-        self._relation_filter = build_relation_filter()
+        try:
+            self._relation_filter = RelationOntologyFilter(get_default_taxonomy().relation_types)
+        except Exception:  # pragma: no cover - config guard: fall back to pass-through
+            self._relation_filter = RelationOntologyFilter([])
 
     def ingest_text(
         self,

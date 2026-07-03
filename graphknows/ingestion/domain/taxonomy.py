@@ -61,6 +61,11 @@ class TaxonomyConfig(BaseModel):
     # Hard overrides: normalised entity name → canonical label
     overrides: dict[str, str] = Field(default_factory=dict)
     relation_types: list[str] = Field(default_factory=list)
+    # Optional per-predicate descriptions for schema-guided relation extraction.
+    # When present, ONLY these predicates are extracted by the deterministic
+    # (GLiNER2) relation model; predicates in relation_types without a
+    # description stay in the canonical vocabulary but are not extracted here.
+    relation_descriptions: dict[str, str] = Field(default_factory=dict)
     # Graph hierarchy metadata (informational; consumed by schema.py and E6 segment builder)
     hierarchy: dict[str, Any] = Field(default_factory=dict)
 
@@ -126,7 +131,17 @@ def get_default_taxonomy() -> TaxonomyConfig:
 
 
 def build_relation_schema(taxonomy: TaxonomyConfig) -> dict[str, str]:
-    """Return a predicate-to-description schema derived from a taxonomy."""
+    """Return a predicate-to-description schema for schema-guided extraction.
+
+    Prefers the taxonomy's authored ``relation_descriptions`` (which also select
+    WHICH predicates are extracted); falls back to every ``relation_types`` label
+    with a trivial spaced-name description when no descriptions are provided.
+    """
+    if taxonomy.relation_descriptions:
+        return {
+            rel: (desc.strip() or rel.replace("_", " ").lower())
+            for rel, desc in taxonomy.relation_descriptions.items()
+        }
     return {rel: rel.replace("_", " ").lower() for rel in taxonomy.relation_types}
 
 

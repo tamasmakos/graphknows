@@ -555,6 +555,41 @@ relation_types:
   - member_of
 
 # ---------------------------------------------------------------------------
+# Relation descriptions — schema-guided relation extraction (GLiNER2, no LLM).
+# Only predicates listed here are extracted by the deterministic relation model;
+# a description sharpens precision. Two predicate families are intentionally
+# OMITTED from extraction (they remain in the canonical relation_types vocabulary
+# above, available to LLM-assisted paths):
+#   * interpersonal (friend_of / family_of / partner_of) — the model cannot tell
+#     them apart from mere co-presence and emits all three between the same pair;
+#   * stative (lives_in / works_as / member_of) — the model over-applies them to
+#     visited places, identities, and objects (e.g. "works_as guitar").
+# Measured: dropping both families keeps gold-chunk coverage at 100% (they are
+# redundant with the event/temporal/possession/preference predicates) while
+# removing the two dominant precision-noise buckets.
+# ---------------------------------------------------------------------------
+
+relation_descriptions:
+  attended: >-
+    The subject person attended or went to the object event or gathering (a
+    party, wedding, meeting, trip, concert, class, or similar).
+  happened_on: >-
+    The object date or time is when the subject event or action happened.
+  owns: >-
+    The subject person owns or possesses the object thing (a vehicle, device,
+    pet, or other belonging).
+  likes: >-
+    The subject person likes, loves, enjoys, or prefers the object activity,
+    food, media, or thing.
+  dislikes: >-
+    The subject person dislikes, hates, or is averse to the object.
+  plans_to: >-
+    The subject person plans, intends, hopes, or wants to do the object future
+    action or goal.
+  located_in: >-
+    The subject place or thing is located within the object place.
+
+# ---------------------------------------------------------------------------
 # Graph hierarchy — structural backbone (shared with other taxonomies)
 # ---------------------------------------------------------------------------
 
