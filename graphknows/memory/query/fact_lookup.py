@@ -115,3 +115,55 @@ async def fact_lookup(
         float(sims.max()),
     )
     return hits
+
+
+# Below this per-fact similarity a fact is noise, not support — it contributes
+# nothing to the unified score. A continuous noise floor, NOT a gate: it never
+# switches retrieval strategy, it just keeps spurious facts out of the term.
+SUPPORT_FLOOR = 0.15
+
+
+async def fact_support_scores(
+    mg: Any,
+    query: str,
+    session_id: str,
+    query_emb: list[float],
+    embed_model: str = "",
+    *,
+    floor: float = SUPPORT_FLOOR,
+) -> dict[str, dict[str, Any]]:
+    """Per-chunk fact-support for the unified scorer (ungated, self-attenuating).
+
+    Returns ``{chunk_id: {subject, relation, object, evidence, score}}`` — the
+    single best query-relevant canonical fact pointing at that chunk, over the
+    fact subjects the query names. ``score`` is the fact-statement↔query cosine.
+
+    Empty when the query names no fact subject (abstract/inference questions), so
+    the fact-support term is ≈0 and vector relevance dominates by construction —
+    the caller needs no router. This is the read-side counterpart of ``fact_lookup``
+    without its hard confidence gate: every matched chunk contributes its
+    similarity as an additive term rather than being routed or dropped.
+    """
+    if not session_id or not query_emb:
+        return {}
+    subjects = await mg.query_fact_subjects(session_id)
+    matched = _match_subjects(query, subjects)
+    if not matched:
+        return {}
+    facts = await mg.query_facts_by_subjects(session_id, matched, top_k=400)
+    if not facts:
+        return {}
+    statements = [
+        f"{f['subject']} {f['relation'].replace('_', ' ').lower()} {f['object']}"
+        for f in facts
+    ]
+    embs = await asyncio.to_thread(embed, statements, embed_model)
+    sims = _cosine(query_emb, np.asarray(embs))
+    best: dict[str, dict[str, Any]] = {}
+    for f, sim in zip(facts, sims.tolist(), strict=False):
+        cid = f.get("chunk_id")
+        if not cid or sim < floor:
+            continue
+        if cid not in best or sim > best[cid]["score"]:
+            best[cid] = {**f, "score": float(sim)}
+    return best

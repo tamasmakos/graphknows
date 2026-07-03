@@ -1,4 +1,4 @@
-"""Tests for DETRetriever: three collectors, RRF fusion, and graceful degradation."""
+"""Tests for DETRetriever: collectors, RRF fusion, and fail-loud error propagation."""
 
 from __future__ import annotations
 
@@ -19,6 +19,20 @@ def _make_retriever():
     pg = MagicMock()
     neo = MagicMock()
     mg = MagicMock()
+    # Retrieval is fail-loud: every awaited store method a collector touches must
+    # be an AsyncMock, or the (now un-swallowed) await error propagates. Defaults
+    # return empty; individual tests override the channels they exercise.
+    mg.query_fact_subjects = AsyncMock(return_value=[])
+    mg.query_entity_chunks = AsyncMock(return_value=[])
+    mg.full_text_search_chunks = AsyncMock(return_value=[])
+    neo._qry = AsyncMock(return_value=[])
+    neo.full_text_search_chunks = AsyncMock(return_value=[])
+    pg.search_topics = AsyncMock(return_value=[])
+    pg.search_stm_chunks = AsyncMock(return_value=[])
+    pg.search_stm_turns = AsyncMock(return_value=[])
+    pg.search_ltm_chunks = AsyncMock(return_value=[])
+    pg.search_ltm_turns = AsyncMock(return_value=[])
+    pg.get_chunks_by_ids = AsyncMock(return_value={})
     retriever = DETRetriever(pg=pg, neo=neo, mg=mg)
     return retriever, pg, neo, mg
 
@@ -129,6 +143,9 @@ async def test_multi_source_chunk_ranks_higher():
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
         patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        # Test fusion/blend order deterministically, independent of whether the
+        # cross-encoder model happens to be cached in this environment.
+        patch("graphknows.memory.query.retriever._ce_rerank", side_effect=lambda q, c, k: c[:k]),
     ):
         ctx = await retriever.retrieve("alice", session_id="s1", scope="stm")
 
@@ -169,6 +186,7 @@ async def test_community_weight_boosts_semantic_hit_without_topic_chunk():
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
         patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        patch("graphknows.memory.query.retriever._ce_rerank", side_effect=lambda q, c, k: c[:k]),
     ):
         ctx = await retriever.retrieve("climate policy", session_id="s1", scope="stm")
 
@@ -202,22 +220,13 @@ async def test_top_k_is_respected():
 
 
 @pytest.mark.asyncio
-async def test_stm_failure_degrades_gracefully():
+async def test_collector_failure_raises_loudly():
+    """A collector failure must propagate — no silent graceful degradation. A
+    broken channel should surface immediately, not masquerade as thin recall."""
     retriever, pg, neo, mg = _make_retriever()
 
     mg.query_entity_chunks = AsyncMock(side_effect=RuntimeError("stm down"))
-    pg.search_stm_chunks = AsyncMock(
-        return_value=[
-            {
-                "id": "sem-ok",
-                "text": "semantic chunk",
-                "cosine_score": 0.85,
-                "file_id": "",
-                "heading_path": "",
-                "metadata": {},
-            }
-        ]
-    )
+    pg.search_stm_chunks = AsyncMock(return_value=[])
     pg.search_stm_turns = AsyncMock(return_value=[])
     pg.search_ltm_chunks = AsyncMock(return_value=[])
     pg.search_ltm_turns = AsyncMock(return_value=[])
@@ -226,9 +235,6 @@ async def test_stm_failure_degrades_gracefully():
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
         patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        pytest.raises(RuntimeError, match="stm down"),
     ):
-        ctx = await retriever.retrieve("query text here", session_id="s1")
-
-    assert ctx.search_type == "DET"
-    chunk_ids = {fr["chunk_id"] for fr in ctx.fused_results}
-    assert "sem-ok" in chunk_ids
+        await retriever.retrieve("query text here", session_id="s1")

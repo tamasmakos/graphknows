@@ -35,6 +35,7 @@ def _make_handler(extractor=None, embed_fn=None):
         "write_chunk_node",
         "write_entity_node",
         "write_chunk_entity_edge",
+        "write_chunk_entities_bulk",
         "write_relation_edge",
     ]:
         setattr(mg, attr, AsyncMock(return_value=None))

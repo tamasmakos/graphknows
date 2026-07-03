@@ -2,16 +2,12 @@
 
 Layers on top of the bare SVO extractor to break its coverage ceiling — the SVO
 path only fires when the subject is an explicit name and drops facts buried in
-pronouns, prepositions, conjunctions and subordinate clauses. All levers are
-deterministic (spaCy dependency parse + a local coref model), toggleable, and
-emit the same triple dicts as ``extract_svo_relations`` so the provenance-carrying
-edge writer is unchanged.
+prepositions, conjunctions and subordinate clauses. All levers are deterministic
+(spaCy dependency parse), toggleable, and emit the same triple dicts as
+``extract_svo_relations`` so the provenance-carrying edge writer is unchanged.
 
 Levers
 ------
-* ``use_coref``  — rewrite 3rd-person pronouns to their antecedent name (local
-  fastcoref model) BEFORE parsing, so "she went to Rome" yields a fact. First/
-  second person keep resolving to the speaker (conversational coref).
 * ``use_patterns`` — beyond bare dobj SVO: an extended verb→relation map,
   prepositional objects ("attended / joined / lives in X"), copular attributes,
   and CONJUNCTION EXPANSION (split "camping and hiking" into two facts).
@@ -26,7 +22,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from graphknows.extraction.relations.coref import resolve_coref
 from graphknows.extraction.relations.svo import (
     _COPULA,
     _DISCOURSE,
@@ -136,19 +131,15 @@ def extract_facts(
     text: str,
     entities: list[dict[str, Any]],
     *,
-    use_coref: bool = False,
     use_patterns: bool = False,
     spacy_model: str = "en_core_web_lg",
 ) -> list[dict[str, Any]]:
-    """Extract deterministic SVO+ facts with optional coref and richer patterns.
+    """Extract deterministic SVO+ facts with richer dependency patterns.
 
     Returns the same triple-dict shape as ``extract_svo_relations`` (source,
     relation, target, evidence, …) so the provenance edge writer is unchanged.
     """
     nlp = get_spacy_nlp(spacy_model)
-    if use_coref:
-        text = resolve_coref(text)
-
     units, speakers = _speaker_units(text)
     entity_names = [e.get("name", "").lower() for e in entities if e.get("name")]
 

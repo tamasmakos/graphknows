@@ -1,7 +1,6 @@
 """Unit tests for WS-6 additions to ArcadeDBLTMStore.
 
 Covers:
-- upsert_semantic_facts: SEMANTIC node writes and HAS_SEMANTIC edges.
 - persist_centrality: PageRank / degree_centrality written to ENTITY nodes.
 - compute_and_persist_pagerank: power-iteration result persisted (mocked graph).
 - prune_tombstoned_edges: only tombstoned-beyond-window edges deleted.
@@ -33,105 +32,6 @@ def _make_store() -> tuple[Any, MagicMock]:
     store = ArcadeDBLTMStore(client=client)
     store._declared_edge_types = set()
     return store, client
-
-
-# ---------------------------------------------------------------------------
-# upsert_semantic_facts
-# ---------------------------------------------------------------------------
-
-class TestUpsertSemanticFacts:
-    @pytest.mark.asyncio
-    async def test_returns_zero_for_empty_input(self) -> None:
-        store, _ = _make_store()
-        result = await store.upsert_semantic_facts("sess1", [])
-        assert result == 0
-
-    @pytest.mark.asyncio
-    async def test_writes_one_fact_and_entity_link(self) -> None:
-        store, client = _make_store()
-        facts = [
-            {
-                "id": "abc123",
-                "subject": "Alice",
-                "predicate": "WORKS_AT",
-                "object": "Acme",
-                "confidence": 0.9,
-                "memory_class": "fact",
-                "created_at": "2024-01-01T00:00:00+00:00",
-                "updated_at": "2024-01-01T00:00:00+00:00",
-                "source_session_ids": ["sess1"],
-            }
-        ]
-        result = await store.upsert_semantic_facts("sess1", facts)
-        assert result == 1
-        # Two commands: MERGE SEMANTIC node + MATCH/MERGE HAS_SEMANTIC edge
-        assert client.command.call_count >= 2
-
-    @pytest.mark.asyncio
-    async def test_skips_fact_without_id(self) -> None:
-        store, client = _make_store()
-        facts = [
-            {
-                "id": "",
-                "subject": "Alice",
-                "predicate": "WORKS_AT",
-                "object": "Acme",
-                "confidence": 0.9,
-                "memory_class": "fact",
-                "created_at": "2024-01-01",
-                "updated_at": "2024-01-01",
-            }
-        ]
-        result = await store.upsert_semantic_facts("sess1", facts)
-        assert result == 0
-        client.command.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_writes_multiple_facts(self) -> None:
-        store, client = _make_store()
-        facts = [
-            {
-                "id": f"key{i}",
-                "subject": f"Entity{i}",
-                "predicate": "REL",
-                "object": f"Object{i}",
-                "confidence": 0.8,
-                "memory_class": "fact",
-                "created_at": "2024-01-01",
-                "updated_at": "2024-01-01",
-                "source_session_ids": ["s1"],
-            }
-            for i in range(3)
-        ]
-        result = await store.upsert_semantic_facts("s1", facts)
-        assert result == 3
-
-    @pytest.mark.asyncio
-    async def test_semantic_merge_cypher_contains_key_properties(self) -> None:
-        """The MERGE cypher must reference SEMANTIC node id and key props."""
-        store, client = _make_store()
-        facts = [
-            {
-                "id": "mykey",
-                "subject": "Bob",
-                "predicate": "LIKES",
-                "object": "Coffee",
-                "confidence": 0.85,
-                "memory_class": "preference",
-                "created_at": "2024-01-01",
-                "updated_at": "2024-01-01",
-            }
-        ]
-        await store.upsert_semantic_facts("sess1", facts)
-        all_calls = [str(c) for c in client.command.call_args_list]
-        assert any("SEMANTIC" in c for c in all_calls)
-        assert any("mykey" in c for c in all_calls)
-
-
-# ---------------------------------------------------------------------------
-# persist_centrality
-# ---------------------------------------------------------------------------
-
 class TestPersistCentrality:
     @pytest.mark.asyncio
     async def test_empty_input_returns_zero(self) -> None:
@@ -302,7 +202,6 @@ class TestFlushPipelineWS6Phases:
 
         neo_store = MagicMock()
         neo_store.write_session_subgraph = AsyncMock(return_value={"nodes": 2, "edges": 1})
-        neo_store.upsert_semantic_facts = AsyncMock(return_value=1)
         neo_store.compute_and_persist_pagerank = AsyncMock(return_value=2)
         neo_store.prune_tombstoned_edges = AsyncMock(return_value=0)
         neo_store.prune_duplicate_edges = AsyncMock(return_value=0)
@@ -316,15 +215,6 @@ class TestFlushPipelineWS6Phases:
             extraction_uses_llm=extraction_uses_llm,
         )
         return pipeline, mg_store, pg_store, neo_store
-
-    @pytest.mark.asyncio
-    async def test_semantic_distillation_called_llm_free(self) -> None:
-        from graphknows.memory.models.promotion import PromotionRequest
-
-        pipeline, _, _, neo_store = self._make_flush(extraction_uses_llm=False)
-        req = PromotionRequest(session_id="s1", run_gds=False, clear_stm=False)
-        await pipeline.promote(req)
-        neo_store.upsert_semantic_facts.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_pagerank_persistence_called(self) -> None:
@@ -372,7 +262,6 @@ class TestFlushPipelineWS6Phases:
         ])
         neo_store.write_session_subgraph = AsyncMock(return_value={"nodes": 0, "edges": 0})
         # Ensure WS-6 methods are absent
-        del neo_store.upsert_semantic_facts
         del neo_store.compute_and_persist_pagerank
         del neo_store.prune_tombstoned_edges
         del neo_store.prune_duplicate_edges

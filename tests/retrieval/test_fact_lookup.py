@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-from graphknows.memory.query.fact_lookup import _match_subjects, fact_lookup
+from graphknows.memory.query.fact_lookup import (
+    _match_subjects,
+    fact_lookup,
+    fact_support_scores,
+)
 from graphknows.memory.query.retriever import DETRetriever
 
 _QEMB = [1.0, 0.0, 0.0, 0.0]
@@ -80,55 +84,69 @@ async def test_fact_lookup_no_session_or_emb():
     assert await fact_lookup(mg, "Where did Alice go?", "s1", [], "m") == []
 
 
-# ----------------------------------------------------------------------- routing
+# --------------------------------------------------------- fact_support_scores
+
+
+@pytest.mark.asyncio
+async def test_fact_support_scores_ungated_per_chunk_best():
+    facts = [
+        {"subject": "Alice", "relation": "WENT_TO", "object": "Paris",
+         "chunk_id": "c1", "evidence": "Alice went to Paris."},
+        {"subject": "Alice", "relation": "LIKES", "object": "tea",
+         "chunk_id": "c2", "evidence": "Alice likes tea."},
+    ]
+    mg = _mg_with_facts(["Alice"], facts)
+    with patch("graphknows.memory.query.fact_lookup.embed", _emb([[1, 0, 0, 0], [0, 1, 0, 0]])):
+        m = await fact_support_scores(mg, "Where did Alice go?", "s1", _QEMB, "m")
+    # c1 (sim 1.0) kept; c2 (sim 0.0 < floor) dropped — no hard gate on the map itself.
+    assert set(m) == {"c1"}
+    assert m["c1"]["object"] == "Paris" and m["c1"]["score"] > 0.9
+
+
+@pytest.mark.asyncio
+async def test_fact_support_scores_empty_without_subject():
+    mg = _mg_with_facts(["Alice"], [])
+    m = await fact_support_scores(mg, "Where did Bob go?", "s1", _QEMB, "m")
+    assert m == {}  # no subject named -> term is 0, vector dominates (self-attenuation)
+    mg.query_facts_by_subjects.assert_not_called()
+
+
+# --------------------------------------------------------- unified blend
 
 
 def _retriever():
     return DETRetriever(pg=MagicMock(), neo=MagicMock(), mg=MagicMock())
 
 
-@pytest.mark.asyncio
-async def test_route_fact_hits_annotates_existing_chunk_in_place():
+def test_blend_empty_fact_map_preserves_rerank_order():
+    """No matching fact -> unified score is a monotonic transform of the rerank
+    score, so the pure-vector ordering is preserved (no router)."""
     r = _retriever()
-    fused = [
-        {"chunk_id": "v1", "text": "vector one", "sources": "semantic", "rrf_score": 0.4, "rank": 1, "metadata": {}},
-        {"chunk_id": "v2", "text": "vector two", "sources": "semantic", "rrf_score": 0.3, "rank": 2, "metadata": {}},
+    ranked = [
+        {"chunk_id": "a", "text": "a", "rrf_score": 0.9, "sources": "semantic", "rank": 1, "metadata": {}},
+        {"chunk_id": "b", "text": "b", "rrf_score": 0.5, "sources": "semantic", "rank": 2, "metadata": {}},
     ]
-    hits = [{"chunk_id": "v2", "subject": "Alice", "relation": "WENT_TO",
-             "object": "Paris", "evidence": "Alice went to Paris.", "score": 0.9}]
-    out = await r._route_fact_hits(hits, fused, top_k=10)
-    # A chunk vector already found is annotated IN PLACE — not reordered, so good
-    # vector hits are never displaced.
-    assert [fc["chunk_id"] for fc in out] == ["v1", "v2"]
-    v2 = out[1]
-    assert v2["text"].startswith("[FACT] Alice went to Paris")
-    assert "fact_lookup" in v2["sources"] and "semantic" in v2["sources"]
-    assert v2["metadata"]["fact"] == "Alice went to Paris"
+    out = r._blend_fact_support(ranked, {}, top_k=10)
+    assert [c["chunk_id"] for c in out] == ["a", "b"]
 
 
-@pytest.mark.asyncio
-async def test_route_fact_hits_default_no_promotion_is_rank_neutral():
-    # Promotion is opt-in: by default a fact on a chunk the vector pool MISSED is
-    # not surfaced, so the channel never evicts a vector hit (rank-neutral).
+def test_blend_promotes_and_annotates_fact_supported_chunk():
+    import graphknows.memory.query.retriever as R
+
     r = _retriever()
-    fused = [{"chunk_id": "v1", "text": "vector one", "sources": "semantic", "rrf_score": 0.4, "rank": 1, "metadata": {}}]
-    hits = [{"chunk_id": "c9", "subject": "Alice", "relation": "LIKES",
-             "object": "tea", "evidence": "Alice likes tea.", "score": 0.9}]
-    out = await r._route_fact_hits(hits, fused, top_k=10)
-    assert [fc["chunk_id"] for fc in out] == ["v1"]
-
-
-@pytest.mark.asyncio
-async def test_route_fact_hits_pulls_source_text_for_new_chunk():
-    r = _retriever()
-    r._fact_promote = True  # promotion is opt-in; enable it for this path
-    r.pg.get_chunks_by_ids = AsyncMock(
-        return_value={"c9": {"text": "chunk nine body", "doc_id": "d9", "metadata": {}}}
-    )
-    fused = [{"chunk_id": "v1", "text": "vector one", "sources": "semantic", "rrf_score": 0.4, "rank": 1, "metadata": {}}]
-    hits = [{"chunk_id": "c9", "subject": "Alice", "relation": "LIKES",
-             "object": "tea", "evidence": "Alice likes tea.", "score": 0.8}]
-    out = await r._route_fact_hits(hits, fused, top_k=10)
-    assert out[0]["chunk_id"] == "c9" and out[0]["sources"] == "fact_lookup"
-    assert "[FACT] Alice likes tea" in out[0]["text"] and "chunk nine body" in out[0]["text"]
-    assert [fc["rank"] for fc in out] == [1, 2]  # re-ranked
+    ranked = [
+        {"chunk_id": "a", "text": "top vector", "rrf_score": 1.0, "sources": "semantic", "rank": 1, "metadata": {}},
+        {"chunk_id": "b", "text": "buried body", "rrf_score": 0.0, "sources": "semantic", "rank": 2, "metadata": {}},
+    ]
+    fact_map = {"b": {"subject": "Alice", "relation": "WENT_TO", "object": "Paris",
+                      "evidence": "Alice went to Paris.", "score": 1.0}}
+    old = R._FACT_SUPPORT_BOOST
+    R._FACT_SUPPORT_BOOST = 2.0  # a=norm 1.0; b=norm 0.0 + 2.0*1.0 -> b wins
+    try:
+        out = r._blend_fact_support(ranked, fact_map, top_k=10)
+    finally:
+        R._FACT_SUPPORT_BOOST = old
+    assert out[0]["chunk_id"] == "b"  # fact-supported chunk the CE ranked last is promoted
+    assert out[0]["text"].startswith("[FACT] Alice went to Paris")
+    assert "fact" in out[0]["sources"].split(",")
+    assert out[0]["metadata"]["fact"] == "Alice went to Paris"

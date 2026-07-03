@@ -34,6 +34,20 @@ def _make_retriever():
     pg = MagicMock()
     neo = MagicMock()
     mg = MagicMock()
+    # Retrieval is fail-loud: every awaited store method a collector touches must
+    # be an AsyncMock or the (un-swallowed) await error propagates. Empty defaults;
+    # individual tests override the channels they exercise.
+    mg.query_fact_subjects = AsyncMock(return_value=[])
+    mg.query_entity_chunks = AsyncMock(return_value=[])
+    mg.full_text_search_chunks = AsyncMock(return_value=[])
+    neo._qry = AsyncMock(return_value=[])
+    neo.full_text_search_chunks = AsyncMock(return_value=[])
+    pg.search_topics = AsyncMock(return_value=[])
+    pg.search_stm_chunks = AsyncMock(return_value=[])
+    pg.search_stm_turns = AsyncMock(return_value=[])
+    pg.search_ltm_chunks = AsyncMock(return_value=[])
+    pg.search_ltm_turns = AsyncMock(return_value=[])
+    pg.get_chunks_by_ids = AsyncMock(return_value={})
     return DETRetriever(pg=pg, neo=neo, mg=mg), pg, neo, mg
 
 

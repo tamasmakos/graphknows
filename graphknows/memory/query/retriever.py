@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import re
 from typing import Any
 
@@ -42,7 +43,7 @@ from graphknows.memory.query._rrf_common import (
 from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
-from graphknows.memory.query.fact_lookup import fact_lookup
+from graphknows.memory.query.fact_lookup import fact_support_scores
 from graphknows.memory.query.rerank import rerank as _ce_rerank
 from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 from graphknows.memory.stores.embedder import embed
@@ -173,13 +174,32 @@ def _declarative_variant(question: str) -> str | None:
 # full-text channels still cover their chunks.
 _ENTITY_SATURATION_RATIO: float = 0.5
 
-# Fact-lookup routing: a fact whose chunk the vector pool MISSED is promoted to
-# the front only when the fact clears this (high) similarity bar, and at most this
-# many are promoted. Promotion is the only routing step that can change recall, so
-# it is gated hard — noisy/low-similarity facts stay silent instead of displacing
-# vector hits. Annotation of already-retrieved chunks is unconditional (rank-neutral).
-_FACT_PROMOTE_MIN_SIM: float = 0.45
-_FACT_PROMOTE_MAX: int = 3
+# Unified scorer: weight of the fact-support term relative to normalised vector
+# relevance. final = norm_relevance + BOOST * fact_similarity. The term is 0 when
+# no canonical fact matches the query, so vector dominates by construction and no
+# router/gate is needed — structure self-attenuates. Env-overridable for tuning.
+_FACT_SUPPORT_BOOST: float = float(os.environ.get("GRAPHKNOWS_FACT_BOOST", "0.6"))
+
+
+def _fact_sim(fact_map: dict[str, dict[str, Any]], cid: str) -> float:
+    """Fact-support similarity for a chunk (0 when no matching fact points here)."""
+    hit = fact_map.get(cid)
+    return float(hit["score"]) if hit else 0.0
+
+
+def _annotate_fact(item: dict[str, Any], hit: dict[str, Any]) -> dict[str, Any]:
+    """Surface a matching fact's triple + evidence into a chunk's context."""
+    triple = f"{hit['subject']} {hit['relation'].replace('_', ' ').lower()} {hit['object']}"
+    ev = (hit.get("evidence") or "").strip()
+    annot = f"[FACT] {triple}" + (f" — {ev}" if ev else "")
+    body = item.get("text", "")
+    if not body.startswith("[FACT]"):
+        item["text"] = f"{annot}\n{body}" if body else annot
+    srcs = {s for s in (item.get("sources", "") or "").split(",") if s}
+    srcs.add("fact")
+    item["sources"] = ",".join(sorted(srcs))
+    item.setdefault("metadata", {})["fact"] = triple
+    return item
 
 
 class DETRetriever(BaseGraphRetriever):
@@ -191,19 +211,18 @@ class DETRetriever(BaseGraphRetriever):
         neo: Any,
         mg: ArcadeDBSTMStore,
         embed_model: str = "",
-        enable_fact_promotion: bool = False,
+        enable_fact_promotion: bool = True,
     ) -> None:
         self.pg = pg
         self.neo = neo
         self.mg = mg
         self.embed_model = embed_model
-        # Fact-lookup always ANNOTATES chunks the vector pool already found (surfaces
-        # the fact triple + evidence to the generator, rank-neutral). PROMOTION of
-        # chunks the vector pool missed lifts recall but can evict vector hits when
-        # the router is imperfect — measured net-negative on retrieval-hit@k with the
-        # current router — so it is opt-in until a stronger router / generation eval
-        # justifies it.
-        self._fact_promote = enable_fact_promotion
+        # Unified fact-support scoring: every candidate's score blends normalised
+        # vector relevance with a fact-support term (does a canonical fact matching
+        # the query point here via provenance?). The term self-attenuates to 0 on
+        # queries with no matching fact, so no router is needed. Set False for a
+        # pure-vector baseline (used by the retrieval-hit A/B harness).
+        self._fact_support = enable_fact_promotion
 
     async def retrieve(
         self,
@@ -236,7 +255,10 @@ class DETRetriever(BaseGraphRetriever):
         words_graph = [w for w in re.findall(r"[a-z0-9][a-z0-9']*", query.lower()) if len(w) >= 3]
         words = [w for w in words_graph if len(w) > 3]
 
-        gather_results = await asyncio.gather(
+        # Collectors run concurrently; a failure in ANY of them raises loudly
+        # (no return_exceptions swallow) so a broken channel surfaces immediately
+        # rather than silently degrading recall.
+        sources = await asyncio.gather(
             self._stm_entity_boost(words_graph, session_id, top_k),
             self._ltm_entity_traversal(words_graph, session_id, top_k),
             self._semantic_ann(emb, session_id, scope, top_k, emb2=emb2),
@@ -244,31 +266,10 @@ class DETRetriever(BaseGraphRetriever):
             self._ltm_bm25(words, session_id, scope, top_k),
             self._ltm_temporal_traversal(query, session_id, scope, top_k),
             self._ltm_topic_match(emb, session_id, scope, top_k),
-            return_exceptions=True,
         )
-        (
-            src_stm,
-            src_ltm,
-            src_semantic,
-            src_text,
-            src_ltm_text,
-            src_temporal,
-            src_topic,
-        ) = gather_results  # type: ignore[misc]
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
-        for src in (
-            src_stm,
-            src_ltm,
-            src_semantic,
-            src_text,
-            src_ltm_text,
-            src_temporal,
-            src_topic,
-        ):
-            if isinstance(src, Exception):
-                log.warning("Retrieval source error: %s", src)
-                continue
+        for src in sources:
             for cid, (score, info) in src.items():
                 if cid in combined:
                     old_score, old_info = combined[cid]
@@ -302,10 +303,38 @@ class DETRetriever(BaseGraphRetriever):
 
         shaped_combined.sort(key=lambda x: -x[1])
 
-        # Materialise the pre-rerank candidate pool (up to top_k candidates for
-        # the cross-encoder — rerank.py internally caps at _RERANK_CANDIDATE_CAP).
+        # --- Unified fact-support scoring -----------------------------------
+        # Each candidate's final score = normalised vector relevance + a
+        # fact-support term (the best canonical fact whose subject the query
+        # names and which points at this chunk via provenance). The term is 0
+        # when no fact matches, so vector dominates abstract/inference queries by
+        # construction — no router. Facts pointing at chunks the vector pool
+        # MISSED are added so structure can lift genuinely-buried list items.
+        fact_map: dict[str, dict[str, Any]] = {}
+        if self._fact_support:
+            fact_map = await fact_support_scores(
+                self.mg, query, session_id, emb, self.embed_model
+            )
+
+        have = {cid for cid, _, _, _ in shaped_combined}
+        missed = [cid for cid in fact_map if cid not in have]
+        if missed:
+            extra = await self.pg.get_chunks_by_ids(missed)
+            for cid in missed:
+                shaped_combined.append((cid, 0.0, {"sources": {"fact"}, "entities": []},
+                                        extra.get(cid, {})))
+
+        max_shaped = max((s for _, s, _, _ in shaped_combined), default=0.0) or 1.0
+
+        # Order the cross-encoder input by the unified score so fact-supported
+        # chunks fall within its candidate cap; store raw shaped relevance (the
+        # cross-encoder overwrites it, and the fact term is re-applied after).
+        ordered = sorted(
+            shaped_combined,
+            key=lambda x: -(x[1] / max_shaped + _FACT_SUPPORT_BOOST * _fact_sim(fact_map, x[0])),
+        )
         pre_rerank: list[dict[str, Any]] = []
-        for rank_i, (cid, shaped, info, fc) in enumerate(shaped_combined):
+        for rank_i, (cid, shaped, info, fc) in enumerate(ordered):
             meta = fc.get("metadata") or info.get("metadata") or {}
             ents = info.get("entities", [])
             pre_rerank.append(
@@ -321,20 +350,13 @@ class DETRetriever(BaseGraphRetriever):
                 }
             )
 
-        # Cross-encoder rerank: no-op when model unavailable (returns unchanged).
-        fused = await asyncio.to_thread(_ce_rerank, query, pre_rerank, top_k)
-
-        # Fact-lookup channel — subject-scoped, confidence-gated structured recall.
-        # Returns [] (silent) unless the query names a fact subject AND a wired fact
-        # is a confident answer, so it never dilutes the pool on queries it can't
-        # help; when it fires, its hits are ROUTED ahead of the vector pool.
-        try:
-            fact_hits = await fact_lookup(self.mg, query, session_id, emb, self.embed_model)
-        except Exception as exc:
-            log.debug("fact-lookup channel skipped: %s", exc)
-            fact_hits = []
-        if fact_hits:
-            fused = await self._route_fact_hits(fact_hits, fused, top_k)
+        # Cross-encoder rerank the whole pool (no-op when the model is
+        # unavailable), then blend the fact-support term into the normalised
+        # rerank score so it has the final say — the cross-encoder can otherwise
+        # demote a correct but lexically-distant list item a fact points straight
+        # at. Matching chunks are annotated with the triple + evidence.
+        ranked = await asyncio.to_thread(_ce_rerank, query, pre_rerank, len(pre_rerank))
+        fused = self._blend_fact_support(ranked, fact_map, top_k)
 
         return RetrievalContext(
             query=query,
@@ -343,87 +365,35 @@ class DETRetriever(BaseGraphRetriever):
             search_type="DET",
         )
 
-    async def _route_fact_hits(
+    def _blend_fact_support(
         self,
-        fact_hits: list[dict[str, Any]],
-        fused: list[dict[str, Any]],
+        ranked: list[dict[str, Any]],
+        fact_map: dict[str, dict[str, Any]],
         top_k: int,
     ) -> list[dict[str, Any]]:
-        """Route fact-lookup hits without evicting good vector hits.
+        """Blend fact-support into min-max-normalised rerank scores; cut to top_k.
 
-        A fact whose chunk the vector pool ALREADY found is annotated *in place*
-        (the fact triple + evidence is surfaced to the generator without changing
-        its rank), so nothing vector ranked well is displaced. Only facts pointing
-        at chunks the vector pool MISSED are promoted to the front — recovering
-        buried/absent gold. This makes the channel additive: it can lift recall,
-        not lower it. The result is re-ranked and capped at *top_k*.
+        ``unified = norm(rerank_score) + BOOST * fact_similarity``. With an empty
+        ``fact_map`` this is a monotonic transform of the rerank order, so the
+        pure-vector ranking is preserved (self-attenuation, no router).
         """
-
-        def _triple(h: dict[str, Any]) -> str:
-            return f"{h['subject']} {h['relation'].replace('_', ' ').lower()} {h['object']}"
-
-        def _annot(h: dict[str, Any]) -> str:
-            ev = (h.get("evidence") or "").strip()
-            return f"[FACT] {_triple(h)}" + (f" — {ev}" if ev else "")
-
-        by_id = {fc["chunk_id"]: fc for fc in fused}
-
-        # (a) Facts on chunks already retrieved: annotate in place, no reordering.
-        recovered: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for h in fact_hits:
-            cid = h["chunk_id"]
-            if cid in seen:
-                continue
-            seen.add(cid)
-            if cid in by_id:
-                fc = by_id[cid]
-                body = fc.get("text", "")
-                if not body.startswith("[FACT]"):
-                    fc["text"] = f"{_annot(h)}\n{body}" if body else _annot(h)
-                srcs = {s for s in (fc.get("sources", "") or "").split(",") if s}
-                srcs.add("fact_lookup")
-                fc["sources"] = ",".join(sorted(srcs))
-                fc.setdefault("metadata", {})["fact"] = _triple(h)
-            else:
-                recovered.append(h)  # chunk the vector pool missed
-
-        # (b) Recovered chunks (vector missed) are promoted to the front — but only
-        # HIGH-confidence facts, capped, so noisy/low-similarity facts stay silent
-        # rather than displacing vector hits (promotion is the only step that can
-        # change recall; gate it hard to keep the channel additive, not lossy).
-        recovered = (
-            sorted(
-                (h for h in recovered if h["score"] >= _FACT_PROMOTE_MIN_SIM),
-                key=lambda h: -h["score"],
-            )[:_FACT_PROMOTE_MAX]
-            if self._fact_promote
-            else []
-        )
-        merged = list(fused)
-        if recovered:
-            text_map = await self.pg.get_chunks_by_ids([h["chunk_id"] for h in recovered])
-            new_entries = []
-            for h in recovered:
-                info = text_map.get(h["chunk_id"], {})
-                body = info.get("text", "")
-                new_entries.append(
-                    {
-                        "chunk_id": h["chunk_id"],
-                        "doc_id": info.get("doc_id", ""),
-                        "text": f"{_annot(h)}\n{body}" if body else _annot(h),
-                        "metadata": {**info.get("metadata", {}), "fact": _triple(h)},
-                        "rrf_score": round(float(h["score"]), 6),
-                        "sources": "fact_lookup",
-                        "rank": 0,
-                        "entities": [],
-                    }
-                )
-            merged = new_entries + merged
-
-        for i, fc in enumerate(merged):
-            fc["rank"] = i + 1
-        return merged[:top_k]
+        if not ranked:
+            return ranked
+        scores = [c.get("rrf_score", 0.0) for c in ranked]
+        lo, hi = min(scores), max(scores)
+        rng = (hi - lo) or 1.0
+        blended: list[dict[str, Any]] = []
+        for c in ranked:
+            hit = fact_map.get(c["chunk_id"])
+            norm = (c.get("rrf_score", 0.0) - lo) / rng
+            unified = norm + _FACT_SUPPORT_BOOST * (hit["score"] if hit else 0.0)
+            item = _annotate_fact(dict(c), hit) if hit else dict(c)
+            item["rrf_score"] = round(unified, 6)
+            blended.append(item)
+        blended.sort(key=lambda x: -x["rrf_score"])
+        for i, item in enumerate(blended):
+            item["rank"] = i + 1
+        return blended[:top_k]
 
     async def execute_cypher(
         self,
@@ -451,25 +421,22 @@ class DETRetriever(BaseGraphRetriever):
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if not words:
             return result
-        try:
-            entity_chunks = await self.mg.query_entity_chunks(
-                session_id=session_id,
-                entity_names=words,
-                top_k=top_k,
-            )
-            for rank, ec in enumerate(entity_chunks):
-                cid = ec["chunk_id"]
-                score = rrf_score(rank)
-                info = {
-                    "text": ec.get("text", ""),
-                    "entities": ec.get("entity_names", []),
-                    "sources": {"stm_graph"},
-                    "doc_id": ec.get("file_id", ""),
-                    "metadata": ec.get("metadata", {}),
-                }
-                result[cid] = (result.get(cid, (0.0, info))[0] + score, info)
-        except Exception as exc:
-            log.warning("STM entity boost failed: %s", exc)
+        entity_chunks = await self.mg.query_entity_chunks(
+            session_id=session_id,
+            entity_names=words,
+            top_k=top_k,
+        )
+        for rank, ec in enumerate(entity_chunks):
+            cid = ec["chunk_id"]
+            score = rrf_score(rank)
+            info = {
+                "text": ec.get("text", ""),
+                "entities": ec.get("entity_names", []),
+                "sources": {"stm_graph"},
+                "doc_id": ec.get("file_id", ""),
+                "metadata": ec.get("metadata", {}),
+            }
+            result[cid] = (result.get(cid, (0.0, info))[0] + score, info)
         return result
 
     _FT_STOPWORDS: frozenset[str] = frozenset(
@@ -524,17 +491,13 @@ class DETRetriever(BaseGraphRetriever):
         if not specific:
             return result
 
-        try:
-            # Fetch a broad candidate pool via the OR pass.
-            or_chunks = await self.mg.full_text_search_chunks(
-                session_id=session_id,
-                terms=specific,
-                top_k=top_k * 3,
-                require_all=False,
-            )
-        except Exception as exc:
-            log.warning("STM BM25 candidate fetch failed: %s", exc)
-            return result
+        # Fetch a broad candidate pool via the OR pass.
+        or_chunks = await self.mg.full_text_search_chunks(
+            session_id=session_id,
+            terms=specific,
+            top_k=top_k * 3,
+            require_all=False,
+        )
 
         ranked = _bm25_rank(specific, or_chunks)
         for rank, (bm25_score, c) in enumerate(ranked[:top_k]):
@@ -577,19 +540,15 @@ class DETRetriever(BaseGraphRetriever):
             f"toLower(e.name) CONTAINS '{w}'" if len(w) >= 5 else f"toLower(e.name) = '{w}'"
             for w in safe_words
         )
-        try:
-            total_rows = await self.neo._qry("MATCH (c:CHUNK) RETURN count(c) AS n")
-            total = int(total_rows[0]["n"]) if total_rows else 0
-            if total <= 0:
-                return []
-            deg_rows = await self.neo._qry(
-                f"MATCH (e:ENTITY) WHERE {where_entity} "
-                f"MATCH (e)<-[:MENTIONS]-(c:CHUNK) "
-                f"RETURN e.name AS name, count(DISTINCT c) AS deg"
-            )
-        except Exception as exc:
-            log.debug("discriminative-entity filter unavailable (%s); skipping traversal", exc)
+        total_rows = await self.neo._qry("MATCH (c:CHUNK) RETURN count(c) AS n")
+        total = int(total_rows[0]["n"]) if total_rows else 0
+        if total <= 0:
             return []
+        deg_rows = await self.neo._qry(
+            f"MATCH (e:ENTITY) WHERE {where_entity} "
+            f"MATCH (e)<-[:MENTIONS]-(c:CHUNK) "
+            f"RETURN e.name AS name, count(DISTINCT c) AS deg"
+        )
         cap = max(1, int(_ENTITY_SATURATION_RATIO * total))
         result: list[tuple[str, float]] = []
         for r in deg_rows:
@@ -609,11 +568,7 @@ class DETRetriever(BaseGraphRetriever):
     ) -> dict[str, tuple[float, dict[str, Any]]]:
         if not words:
             return {}
-        try:
-            return await self._run_entity_traversal_async(words, session_id or None, top_k)
-        except Exception as exc:
-            log.warning("LTM entity traversal failed: %s", exc)
-            return {}
+        return await self._run_entity_traversal_async(words, session_id or None, top_k)
 
     async def _run_entity_traversal_async(
         self,
@@ -638,58 +593,55 @@ class DETRetriever(BaseGraphRetriever):
         safe_names = list(idf_lookup.keys())
         # Exact-match the (already query-matched, non-saturated) entity names.
         where_entity = " OR ".join(f"e.name = '{n}'" for n in safe_names)
-        try:
-            if session_filter:
-                cypher = (
-                    f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
-                    f"-[:HAS_CHUNK]->(c:CHUNK) "
-                    f"MATCH (c)-[:MENTIONS]->(e:ENTITY) "
-                    f"WHERE {where_entity} "
-                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc, "
-                    f"     max(coalesce(e.pagerank, 0.0)) AS max_pr "
-                    f"ORDER BY mc DESC LIMIT $top_k "
-                    f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
-                )
-                rows = await self.neo._qry(cypher, top_k=top_k, sid=session_filter)
-            else:
-                cypher = (
-                    f"MATCH (e:ENTITY) WHERE {where_entity} "
-                    f"MATCH (c:CHUNK)-[:MENTIONS]->(e) "
-                    f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc, "
-                    f"     max(coalesce(e.pagerank, 0.0)) AS max_pr "
-                    f"ORDER BY mc DESC LIMIT $top_k "
-                    f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
-                )
-                rows = await self.neo._qry(cypher, top_k=top_k)
+        if session_filter:
+            cypher = (
+                f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
+                f"-[:HAS_CHUNK]->(c:CHUNK) "
+                f"MATCH (c)-[:MENTIONS]->(e:ENTITY) "
+                f"WHERE {where_entity} "
+                f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc, "
+                f"     max(coalesce(e.pagerank, 0.0)) AS max_pr "
+                f"ORDER BY mc DESC LIMIT $top_k "
+                f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
+            )
+            rows = await self.neo._qry(cypher, top_k=top_k, sid=session_filter)
+        else:
+            cypher = (
+                f"MATCH (e:ENTITY) WHERE {where_entity} "
+                f"MATCH (c:CHUNK)-[:MENTIONS]->(e) "
+                f"WITH c, collect(DISTINCT e.name) AS entities, count(DISTINCT e) AS mc, "
+                f"     max(coalesce(e.pagerank, 0.0)) AS max_pr "
+                f"ORDER BY mc DESC LIMIT $top_k "
+                f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
+            )
+            rows = await self.neo._qry(cypher, top_k=top_k)
 
-            for rank, row in enumerate(rows):
-                # IDF smooth down-weight: multiply by the minimum IDF weight among
-                # the matched entities in this chunk.  Rare entities → 1.0 (no change).
-                chunk_ents = row.get("entities") or []
-                min_idf = min(
-                    (idf_lookup.get(e, 1.0) for e in chunk_ents if e in idf_lookup),
-                    default=1.0,
-                )
-                # Expose max entity pagerank in metadata so the shaping stage can
-                # apply pagerank_boost.  Absent in older graphs → defaults to 0.
-                pr = float(row.get("max_pr") or 0.0)
-                _add_result(
-                    result,
-                    row["chunk_id"],
-                    # boost=2: entity hits are high-precision; outcompete pure-ANN noise
-                    rrf_score(rank, boost=2.0) * min_idf,
-                    {
-                        "text": row["text"],
-                        "entities": row["entities"],
-                        "sources": {"ltm_graph"},
-                        "doc_id": "",
-                        "metadata": {"pagerank": pr},
-                    },
-                )
+        for rank, row in enumerate(rows):
+            # IDF smooth down-weight: multiply by the minimum IDF weight among
+            # the matched entities in this chunk.  Rare entities → 1.0 (no change).
+            chunk_ents = row.get("entities") or []
+            min_idf = min(
+                (idf_lookup.get(e, 1.0) for e in chunk_ents if e in idf_lookup),
+                default=1.0,
+            )
+            # Expose max entity pagerank in metadata so the shaping stage can
+            # apply pagerank_boost.  Absent in older graphs → defaults to 0.
+            pr = float(row.get("max_pr") or 0.0)
+            _add_result(
+                result,
+                row["chunk_id"],
+                # boost=2: entity hits are high-precision; outcompete pure-ANN noise
+                rrf_score(rank, boost=2.0) * min_idf,
+                {
+                    "text": row["text"],
+                    "entities": row["entities"],
+                    "sources": {"ltm_graph"},
+                    "doc_id": "",
+                    "metadata": {"pagerank": pr},
+                },
+            )
 
-            await self._run_relation_expansion_async(result, safe_names, session_filter, top_k)
-        except Exception as exc:
-            log.warning("LTM entity traversal error: %s", exc)
+        await self._run_relation_expansion_async(result, safe_names, session_filter, top_k)
         return result
 
     async def _run_relation_expansion_async(
@@ -706,52 +658,49 @@ class DETRetriever(BaseGraphRetriever):
         with dynamic OR WHERE conditions. Structural edge types are excluded via
         a NOT IN list embedded in the Cypher string.
         """
-        try:
-            where_entity = " OR ".join(f"e.name = '{n}'" for n in seed_names)
-            # Embed skip-types as a literal list in Cypher rather than a $param list,
-            # because ArcadeDB does not support IN $list for type() comparisons.
-            skip_list = ", ".join(f"'{t}'" for t in sorted(_STRUCTURAL_REL_TYPES))
-            not_in_skip = f"NOT type(rel) IN [{skip_list}]"
-            if session_filter:
-                rel_cypher = (
-                    f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
-                    f"-[:HAS_CHUNK]->(c0:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-                    f"WHERE {where_entity} "
-                    f"MATCH (e)-[rel]-(e2:ENTITY) "
-                    f"WHERE e2 <> e AND {not_in_skip} "
-                    f"MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e2) "
-                    f"WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc "
-                    f"ORDER BY mc DESC LIMIT $top_k "
-                    f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
-                )
-                rows = await self.neo._qry(rel_cypher, top_k=top_k, sid=session_filter)
-            else:
-                rel_cypher = (
-                    f"MATCH (e:ENTITY) WHERE {where_entity} "
-                    f"MATCH (e)-[rel]-(e2:ENTITY) "
-                    f"WHERE e2 <> e AND {not_in_skip} "
-                    f"MATCH (c:CHUNK)-[:MENTIONS]->(e2) "
-                    f"WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc "
-                    f"ORDER BY mc DESC LIMIT $top_k "
-                    f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
-                )
-                rows = await self.neo._qry(rel_cypher, top_k=top_k)
+        where_entity = " OR ".join(f"e.name = '{n}'" for n in seed_names)
+        # Embed skip-types as a literal list in Cypher rather than a $param list,
+        # because ArcadeDB does not support IN $list for type() comparisons.
+        skip_list = ", ".join(f"'{t}'" for t in sorted(_STRUCTURAL_REL_TYPES))
+        not_in_skip = f"NOT type(rel) IN [{skip_list}]"
+        if session_filter:
+            rel_cypher = (
+                f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
+                f"-[:HAS_CHUNK]->(c0:CHUNK)-[:MENTIONS]->(e:ENTITY) "
+                f"WHERE {where_entity} "
+                f"MATCH (e)-[rel]-(e2:ENTITY) "
+                f"WHERE e2 <> e AND {not_in_skip} "
+                f"MATCH (sess)-[:IN_SESSION]->(f2:FILE)-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e2) "
+                f"WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc "
+                f"ORDER BY mc DESC LIMIT $top_k "
+                f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
+            )
+            rows = await self.neo._qry(rel_cypher, top_k=top_k, sid=session_filter)
+        else:
+            rel_cypher = (
+                f"MATCH (e:ENTITY) WHERE {where_entity} "
+                f"MATCH (e)-[rel]-(e2:ENTITY) "
+                f"WHERE e2 <> e AND {not_in_skip} "
+                f"MATCH (c:CHUNK)-[:MENTIONS]->(e2) "
+                f"WITH c, collect(DISTINCT e2.name) AS ents, count(DISTINCT e2) AS mc "
+                f"ORDER BY mc DESC LIMIT $top_k "
+                f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
+            )
+            rows = await self.neo._qry(rel_cypher, top_k=top_k)
 
-            for rank, row in enumerate(rows):
-                _add_result(
-                    result,
-                    row["chunk_id"],
-                    rrf_score(rank, RRF_RELATION_BOOST),
-                    {
-                        "text": row["text"],
-                        "entities": row["entities"],
-                        "sources": {"ltm_graph"},
-                        "doc_id": "",
-                        "metadata": {},
-                    },
-                )
-        except Exception as exc:
-            log.debug("relation-expanded pass skipped: %s", exc)
+        for rank, row in enumerate(rows):
+            _add_result(
+                result,
+                row["chunk_id"],
+                rrf_score(rank, RRF_RELATION_BOOST),
+                {
+                    "text": row["text"],
+                    "entities": row["entities"],
+                    "sources": {"ltm_graph"},
+                    "doc_id": "",
+                    "metadata": {},
+                },
+            )
 
     async def _ltm_bm25(
         self,
@@ -777,16 +726,12 @@ class DETRetriever(BaseGraphRetriever):
         if not callable(neo_ft):
             return result
 
-        try:
-            or_chunks = await neo_ft(
-                terms=specific,
-                session_id=session_id or None,
-                top_k=top_k * 3,
-                require_all=False,
-            )
-        except Exception as exc:
-            log.warning("LTM BM25 candidate fetch failed: %s", exc)
-            return result
+        or_chunks = await neo_ft(
+            terms=specific,
+            session_id=session_id or None,
+            top_k=top_k * 3,
+            require_all=False,
+        )
 
         ranked = _bm25_rank(specific, or_chunks)
         for rank, (bm25_score, c) in enumerate(ranked[:top_k]):
@@ -841,64 +786,58 @@ class DETRetriever(BaseGraphRetriever):
         where_iso = " OR ".join(conds)
 
         # Pass 1: canonical TEMPORAL node → chunk traversal (existing machinery).
-        try:
-            if session_id:
-                cypher = (
-                    f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
-                    f"-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
-                    f"WHERE {where_iso} "
-                    f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
-                )
-                rows = await self.neo._qry(cypher, top_k=top_k, sid=session_id)
-            else:
-                cypher = (
-                    f"MATCH (c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
-                    f"WHERE {where_iso} "
-                    f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
-                )
-                rows = await self.neo._qry(cypher, top_k=top_k)
-            for rank, row in enumerate(rows):
-                _add_result(
-                    result,
-                    row["chunk_id"],
-                    rrf_score(rank, RRF_RELATION_BOOST),
-                    {
-                        "text": row["text"],
-                        "entities": [],
-                        "sources": {"ltm_temporal"},
-                        "doc_id": "",
-                        "metadata": {},
-                    },
-                )
-        except Exception as exc:
-            log.warning("LTM temporal traversal (TEMPORAL node pass) failed: %s", exc)
+        if session_id:
+            cypher = (
+                f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
+                f"-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
+                f"WHERE {where_iso} "
+                f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
+            )
+            rows = await self.neo._qry(cypher, top_k=top_k, sid=session_id)
+        else:
+            cypher = (
+                f"MATCH (c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
+                f"WHERE {where_iso} "
+                f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
+            )
+            rows = await self.neo._qry(cypher, top_k=top_k)
+        for rank, row in enumerate(rows):
+            _add_result(
+                result,
+                row["chunk_id"],
+                rrf_score(rank, RRF_RELATION_BOOST),
+                {
+                    "text": row["text"],
+                    "entities": [],
+                    "sources": {"ltm_temporal"},
+                    "doc_id": "",
+                    "metadata": {},
+                },
+            )
 
         # Pass 2: relation-edge validity window — find chunks whose relation edges
         # have a valid_at within the queried date window.  Only activates when
         # relation edges carry bi-temporal metadata (WS-5 forward path).
         # Uses the first candidate date as the as-of anchor.
         as_of_iso = candidates[0] if candidates else None
-        try:
-            rel_rows = await self._ltm_relation_validity_pass(
-                as_of_iso, session_id, top_k
+        rel_rows = await self._ltm_relation_validity_pass(
+            as_of_iso, session_id, top_k
+        )
+        for rank, row in enumerate(rel_rows):
+            temporal_score: float = row.get("_temporal_score", 0.5)
+            _add_result(
+                result,
+                row["chunk_id"],
+                # Multiply RRF base by a small temporal recency boost (0–1).
+                rrf_score(rank, RRF_RELATION_BOOST) * (1.0 + 0.5 * temporal_score),
+                {
+                    "text": row.get("text", ""),
+                    "entities": [],
+                    "sources": {"ltm_temporal_rel"},
+                    "doc_id": "",
+                    "metadata": {},
+                },
             )
-            for rank, row in enumerate(rel_rows):
-                temporal_score: float = row.get("_temporal_score", 0.5)
-                _add_result(
-                    result,
-                    row["chunk_id"],
-                    # Multiply RRF base by a small temporal recency boost (0–1).
-                    rrf_score(rank, RRF_RELATION_BOOST) * (1.0 + 0.5 * temporal_score),
-                    {
-                        "text": row.get("text", ""),
-                        "entities": [],
-                        "sources": {"ltm_temporal_rel"},
-                        "doc_id": "",
-                        "metadata": {},
-                    },
-                )
-        except Exception as exc:
-            log.debug("LTM temporal traversal (relation validity pass) skipped: %s", exc)
 
         return result
 
@@ -917,34 +856,30 @@ class DETRetriever(BaseGraphRetriever):
         if not as_of_iso:
             return []
         # Fetch relation edges that have valid_at set.
-        try:
-            if session_id:
-                edge_rows = await self.neo._qry(
-                    "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
-                    "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
-                    "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
-                    "WHERE c.session_id = $sid "
-                    "RETURN c.id AS chunk_id, c.text AS text, "
-                    "       r.valid_at AS valid_at, r.invalid_at AS invalid_at, "
-                    "       r.created_at AS created_at "
-                    "LIMIT $top_k",
-                    sid=session_id,
-                    top_k=top_k * 2,
-                )
-            else:
-                edge_rows = await self.neo._qry(
-                    "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
-                    "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
-                    "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
-                    "RETURN c.id AS chunk_id, c.text AS text, "
-                    "       r.valid_at AS valid_at, r.invalid_at AS invalid_at, "
-                    "       r.created_at AS created_at "
-                    "LIMIT $top_k",
-                    top_k=top_k * 2,
-                )
-        except Exception as exc:
-            log.debug("relation validity fetch skipped: %s", exc)
-            return []
+        if session_id:
+            edge_rows = await self.neo._qry(
+                "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
+                "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
+                "WHERE c.session_id = $sid "
+                "RETURN c.id AS chunk_id, c.text AS text, "
+                "       r.valid_at AS valid_at, r.invalid_at AS invalid_at, "
+                "       r.created_at AS created_at "
+                "LIMIT $top_k",
+                sid=session_id,
+                top_k=top_k * 2,
+            )
+        else:
+            edge_rows = await self.neo._qry(
+                "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
+                "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
+                "RETURN c.id AS chunk_id, c.text AS text, "
+                "       r.valid_at AS valid_at, r.invalid_at AS invalid_at, "
+                "       r.created_at AS created_at "
+                "LIMIT $top_k",
+                top_k=top_k * 2,
+            )
 
         if not edge_rows:
             return []
@@ -977,11 +912,7 @@ class DETRetriever(BaseGraphRetriever):
         searcher = getattr(self.pg, "search_topics", None)
         if not callable(searcher):
             return result
-        try:
-            topics = await searcher(emb, k=2)
-        except Exception as exc:
-            log.debug("topic match skipped: %s", exc)
-            return result
+        topics = await searcher(emb, k=2)
         for t_rank, topic in enumerate(topics):
             summary = (topic.get("summary") or "").strip()
             label = (topic.get("label") or "").strip()
@@ -1002,17 +933,13 @@ class DETRetriever(BaseGraphRetriever):
                 )
             if not tid:
                 continue
-            try:
-                rows = await self.neo._qry(
-                    "MATCH (t:TOPIC {id: $tid})<-[:IN_TOPIC]-(e:ENTITY) "
-                    "MATCH (c:CHUNK)-[:MENTIONS]->(e) "
-                    "RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $k",
-                    tid=tid,
-                    k=top_k,
-                )
-            except Exception as exc:
-                log.debug("topic member traversal skipped: %s", exc)
-                continue
+            rows = await self.neo._qry(
+                "MATCH (t:TOPIC {id: $tid})<-[:IN_TOPIC]-(e:ENTITY) "
+                "MATCH (c:CHUNK)-[:MENTIONS]->(e) "
+                "RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $k",
+                tid=tid,
+                k=top_k,
+            )
             for rank, row in enumerate(rows):
                 _add_result(
                     result,
@@ -1069,7 +996,7 @@ class DETRetriever(BaseGraphRetriever):
         if not all_coros:
             return result
 
-        all_rows = await asyncio.gather(*all_coros, return_exceptions=True)
+        all_rows = await asyncio.gather(*all_coros)  # failures raise loudly
 
         # First pass: collect the best (minimum) rank per chunk across all ANN
         # passes (original query + declarative variant, stm/ltm sub-calls).
@@ -1078,9 +1005,6 @@ class DETRetriever(BaseGraphRetriever):
         best_rank: dict[str, int] = {}
         best_row: dict[str, dict] = {}
         for (_label, _source_tag), rows in zip(all_tagged, all_rows, strict=False):
-            if isinstance(rows, Exception):
-                log.warning("ANN %s failed: %s", _label, rows)
-                continue
             for rank, row in enumerate(rows):
                 cid = row["id"]
                 if cid not in best_rank or rank < best_rank[cid]:

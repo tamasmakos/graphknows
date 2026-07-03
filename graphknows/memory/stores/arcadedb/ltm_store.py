@@ -144,22 +144,6 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE APPEARED_IN"),
     ("sql", "CREATE EDGE TYPE CONTAINS_DOC"),
     ("sql", "CREATE EDGE TYPE HAS_ENTITY"),
-    # SEMANTIC vertex — canonical fact/preference nodes distilled from STM episodes.
-    # Distinct from CHUNK (raw evidence) and TOPIC (community summaries).
-    ("sql", "CREATE VERTEX TYPE SEMANTIC"),
-    ("sql", "CREATE PROPERTY SEMANTIC.id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEMANTIC.subject IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEMANTIC.predicate IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEMANTIC.object IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEMANTIC.confidence IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY SEMANTIC.memory_class IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEMANTIC.source_session_ids IF NOT EXISTS LIST"),
-    ("sql", "CREATE PROPERTY SEMANTIC.created_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEMANTIC.updated_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON SEMANTIC(id) UNIQUE"),
-    ("sql", "CREATE INDEX ON SEMANTIC(subject) NOTUNIQUE"),
-    # Edge: ENTITY -[:HAS_SEMANTIC]-> SEMANTIC
-    ("sql", "CREATE EDGE TYPE HAS_SEMANTIC"),
 ]
 
 
@@ -489,77 +473,6 @@ class ArcadeDBLTMStore:
 
         return {"nodes": nodes, "edges": edges}
 
-    # ------------------------------------------------------------------
-    # SEMANTIC fact upsert
-    # ------------------------------------------------------------------
-
-    async def upsert_semantic_facts(
-        self,
-        session_id: str,
-        facts: list[dict[str, Any]],
-    ) -> int:
-        """MERGE canonical SEMANTIC fact/preference nodes and link to their subject entity.
-
-        Each fact dict must have: id, subject, predicate, object, confidence,
-        memory_class, created_at, updated_at.  source_session_ids is merged
-        (new session appended if not already present).
-
-        Returns the number of SEMANTIC nodes written.
-        """
-        if not facts:
-            return 0
-        written = 0
-        for fact in facts:
-            fid = fact.get("id", "")
-            if not fid:
-                continue
-            try:
-                # MERGE on stable id; on match update confidence (max) and
-                # updated_at; always keep created_at from first write.
-                await self._cmd(
-                    "MERGE (s:SEMANTIC {id: $id}) "
-                    "SET s.subject = $subject, "
-                    "    s.predicate = $predicate, "
-                    "    s.object = $object, "
-                    "    s.confidence = CASE WHEN s.confidence IS NULL OR $conf > s.confidence "
-                    "                        THEN $conf ELSE s.confidence END, "
-                    "    s.memory_class = $mc, "
-                    "    s.updated_at = $updated_at, "
-                    "    s.created_at = coalesce(s.created_at, $created_at)",
-                    id=fid,
-                    subject=fact.get("subject", ""),
-                    predicate=fact.get("predicate", ""),
-                    object=fact.get("object", ""),
-                    conf=float(fact.get("confidence", 1.0) or 1.0),
-                    mc=fact.get("memory_class", "fact"),
-                    updated_at=fact.get("updated_at", ""),
-                    created_at=fact.get("created_at", ""),
-                )
-                # Link subject ENTITY to its SEMANTIC nodes.
-                subject = fact.get("subject", "")
-                if subject:
-                    try:
-                        await self._cmd(
-                            "MATCH (e:ENTITY {name: $name}), (s:SEMANTIC {id: $sid}) "
-                            "MERGE (e)-[:HAS_SEMANTIC]->(s)",
-                            name=subject,
-                            sid=fid,
-                        )
-                    except Exception as link_exc:
-                        logger.debug(
-                            "HAS_SEMANTIC edge skipped for %r → %s: %s", subject, fid, link_exc
-                        )
-                written += 1
-            except Exception as exc:
-                logger.warning("upsert_semantic_facts: fact %s failed: %s", fid, exc)
-
-        logger.info(
-            "upsert_semantic_facts session=%s: %d/%d SEMANTIC nodes written",
-            session_id,
-            written,
-            len(facts),
-        )
-        return written
 
     # ------------------------------------------------------------------
     # PageRank / centrality persistence

@@ -1,11 +1,10 @@
 """General, domain-agnostic SVO relation extractor.
 
 The grammatical subject–predicate–object skeleton is universal across registers
-(chat, articles, transcripts, docs), unlike the narrow speech-act verb register in
-:mod:`graphknows.extraction.relations.spacy`. This module reads the spaCy
-dependency parse, resolves conversational first/second person to the
-speaker/addressee, maps predicates to a compact universal relation taxonomy, and
-emits clean (subject, relation, object) triples.
+(chat, articles, transcripts, docs). This module reads the spaCy dependency
+parse, resolves conversational first/second person to the speaker/addressee,
+maps predicates to a compact universal relation taxonomy, and emits clean
+(subject, relation, object) triples.
 
 Output triples match the shape consumed by the STM ingest writer:
 ``{source, source_label, relation, target, target_label, confidence, evidence,
@@ -14,10 +13,34 @@ method, negated}``.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
-from graphknows.extraction.relations.spacy import _has_negation, get_spacy_nlp
+log = logging.getLogger(__name__)
+
+_NLP_INSTANCE: Any = None
+
+
+def get_spacy_nlp(model: str = "en_core_web_lg") -> Any:
+    """Return the shared spaCy pipeline (lazy load, singleton)."""
+    global _NLP_INSTANCE
+    if _NLP_INSTANCE is None:
+        import spacy
+
+        try:
+            _NLP_INSTANCE = spacy.load(model)
+            log.info("spaCy model '%s' loaded.", model)
+        except OSError as exc:
+            raise RuntimeError(
+                f"spaCy model '{model}' not found. Run: python -m spacy download {model}"
+            ) from exc
+    return _NLP_INSTANCE
+
+
+def _has_negation(verb: Any) -> bool:
+    """True if the verb has a negation (``neg``) modifier."""
+    return any(c.dep_ == "neg" for c in verb.children)
 
 # ---------------------------------------------------------------------------
 # Universal relation taxonomy: predicate lemma -> canonical relation.

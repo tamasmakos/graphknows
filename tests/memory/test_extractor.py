@@ -130,7 +130,10 @@ def test_extract_builds_fresh_schema_and_parses_entities_and_relations():
     result = extractor.extract("OpenAI built ChatGPT.")
 
     mock_schema.entities.assert_called_once_with(schema.entity_spec)
-    mock_schema.relations.assert_called_once_with(schema.relation_spec)
+    # Entities stay dynamic (spaCy-mined), but RELATIONS come from the configured
+    # taxonomy's canonical predicate schema, NOT the per-chunk mined relation_spec.
+    mock_schema.relations.assert_called_once_with(extractor._relation_schema)
+    assert "build" not in extractor._relation_schema  # mined lemma not used
     mock_model.extract.assert_called_once()
     assert result.entities == [{"name": "OpenAI", "type": "ORG", "score": 0.95}]
     assert result.relations[0]["head"] == "OpenAI"

@@ -12,7 +12,6 @@ from typing import Any, cast
 
 from graphknows.config.adapters.ports.vector_db import IVectorDb
 from graphknows.memory.ltm.entity_resolution import EntityResolution
-from graphknows.memory.ltm.semantic import SemanticDistiller
 from graphknows.memory.models.contracts import CommunityAssignment, SessionSnapshot
 from graphknows.memory.models.promotion import PromotionRecord, PromotionRequest
 
@@ -28,7 +27,6 @@ class LTMPromotionPipeline:
     3. MERGE into ArcadeDB LTM: SESSION → FILE → CHUNK → ENTITY, SESSION → DIALOG → TURN.
     4. Optional LLM relation extraction (llm_assisted mode only).
     5. Copy stm_chunks → ltm_chunks, stm_turns → ltm_turns.
-    6. Semantic-memory distillation → SEMANTIC fact/preference nodes (both modes).
     7. PageRank / centrality persistence onto ENTITY nodes (both modes).
     8. Graph pruning: remove tombstoned-beyond-window edges (both modes).
     9. Optional GDS Leiden community detection.
@@ -53,11 +51,6 @@ class LTMPromotionPipeline:
         self._llm_model = llm_model
         self._extraction_uses_llm = extraction_uses_llm
         self._entity_resolution = EntityResolution()
-        # SemanticDistiller uses LLM only in llm_assisted mode (key present).
-        self._semantic_distiller = SemanticDistiller(
-            openrouter_key=openrouter_key if extraction_uses_llm else "",
-            llm_model=llm_model,
-        )
 
     async def close(self) -> None:
         """Release all store connections."""
@@ -115,9 +108,6 @@ class LTMPromotionPipeline:
 
         await self._copy_vector_to_ltm(request.session_id, record)
         await self._index_entities(stm_data, record)
-
-        # Phase 6: Semantic-memory distillation (both llm_free and llm_assisted).
-        await self._run_semantic_distillation(request.session_id, stm_data, record)
 
         # Phase 7: PageRank / centrality persistence (both modes).
         await self._run_pagerank_persistence(record)
@@ -385,37 +375,6 @@ class LTMPromotionPipeline:
         except Exception as exc:
             log.warning("_index_entities: upsert failed: %s", exc)
             record.errors.append(f"entity_upsert: {exc}")
-
-    async def _run_semantic_distillation(
-        self,
-        session_id: str,
-        stm_data: dict[str, Any],
-        record: PromotionRecord,
-    ) -> None:
-        """Distil SEMANTIC fact/preference nodes from the STM subgraph.
-
-        Runs in both llm_free (structural triplets only) and llm_assisted
-        (structural + LLM-synthesised) modes.  Results are written to ArcadeDB
-        via ltm_store.upsert_semantic_facts.  Non-fatal: errors are logged and
-        appended to record.errors.
-        """
-        upsert_fn = getattr(self._neo, "upsert_semantic_facts", None)
-        if not callable(upsert_fn):
-            log.debug("_run_semantic_distillation: ltm_store has no upsert_semantic_facts, skip")
-            return
-        try:
-            entity_aliases = getattr(record.audit, "entity_aliases", {}) or {}
-            facts = await self._semantic_distiller.distil(
-                stm_data=stm_data,
-                session_id=session_id,
-                entity_aliases=entity_aliases,
-            )
-            if facts:
-                await upsert_fn(session_id, facts)
-                record.nodes_written += len(facts)
-        except Exception as exc:
-            log.warning("_run_semantic_distillation session=%s failed: %s", session_id, exc)
-            record.errors.append(f"semantic_distillation: {exc}")
 
     async def _run_pagerank_persistence(self, record: PromotionRecord) -> None:
         """Compute and persist PageRank onto ENTITY nodes.

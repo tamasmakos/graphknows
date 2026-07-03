@@ -80,10 +80,7 @@ class _STMIngestHandler:
         from graphknows.extraction.ontology.relation_filter import RelationOntologyFilter
         from graphknows.ingestion.domain.taxonomy import get_default_taxonomy
 
-        try:
-            self._relation_filter = RelationOntologyFilter(get_default_taxonomy().relation_types)
-        except Exception:  # pragma: no cover - config guard: fall back to pass-through
-            self._relation_filter = RelationOntologyFilter([])
+        self._relation_filter = RelationOntologyFilter(get_default_taxonomy().relation_types)
 
     def ingest_text(
         self,
@@ -373,7 +370,7 @@ class _STMIngestHandler:
                 )
             )
 
-        # SpaCy dep-pattern relations (intentionality strata G/H/I) — toggleable, soft-fail.
+        # Deterministic SVO+pattern fact relations (both profiles).
         if self._spacy_relations:
             self._write_spacy_dep_relations(
                 session_id, clean_text, extraction.entities, chunk_id=chunk_id
@@ -383,13 +380,7 @@ class _STMIngestHandler:
         # extract_relations returns (triplets, nodes, diagnostics).
         # Each triplet is (subject, relation, object, props_dict).
         if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            try:
-                raw = _run(self._rel_extractor.extract_relations(text=clean_text))
-            except Exception as exc:
-                # Never let a relation-extractor failure abort ingestion of the
-                # whole document — the chunk is still embedded and graph-written.
-                log.warning("DSPy relation extraction skipped for chunk %s: %s", chunk_id[:8], exc)
-                raw = ([], [], {})
+            raw = _run(self._rel_extractor.extract_relations(text=clean_text))
             dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
             for triplet in dspy_triplets:
                 subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
@@ -464,7 +455,7 @@ class _STMIngestHandler:
                 chunk_id=chunk_id,
             )
 
-        # SpaCy dep-pattern relations — soft-fail, written sequentially.
+        # Deterministic SVO+pattern fact relations (both profiles).
         if self._spacy_relations:
             await self._write_spacy_dep_relations_async(
                 session_id, clean_text, extraction.entities, chunk_id=chunk_id
@@ -472,11 +463,7 @@ class _STMIngestHandler:
 
         # DSPy ontology-guided relation extraction (llm_assisted mode only).
         if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            try:
-                raw = await self._rel_extractor.extract_relations(text=clean_text)
-            except Exception as exc:
-                log.warning("DSPy relation extraction skipped for chunk %s: %s", chunk_id[:8], exc)
-                raw = ([], [], {})
+            raw = await self._rel_extractor.extract_relations(text=clean_text)
             dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
             for triplet in dspy_triplets:
                 subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
@@ -510,17 +497,14 @@ class _STMIngestHandler:
         """Async version of _write_spacy_dep_relations for the concurrent chunk path.
 
         Semantics identical to the sync version; awaits write_relation_edge directly.
+        Errors are NOT swallowed: an extraction or write failure raises so a broken
+        pipeline surfaces immediately instead of silently producing a factless graph.
         """
-        try:
-            from graphknows.extraction.relations.facts import extract_facts
+        from graphknows.extraction.relations.facts import extract_facts
 
-            triples = extract_facts(
-                text, graph_entities(gliner_entities), use_coref=False, use_patterns=True
-            )
-        except Exception as exc:
-            log.debug("SVO relation extraction skipped: %s", exc)
-            return
-
+        triples = extract_facts(
+            text, graph_entities(gliner_entities), use_patterns=True
+        )
         written = 0
         for triple in triples:
             if triple.get("negated"):
@@ -529,21 +513,18 @@ class _STMIngestHandler:
                 triple["source"], triple.get("source_label", "")
             ) or _noisy_endpoint(triple["target"], triple.get("target_label", "")):
                 continue
-            try:
-                await self._mg.write_relation_edge(
-                    session_id=session_id,
-                    subject_name=triple["source"],
-                    relation_name=triple["relation"],
-                    object_name=triple["target"],
-                    fact=triple.get("evidence", "") or text,
-                    confidence=triple.get("confidence", 0.7),
-                    chunk_id=chunk_id,
-                )
-                written += 1
-            except Exception as exc:
-                log.debug("SVO relation write error (non-fatal): %s", exc)
+            await self._mg.write_relation_edge(
+                session_id=session_id,
+                subject_name=triple["source"],
+                relation_name=triple["relation"],
+                object_name=triple["target"],
+                fact=triple.get("evidence", "") or text,
+                confidence=triple.get("confidence", 0.7),
+                chunk_id=chunk_id,
+            )
+            written += 1
         if written:
-            log.debug("SVO relations: %d triples written for session=%s", written, session_id)
+            log.debug("fact relations: %d triples written for session=%s", written, session_id)
 
     def _write_spacy_dep_relations(
         self,
@@ -561,19 +542,12 @@ class _STMIngestHandler:
         precision filtering (subject must be a real entity, noun-phrase objects,
         questions/discourse pronouns dropped).
 
-        Soft-fails: missing spaCy model or parse errors are logged at DEBUG and do
-        not interrupt ingestion.
+        Errors are NOT swallowed: an extraction or write failure raises so a broken
+        pipeline surfaces immediately instead of silently producing a factless graph.
         """
-        try:
-            from graphknows.extraction.relations.facts import extract_facts
+        from graphknows.extraction.relations.facts import extract_facts
 
-            triples = extract_facts(
-                text, graph_entities(gliner_entities), use_coref=False, use_patterns=True
-            )
-        except Exception as exc:
-            log.debug("SVO relation extraction skipped: %s", exc)
-            return
-
+        triples = extract_facts(text, graph_entities(gliner_entities), use_patterns=True)
         written = 0
         for triple in triples:
             if triple.get("negated"):
@@ -582,21 +556,18 @@ class _STMIngestHandler:
                 triple["target"], triple.get("target_label", "")
             ):
                 continue
-            try:
-                _run(
-                    self._mg.write_relation_edge(
-                        session_id=session_id,
-                        subject_name=triple["source"],
-                        relation_name=triple["relation"],
-                        object_name=triple["target"],
-                        fact=triple.get("evidence", "") or text,
-                        confidence=triple.get("confidence", 0.7),
-                        chunk_id=chunk_id,
-                    )
+            _run(
+                self._mg.write_relation_edge(
+                    session_id=session_id,
+                    subject_name=triple["source"],
+                    relation_name=triple["relation"],
+                    object_name=triple["target"],
+                    fact=triple.get("evidence", "") or text,
+                    confidence=triple.get("confidence", 0.7),
+                    chunk_id=chunk_id,
                 )
-                written += 1
-            except Exception as exc:
-                log.debug("SVO relation write error (non-fatal): %s", exc)
+            )
+            written += 1
         if written:
             log.debug("SVO relations: %d triples written for session=%s", written, session_id)
 
