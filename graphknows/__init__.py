@@ -16,6 +16,8 @@ transport sees identical behaviour.
 
 from __future__ import annotations
 
+__version__ = "1.0.0rc1"
+
 from graphknows.config import GraphKnowsSettings
 from graphknows.memory.query import DETRetriever, RetrievalContext
 from graphknows.memory.stores.arcadedb import (

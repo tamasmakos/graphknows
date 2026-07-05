@@ -18,10 +18,14 @@ Public API::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from graphknows.extraction.chunking import process_document_splitting as chunk_text
 from graphknows.extraction.entities.gliner import get_gliner2_model
 from graphknows.extraction.entities.label_space import build_top_level_label_space
-from graphknows.extraction.relations.dspy import BaseExtractor, DSPyExtractor
+
+if TYPE_CHECKING:
+    from graphknows.extraction.relations.dspy import BaseExtractor, DSPyExtractor
 
 __all__ = [
     "BaseExtractor",
@@ -30,3 +34,13 @@ __all__ = [
     "chunk_text",
     "get_gliner2_model",
 ]
+
+# DSPyExtractor/BaseExtractor pull in `dspy` (the [assisted] extra). Import them
+# lazily so the llm_free path — which imports this package for chunking/GLiNER —
+# never requires dspy to be installed.
+def __getattr__(name: str) -> Any:
+    if name in ("BaseExtractor", "DSPyExtractor"):
+        from graphknows.extraction.relations import dspy as _dspy_mod
+
+        return getattr(_dspy_mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

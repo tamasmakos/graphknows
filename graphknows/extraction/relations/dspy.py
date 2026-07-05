@@ -26,7 +26,13 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-import dspy
+try:
+    import dspy
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without the extra
+    raise ModuleNotFoundError(
+        "llm_assisted extraction requires the 'assisted' extra. "
+        "Install it with:  pip install 'graphknows[assisted]'"
+    ) from exc
 from pydantic import BaseModel, Field
 
 from graphknows.config.llm import (

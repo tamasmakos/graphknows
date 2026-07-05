@@ -11,12 +11,14 @@ layer hierarchy.
 
 from __future__ import annotations
 
-import subprocess  # nosec
+from importlib.metadata import PackageNotFoundError, version
 
 
 def get_version() -> str:
-    """Return current git commit SHA (short)."""
+    """Return the installed graphknows package version."""
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()[:12]  # nosec
-    except Exception:
-        return "unknown"
+        return version("graphknows")
+    except PackageNotFoundError:
+        from graphknows import __version__
+
+        return __version__
