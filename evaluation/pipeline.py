@@ -152,7 +152,7 @@ async def _run_dialogue(
             probe = await retriever.query(session_id, case.question, k=config.probe_k)
             passages = probe[: config.top_k]
             # passage count fed to generator is mode-specific (llm_free=50, llm_assisted=25)
-            context_passages = probe[: select_gen_context_k(config, os.environ.get("MODE"))]
+            context_passages = probe[: select_gen_context_k(config, os.environ.get("GRAPHKNOWS_MODE"))]
             answer, gen_usage = await generator.generate(case.question, context_passages)
 
             # SemanticF1 is the headline metric — always computed.

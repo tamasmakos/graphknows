@@ -53,7 +53,7 @@ async def _run_one(
     ts: str,
 ) -> "tuple[object, object]":
     """Run a single mode and return (RunReport, ReportPaths)."""
-    os.environ["MODE"] = mode
+    os.environ["GRAPHKNOWS_MODE"] = mode
     config = EvalConfig(generation_model=gen_model)
     run_id = f"eval-{mode}-{ts}"
     run = await run_evaluation(config, run_id=run_id, limit=limit, offset=offset)
@@ -97,7 +97,7 @@ async def _amain(argv: list[str] | None = None) -> int:
         return 0
 
     # Single-mode run.
-    os.environ["MODE"] = args.mode
+    os.environ["GRAPHKNOWS_MODE"] = args.mode
     config = EvalConfig(generation_model=gen_model)
     print(f"[eval] mode={args.mode}  model={gen_model}  (from .env)")
     run_id = f"eval-{args.mode}-{ts}"
