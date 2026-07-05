@@ -695,7 +695,7 @@ class ArcadeDBLTMStore:
     async def extract_and_write_relations(
         self,
         stm_data: dict[str, Any],
-        openrouter_key: str,
+        llm_api_key: str = "",
         llm_model: str = "",
         session_id: str = "",
     ) -> int:

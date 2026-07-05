@@ -35,10 +35,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without 
     ) from exc
 from pydantic import BaseModel, Field
 
-from graphknows.config.llm import (
-    _get_openrouter_api_key,
-    normalize_openrouter_model,
-)
+from graphknows.config.llm import _get_openrouter_api_key, build_lm
 from graphknows.extraction.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
 from graphknows.extraction.ontology.relation_filter import OntologyPredicateMapper
 from graphknows.extraction.utils import standardize_label
@@ -333,15 +330,14 @@ class DSPyExtractor(BaseExtractor):
             or llm_config.get("model")
         )
 
-        api_key = _get_openrouter_api_key(config)
+        api_key = llm_config.get("api_key") or _get_openrouter_api_key(config)
         if not api_key:
             raise ValueError(
-                "DSPyExtractor requires an OpenRouter API key. "
-                "Set OPENROUTER_API_KEY in your .env file. "
-                "Current value is empty — check /root/graphknows/.env."
+                "llm_assisted extraction requires an LLM API key. "
+                "Set GRAPHKNOWS_LLM_API_KEY in your environment or .env."
             )
 
-        self._configure_lm(api_key, model)
+        self._configure_lm(api_key, model, llm_config.get("api_base", ""))
 
     def _load_ontology(self, ontology_config: dict[str, Any]) -> None:
         """Load RDF ontology labels, falling back to open-domain defaults.
@@ -383,25 +379,24 @@ class DSPyExtractor(BaseExtractor):
             self._ontology_enriched_context = ""
             log.info("DSPyExtractor: no ontology file — using open-domain relation types")
 
-    def _configure_lm(self, api_key: str, model: str) -> None:
+    def _configure_lm(self, api_key: str, model: str, api_base: str = "") -> None:
         """Build the DSPy LM instance and module.
 
         Uses dspy.settings.context(lm=self._lm) inside _extract_sync instead of
         dspy.configure() to avoid mutating the global thread-local from a different
         thread than the one that will actually execute the module call.
         """
-        or_model = normalize_openrouter_model(model)
-        log.info("Configuring DSPy LM for OpenRouter with model %s", or_model)
-        self._lm = dspy.LM(
-            model=or_model,
+        log.info("Configuring DSPy LM with model %s", model)
+        self._lm = build_lm(
+            model,
             api_key=api_key,
-            api_base="https://openrouter.ai/api/v1",
+            api_base=api_base,
             temperature=self.config.get("llm", {}).get("temperature", 0.0),
             max_tokens=self.config.get("llm", {}).get("max_tokens", 2048),
             num_retries=0,
         )
         self.module = GraphExtractorModule()
-        log.info("Initialized DSPy extractor with model %s", or_model)
+        log.info("Initialized DSPy extractor with model %s", model)
 
     def _extract_triplet_fields(self, triplet: Any) -> dict[str, Any]:
         """Pull raw fields from a DSPy Triplet object or dict."""

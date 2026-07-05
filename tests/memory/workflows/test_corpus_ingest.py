@@ -19,7 +19,7 @@ def _make_workflow() -> CorpusIngestWorkflow:
         neo_store=MagicMock(),
         extractor=MagicMock(),
         embed_fn=MagicMock(),
-        openrouter_key="",
+        llm_api_key="",
         rel_extractor=None,
     )
 

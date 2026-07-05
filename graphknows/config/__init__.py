@@ -16,12 +16,9 @@ Example:
 from __future__ import annotations
 
 from enum import StrEnum
-from pathlib import Path
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
-
-from graphknows.config.env_loader import load_env_file
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class MemoryMode(StrEnum):
@@ -37,51 +34,18 @@ class MemoryMode(StrEnum):
     llm_assisted = "llm_assisted"
 
 
-def _clean_env_secret(value: str | None) -> str:
-    return (value or "").strip().strip('"').strip("'")
-
-
-def _find_repo_env() -> Path | None:
-    """Locate the nearest repo-level .env file by walking upward from this module.
-
-    Stops at the first directory that contains a pyproject.toml or .git marker
-    so the walk never escapes the repository root.
-    """
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / ".env"
-        if candidate.exists():
-            return candidate
-        # Stop searching once we've reached the repo root.
-        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            break
-    return None
-
-
-def _load_repo_env() -> dict[str, str]:
-    """Load repo-local .env values when present."""
-    env_file = _find_repo_env()
-    return load_env_file(env_file)
-
-
 class GraphKnowsSettings(BaseSettings):
-    """Runtime configuration for the graphknows service and in-process container.
+    """Runtime configuration for graphknows.
 
-    Loads from environment variables and an optional ``.env`` file.  Field
-    aliases match the conventional upper-case env var names so both
-    ``ARCADEDB_URL`` and ``arcadedb_url`` work as sources.
+    Every setting maps to a ``GRAPHKNOWS_``-prefixed environment variable and can
+    also be read from a ``.env`` file in the current working directory. Standard
+    precedence applies: constructor args > environment > ``.env``.
 
-    Attributes:
-        graphknows_env: Runtime environment tag (``"development"`` | ``"production"``).
-        graphknows_port: HTTP port for the REST API.
-        arcadedb_url: HTTP base URL for ArcadeDB.
-        arcadedb_user: ArcadeDB server user.
-        arcadedb_password: ArcadeDB server password.
-        embed_model: OpenRouter embedding model name (e.g. openai/text-embedding-3-small).
-        session_ttl_minutes: Minutes of session inactivity before auto-merge.
-        llm_model: LLM model name for synthesis and extraction.
-        llm_provider: LLM provider (``"openrouter"``).
-        openrouter_api_key: OpenRouter API key.
-        extraction_model: Model used for relation extraction.
+    LLM configuration is provider-neutral: ``llm_model`` is a litellm model
+    string (e.g. ``openrouter/deepseek/deepseek-v4-flash`` or ``openai/gpt-4o-mini``)
+    and the provider base URL is inferred from that prefix unless ``llm_api_base``
+    is set. Embeddings default to a local sentence-transformers model (no API key);
+    set ``embed_api_base`` to use a remote OpenAI-compatible endpoint instead.
     """
 
     model_config = SettingsConfigDict(
@@ -91,96 +55,59 @@ class GraphKnowsSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Order settings sources so the repo .env wins over container/shell env.
-
-        The .env file is the source of truth for model names and API keys.
-        """
-        return init_settings, dotenv_settings, env_settings, file_secret_settings
-
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
     graphknows_port: int = Field(default=8025, alias="GRAPHKNOWS_PORT")
 
+    # Single mode switch driving both extraction and retrieval.
+    mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="GRAPHKNOWS_MODE")
+
     # ArcadeDB
-    arcadedb_url: str = Field(default="http://172.18.0.1:2480", alias="ARCADEDB_URL")
-    arcadedb_user: str = Field(default="root", alias="ARCADEDB_USER")
-    arcadedb_password: str = Field(default="changeme", alias="ARCADEDB_PASSWORD")
+    arcadedb_url: str = Field(default="http://localhost:2480", alias="GRAPHKNOWS_ARCADEDB_URL")
+    arcadedb_user: str = Field(default="root", alias="GRAPHKNOWS_ARCADEDB_USER")
+    arcadedb_password: str = Field(default="changeme", alias="GRAPHKNOWS_ARCADEDB_PASSWORD")
 
-    # Embeddings
-    embed_model: str = Field(default="openai/text-embedding-3-small", alias="EMBED_MODEL")
+    # LLM (provider-neutral; litellm model strings)
+    llm_model: str = Field(
+        default="openrouter/deepseek/deepseek-v4-flash", alias="GRAPHKNOWS_LLM_MODEL"
+    )
+    llm_api_key: str = Field(default="", alias="GRAPHKNOWS_LLM_API_KEY")
+    llm_api_base: str = Field(default="", alias="GRAPHKNOWS_LLM_API_BASE")
+    llm_temperature: float = Field(default=0.0, alias="GRAPHKNOWS_LLM_TEMPERATURE")
+    llm_max_tokens: int = Field(default=2048, alias="GRAPHKNOWS_LLM_MAX_TOKENS")
+    extraction_model: str = Field(default="", alias="GRAPHKNOWS_EXTRACTION_MODEL")
+    summarization_model: str = Field(default="", alias="GRAPHKNOWS_SUMMARIZATION_MODEL")
 
-    # Session lifecycle
-    session_ttl_minutes: int = Field(default=60, alias="SESSION_TTL_MINUTES")
-
-    # LLM
-    llm_model: str = Field(default="deepseek/deepseek-v4-flash", alias="LLM_MODEL")
-    llm_provider: str = Field(default="openrouter", alias="LLM_PROVIDER")
-    llm_temperature: float = Field(default=0.0, alias="LLM_TEMPERATURE")
-    llm_max_tokens: int = Field(default=2048, alias="LLM_MAX_TOKENS")
-    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
-    extraction_model: str = Field(default="", alias="EXTRACTION_MODEL")
+    # Embeddings (local sentence-transformers by default; no API key needed)
+    embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="GRAPHKNOWS_EMBED_MODEL")
+    embed_api_base: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_BASE")
+    embed_api_key: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_KEY")
 
     # Chunking
-    chunk_size: int = Field(default=1200, alias="CHUNK_SIZE")
-    chunk_overlap: int = Field(default=100, alias="CHUNK_OVERLAP")
+    chunk_size: int = Field(default=1200, alias="GRAPHKNOWS_CHUNK_SIZE")
+    chunk_overlap: int = Field(default=100, alias="GRAPHKNOWS_CHUNK_OVERLAP")
 
     # Entity extraction
-    gliner_model: str = Field(default="fastino/gliner2-multi-v1", alias="GLINER_MODEL")
-    gliner_threshold: float = Field(default=0.5, alias="GLINER_THRESHOLD")
-    # Single mode switch driving both extraction and retrieval.
-    mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="MODE")
+    gliner_model: str = Field(default="fastino/gliner2-multi-v1", alias="GRAPHKNOWS_GLINER_MODEL")
+    gliner_threshold: float = Field(default=0.5, alias="GRAPHKNOWS_GLINER_THRESHOLD")
+    spacy_model: str = Field(default="en_core_web_lg", alias="GRAPHKNOWS_SPACY_MODEL")
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
-    # Summarisation
-    summarization_model: str = Field(default="", alias="SUMMARISATION_MODEL")
-
-    @model_validator(mode="after")
-    def _populate_from_repo_env(self) -> GraphKnowsSettings:
-        """Back-fill credentials from the repo-level .env when defaults are in use."""
-        env = _load_repo_env()
-
-        if self.openrouter_api_key:
-            self.openrouter_api_key = _clean_env_secret(self.openrouter_api_key)
-        else:
-            self.openrouter_api_key = _clean_env_secret(
-                env.get("OPENROUTER_API_KEY") or env.get("OPEN_ROUTER_API")
-            )
-
-        # NOTE: os.environ writes were removed from this validator (Finding 5 —
-        # model validators must be side-effect-free and config is the bottom
-        # layer that other modules must not depend on via globals).
-        #
-        # Remaining os.environ readers for these keys:
-        #   - graphknows/memory/stores/embedder.py — reads EMBED_MODEL at
-        #     module-import time and OPENROUTER_API_KEY inside
-        #     _openrouter_api_key(); the embedder has its own _repo_env_key()
-        #     fallback that reads the repo .env directly.
-        #   - graphknows/config/llm.py — reads OPENROUTER_API_KEY/OPEN_ROUTER_API
-        #     as a last-resort fallback; callers should pass openrouter_api_key
-        #     via the config dict (builders/stores.py already does this).
-        #   - evaluation/ scripts — read LLM_MODEL/OPENROUTER_API_KEY directly;
-        #     those scripts must ensure the .env is loaded before importing.
-
-        return self
+    # Session lifecycle
+    session_ttl_minutes: int = Field(default=60, alias="GRAPHKNOWS_SESSION_TTL_MINUTES")
 
     def check_production_secrets(self) -> None:
-        """Raise if running in production with default credentials.
+        """Raise if running in production with unsafe defaults.
 
         Raises:
-            ValueError: When production env is detected with default passwords.
+            ValueError: When production env is detected with the default password,
+                or with llm_assisted mode selected but no LLM API key configured.
         """
         if self.graphknows_env != "production":
             return
         if self.arcadedb_password == "changeme":
-            raise ValueError("ARCADEDB_PASSWORD is still the development default.")
+            raise ValueError("GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default.")
+        if self.mode is MemoryMode.llm_assisted and not self.llm_api_key:
+            raise ValueError("llm_assisted mode in production requires GRAPHKNOWS_LLM_API_KEY.")
 
 
 from graphknows.config.health import get_version  # noqa: F401, E402

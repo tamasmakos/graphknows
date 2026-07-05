@@ -63,8 +63,7 @@ async def _startup_warmup() -> None:
     """Pre-warm embedder and stores before first tool call."""
     log = logging.getLogger("graphknows.startup")
 
-    # Load settings first so repo .env values are promoted to os.environ before
-    # embedder code reads OPENROUTER_API_KEY directly.
+    # Load settings first so configuration is validated before the first tool call.
     try:
         from graphknows.mcp._state import get_settings
 

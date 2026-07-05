@@ -195,7 +195,8 @@ class _SpacySchemaMiner:
             self._nlp = loader(self._model_name)
         except Exception as exc:
             raise RuntimeError(
-                f"spaCy model '{self._model_name}' is required for dynamic GLiNER2 schemas"
+                f"spaCy model '{self._model_name}' is required for GLiNER2 schemas. "
+                f"Install it with:  python -m spacy download {self._model_name}"
             ) from exc
 
     @property
@@ -281,10 +282,14 @@ class GLiNER2EntityExtractor:
         self,
         model_loader: Callable[[], Any] = load_gliner2_model,
         schema_miner: _SpacySchemaMiner | None = None,
-        spacy_model: str = _SPACY_MODEL,
+        spacy_model: str = "",
     ) -> None:
         self._gliner: Any | None = None
         self._model_loader = model_loader
+        if not spacy_model:
+            from graphknows.config import GraphKnowsSettings
+
+            spacy_model = GraphKnowsSettings().spacy_model
         self._schema_miner = schema_miner or _SpacySchemaMiner(model_name=spacy_model)
         # Relation schema comes from the configured taxonomy (conversational
         # predicates + descriptions), not per-chunk mined lemmas — schema-guided

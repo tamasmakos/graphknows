@@ -210,7 +210,7 @@ class TestFlushPipelineWS6Phases:
             mg_store=mg_store,
             pg_store=pg_store,
             neo_store=neo_store,
-            openrouter_key="" if not extraction_uses_llm else "sk-test",
+            llm_api_key="" if not extraction_uses_llm else "sk-test",
             llm_model="deepseek/deepseek-v4-flash",
             extraction_uses_llm=extraction_uses_llm,
         )
@@ -270,7 +270,7 @@ class TestFlushPipelineWS6Phases:
             mg_store=mg_store,
             pg_store=pg_store,
             neo_store=neo_store,
-            openrouter_key="",
+            llm_api_key="",
             llm_model="",
             extraction_uses_llm=False,
         )

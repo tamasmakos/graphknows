@@ -36,20 +36,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = ""
-
 # Maximum ReAct reasoning hops per sub-question.
 MAX_REACT_HOPS: int = 4
-
-
-def _normalize_openrouter_model(model: str | None) -> str:
-    """Return *model* with an ``openrouter/`` prefix."""
-    if not model:
-        return f"openrouter/{_DEFAULT_MODEL}"
-    clean = str(model)
-    if clean.startswith("openrouter/"):
-        clean = clean[len("openrouter/"):]
-    return f"openrouter/{clean}"
 
 
 def _require_dspy() -> Any:
@@ -101,16 +89,18 @@ class AgenticRetriever(BaseGraphRetriever):
         """Return the cached DSPy LM instance, building it once."""
         if self._lm is not None:
             return self._lm
-        dspy_mod = _require_dspy()
+        _require_dspy()
+        from graphknows.config.llm import build_lm
+
         react_model = self._settings.extraction_model or self._settings.llm_model
-        self._lm = dspy_mod.LM(
-            model=_normalize_openrouter_model(react_model),
-            api_key=self._settings.openrouter_api_key,
-            api_base="https://openrouter.ai/api/v1",
+        self._lm = build_lm(
+            react_model,
+            api_key=self._settings.llm_api_key,
+            api_base=self._settings.llm_api_base,
             temperature=self._settings.llm_temperature,
-            # deepseek-v4-flash is a reasoning model: it spends much of the budget
-            # on reasoning_content, so a small budget truncates the ReAct tool-call
-            # output and that hop silently yields no chunks. Give it headroom.
+            # Reasoning models spend much of the budget on reasoning_content, so a
+            # small budget truncates the ReAct tool-call output and that hop silently
+            # yields no chunks. Give it headroom.
             max_tokens=max(self._settings.llm_max_tokens, 8192),
             num_retries=1,
             timeout=120,  # per-request; without it litellm defaults to 6000s → a hung call wedges the run

@@ -1,97 +1,69 @@
-"""Shared OpenRouter embedder for graphknows (ingestion + retrieval).
+"""Shared embedder for graphknows (ingestion + retrieval).
 
-Uses ``openai/text-embedding-3-small`` via OpenRouter. Raises ``RuntimeError``
-when ``OPENROUTER_API_KEY`` is not set, and propagates HTTP/network exceptions
-directly — no zero-vector fallbacks, no silent degradation.
+Local by default: a `sentence-transformers` model runs in-process, so the
+llm_free path needs **no API key**. Set ``GRAPHKNOWS_EMBED_API_BASE`` to route
+embeddings through a remote OpenAI-compatible endpoint instead (model + key from
+``GRAPHKNOWS_EMBED_MODEL`` / ``GRAPHKNOWS_EMBED_API_KEY``).
+
+No embedding fallbacks: network/model errors propagate directly.
 """
 
 from __future__ import annotations
 
 import functools
 import logging
-import os
-from pathlib import Path
 from typing import Any
 
 import httpx
 import numpy as np
-from dotenv import dotenv_values
 
 log = logging.getLogger(__name__)
 
-EMBED_MODEL: str = os.environ.get("EMBED_MODEL", "openai/text-embedding-3-small")
-EMBED_DIM: int = 1536  # text-embedding-3-small output dimension
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/embeddings"
+# Default output dimension (BAAI/bge-small-en-v1.5). Updated when a local model
+# loads; only used to shape the empty-input result.
+EMBED_DIM: int = 384
+
+_MAX_CHARS_PER_TEXT = 20_000  # ~5000 tokens; headroom below typical 8192-token limits
 
 
-_MAX_CHARS_PER_TEXT = 20_000  # ~5000 tokens; leave headroom below 8192-token limit
+@functools.lru_cache(maxsize=1)
+def _settings() -> Any:
+    from graphknows.config import GraphKnowsSettings
+
+    return GraphKnowsSettings()
 
 
-def _clean_secret(value: str | None) -> str:
-    """Return a usable secret from shell or .env syntax."""
-    return (value or "").strip().strip('"').strip("'")
+@functools.lru_cache(maxsize=2)
+def _local_model(model_name: str) -> Any:
+    """Load and cache a local sentence-transformers model on CPU."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ModuleNotFoundError as exc:  # pragma: no cover - sentence-transformers is a base dep
+        raise ModuleNotFoundError(
+            "Local embeddings need sentence-transformers (a base dependency). "
+            "Reinstall graphknows, or set GRAPHKNOWS_EMBED_API_BASE to use a remote endpoint."
+        ) from exc
+    model = SentenceTransformer(model_name, device="cpu")
+    global EMBED_DIM
+    get_dim = getattr(model, "get_embedding_dimension", None) or model.get_sentence_embedding_dimension
+    EMBED_DIM = int(get_dim())
+    return model
 
 
-def _repo_env_key() -> str:
-    """Best-effort OpenRouter key lookup from the repo .env file."""
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / ".env"
-        if candidate.exists():
-            values = dotenv_values(candidate)
-            return _clean_secret(values.get("OPENROUTER_API_KEY") or values.get("OPEN_ROUTER_API"))
-    return ""
+def _embed_local(texts: list[str], model_name: str) -> np.ndarray:
+    model = _local_model(model_name)
+    arr = model.encode(texts, normalize_embeddings=True, convert_to_numpy=True)
+    return np.asarray(arr, dtype=np.float32)
 
 
-def _openrouter_api_key() -> str:
-    """Resolve and normalize the OpenRouter key for all embedder call paths.
-
-    Primary source is os.environ, which GraphKnowsSettings._populate_from_repo_env
-    populates at startup (config/__init__.py).  The repo-env fallback here handles
-    standalone embedder use (tests, scripts) when GraphKnowsSettings is not loaded.
-    """
-    key = _clean_secret(os.environ.get("OPENROUTER_API_KEY")) or _clean_secret(
-        os.environ.get("OPEN_ROUTER_API")
-    )
-    if not key:
-        key = _repo_env_key()
-    if key:
-        os.environ["OPENROUTER_API_KEY"] = key
-        os.environ.setdefault("OPEN_ROUTER_API", key)
-    return key
-
-
-def embed(texts: list[str], model_name: str = EMBED_MODEL) -> np.ndarray:
-    """Embed *texts* via OpenRouter, returning shape (N, EMBED_DIM).
-
-    Each text is silently truncated to ``_MAX_CHARS_PER_TEXT`` characters before
-    sending to avoid OpenRouter's per-text token limit.
-
-    Args:
-        texts: Input strings to embed.
-        model_name: OpenRouter model identifier.
-
-    Returns:
-        Float32 array of shape (N, EMBED_DIM).
-
-    Raises:
-        RuntimeError: If ``OPENROUTER_API_KEY`` is not set.
-        httpx.HTTPStatusError: On HTTP errors from the OpenRouter API.
-        httpx.RequestError: On network-level failures.
-    """
-    if not texts:
-        return np.zeros((0, EMBED_DIM), dtype=np.float32)
-
-    api_key = _openrouter_api_key()
-    if not api_key:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY is not set — embedding requires the OpenRouter API key. "
-            "Set it in .env or the environment before running."
-        )
-
+def _embed_remote(texts: list[str], model_name: str, api_base: str, api_key: str) -> np.ndarray:
     truncated = [t[:_MAX_CHARS_PER_TEXT] for t in texts]
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     resp = httpx.post(
-        _OPENROUTER_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        f"{api_base.rstrip('/')}/embeddings",
+        headers=headers,
         json={"model": model_name, "input": truncated},
         timeout=httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=5.0),
     )
@@ -99,12 +71,34 @@ def embed(texts: list[str], model_name: str = EMBED_MODEL) -> np.ndarray:
     body = resp.json()
     if "data" not in body:
         raise RuntimeError(
-            f"OpenRouter embeddings response missing 'data' key. "
+            f"Embeddings response missing 'data' key. "
             f"Status {resp.status_code}. Body: {resp.text[:400]}"
         )
-    data = body["data"]
-    vecs = [d["embedding"] for d in sorted(data, key=lambda x: x["index"])]
+    vecs = [d["embedding"] for d in sorted(body["data"], key=lambda x: x["index"])]
     return np.array(vecs, dtype=np.float32)
+
+
+def embed(texts: list[str], model_name: str = "") -> np.ndarray:
+    """Embed *texts*, returning shape ``(N, dim)``.
+
+    Uses a local sentence-transformers model unless ``GRAPHKNOWS_EMBED_API_BASE``
+    is set, in which case a remote OpenAI-compatible endpoint is called.
+
+    Args:
+        texts: Input strings to embed.
+        model_name: Model id override; defaults to the configured ``embed_model``.
+
+    Returns:
+        Float32 array of shape ``(N, dim)``.
+    """
+    if not texts:
+        return np.zeros((0, EMBED_DIM), dtype=np.float32)
+
+    s = _settings()
+    model = model_name or s.embed_model
+    if s.embed_api_base:
+        return _embed_remote(texts, model, s.embed_api_base, s.embed_api_key)
+    return _embed_local(texts, model)
 
 
 @functools.lru_cache(maxsize=4096)
@@ -113,44 +107,16 @@ def _embed_one_cached(text: str, model_name: str) -> tuple[float, ...]:
     return tuple(embed([text], model_name)[0].tolist())
 
 
-def embed_one(text: str, model_name: str = EMBED_MODEL) -> list[float]:
-    """Embed a single string and return a plain float list.
-
-    Repeated calls with identical ``(text, model_name)`` hit an in-process
-    LRU cache (max 4096 entries) instead of making a network round-trip.
-
-    Args:
-        text: Input string.
-        model_name: OpenRouter model identifier.
-
-    Returns:
-        Embedding as a plain Python list of floats.
-
-    Raises:
-        RuntimeError: If ``OPENROUTER_API_KEY`` is not set.
-        httpx.HTTPStatusError: On HTTP errors from the OpenRouter API.
-    """
+def embed_one(text: str, model_name: str = "") -> list[float]:
+    """Embed a single string (LRU-cached) and return a plain float list."""
     return list(_embed_one_cached(text, model_name))
 
 
-def get_embedder(model_name: str = EMBED_MODEL) -> Any:
-    """Return a minimal embedder-like object compatible with legacy callers.
-
-    Legacy code expects ``embedder.encode(texts, normalize_embeddings=True)``.
-    This shim wraps :func:`embed` so existing call sites keep working.
-
-    Args:
-        model_name: OpenRouter model identifier.
-
-    Returns:
-        Object with an ``encode`` method.
-    """
+def get_embedder(model_name: str = "") -> Any:
+    """Return a minimal ``encode``-compatible embedder shim for legacy callers."""
 
     class _Shim:
-        def encode(
-            self,
-            texts: list[str] | str,
-        ) -> np.ndarray:
+        def encode(self, texts: list[str] | str) -> np.ndarray:
             if isinstance(texts, str):
                 texts = [texts]
             return embed(texts, model_name)

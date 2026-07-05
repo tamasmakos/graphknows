@@ -17,10 +17,11 @@ import pytest
 
 def _make_settings():
     settings = MagicMock()
-    settings.embed_model = "openai/text-embedding-3-small"
+    settings.embed_model = "BAAI/bge-small-en-v1.5"
     settings.extraction_model = None
-    settings.llm_model = "deepseek/deepseek-v4-flash"
-    settings.openrouter_api_key = "sk-test"
+    settings.llm_model = "openrouter/deepseek/deepseek-v4-flash"
+    settings.llm_api_key = "sk-test"
+    settings.llm_api_base = ""
     settings.llm_temperature = 0.0
     settings.llm_max_tokens = 512
     return settings

@@ -1,118 +1,145 @@
-"""Tests for graphknows.memory.stores.embedder — embed, embed_one, get_embedder."""
+"""Tests for graphknows.memory.stores.embedder — local + remote embed paths."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 
-class TestEmbed:
+def _settings(*, embed_api_base="", embed_model="BAAI/bge-small-en-v1.5", embed_api_key=""):
+    return SimpleNamespace(
+        embed_api_base=embed_api_base, embed_model=embed_model, embed_api_key=embed_api_key
+    )
+
+
+class TestEmbedLocal:
     def test_empty_list_returns_zero_array(self):
         from graphknows.memory.stores.embedder import EMBED_DIM, embed
 
         result = embed([])
         assert result.shape == (0, EMBED_DIM)
 
-    def test_raises_without_api_key(self, monkeypatch):
-        from graphknows.memory.stores.embedder import embed
+    def test_local_embed_returns_correct_shape(self):
+        from graphknows.memory.stores import embedder
 
-        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-        monkeypatch.delenv("OPEN_ROUTER_API", raising=False)
-        monkeypatch.setattr("graphknows.memory.stores.embedder._repo_env_key", lambda: "")
-        with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-            embed(["hello"])
+        fake_model = MagicMock()
+        fake_model.encode.return_value = np.array([[0.1, 0.2, 0.3]], dtype=np.float32)
+        with (
+            patch.object(embedder, "_settings", return_value=_settings()),
+            patch.object(embedder, "_local_model", return_value=fake_model),
+        ):
+            result = embedder.embed(["hello world"])
 
-    def test_successful_embed_returns_correct_shape(self, monkeypatch):
-        from graphknows.memory.stores.embedder import EMBED_DIM, embed
-
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-
-        fake_response = {"data": [{"index": 0, "embedding": [0.1] * EMBED_DIM}]}
-
-        with patch("httpx.post") as mock_post:
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = fake_response
-            mock_resp.raise_for_status = MagicMock()
-            mock_post.return_value = mock_resp
-
-            result = embed(["hello world"])
-
-        assert result.shape == (1, EMBED_DIM)
+        assert result.shape == (1, 3)
         assert result.dtype == np.float32
+        fake_model.encode.assert_called_once()
 
-    def test_truncates_long_text(self, monkeypatch):
-        from graphknows.memory.stores.embedder import _MAX_CHARS_PER_TEXT, EMBED_DIM, embed
 
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+class TestEmbedRemote:
+    def test_remote_embed_hits_configured_endpoint(self):
+        from graphknows.memory.stores import embedder
 
-        sent_inputs = []
+        captured = {}
 
         def fake_post(url, headers, json, timeout):
-            sent_inputs.extend(json["input"])
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"data": [{"index": 0, "embedding": [0.1] * EMBED_DIM}]}
-            mock_resp.raise_for_status = MagicMock()
-            return mock_resp
+            captured["url"] = url
+            resp = MagicMock()
+            resp.json.return_value = {"data": [{"index": 0, "embedding": [0.1, 0.2]}]}
+            resp.raise_for_status = MagicMock()
+            return resp
 
-        with patch("httpx.post", side_effect=fake_post):
-            embed(["x" * 50_000])
+        with (
+            patch.object(
+                embedder,
+                "_settings",
+                return_value=_settings(embed_api_base="https://api.example.com/v1", embed_api_key="k"),
+            ),
+            patch("httpx.post", side_effect=fake_post),
+        ):
+            result = embedder.embed(["hello"])
 
-        assert len(sent_inputs[0]) == _MAX_CHARS_PER_TEXT
+        assert captured["url"] == "https://api.example.com/v1/embeddings"
+        assert result.shape == (1, 2)
 
-    def test_raises_when_data_missing_from_response(self, monkeypatch):
-        from graphknows.memory.stores.embedder import embed
+    def test_remote_truncates_long_text(self):
+        from graphknows.memory.stores import embedder
 
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        sent = []
 
-        with patch("httpx.post") as mock_post:
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"error": "quota exceeded"}
-            mock_resp.status_code = 429
-            mock_resp.text = "quota exceeded"
-            mock_resp.raise_for_status = MagicMock()
-            mock_post.return_value = mock_resp
+        def fake_post(url, headers, json, timeout):
+            sent.extend(json["input"])
+            resp = MagicMock()
+            resp.json.return_value = {"data": [{"index": 0, "embedding": [0.1]}]}
+            resp.raise_for_status = MagicMock()
+            return resp
 
-            with pytest.raises(RuntimeError, match="missing 'data' key"):
-                embed(["hello"])
+        with (
+            patch.object(
+                embedder, "_settings", return_value=_settings(embed_api_base="https://x/v1")
+            ),
+            patch("httpx.post", side_effect=fake_post),
+        ):
+            embedder.embed(["x" * 50_000])
+
+        assert len(sent[0]) == embedder._MAX_CHARS_PER_TEXT
+
+    def test_remote_raises_when_data_missing(self):
+        import pytest
+
+        from graphknows.memory.stores import embedder
+
+        resp = MagicMock()
+        resp.json.return_value = {"error": "quota exceeded"}
+        resp.status_code = 429
+        resp.text = "quota exceeded"
+        resp.raise_for_status = MagicMock()
+
+        with (
+            patch.object(
+                embedder, "_settings", return_value=_settings(embed_api_base="https://x/v1")
+            ),
+            patch("httpx.post", return_value=resp),
+            pytest.raises(RuntimeError, match="missing 'data' key"),
+        ):
+            embedder.embed(["hello"])
 
 
 class TestEmbedOne:
-    def test_returns_list_of_floats(self, monkeypatch):
-        from graphknows.memory.stores.embedder import EMBED_DIM, embed_one
+    def test_returns_list_of_floats(self):
+        import pytest
 
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        from graphknows.memory.stores import embedder
 
-        with patch("graphknows.memory.stores.embedder.embed") as mock_embed:
-            mock_embed.return_value = np.array([[0.1] * EMBED_DIM], dtype=np.float32)
-            result = embed_one("hello")
+        embedder._embed_one_cached.cache_clear()
+        with patch.object(
+            embedder, "embed", return_value=np.array([[0.1, 0.2, 0.3]], dtype=np.float32)
+        ):
+            result = embedder.embed_one("hello-unique")
 
         assert isinstance(result, list)
-        assert len(result) == EMBED_DIM
+        assert result == pytest.approx([0.1, 0.2, 0.3], abs=1e-6)
 
 
 class TestGetEmbedder:
-    def test_shim_encode_calls_embed(self, monkeypatch):
-        from graphknows.memory.stores.embedder import EMBED_DIM, get_embedder
+    def test_shim_encode_calls_embed(self):
+        from graphknows.memory.stores import embedder
 
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-
-        with patch("graphknows.memory.stores.embedder.embed") as mock_embed:
-            mock_embed.return_value = np.array([[0.2] * EMBED_DIM], dtype=np.float32)
-            shim = get_embedder()
+        with patch.object(
+            embedder, "embed", return_value=np.array([[0.2, 0.3]], dtype=np.float32)
+        ) as mock_embed:
+            shim = embedder.get_embedder()
             result = shim.encode(["test text"])
 
-        mock_embed.assert_called_once_with(["test text"], "openai/text-embedding-3-small")
-        assert result.shape == (1, EMBED_DIM)
+        mock_embed.assert_called_once_with(["test text"], "")
+        assert result.shape == (1, 2)
 
-    def test_shim_wraps_string_in_list(self, monkeypatch):
-        from graphknows.memory.stores.embedder import EMBED_DIM, get_embedder
+    def test_shim_wraps_string_in_list(self):
+        from graphknows.memory.stores import embedder
 
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-
-        with patch("graphknows.memory.stores.embedder.embed") as mock_embed:
-            mock_embed.return_value = np.array([[0.1] * EMBED_DIM], dtype=np.float32)
-            shim = get_embedder()
+        with patch.object(
+            embedder, "embed", return_value=np.array([[0.1]], dtype=np.float32)
+        ) as mock_embed:
+            shim = embedder.get_embedder()
             shim.encode("single string")
 
-        call_args = mock_embed.call_args[0][0]
-        assert call_args == ["single string"]
+        assert mock_embed.call_args[0][0] == ["single string"]

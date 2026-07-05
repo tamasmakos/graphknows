@@ -26,13 +26,14 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
         config={
             "llm": {
                 "model": settings.extraction_model or settings.llm_model,
+                "api_key": settings.llm_api_key or "",
+                "api_base": settings.llm_api_base or "",
                 "temperature": settings.llm_temperature,
                 # Relation extraction needs headroom: reasoning models spend the
                 # budget on reasoning_content and truncate the structured triplet
                 # output at 2048, producing malformed/empty JSON.
                 "max_tokens": max(settings.llm_max_tokens, 4096),
             },
-            "infra": {"openrouter_api_key": settings.openrouter_api_key or ""},
             "ontology": {"file": ontology_file},
         }
     )
@@ -140,12 +141,13 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     pg = ArcadeDBVectorStore(client=client)
     relation_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
     neo = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
-    key = settings.openrouter_api_key or ""
     return LTMPromotionPipeline(
         mg,
         pg,
         neo,
-        openrouter_key=key,
+        llm_api_key=settings.llm_api_key or "",
+        llm_api_base=settings.llm_api_base or "",
+        llm_model=settings.summarization_model or settings.llm_model,
         extraction_uses_llm=profile.extraction_uses_llm,
     )
 
@@ -162,14 +164,14 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     flush_pg = build_arcadedb_vector_store(settings)
     neo = build_arcadedb_ltm_store(settings)
     extractor = _build_entity_extractor("llm_assisted" if profile.extraction_uses_llm else "gliner2")
-    key = settings.openrouter_api_key or ""
     return CorpusIngestWorkflow(
         mg_store=mg,
         pg_store=pg,
         neo_store=neo,
         extractor=extractor,
         embed_fn=embed_one,
-        openrouter_key=key,
+        llm_api_key=settings.llm_api_key or "",
+        llm_api_base=settings.llm_api_base or "",
         rel_extractor=None,
         extraction_uses_llm=profile.extraction_uses_llm,
         flush_pg_store=flush_pg,

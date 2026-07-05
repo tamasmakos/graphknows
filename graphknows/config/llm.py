@@ -20,6 +20,33 @@ _MASKED_SECRET = "**********"
 _DEFAULT_MODEL = ""
 
 
+def build_lm(
+    model: str,
+    *,
+    api_key: str = "",
+    api_base: str = "",
+    temperature: float = 0.0,
+    max_tokens: int = 2048,
+    **extra: Any,
+) -> Any:
+    """Construct a provider-neutral ``dspy.LM``.
+
+    ``model`` is a litellm model string (e.g. ``openrouter/deepseek/deepseek-v4-flash``
+    or ``openai/gpt-4o-mini``); the provider base URL is inferred from its prefix.
+    Pass ``api_base`` only to override that (e.g. a self-hosted vLLM endpoint). This
+    is the single place graphknows builds an LM — no provider endpoint is hardcoded.
+    """
+    import dspy
+
+    kwargs: dict[str, Any] = {"model": model, "temperature": temperature, "max_tokens": max_tokens}
+    if api_key:
+        kwargs["api_key"] = api_key
+    if api_base:
+        kwargs["api_base"] = api_base
+    kwargs.update(extra)
+    return dspy.LM(**kwargs)
+
+
 def _extract_secret(container: Any, key: str) -> str | None:
     """Safely extract a secret from dicts, pydantic models, or env-backed config."""
     if container is None:

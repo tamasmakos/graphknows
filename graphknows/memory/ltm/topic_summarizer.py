@@ -11,8 +11,6 @@ try:
 except ImportError:  # pragma: no cover - optional deployment dependency
     dspy = None  # type: ignore[assignment]
 
-from graphknows.config.llm import normalize_openrouter_model
-
 log = logging.getLogger(__name__)
 
 
@@ -57,18 +55,20 @@ class TopicSummarizer:
     whenever a key is configured.
     """
 
-    def __init__(self, api_key: str | None, model: str) -> None:
+    def __init__(self, api_key: str | None, model: str, api_base: str = "") -> None:
         self._api_key = (api_key or "").strip()
-        self._model = normalize_openrouter_model(model)
+        self._model = model
         self._module = TopicSummaryModule() if self._api_key else None
         self._lm = None
         if self._api_key:
             if dspy is None:
                 raise ImportError("dspy is required for LLM-backed topic summarization")
-            self._lm = dspy.LM(
-                model=self._model,
+            from graphknows.config.llm import build_lm
+
+            self._lm = build_lm(
+                self._model,
                 api_key=self._api_key,
-                api_base="https://openrouter.ai/api/v1",
+                api_base=api_base,
                 temperature=0.0,
                 max_tokens=1024,
                 num_retries=0,

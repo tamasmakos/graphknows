@@ -40,14 +40,16 @@ class LTMPromotionPipeline:
         mg_store: Any,
         pg_store: IVectorDb,
         neo_store: Any,
-        openrouter_key: str = "",
+        llm_api_key: str = "",
+        llm_api_base: str = "",
         llm_model: str = "",
         extraction_uses_llm: bool = False,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
         self._neo = neo_store
-        self._openrouter_key = openrouter_key
+        self._llm_api_key = llm_api_key
+        self._llm_api_base = llm_api_base
         self._llm_model = llm_model
         self._extraction_uses_llm = extraction_uses_llm
         self._entity_resolution = EntityResolution()
@@ -196,10 +198,12 @@ class LTMPromotionPipeline:
     async def _run_topics(self, session_id: str, gds_result: Any, record: PromotionRecord) -> None:
         try:
             summarizer = None
-            if self._openrouter_key:
+            if self._llm_api_key:
                 from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
 
-                summarizer = TopicSummarizer(self._openrouter_key, self._llm_model)
+                summarizer = TopicSummarizer(
+                    self._llm_api_key, self._llm_model, self._llm_api_base
+                )
             record.topics_created = await self._neo.write_topic_summaries(
                 session_id=session_id,
                 summarizer=summarizer,
@@ -302,9 +306,9 @@ class LTMPromotionPipeline:
             )
             return {"nodes": nodes, "edges": edges}
 
-        if not (self._openrouter_key or "").strip():
+        if not (self._llm_api_key or "").strip():
             log.warning(
-                "_write_ltm_graph %s: openrouter_key is empty — skipping "
+                "_write_ltm_graph %s: llm_api_key is empty — skipping "
                 "extract_and_write_relations (rel_edges=0)",
                 session_id,
             )
@@ -314,7 +318,7 @@ class LTMPromotionPipeline:
         try:
             rel_edges = await self._neo.extract_and_write_relations(
                 stm_data=stm_data,
-                openrouter_key=self._openrouter_key,
+                llm_api_key=self._llm_api_key,
                 session_id=session_id,
             )
         except Exception as exc:

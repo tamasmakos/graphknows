@@ -51,7 +51,8 @@ class CorpusIngestWorkflow:
         neo_store: Any,
         extractor: Any,
         embed_fn: Any,
-        openrouter_key: str = "",
+        llm_api_key: str = "",
+        llm_api_base: str = "",
         rel_extractor: Any = None,
         extraction_uses_llm: bool = False,
         flush_pg_store: Any | None = None,
@@ -61,7 +62,8 @@ class CorpusIngestWorkflow:
         self._neo = neo_store
         self._extractor = extractor
         self._embed_fn = embed_fn
-        self._openrouter_key = openrouter_key
+        self._llm_api_key = llm_api_key
+        self._llm_api_base = llm_api_base
         self._rel_extractor = rel_extractor
         self._extraction_uses_llm = extraction_uses_llm
         self._flush_pg_store = flush_pg_store
@@ -137,7 +139,8 @@ class CorpusIngestWorkflow:
             mg_store=self._mg,
             pg_store=flush_pg,
             neo_store=self._neo,
-            openrouter_key=self._openrouter_key,
+            llm_api_key=self._llm_api_key,
+            llm_api_base=self._llm_api_base,
             extraction_uses_llm=self._extraction_uses_llm,
         )
         try:
