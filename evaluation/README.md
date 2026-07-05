@@ -1,5 +1,13 @@
 # Graphknows Evaluation
 
+> **Internal benchmarking — not part of the installed `graphknows` package.**
+> This directory is excluded from the wheel and sdist and depends on the `eval`
+> dependency group (`datasets`, `pandas`, `tabulate`). The memory side is
+> configured with `GRAPHKNOWS_*` variables (see [docs/configuration.md](../docs/configuration.md));
+> the SemanticF1 scorer and answer generator additionally read `OPENROUTER_API_KEY`.
+> The LoCoMo dataset is **not redistributed** here — regenerate it with the
+> converter below and check the upstream license for redistribution terms.
+
 A LoCoMo evaluation framework with one job: measure graphknows ingestion and
 retrieval through a DSPy answer-generation pipeline, scored with **DSPy
 SemanticF1** as the single headline metric and lexical token-F1 as a cheap

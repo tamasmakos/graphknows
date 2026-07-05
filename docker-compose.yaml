@@ -1,51 +1,45 @@
-# docker-compose.yaml — ArcadeDB-only stack
-# Services: arcadedb, mcp, workspace, web
-# Usage: docker compose up -d
+# docker-compose.yaml — GraphKnows stack (ArcadeDB + MCP server + web Memory Mirror)
+#
+#   docker compose up -d                 # arcadedb + mcp + web
+#   docker compose --profile dev up -d   # + workspace dev container
+#   docker compose --profile observability up -d   # + Langfuse
+#
+# Configure via a .env file (see .env.example). All app config is GRAPHKNOWS_*.
+
+x-graphknows-env: &graphknows-env
+  GRAPHKNOWS_ARCADEDB_URL: "${GRAPHKNOWS_ARCADEDB_URL:-http://arcadedb:2480}"
+  GRAPHKNOWS_ARCADEDB_USER: "${GRAPHKNOWS_ARCADEDB_USER:-root}"
+  GRAPHKNOWS_ARCADEDB_PASSWORD: "${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
+  GRAPHKNOWS_MODE: "${GRAPHKNOWS_MODE:-llm_free}"
+  GRAPHKNOWS_LLM_MODEL: "${GRAPHKNOWS_LLM_MODEL:-openrouter/deepseek/deepseek-v4-flash}"
+  GRAPHKNOWS_LLM_API_KEY: "${GRAPHKNOWS_LLM_API_KEY:-}"
+  GRAPHKNOWS_EMBED_MODEL: "${GRAPHKNOWS_EMBED_MODEL:-BAAI/bge-small-en-v1.5}"
 
 services:
-  # ── Infrastructure ──────────────────────────────────────────────────────────
-
   arcadedb:
     image: arcadedata/arcadedb:latest
     ports:
-      - "${ARCADEDB_HTTP_PORT:-2480}:2480"
+      - "${GRAPHKNOWS_ARCADEDB_PORT:-2480}:2480"
     environment:
-      JAVA_OPTS: "-Darcadedb.server.rootPassword=${ARCADEDB_PASSWORD:-changeme}"
+      JAVA_OPTS: "-Darcadedb.server.rootPassword=${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
     volumes:
       - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped
     healthcheck:
-      # The arcadedb image ships wget, not curl — curl exec-fails every probe.
+      # The arcadedb image ships wget, not curl.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2480/api/v1/ready"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
 
-  # ── Application Services ────────────────────────────────────────────────────
-
   mcp:
     container_name: graphknows-mcp
     build:
       context: .
       dockerfile: Dockerfile
-    volumes:
-      - .:/app
     command: graphknows-mcp
-    environment:
-      ARCADEDB_URL: "${ARCADEDB_URL:-http://arcadedb:2480}"
-      ARCADEDB_USER: "${ARCADEDB_USER:-root}"
-      ARCADEDB_PASSWORD: "${ARCADEDB_PASSWORD:-changeme}"
-      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
-      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
-      GROQ_API_KEY: "${GROQ_API_KEY:-}"
-      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
-      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
-      LANGFUSE_HOST: "${LANGFUSE_HOST:-}"
-      LANGFUSE_BASE_URL: "${LANGFUSE_BASE_URL:-}"
-      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
-      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+    environment: *graphknows-env
     depends_on:
       arcadedb:
         condition: service_healthy
@@ -56,11 +50,9 @@ services:
       context: .
       dockerfile: Dockerfile.web
     ports:
-      - "${WEB_PORT:-8800}:8800"
+      - "${GRAPHKNOWS_WEB_PORT:-8800}:8800"
     environment:
-      ARCADEDB_URL: "${ARCADEDB_URL:-http://arcadedb:2480}"
-      ARCADEDB_USER: "${ARCADEDB_USER:-root}"
-      ARCADEDB_PASSWORD: "${ARCADEDB_PASSWORD:-changeme}"
+      <<: *graphknows-env
       GRAPHKNOWS_WEB_HOST: "0.0.0.0"
       GRAPHKNOWS_WEB_PORT: "8800"
       GRAPHKNOWS_FRONTEND_DIR: "/app/frontend"
@@ -68,26 +60,25 @@ services:
       arcadedb:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8800/healthz')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
+  # Dev container (mounts the repo, interactive shell). `--profile dev`.
   workspace:
     container_name: graphknows-workspace
-    image: graphknows-workspace:latest
+    profiles: ["dev"]
     build:
       context: .
       dockerfile: Dockerfile
-    user: root
     working_dir: /app
     volumes:
       - .:/app
     environment:
-      ARCADEDB_URL: "${ARCADEDB_URL:-http://arcadedb:2480}"
-      ARCADEDB_USER: "${ARCADEDB_USER:-root}"
-      ARCADEDB_PASSWORD: "${ARCADEDB_PASSWORD:-changeme}"
-      LLM_PROVIDER: "${LLM_PROVIDER:-groq}"
-      LLM_MODEL: "${LLM_MODEL:-llama-3.3-70b-versatile}"
-      LLM_GROQ_API_KEY: "${LLM_GROQ_API_KEY:-}"
-      LLM_OPENAI_API_KEY: "${LLM_OPENAI_API_KEY:-}"
-      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      <<: *graphknows-env
       PYTHONPATH: /app
     tty: true
     stdin_open: true
@@ -97,8 +88,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── Observability (optional profile) ────────────────────────────────────────
-
+  # Optional tracing. `--profile observability`.
   langfuse:
     image: langfuse/langfuse:2.95.0
     profiles: ["observability"]

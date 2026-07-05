@@ -50,6 +50,32 @@ asyncio.run(main())
 Configuration is via `GRAPHKNOWS_*` environment variables (or a `.env` file) — see
 [.env.example](.env.example) and [docs/configuration.md](docs/configuration.md).
 
+## Running the servers
+
+The same runtime backs an MCP stdio server and a web Memory Mirror.
+
+```bash
+docker compose up -d            # arcadedb + mcp + web (Memory Mirror on :8800)
+```
+
+**MCP** (Claude Desktop / Claude Code) — register the stdio server:
+
+```json
+{
+  "mcpServers": {
+    "graphknows": {
+      "command": "graphknows-mcp",
+      "env": { "GRAPHKNOWS_ARCADEDB_URL": "http://localhost:2480" }
+    }
+  }
+}
+```
+
+**Web** — `graphknows-web` serves the Memory Mirror (liveness at `/healthz`,
+readiness at `/readyz`). The bundled SPA ships via the Docker image; a bare
+`pip` install exposes the JSON API and can point at a static dir with
+`GRAPHKNOWS_FRONTEND_DIR`.
+
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — STM/LTM, promotion, RRF retrieval

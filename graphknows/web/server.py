@@ -225,6 +225,21 @@ async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
     }
 
 
+async def healthz(_: Request) -> JSONResponse:
+    """Liveness probe — process is up (no backend calls)."""
+    return JSONResponse({"status": "ok"})
+
+
+async def readyz(_: Request) -> JSONResponse:
+    """Readiness probe — backend reachable (503 if not)."""
+    try:
+        report = await get_runtime().doctor()
+        ok = report.get("arcadedb_stm") is True and report.get("arcadedb_ltm") is True
+        return JSONResponse(report, status_code=200 if ok else 503)
+    except Exception as exc:
+        return JSONResponse(_error_payload(exc), status_code=503)
+
+
 async def health(_: Request) -> JSONResponse:
     """Return backend connectivity status."""
     try:
@@ -418,6 +433,8 @@ async def flush_session(request: Request) -> JSONResponse:
 def _routes() -> list[Any]:
     frontend_dir = _frontend_dir()
     routes: list[Any] = [
+        Route("/healthz", healthz),
+        Route("/readyz", readyz),
         Route("/api/health", health),
         Route("/api/stats", stats),
         Route("/api/sessions", sessions),
@@ -442,6 +459,7 @@ app = Starlette(debug=False, routes=_routes())
 
 def main() -> None:
     """Run the local Memory Mirror web server."""
+    get_settings().check_production_secrets()
     host = os.environ.get("GRAPHKNOWS_WEB_HOST", "0.0.0.0")
     port = int(os.environ.get("GRAPHKNOWS_WEB_PORT", DEFAULT_PORT))
     uvicorn.run("graphknows.web.server:app", host=host, port=port, reload=False)

@@ -14,7 +14,7 @@ COPY frontend ./frontend
 # Install all production deps + dev/eval groups into an isolated venv
 RUN uv venv /opt/venv && \
     uv pip install --python /opt/venv/bin/python --no-cache \
-        .[web] \
+        .[assisted] \
         --group dev \
         --group eval \
         jupyterlab

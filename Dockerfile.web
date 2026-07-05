@@ -1,6 +1,7 @@
 # Dockerfile.web — Memory Mirror web UI
-# Serves the GraphKnows frontend (static SPA) + a thin Starlette API
-# that queries Neo4j and Memgraph to render graphs.
+# Serves the GraphKnows frontend (static SPA) + the Starlette API over ArcadeDB.
+# Installs the full base package: the server ingests (GLiNER2/spaCy) and embeds
+# queries (sentence-transformers), so a torch-free image is not possible.
 #
 # Build:  docker compose build web
 # Run:    docker compose up -d web
@@ -17,10 +18,9 @@ COPY pyproject.toml ./
 COPY uv.lock* ./
 COPY graphknows/ ./graphknows/
 
-# Install only the minimal web extras — avoids pulling in ML/CUDA packages
-# (torch, spacy, gliner, etc.) that the UI server does not need.
 RUN uv venv /opt/venv && \
-    uv pip install --python /opt/venv/bin/python --no-cache ".[web]"
+    uv pip install --python /opt/venv/bin/python --no-cache "." && \
+    /opt/venv/bin/python -m spacy download en_core_web_lg
 
 # ─── runtime stage ─────────────────────────────────────────────────────────────
 FROM python:3.13-slim AS runtime
@@ -48,6 +48,6 @@ EXPOSE 8800
 # Timeout raised to 15s: the probe cold-starts a Python interpreter each run and
 # was timing out under CPU load (endpoint itself returns 200), flapping unhealthy.
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8800/api/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8800/healthz')" || exit 1
 
 CMD ["graphknows-web"]
