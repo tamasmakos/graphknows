@@ -38,6 +38,14 @@ def build_lm(
     """
     import dspy
 
+    # OpenRouter model ids carry a nested provider (e.g.
+    # openrouter/deepseek/deepseek-v4-flash). Without an explicit base, litellm
+    # can strip the openrouter/ prefix and mis-route the nested provider to its
+    # native API. Pin the OpenRouter base so the default config works out of the
+    # box; any other provider is left to litellm's own inference.
+    if not api_base and model.startswith("openrouter/"):
+        api_base = "https://openrouter.ai/api/v1"
+
     kwargs: dict[str, Any] = {"model": model, "temperature": temperature, "max_tokens": max_tokens}
     if api_key:
         kwargs["api_key"] = api_key

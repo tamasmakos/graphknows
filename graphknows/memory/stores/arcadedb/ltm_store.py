@@ -552,7 +552,7 @@ class ArcadeDBLTMStore:
         # Fetch all entity names and directed relation edges.
         try:
             entity_rows = await self._qry(
-                "MATCH (e:ENTITY) RETURN e.name AS name WHERE e.name IS NOT NULL"
+                "MATCH (e:ENTITY) WHERE e.name IS NOT NULL RETURN e.name AS name"
             )
             edge_rows = await self._qry(
                 "MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE r.is_current = true OR r.is_current IS NULL "

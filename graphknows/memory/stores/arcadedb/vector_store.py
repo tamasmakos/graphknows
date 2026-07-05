@@ -23,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 _STM_DB = "stm"
 _LTM_DB = "ltm"
-_VEC_DIM = 1536
+# Vector-index dimension is injected at schema-creation time to match the
+# configured embedder (see ensure_schema); this token is replaced with the
+# real dimension from embedder.embed_dim().
+_VEC_DIM = "__VEC_DIM__"
 
 # ---------------------------------------------------------------------------
 # DDL helpers
@@ -184,11 +187,19 @@ class ArcadeDBVectorStore:
         await self._c.close()
 
     async def ensure_schema(self) -> None:
-        """Add embedding DDL to STM and create LTM vector schema. Idempotent."""
+        """Add embedding DDL to STM and create LTM vector schema. Idempotent.
+
+        Vector indexes are declared at the configured embedder's dimension so
+        the index matches the vectors written into it.
+        """
+        from graphknows.memory.stores.embedder import embed_dim
+
+        dim = str(embed_dim())
+
         # STM: extend existing CHUNK/TURN with embedding property + index
         for lang, stmt in _STM_EMB_DDL:
             try:
-                await self._c.command(_STM_DB, stmt, language=lang)
+                await self._c.command(_STM_DB, stmt.replace(_VEC_DIM, dim), language=lang)
             except Exception as exc:
                 if "already exists" not in str(exc).lower():
                     logger.debug("STM emb DDL (non-fatal): %s | %s", stmt[:60], exc)
@@ -197,7 +208,7 @@ class ArcadeDBVectorStore:
         await self._c.create_database(_LTM_DB)
         for lang, stmt in _LTM_BASE_DDL:
             try:
-                await self._c.command(_LTM_DB, stmt, language=lang)
+                await self._c.command(_LTM_DB, stmt.replace(_VEC_DIM, dim), language=lang)
             except Exception as exc:
                 if "already exists" not in str(exc).lower():
                     logger.debug("LTM DDL (non-fatal): %s | %s", stmt[:60], exc)

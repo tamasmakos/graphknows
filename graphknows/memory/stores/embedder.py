@@ -101,6 +101,15 @@ def embed(texts: list[str], model_name: str = "") -> np.ndarray:
     return _embed_local(texts, model)
 
 
+@functools.lru_cache(maxsize=1)
+def embed_dim() -> int:
+    """Return the dimension of the configured embedding model (probes once).
+
+    Used to declare vector indexes at the matching dimension.
+    """
+    return int(embed(["dimension probe"]).shape[1])
+
+
 @functools.lru_cache(maxsize=4096)
 def _embed_one_cached(text: str, model_name: str) -> tuple[float, ...]:
     """LRU-cached single-text embedding keyed by (text, model_name)."""
