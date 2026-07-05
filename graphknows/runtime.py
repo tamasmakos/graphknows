@@ -86,6 +86,12 @@ class GraphKnowsRuntime:
         self._retriever: Any = None
         self._retriever_stores: list[Any] = []
 
+    async def __aenter__(self) -> GraphKnowsRuntime:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def close(self) -> None:
         """Close any store connections held by this runtime instance."""
         import contextlib

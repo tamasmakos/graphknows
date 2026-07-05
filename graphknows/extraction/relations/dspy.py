@@ -29,10 +29,9 @@ from typing import Any
 try:
     import dspy
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without the extra
-    raise ModuleNotFoundError(
-        "llm_assisted extraction requires the 'assisted' extra. "
-        "Install it with:  pip install 'graphknows[assisted]'"
-    ) from exc
+    from graphknows.exceptions import MissingExtraError
+
+    raise MissingExtraError("llm_assisted extraction", "assisted") from exc
 from pydantic import BaseModel, Field
 
 from graphknows.config.llm import _get_openrouter_api_key, build_lm

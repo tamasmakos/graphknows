@@ -18,7 +18,14 @@ from __future__ import annotations
 
 __version__ = "1.0.0rc1"
 
-from graphknows.config import GraphKnowsSettings
+from graphknows.config import GraphKnowsSettings, MemoryMode
+from graphknows.exceptions import (
+    ConfigurationError,
+    ExtractionError,
+    GraphKnowsError,
+    MissingExtraError,
+    StoreConnectionError,
+)
 from graphknows.memory.query import DETRetriever, RetrievalContext
 from graphknows.memory.stores.arcadedb import (
     ArcadeDBClient,
@@ -34,10 +41,17 @@ __all__ = [
     "ArcadeDBLTMStore",
     "ArcadeDBSTMStore",
     "ArcadeDBVectorStore",
+    "ConfigurationError",
     "DETRetriever",
+    "ExtractionError",
+    "GraphKnowsError",
     "GraphKnowsRuntime",
     "GraphKnowsSettings",
+    "MemoryMode",
+    "MissingExtraError",
     "RetrievalContext",
+    "StoreConnectionError",
+    "__version__",
     "embed",
     "embed_one",
     "get_embedder",
