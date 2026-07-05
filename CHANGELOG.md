@@ -27,9 +27,11 @@ pip-installable library with a first-class server story.
 - **BREAKING:** all environment variables are now prefixed `GRAPHKNOWS_`
   (e.g. `ARCADEDB_URL` → `GRAPHKNOWS_ARCADEDB_URL`, `LLM_MODEL` →
   `GRAPHKNOWS_LLM_MODEL`, `MODE` → `GRAPHKNOWS_MODE`). Old names are ignored.
-- **BREAKING:** default embedder changed to a local model. Vector spaces differ
-  from the previous remote embeddings — **existing ArcadeDB data must be
-  re-ingested** after upgrading.
+- **BREAKING:** default embedder changed to a local model (384-dim). Vector
+  indexes are now created at the configured embedder's dimension. Existing
+  ArcadeDB databases keep their old 1536-dim index, so **drop and recreate the
+  `stm`/`ltm` databases** (or point at a fresh ArcadeDB) and re-ingest after
+  upgrading — `CREATE INDEX IF NOT EXISTS` will not rebuild an existing index.
 - **BREAKING:** removed `openrouter_api_key` / `llm_provider` settings; use
   `GRAPHKNOWS_LLM_API_KEY` and a litellm model prefix instead.
 - Settings now use standard precedence (env beats `.env`); removed the
