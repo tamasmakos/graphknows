@@ -117,7 +117,6 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
         extractor,
         embed_fn=embed_one,
         rel_extractor=rel_extractor,
-        spacy_relations=not profile.extraction_uses_llm,
     )
 
 

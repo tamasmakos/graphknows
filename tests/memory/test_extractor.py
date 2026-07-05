@@ -107,6 +107,8 @@ def test_extract_builds_fresh_schema_and_parses_entities_and_relations():
     )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
+    # Object cleaning parses the relation tail with the miner's spaCy pipeline.
+    schema_miner.nlp = _SpacySchemaMiner().nlp
 
     mock_schema = MagicMock()
     mock_model = MagicMock()

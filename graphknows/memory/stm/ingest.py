@@ -23,22 +23,6 @@ from graphknows.memory.stm._entity_writer import (
 
 log = logging.getLogger("graphknows.memory.stm.ingest")
 
-# Relation endpoints that are dates/times/bare numbers are noise — and writing a
-# relation edge re-creates its endpoints as ENTITY nodes, which would otherwise
-# smuggle the numeric/temporal entities (dropped from the graph) back in.
-_NOISE_REL_LABELS = frozenset(
-    {"TIME", "DATE", "CARDINAL", "ORDINAL", "PERCENT", "MONEY", "QUANTITY"}
-)
-_BARE_NUM_RE = re.compile(r"^[\W\d]+$")
-
-
-def _noisy_endpoint(text: str, label: str) -> bool:
-    """True if a relation endpoint is a date/time/number rather than a real entity."""
-    if (label or "").upper() in _NOISE_REL_LABELS:
-        return True
-    t = (text or "").strip()
-    return not t or bool(_BARE_NUM_RE.match(t))
-
 
 class _STMIngestHandler:
     """Ingest parsed text into STM (ArcadeDB evidence graph + vector store).
@@ -58,13 +42,11 @@ class _STMIngestHandler:
         extractor: Any,
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
-        spacy_relations: bool = True,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
-        self._spacy_relations = spacy_relations
         if embed_fn is not None:
             self._embed_fn = embed_fn
         else:
@@ -370,12 +352,6 @@ class _STMIngestHandler:
                 )
             )
 
-        # Deterministic SVO+pattern fact relations (both profiles).
-        if self._spacy_relations:
-            self._write_spacy_dep_relations(
-                session_id, clean_text, extraction.entities, chunk_id=chunk_id
-            )
-
         # DSPy ontology-guided relation extraction (llm_assisted mode only).
         # extract_relations returns (triplets, nodes, diagnostics).
         # Each triplet is (subject, relation, object, props_dict).
@@ -455,12 +431,6 @@ class _STMIngestHandler:
                 chunk_id=chunk_id,
             )
 
-        # Deterministic SVO+pattern fact relations (both profiles).
-        if self._spacy_relations:
-            await self._write_spacy_dep_relations_async(
-                session_id, clean_text, extraction.entities, chunk_id=chunk_id
-            )
-
         # DSPy ontology-guided relation extraction (llm_assisted mode only).
         if self._rel_extractor is not None and len(extraction.entities) >= 2:
             raw = await self._rel_extractor.extract_relations(text=clean_text)
@@ -486,90 +456,6 @@ class _STMIngestHandler:
                 len(dspy_triplets),
             )
         return entity_count
-
-    async def _write_spacy_dep_relations_async(
-        self,
-        session_id: str,
-        text: str,
-        gliner_entities: list[dict[str, Any]],
-        chunk_id: str = "",
-    ) -> None:
-        """Async version of _write_spacy_dep_relations for the concurrent chunk path.
-
-        Semantics identical to the sync version; awaits write_relation_edge directly.
-        Errors are NOT swallowed: an extraction or write failure raises so a broken
-        pipeline surfaces immediately instead of silently producing a factless graph.
-        """
-        from graphknows.extraction.relations.facts import extract_facts
-
-        triples = extract_facts(
-            text, graph_entities(gliner_entities), use_patterns=True
-        )
-        written = 0
-        for triple in triples:
-            if triple.get("negated"):
-                continue
-            if _noisy_endpoint(
-                triple["source"], triple.get("source_label", "")
-            ) or _noisy_endpoint(triple["target"], triple.get("target_label", "")):
-                continue
-            await self._mg.write_relation_edge(
-                session_id=session_id,
-                subject_name=triple["source"],
-                relation_name=triple["relation"],
-                object_name=triple["target"],
-                fact=triple.get("evidence", "") or text,
-                confidence=triple.get("confidence", 0.7),
-                chunk_id=chunk_id,
-            )
-            written += 1
-        if written:
-            log.debug("fact relations: %d triples written for session=%s", written, session_id)
-
-    def _write_spacy_dep_relations(
-        self,
-        session_id: str,
-        text: str,
-        gliner_entities: list[dict[str, Any]],
-        chunk_id: str = "",
-    ) -> None:
-        """Extract universal SVO relations and write them to ArcadeDB STM.
-
-        Uses the domain-agnostic SVO extractor (subject–predicate–object over the
-        dependency parse, with conversational participant resolution and a compact
-        relation taxonomy) rather than the narrow speech-act intentionality
-        patterns, which only fire on declarative prose. The extractor handles all
-        precision filtering (subject must be a real entity, noun-phrase objects,
-        questions/discourse pronouns dropped).
-
-        Errors are NOT swallowed: an extraction or write failure raises so a broken
-        pipeline surfaces immediately instead of silently producing a factless graph.
-        """
-        from graphknows.extraction.relations.facts import extract_facts
-
-        triples = extract_facts(text, graph_entities(gliner_entities), use_patterns=True)
-        written = 0
-        for triple in triples:
-            if triple.get("negated"):
-                continue
-            if _noisy_endpoint(triple["source"], triple.get("source_label", "")) or _noisy_endpoint(
-                triple["target"], triple.get("target_label", "")
-            ):
-                continue
-            _run(
-                self._mg.write_relation_edge(
-                    session_id=session_id,
-                    subject_name=triple["source"],
-                    relation_name=triple["relation"],
-                    object_name=triple["target"],
-                    fact=triple.get("evidence", "") or text,
-                    confidence=triple.get("confidence", 0.7),
-                    chunk_id=chunk_id,
-                )
-            )
-            written += 1
-        if written:
-            log.debug("SVO relations: %d triples written for session=%s", written, session_id)
 
     def _write_chunk_to_pg(
         self,

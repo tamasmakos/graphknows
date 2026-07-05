@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graphknows.config.adapters.gliner_model import load_gliner2_model
+from graphknows.extraction.relations.object_cleaner import clean_relation_object
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,21 @@ def _default_relation_schema() -> dict[str, str]:
     except Exception as exc:  # pragma: no cover - config guard
         log.warning("taxonomy relation schema unavailable, using mined lemmas: %s", exc)
         return {}
+
+
+def _relationship_terms() -> frozenset[str]:
+    """Kinship / social-role words from the taxonomy — never valid fact objects.
+
+    Empty on config failure (object cleaning simply skips the role check).
+    """
+    try:
+        from graphknows.ingestion.domain.taxonomy import get_default_taxonomy
+
+        group = get_default_taxonomy().entity_groups.get("RELATIONSHIP")
+        return frozenset(a.lower() for a in (group.aliases if group else []))
+    except Exception as exc:  # pragma: no cover - config guard
+        log.warning("relationship-role vocabulary unavailable: %s", exc)
+        return frozenset()
 
 
 def _schema_label(value: str) -> str:
@@ -182,6 +198,12 @@ class _SpacySchemaMiner:
                 f"spaCy model '{self._model_name}' is required for dynamic GLiNER2 schemas"
             ) from exc
 
+    @property
+    def nlp(self) -> Any:
+        """The loaded spaCy pipeline (loads on first access)."""
+        self._ensure_loaded()
+        return self._nlp
+
     def build(self, text: str) -> _DynamicSchema:
         self._ensure_loaded()
         assert self._nlp is not None
@@ -269,6 +291,7 @@ class GLiNER2EntityExtractor:
         # relation extraction against a stable, canonical vocabulary. Entities
         # stay dynamic (spaCy-mined). Empty schema -> fall back to mined lemmas.
         self._relation_schema: dict[str, str] = _default_relation_schema()
+        self._relationship_terms: frozenset[str] = _relationship_terms()
 
     def _ensure_model_loaded(self) -> None:
         """Load GLiNER2 model on first extraction call."""
@@ -340,6 +363,11 @@ class GLiNER2EntityExtractor:
                 tgt = tail.get("text", "").strip()
                 if not src or not tgt or src.lower() == tgt.lower():
                     continue  # drop empty and self-relations (X -rel-> X is noise)
+                # Canonicalize the object to a content noun; drop clause /
+                # question-echo / wrong-type objects at extraction.
+                tgt = clean_relation_object(tgt, self._schema_miner.nlp, self._relationship_terms)
+                if not tgt or src.lower() == tgt.lower():
+                    continue
                 score = min(
                     float(head.get("confidence", 0.0)),
                     float(tail.get("confidence", 0.0)),
