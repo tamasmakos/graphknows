@@ -95,7 +95,14 @@ _SCHEMA_DDL = [
     "CREATE INDEX ON FILE(id) UNIQUE",
     "CREATE INDEX ON CHUNK(id) UNIQUE",
     "CREATE INDEX ON CHUNK(session_id) NOTUNIQUE",
-    "CREATE INDEX ON ENTITY(name) UNIQUE",
+    # Entities are session-scoped: every write MERGEs on (name, session_id), so
+    # the uniqueness constraint must be composite. A single-column ENTITY(name)
+    # UNIQUE index (the original schema) makes any entity name global, so
+    # ingesting a second session that reuses a name (e.g. "Melanie") 409s with
+    # DuplicatedKeyException. Drop the legacy single-column index first so an
+    # existing database migrates; IF EXISTS makes it a no-op on fresh databases.
+    "DROP INDEX `ENTITY[name]` IF EXISTS",
+    "CREATE INDEX ON ENTITY(name, session_id) UNIQUE",
     "CREATE INDEX ON ENTITY(session_id) NOTUNIQUE",
     "CREATE INDEX ON DIALOG(id) UNIQUE",
     "CREATE INDEX ON DIALOG(session_id) NOTUNIQUE",

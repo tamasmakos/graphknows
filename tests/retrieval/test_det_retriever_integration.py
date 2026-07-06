@@ -122,3 +122,67 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
         # Clean up the test session
         await pg.clear_stm(test_session)
         await pg.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_entities_are_session_scoped_across_two_sessions() -> None:
+    """Two sessions sharing an entity name must both ingest without a 409.
+
+    Regression for the DuplicatedKeyException where the STM schema had a
+    single-column UNIQUE index on ENTITY(name) while every write MERGEs on
+    (name, session_id). That made entity names global, so a second session
+    reusing a name (e.g. "Melanie") failed at the MERGE with
+    ``DuplicatedKeyException``. The fix makes the unique index composite on
+    (name, session_id); ensure_schema() migrates existing databases by dropping
+    the legacy single-column index. This test drives the exact failing path —
+    write_relation_edge, which MERGEs the endpoint ENTITY nodes.
+    """
+    if not _arcadedb_reachable():
+        pytest.skip("ArcadeDB not reachable")
+
+    from graphknows.config import GraphKnowsSettings
+    from graphknows.config.builders.stores import build_arcadedb_stm_store
+
+    s = GraphKnowsSettings()
+    mg = build_arcadedb_stm_store(s)
+    await mg._c.connect()
+    await mg.ensure_schema()  # runs the drop-legacy + composite-index migration
+
+    suffix = uuid.uuid4().hex[:8]
+    session_a = f"test-session-scope-a-{suffix}"
+    session_b = f"test-session-scope-b-{suffix}"
+    subject, obj = "Melanie", "camping"
+
+    try:
+        # Same (subject, object) names in two different sessions. Before the fix
+        # the session_b write raised DuplicatedKeyException on ENTITY[name].
+        for sid in (session_a, session_b):
+            await mg.write_relation_edge(
+                session_id=sid,
+                subject_name=subject,
+                relation_name="LIKES",
+                object_name=obj,
+                fact="evidence",
+                confidence=0.9,
+                chunk_id=f"{sid}-chunk",
+            )
+
+        # Both sessions' entities coexist: the shared name exists once per session.
+        rows = await mg._c.query(
+            "stm",
+            "MATCH (e:ENTITY {name: $name}) RETURN e.session_id AS sid",
+            params={"name": subject},
+        )
+        sids = {r["sid"] for r in rows}
+        assert session_a in sids and session_b in sids, (
+            f"expected {subject!r} in both sessions, got {sids}"
+        )
+    finally:
+        for sid in (session_a, session_b):
+            await mg._c.command(
+                "stm",
+                "MATCH (e:ENTITY {session_id: $sid}) DETACH DELETE e",
+                params={"sid": sid},
+            )
+        await mg._c.close()
