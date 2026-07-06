@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import os
 import re
 from typing import Any
 
@@ -43,7 +42,6 @@ from graphknows.memory.query._rrf_common import (
 from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
 from graphknows.memory.query.context import RetrievalContext
-from graphknows.memory.query.fact_lookup import fact_support_scores
 from graphknows.memory.query.rerank import rerank as _ce_rerank
 from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 from graphknows.memory.stores.embedder import embed
@@ -174,34 +172,6 @@ def _declarative_variant(question: str) -> str | None:
 # full-text channels still cover their chunks.
 _ENTITY_SATURATION_RATIO: float = 0.5
 
-# Unified scorer: weight of the fact-support term relative to normalised vector
-# relevance. final = norm_relevance + BOOST * fact_similarity. The term is 0 when
-# no canonical fact matches the query, so vector dominates by construction and no
-# router/gate is needed — structure self-attenuates. Env-overridable for tuning.
-_FACT_SUPPORT_BOOST: float = float(os.environ.get("GRAPHKNOWS_FACT_BOOST", "0.6"))
-
-
-def _fact_sim(fact_map: dict[str, dict[str, Any]], cid: str) -> float:
-    """Fact-support similarity for a chunk (0 when no matching fact points here)."""
-    hit = fact_map.get(cid)
-    return float(hit["score"]) if hit else 0.0
-
-
-def _annotate_fact(item: dict[str, Any], hit: dict[str, Any]) -> dict[str, Any]:
-    """Surface a matching fact's triple + evidence into a chunk's context."""
-    triple = f"{hit['subject']} {hit['relation'].replace('_', ' ').lower()} {hit['object']}"
-    ev = (hit.get("evidence") or "").strip()
-    annot = f"[FACT] {triple}" + (f" — {ev}" if ev else "")
-    body = item.get("text", "")
-    if not body.startswith("[FACT]"):
-        item["text"] = f"{annot}\n{body}" if body else annot
-    srcs = {s for s in (item.get("sources", "") or "").split(",") if s}
-    srcs.add("fact")
-    item["sources"] = ",".join(sorted(srcs))
-    item.setdefault("metadata", {})["fact"] = triple
-    return item
-
-
 class DETRetriever(BaseGraphRetriever):
     """Deterministic three-collector hybrid retriever."""
 
@@ -211,18 +181,11 @@ class DETRetriever(BaseGraphRetriever):
         neo: Any,
         mg: ArcadeDBSTMStore,
         embed_model: str = "",
-        enable_fact_promotion: bool = True,
     ) -> None:
         self.pg = pg
         self.neo = neo
         self.mg = mg
         self.embed_model = embed_model
-        # Unified fact-support scoring: every candidate's score blends normalised
-        # vector relevance with a fact-support term (does a canonical fact matching
-        # the query point here via provenance?). The term self-attenuates to 0 on
-        # queries with no matching fact, so no router is needed. Set False for a
-        # pure-vector baseline (used by the retrieval-hit A/B harness).
-        self._fact_support = enable_fact_promotion
 
     async def retrieve(
         self,
@@ -307,38 +270,8 @@ class DETRetriever(BaseGraphRetriever):
 
         shaped_combined.sort(key=lambda x: -x[1])
 
-        # --- Unified fact-support scoring -----------------------------------
-        # Each candidate's final score = normalised vector relevance + a
-        # fact-support term (the best canonical fact whose subject the query
-        # names and which points at this chunk via provenance). The term is 0
-        # when no fact matches, so vector dominates abstract/inference queries by
-        # construction — no router. Facts pointing at chunks the vector pool
-        # MISSED are added so structure can lift genuinely-buried list items.
-        fact_map: dict[str, dict[str, Any]] = {}
-        if self._fact_support:
-            fact_map = await fact_support_scores(
-                self.mg, query, session_id, emb, self.embed_model
-            )
-
-        have = {cid for cid, _, _, _ in shaped_combined}
-        missed = [cid for cid in fact_map if cid not in have]
-        if missed:
-            extra = await self.pg.get_chunks_by_ids(missed)
-            for cid in missed:
-                shaped_combined.append((cid, 0.0, {"sources": {"fact"}, "entities": []},
-                                        extra.get(cid, {})))
-
-        max_shaped = max((s for _, s, _, _ in shaped_combined), default=0.0) or 1.0
-
-        # Order the cross-encoder input by the unified score so fact-supported
-        # chunks fall within its candidate cap; store raw shaped relevance (the
-        # cross-encoder overwrites it, and the fact term is re-applied after).
-        ordered = sorted(
-            shaped_combined,
-            key=lambda x: -(x[1] / max_shaped + _FACT_SUPPORT_BOOST * _fact_sim(fact_map, x[0])),
-        )
         pre_rerank: list[dict[str, Any]] = []
-        for rank_i, (cid, shaped, info, fc) in enumerate(ordered):
+        for rank_i, (cid, shaped, info, fc) in enumerate(shaped_combined):
             meta = fc.get("metadata") or info.get("metadata") or {}
             ents = info.get("entities", [])
             pre_rerank.append(
@@ -355,30 +288,24 @@ class DETRetriever(BaseGraphRetriever):
             )
 
         # Cross-encoder rerank the whole pool (no-op when the model is
-        # unavailable), then blend the fact-support term into the normalised
-        # rerank score so it has the final say — the cross-encoder can otherwise
-        # demote a correct but lexically-distant list item a fact points straight
-        # at. Matching chunks are annotated with the triple + evidence.
+        # unavailable), then cut to top_k and renumber.
         ranked = await asyncio.to_thread(_ce_rerank, query, pre_rerank, len(pre_rerank))
-        fused = self._blend_fact_support(ranked, fact_map, top_k)
+        fused = ranked[:top_k]
+        for i, item in enumerate(fused):
+            item["rank"] = i + 1
 
-        # Transparency trace: how each surviving candidate scored, per signal.
-        shaped_by_cid = {cid: shaped for cid, shaped, _, _ in shaped_combined}
+        # Transparency trace: how each surviving candidate scored.
         trace = {
             "query": query,
             "session_id": session_id,
             "collectors_fired": collectors_fired,
-            "fact_support_on": bool(self._fact_support and fact_map),
             "candidates": [
                 {
                     "rank": fc["rank"],
                     "chunk_id": fc["chunk_id"],
                     "doc_id": fc.get("doc_id", ""),
                     "sources": fc.get("sources", ""),
-                    "vector_relevance": round(shaped_by_cid.get(fc["chunk_id"], 0.0) / max_shaped, 4),
-                    "fact_support": round(_fact_sim(fact_map, fc["chunk_id"]), 4),
-                    "unified": fc.get("rrf_score", 0.0),
-                    "fact": fc.get("metadata", {}).get("fact", ""),
+                    "score": fc.get("rrf_score", 0.0),
                     "text": (fc.get("text", "") or "")[:200],
                 }
                 for fc in fused
@@ -392,36 +319,6 @@ class DETRetriever(BaseGraphRetriever):
             search_type="DET",
             trace=trace,
         )
-
-    def _blend_fact_support(
-        self,
-        ranked: list[dict[str, Any]],
-        fact_map: dict[str, dict[str, Any]],
-        top_k: int,
-    ) -> list[dict[str, Any]]:
-        """Blend fact-support into min-max-normalised rerank scores; cut to top_k.
-
-        ``unified = norm(rerank_score) + BOOST * fact_similarity``. With an empty
-        ``fact_map`` this is a monotonic transform of the rerank order, so the
-        pure-vector ranking is preserved (self-attenuation, no router).
-        """
-        if not ranked:
-            return ranked
-        scores = [c.get("rrf_score", 0.0) for c in ranked]
-        lo, hi = min(scores), max(scores)
-        rng = (hi - lo) or 1.0
-        blended: list[dict[str, Any]] = []
-        for c in ranked:
-            hit = fact_map.get(c["chunk_id"])
-            norm = (c.get("rrf_score", 0.0) - lo) / rng
-            unified = norm + _FACT_SUPPORT_BOOST * (hit["score"] if hit else 0.0)
-            item = _annotate_fact(dict(c), hit) if hit else dict(c)
-            item["rrf_score"] = round(unified, 6)
-            blended.append(item)
-        blended.sort(key=lambda x: -x["rrf_score"])
-        for i, item in enumerate(blended):
-            item["rank"] = i + 1
-        return blended[:top_k]
 
     async def execute_cypher(
         self,
