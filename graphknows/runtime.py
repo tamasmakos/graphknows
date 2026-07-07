@@ -72,9 +72,7 @@ class GraphKnowsRuntime:
 
         for store in self._retriever_stores:
             with contextlib.suppress(Exception):
-                # TODO(Finding 3): replace store._c.close() with a public
-                # close() / disconnect() method once memory.stores exposes one.
-                await store._c.close()
+                await store.close()
         self._retriever = None
         self._retriever_stores = []
 
@@ -94,10 +92,8 @@ class GraphKnowsRuntime:
         mg = build_arcadedb_stm_store(s)
         await asyncio.gather(
             pg.connect(),  # vector: connect + ensure_schema
-            # TODO(Finding 3): replace ._c.connect() with a public connect()
-            # on LTMStore/STMStore once memory.stores exposes one.
-            neo._c.connect(),
-            mg._c.connect(),
+            neo.connect(),
+            mg.connect(),
         )
         await neo.ensure_schema()
         self._retriever_stores = [pg, neo, mg]
@@ -280,8 +276,8 @@ class GraphKnowsRuntime:
                 "warnings": [],
             }
         finally:
-            _bg_run(service._mg._c.close())
-            _bg_run(service._pg._c.close())
+            _bg_run(service._mg.close())
+            _bg_run(service._pg.close())
 
     async def recall_memory(
         self,
@@ -347,26 +343,22 @@ class GraphKnowsRuntime:
         }
 
     async def _purge_stm(self, session_id: str, errors: list[str]) -> None:
-        # TODO(Finding 3): ._c.connect/close/drop_database are private ArcadeDBClient
-        # attrs. Replace with public store methods once memory.stores exposes them.
         from graphknows.config.builders.stores import build_arcadedb_stm_store
 
         try:
             stm_store = build_arcadedb_stm_store(self.settings)
-            await stm_store._c.connect()
+            await stm_store.connect()
             try:
                 if session_id:
                     await stm_store.delete_session(session_id)
                 else:
-                    await stm_store._c.drop_database(stm_store._db)
+                    await stm_store.drop_database()
             finally:
-                await stm_store._c.close()
+                await stm_store.close()
         except Exception as exc:
             errors.append(f"arcadedb stm: {exc}")
 
     async def _purge_ltm(self, session_id: str, errors: list[str]) -> None:
-        # TODO(Finding 3): ._c.connect/close and ._cmd are private store attrs.
-        # Replace with public methods once memory.stores exposes them.
         from graphknows.config.builders.stores import (
             build_arcadedb_ltm_store,
             build_arcadedb_vector_store,
@@ -374,7 +366,7 @@ class GraphKnowsRuntime:
 
         try:
             ltm_store = build_arcadedb_ltm_store(self.settings)
-            await ltm_store._c.connect()
+            await ltm_store.connect()
             try:
                 if session_id:
                     await self._delete_ltm_session(ltm_store, session_id)
@@ -391,7 +383,7 @@ class GraphKnowsRuntime:
                     await vec_store.close()
                     await self._clear_ltm_all(ltm_store)
             finally:
-                await ltm_store._c.close()
+                await ltm_store.close()
         except Exception as exc:
             errors.append(f"arcadedb ltm: {exc}")
 
@@ -480,7 +472,7 @@ class GraphKnowsRuntime:
         from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
         ltm = build_arcadedb_ltm_store(self.settings)
-        await ltm._c.connect()
+        await ltm.connect()
         try:
             rows = await ltm._qry(
                 "MATCH (t:TOPIC) WHERE t.entity_count >= $min "
@@ -491,7 +483,7 @@ class GraphKnowsRuntime:
                 min=min_entities,
             )
         finally:
-            await ltm._c.close()
+            await ltm.close()
         return {"topics": [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]}
 
     async def ltm_entity(self, name: str) -> dict[str, Any]:
@@ -499,7 +491,7 @@ class GraphKnowsRuntime:
         from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
         ltm = build_arcadedb_ltm_store(self.settings)
-        await ltm._c.connect()
+        await ltm.connect()
         try:
             rows = await ltm._qry(
                 "MATCH (e:ENTITY) WHERE toLower(e.name) = toLower($name) "
@@ -508,7 +500,7 @@ class GraphKnowsRuntime:
                 name=name,
             )
         finally:
-            await ltm._c.close()
+            await ltm.close()
         if not rows:
             return {"error": f"Entity not found: {name}"}
         return {k: v for k, v in rows[0].items() if not k.startswith("@")}
@@ -536,7 +528,7 @@ class GraphKnowsRuntime:
         from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
         ltm = build_arcadedb_ltm_store(self.settings)
-        await ltm._c.connect()
+        await ltm.connect()
         try:
             if session_id:
                 # Split into two MATCH clauses — ArcadeDB's openCypher rejects
@@ -563,6 +555,6 @@ class GraphKnowsRuntime:
                     limit=limit,
                 )
         finally:
-            await ltm._c.close()
+            await ltm.close()
         entities = [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]
         return {"entities": entities, "count": len(entities), "session_id": session_id}

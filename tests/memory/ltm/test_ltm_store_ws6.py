@@ -177,6 +177,8 @@ class TestFlushPipelineWS6Phases:
         from graphknows.memory.flush import LTMPromotionPipeline
 
         mg_store = MagicMock()
+        mg_store.connect = AsyncMock(return_value=None)
+        mg_store.close = AsyncMock(return_value=None)
         mg_store.read_session_subgraph = AsyncMock(
             return_value={
                 "entities": [],
@@ -196,11 +198,14 @@ class TestFlushPipelineWS6Phases:
 
         pg_store = MagicMock()
         pg_store.connect = AsyncMock(return_value=None)
+        pg_store.close = AsyncMock(return_value=None)
         pg_store.promote_to_ltm = AsyncMock(return_value=(0, 0))
         pg_store.upsert_entities = AsyncMock(return_value=None)
         pg_store.clear_stm = AsyncMock(return_value=None)
 
         neo_store = MagicMock()
+        neo_store.connect = AsyncMock(return_value=None)
+        neo_store.close = AsyncMock(return_value=None)
         neo_store.write_session_subgraph = AsyncMock(return_value={"nodes": 2, "edges": 1})
         neo_store.compute_and_persist_pagerank = AsyncMock(return_value=2)
         neo_store.prune_tombstoned_edges = AsyncMock(return_value=0)
@@ -242,6 +247,8 @@ class TestFlushPipelineWS6Phases:
         from graphknows.memory.models.promotion import PromotionRequest
 
         mg_store = MagicMock()
+        mg_store.connect = AsyncMock(return_value=None)
+        mg_store.close = AsyncMock(return_value=None)
         mg_store.read_session_subgraph = AsyncMock(
             return_value={
                 "entities": [], "files": [], "chunks": [], "dialogs": [], "turns": [],
@@ -252,14 +259,20 @@ class TestFlushPipelineWS6Phases:
 
         pg_store = MagicMock()
         pg_store.connect = AsyncMock(return_value=None)
+        pg_store.close = AsyncMock(return_value=None)
         pg_store.promote_to_ltm = AsyncMock(return_value=(0, 0))
         pg_store.upsert_entities = AsyncMock(return_value=None)
         pg_store.clear_stm = AsyncMock(return_value=None)
 
-        # Minimal neo_store without any WS-6 methods
+        # Minimal neo_store without any WS-6 methods (but with the store lifecycle
+        # methods the promotion pipeline now requires of every store).
         neo_store = MagicMock(spec=[
             "write_session_subgraph",
+            "connect",
+            "close",
         ])
+        neo_store.connect = AsyncMock(return_value=None)
+        neo_store.close = AsyncMock(return_value=None)
         neo_store.write_session_subgraph = AsyncMock(return_value={"nodes": 0, "edges": 0})
         # Ensure WS-6 methods are absent
         del neo_store.compute_and_persist_pagerank

@@ -57,12 +57,9 @@ class LTMPromotionPipeline:
 
     async def close(self) -> None:
         """Release all store connections."""
-        await self._pg.close()
-        for store in (self._mg, self._neo):
-            client = getattr(store, "_c", None)
-            if client is not None and hasattr(client, "close"):
-                with contextlib.suppress(Exception):
-                    await client.close()
+        for store in (self._pg, self._mg, self._neo):
+            with contextlib.suppress(Exception):
+                await store.close()
 
     async def promote(self, request: PromotionRequest) -> PromotionRecord:
         """Run the full STM→LTM promotion pipeline.
@@ -153,17 +150,14 @@ class LTMPromotionPipeline:
         return record
 
     async def _ensure_stores_connected(self) -> None:
-        """Connect all store clients that are not yet open."""
-        if hasattr(self._pg, "connect") and not getattr(self._pg, "_pool", None):
-            await self._pg.connect()
-        for store in (self._mg, self._neo):
-            client = getattr(store, "_c", None)
-            if (
-                client is not None
-                and getattr(client, "_client", None) is None
-                and hasattr(client, "connect")
-            ):
-                await client.connect()
+        """Connect all store clients that are not yet open.
+
+        connect() is idempotent (the shared client no-ops when already open and
+        the vector store guards its schema DDL), so an unconditional call here is
+        safe whether or not the stores were pre-connected by the builder.
+        """
+        for store in (self._pg, self._mg, self._neo):
+            await store.connect()
 
     async def _copy_vector_to_ltm(self, session_id: str, record: PromotionRecord) -> None:
         try:

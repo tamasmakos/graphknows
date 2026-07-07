@@ -59,8 +59,20 @@ class ArcadeDBClient:
         self._auth = (user, password)
         self._client: httpx.AsyncClient | None = None
 
+    @property
+    def connected(self) -> bool:
+        """True when the underlying httpx pool is open."""
+        return self._client is not None
+
     async def connect(self) -> None:
-        """Open the underlying httpx connection pool."""
+        """Open the underlying httpx connection pool.
+
+        Idempotent: calling connect() on an already-connected client is a no-op,
+        so stores that share one client can each connect() safely without leaking
+        a second httpx pool.
+        """
+        if self._client is not None:
+            return
         transport = httpx.AsyncHTTPTransport(retries=3)
         self._client = httpx.AsyncClient(
             auth=self._auth,
@@ -72,7 +84,7 @@ class ArcadeDBClient:
         )
 
     async def close(self) -> None:
-        """Close the connection pool."""
+        """Close the connection pool. Idempotent."""
         if self._client is not None:
             await self._client.aclose()
             self._client = None

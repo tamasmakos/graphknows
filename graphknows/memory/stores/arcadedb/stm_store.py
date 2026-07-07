@@ -125,8 +125,36 @@ class ArcadeDBSTMStore:
         self._db = _DB
         self._c = client
 
-    def close(self) -> None:
-        """No-op — lifecycle is managed by the client passed in."""
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    @property
+    def client(self) -> ArcadeDBClient:
+        """The underlying ArcadeDB client (shared across stores)."""
+        return self._c
+
+    @property
+    def database(self) -> str:
+        """Name of the ArcadeDB database this store reads/writes."""
+        return self._db
+
+    async def connect(self) -> None:
+        """Open the shared client connection. Idempotent.
+
+        Schema creation is deliberately not run here — call ensure_schema()
+        explicitly on write paths. Read paths (recall, session listing) connect
+        without paying for idempotent DDL round-trips.
+        """
+        await self._c.connect()
+
+    async def close(self) -> None:
+        """Close the shared client connection. Idempotent."""
+        await self._c.close()
+
+    async def drop_database(self) -> None:
+        """Drop this store's entire ArcadeDB database (destructive; used by purge)."""
+        await self._c.drop_database(self._db)
 
     # ------------------------------------------------------------------
     # Schema

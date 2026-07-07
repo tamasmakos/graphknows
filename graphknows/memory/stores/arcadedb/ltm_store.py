@@ -202,8 +202,31 @@ class ArcadeDBLTMStore:
         self._relation_extractor = relation_extractor
         self._declared_edge_types: set[str] = set()
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    @property
+    def client(self) -> ArcadeDBClient:
+        """The underlying ArcadeDB client (shared across stores)."""
+        return self._c
+
+    @property
+    def database(self) -> str:
+        """Name of the ArcadeDB database this store reads/writes."""
+        return _LTM_DB
+
+    async def connect(self) -> None:
+        """Open the shared client connection. Idempotent.
+
+        Schema creation is deliberately not run here — call ensure_schema()
+        explicitly on write paths so read paths avoid idempotent DDL round-trips.
+        """
+        await self._c.connect()
+
     async def close(self) -> None:
-        pass  # client lifetime managed externally
+        """Close the shared client connection. Idempotent."""
+        await self._c.close()
 
     async def ensure_indexes(self) -> None:
         """Create LTM database and schema. Idempotent."""

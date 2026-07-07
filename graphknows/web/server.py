@@ -171,7 +171,7 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
 
 async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
     ltm = build_arcadedb_ltm_store(get_settings())
-    await ltm._c.connect()
+    await ltm.connect()
     try:
         node_cypher, edge_cypher, params = _ltm_queries(session_id, limit)
         node_rows, edge_rows = await asyncio.gather(
@@ -179,7 +179,7 @@ async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
             ltm._qry(edge_cypher, **params),
         )
     finally:
-        await ltm._c.close()
+        await ltm.close()
 
     nodes = []
     known_ids: set[str] = set()
@@ -264,27 +264,27 @@ async def sessions(_: Request) -> JSONResponse:
 
     try:
         stm = build_arcadedb_stm_store(get_settings())
-        await stm._c.connect()
+        await stm.connect()
         try:
-            rows = await stm._c.query(
-                stm._db,
+            rows = await stm.client.query(
+                stm.database,
                 "MATCH (n:ENTITY) WHERE n.session_id IS NOT NULL "
                 "RETURN DISTINCT n.session_id AS id ORDER BY id",
             )
             values.update(_string(row["id"]) for row in rows if row.get("id"))
         finally:
-            await stm._c.close()
+            await stm.close()
     except Exception as exc:
         errors.append(f"stm: {exc}")
 
     try:
         ltm = build_arcadedb_ltm_store(get_settings())
-        await ltm._c.connect()
+        await ltm.connect()
         try:
             rows = await ltm._qry("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
             values.update(_string(row["id"]) for row in rows if row.get("id"))
         finally:
-            await ltm._c.close()
+            await ltm.close()
     except Exception as exc:
         errors.append(f"ltm: {exc}")
 
@@ -308,13 +308,11 @@ async def graph(request: Request) -> JSONResponse:
                     status_code=400,
                 )
             stm = build_arcadedb_stm_store(get_settings())
-            # TODO(Finding 3): ._c is a private attr; replace with a public
-            # connect/close once memory.stores exposes them.
-            await stm._c.connect()
+            await stm.connect()
             try:
                 raw = await stm.get_session_graph(session_id)
             finally:
-                await stm._c.close()
+                await stm.close()
             return JSONResponse(_normalise_stm_graph(raw, limit))
 
         if scope != "ltm":

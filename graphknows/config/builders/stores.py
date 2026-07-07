@@ -101,7 +101,7 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     client = build_arcadedb_client(settings)
     mg = ArcadeDBSTMStore(client=client)
     pg = ArcadeDBVectorStore(client=client)
-    _run(mg._c.connect())
+    _run(mg.connect())
     _run(mg.ensure_schema())
     _run(pg.connect())  # connects client + ensures schema
 

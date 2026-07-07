@@ -51,12 +51,12 @@ async def test_ltm_ensure_schema_does_not_raise() -> None:
 
     s = GraphKnowsSettings()
     store = build_arcadedb_ltm_store(s)
-    await store._c.connect()
+    await store.connect()
     try:
         # Must not raise — previously blew up on CREATE PROPERTY E.valid_at
         await store.ensure_schema()
     finally:
-        await store._c.close()
+        await store.close()
 
 
 @pytest.mark.integration
@@ -84,7 +84,7 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
     pg = build_arcadedb_vector_store(s)
     neo = build_arcadedb_ltm_store(s)
     mg = build_arcadedb_stm_store(s)
-    await asyncio.gather(pg.connect(), neo._c.connect(), mg._c.connect())
+    await asyncio.gather(pg.connect(), neo.connect(), mg.connect())
     await neo.ensure_schema()
 
     test_session = f"test-det-retriever-integration-{uuid.uuid4().hex[:8]}"
@@ -146,7 +146,7 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
 
     s = GraphKnowsSettings()
     mg = build_arcadedb_stm_store(s)
-    await mg._c.connect()
+    await mg.connect()
     await mg.ensure_schema()  # runs the drop-legacy + composite-index migration
 
     suffix = uuid.uuid4().hex[:8]
@@ -169,7 +169,7 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
             )
 
         # Both sessions' entities coexist: the shared name exists once per session.
-        rows = await mg._c.query(
+        rows = await mg.client.query(
             "stm",
             "MATCH (e:ENTITY {name: $name}) RETURN e.session_id AS sid",
             params={"name": subject},
@@ -180,9 +180,9 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
         )
     finally:
         for sid in (session_a, session_b):
-            await mg._c.command(
+            await mg.client.command(
                 "stm",
                 "MATCH (e:ENTITY {session_id: $sid}) DETACH DELETE e",
                 params={"sid": sid},
             )
-        await mg._c.close()
+        await mg.close()
