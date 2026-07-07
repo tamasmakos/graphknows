@@ -375,37 +375,19 @@ class LTMPromotionPipeline:
             record.errors.append(f"entity_upsert: {exc}")
 
     async def _run_pagerank_persistence(self, record: PromotionRecord) -> None:
-        """Compute and persist PageRank onto ENTITY nodes.
-
-        Calls ltm_store.compute_and_persist_pagerank() if available.
-        Non-fatal.
-        """
-        persist_fn = getattr(self._neo, "compute_and_persist_pagerank", None)
-        if not callable(persist_fn):
-            log.debug(
-                "_run_pagerank_persistence: ltm_store has no compute_and_persist_pagerank, skip"
-            )
-            return
+        """Compute and persist PageRank onto ENTITY nodes. Non-fatal."""
         try:
-            updated = await persist_fn()
+            updated = await self._neo.compute_and_persist_pagerank()
             log.info("_run_pagerank_persistence: updated pagerank on %d ENTITY nodes", updated)
         except Exception as exc:
             log.warning("_run_pagerank_persistence failed (non-fatal): %s", exc)
             record.errors.append(f"pagerank_persistence: {exc}")
 
     async def _run_graph_pruning(self, record: PromotionRecord) -> None:
-        """Prune stale tombstoned relation edges from LTM.
-
-        Calls ltm_store.prune_tombstoned_edges() and prune_duplicate_edges()
-        if available.  Non-fatal.
-        """
+        """Prune stale tombstoned and duplicate relation edges from LTM. Non-fatal."""
         for fn_name in ("prune_tombstoned_edges", "prune_duplicate_edges"):
-            prune_fn = getattr(self._neo, fn_name, None)
-            if not callable(prune_fn):
-                log.debug("_run_graph_pruning: ltm_store has no %s, skip", fn_name)
-                continue
             try:
-                deleted = await prune_fn()
+                deleted = await getattr(self._neo, fn_name)()
                 log.info("_run_graph_pruning %s: deleted %d edges", fn_name, deleted)
             except Exception as exc:
                 log.warning("_run_graph_pruning %s failed (non-fatal): %s", fn_name, exc)
