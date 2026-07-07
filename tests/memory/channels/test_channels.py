@@ -46,6 +46,16 @@ class TestBuildChannels:
         s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=True, GRAPHKNOWS_MODE=MemoryMode.llm_free)
         assert [c.name for c in build_channels(s)][-1] == "frame"
 
+    def test_enabled_selects_named_subset(self):
+        s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
+        names = [c.name for c in build_channels(s, enabled=["vector", "stm_bm25"])]
+        assert names == ["vector", "stm_bm25"]
+
+    def test_enabled_unknown_name_raises(self):
+        s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
+        with pytest.raises(KeyError):
+            build_channels(s, enabled=["does_not_exist"])
+
 
 class TestChannelBaseDefaults:
     async def test_defaults_are_noops(self):

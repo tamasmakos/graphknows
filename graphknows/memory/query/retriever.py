@@ -31,7 +31,7 @@ import math
 import re
 from typing import Any
 
-from graphknows.ports.vector_db import IVectorDb
+from graphknows.ports.vector_store import IVectorStore
 from graphknows.memory.query._rrf_common import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
@@ -178,7 +178,7 @@ class DETRetriever(BaseGraphRetriever):
 
     def __init__(
         self,
-        vec: IVectorDb,
+        vec: IVectorStore,
         ltm: Any,
         stm: ArcadeDBSTMStore,
         embed_model: str = "",
@@ -345,12 +345,13 @@ class DETRetriever(BaseGraphRetriever):
         rows = await self.ltm._qry(cypher_template, **(params or {}))
         return [dict(r) for r in rows]
 
-    async def _stm_entity_boost(
+    async def stm_entity_boost(
         self,
         words: list[str],
         session_id: str,
         top_k: int,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Collector: boost STM chunks reachable from query-token entity nodes."""
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if not words:
             return result
@@ -406,7 +407,7 @@ class DETRetriever(BaseGraphRetriever):
         }
     )
 
-    async def _stm_bm25(
+    async def stm_bm25(
         self,
         words: list[str],
         session_id: str,
@@ -493,12 +494,13 @@ class DETRetriever(BaseGraphRetriever):
             result.append((name, w))
         return result
 
-    async def _ltm_entity_traversal(
+    async def ltm_entity_traversal(
         self,
         words: list[str],
         session_id: str,
         top_k: int,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Collector: traverse the LTM entity graph from the query's entities."""
         if not words:
             return {}
         return await self._run_entity_traversal_async(words, session_id or None, top_k)
@@ -635,7 +637,7 @@ class DETRetriever(BaseGraphRetriever):
                 },
             )
 
-    async def _ltm_bm25(
+    async def ltm_bm25(
         self,
         words: list[str],
         session_id: str,
@@ -644,7 +646,7 @@ class DETRetriever(BaseGraphRetriever):
     ) -> dict[str, tuple[float, dict[str, Any]]]:
         """BM25 sparse channel over LTM chunks — replaces homegrown two-pass full-text.
 
-        Mirrors ``_stm_bm25`` for the LTM scope.  Fetches a broad OR-pool from
+        Mirrors ``stm_bm25`` for the LTM scope.  Fetches a broad OR-pool from
         the LTM store's full-text index, then re-ranks with BM25 for one clean
         RRF source.  No-op when scope excludes LTM or the store has no FT method.
         """
@@ -682,7 +684,7 @@ class DETRetriever(BaseGraphRetriever):
             )
         return result
 
-    async def _ltm_temporal_traversal(
+    async def ltm_temporal_traversal(
         self,
         query: str,
         session_id: str,
@@ -825,7 +827,7 @@ class DETRetriever(BaseGraphRetriever):
         )
         return filtered[:top_k]
 
-    async def _ltm_topic_match(
+    async def ltm_topic_match(
         self,
         emb: list[float],
         session_id: str,
@@ -888,7 +890,7 @@ class DETRetriever(BaseGraphRetriever):
                 )
         return result
 
-    async def _semantic_ann(
+    async def semantic_ann(
         self,
         emb: list[float],
         session_id: str,
@@ -896,6 +898,7 @@ class DETRetriever(BaseGraphRetriever):
         top_k: int,
         emb2: list[float] | None = None,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Collector: dense vector ANN over chunk embeddings (STM + LTM)."""
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         k = top_k * 2
 

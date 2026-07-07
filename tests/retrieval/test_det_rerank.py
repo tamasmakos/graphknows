@@ -3,7 +3,7 @@
 Covers:
 1. rerank() no-ops gracefully when the model library is absent (returns input unchanged).
 2. BM25 fallback scorer ranks an exact-term document above a non-matching document.
-3. BM25 channel: _stm_bm25 contributes a source entry for matching queries.
+3. BM25 channel: stm_bm25 contributes a source entry for matching queries.
 4. pagerank_boost / idf_weight helpers behave correctly at boundaries.
 5. retrieve() signature remains (query, session_id, top_k, scope) -> RetrievalContext.
 """
@@ -217,12 +217,12 @@ def test_idf_weight_zero_freq():
 
 
 # ---------------------------------------------------------------------------
-# STM BM25 channel integration — _stm_bm25 contributes to fused results
+# STM BM25 channel integration — stm_bm25 contributes to fused results
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_stm_bm25_contributes_source():
+async def teststm_bm25_contributes_source():
     """When STM full-text search returns a matching chunk, stm_text appears in sources."""
     retriever, vec, ltm, stm = _make_retriever()
 
@@ -240,7 +240,7 @@ async def test_stm_bm25_contributes_source():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve("violin concert", session_id="s1", scope="stm")
 
@@ -271,7 +271,7 @@ async def test_retrieve_signature_unchanged():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve(
             query="test query",

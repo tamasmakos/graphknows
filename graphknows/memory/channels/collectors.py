@@ -19,7 +19,7 @@ class StmEntityChannel(Channel):
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Delegate to the retriever's STM entity collector."""
-        return await rt._stm_entity_boost(ctx.words_graph, ctx.session_id, top_k)
+        return await rt.stm_entity_boost(ctx.words_graph, ctx.session_id, top_k)
 
 
 class LtmEntityChannel(Channel):
@@ -29,7 +29,7 @@ class LtmEntityChannel(Channel):
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Delegate to the retriever's LTM entity-traversal collector."""
-        return await rt._ltm_entity_traversal(ctx.words_graph, ctx.session_id, top_k)
+        return await rt.ltm_entity_traversal(ctx.words_graph, ctx.session_id, top_k)
 
 
 class VectorChannel(Channel):
@@ -39,7 +39,7 @@ class VectorChannel(Channel):
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Delegate to the retriever's semantic ANN collector."""
-        return await rt._semantic_ann(ctx.emb, ctx.session_id, ctx.scope, top_k, emb2=ctx.emb2)
+        return await rt.semantic_ann(ctx.emb, ctx.session_id, ctx.scope, top_k, emb2=ctx.emb2)
 
 
 class StmBm25Channel(Channel):
@@ -49,7 +49,7 @@ class StmBm25Channel(Channel):
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Delegate to the retriever's STM full-text collector."""
-        return await rt._stm_bm25(ctx.words, ctx.session_id, top_k)
+        return await rt.stm_bm25(ctx.words, ctx.session_id, top_k)
 
 
 class LtmBm25Channel(Channel):
@@ -59,7 +59,7 @@ class LtmBm25Channel(Channel):
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Delegate to the retriever's LTM full-text collector."""
-        return await rt._ltm_bm25(ctx.words, ctx.session_id, ctx.scope, top_k)
+        return await rt.ltm_bm25(ctx.words, ctx.session_id, ctx.scope, top_k)
 
 
 class TemporalChannel(Channel):
@@ -69,7 +69,7 @@ class TemporalChannel(Channel):
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Delegate to the retriever's temporal-traversal collector."""
-        return await rt._ltm_temporal_traversal(ctx.query, ctx.session_id, ctx.scope, top_k)
+        return await rt.ltm_temporal_traversal(ctx.query, ctx.session_id, ctx.scope, top_k)
 
 
 class TopicChannel(Channel):
@@ -79,7 +79,7 @@ class TopicChannel(Channel):
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Delegate to the retriever's topic-match collector."""
-        return await rt._ltm_topic_match(ctx.emb, ctx.session_id, ctx.scope, top_k)
+        return await rt.ltm_topic_match(ctx.emb, ctx.session_id, ctx.scope, top_k)
 
 
 # The default retrieval channel set, in fusion order (matches the original

@@ -9,7 +9,7 @@ import math
 import time
 from typing import Any, cast
 
-from graphknows.ports.vector_db import IVectorDb
+from graphknows.ports.vector_store import IVectorStore
 from graphknows.memory.ltm.entity_resolution import EntityResolution
 from graphknows.memory.models.contracts import CommunityAssignment, SessionSnapshot
 from graphknows.memory.models.promotion import PromotionRecord, PromotionRequest
@@ -37,7 +37,7 @@ class LTMPromotionPipeline:
     def __init__(
         self,
         stm_store: Any,
-        vec_store: IVectorDb,
+        vec_store: IVectorStore,
         ltm_store: Any,
         llm_api_key: str = "",
         llm_api_base: str = "",

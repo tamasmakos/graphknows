@@ -89,7 +89,7 @@ async def test_all_three_collectors_contribute():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_ltm_entity_traversal", side_effect=_ltm_traversal),
+        patch.object(retriever, "ltm_entity_traversal", side_effect=_ltm_traversal),
     ):
         ctx = await retriever.retrieve("alice policy", session_id="s1", scope="both")
 
@@ -142,7 +142,7 @@ async def test_multi_source_chunk_ranks_higher():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
         # Test fusion/blend order deterministically, independent of whether the
         # cross-encoder model happens to be cached in this environment.
         patch("graphknows.memory.query.retriever._ce_rerank", side_effect=lambda q, c, k: c[:k]),
@@ -185,7 +185,7 @@ async def test_community_weight_boosts_semantic_hit_without_topic_chunk():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
         patch("graphknows.memory.query.retriever._ce_rerank", side_effect=lambda q, c, k: c[:k]),
     ):
         ctx = await retriever.retrieve("climate policy", session_id="s1", scope="stm")
@@ -212,7 +212,7 @@ async def test_top_k_is_respected():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve("query words here", session_id="s1", top_k=3)
 
@@ -234,7 +234,7 @@ async def test_collector_failure_raises_loudly():
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "_ltm_entity_traversal", new=AsyncMock(return_value={})),
+        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
         pytest.raises(RuntimeError, match="stm down"),
     ):
         await retriever.retrieve("query text here", session_id="s1")
