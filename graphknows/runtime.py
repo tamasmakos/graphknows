@@ -52,15 +52,21 @@ def _format_fused_hits(
     ]
 
 
-class GraphKnowsRuntime:
-    """Transport-neutral runtime for graphknows memory operations."""
+class Memory:
+    """The graphknows memory facade — the primary developer-facing API.
+
+    Transport-neutral: the MCP server and the Memory Mirror web UI are thin
+    wrappers over this class, so every transport sees identical behaviour. One
+    ``Memory`` instance is safe for concurrent asyncio use.
+    """
 
     def __init__(self, settings: GraphKnowsSettings | None = None) -> None:
         self.settings = settings or GraphKnowsSettings()
         self._retriever: Any = None
         self._retriever_stores: list[Any] = []
+        self._connect_lock = asyncio.Lock()
 
-    async def __aenter__(self) -> GraphKnowsRuntime:
+    async def __aenter__(self) -> Memory:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -76,10 +82,28 @@ class GraphKnowsRuntime:
         self._retriever = None
         self._retriever_stores = []
 
+    async def connect(self) -> None:
+        """Eagerly open store connections on the caller's event loop.
+
+        Optional: recall/ingest connect lazily on first use. Call this to pay the
+        connection cost up front (e.g. at app startup) or to fail fast.
+        """
+        await self._get_retriever()
+
     async def _get_retriever(self) -> Any:
-        """Return a cached retriever, connecting stores lazily on first call."""
+        """Return a cached retriever, connecting stores lazily on first call.
+
+        Guarded by an ``asyncio.Lock`` so concurrent first-use callers connect
+        the stores exactly once.
+        """
         if self._retriever is not None:
             return self._retriever
+        async with self._connect_lock:
+            if self._retriever is not None:  # another coroutine won the race
+                return self._retriever
+            return await self._build_retriever()
+
+    async def _build_retriever(self) -> Any:
         from graphknows.config.builders.stores import (
             build_arcadedb_ltm_store,
             build_arcadedb_stm_store,
@@ -557,3 +581,10 @@ class GraphKnowsRuntime:
             await ltm.close()
         entities = [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]
         return {"entities": entities, "count": len(entities), "session_id": session_id}
+
+
+# Deprecated alias — ``Memory`` is the canonical name from 1.0. Kept for the 1.x
+# line so ``from graphknows.runtime import GraphKnowsRuntime`` keeps working;
+# removed in 2.0. The top-level ``graphknows.GraphKnowsRuntime`` import also
+# emits a DeprecationWarning (see graphknows/__init__.py).
+GraphKnowsRuntime = Memory

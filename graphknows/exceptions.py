@@ -10,6 +10,26 @@ class GraphKnowsError(Exception):
     """Base class for all graphknows errors."""
 
 
+class ConfigurationError(GraphKnowsError):
+    """Settings are invalid or incomplete (bad env vars, missing secrets)."""
+
+
+class StoreError(GraphKnowsError):
+    """A storage backend operation failed (connection, query, or transport)."""
+
+
+class IngestError(GraphKnowsError):
+    """Ingestion of text or messages into short-term memory failed."""
+
+
+class RetrievalError(GraphKnowsError):
+    """A recall/retrieval operation failed."""
+
+
+class ExtractionError(GraphKnowsError):
+    """Entity or relation extraction failed."""
+
+
 class MissingExtraError(GraphKnowsError, ImportError):
     """A feature was used whose optional dependency extra is not installed.
 

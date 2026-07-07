@@ -17,25 +17,25 @@ from starlette.staticfiles import StaticFiles
 from graphknows.config import GraphKnowsSettings
 from graphknows.config.builders.stores import build_arcadedb_ltm_store, build_arcadedb_stm_store
 from graphknows.config.links import DEFAULT_PORT
-from graphknows.runtime import GraphKnowsRuntime
+from graphknows.runtime import Memory
 
 _settings: GraphKnowsSettings | None = None
-_runtime: GraphKnowsRuntime | None = None
+_runtime: Memory | None = None
 
 
 def get_settings() -> GraphKnowsSettings:
-    """Return web-local singleton settings."""
+    """Return web-local settings for the process-level Memory Mirror server."""
     global _settings
     if _settings is None:
         _settings = GraphKnowsSettings()
     return _settings
 
 
-def get_runtime() -> GraphKnowsRuntime:
-    """Return web-local singleton runtime."""
+def get_runtime() -> Memory:
+    """Return the process-level Memory backing the Memory Mirror web server."""
     global _runtime
     if _runtime is None:
-        _runtime = GraphKnowsRuntime(get_settings())
+        _runtime = Memory(get_settings())
     return _runtime
 
 

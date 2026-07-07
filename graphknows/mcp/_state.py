@@ -19,12 +19,16 @@ def get_settings() -> GraphKnowsSettings:
 
 
 def get_runtime() -> Any:
-    """Return the singleton transport-neutral graphknows runtime."""
+    """Return the process-level graphknows Memory for the MCP server.
+
+    The MCP server is one process serving one memory backend, so a single shared
+    ``Memory`` is the right lifetime here (reset via :func:`close`, e.g. in tests).
+    """
     global _runtime
     if _runtime is None:
-        from graphknows.runtime import GraphKnowsRuntime
+        from graphknows.runtime import Memory
 
-        _runtime = GraphKnowsRuntime(get_settings())
+        _runtime = Memory(get_settings())
     return _runtime
 
 

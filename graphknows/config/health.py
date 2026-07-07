@@ -3,8 +3,7 @@
 Only ``get_version()`` lives here (pure, no store dependencies).
 
 ``check_backends`` and ``get_memory_stats`` were moved to
-``graphknows.runtime`` (``GraphKnowsRuntime.doctor`` /
-``GraphKnowsRuntime.stats``) because they import
+``graphknows.runtime`` (``Memory.doctor`` / ``Memory.stats``) because they import
 ``graphknows.memory.stores``, which is above ``graphknows.config`` in the
 layer hierarchy.
 """

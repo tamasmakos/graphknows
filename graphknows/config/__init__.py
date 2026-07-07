@@ -17,8 +17,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from graphknows.exceptions import ConfigurationError
 
 
 class MemoryMode(StrEnum):
@@ -102,16 +104,29 @@ class GraphKnowsSettings(BaseSettings):
     def check_production_secrets(self) -> None:
         """Raise if running in production with unsafe defaults.
 
+        Runs automatically at construction (see :meth:`_validate_secrets`); also
+        callable directly as the strict entry point.
+
         Raises:
-            ValueError: When production env is detected with the default password,
-                or with llm_assisted mode selected but no LLM API key configured.
+            ConfigurationError: When production env is detected with the default
+                password, or with llm_assisted mode selected but no LLM API key.
         """
         if self.graphknows_env != "production":
             return
         if self.arcadedb_password == "changeme":
-            raise ValueError("GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default.")
+            raise ConfigurationError(
+                "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
+            )
         if self.mode is MemoryMode.llm_assisted and not self.llm_api_key:
-            raise ValueError("llm_assisted mode in production requires GRAPHKNOWS_LLM_API_KEY.")
+            raise ConfigurationError(
+                "llm_assisted mode in production requires GRAPHKNOWS_LLM_API_KEY."
+            )
+
+    @model_validator(mode="after")
+    def _validate_secrets(self) -> GraphKnowsSettings:
+        """Fail fast at construction when production secrets are unsafe."""
+        self.check_production_secrets()
+        return self
 
 
 from graphknows.config.health import get_version  # noqa: F401, E402
