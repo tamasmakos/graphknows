@@ -9,7 +9,8 @@ COMPOSE := docker compose
 SVC     ?=   # optional: limit logs/restart/stop/shell/build to one service
 
 .PHONY: up down restart stop build rebuild ps logs shell \
-        infra-up infra-down observability setup clean prune help
+        infra-up infra-down observability setup clean prune help \
+        test test-integration lint typecheck arch build-wheel smoke ci eval-smoke
 
 # ── Lifecycle ──────────────────────────────────────────────────────
 up: ## Start all services
@@ -68,6 +69,38 @@ clean: ## Stop containers and remove images built from this project
 
 prune: ## ⚠ Remove all stopped containers, unused images and networks
 	docker system prune -f
+
+# ── Quality gates (local, no Docker) ──────────────────────────────
+test: ## Run the unit test suite (integration tests excluded)
+	pytest -q -m "not integration"
+
+test-integration: ## Run integration tests (needs a live ArcadeDB — make infra-up)
+	pytest -q -m integration
+
+lint: ## Ruff lint the package + tests
+	ruff check graphknows tests
+
+typecheck: ## Mypy the package
+	mypy graphknows
+
+arch: ## Enforce module boundaries (tach)
+	tach check
+
+build-wheel: ## Build the wheel and assert it stays small + ships py.typed
+	python -m build --wheel
+	@python -c "import glob,os,zipfile; w=sorted(glob.glob('dist/*.whl'))[-1]; \
+	  z=zipfile.ZipFile(w); assert any('py.typed' in n for n in z.namelist()), 'py.typed missing'; \
+	  kb=os.path.getsize(w)/1024; assert kb < 1024, f'wheel too large: {kb:.0f} KB'; \
+	  print(f'wheel OK: {os.path.basename(w)} ({kb:.0f} KB, py.typed present)')"
+
+smoke: ## Core-only import smoke: import graphknows + client with no heavy deps
+	pytest -q tests/api/test_lazy_core.py tests/api/test_public_surface.py
+
+ci: lint typecheck arch test build-wheel ## Run the full local CI gate
+	@echo "CI gate passed."
+
+eval-smoke: ## End-to-end acceptance: one LoCoMo conversation via the MCP client (needs services up)
+	python -m evaluation --limit 1
 
 # ── Help ──────────────────────────────────────────────────────────
 help: ## Show this help

@@ -8,6 +8,18 @@ source_roots = ["."]
 path = "graphknows.ports"
 depends_on = []
 
+# Stdlib-only out-of-process client SDK — depends on nothing but the root
+# exception hierarchy, so it installs and imports with the core package alone.
+[[modules]]
+path = "graphknows.client"
+depends_on = []
+
+# Framework adapters — hooks are duck-typed (take a memory instance), the
+# langgraph store touches only the root exception hierarchy.
+[[modules]]
+path = "graphknows.adapters"
+depends_on = []
+
 [[modules]]
 path = "graphknows.ingestion.domain"
 depends_on = []
@@ -30,6 +42,7 @@ depends_on = [
   "graphknows.config",
   "graphknows.ingestion.domain",
   "graphknows.ports",
+  "graphknows.memory.stores",  # legacy (accepted 2026-07): frames.py reuses embedder — TODO invert
 ]
 
 [[modules]]
@@ -41,6 +54,8 @@ path = "graphknows.memory.stores"
 depends_on = [
   "graphknows.ingestion.domain",
   "graphknows.memory.ltm",
+  "graphknows.memory.models",  # legacy (accepted 2026-07): ltm_store imports gds.CommunityResult
+  "graphknows.config",         # legacy (accepted 2026-07): embedder reads GraphKnowsSettings
 ]
 
 [[modules]]
@@ -57,6 +72,7 @@ depends_on = [
   "graphknows.memory.stores",
   "graphknows.memory.temporal",
   "graphknows.ports",
+  "graphknows.memory",  # legacy (accepted 2026-07): retriever imports channels.base/collectors
 ]
 
 [[modules]]
@@ -64,6 +80,7 @@ path = "graphknows.memory.stm"
 depends_on = [
   "graphknows.extraction",
   "graphknows.ingestion",
+  "graphknows.ingestion.domain",  # legacy (accepted 2026-07): ingest.py reads default taxonomy
   "graphknows.memory.models",
   "graphknows.memory.stores", "graphknows.memory.query", "graphknows.memory",
   "graphknows.memory.temporal",
@@ -98,6 +115,8 @@ depends_on = [
   "graphknows.memory.stm",
   "graphknows.memory.stores",
   "graphknows.ports",
+  "graphknows.extraction",  # legacy (accepted 2026-07): channels + extractor reuse extraction
+  "graphknows.config",      # legacy (accepted 2026-07): extractor reads GraphKnowsSettings
 ]
 
 [[modules]]
