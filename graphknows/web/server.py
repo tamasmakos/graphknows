@@ -16,8 +16,8 @@ from starlette.staticfiles import StaticFiles
 
 from graphknows.config import GraphKnowsSettings
 from graphknows.config.builders.stores import build_arcadedb_ltm_store, build_arcadedb_stm_store
+from graphknows.config.links import DEFAULT_PORT
 from graphknows.runtime import GraphKnowsRuntime
-from graphknows.web.links import DEFAULT_PORT
 
 _settings: GraphKnowsSettings | None = None
 _runtime: GraphKnowsRuntime | None = None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.memory.ltm.models import CentralityResult, CommunityResult, GDSResult
+from graphknows.memory.models.gds import CentralityResult, CommunityResult, GDSResult
 
 
 def test_gds_result_defaults() -> None:
