@@ -38,8 +38,10 @@ class LoCoMoAnswerGeneration(dspy.Signature):
     3. Yes/no questions: answer "yes" or "no" alone — do NOT append a reason.
     4. Resolve dates: convert purely relative phrases ("last year" → "2022"). But
        preserve period-anchored expressions as-is ("the week before 27 June 2023" —
-       do NOT reduce to "20 June 2023"). Resolve vague references ("my home country"
-       → "Sweden").
+       do NOT reduce to "20 June 2023"). Give a date at day/month/year granularity
+       ONLY — never carry a clock time from a passage's timestamp into the answer:
+       "2:35 pm on 16 March 2023" → "16 March 2023". Resolve vague references ("my
+       home country" → "Sweden").
     5. Multi-item questions — list EVERY matching item across all passages,
        comma-separated and deduplicated.
     6. ANSWER THE EXACT SUBJECT ASKED. If the question asks what someone's KIDS
@@ -97,6 +99,12 @@ def demos() -> list[dspy.Example]:
             "[1] 12 March 2023 | Priya: I adopted Bella yesterday, she's settled "
             "in so well already.",
             "11 March 2023",
+        ),
+        # Clock time in the passage timestamp — strip it, answer at date granularity.
+        (
+            "When did Nadia launch her podcast?",
+            "[1] 2:35 pm on 12 May 2023 | Nadia: I finally launched my podcast today!",
+            "12 May 2023",
         ),
         # Yes/no inference — answer bare "yes", reason in thinking only, NOT in the answer.
         (
