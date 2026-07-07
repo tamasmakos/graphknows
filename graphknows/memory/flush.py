@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
 import logging
 import math
 import time
@@ -166,9 +165,6 @@ class LTMPromotionPipeline:
             ):
                 await client.connect()
 
-    # keep old name so callers outside this file still compile
-    _ensure_pg_connected = _ensure_stores_connected
-
     async def _copy_vector_to_ltm(self, session_id: str, record: PromotionRecord) -> None:
         try:
             chunks_promoted, turns_promoted = await self._pg.promote_to_ltm(session_id)
@@ -184,11 +180,8 @@ class LTMPromotionPipeline:
         llm_assisted retriever consumes ``community_id`` (topic summaries +
         community-weighted fusion), so llm_free skips this entirely.
         """
-        detect = getattr(self._neo, "detect_communities", None)
-        if not callable(detect):
-            return None
         try:
-            result = await detect()
+            result = await self._neo.detect_communities()
         except Exception as exc:
             record.errors.append(f"gds: {exc}")
             log.warning("community detection failed: %s", exc)
@@ -207,9 +200,7 @@ class LTMPromotionPipeline:
             if self._llm_api_key:
                 from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
 
-                summarizer = TopicSummarizer(
-                    self._llm_api_key, self._llm_model, self._llm_api_base
-                )
+                summarizer = TopicSummarizer(self._llm_api_key, self._llm_model, self._llm_api_base)
             record.topics_created = await self._neo.write_topic_summaries(
                 session_id=session_id,
                 summarizer=summarizer,
@@ -243,13 +234,10 @@ class LTMPromotionPipeline:
         record.audit.communities = assignments
         if not assignments:
             return
-        writer = getattr(self._pg, "write_community_assignments", None)
-        if not callable(writer):
-            return
         try:
-            result = writer(session_id, [item.model_dump() for item in assignments])
-            if inspect.isawaitable(result):
-                await result
+            await self._pg.write_community_assignments(
+                session_id, [item.model_dump() for item in assignments]
+            )
         except Exception as exc:
             record.errors.append(f"community_metadata: {exc}")
 
@@ -394,7 +382,9 @@ class LTMPromotionPipeline:
         """
         persist_fn = getattr(self._neo, "compute_and_persist_pagerank", None)
         if not callable(persist_fn):
-            log.debug("_run_pagerank_persistence: ltm_store has no compute_and_persist_pagerank, skip")
+            log.debug(
+                "_run_pagerank_persistence: ltm_store has no compute_and_persist_pagerank, skip"
+            )
             return
         try:
             updated = await persist_fn()

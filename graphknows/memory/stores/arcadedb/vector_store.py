@@ -555,7 +555,10 @@ class ArcadeDBVectorStore:
                     "n.memory_class AS memory_class, n.metadata AS metadata",
                     params={"ids": chunk_ids},
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "get_chunks_by_ids: %s query failed, results may be partial: %s", db, exc
+                )
                 continue
             for r in rows:
                 cid = r.get("id", "")

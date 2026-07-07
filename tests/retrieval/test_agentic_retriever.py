@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
+from graphknows.config import MemoryMode
 from graphknows.memory.query.agentic import AgenticRetriever
 
 
@@ -19,6 +20,8 @@ def _make_settings():
     settings.llm_api_base = ""
     settings.llm_temperature = 0.0
     settings.llm_max_tokens = 512
+    settings.mode = MemoryMode.llm_assisted
+    settings.enable_frames = False
     return settings
 
 

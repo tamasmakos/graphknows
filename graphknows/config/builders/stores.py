@@ -19,9 +19,7 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
     """Build the relation extractor used by graph stores."""
     from graphknows.config.adapters.dspy_relation_extractor import DspyRelationExtractorAdapter
 
-    ontology_file = getattr(settings, "ontology_file", "") or os.environ.get(
-        "GRAPHKNOWS_ONTOLOGY_FILE", ""
-    )
+    ontology_file = settings.ontology_file or os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE", "")
     return DspyRelationExtractorAdapter(
         config={
             "llm": {
@@ -110,7 +108,9 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     from graphknows.config.profiles import get_profile
 
     profile = get_profile(settings)
-    extractor = _build_entity_extractor("llm_assisted" if profile.extraction_uses_llm else "gliner2")
+    extractor = _build_entity_extractor(
+        "llm_assisted" if profile.extraction_uses_llm else "gliner2"
+    )
     rel_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
     return STMService(
         mg,
@@ -166,7 +166,9 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     pg = build_arcadedb_vector_store(settings)
     flush_pg = build_arcadedb_vector_store(settings)
     neo = build_arcadedb_ltm_store(settings)
-    extractor = _build_entity_extractor("llm_assisted" if profile.extraction_uses_llm else "gliner2")
+    extractor = _build_entity_extractor(
+        "llm_assisted" if profile.extraction_uses_llm else "gliner2"
+    )
     from graphknows.config.builders.channels import build_channels
 
     return CorpusIngestWorkflow(

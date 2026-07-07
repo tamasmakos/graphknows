@@ -3,6 +3,7 @@
 Explicit list, no auto-discovery: what runs is what's written here, filtered by
 the memory mode each channel declares in ``profiles`` and by opt-in flags.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -18,14 +19,10 @@ def build_channels(settings: GraphKnowsSettings) -> list[Channel]:
     """Instantiate the channels active for this configuration."""
     channels: list[Channel] = [cls() for cls in DEFAULT_COLLECTOR_CHANNELS]
 
-    # Only a literal True enables frames (defensive: a mock/partial settings must
-    # not silently pull in the frame channel and its FrameNet load).
-    if getattr(settings, "enable_frames", False) is True:
+    if settings.enable_frames:
         from graphknows.memory.channels.frame import FrameChannel
+
         channels.append(FrameChannel())
 
-    mode_obj = getattr(settings, "mode", None)
-    mode = getattr(mode_obj, "value", mode_obj)
-    if not isinstance(mode, str):
-        return channels  # unresolved mode (e.g. a test mock) — do not filter
+    mode = settings.mode.value
     return [c for c in channels if mode in c.profiles]

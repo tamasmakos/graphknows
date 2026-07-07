@@ -1005,8 +1005,8 @@ class ArcadeDBLTMStore:
                 "RETURN t.community_id AS cid, t.community_hash AS h"
             )
             existing_hashes = {int(r["cid"]): r["h"] for r in rows if r.get("cid") is not None}
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("community-hash preload failed; recomputing all topics: %s", exc)
 
         created = 0
         for comm_id, members in communities.items():
