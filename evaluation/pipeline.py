@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Callable
 
 from evaluation.client import GraphknowsMCPClient
@@ -24,15 +25,15 @@ from evaluation.dataset import load_dialogues
 from evaluation.ingestion import Ingestor
 from evaluation.reporting import summarize, write_report
 from evaluation.retrieval import Retriever
-from evaluation.scoring import gold_max_overlap, gold_reachable, token_f1
+from evaluation.scoring import gold_max_overlap, gold_reachable, locomo_f1, token_f1
 
 # Deferred imports for dspy-dependent modules so that importing evaluation.pipeline
 # for its non-dspy helpers (_build_case_result etc.) works even when dspy is absent.
 # The actual import happens inside run_evaluation() / _run_dialogue() at call time.
 TYPE_CHECKING = False
 if TYPE_CHECKING:  # pragma: no cover
-    from evaluation.generation import AnswerGenerator  # noqa: F401
-    from evaluation.scoring.dspy_metrics import DspyMetricScorer  # noqa: F401
+    from evaluation.generation import AnswerGenerator
+    from evaluation.scoring.dspy_metrics import DspyMetricScorer
 
 log = logging.getLogger(__name__)
 
@@ -51,8 +52,10 @@ def _is_credit_exhaustion(exc: Exception) -> bool:
 def _checkpoint(run_id: str, config: EvalConfig, cases: list[CaseResult]) -> None:
     """Persist results so far; a later crash never loses completed dialogues."""
     try:
-        write_report(RunReport(run_id=run_id, config=config, cases=list(cases), summary=summarize(cases)))
-    except Exception as exc:  # noqa: BLE001 — checkpointing must never break the run
+        write_report(
+            RunReport(run_id=run_id, config=config, cases=list(cases), summary=summarize(cases))
+        )
+    except Exception as exc:
         log.warning("Checkpoint write failed (non-fatal): %s", exc)
 
 
@@ -69,6 +72,24 @@ def _avg_score(passages: list) -> float:
     return round(sum(scores) / len(scores), 4) if scores else 0.0
 
 
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _gold_context_coverage(gold: str, passages: list) -> float:
+    """Fraction of the gold's content tokens present in the generator's passages.
+
+    High coverage + wrong answer = generation failure; low coverage = retrieval
+    miss. Splitting the two per-case makes failure attribution readable straight
+    from the results JSON.
+    """
+    gold_toks = {w for w in _WORD_RE.findall((gold or "").lower()) if len(w) > 2}
+    if not gold_toks:
+        return 0.0
+    ctx = " ".join(p.text for p in passages).lower()
+    ctx_toks = set(_WORD_RE.findall(ctx))
+    return len(gold_toks & ctx_toks) / len(gold_toks)
+
+
 def _build_case_result(
     case: LocomoCase,
     *,
@@ -82,6 +103,7 @@ def _build_case_result(
     semantic_f1: float = 0.0,
 ) -> CaseResult:
     tok_f1 = token_f1(case.gold, generated_answer)
+    loco_f1 = locomo_f1(case.gold, generated_answer, case.category)
     return CaseResult(
         case_id=case.case_id,
         question=case.question,
@@ -94,9 +116,14 @@ def _build_case_result(
         metrics={
             "score_type": "semantic_f1",
             "semantic_f1": semantic_f1,
-            "token_f1": tok_f1,  # diagnostic secondary column
+            # Official LoCoMo token-F1 (category-aware, stemmed) — paper-comparable.
+            "locomo_f1": loco_f1,
+            "token_f1": tok_f1,  # plain (non-category) stemmed token-F1
             "gold_max_token_overlap": round(gold_max_overlap(case.gold, probe), 3),
             "gold_reachable_at_20": gold_reachable(case.gold, probe),
+            # Fraction of gold tokens present in the passages the GENERATOR saw:
+            # high + wrong answer = generation failure, low = retrieval miss.
+            "gold_context_coverage": round(_gold_context_coverage(case.gold, passages), 3),
             "avg_hit_score": _avg_score(passages),
             "recall_hit_count": len(passages),
             "ltm_graph_hit_count": sum(1 for p in passages if p.is_ltm_graph),
@@ -132,7 +159,7 @@ async def _run_dialogue(
     dspy_scorer: DspyMetricScorer,
     client: GraphknowsMCPClient,
     progress: tuple[int, int],
-    on_progress: "Callable[[list[CaseResult]], None] | None" = None,
+    on_progress: Callable[[list[CaseResult]], None] | None = None,
 ) -> list[CaseResult]:
     """Ingest one dialogue, then retrieve+generate+score each of its questions."""
     case_idx, total = progress
@@ -152,7 +179,9 @@ async def _run_dialogue(
             probe = await retriever.query(session_id, case.question, k=config.probe_k)
             passages = probe[: config.top_k]
             # passage count fed to generator is mode-specific (llm_free=50, llm_assisted=25)
-            context_passages = probe[: select_gen_context_k(config, os.environ.get("GRAPHKNOWS_MODE"))]
+            context_passages = probe[
+                : select_gen_context_k(config, os.environ.get("GRAPHKNOWS_MODE"))
+            ]
             answer, gen_usage = await generator.generate(case.question, context_passages)
 
             # SemanticF1 is the headline metric — always computed.
@@ -191,8 +220,8 @@ async def _run_dialogue(
 
 async def run_evaluation(config: EvalConfig, *, run_id: str, limit: int, offset: int) -> RunReport:
     """Run the LoCoMo evaluation and return a populated :class:`RunReport`."""
-    from evaluation.generation import AnswerGenerator  # noqa: PLC0415
-    from evaluation.scoring.dspy_metrics import DspyMetricScorer  # noqa: PLC0415
+    from evaluation.generation import AnswerGenerator
+    from evaluation.scoring.dspy_metrics import DspyMetricScorer
 
     generator = AnswerGenerator(model=config.generation_model or None)
     dspy_scorer = DspyMetricScorer(model=config.generation_model or None)
@@ -214,6 +243,7 @@ async def run_evaluation(config: EvalConfig, *, run_id: str, limit: int, offset:
         retriever = Retriever(client, config)
 
         for i, dialogue in enumerate(dialogues, 1):
+
             def _progress_ckpt(partial: list[CaseResult], _done: list[CaseResult] = cases) -> None:
                 _checkpoint(run_id, config, _done + partial)
 
@@ -230,17 +260,31 @@ async def run_evaluation(config: EvalConfig, *, run_id: str, limit: int, offset:
                     progress=(len(cases), total),
                     on_progress=_progress_ckpt,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 if _is_credit_exhaustion(exc):
-                    log.error("Stopping after %d/%d dialogues — OpenRouter credits exhausted: %s",
-                              i - 1, len(dialogues), exc)
+                    log.error(
+                        "Stopping after %d/%d dialogues — OpenRouter credits exhausted: %s",
+                        i - 1,
+                        len(dialogues),
+                        exc,
+                    )
                 else:
-                    log.exception("Stopping after %d/%d dialogues — dialogue %s failed: %s",
-                                  i - 1, len(dialogues), dialogue.dialogue_id, exc)
+                    log.exception(
+                        "Stopping after %d/%d dialogues — dialogue %s failed: %s",
+                        i - 1,
+                        len(dialogues),
+                        dialogue.dialogue_id,
+                        exc,
+                    )
                 break
             cases.extend(results)
             _checkpoint(run_id, config, cases)
-            log.info("Checkpoint: %d cases after dialogue %s (%d/%d)",
-                     len(cases), dialogue.dialogue_id, i, len(dialogues))
+            log.info(
+                "Checkpoint: %d cases after dialogue %s (%d/%d)",
+                len(cases),
+                dialogue.dialogue_id,
+                i,
+                len(dialogues),
+            )
 
     return RunReport(run_id=run_id, config=config, cases=cases, summary=summarize(cases))

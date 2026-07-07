@@ -51,7 +51,7 @@ async def _run_one(
     limit: int,
     offset: int,
     ts: str,
-) -> "tuple[object, object]":
+) -> tuple[object, object]:
     """Run a single mode and return (RunReport, ReportPaths)."""
     os.environ["GRAPHKNOWS_MODE"] = mode
     config = EvalConfig(generation_model=gen_model)
@@ -78,7 +78,9 @@ async def _amain(argv: list[str] | None = None) -> int:
         )
 
         run_free, paths_free = await _run_one("llm_free", gen_model, args.limit, args.offset, ts)
-        run_asst, paths_asst = await _run_one("llm_assisted", gen_model, args.limit, args.offset, ts)
+        run_asst, paths_asst = await _run_one(
+            "llm_assisted", gen_model, args.limit, args.offset, ts
+        )
 
         table = compare_modes(run_free.cases, run_asst.cases)
 
@@ -87,10 +89,14 @@ async def _amain(argv: list[str] | None = None) -> int:
         compare_path.write_text(table, encoding="utf-8")
 
         print("\n" + table)
-        print(f"\nllm_free     SemanticF1: {run_free.summary.get('mean_semantic_f1', 0.0):.3f}  "
-              f"over {run_free.summary['case_count']} cases")
-        print(f"llm_assisted SemanticF1: {run_asst.summary.get('mean_semantic_f1', 0.0):.3f}  "
-              f"over {run_asst.summary['case_count']} cases")
+        print(
+            f"\nllm_free     SemanticF1: {run_free.summary.get('mean_semantic_f1', 0.0):.3f}  "
+            f"over {run_free.summary['case_count']} cases"
+        )
+        print(
+            f"llm_assisted SemanticF1: {run_asst.summary.get('mean_semantic_f1', 0.0):.3f}  "
+            f"over {run_asst.summary['case_count']} cases"
+        )
         print(f"\nComparison table: {compare_path}")
         print(f"llm_free  reports: {paths_free.json_path}")
         print(f"llm_asst  reports: {paths_asst.json_path}")
@@ -106,14 +112,15 @@ async def _amain(argv: list[str] | None = None) -> int:
     paths = write_report(run)
 
     print(
-        f"\nMean SemanticF1: {run.summary.get('mean_semantic_f1', 0.0):.3f}  "
-        f"(token-F1: {run.summary.get('mean_token_f1', 0.0):.3f})  "
+        f"\nMean LoCoMo F1 (official): {run.summary.get('mean_locomo_f1', 0.0):.3f}  "
+        f"(SemanticF1: {run.summary.get('mean_semantic_f1', 0.0):.3f}  "
+        f"token-F1: {run.summary.get('mean_token_f1', 0.0):.3f})  "
         f"over {run.summary['case_count']} cases"
     )
-    sf1_cat = run.summary.get("semantic_f1_by_category", {})
-    if sf1_cat:
-        print("SemanticF1 by category:")
-        for cat, val in sf1_cat.items():
+    loco_cat = run.summary.get("locomo_f1_by_category", {})
+    if loco_cat:
+        print("LoCoMo F1 by category:")
+        for cat, val in loco_cat.items():
             print(f"  {cat}: {val:.3f}")
     print(paths.json_path)
     print(paths.csv_path)

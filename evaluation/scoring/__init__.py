@@ -6,6 +6,7 @@ from evaluation.scoring.metrics import (
     answer_tokens,
     gold_max_overlap,
     gold_reachable,
+    locomo_f1,
     normalize_answer,
     token_f1,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "answer_tokens",
     "gold_max_overlap",
     "gold_reachable",
+    "locomo_f1",
     "normalize_answer",
     "token_f1",
 ]
