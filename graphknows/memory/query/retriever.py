@@ -31,7 +31,7 @@ import math
 import re
 from typing import Any
 
-from graphknows.config.adapters.ports.vector_db import IVectorDb
+from graphknows.ports.vector_db import IVectorDb
 from graphknows.memory.query._rrf_common import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,

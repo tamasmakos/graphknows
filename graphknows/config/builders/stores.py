@@ -6,7 +6,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
+from graphknows.ports.relation_extractor import IRelationExtractor
 
 if TYPE_CHECKING:
     from graphknows.memory.stores.arcadedb.client import ArcadeDBClient

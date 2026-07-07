@@ -9,7 +9,7 @@ import math
 import time
 from typing import Any, cast
 
-from graphknows.config.adapters.ports.vector_db import IVectorDb
+from graphknows.ports.vector_db import IVectorDb
 from graphknows.memory.ltm.entity_resolution import EntityResolution
 from graphknows.memory.models.contracts import CommunityAssignment, SessionSnapshot
 from graphknows.memory.models.promotion import PromotionRecord, PromotionRequest

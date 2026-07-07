@@ -1,21 +1,13 @@
-"""graphknows adapters: ports and infrastructure adapters.
+"""graphknows infrastructure adapters (port implementations).
 
-Imports stay lazy so the baseline GLiNER2 ingest path does not import the
-DSPy/LiteLLM stack unless an LLM-assisted relation adapter is explicitly used.
+The port interfaces themselves live in ``graphknows.ports``. Imports stay lazy
+so the baseline GLiNER2 ingest path does not import the DSPy/LiteLLM stack
+unless an LLM-assisted relation adapter is explicitly used.
 """
 
 from typing import Any
 
-from graphknows.config.adapters.ports.embedder import IEmbedder
-from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
-from graphknows.config.adapters.ports.vector_db import IVectorDb
-
-__all__ = [
-    "DspyRelationExtractorAdapter",
-    "IEmbedder",
-    "IRelationExtractor",
-    "IVectorDb",
-]
+__all__ = ["DspyRelationExtractorAdapter"]
 
 
 def __getattr__(name: str) -> Any:

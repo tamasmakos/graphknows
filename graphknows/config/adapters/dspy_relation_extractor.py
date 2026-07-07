@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from graphknows.config.adapters.ports.relation_extractor import IRelationExtractor
+from graphknows.ports.relation_extractor import IRelationExtractor
 
 
 class DspyRelationExtractorAdapter:

@@ -11,7 +11,7 @@ import numpy as np
 from .loader import OntologyLoader, OntologyManifest
 
 if TYPE_CHECKING:
-    from graphknows.config.adapters.ports.embedder import IEmbedder
+    from graphknows.ports.embedder import IEmbedder
 
 log = logging.getLogger(__name__)
 
