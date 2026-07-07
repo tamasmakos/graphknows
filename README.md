@@ -18,10 +18,27 @@ Use it three ways from the same core: as a **Python library**, as an **MCP stdio
 
 ## Install
 
+The core install is small (no ML dependencies) — add extras for the features you use:
+
 ```bash
-pip install graphknows            # llm_free, batteries included
-pip install "graphknows[assisted]"  # + LLM extraction & ontology injection
+pip install "graphknows[local-embeddings,extraction,server]"   # full llm_free stack + MCP server
+pip install "graphknows[assisted]"                             # + LLM extraction & ontology
+pip install graphknows                                         # core only (e.g. just the client SDK)
 ```
+
+| Extra | Adds |
+| --- | --- |
+| `local-embeddings` | local sentence-transformers embeddings (the default embedder) |
+| `extraction` | GLiNER2 + spaCy entity/relation extraction (llm_free ingest) |
+| `analytics` | igraph + leidenalg community detection (flush) |
+| `parsers` | non-plaintext document parsers |
+| `server` | the `graphknows-mcp` stdio server |
+| `web` | the Memory Mirror web UI |
+| `assisted` | DSPy LLM extraction + injectable RDF/OWL ontology |
+| `langgraph` | the LangGraph adapter |
+| `all` | everything (used by the Docker images) |
+
+The stdlib-only `graphknows.client` SDK (drive the server out-of-process) needs no extras.
 
 GraphKnows needs a running ArcadeDB. The quickest path:
 
@@ -34,17 +51,29 @@ docker compose up -d arcadedb
 
 ## Quickstart
 
+`Memory` is the single entrypoint — in-process, transport-neutral:
+
 ```python
 import asyncio
-from graphknows import GraphKnowsRuntime
+from graphknows import Memory
 
 async def main():
-    async with GraphKnowsRuntime() as rt:
-        await rt.ingest_memory("Alex joined Acme as CTO in March.", session_id="s1")
-        hits = await rt.recall_memory("Where does Alex work?", session_id="s1")
+    async with Memory() as mem:
+        await mem.ingest_memory("Alex joined Acme as CTO in March.", session_id="s1")
+        hits = await mem.recall_memory("Where does Alex work?", session_id="s1")
         print(hits)
 
 asyncio.run(main())
+```
+
+Out-of-process (no ML deps in your process), drive the MCP server with the same verbs:
+
+```python
+from graphknows.client import RemoteMemory
+
+async with RemoteMemory(command="graphknows-mcp") as mem:
+    await mem.ingest_memory("Alex joined Acme as CTO in March.", session_id="s1")
+    hits = await mem.recall_memory("Where does Alex work?", session_id="s1")
 ```
 
 Configuration is via `GRAPHKNOWS_*` environment variables (or a `.env` file) — see
@@ -76,12 +105,26 @@ readiness at `/readyz`). The bundled SPA ships via the Docker image; a bare
 `pip` install exposes the JSON API and can point at a static dir with
 `GRAPHKNOWS_FRONTEND_DIR`.
 
+## Integrating into an agent framework
+
+Wire your framework's memory hooks to the `Memory`/`RemoteMemory` verbs. The
+LangGraph adapter is shipped as the reference; the generic recipe (write →
+`ingest_memory`, read → `recall_memory`, thread id → `session_id`, end of
+episode → `flush_memory`) covers any framework — see
+[docs/integrations.md](docs/integrations.md) and
+[examples/langgraph_agent.py](examples/langgraph_agent.py).
+
+To plug a different storage backend, implement the three store protocols in
+[graphknows/ports](graphknows/ports) (`ISTMStore`, `IVectorStore`, `ILTMStore`).
+
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — STM/LTM, promotion, RRF retrieval
 - [docs/modes.md](docs/modes.md) — llm_free vs llm_assisted
 - [docs/ontology.md](docs/ontology.md) — injecting a domain ontology
 - [docs/configuration.md](docs/configuration.md) — full settings reference
+- [docs/integrations.md](docs/integrations.md) — framework integration recipe
+- [docs/versioning.md](docs/versioning.md) — semver & deprecation policy
 
 The `evaluation/` directory is internal LoCoMo benchmarking — not part of the installed
 package.

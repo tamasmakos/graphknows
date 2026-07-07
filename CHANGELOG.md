@@ -4,16 +4,31 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0rc1] — unreleased
+## [1.0.0] — 2026-07-07
 
-First public release candidate: the internal service becomes an importable,
-pip-installable library with a first-class server story.
+First stable release: the internal service becomes an importable,
+pip-installable, framework-agnostic library with a first-class server story.
 
 ### Added
-- Public API surface from the package root: `GraphKnowsRuntime` (now an async
-  context manager), `GraphKnowsSettings`, `MemoryMode`, `__version__`, and the
-  exception hierarchy (`GraphKnowsError`, `ConfigurationError`,
-  `StoreConnectionError`, `ExtractionError`, `MissingExtraError`).
+- **`Memory`** — the single transport-neutral facade (async context manager).
+  `GraphKnowsRuntime` is kept as a deprecated alias for the 1.x line.
+- **`graphknows.client`** — a stdlib-only out-of-process SDK: `RemoteMemory`
+  (mirrors the `Memory` verbs over MCP) and `GraphKnowsMCPClient`. No ML deps.
+- **`graphknows.ports`** — public store protocols (`ISTMStore`, `IVectorStore`,
+  `ILTMStore`) plus `IEmbedder`/`IRelationExtractor`, so a backend is swappable
+  in principle (ArcadeDB is the shipped implementation).
+- **`graphknows.adapters.langgraph`** — a reference framework adapter
+  (`GraphKnowsStore`, `recall`/`remember` node helpers) + a generic integration
+  recipe (`docs/integrations.md`).
+- **Extras-based install**: a small core (no ML), with `local-embeddings`,
+  `extraction`, `analytics`, `parsers`, `server`, `web`, `assisted`,
+  `langgraph`, and `all`. Missing extras raise `MissingExtraError` with an
+  install hint. Ships a `py.typed` marker.
+- Public API surface from the package root: `Memory`, `GraphKnowsSettings`,
+  `MemoryMode`, `IngestResult`, `__version__`, and the exception hierarchy
+  (`GraphKnowsError`, `ConfigurationError`, `StoreError`, `IngestError`,
+  `RetrievalError`, `ExtractionError`, `MissingExtraError`). Pinned by a
+  public-surface snapshot test.
 - Local-by-default embeddings (sentence-transformers), so `llm_free` mode runs
   with **zero API keys**. A remote OpenAI-compatible endpoint is opt-in via
   `GRAPHKNOWS_EMBED_API_BASE`.
@@ -24,6 +39,14 @@ pip-installable library with a first-class server story.
   configuration), `CHANGELOG.md`.
 
 ### Changed
+- The core install is now small: heavy ML/NLP and transport dependencies moved
+  behind extras (`import graphknows` and `graphknows.client` pull no ML deps).
+- Ingestion is async-first: `Memory.ingest_memory` and the STM service run store
+  I/O on the caller's event loop; the background-thread bridge is gone from the
+  ingest path.
+- Stores expose public `connect()`/`close()` (no more private client access);
+  internal store handles renamed to semantic names (`stm`/`vec`/`ltm`).
+- `GraphKnowsSettings` validates production secrets at construction (fail fast).
 - **BREAKING:** all environment variables are now prefixed `GRAPHKNOWS_`
   (e.g. `ARCADEDB_URL` → `GRAPHKNOWS_ARCADEDB_URL`, `LLM_MODEL` →
   `GRAPHKNOWS_LLM_MODEL`, `MODE` → `GRAPHKNOWS_MODE`). Old names are ignored.

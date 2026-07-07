@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-__version__ = "1.0.0rc1"
+__version__ = "1.0.0"
 
 from graphknows.config import GraphKnowsSettings, MemoryMode
 from graphknows.exceptions import (
