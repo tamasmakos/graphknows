@@ -55,7 +55,11 @@ def get_gliner2_model(config: dict[str, Any] | None = None):
     if GLINER2_MODEL is None:
         try:
             from gliner2 import GLiNER2
+        except ModuleNotFoundError as exc:
+            from graphknows.exceptions import MissingExtraError
 
+            raise MissingExtraError("Entity extraction (GLiNER2)", "extraction") from exc
+        try:
             model_name = "fastino/gliner2-base-v1"
             if config:
                 model_name = _get_extraction_cfg(config).get("gliner_model", model_name)

@@ -11,10 +11,12 @@ COPY pyproject.toml uv.lock ./
 COPY graphknows ./graphknows
 COPY frontend ./frontend
 
-# Install all production deps + dev/eval groups into an isolated venv
+# Install the batteries-included package (all extras) + dev/eval groups.
+# Core deps are lean; the ML/NLP/transport stack lives behind extras (see
+# pyproject [project.optional-dependencies]); [all] pulls them for the server.
 RUN uv venv /opt/venv && \
     uv pip install --python /opt/venv/bin/python --no-cache \
-        .[assisted] \
+        .[all] \
         --group dev \
         --group eval \
         jupyterlab

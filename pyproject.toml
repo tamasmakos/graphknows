@@ -25,37 +25,45 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    # Core
+    # Lightweight core: config, ArcadeDB HTTP client, vectors, graph algorithms,
+    # chunking, temporal parsing. The graphknows.client SDK is stdlib-only and
+    # needs none of these beyond pydantic.
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "python-dotenv>=1.0.0",
     "python-json-logger>=2.0.0",
     "httpx>=0.27.0",
-    # ML / embeddings (llm_free path — local by default)
     "numpy>=1.26.0",
     "networkx>=3.3",
-    "igraph>=0.11.0",
-    "leidenalg>=0.10.0",
     "pyyaml>=6.0",
-    "sentence-transformers>=3.0.0",
-    # NLP / graph extraction (llm_free path)
-    "gliner2>=0.1.0",
     "langchain-text-splitters>=0.3.0",
-    "spacy>=3.7.0",
     "dateparser>=1.2.0",
-    # Document parsing
-    "python-docx>=1.1.0",
-    # Transports (MCP stdio + web Memory Mirror — both first-class, both light)
-    "mcp>=1.0.0",
-    "starlette>=1.0.1",
-    "uvicorn[standard]>=0.29.0",
 ]
 
+# Heavy ML/NLP and transport dependencies live behind extras so the default
+# install stays small. All are lazily imported and raise MissingExtraError with
+# an install hint when a feature needs an extra that is not installed.
 [project.optional-dependencies]
+# Local sentence-transformers embeddings (the default embedder). Omit to use a
+# remote OpenAI-compatible endpoint via GRAPHKNOWS_EMBED_API_BASE.
+local-embeddings = ["sentence-transformers>=3.0.0"]
+# Entity + relation extraction on the ingest path (llm_free mode).
+extraction = ["gliner2>=0.1.0", "spacy>=3.7.0"]
+# Community detection during flush (degrades gracefully when absent).
+analytics = ["igraph>=0.11.0", "leidenalg>=0.10.0"]
+# Non-plaintext document parsers.
+parsers = ["python-docx>=1.1.0"]
+# MCP stdio server (graphknows-mcp entry point).
+server = ["mcp>=1.0.0"]
+# Memory Mirror web UI (graphknows-web entry point).
+web = ["starlette>=1.0.1", "uvicorn[standard]>=0.29.0"]
 # llm_assisted mode: LLM-driven extraction + injectable RDF/OWL ontology.
-assisted = [
-    "dspy>=2.5.0",
-    "rdflib>=7.0.0",
+assisted = ["dspy>=2.5.0", "rdflib>=7.0.0"]
+# LangGraph reference adapter (graphknows.adapters.langgraph).
+langgraph = ["langgraph>=0.2.0"]
+# Everything — the batteries-included install used by the Docker images.
+all = [
+    "graphknows[local-embeddings,extraction,analytics,parsers,server,web,assisted,langgraph]",
 ]
 
 [project.urls]

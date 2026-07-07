@@ -38,11 +38,10 @@ def _local_model(model_name: str) -> Any:
     """Load and cache a local sentence-transformers model on CPU."""
     try:
         from sentence_transformers import SentenceTransformer
-    except ModuleNotFoundError as exc:  # pragma: no cover - sentence-transformers is a base dep
-        raise ModuleNotFoundError(
-            "Local embeddings need sentence-transformers (a base dependency). "
-            "Reinstall graphknows, or set GRAPHKNOWS_EMBED_API_BASE to use a remote endpoint."
-        ) from exc
+    except ModuleNotFoundError as exc:
+        from graphknows.exceptions import MissingExtraError
+
+        raise MissingExtraError("Local embeddings", "local-embeddings") from exc
     model = SentenceTransformer(model_name, device="cpu")
     global EMBED_DIM
     get_dim = getattr(model, "get_embedding_dimension", None) or model.get_sentence_embedding_dimension

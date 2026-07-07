@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on core-only installs
+    from graphknows.exceptions import MissingExtraError
+
+    raise MissingExtraError("The MCP stdio server", "server") from exc
 
 
 @asynccontextmanager

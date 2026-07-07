@@ -19,7 +19,7 @@ COPY uv.lock* ./
 COPY graphknows/ ./graphknows/
 
 RUN uv venv /opt/venv && \
-    uv pip install --python /opt/venv/bin/python --no-cache "." && \
+    uv pip install --python /opt/venv/bin/python --no-cache ".[all]" && \
     /opt/venv/bin/python -m spacy download en_core_web_lg
 
 # ─── runtime stage ─────────────────────────────────────────────────────────────
