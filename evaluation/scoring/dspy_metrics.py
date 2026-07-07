@@ -14,9 +14,12 @@ The LM is injectable (``lm=``) for offline unit-testing with a stub LM.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
+from statistics import median
 
 try:
     import dspy
@@ -46,7 +49,7 @@ def _build_openrouter_lm(
     *,
     temperature: float = 0.0,
     max_tokens: int = 2048,
-) -> "dspy.LM":
+) -> dspy.LM:
     """Construct an OpenRouter-backed ``dspy.LM`` for grading."""
     from graphknows.config.llm import _get_openrouter_api_key, normalize_openrouter_model
 
@@ -89,7 +92,7 @@ class DspyMetricScorer:
         model: str | None = None,
         api_key: str | None = None,
         *,
-        lm: "dspy.LM | None" = None,
+        lm: dspy.LM | None = None,
         threshold: float = 0.66,
         decompositional: bool = False,
     ) -> None:
@@ -109,10 +112,61 @@ class DspyMetricScorer:
             None if lm else _build_openrouter_lm(model, api_key, temperature=0.4, max_tokens=8192)
         )
         self._semantic_f1 = _SemanticF1(threshold=threshold, decompositional=decompositional)
-        log.info("DspyMetricScorer ready (SemanticF1)")
+        self._threshold = threshold
+        self._decompositional = decompositional
+        # Deterministic judge cache: SemanticF1 is a non-deterministic LLM judge
+        # (~25% of triples vary run-to-run, up to ~0.3 on a single question). A
+        # persistent (question, gold, answer) -> score cache makes an identical
+        # triple always score identically — across reruns and A/B arms — so an
+        # unchanged answer contributes exactly zero to a measured delta. Disable
+        # with GRAPHKNOWS_JUDGE_CACHE=0. GRAPHKNOWS_JUDGE_SAMPLES>1 scores a
+        # cache-miss N times and stores the median to also cut per-question noise.
+        self._samples = max(1, int(os.environ.get("GRAPHKNOWS_JUDGE_SAMPLES", "1")))
+        self._cache_dir: Path | None = None
+        if os.environ.get("GRAPHKNOWS_JUDGE_CACHE", "1") not in ("0", "false", "off", ""):
+            self._cache_dir = Path(
+                os.environ.get("GRAPHKNOWS_JUDGE_CACHE_DIR",
+                               "evaluation/results/.judge_cache")
+            )
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+        log.info(
+            "DspyMetricScorer ready (SemanticF1, cache=%s, samples=%d)",
+            bool(self._cache_dir), self._samples,
+        )
+
+    def _cache_key(self, question: str, gold: str, predicted: str) -> str:
+        """Stable key over the exact judge inputs (+ config that changes scoring)."""
+        h = hashlib.sha256()
+        for part in (question, gold, predicted or "Unknown",
+                     str(self._threshold), str(self._decompositional)):
+            h.update(part.encode("utf-8"))
+            h.update(b"\x00")
+        return h.hexdigest()
+
+    def _cache_get(self, key: str) -> float | None:
+        if self._cache_dir is None:
+            return None
+        p = self._cache_dir / key
+        if not p.exists():
+            return None
+        try:
+            return float(p.read_text())
+        except (ValueError, OSError):
+            return None
+
+    def _cache_put(self, key: str, value: float) -> None:
+        if self._cache_dir is None:
+            return
+        p = self._cache_dir / key
+        tmp = p.with_name(key + ".tmp")
+        try:
+            tmp.write_text(str(value))
+            tmp.replace(p)  # atomic within the dir
+        except OSError as exc:
+            log.debug("judge cache write failed (non-fatal): %s", exc)
 
     def _score_sync(
-        self, question: str, gold: str, predicted: str, lm: "dspy.LM | None" = None
+        self, question: str, gold: str, predicted: str, lm: dspy.LM | None = None
     ) -> DspyScores:
         example = dspy.Example(question=question, response=gold).with_inputs("question")
         pred = dspy.Prediction(response=predicted or "Unknown")
@@ -121,13 +175,32 @@ class DspyMetricScorer:
         return DspyScores(semantic_f1=sf1)
 
     async def score(self, question: str, gold: str, predicted: str) -> DspyScores:
-        """Return the SemanticF1 score for one case (rate-limit aware)."""
+        """Return the SemanticF1 score for one case.
+
+        Deterministic via the (question, gold, answer) cache: an identical triple
+        always returns the same score. On a cache miss the (noisy) judge is called
+        ``GRAPHKNOWS_JUDGE_SAMPLES`` times and the median is cached.
+        """
+        key = self._cache_key(question, gold, predicted)
+        cached = self._cache_get(key)
+        if cached is not None:
+            return DspyScores(semantic_f1=cached)
+        samples = [
+            (await self._score_once(question, gold, predicted)).semantic_f1
+            for _ in range(self._samples)
+        ]
+        value = float(median(samples))
+        self._cache_put(key, value)
+        return DspyScores(semantic_f1=value)
+
+    async def _score_once(self, question: str, gold: str, predicted: str) -> DspyScores:
+        """One SemanticF1 judge call (rate-limit aware; uncached)."""
         retried_temp = False
         for attempt in range(6):
             try:
                 lm = self._lm_retry if (retried_temp and self._lm_retry is not None) else self._lm
                 return await asyncio.to_thread(self._score_sync, question, gold, predicted, lm)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 msg = str(exc).lower()
                 if "402" in msg or "credits" in msg or "payment" in msg:
                     raise RuntimeError(f"OpenRouter credit limit reached: {exc}") from exc

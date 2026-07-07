@@ -85,3 +85,4 @@ AGENTS.md
 .codegraph
 # local analysis scratch (not committed)
 .scratch/
+evaluation/results/.judge_cache/
