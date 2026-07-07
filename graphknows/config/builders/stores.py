@@ -88,8 +88,12 @@ def _build_entity_extractor(mode: str) -> Any:
 
 
 def build_stm_service(settings: GraphKnowsSettings) -> Any:
-    """Build an STMService from settings."""
-    from graphknows.memory.stm._async_bridge import _run
+    """Build an STMService from settings (unconnected — call ``await service.connect()``).
+
+    The service is returned without an open connection so the ArcadeDB client is
+    bound to the caller's event loop when ``connect()`` is awaited, not to a
+    background loop at build time.
+    """
     from graphknows.memory.stm.service import STMService
     from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
     from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
@@ -101,9 +105,6 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     client = build_arcadedb_client(settings)
     mg = ArcadeDBSTMStore(client=client)
     pg = ArcadeDBVectorStore(client=client)
-    _run(mg.connect())
-    _run(mg.ensure_schema())
-    _run(pg.connect())  # connects client + ensures schema
 
     from graphknows.config.profiles import get_profile
 

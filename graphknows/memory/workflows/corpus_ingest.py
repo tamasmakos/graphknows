@@ -8,8 +8,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from graphknows.memory.stm._async_bridge import _run as _stm_run
-
 log = logging.getLogger("graphknows.memory.workflows.corpus_ingest")
 
 
@@ -79,11 +77,6 @@ class CorpusIngestWorkflow:
         Returns:
             CorpusIngestResult with aggregated counts and any errors.
         """
-        # Ensure the connection is created on _BG_LOOP where stm.ingest() dispatches queries.
-        # Using _stm_run (sync) avoids binding the connection to the MCP event loop.
-        if not getattr(self._pg, "_pool", None):
-            _stm_run(self._pg.connect())
-
         from graphknows.memory.flush import LTMPromotionPipeline
         from graphknows.memory.models.promotion import PromotionRequest
         from graphknows.memory.stm.service import STMService
@@ -101,6 +94,8 @@ class CorpusIngestWorkflow:
             embed_fn=self._embed_fn,
             rel_extractor=resolved_rel_extractor,
         )
+        # Connect on the caller's event loop so the store client is bound to it.
+        await stm.connect()
 
         # Phase 1: ingest each document into STM
         for doc in request.documents:
@@ -116,7 +111,7 @@ class CorpusIngestWorkflow:
             source_hint = doc.get("source", "")
 
             try:
-                ingest_result = stm.ingest(
+                ingest_result = await stm.ingest(
                     text=text,
                     session_id=session_id,
                     title=title,
@@ -133,9 +128,9 @@ class CorpusIngestWorkflow:
                 result.errors.append(err)
                 log.warning(err)
 
-        # Phase 2: flush STM → LTM
-        # Build a separate pg store for the flusher so it connects on the MCP async event loop
-        # (self._pg is bound to _BG_LOOP for STM ingest and cannot be reused here).
+        # Phase 2: flush STM → LTM. All stores now share the caller's event loop,
+        # so the flusher can reuse the ingest vector store; an explicit
+        # flush_pg_store is still honoured when supplied.
         flush_pg = self._flush_pg_store or self._pg
         pipeline = LTMPromotionPipeline(
             mg_store=self._mg,

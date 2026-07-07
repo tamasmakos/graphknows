@@ -50,7 +50,8 @@ async def test_workflow_calls_stm_then_flush() -> None:
     wf = _make_workflow()
 
     mock_stm = MagicMock()
-    mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
+    mock_stm.connect = AsyncMock(return_value=None)
+    mock_stm.ingest = AsyncMock(return_value=_make_ingest_result())
 
     mock_pipeline = MagicMock()
     mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
@@ -87,7 +88,8 @@ async def test_workflow_skips_docs_without_text() -> None:
     wf = _make_workflow()
 
     mock_stm = MagicMock()
-    mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
+    mock_stm.connect = AsyncMock(return_value=None)
+    mock_stm.ingest = AsyncMock(return_value=_make_ingest_result())
 
     mock_pipeline = MagicMock()
     mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
@@ -118,7 +120,8 @@ async def test_workflow_stm_failure_collected_in_errors() -> None:
     wf = _make_workflow()
 
     mock_stm = MagicMock()
-    mock_stm.ingest = MagicMock(side_effect=RuntimeError("stm down"))
+    mock_stm.connect = AsyncMock(return_value=None)
+    mock_stm.ingest = AsyncMock(side_effect=RuntimeError("stm down"))
 
     mock_pipeline = MagicMock()
     mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
@@ -148,7 +151,8 @@ async def test_workflow_flush_failure_collected_in_errors() -> None:
     wf = _make_workflow()
 
     mock_stm = MagicMock()
-    mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
+    mock_stm.connect = AsyncMock(return_value=None)
+    mock_stm.ingest = AsyncMock(return_value=_make_ingest_result())
 
     mock_pipeline = MagicMock()
     mock_pipeline.promote = AsyncMock(side_effect=RuntimeError("ltm unavailable"))
@@ -177,7 +181,8 @@ async def test_workflow_accepts_explicit_session_id() -> None:
     wf = _make_workflow()
 
     mock_stm = MagicMock()
-    mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
+    mock_stm.connect = AsyncMock(return_value=None)
+    mock_stm.ingest = AsyncMock(return_value=_make_ingest_result())
 
     mock_pipeline = MagicMock()
     mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
@@ -200,23 +205,22 @@ async def test_workflow_accepts_explicit_session_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_corpus_ingest_connects_pg_on_bg_loop() -> None:
-    """corpus_ingest must connect pg store on _BG_LOOP via _stm_run, not via await."""
+async def test_corpus_ingest_connects_stm_on_caller_loop() -> None:
+    """corpus_ingest connects the STM service on the caller's loop (await), not a bg loop."""
     wf = _make_workflow()
-    wf._pg._pool = None  # force the reconnect path
 
     mock_stm = MagicMock()
-    mock_stm.ingest = MagicMock(return_value=_make_ingest_result())
+    mock_stm.connect = AsyncMock(return_value=None)
+    mock_stm.ingest = AsyncMock(return_value=_make_ingest_result())
 
     mock_pipeline = MagicMock()
     mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
 
     with (
-        patch("graphknows.memory.workflows.corpus_ingest._stm_run") as mock_run,
         patch("graphknows.memory.stm.service.STMService", return_value=mock_stm),
         patch("graphknows.memory.flush.LTMPromotionPipeline", return_value=mock_pipeline),
     ):
         request = CorpusIngestRequest(documents=[{"id": "d1", "text": "Test text."}])
         await wf.run(request)
 
-    assert mock_run.called, "_stm_run must be called to connect pg on _BG_LOOP"
+    mock_stm.connect.assert_awaited_once()

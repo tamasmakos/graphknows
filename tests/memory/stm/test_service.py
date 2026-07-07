@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from graphknows.memory.stm import STMConfig, STMService
 
 
@@ -52,25 +54,28 @@ def test_stm_service_accepts_custom_config():
     assert svc._config.entity_confidence == 0.8
 
 
-def test_ingest_calls_handler(tmp_path):
+@pytest.mark.asyncio
+async def test_ingest_calls_handler(tmp_path):
     svc, mg, pg, embed = _make_service()
-    result = svc.ingest("Hello world", session_id="s1", title="Test")
+    result = await svc.ingest("Hello world", session_id="s1", title="Test")
     assert result.session_id == "s1"
     assert result.chunk_count >= 1
 
 
-def test_record_turn_creates_dialog_capture():
+@pytest.mark.asyncio
+async def test_record_turn_creates_dialog_capture():
     from graphknows.memory.stm.dialog import Turn
 
     svc, mg, pg, embed = _make_service()
     turn = Turn(id="t1", index=0, role="user", text="hello")
-    result = svc.record_turn("s1", "d1", turn)
+    result = await svc.record_turn("s1", "d1", turn)
     assert result.turn_id == "t1"
     assert svc._dialog_capture is not None
 
 
-def test_ingest_handler_is_lazy():
+@pytest.mark.asyncio
+async def test_ingest_handler_is_lazy():
     svc, _, _, _ = _make_service()
     assert svc._ingest_handler is None
-    svc.ingest("x", session_id="s1")
+    await svc.ingest("x", session_id="s1")
     assert svc._ingest_handler is not None

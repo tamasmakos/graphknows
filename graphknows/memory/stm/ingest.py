@@ -14,11 +14,9 @@ from graphknows.ingestion.parsers.base import ParsedFile
 from graphknows.ingestion.parsers.registry import get_parser
 from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.models.ingest import IngestResult
-from graphknows.memory.stm._async_bridge import _run
 from graphknows.memory.stm._entity_writer import (
     graph_entities,
     write_chunk_entities_and_edges_bulk,
-    write_entity_nodes_and_edges,
 )
 
 log = logging.getLogger("graphknows.memory.stm.ingest")
@@ -64,7 +62,7 @@ class _STMIngestHandler:
 
         self._relation_filter = RelationOntologyFilter(get_default_taxonomy().relation_types)
 
-    def ingest_text(
+    async def ingest_text(
         self,
         text: str,
         session_id: str,
@@ -86,9 +84,9 @@ class _STMIngestHandler:
         """
         parser = get_parser(source_hint or ".txt")
         parsed = parser.parse(text, source_hint=source_hint, title=title)
-        return self._ingest_parsed(parsed, session_id, metadata or {})
+        return await self._ingest_parsed(parsed, session_id, metadata or {})
 
-    def ingest_parsed(
+    async def ingest_parsed(
         self,
         parsed: ParsedFile,
         session_id: str,
@@ -104,14 +102,14 @@ class _STMIngestHandler:
         Returns:
             IngestResult with counts and timing.
         """
-        return self._ingest_parsed(parsed, session_id, metadata or {})
+        return await self._ingest_parsed(parsed, session_id, metadata or {})
 
-    def _ingest_parsed(
+    async def _ingest_parsed(
         self, parsed: ParsedFile, session_id: str, metadata: dict[str, Any]
     ) -> IngestResult:
         t0 = time.monotonic()
 
-        self._ensure_session_and_file(session_id, parsed, metadata, t0)
+        await self._ensure_session_and_file(session_id, parsed, metadata, t0)
 
         # Pre-compute cleaned texts so they are identical for both embedding and
         # writing (no double-clean).
@@ -135,9 +133,8 @@ class _STMIngestHandler:
 
         # Bounded chunk-level concurrency.  Each chunk coroutine runs extraction
         # (CPU/model I/O) and DB writes concurrently; a semaphore caps parallelism.
-        # All chunks are dispatched via a SINGLE _run(asyncio.gather(...)) so that
-        # every await inside the coroutines lands on the SAME background event loop
-        # that _run manages — no nested _run calls, no cross-loop executor issues.
+        # All chunks run on the caller's event loop (the same loop the store client
+        # was connected on) via a single asyncio.gather.
         # Default 1 (sequential): the ENTITY(name) index is UNIQUE, so concurrent
         # MERGEs of a shared entity name across chunks can race on the unique key.
         # Opt into parallelism (e.g. for the LLM-heavy llm_assisted ingest) by
@@ -188,7 +185,7 @@ class _STMIngestHandler:
 
             return list(await asyncio.gather(*[_with_sem(i) for i in range(len(parsed.segments))]))
 
-        counts: list[int] = _run(_run_all())
+        counts: list[int] = await _run_all()
         entity_count = sum(counts)
 
         elapsed = time.monotonic() - t0
@@ -214,22 +211,20 @@ class _STMIngestHandler:
     # Private step methods
     # ------------------------------------------------------------------
 
-    def _ensure_session_and_file(
+    async def _ensure_session_and_file(
         self,
         session_id: str,
         parsed: ParsedFile,
         metadata: dict[str, Any],
         t0: float,
     ) -> None:
-        _run(self._mg.write_session_metadata(session_id, {"started_at": t0}))
-        _run(
-            self._mg.write_file_node(
-                session_id=session_id,
-                file_id=parsed.source_id,
-                title=parsed.title,
-                parser_name=parsed.parser_name,
-                source_hint=metadata.get("source_hint", ""),
-            )
+        await self._mg.write_session_metadata(session_id, {"started_at": t0})
+        await self._mg.write_file_node(
+            session_id=session_id,
+            file_id=parsed.source_id,
+            title=parsed.title,
+            parser_name=parsed.parser_name,
+            source_hint=metadata.get("source_hint", ""),
         )
 
     def _resolve_temporal(
@@ -271,91 +266,6 @@ class _STMIngestHandler:
             return cast(ExtractionResult, self._extractor.extract(clean_text))
         return ExtractionResult()
 
-    def _write_chunk_to_mg(
-        self,
-        session_id: str,
-        source_id: str,
-        chunk_id: str,
-        clean_text: str,
-        seg: Any,
-        extraction: ExtractionResult,
-        temporal: list[dict[str, str]] | None = None,
-    ) -> int:
-        """Write CHUNK node, entity nodes/edges, and relation edges to ArcadeDB STM.
-
-        Sync bridge version — used by callers outside the concurrent chunk path
-        (retained for any future callers; not used by _ingest_parsed).
-        Returns the entity count for this chunk.
-        """
-        chunk_metadata = {**seg.metadata, "temporal": temporal} if temporal else seg.metadata
-        _run(
-            self._mg.write_chunk_node(
-                session_id=session_id,
-                file_id=source_id,
-                chunk_id=chunk_id,
-                text=clean_text,
-                heading_path=seg.heading_path,
-                metadata=chunk_metadata,
-            )
-        )
-        entity_count = write_entity_nodes_and_edges(
-            mg=self._mg,
-            session_id=session_id,
-            entities=extraction.entities,
-            edge_writer=lambda ent: _run(
-                self._mg.write_chunk_entity_edge(
-                    chunk_id=chunk_id,
-                    entity_name=ent["name"],
-                    session_id=session_id,
-                )
-            ),
-            _run=_run,
-        )
-        # GLiNER2 relations — ontology-filtered, then written.
-        gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
-        for rel in gliner_relations:
-            _run(
-                self._mg.write_relation_edge(
-                    session_id=session_id,
-                    subject_name=rel["head"],
-                    relation_name=rel["relation"],
-                    object_name=rel["tail"],
-                    fact=rel.get("evidence", "") or clean_text,
-                    confidence=rel.get("score", 0.5),
-                    chunk_id=chunk_id,
-                )
-            )
-
-        # DSPy ontology-guided relation extraction (llm_assisted mode only).
-        # extract_relations returns (triplets, nodes, diagnostics).
-        # Each triplet is (subject, relation, object, props_dict).
-        if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            raw = _run(self._rel_extractor.extract_relations(text=clean_text))
-            dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
-            for triplet in dspy_triplets:
-                subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
-                props = triplet[3] if len(triplet) > 3 else {}
-                confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
-                evidence = props.get("evidence", "") if isinstance(props, dict) else ""
-                _run(
-                    self._mg.write_relation_edge(
-                        session_id=session_id,
-                        subject_name=subj,
-                        relation_name=rel_name,
-                        object_name=obj,
-                        fact=evidence or clean_text,
-                        confidence=confidence,
-                        chunk_id=chunk_id,
-                    )
-                )
-            log.debug(
-                "DSPy extraction session=%s chunk=%s: %d triples",
-                session_id,
-                chunk_id[:8],
-                len(dspy_triplets),
-            )
-        return entity_count
-
     async def _write_chunk_to_mg_async(
         self,
         session_id: str,
@@ -366,14 +276,10 @@ class _STMIngestHandler:
         extraction: ExtractionResult,
         temporal: list[dict[str, str]] | None = None,
     ) -> int:
-        """Async version of _write_chunk_to_mg for the concurrent chunk path.
+        """Write a chunk's CHUNK node, entity nodes/edges, and relation edges.
 
-        Awaits store methods directly — must only be called from within a
-        coroutine already running on the background event loop (i.e. inside
-        the gather dispatched by _run(_run_all())).  DO NOT call via _run()
-        as that would nest _run calls and deadlock the single background loop.
-
-        Returns the entity count for this chunk.
+        Awaits store methods directly on the caller's event loop (the same loop
+        the store client was connected on). Returns the entity count for this chunk.
         """
         chunk_metadata = {**seg.metadata, "temporal": temporal} if temporal else seg.metadata
         await self._mg.write_chunk_node(
@@ -430,37 +336,6 @@ class _STMIngestHandler:
                 len(dspy_triplets),
             )
         return entity_count
-
-    def _write_chunk_to_pg(
-        self,
-        session_id: str,
-        source_id: str,
-        chunk_id: str,
-        clean_text: str,
-        seg: Any,
-        embedding: list[float],
-        entities: list[dict[str, Any]],
-        metadata: dict[str, Any],
-    ) -> None:
-        _run(
-            self._pg.write_stm_chunk(
-                {
-                    "id": chunk_id,
-                    "session_id": session_id,
-                    "file_id": source_id,
-                    "text": clean_text,
-                    "heading_path": seg.heading_path,
-                    "embedding": embedding,
-                    "metadata": {
-                        **seg.metadata,
-                        **metadata,
-                        "atom_type": seg.metadata.get("atom_type", "text"),
-                        "memory_class": seg.metadata.get("memory_class", "raw_evidence"),
-                        "entity_names": [e["name"] for e in entities],
-                    },
-                }
-            )
-        )
 
     async def _write_chunk_to_pg_async(
         self,

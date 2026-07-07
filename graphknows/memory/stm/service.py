@@ -67,10 +67,29 @@ class STMService:
         self._dialog_capture: Any = None
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def connect(self) -> None:
+        """Connect the shared store client on the caller's event loop.
+
+        Both stores share one ArcadeDBClient (see build_stm_service), so the
+        client is connected once and each store ensures its own schema.
+        """
+        await self._mg.connect()
+        await self._mg.ensure_schema()
+        await self._pg.connect()  # idempotent client connect + vector schema
+
+    async def close(self) -> None:
+        """Close the shared store client. Idempotent."""
+        await self._mg.close()
+        await self._pg.close()
+
+    # ------------------------------------------------------------------
     # Ingest
     # ------------------------------------------------------------------
 
-    def ingest(
+    async def ingest(
         self,
         text: str,
         session_id: str,
@@ -100,7 +119,7 @@ class STMService:
                 embed_fn=self._embed_fn,
                 rel_extractor=self._rel_extractor,
             )
-        return self._ingest_handler.ingest_text(  # type: ignore[no-any-return]
+        return await self._ingest_handler.ingest_text(  # type: ignore[no-any-return]
             text,
             session_id=session_id,
             title=title,
@@ -112,7 +131,7 @@ class STMService:
     # Dialog
     # ------------------------------------------------------------------
 
-    def record_turn(
+    async def record_turn(
         self,
         session_id: str,
         dialog_id: str,
@@ -137,13 +156,13 @@ class STMService:
                 extractor=self._extractor,
                 embed_fn=self._embed_fn,
             )
-        return self._dialog_capture.write_turn(session_id, dialog_id, turn)
+        return await self._dialog_capture.write_turn(session_id, dialog_id, turn)
 
     # ------------------------------------------------------------------
     # Conversation ingestion
     # ------------------------------------------------------------------
 
-    def ingest_messages(
+    async def ingest_messages(
         self,
         messages: list[Message],
         options: IngestOptions,
@@ -158,7 +177,6 @@ class STMService:
             IngestResult with turn count, entity count, and any errors.
         """
         from graphknows.memory.models.ingest import IngestResult
-        from graphknows.memory.stm._async_bridge import _run
         from graphknows.memory.stm.dialog import DialogCapture, Turn
 
         session_id = options.scope.to_session_id()
@@ -183,12 +201,10 @@ class STMService:
             dc = self._dialog_capture
 
         # Ensure DIALOG node exists
-        _run(
-            self._mg.write_dialog_node(
-                session_id=session_id,
-                dialog_id=dialog_id,
-                started_at=str(time.time()),
-            )
+        await self._mg.write_dialog_node(
+            session_id=session_id,
+            dialog_id=dialog_id,
+            started_at=str(time.time()),
         )
 
         t0 = time.perf_counter()
@@ -206,7 +222,7 @@ class STMService:
                 role=msg.role.value,
                 text=msg.content,
             )
-            result = dc.write_turn(
+            result = await dc.write_turn(
                 session_id=session_id,
                 dialog_id=dialog_id,
                 turn=turn,

@@ -9,6 +9,10 @@ from graphknows.memory.extractor import ExtractionResult
 from graphknows.memory.models.ingest import IngestResult
 from graphknows.memory.stm.ingest import _STMIngestHandler
 
+import pytest
+
+pytestmark = pytest.mark.asyncio
+
 
 def _make_parsed(n_segments: int = 2) -> ParsedFile:
     return ParsedFile(
@@ -45,46 +49,46 @@ def _make_handler(extractor=None, embed_fn=None):
     return handler, mg, pg, embed
 
 
-def test_ingest_parsed_returns_ingest_result():
+async def test_ingest_parsed_returns_ingest_result():
     handler, mg, pg, embed = _make_handler()
     parsed = _make_parsed(2)
-    result = handler.ingest_parsed(parsed, "session1")
+    result = await handler.ingest_parsed(parsed, "session1")
     assert isinstance(result, IngestResult)
     assert result.session_id == "session1"
     assert result.chunk_count == 2
 
 
-def test_ingest_text_no_extractor():
+async def test_ingest_text_no_extractor():
     handler, mg, pg, embed = _make_handler(extractor=None)
-    result = handler.ingest_text("Hello world", session_id="s1", title="Test")
+    result = await handler.ingest_text("Hello world", session_id="s1", title="Test")
     assert result.entity_count == 0
     assert result.chunk_count >= 1
 
 
-def test_ingest_text_with_extractor():
+async def test_ingest_text_with_extractor():
     extractor = MagicMock()
     extractor.extract.return_value = ExtractionResult(
         entities=[{"name": "Alice", "type": "PERSON", "score": 0.9}]
     )
     handler, mg, pg, embed = _make_handler(extractor=extractor)
-    result = handler.ingest_text("Alice is here", session_id="s2")
+    result = await handler.ingest_text("Alice is here", session_id="s2")
     assert result.entity_count == 1
 
 
-def test_write_session_metadata_called():
+async def test_write_session_metadata_called():
     handler, mg, pg, embed = _make_handler()
-    handler.ingest_text("x", session_id="s3")
+    await handler.ingest_text("x", session_id="s3")
     mg.write_session_metadata.assert_called_once()
 
 
-def test_write_stm_chunk_called_per_segment():
+async def test_write_stm_chunk_called_per_segment():
     handler, mg, pg, embed = _make_handler()
     parsed = _make_parsed(3)
-    handler.ingest_parsed(parsed, "s4")
+    await handler.ingest_parsed(parsed, "s4")
     assert pg.write_stm_chunk.call_count == 3
 
 
-def test_rel_extractor_skipped_with_fewer_than_2_entities():
+async def test_rel_extractor_skipped_with_fewer_than_2_entities():
     rel_extractor = MagicMock()
     extractor = MagicMock()
     extractor.extract.return_value = ExtractionResult(
@@ -92,5 +96,5 @@ def test_rel_extractor_skipped_with_fewer_than_2_entities():
     )
     handler, mg, pg, embed = _make_handler(extractor=extractor)
     handler._rel_extractor = rel_extractor
-    handler.ingest_text("Alice alone", session_id="s5")
+    await handler.ingest_text("Alice alone", session_id="s5")
     rel_extractor.extract.assert_not_called()

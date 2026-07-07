@@ -8,8 +8,8 @@ difference — callers supply a lambda that calls the appropriate edge method.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
-from typing import Any, Coroutine
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 # spaCy NER labels that are numeric/temporal noise as graph entities. Dates and
 # times are captured separately as canonical TEMPORAL nodes; numbers/percents/
@@ -55,12 +55,11 @@ def graph_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def write_entity_nodes_and_edges(
+async def write_entity_nodes_and_edges(
     mg: Any,
     session_id: str,
     entities: list[dict[str, Any]],
-    edge_writer: Callable[[dict[str, Any]], None],
-    _run: Callable[..., Any],
+    edge_writer: Callable[[dict[str, Any]], Awaitable[Any]],
 ) -> int:
     """Write entity nodes and their source edge. Returns the entity count.
 
@@ -68,22 +67,19 @@ def write_entity_nodes_and_edges(
         mg: ArcadeDBSTMStore (or ISessionDb) for graph writes.
         session_id: Session namespace.
         entities: List of entity dicts with "name", optional "type" and "score".
-        edge_writer: Callable(ent_dict) that writes the edge linking the entity
-            to its source node (chunk or turn).  Callers supply this to avoid
-            coupling the helper to a specific edge method.
-        _run: Synchronous bridge for async store calls.
+        edge_writer: Async callable(ent_dict) that writes the edge linking the
+            entity to its source node (chunk or turn).  Callers supply this to
+            avoid coupling the helper to a specific edge method.
     """
     entity_count = 0
     for ent in graph_entities(entities):
-        _run(
-            mg.write_entity_node(
-                session_id=session_id,
-                entity_name=ent["name"],
-                entity_type=ent.get("type", "ENTITY"),
-                confidence=ent.get("score", 1.0),
-            )
+        await mg.write_entity_node(
+            session_id=session_id,
+            entity_name=ent["name"],
+            entity_type=ent.get("type", "ENTITY"),
+            confidence=ent.get("score", 1.0),
         )
-        edge_writer(ent)
+        await edge_writer(ent)
         entity_count += 1
     return entity_count
 
@@ -123,11 +119,10 @@ async def write_chunk_entities_and_edges_bulk(
     return len(filtered)
 
 
-def write_relation_edges(
+async def write_relation_edges(
     mg: Any,
     session_id: str,
     relations: list[dict[str, Any]],
-    _run: Callable[..., Any],
 ) -> None:
     """Write relation edges from extraction results.
 
@@ -135,15 +130,12 @@ def write_relation_edges(
         mg: ArcadeDBSTMStore (or ISessionDb) for graph writes.
         session_id: Session namespace.
         relations: List of relation dicts with "head", "relation", "tail", optional "score".
-        _run: Synchronous bridge for async store calls.
     """
     for rel in relations:
-        _run(
-            mg.write_relation_edge(
-                session_id=session_id,
-                subject_name=rel["head"],
-                relation_name=rel["relation"],
-                object_name=rel["tail"],
-                confidence=rel.get("score", 0.5),
-            )
+        await mg.write_relation_edge(
+            session_id=session_id,
+            subject_name=rel["head"],
+            relation_name=rel["relation"],
+            object_name=rel["tail"],
+            confidence=rel.get("score", 0.5),
         )

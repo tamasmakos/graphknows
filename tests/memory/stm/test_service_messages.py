@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from graphknows.memory.stm.service import STMService
+
+pytestmark = pytest.mark.asyncio
 
 
 def _make_svc():
@@ -44,70 +48,37 @@ def _make_messages(n=2):
     ]
 
 
-def test_ingest_messages_returns_ingest_result():
+async def test_ingest_messages_returns_ingest_result():
     from graphknows.memory.models.ingest import IngestResult
 
     svc, mg, pg = _make_svc()
     messages = _make_messages(3)
     options = _make_options()
 
-    import asyncio
-    from unittest.mock import patch
-
-    def sync_run(coro):
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-
-    with patch("graphknows.memory.stm._async_bridge._run", side_effect=sync_run):
-        result = svc.ingest_messages(messages, options)
+    result = await svc.ingest_messages(messages, options)
 
     assert isinstance(result, IngestResult)
     assert result.chunk_count == 3
     assert result.session_id != ""
 
 
-def test_ingest_messages_chunk_count_matches_message_count():
-    import asyncio
-    from unittest.mock import patch
-
+async def test_ingest_messages_chunk_count_matches_message_count():
     svc, mg, pg = _make_svc()
     messages = _make_messages(5)
     options = _make_options()
 
-    def sync_run(coro):
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-
-    with patch("graphknows.memory.stm._async_bridge._run", side_effect=sync_run):
-        result = svc.ingest_messages(messages, options)
+    result = await svc.ingest_messages(messages, options)
 
     assert result.chunk_count == 5
 
 
-def test_ingest_messages_no_infer_skips_extractor():
-    import asyncio
-    from unittest.mock import MagicMock, patch
-
+async def test_ingest_messages_no_infer_skips_extractor():
     extractor = MagicMock()
     svc, mg, pg = _make_svc()
     svc._extractor = extractor
     messages = _make_messages(2)
     options = _make_options(infer=False)
 
-    def sync_run(coro):
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-
-    with patch("graphknows.memory.stm._async_bridge._run", side_effect=sync_run):
-        svc.ingest_messages(messages, options)
+    await svc.ingest_messages(messages, options)
 
     extractor.extract.assert_not_called()

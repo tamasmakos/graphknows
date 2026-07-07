@@ -224,7 +224,6 @@ class GraphKnowsRuntime:
         from graphknows.memory.models.memory_class import MemoryClass
         from graphknows.memory.models.message import normalize_messages
         from graphknows.memory.models.scope import MemoryScope
-        from graphknows.memory.stm._async_bridge import _run as _bg_run
 
         scope = MemoryScope(
             user_id=user_id or None,
@@ -236,6 +235,7 @@ class GraphKnowsRuntime:
         )
 
         service = build_stm_service(self.settings)
+        await service.connect()
         try:
             # Only structured conversations go through the turn-based path. A plain
             # string (even without a title) must go through the text/chunk path —
@@ -252,7 +252,7 @@ class GraphKnowsRuntime:
                     infer=infer,
                     memory_class=resolved_class,
                 )
-                result = service.ingest_messages(normalize_messages(messages), options)
+                result = await service.ingest_messages(normalize_messages(messages), options)
                 return {
                     "file_id": result.file_id,
                     "chunks": result.chunk_count,
@@ -261,7 +261,7 @@ class GraphKnowsRuntime:
                     "errors": list(result.errors),
                 }
 
-            result = service.ingest(
+            result = await service.ingest(
                 messages,  # type: ignore[arg-type]
                 session_id=scope.to_session_id(),
                 title=title,
@@ -276,8 +276,7 @@ class GraphKnowsRuntime:
                 "warnings": [],
             }
         finally:
-            _bg_run(service._mg.close())
-            _bg_run(service._pg.close())
+            await service.close()
 
     async def recall_memory(
         self,
