@@ -111,6 +111,7 @@ class AgenticRetriever(BaseGraphRetriever):
         """Return the cached DETRetriever instance, building it once from the same stores."""
         if self._det is not None:
             return self._det
+        from graphknows.config.builders.channels import build_channels
         from graphknows.memory.query.retriever import DETRetriever
 
         self._det = DETRetriever(
@@ -118,6 +119,7 @@ class AgenticRetriever(BaseGraphRetriever):
             neo=self._neo,
             mg=self._stm,
             embed_model=self._settings.embed_model,
+            channels=build_channels(self._settings),
         )
         return self._det
 

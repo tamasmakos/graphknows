@@ -41,6 +41,7 @@ from graphknows.memory.query._rrf_common import (
 )
 from graphknows.memory.query._rrf_common import shape_score as _shape_score
 from graphknows.memory.query.base import BaseGraphRetriever
+from graphknows.memory.channels.base import ChannelContext
 from graphknows.memory.query.context import RetrievalContext
 from graphknows.memory.query.rerank import rerank as _ce_rerank
 from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
@@ -181,11 +182,20 @@ class DETRetriever(BaseGraphRetriever):
         neo: Any,
         mg: ArcadeDBSTMStore,
         embed_model: str = "",
+        channels: "list[Any] | None" = None,
     ) -> None:
         self.pg = pg
         self.neo = neo
         self.mg = mg
         self.embed_model = embed_model
+        # Channels provide ranked candidates; this spine fuses/reranks them and is
+        # channel-blind. Defaults to the seven built-in collectors (behaviour
+        # identical to the original hardcoded gather); callers pass a richer set
+        # (e.g. + frames) built from settings via config.builders.channels.
+        if channels is None:
+            from graphknows.memory.channels.collectors import DEFAULT_COLLECTOR_CHANNELS
+            channels = [cls() for cls in DEFAULT_COLLECTOR_CHANNELS]
+        self._channels = channels
 
     async def retrieve(
         self,
@@ -218,22 +228,20 @@ class DETRetriever(BaseGraphRetriever):
         words_graph = [w for w in re.findall(r"[a-z0-9][a-z0-9']*", query.lower()) if len(w) >= 3]
         words = [w for w in words_graph if len(w) > 3]
 
-        # Collectors run concurrently; a failure in ANY of them raises loudly
+        # Channels run concurrently; a failure in ANY of them raises loudly
         # (no return_exceptions swallow) so a broken channel surfaces immediately
-        # rather than silently degrading recall.
+        # rather than silently degrading recall. Each returns chunk_id -> (score,
+        # info); the spine below is channel-blind (fuses + reranks only).
+        ctx = ChannelContext(
+            query=query, session_id=session_id, scope=scope,
+            emb=emb, emb2=emb2, words=words, words_graph=words_graph,
+        )
         sources = await asyncio.gather(
-            self._stm_entity_boost(words_graph, session_id, top_k),
-            self._ltm_entity_traversal(words_graph, session_id, top_k),
-            self._semantic_ann(emb, session_id, scope, top_k, emb2=emb2),
-            self._stm_bm25(words, session_id, top_k),
-            self._ltm_bm25(words, session_id, scope, top_k),
-            self._ltm_temporal_traversal(query, session_id, scope, top_k),
-            self._ltm_topic_match(emb, session_id, scope, top_k),
+            *(c.collect(ctx, self, top_k) for c in self._channels)
         )
-        _COLLECTOR_NAMES = (
-            "stm_entity", "ltm_entity", "vector", "stm_bm25", "ltm_bm25", "temporal", "topic",
-        )
-        collectors_fired = {n: len(s) for n, s in zip(_COLLECTOR_NAMES, sources, strict=False)}
+        collectors_fired = {
+            c.name: len(s) for c, s in zip(self._channels, sources, strict=False)
+        }
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
         for src in sources:

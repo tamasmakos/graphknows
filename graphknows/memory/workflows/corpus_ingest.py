@@ -56,6 +56,7 @@ class CorpusIngestWorkflow:
         rel_extractor: Any = None,
         extraction_uses_llm: bool = False,
         flush_pg_store: Any | None = None,
+        channels: list[Any] | None = None,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
@@ -67,6 +68,7 @@ class CorpusIngestWorkflow:
         self._rel_extractor = rel_extractor
         self._extraction_uses_llm = extraction_uses_llm
         self._flush_pg_store = flush_pg_store
+        self._channels = channels or []
 
     async def run(self, request: CorpusIngestRequest) -> CorpusIngestResult:
         """Execute the STM-first corpus ingestion pipeline.
@@ -142,6 +144,7 @@ class CorpusIngestWorkflow:
             llm_api_key=self._llm_api_key,
             llm_api_base=self._llm_api_base,
             extraction_uses_llm=self._extraction_uses_llm,
+            channels=self._channels,
         )
         try:
             flush_result = await pipeline.promote(

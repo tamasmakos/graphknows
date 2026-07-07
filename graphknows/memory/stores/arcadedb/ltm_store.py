@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -131,6 +132,20 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TEMPORAL.iso IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TEMPORAL.granularity IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON TEMPORAL(iso) UNIQUE"),
+    # Semantic-frame instances (deterministic FrameNet layer). One node per
+    # frame evoked in a chunk; fillers/speaker carry the frame-element roles.
+    ("sql", "CREATE VERTEX TYPE FRAME"),
+    ("sql", "CREATE PROPERTY FRAME.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.session_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.frame_type IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.chunk_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.lu IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.speaker IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.fes IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.fillers IF NOT EXISTS LIST"),
+    ("sql", "CREATE INDEX ON FRAME(id) UNIQUE"),
+    ("sql", "CREATE INDEX ON FRAME(session_id) NOTUNIQUE"),
+    ("sql", "CREATE INDEX ON FRAME(frame_type) NOTUNIQUE"),
     # Edge types
     ("sql", "CREATE EDGE TYPE MENTIONS"),
     ("sql", "CREATE EDGE TYPE MENTIONS_DATE"),
@@ -1119,6 +1134,65 @@ class ArcadeDBLTMStore:
                 ci=c.get("chunk_index", 0),
                 sid=c.get("session_id", ""),
             )
+
+    # ------------------------------------------------------------------
+    # FRAME layer (deterministic FrameNet channel)
+    # ------------------------------------------------------------------
+
+    async def write_frames(self, session_id: str, frames: list[dict[str, Any]]) -> int:
+        """Bulk-write FRAME instances for a session.
+
+        Each ``frames`` item: ``{frame_type, chunk_id, lu, speaker,
+        fes: [[role, filler], ...], fillers: [str, ...]}``. ``id`` is deterministic
+        per (session, chunk, index) so a re-flush MERGEs idempotently.
+        """
+        if not frames:
+            return 0
+        rows = [
+            {
+                "id": f"{session_id}:{f['chunk_id']}:{i}",
+                "sid": session_id,
+                "ft": f["frame_type"],
+                "cid": f["chunk_id"],
+                "lu": f.get("lu", ""),
+                "spk": f.get("speaker", "") or "",
+                "fes": json.dumps(f.get("fes", [])),
+                "fillers": [str(x).lower() for x in f.get("fillers", [])],
+            }
+            for i, f in enumerate(frames)
+        ]
+        await self._cmd(
+            "UNWIND $rows AS r "
+            "MERGE (n:FRAME {id: r.id}) "
+            "SET n.session_id = r.sid, n.frame_type = r.ft, n.chunk_id = r.cid, "
+            "n.lu = r.lu, n.speaker = r.spk, n.fes = r.fes, n.fillers = r.fillers",
+            rows=rows,
+        )
+        return len(rows)
+
+    async def query_frame_chunks(
+        self, session_id: str, frame_types: list[str]
+    ) -> list[dict[str, Any]]:
+        """Return FRAME rows for *session_id* whose frame_type is in *frame_types*."""
+        if not frame_types:
+            return []
+        rows = await self._qry(
+            "MATCH (n:FRAME) WHERE n.session_id = $sid AND n.frame_type IN $fts "
+            "RETURN n.chunk_id AS chunk_id, n.frame_type AS frame_type, "
+            "n.speaker AS speaker, n.fillers AS fillers",
+            sid=session_id,
+            fts=list(frame_types),
+        )
+        return [
+            {
+                "chunk_id": r.get("chunk_id"),
+                "frame_type": r.get("frame_type"),
+                "speaker": (r.get("speaker") or "").lower(),
+                "fillers": list(r.get("fillers") or []),
+            }
+            for r in rows
+            if r.get("chunk_id")
+        ]
 
     async def upsert_entities_and_mentions(self, chunks: list[dict[str, Any]]) -> None:
         for c in chunks:

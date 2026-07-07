@@ -141,6 +141,8 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     pg = ArcadeDBVectorStore(client=client)
     relation_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
     neo = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
+    from graphknows.config.builders.channels import build_channels
+
     return LTMPromotionPipeline(
         mg,
         pg,
@@ -149,6 +151,7 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
         llm_api_base=settings.llm_api_base or "",
         llm_model=settings.summarization_model or settings.llm_model,
         extraction_uses_llm=profile.extraction_uses_llm,
+        channels=build_channels(settings),
     )
 
 
@@ -164,6 +167,8 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     flush_pg = build_arcadedb_vector_store(settings)
     neo = build_arcadedb_ltm_store(settings)
     extractor = _build_entity_extractor("llm_assisted" if profile.extraction_uses_llm else "gliner2")
+    from graphknows.config.builders.channels import build_channels
+
     return CorpusIngestWorkflow(
         mg_store=mg,
         pg_store=pg,
@@ -175,4 +180,5 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
         rel_extractor=None,
         extraction_uses_llm=profile.extraction_uses_llm,
         flush_pg_store=flush_pg,
+        channels=build_channels(settings),
     )

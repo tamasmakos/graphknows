@@ -92,6 +92,10 @@ class GraphKnowsSettings(BaseSettings):
     spacy_model: str = Field(default="en_core_web_lg", alias="GRAPHKNOWS_SPACY_MODEL")
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
+    # Retrieval channels — modular ingest+retrieve signals (see memory/channels/).
+    # Frames (deterministic FrameNet layer) are opt-in until validated at scale.
+    enable_frames: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FRAMES")
+
     # Session lifecycle
     session_ttl_minutes: int = Field(default=60, alias="GRAPHKNOWS_SESSION_TTL_MINUTES")
 

@@ -135,10 +135,12 @@ class GraphKnowsRuntime:
 
             self._retriever = AgenticRetriever(settings=s, pg=pg, neo=neo, stm=mg)
         else:
+            from graphknows.config.builders.channels import build_channels
             from graphknows.memory.query.retriever import DETRetriever
 
             self._retriever = DETRetriever(
-                pg=pg, neo=neo, mg=mg, embed_model=s.embed_model
+                pg=pg, neo=neo, mg=mg, embed_model=s.embed_model,
+                channels=build_channels(s),
             )
         return self._retriever
 
@@ -433,6 +435,7 @@ class GraphKnowsRuntime:
             "SEGMENT",
             "DOC",
             "SESSIONENTITY",
+            "FRAME",
         )
         for label in labels:
             with contextlib.suppress(Exception):
@@ -460,6 +463,7 @@ class GraphKnowsRuntime:
         )
         await ltm_store._cmd("MATCH (sess:SESSION {id: $sid}) DETACH DELETE sess", sid=session_id)
         await ltm_store._cmd("MATCH (e:ENTITY) WHERE NOT (e)--() DETACH DELETE e")
+        await ltm_store._cmd("MATCH (n:FRAME {session_id: $sid}) DETACH DELETE n", sid=session_id)
 
     async def corpus_ingest(
         self,

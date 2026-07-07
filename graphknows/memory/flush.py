@@ -44,6 +44,7 @@ class LTMPromotionPipeline:
         llm_api_base: str = "",
         llm_model: str = "",
         extraction_uses_llm: bool = False,
+        channels: list[Any] | None = None,
     ) -> None:
         self._mg = mg_store
         self._pg = pg_store
@@ -52,6 +53,7 @@ class LTMPromotionPipeline:
         self._llm_api_base = llm_api_base
         self._llm_model = llm_model
         self._extraction_uses_llm = extraction_uses_llm
+        self._channels = channels or []
         self._entity_resolution = EntityResolution()
 
     async def close(self) -> None:
@@ -110,6 +112,10 @@ class LTMPromotionPipeline:
 
         await self._copy_vector_to_ltm(request.session_id, record)
         await self._index_entities(stm_data, record)
+
+        # Channel promotions: each channel derives + writes its LTM structure now
+        # that chunks are in LTM. Soft-fail per channel (matches GDS/topics phases).
+        await self._run_channel_promotions(request.session_id, record)
 
         # Phase 7: PageRank / centrality persistence (both modes).
         await self._run_pagerank_persistence(record)
@@ -414,6 +420,24 @@ class LTMPromotionPipeline:
             except Exception as exc:
                 log.warning("_run_graph_pruning %s failed (non-fatal): %s", fn_name, exc)
                 record.errors.append(f"{fn_name}: {exc}")
+
+    async def _run_channel_promotions(self, session_id: str, record: Any) -> None:
+        """Run each channel's promote() hook over the freshly-promoted LTM chunks.
+
+        Soft-fail per channel (like _run_gds/_run_topics): a broken enrichment
+        channel is logged and recorded, but never aborts the promotion.
+        """
+        if not self._channels:
+            return
+        from graphknows.memory.channels.base import ChannelStores
+
+        stores = ChannelStores(mg=self._mg, pg=self._pg, neo=self._neo)
+        for channel in self._channels:
+            try:
+                await channel.promote(stores, session_id, record)
+            except Exception as exc:
+                log.warning("channel %s promote failed (non-fatal): %s", channel.name, exc)
+                record.errors.append(f"channel_{channel.name}: {exc}")
 
     async def _clear_stm(self, session_id: str) -> None:
         await self._mg.delete_session(session_id)
