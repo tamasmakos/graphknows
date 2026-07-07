@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from graphknows.extraction.ontology.loader import OntologyLoader, OntologyManifest
+from graphknows.extraction.ontology.loader import OntologyManifest
 from graphknows.extraction.ontology.ports import OntologyProvider
 
 
@@ -50,13 +50,6 @@ class OntologyRegistry:
     def __init__(self, providers: list[OntologyProvider] | None = None) -> None:
         self._providers = list(providers or [])
 
-    @classmethod
-    def from_loader(cls, loader: OntologyLoader | None = None) -> OntologyRegistry:
-        """Build a registry from bundled ontology manifests."""
-        ontology_loader = loader or OntologyLoader()
-        providers = [ManifestOntologyProvider(manifest) for manifest in ontology_loader.load_all()]
-        return cls(providers)
-
     def register(self, provider: OntologyProvider) -> None:
         """Register an ontology provider."""
         self._providers.append(provider)
@@ -64,12 +57,3 @@ class OntologyRegistry:
     def providers(self) -> list[OntologyProvider]:
         """Return registered providers."""
         return list(self._providers)
-
-    def for_document(self, doc_type: str | None = None, text: str = "") -> OntologyProvider:
-        """Select the first provider that supports the document."""
-        for provider in self._providers:
-            if provider.supports(doc_type=doc_type, text=text):
-                return provider
-        if self._providers:
-            return self._providers[0]
-        raise RuntimeError("No ontology providers registered")

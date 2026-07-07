@@ -39,15 +39,6 @@ _NON_COMMUNITY_EDGE_TYPES = (
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _entity_node_id(name: str) -> str:
-    return str(uuid.uuid5(_GK_NS, f"entity:{name.strip().upper()}"))
-
-
-# ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
 
@@ -260,9 +251,7 @@ class ArcadeDBLTMStore:
                 logger.warning("ensure_edge_type %s failed: %s", safe, exc)
                 raise
 
-    async def _supersede_ltm_edge(
-        self, safe_rel: str, src: str, tgt: str, now: str
-    ) -> None:
+    async def _supersede_ltm_edge(self, safe_rel: str, src: str, tgt: str, now: str) -> None:
         """Tombstone any current LTM relation edge for (src, predicate) that points
         to a different target.
 
@@ -282,9 +271,7 @@ class ArcadeDBLTMStore:
                 now=now,
             )
         except Exception as exc:
-            logger.debug(
-                "_supersede_ltm_edge %s (%s → ≠%s) skipped: %s", safe_rel, src, tgt, exc
-            )
+            logger.debug("_supersede_ltm_edge %s (%s → ≠%s) skipped: %s", safe_rel, src, tgt, exc)
 
     # ------------------------------------------------------------------
     # Session subgraph write (main flush path)
@@ -487,7 +474,6 @@ class ArcadeDBLTMStore:
             edges += 1
 
         return {"nodes": nodes, "edges": edges}
-
 
     # ------------------------------------------------------------------
     # PageRank / centrality persistence
@@ -1118,24 +1104,6 @@ class ArcadeDBLTMStore:
         return created
 
     # ------------------------------------------------------------------
-    # Corpus writes
-    # ------------------------------------------------------------------
-
-    async def upsert_chunks(self, chunks: list[dict[str, Any]]) -> None:
-        for c in chunks:
-            if not c.get("id"):
-                continue
-            await self._cmd(
-                "MERGE (n:CHUNK {id: $id}) SET n.text = $text, n.heading_path = $hp, "
-                "n.chunk_index = $ci, n.session_id = $sid",
-                id=c["id"],
-                text=c.get("text", ""),
-                hp=c.get("heading_path", ""),
-                ci=c.get("chunk_index", 0),
-                sid=c.get("session_id", ""),
-            )
-
-    # ------------------------------------------------------------------
     # FRAME layer (deterministic FrameNet channel)
     # ------------------------------------------------------------------
 
@@ -1194,26 +1162,6 @@ class ArcadeDBLTMStore:
             if r.get("chunk_id")
         ]
 
-    async def upsert_entities_and_mentions(self, chunks: list[dict[str, Any]]) -> None:
-        for c in chunks:
-            cid = c.get("id", "")
-            for ent in c.get("entities", []) or []:
-                name = ent.get("name", "")
-                if not name:
-                    continue
-                await self._cmd(
-                    "MERGE (e:ENTITY {name: $name}) SET e.type = $t, e.confidence = $conf",
-                    name=name,
-                    t=ent.get("type", "UNKNOWN"),
-                    conf=ent.get("confidence", 1.0),
-                )
-                if cid:
-                    await self._cmd(
-                        "MATCH (c:CHUNK {id: $cid}), (e:ENTITY {name: $name}) MERGE (c)-[:MENTIONS]->(e)",
-                        cid=cid,
-                        name=name,
-                    )
-
     async def upsert_topics(self, topics: list[dict[str, Any]]) -> None:
         for t in topics:
             tid = t.get("id") or t.get("topic_id", "")
@@ -1241,86 +1189,6 @@ class ArcadeDBLTMStore:
                 alg=t.get("community_algorithm", ""),
                 sil=t.get("silhouette"),
             )
-
-    async def upsert_co_occurs(self, cooccurrences: list[dict[str, Any]]) -> None:
-        await self._ensure_edge_type("CO_OCCURS")
-        for co in cooccurrences:
-            a, b, w = co.get("a"), co.get("b"), co.get("weight", 1.0)
-            if not (a and b):
-                continue
-            await self._cmd(
-                "MERGE (ea:ENTITY {name: $a}) MERGE (eb:ENTITY {name: $b}) "
-                "MERGE (ea)-[r:CO_OCCURS]-(eb) SET r.weight = coalesce(r.weight, 0) + $w",
-                a=a,
-                b=b,
-                w=float(w),
-            )
-
-    async def upsert_session_entities(
-        self,
-        session_id: str,
-        entities: list[dict[str, Any]],
-        relations: list[dict[str, Any]],
-    ) -> tuple[int, int]:
-        merged_nodes = merged_edges = 0
-        ingested_at = datetime.now(UTC).isoformat()
-        for n in entities:
-            name = n.get("name", "").strip().upper()
-            if not name:
-                continue
-            eid = _entity_node_id(name)
-            await self._cmd(
-                "MERGE (e:ENTITY {id: $id}) SET e.name = $name, e.label = $label, "
-                "e.ingested_at = $ts, e.contributing_session_id = $sid, "
-                "e.merged_session_count = coalesce(e.merged_session_count, 0) + 1",
-                id=eid,
-                name=name,
-                label=n.get("type", "Entity"),
-                ts=ingested_at,
-                sid=session_id,
-            )
-            merged_nodes += 1
-        for e in relations:
-            left = e.get("from", "").strip().upper()
-            right = e.get("to", "").strip().upper()
-            rel = e.get("rel_type", "RELATES")
-            if not (left and right):
-                continue
-            safe = _safe_rel_label(rel)
-            if not safe:
-                continue
-            await self._ensure_edge_type(safe)
-            await self._cmd(
-                f"MATCH (a:ENTITY {{id: $a_id}}) MATCH (b:ENTITY {{id: $b_id}}) "
-                f"MERGE (a)-[r:{safe}]->(b)",
-                a_id=_entity_node_id(left),
-                b_id=_entity_node_id(right),
-            )
-            merged_edges += 1
-        return merged_nodes, merged_edges
-
-    async def merge_session_entities_to_corpus(
-        self,
-        session_id: str,
-        nodes: list[dict[str, Any]],
-        edges: list[dict[str, Any]],
-    ) -> tuple[int, int]:
-        return await self.upsert_session_entities(session_id, nodes, edges)
-
-    async def seed_session_from_corpus(self, session_id: str, entity_names: list[str]) -> int:
-        seeded = 0
-        for name in entity_names:
-            try:
-                await self._cmd(
-                    "MATCH (e:ENTITY) WHERE toLower(e.name) = toLower($name) "
-                    "MERGE (se:SESSIONENTITY {id: $sid + ':' + $name, session_id: $sid, name: e.name})",
-                    name=name,
-                    sid=session_id,
-                )
-                seeded += 1
-            except Exception:
-                pass
-        return seeded
 
     # ------------------------------------------------------------------
     # Corpus reads (retrieval)
@@ -1353,121 +1221,6 @@ class ArcadeDBLTMStore:
             k=top_k,
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
-
-    async def get_chunk_entities(self, chunk_id: str) -> list[dict[str, Any]]:
-        rows = await self._qry(
-            "MATCH (ch:CHUNK {id: $cid})-[:MENTIONS]->(e:ENTITY) "
-            "RETURN e.name AS name, e.label AS label LIMIT 20",
-            cid=chunk_id,
-        )
-        return [{"name": r["name"], "label": r.get("label") or "Entity"} for r in rows]
-
-    async def get_entity_neighbors(
-        self,
-        entity_name: str,
-        depth: int = 1,
-        relationship_types: list[str] | None = None,
-    ) -> dict[str, Any]:
-        depth = max(1, min(depth, 3))
-        safe_types: list[str] = []
-        if relationship_types:
-            safe_types = [
-                t for t in relationship_types if t and all(c.isalnum() or c == "_" for c in t)
-            ]
-        if safe_types:
-            type_list = "|".join(safe_types)
-            rel_pattern = f"[r:{type_list}*1..{depth}]"
-        else:
-            rel_pattern = f"[r*1..{depth}]"
-        rows = await self._qry(
-            f"MATCH (start:ENTITY)-{rel_pattern}-(neighbor) "
-            "WHERE toLower(start.name) = toLower($name) "
-            "AND (neighbor:ENTITY OR neighbor:TOPIC) "
-            "RETURN neighbor.name AS name, labels(neighbor)[0] AS node_label LIMIT 100",
-            name=entity_name.strip(),
-        )
-        seen: set[str] = set()
-        neighbors: list[dict] = []
-        for r in rows:
-            n_name = r.get("name") or ""
-            if n_name and n_name not in seen:
-                seen.add(n_name)
-                neighbors.append({"name": n_name, "label": r.get("node_label") or "Entity"})
-        return {
-            "entity": entity_name,
-            "depth": depth,
-            "neighbor_count": len(neighbors),
-            "neighbors": neighbors,
-        }
-
-    async def get_chunks_for_entity(self, entity_name: str, top_k: int = 5) -> list[dict[str, Any]]:
-        rows = await self._qry(
-            "MATCH (ch:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-            "WHERE toLower(e.name) = toLower($name) "
-            "OPTIONAL MATCH (f:FILE)-[:HAS_CHUNK]->(ch) "
-            "RETURN ch.id AS chunk_id, coalesce(ch.file_id, f.id, '') AS doc_id, ch.text AS text "
-            "LIMIT $k",
-            name=entity_name.strip(),
-            k=top_k,
-        )
-        return [dict(r) for r in rows]
-
-    async def get_entity_community(self, entity_name: str) -> dict[str, Any] | None:
-        eid = _entity_node_id(entity_name.strip().upper())
-        rows = await self._qry(
-            "MATCH (e:ENTITY) WHERE e.id = $eid OR toLower(e.name) = toLower($name) "
-            "MATCH (e)-[:IN_TOPIC|IN_COMMUNITY]->(tp:TOPIC) "
-            "RETURN tp.id AS id, tp.label AS label, tp.summary AS summary, "
-            "tp.community_id AS community_id, tp.modularity AS modularity, "
-            "tp.entity_names AS entity_names, tp.entity_count AS entity_count LIMIT 1",
-            eid=eid,
-            name=entity_name.strip(),
-        )
-        return {k: v for k, v in rows[0].items() if not k.startswith("@")} if rows else None
-
-    async def count_nodes(self) -> dict[str, int]:
-        async def _count(label: str) -> int:
-            rows = await self._qry(f"MATCH (n:{label}) RETURN count(n) AS c")
-            return int(rows[0].get("c") or 0) if rows else 0
-
-        chunk_count, entity_count, topic_count, session_count = await asyncio.gather(
-            _count("CHUNK"),
-            _count("ENTITY"),
-            _count("TOPIC"),
-            _count("SESSIONENTITY"),
-        )
-        return {
-            "chunks": chunk_count,
-            "entities": entity_count,
-            "topics": topic_count,
-            "session_entities": session_count,
-        }
-
-    async def list_segments(self, limit: int = 20) -> list[dict[str, Any]]:
-        rows = await self._qry(
-            "MATCH (s:SEGMENT) RETURN s.segment_id AS segment_id, s.ingested_at AS ingested_at, "
-            "s.run_id AS run_id, s.taxonomy_name AS taxonomy_name, s.source_count AS source_count "
-            "ORDER BY s.ingested_at DESC LIMIT $limit",
-            limit=limit,
-        )
-        return [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]
-
-    async def get_segment_info(self, segment_id: str) -> dict[str, Any] | None:
-        rows = await self._qry(
-            "MATCH (s:SEGMENT {segment_id: $sid}) "
-            "OPTIONAL MATCH (s)-[:CONTAINS_DOC]->(d:DOC) "
-            "RETURN s.segment_id AS segment_id, s.ingested_at AS ingested_at, "
-            "s.run_id AS run_id, s.git_revision AS git_revision, "
-            "s.config_hash AS config_hash, s.pipeline_version AS pipeline_version, "
-            "s.source_count AS source_count, s.input_dir AS input_dir, "
-            "s.taxonomy_name AS taxonomy_name, count(d) AS doc_count",
-            sid=segment_id,
-        )
-        if not rows:
-            return None
-        row = {k: v for k, v in rows[0].items() if not k.startswith("@")}
-        row["doc_count"] = int(row.get("doc_count") or 0)
-        return row
 
     def get_entity_by_name(self, name: str) -> dict[str, Any] | None:
         """Sync wrapper — runs async query in a new event loop or worker thread."""
@@ -1546,46 +1299,3 @@ class ArcadeDBLTMStore:
                 }
             )
         return sorted(topics, key=lambda t: t["entity_count"], reverse=True)
-
-    async def run_read_query(
-        self, template: str, params: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
-        """Pass-through for MCP cypher_query tool."""
-        rows = await self._c.query(_LTM_DB, template, params=params)
-        return [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]
-
-    async def get_community_assignments(self) -> list[dict[str, Any]]:
-        """Read community membership for flush pipeline write_community_metadata."""
-        rows = await self._qry(
-            "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
-            "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e) "
-            "OPTIONAL MATCH (t:TURN)-[:HAS_ENTITY|MENTIONS]->(e) "
-            "WITH e.community_id AS community_id, "
-            "collect(DISTINCT e.name) AS entity_names, "
-            "collect(DISTINCT c.id) AS chunk_ids, "
-            "collect(DISTINCT t.id) AS turn_ids "
-            "RETURN community_id, entity_names, chunk_ids, turn_ids"
-        )
-        return [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]
-
-    async def preview_session_merge(
-        self,
-        session_id: str,
-        nodes: list[dict[str, Any]],
-        edges: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        names = [n.get("name", "").strip().upper() for n in nodes if n.get("name")]
-        existing = 0
-        if names:
-            rows = await self._qry(
-                "UNWIND $names AS n MATCH (e:ENTITY {name: n}) RETURN count(e) AS c",
-                names=names,
-            )
-            existing = int(rows[0].get("c") or 0) if rows else 0
-        return {
-            "session_id": session_id,
-            "node_count": len(nodes),
-            "edge_count": len(edges),
-            "existing_overlap_count": existing,
-            "sample_nodes": [n.get("name") for n in nodes[:10]],
-        }

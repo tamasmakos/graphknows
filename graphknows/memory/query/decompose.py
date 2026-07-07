@@ -42,10 +42,6 @@ def _require_dspy() -> Any:
 # ---------------------------------------------------------------------------
 
 
-class _DecomposeSignature:
-    """Placeholder — replaced at runtime with a real dspy.Signature subclass."""
-
-
 def _build_signature(dspy_mod: Any) -> type:
     """Construct and return the DSPy Signature class using the live dspy module."""
 

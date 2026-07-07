@@ -699,39 +699,6 @@ class ArcadeDBVectorStore:
     # LTM corpus writes
     # ------------------------------------------------------------------
 
-    async def upsert_chunks(self, session_id: str, chunks: list[dict[str, Any]]) -> None:
-        """Upsert chunks into LTM."""
-        rows = [
-            {
-                "id": c["id"],
-                "sid": session_id,
-                "text": c.get("text", ""),
-                "fid": c.get("doc_id", ""),
-                "meta": _dump_meta(c.get("metadata")),
-            }
-            for c in chunks
-            if c.get("id")
-        ]
-        if rows:
-            tx = await self._c.begin(_LTM_DB)
-            try:
-                await self._c.command(
-                    _LTM_DB,
-                    "UNWIND $rows AS row MERGE (n:CHUNK {id: row.id}) "
-                    "SET n.session_id = row.sid, n.text = row.text, "
-                    "n.file_id = row.fid, n.metadata = row.meta",
-                    params={"rows": rows},
-                    session_id=tx,
-                )
-                await self._c.commit(_LTM_DB, tx)
-            except Exception:
-                await self._c.rollback(_LTM_DB, tx)
-                raise
-        # Embedding writes are per-item (SQL literal, cannot be batched via params).
-        for c in chunks:
-            if c.get("id") and c.get("embedding"):
-                await self._set_embedding(_LTM_DB, "CHUNK", c["id"], c["embedding"])
-
     async def upsert_entities(self, entities: list[dict[str, Any]]) -> None:
         """Upsert corpus-level entity embeddings."""
         rows = [

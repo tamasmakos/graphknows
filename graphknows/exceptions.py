@@ -10,18 +10,6 @@ class GraphKnowsError(Exception):
     """Base class for all graphknows errors."""
 
 
-class ConfigurationError(GraphKnowsError):
-    """Invalid or missing configuration (bad settings, unsafe production secrets)."""
-
-
-class StoreConnectionError(GraphKnowsError):
-    """Could not connect to or query the ArcadeDB backend."""
-
-
-class ExtractionError(GraphKnowsError):
-    """Entity/relation extraction failed."""
-
-
 class MissingExtraError(GraphKnowsError, ImportError):
     """A feature was used whose optional dependency extra is not installed.
 

@@ -211,26 +211,6 @@ class OntologyLabelExtractor:
 
         return name
 
-    def get_statistics(self) -> dict:
-        """Get statistics about the loaded ontology.
-
-        Returns:
-            Dictionary with ontology statistics.
-        """
-        self._load_rdf_files()
-
-        owl_classes = set(self.graph.subjects(RDF.type, OWL.Class))
-        rdfs_classes = set(self.graph.subjects(RDF.type, RDFS.Class))
-
-        return {
-            "total_triples": len(self.graph),
-            "owl_classes": len(owl_classes),
-            "rdfs_classes": len(rdfs_classes),
-            "total_classes": len(owl_classes.union(rdfs_classes)),
-            "ontology_dir": str(self.ontology_dir),
-            "namespace_filter": self.namespace_filter,
-        }
-
 
 def extract_ontology_labels(
     ontology_dir: str, namespace_filter: str | None = None, include_local_names: bool = True

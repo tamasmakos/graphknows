@@ -88,28 +88,6 @@ class _STMIngestHandler:
         parsed = parser.parse(text, source_hint=source_hint, title=title)
         return self._ingest_parsed(parsed, session_id, metadata or {})
 
-    def ingest_file(
-        self,
-        path: str,
-        session_id: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> IngestResult:
-        """Read a file from disk and ingest into STM.
-
-        Args:
-            path: Absolute or relative path to file.
-            session_id: Session namespace.
-            metadata: Extra key/value pairs stored on the FILE node.
-
-        Returns:
-            IngestResult with counts and timing.
-        """
-        with open(path, encoding="utf-8", errors="replace") as f:
-            text = f.read()
-        parser = get_parser(path)
-        parsed = parser.parse(text, source_hint=path, title=os.path.basename(path))
-        return self._ingest_parsed(parsed, session_id, metadata or {})
-
     def ingest_parsed(
         self,
         parsed: ParsedFile,
@@ -177,9 +155,7 @@ class _STMIngestHandler:
             """
             seg = parsed.segments[idx]
             clean = cleaned_texts[idx]
-            embedding: list[float] = (
-                batch_embeddings[idx] if use_batch else self._embed_fn(clean)
-            )
+            embedding: list[float] = batch_embeddings[idx] if use_batch else self._embed_fn(clean)
             # Wrap synchronous GLiNER2 extraction in a thread so concurrent
             # chunks overlap their model/network I/O with DB writes.
             extraction = await asyncio.to_thread(self._extract, clean)
@@ -210,9 +186,7 @@ class _STMIngestHandler:
                 async with sem:
                     return await _process_chunk(idx)
 
-            return list(
-                await asyncio.gather(*[_with_sem(i) for i in range(len(parsed.segments))])
-            )
+            return list(await asyncio.gather(*[_with_sem(i) for i in range(len(parsed.segments))]))
 
         counts: list[int] = _run(_run_all())
         entity_count = sum(counts)

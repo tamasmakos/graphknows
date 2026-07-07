@@ -21,14 +21,6 @@ class IVectorDb(Protocol):
         """Create tables and indexes idempotently."""
         ...
 
-    async def upsert_chunks(
-        self,
-        session_id: str,
-        chunks: list[dict[str, Any]],
-    ) -> None:
-        """Upsert chunks into the chunks table under session_id."""
-        ...
-
     async def upsert_entities(self, entities: list[dict[str, Any]]) -> None:
         """Upsert corpus-level entity embeddings."""
         ...

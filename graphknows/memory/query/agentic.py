@@ -81,10 +81,6 @@ class AgenticRetriever(BaseGraphRetriever):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_pg_bridge(self) -> Any:
-        """Return the vector store for use in sync DSPy tool closures."""
-        return self._pg
-
     def _get_lm(self) -> Any:
         """Return the cached DSPy LM instance, building it once."""
         if self._lm is not None:
@@ -332,6 +328,7 @@ class AgenticRetriever(BaseGraphRetriever):
 
         react_failed = False
         try:
+
             def _run_react() -> Any:
                 with dspy.settings.context(lm=lm):
                     # Run one ReAct call per sub-question so each hop is
@@ -354,7 +351,9 @@ class AgenticRetriever(BaseGraphRetriever):
             if react_failed:
                 log.info("Falling back to DETRetriever.retrieve() after agent failure.")
             try:
-                fallback_ctx = await det.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
+                fallback_ctx = await det.retrieve(
+                    query, session_id=session_id, top_k=top_k, scope=scope
+                )
                 # Tag fallback results so the caller can distinguish them.
                 for r in fallback_ctx.fused_results:
                     r["sources"] = "agentic-fallback"
@@ -374,7 +373,9 @@ class AgenticRetriever(BaseGraphRetriever):
                     emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
                     emb = emb_array[0].tolist()
                     if scope == "stm":
-                        vector_chunks = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
+                        vector_chunks = await self._pg.search_chunks(
+                            emb, session_id=session_id, k=top_k
+                        )
                     elif scope == "ltm":
                         vector_chunks = await self._pg.search_chunks(emb, session_id="", k=top_k)
                     else:

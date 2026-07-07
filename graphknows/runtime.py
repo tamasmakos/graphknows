@@ -34,20 +34,6 @@ def _clean_recall_text(text: str) -> str:
     return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
 
 
-def _format_recall_hits(results: list[Any], session_id: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "score": round(result.score, 6),
-            "cosine_score": round(getattr(result, "cosine_score", result.score), 6),
-            "type": result.source_type,
-            "text": _clean_recall_text(result.text),
-            "session_id": result.provenance.get("session_id", session_id),
-            "entities": list(result.entity_names or []),
-        }
-        for result in results
-    ]
-
-
 def _format_fused_hits(
     fused_results: list[dict[str, Any]], session_id: str
 ) -> list[dict[str, Any]]:
@@ -63,18 +49,6 @@ def _format_fused_hits(
             "metadata": r.get("metadata", {}),
         }
         for r in fused_results
-    ]
-
-
-def _format_entity_recall_hits(results: list[Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "text": _clean_recall_text(result.text),
-            "score": round(result.score, 6),
-            "entities": list(result.entity_names or []),
-            "provenance": dict(result.provenance or {}),
-        }
-        for result in results
     ]
 
 
@@ -139,7 +113,10 @@ class GraphKnowsRuntime:
             from graphknows.memory.query.retriever import DETRetriever
 
             self._retriever = DETRetriever(
-                pg=pg, neo=neo, mg=mg, embed_model=s.embed_model,
+                pg=pg,
+                neo=neo,
+                mg=mg,
+                embed_model=s.embed_model,
                 channels=build_channels(s),
             )
         return self._retriever

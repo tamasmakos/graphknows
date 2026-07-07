@@ -305,7 +305,7 @@ class ArcadeDBSTMStore:
         * Same MENTIONS edge from the CHUNK to each ENTITY
 
         List parameters with UNWIND are supported by the ArcadeDB HTTP client
-        (params are JSON-serialised — see preview_session_merge's ``UNWIND $names``).
+        (params are JSON-serialised).
         A single statement either applies fully or errors loudly, so unlike a
         hand-concatenated multi-MERGE string it cannot silently drop writes.
 
@@ -543,54 +543,6 @@ class ArcadeDBSTMStore:
             raise
 
     # ------------------------------------------------------------------
-    # Deprecated write methods (backward compatibility with old ingest paths)
-    # ------------------------------------------------------------------
-
-    async def write_entities(self, session_id: str, entities: list[Any]) -> None:
-        """Upsert entity nodes under *session_id* (deprecated, use write_entity_node)."""
-        for e in entities:
-            await self._c.command(
-                self._db,
-                """
-                MERGE (n:ENTITY {name: $name, session_id: $sid})
-                ON CREATE SET
-                    n.label = $label,
-                    n.id = $id,
-                    n.confidence = $confidence
-                ON MATCH SET
-                    n.confidence = CASE
-                        WHEN $confidence > n.confidence THEN $confidence
-                        ELSE n.confidence
-                    END
-                """,
-                params={
-                    "name": e.name,
-                    "label": e.label,
-                    "id": e.id,
-                    "sid": session_id,
-                    "confidence": e.confidence,
-                },
-            )
-
-    async def write_relations(self, session_id: str, relations: list[Any]) -> None:
-        """Upsert RELATES edges (deprecated, use write_relation_edge)."""
-        for r in relations:
-            await self._c.command(
-                self._db,
-                """
-                MATCH (a:ENTITY {id: $src, session_id: $sid}),
-                      (b:ENTITY {id: $tgt, session_id: $sid})
-                MERGE (a)-[rel:RELATES {type: $rtype, session_id: $sid}]->(b)
-                """,
-                params={
-                    "src": r.source,
-                    "tgt": r.target,
-                    "rtype": r.type,
-                    "sid": session_id,
-                },
-            )
-
-    # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------
 
@@ -639,42 +591,6 @@ class ArcadeDBSTMStore:
             params={"sid": session_id},
         )
         return [r["name"] for r in rows if r.get("name")]
-
-    async def query_facts_by_subjects(
-        self,
-        session_id: str,
-        subject_names: list[str],
-        top_k: int = 100,
-    ) -> list[dict[str, Any]]:
-        """Return wired fact edges whose subject is one of *subject_names* in *session_id*.
-
-        Each row is (subject, relation, object, chunk_id, evidence).
-        Uses dynamic OR conditions (ArcadeDB openCypher has no any() list
-        predicate). Only edges carrying ``chunk_id`` provenance are returned.
-        """
-        if not subject_names:
-            return []
-        safe = [n.replace("'", "") for n in subject_names]
-        where_parts = " OR ".join(f"a.name = '{n}'" for n in safe)
-        rows = await self._c.query(
-            self._db,
-            f"MATCH (a:ENTITY {{session_id: $sid}})-[r]->(b:ENTITY) "
-            f"WHERE ({where_parts}) AND r.chunk_id IS NOT NULL AND r.chunk_id <> '' "
-            f"RETURN a.name AS subject, type(r) AS relation, b.name AS object, "
-            f"       r.chunk_id AS chunk_id, r.fact AS evidence LIMIT $k",
-            params={"sid": session_id, "k": top_k},
-        )
-        return [
-            {
-                "subject": r["subject"],
-                "relation": r["relation"],
-                "object": r["object"],
-                "chunk_id": r["chunk_id"],
-                "evidence": r.get("evidence") or "",
-            }
-            for r in rows
-            if r.get("subject") and r.get("object")
-        ]
 
     async def full_text_search_chunks(
         self,
@@ -958,47 +874,6 @@ class ArcadeDBSTMStore:
             "next_edges": next_edges,
             "relation_edges": relation_edges,
             "_merge_count": 0,
-        }
-
-    async def get_session_node_count(self, session_id: str) -> int:
-        """Return the number of ENTITY nodes stored for *session_id*."""
-        rows = await self._c.query(
-            self._db,
-            "MATCH (n:ENTITY {session_id: $sid}) RETURN count(n) AS c",
-            params={"sid": session_id},
-        )
-        return int(rows[0]["c"]) if rows else 0
-
-    async def check_chain_integrity(self, session_id: str) -> dict[str, Any]:
-        """Check SESSION→FILE→CHUNK chain integrity for *session_id*."""
-
-        async def _count(cypher: str) -> int:
-            rows = await self._c.query(self._db, cypher, params={"sid": session_id})
-            return int(rows[0][next(iter(rows[0]))]) if rows else 0
-
-        session_count = await _count("MATCH (sess:SESSION {id: $sid}) RETURN count(sess) AS n")
-        file_count = await _count(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE) RETURN count(f) AS n"
-        )
-        chunk_count = await _count(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
-            "RETURN count(c) AS n"
-        )
-        entity_count = await _count(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK)"
-            "-[:HAS_ENTITY|MENTIONS]->(e:ENTITY) RETURN count(DISTINCT e) AS n"
-        )
-        fallback_entity_count = await _count(
-            "MATCH (e:ENTITY) WHERE e.session_id = $sid RETURN count(e) AS n"
-        )
-        return {
-            "session_id": session_id,
-            "has_session_node": session_count > 0,
-            "file_count": file_count,
-            "chunk_count": chunk_count,
-            "entity_count": entity_count,
-            "chain_ok": file_count > 0 and chunk_count > 0 and entity_count > 0,
-            "fallback_entity_count": fallback_entity_count,
         }
 
     # ------------------------------------------------------------------

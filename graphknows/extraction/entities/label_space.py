@@ -10,11 +10,7 @@ Replaces the old ``graphgen.prototype_gliner2_ontology`` research prototype.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import networkx as nx
 
 from graphknows.extraction.utils import standardize_label
 
@@ -25,16 +21,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Label taxonomy
 # ---------------------------------------------------------------------------
-
-def _build_group_rules_from_taxonomy(taxonomy: "TaxonomyConfig") -> dict[str, list[str]]:
-    """Derive group-rules dict from a taxonomy's entity_groups (children lists)."""
-    return {k: list(v.children) for k, v in taxonomy.entity_groups.items()}
-
-
-def _build_aliases_from_taxonomy(taxonomy: "TaxonomyConfig") -> dict[str, list[str]]:
-    """Derive top-level alias dict from a taxonomy's entity_groups (aliases lists)."""
-    return {k: list(v.aliases) for k, v in taxonomy.entity_groups.items()}
-
 
 # ---------------------------------------------------------------------------
 # Generic fallback constants (domain-neutral; used only when no taxonomy is
@@ -243,104 +229,6 @@ def refine_entities_with_ontology(
         item["ontology_label"] = ontology_label
         refined.append(item)
     return refined
-
-
-def build_relations_from_entities(
-    entities: list[dict[str, Any]],
-) -> list[dict[str, str]]:
-    """Build pairwise co-occurrence relations from a list of refined entities."""
-    relations: list[dict[str, str]] = []
-    for idx, source in enumerate(entities):
-        for target in entities[idx + 1 :]:
-            relations.append(
-                {
-                    "source": source["text"],
-                    "target": target["text"],
-                    "relation": (
-                        f"CO_OCCURS_{source['ontology_label']}_TO_{target['ontology_label']}"
-                    ),
-                }
-            )
-    return relations
-
-
-def export_graphml_and_cypher_artifacts(
-    entities: list[dict[str, Any]],
-    relations: list[dict[str, str]],
-    output_dir: Path,
-) -> dict[str, str]:
-    """Serialise entities and relations to GraphML, Cypher, and a JSON summary.
-
-    Args:
-        entities: Refined entity dicts (must have ``text``, ``label``, ``ontology_label``).
-        relations: Relation dicts (must have ``source``, ``target``, ``relation``).
-        output_dir: Directory where output files are written (created if absent).
-
-    Returns:
-        Mapping of ``{artifact_name: file_path}`` for all written files.
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    graph = nx.DiGraph()
-
-    for entity in entities:
-        node_id = standardize_label(entity["text"])
-        graph.add_node(
-            node_id,
-            name=entity["text"],
-            top_label=entity["label"],
-            ontology_label=entity["ontology_label"],
-            score=float(entity.get("score", 0.0)),
-        )
-
-    for relation in relations:
-        source = standardize_label(relation["source"])
-        target = standardize_label(relation["target"])
-        graph.add_edge(source, target, relation=relation["relation"])
-
-    graphml_path = output_dir / "ontology_graph.graphml"
-    nx.write_graphml(graph, graphml_path)
-
-    cypher_path = output_dir / "ontology.cypher"
-    with cypher_path.open("w", encoding="utf-8") as fh:
-        fh.write("CREATE INDEX ON :ENTITY(name);\n")
-        for entity in entities:
-            node_id = standardize_label(entity["text"])
-            fh.write(
-                "MERGE (n:ENTITY {{id: '{id}'}}) "
-                "SET n.name={name}, n.top_label='{top}', "
-                "n.ontology_label='{ont}', n.score={score};\n".format(
-                    id=node_id,
-                    name=json.dumps(entity["text"]),
-                    top=entity["label"],
-                    ont=entity["ontology_label"],
-                    score=float(entity.get("score", 0.0)),
-                )
-            )
-        for relation in relations:
-            source = standardize_label(relation["source"])
-            target = standardize_label(relation["target"])
-            fh.write(
-                "MATCH (a:ENTITY {{id: '{src}'}}), (b:ENTITY {{id: '{tgt}'}}) "
-                "MERGE (a)-[r:{rel_type}]->(b) "
-                "SET r.weight = coalesce(r.weight, 0) + 1;\n".format(
-                    src=source, tgt=target, rel_type=standardize_label(relation["relation"])
-                )
-            )
-
-    summary_path = output_dir / "ontology_summary.json"
-    summary = {
-        "entity_count": len(entities),
-        "relation_count": len(relations),
-        "top_labels": sorted({e["label"] for e in entities}),
-        "ontology_labels": sorted({e["ontology_label"] for e in entities}),
-    }
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-    return {
-        "graphml": str(graphml_path),
-        "cypher": str(cypher_path),
-        "summary_json": str(summary_path),
-    }
 
 
 # ---------------------------------------------------------------------------
