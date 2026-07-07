@@ -26,8 +26,8 @@ class _STMIngestHandler:
     """Ingest parsed text into STM (ArcadeDB evidence graph + vector store).
 
     Attributes:
-        _mg: ArcadeDBSTMStore for session evidence graph writes.
-        _pg: ArcadeDBVectorStore for stm_chunks writes.
+        _stm: ArcadeDBSTMStore for session evidence graph writes.
+        _vec: ArcadeDBVectorStore for stm_chunks writes.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Callable that takes text and returns list[float] embedding.
         _rel_extractor: Optional relation extractor.
@@ -35,14 +35,14 @@ class _STMIngestHandler:
 
     def __init__(
         self,
-        mg_store: Any,
-        pg_store: Any,
+        stm_store: Any,
+        vec_store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
     ) -> None:
-        self._mg = mg_store
-        self._pg = pg_store
+        self._stm = stm_store
+        self._vec = vec_store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
         if embed_fn is not None:
@@ -218,8 +218,8 @@ class _STMIngestHandler:
         metadata: dict[str, Any],
         t0: float,
     ) -> None:
-        await self._mg.write_session_metadata(session_id, {"started_at": t0})
-        await self._mg.write_file_node(
+        await self._stm.write_session_metadata(session_id, {"started_at": t0})
+        await self._stm.write_file_node(
             session_id=session_id,
             file_id=parsed.source_id,
             title=parsed.title,
@@ -282,7 +282,7 @@ class _STMIngestHandler:
         the store client was connected on). Returns the entity count for this chunk.
         """
         chunk_metadata = {**seg.metadata, "temporal": temporal} if temporal else seg.metadata
-        await self._mg.write_chunk_node(
+        await self._stm.write_chunk_node(
             session_id=session_id,
             file_id=source_id,
             chunk_id=chunk_id,
@@ -292,7 +292,7 @@ class _STMIngestHandler:
         )
         # Bulk entity write: CHUNK node must exist before edges (written above).
         entity_count = await write_chunk_entities_and_edges_bulk(
-            mg=self._mg,
+            stm=self._stm,
             session_id=session_id,
             chunk_id=chunk_id,
             entities=extraction.entities,
@@ -301,7 +301,7 @@ class _STMIngestHandler:
         # Relation writes use transactions with tombstoning logic; leave sequential.
         gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
         for rel in gliner_relations:
-            await self._mg.write_relation_edge(
+            await self._stm.write_relation_edge(
                 session_id=session_id,
                 subject_name=rel["head"],
                 relation_name=rel["relation"],
@@ -320,7 +320,7 @@ class _STMIngestHandler:
                 props = triplet[3] if len(triplet) > 3 else {}
                 confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
                 evidence = props.get("evidence", "") if isinstance(props, dict) else ""
-                await self._mg.write_relation_edge(
+                await self._stm.write_relation_edge(
                     session_id=session_id,
                     subject_name=subj,
                     relation_name=rel_name,
@@ -349,7 +349,7 @@ class _STMIngestHandler:
         metadata: dict[str, Any],
     ) -> None:
         """Async version of _write_chunk_to_pg for the concurrent chunk path."""
-        await self._pg.write_stm_chunk(
+        await self._vec.write_stm_chunk(
             {
                 "id": chunk_id,
                 "session_id": session_id,

@@ -176,10 +176,10 @@ class TestFlushPipelineWS6Phases:
     def _make_flush(self, extraction_uses_llm: bool = False) -> Any:
         from graphknows.memory.flush import LTMPromotionPipeline
 
-        mg_store = MagicMock()
-        mg_store.connect = AsyncMock(return_value=None)
-        mg_store.close = AsyncMock(return_value=None)
-        mg_store.read_session_subgraph = AsyncMock(
+        stm_store = MagicMock()
+        stm_store.connect = AsyncMock(return_value=None)
+        stm_store.close = AsyncMock(return_value=None)
+        stm_store.read_session_subgraph = AsyncMock(
             return_value={
                 "entities": [],
                 "files": [],
@@ -194,51 +194,51 @@ class TestFlushPipelineWS6Phases:
                 "next_edges": [],
             }
         )
-        mg_store.delete_session = AsyncMock(return_value=None)
+        stm_store.delete_session = AsyncMock(return_value=None)
 
-        pg_store = MagicMock()
-        pg_store.connect = AsyncMock(return_value=None)
-        pg_store.close = AsyncMock(return_value=None)
-        pg_store.promote_to_ltm = AsyncMock(return_value=(0, 0))
-        pg_store.upsert_entities = AsyncMock(return_value=None)
-        pg_store.clear_stm = AsyncMock(return_value=None)
+        vec_store = MagicMock()
+        vec_store.connect = AsyncMock(return_value=None)
+        vec_store.close = AsyncMock(return_value=None)
+        vec_store.promote_to_ltm = AsyncMock(return_value=(0, 0))
+        vec_store.upsert_entities = AsyncMock(return_value=None)
+        vec_store.clear_stm = AsyncMock(return_value=None)
 
-        neo_store = MagicMock()
-        neo_store.connect = AsyncMock(return_value=None)
-        neo_store.close = AsyncMock(return_value=None)
-        neo_store.write_session_subgraph = AsyncMock(return_value={"nodes": 2, "edges": 1})
-        neo_store.compute_and_persist_pagerank = AsyncMock(return_value=2)
-        neo_store.prune_tombstoned_edges = AsyncMock(return_value=0)
-        neo_store.prune_duplicate_edges = AsyncMock(return_value=0)
+        ltm_store = MagicMock()
+        ltm_store.connect = AsyncMock(return_value=None)
+        ltm_store.close = AsyncMock(return_value=None)
+        ltm_store.write_session_subgraph = AsyncMock(return_value={"nodes": 2, "edges": 1})
+        ltm_store.compute_and_persist_pagerank = AsyncMock(return_value=2)
+        ltm_store.prune_tombstoned_edges = AsyncMock(return_value=0)
+        ltm_store.prune_duplicate_edges = AsyncMock(return_value=0)
 
         pipeline = LTMPromotionPipeline(
-            mg_store=mg_store,
-            pg_store=pg_store,
-            neo_store=neo_store,
+            stm_store=stm_store,
+            vec_store=vec_store,
+            ltm_store=ltm_store,
             llm_api_key="" if not extraction_uses_llm else "sk-test",
             llm_model="deepseek/deepseek-v4-flash",
             extraction_uses_llm=extraction_uses_llm,
         )
-        return pipeline, mg_store, pg_store, neo_store
+        return pipeline, stm_store, vec_store, ltm_store
 
     @pytest.mark.asyncio
     async def test_pagerank_persistence_called(self) -> None:
         from graphknows.memory.models.promotion import PromotionRequest
 
-        pipeline, _, _, neo_store = self._make_flush(extraction_uses_llm=False)
+        pipeline, _, _, ltm_store = self._make_flush(extraction_uses_llm=False)
         req = PromotionRequest(session_id="s1", run_gds=False, clear_stm=False)
         await pipeline.promote(req)
-        neo_store.compute_and_persist_pagerank.assert_called_once()
+        ltm_store.compute_and_persist_pagerank.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_graph_pruning_called(self) -> None:
         from graphknows.memory.models.promotion import PromotionRequest
 
-        pipeline, _, _, neo_store = self._make_flush(extraction_uses_llm=False)
+        pipeline, _, _, ltm_store = self._make_flush(extraction_uses_llm=False)
         req = PromotionRequest(session_id="s1", run_gds=False, clear_stm=False)
         await pipeline.promote(req)
-        neo_store.prune_tombstoned_edges.assert_called_once()
-        neo_store.prune_duplicate_edges.assert_called_once()
+        ltm_store.prune_tombstoned_edges.assert_called_once()
+        ltm_store.prune_duplicate_edges.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_phases_non_fatal_when_store_lacks_methods(self) -> None:
@@ -246,43 +246,43 @@ class TestFlushPipelineWS6Phases:
         from graphknows.memory.flush import LTMPromotionPipeline
         from graphknows.memory.models.promotion import PromotionRequest
 
-        mg_store = MagicMock()
-        mg_store.connect = AsyncMock(return_value=None)
-        mg_store.close = AsyncMock(return_value=None)
-        mg_store.read_session_subgraph = AsyncMock(
+        stm_store = MagicMock()
+        stm_store.connect = AsyncMock(return_value=None)
+        stm_store.close = AsyncMock(return_value=None)
+        stm_store.read_session_subgraph = AsyncMock(
             return_value={
                 "entities": [], "files": [], "chunks": [], "dialogs": [], "turns": [],
                 "relation_edges": [], "chunk_entity_edges": [], "turn_entity_edges": [], "next_edges": [],
             }
         )
-        mg_store.delete_session = AsyncMock(return_value=None)
+        stm_store.delete_session = AsyncMock(return_value=None)
 
-        pg_store = MagicMock()
-        pg_store.connect = AsyncMock(return_value=None)
-        pg_store.close = AsyncMock(return_value=None)
-        pg_store.promote_to_ltm = AsyncMock(return_value=(0, 0))
-        pg_store.upsert_entities = AsyncMock(return_value=None)
-        pg_store.clear_stm = AsyncMock(return_value=None)
+        vec_store = MagicMock()
+        vec_store.connect = AsyncMock(return_value=None)
+        vec_store.close = AsyncMock(return_value=None)
+        vec_store.promote_to_ltm = AsyncMock(return_value=(0, 0))
+        vec_store.upsert_entities = AsyncMock(return_value=None)
+        vec_store.clear_stm = AsyncMock(return_value=None)
 
-        # Minimal neo_store without any WS-6 methods (but with the store lifecycle
+        # Minimal ltm_store without any WS-6 methods (but with the store lifecycle
         # methods the promotion pipeline now requires of every store).
-        neo_store = MagicMock(spec=[
+        ltm_store = MagicMock(spec=[
             "write_session_subgraph",
             "connect",
             "close",
         ])
-        neo_store.connect = AsyncMock(return_value=None)
-        neo_store.close = AsyncMock(return_value=None)
-        neo_store.write_session_subgraph = AsyncMock(return_value={"nodes": 0, "edges": 0})
+        ltm_store.connect = AsyncMock(return_value=None)
+        ltm_store.close = AsyncMock(return_value=None)
+        ltm_store.write_session_subgraph = AsyncMock(return_value={"nodes": 0, "edges": 0})
         # Ensure WS-6 methods are absent
-        del neo_store.compute_and_persist_pagerank
-        del neo_store.prune_tombstoned_edges
-        del neo_store.prune_duplicate_edges
+        del ltm_store.compute_and_persist_pagerank
+        del ltm_store.prune_tombstoned_edges
+        del ltm_store.prune_duplicate_edges
 
         pipeline = LTMPromotionPipeline(
-            mg_store=mg_store,
-            pg_store=pg_store,
-            neo_store=neo_store,
+            stm_store=stm_store,
+            vec_store=vec_store,
+            ltm_store=ltm_store,
             llm_api_key="",
             llm_model="",
             extraction_uses_llm=False,

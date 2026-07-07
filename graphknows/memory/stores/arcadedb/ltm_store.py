@@ -1008,7 +1008,7 @@ class ArcadeDBLTMStore:
         self,
         session_id: str,
         summarizer: Any = None,
-        pg_store: Any = None,
+        vec_store: Any = None,
         gds_modularity: float | None = None,
         community_algorithm: str | None = None,
     ) -> int:
@@ -1115,9 +1115,9 @@ class ArcadeDBLTMStore:
                     logger.warning("IN_TOPIC edge failed for %r -> %s: %s", name, topic_id, exc)
 
             # Write to vector store if provided
-            if pg_store is not None:
+            if vec_store is not None:
                 try:
-                    result = pg_store.write_ltm_topic(topic)
+                    result = vec_store.write_ltm_topic(topic)
                     if asyncio.iscoroutine(result):
                         await result
                 except Exception as exc:

@@ -32,8 +32,8 @@ class STMService:
     # TODO(Wave 3): replace direct store references with IGraphDb adapter.
 
     Attributes:
-        _mg: ArcadeDBSTMStore for session evidence graph writes/queries.
-        _pg: ArcadeDBVectorStore for stm_chunks / stm_turns writes/queries.
+        _stm: ArcadeDBSTMStore for session evidence graph writes/queries.
+        _vec: ArcadeDBVectorStore for stm_chunks / stm_turns writes/queries.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Embedding callable (text -> list[float]).
         _rel_extractor: Optional relation extractor.
@@ -42,15 +42,15 @@ class STMService:
 
     def __init__(
         self,
-        mg_store: Any,
-        pg_store: Any,
+        stm_store: Any,
+        vec_store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
         config: STMConfig | None = None,
     ) -> None:
-        self._mg = mg_store
-        self._pg = pg_store
+        self._stm = stm_store
+        self._vec = vec_store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
         self._config = config or STMConfig()
@@ -76,14 +76,14 @@ class STMService:
         Both stores share one ArcadeDBClient (see build_stm_service), so the
         client is connected once and each store ensures its own schema.
         """
-        await self._mg.connect()
-        await self._mg.ensure_schema()
-        await self._pg.connect()  # idempotent client connect + vector schema
+        await self._stm.connect()
+        await self._stm.ensure_schema()
+        await self._vec.connect()  # idempotent client connect + vector schema
 
     async def close(self) -> None:
         """Close the shared store client. Idempotent."""
-        await self._mg.close()
-        await self._pg.close()
+        await self._stm.close()
+        await self._vec.close()
 
     # ------------------------------------------------------------------
     # Ingest
@@ -113,8 +113,8 @@ class STMService:
 
         if self._ingest_handler is None:
             self._ingest_handler = _STMIngestHandler(
-                mg_store=self._mg,
-                pg_store=self._pg,
+                stm_store=self._stm,
+                vec_store=self._vec,
                 extractor=self._extractor,
                 embed_fn=self._embed_fn,
                 rel_extractor=self._rel_extractor,
@@ -151,8 +151,8 @@ class STMService:
 
         if self._dialog_capture is None:
             self._dialog_capture = DialogCapture(
-                mg_store=self._mg,
-                pg_store=self._pg,
+                stm_store=self._stm,
+                vec_store=self._vec,
                 extractor=self._extractor,
                 embed_fn=self._embed_fn,
             )
@@ -185,23 +185,23 @@ class STMService:
         if not options.infer:
             # Embed-only path — create a transient capture with no extractor
             dc: DialogCapture = DialogCapture(
-                mg_store=self._mg,
-                pg_store=self._pg,
+                stm_store=self._stm,
+                vec_store=self._vec,
                 extractor=None,
                 embed_fn=self._embed_fn,
             )
         else:
             if self._dialog_capture is None:
                 self._dialog_capture = DialogCapture(
-                    mg_store=self._mg,
-                    pg_store=self._pg,
+                    stm_store=self._stm,
+                    vec_store=self._vec,
                     extractor=self._extractor,
                     embed_fn=self._embed_fn,
                 )
             dc = self._dialog_capture
 
         # Ensure DIALOG node exists
-        await self._mg.write_dialog_node(
+        await self._stm.write_dialog_node(
             session_id=session_id,
             dialog_id=dialog_id,
             started_at=str(time.time()),

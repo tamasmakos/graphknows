@@ -81,11 +81,11 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
     from graphknows.memory.stores.embedder import embed_one
 
     s = GraphKnowsSettings()
-    pg = build_arcadedb_vector_store(s)
-    neo = build_arcadedb_ltm_store(s)
-    mg = build_arcadedb_stm_store(s)
-    await asyncio.gather(pg.connect(), neo.connect(), mg.connect())
-    await neo.ensure_schema()
+    vec = build_arcadedb_vector_store(s)
+    ltm = build_arcadedb_ltm_store(s)
+    stm = build_arcadedb_stm_store(s)
+    await asyncio.gather(vec.connect(), ltm.connect(), stm.connect())
+    await ltm.ensure_schema()
 
     test_session = f"test-det-retriever-integration-{uuid.uuid4().hex[:8]}"
     chunk_id = f"{test_session}-chunk-0"
@@ -93,7 +93,7 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
 
     # Write one chunk with embedding so the semantic ANN branch can find it
     emb = embed_one(test_text, s.embed_model)
-    await pg.write_stm_chunk({
+    await vec.write_stm_chunk({
         "id": chunk_id,
         "session_id": test_session,
         "file_id": f"{test_session}-file",
@@ -104,7 +104,7 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
     })
 
     try:
-        retriever = DETRetriever(pg=pg, neo=neo, mg=mg, embed_model=s.embed_model)
+        retriever = DETRetriever(vec=vec, ltm=ltm, stm=stm, embed_model=s.embed_model)
         ctx = await retriever.retrieve(
             "Where did Caroline go on vacation?",
             session_id=test_session,
@@ -120,8 +120,8 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
         assert all("chunk_id" in r and "text" in r and "rrf_score" in r for r in ctx.fused_results)
     finally:
         # Clean up the test session
-        await pg.clear_stm(test_session)
-        await pg.close()
+        await vec.clear_stm(test_session)
+        await vec.close()
 
 
 @pytest.mark.integration
@@ -145,9 +145,9 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
     from graphknows.config.builders.stores import build_arcadedb_stm_store
 
     s = GraphKnowsSettings()
-    mg = build_arcadedb_stm_store(s)
-    await mg.connect()
-    await mg.ensure_schema()  # runs the drop-legacy + composite-index migration
+    stm = build_arcadedb_stm_store(s)
+    await stm.connect()
+    await stm.ensure_schema()  # runs the drop-legacy + composite-index migration
 
     suffix = uuid.uuid4().hex[:8]
     session_a = f"test-session-scope-a-{suffix}"
@@ -158,7 +158,7 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
         # Same (subject, object) names in two different sessions. Before the fix
         # the session_b write raised DuplicatedKeyException on ENTITY[name].
         for sid in (session_a, session_b):
-            await mg.write_relation_edge(
+            await stm.write_relation_edge(
                 session_id=sid,
                 subject_name=subject,
                 relation_name="LIKES",
@@ -169,7 +169,7 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
             )
 
         # Both sessions' entities coexist: the shared name exists once per session.
-        rows = await mg.client.query(
+        rows = await stm.client.query(
             "stm",
             "MATCH (e:ENTITY {name: $name}) RETURN e.session_id AS sid",
             params={"name": subject},
@@ -180,9 +180,9 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
         )
     finally:
         for sid in (session_a, session_b):
-            await mg.client.command(
+            await stm.client.command(
                 "stm",
                 "MATCH (e:ENTITY {session_id: $sid}) DETACH DELETE e",
                 params={"sid": sid},
             )
-        await mg.close()
+        await stm.close()

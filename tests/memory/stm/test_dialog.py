@@ -13,8 +13,8 @@ pytestmark = pytest.mark.asyncio
 
 
 def _make_capture(extractor=None, embed_fn=None):
-    mg = MagicMock()
-    pg = MagicMock()
+    stm = MagicMock()
+    vec = MagicMock()
     for attr in [
         "write_dialog_node",
         "write_entity_node",
@@ -22,11 +22,11 @@ def _make_capture(extractor=None, embed_fn=None):
         "write_turn_sequence",
         "write_turn_entity_edge",
     ]:
-        setattr(mg, attr, AsyncMock(return_value=None))
-    pg.write_stm_turn = AsyncMock(return_value=None)
+        setattr(stm, attr, AsyncMock(return_value=None))
+    vec.write_stm_turn = AsyncMock(return_value=None)
     embed = embed_fn or MagicMock(return_value=[0.1] * 10)
-    capture = DialogCapture(mg, pg, extractor=extractor, embed_fn=embed)
-    return capture, mg, pg, embed
+    capture = DialogCapture(stm, vec, extractor=extractor, embed_fn=embed)
+    return capture, stm, vec, embed
 
 
 def _turn(index: int = 0, role: str = "user", text: str = "Hello") -> Turn:
@@ -34,23 +34,23 @@ def _turn(index: int = 0, role: str = "user", text: str = "Hello") -> Turn:
 
 
 async def test_write_turn_creates_turn_node():
-    capture, mg, pg, _ = _make_capture()
+    capture, stm, vec, _ = _make_capture()
     result = await capture.write_turn("s1", "d1", _turn(0))
-    mg.write_turn_node.assert_called_once()
+    stm.write_turn_node.assert_called_once()
     assert result.turn_id == "t0"
 
 
 async def test_write_turn_links_previous_turn():
-    capture, mg, pg, _ = _make_capture()
+    capture, stm, vec, _ = _make_capture()
     await capture.write_turn("s1", "d1", _turn(0))
     await capture.write_turn("s1", "d1", _turn(1))
-    mg.write_turn_sequence.assert_called_once()
+    stm.write_turn_sequence.assert_called_once()
 
 
 async def test_write_turn_no_sequence_on_first_turn():
-    capture, mg, pg, _ = _make_capture()
+    capture, stm, vec, _ = _make_capture()
     await capture.write_turn("s1", "d1", _turn(0))
-    mg.write_turn_sequence.assert_not_called()
+    stm.write_turn_sequence.assert_not_called()
 
 
 async def test_write_turn_extracts_entities():
@@ -58,15 +58,15 @@ async def test_write_turn_extracts_entities():
     extractor.extract.return_value = ExtractionResult(
         entities=[{"name": "Bob", "type": "PERSON", "score": 0.95}]
     )
-    capture, mg, pg, _ = _make_capture(extractor=extractor)
+    capture, stm, vec, _ = _make_capture(extractor=extractor)
     result = await capture.write_turn("s1", "d1", _turn(0, text="Bob is here"))
     assert result.entity_count == 1
-    mg.write_entity_node.assert_called()
+    stm.write_entity_node.assert_called()
 
 
 async def test_write_turn_embeds_text():
     embed = MagicMock(return_value=[0.5] * 10)
-    capture, mg, pg, _ = _make_capture(embed_fn=embed)
+    capture, stm, vec, _ = _make_capture(embed_fn=embed)
     await capture.write_turn("s1", "d1", _turn(0, text="embed me"))
     embed.assert_called_once_with("embed me")
-    pg.write_stm_turn.assert_called_once()
+    vec.write_stm_turn.assert_called_once()

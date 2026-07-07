@@ -198,13 +198,13 @@ class TestAgenticRetrieverWithDET:
         from graphknows.memory.query.agentic import AgenticRetriever
 
         settings = _make_settings()
-        pg = MagicMock()
-        neo = MagicMock()
-        neo._qry = AsyncMock(return_value=[])
+        vec = MagicMock()
+        ltm = MagicMock()
+        ltm._qry = AsyncMock(return_value=[])
         stm = MagicMock()
         stm.get_session_graph = AsyncMock(return_value={"nodes": []})
 
-        retriever = AgenticRetriever(settings=settings, pg=pg, neo=neo, stm=stm)
+        retriever = AgenticRetriever(settings=settings, vec=vec, ltm=ltm, stm=stm)
 
         # Stub DETRetriever
         stub_det = MagicMock()
@@ -316,23 +316,23 @@ class TestAgenticRetrieverWithDET:
 
     @pytest.mark.asyncio
     async def test_det_retriever_constructed_from_same_stores(self):
-        """DETRetriever must be built from the same pg/neo/stm stores."""
+        """DETRetriever must be built from the same vec/ltm/stm stores."""
         from graphknows.memory.query.agentic import AgenticRetriever
         from graphknows.memory.query.retriever import DETRetriever
 
         settings = _make_settings()
-        pg = MagicMock()
-        neo = MagicMock()
-        neo._qry = AsyncMock(return_value=[])
+        vec = MagicMock()
+        ltm = MagicMock()
+        ltm._qry = AsyncMock(return_value=[])
         stm = MagicMock()
 
-        retriever = AgenticRetriever(settings=settings, pg=pg, neo=neo, stm=stm)
+        retriever = AgenticRetriever(settings=settings, vec=vec, ltm=ltm, stm=stm)
         det = retriever._get_det_retriever()
 
         assert isinstance(det, DETRetriever)
-        assert det.pg is pg
-        assert det.neo is neo
-        assert det.mg is stm
+        assert det.vec is vec
+        assert det.ltm is ltm
+        assert det.stm is stm
 
     @pytest.mark.asyncio
     async def test_det_retriever_cached(self):
@@ -341,7 +341,7 @@ class TestAgenticRetrieverWithDET:
 
         settings = _make_settings()
         retriever = AgenticRetriever(
-            settings=settings, pg=MagicMock(), neo=MagicMock(), stm=MagicMock()
+            settings=settings, vec=MagicMock(), ltm=MagicMock(), stm=MagicMock()
         )
 
         det1 = retriever._get_det_retriever()

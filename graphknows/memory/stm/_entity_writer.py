@@ -56,7 +56,7 @@ def graph_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def write_entity_nodes_and_edges(
-    mg: Any,
+    stm: Any,
     session_id: str,
     entities: list[dict[str, Any]],
     edge_writer: Callable[[dict[str, Any]], Awaitable[Any]],
@@ -64,7 +64,7 @@ async def write_entity_nodes_and_edges(
     """Write entity nodes and their source edge. Returns the entity count.
 
     Args:
-        mg: ArcadeDBSTMStore (or ISessionDb) for graph writes.
+        stm: ArcadeDBSTMStore (or ISessionDb) for graph writes.
         session_id: Session namespace.
         entities: List of entity dicts with "name", optional "type" and "score".
         edge_writer: Async callable(ent_dict) that writes the edge linking the
@@ -73,7 +73,7 @@ async def write_entity_nodes_and_edges(
     """
     entity_count = 0
     for ent in graph_entities(entities):
-        await mg.write_entity_node(
+        await stm.write_entity_node(
             session_id=session_id,
             entity_name=ent["name"],
             entity_type=ent.get("type", "ENTITY"),
@@ -85,7 +85,7 @@ async def write_entity_nodes_and_edges(
 
 
 async def write_chunk_entities_and_edges_bulk(
-    mg: Any,
+    stm: Any,
     session_id: str,
     chunk_id: str,
     entities: list[dict[str, Any]],
@@ -101,7 +101,7 @@ async def write_chunk_entities_and_edges_bulk(
     DialogCapture (turn) path which uses the _run sync bridge.
 
     Args:
-        mg: ArcadeDBSTMStore instance.
+        stm: ArcadeDBSTMStore instance.
         session_id: Session namespace.
         chunk_id: The CHUNK node id to link entities to.
         entities: Raw extraction entities (will be filtered by graph_entities).
@@ -111,7 +111,7 @@ async def write_chunk_entities_and_edges_bulk(
     """
     filtered = graph_entities(entities)
     if filtered:
-        await mg.write_chunk_entities_bulk(
+        await stm.write_chunk_entities_bulk(
             session_id=session_id,
             chunk_id=chunk_id,
             entities=filtered,
@@ -120,19 +120,19 @@ async def write_chunk_entities_and_edges_bulk(
 
 
 async def write_relation_edges(
-    mg: Any,
+    stm: Any,
     session_id: str,
     relations: list[dict[str, Any]],
 ) -> None:
     """Write relation edges from extraction results.
 
     Args:
-        mg: ArcadeDBSTMStore (or ISessionDb) for graph writes.
+        stm: ArcadeDBSTMStore (or ISessionDb) for graph writes.
         session_id: Session namespace.
         relations: List of relation dicts with "head", "relation", "tail", optional "score".
     """
     for rel in relations:
-        await mg.write_relation_edge(
+        await stm.write_relation_edge(
             session_id=session_id,
             subject_name=rel["head"],
             relation_name=rel["relation"],

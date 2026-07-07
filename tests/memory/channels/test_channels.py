@@ -59,16 +59,16 @@ class TestFrameChannelCollect:
     async def test_abstract_gate_returns_empty_without_touching_store(self):
         """No concrete query frame -> return {} and never query the store."""
         rt = MagicMock()
-        rt.neo.query_frame_chunks = AsyncMock()
+        rt.ltm.query_frame_chunks = AsyncMock()
         out = await FrameChannel().collect(
             _ctx(q_frames=set(), expanded=set(), anchors=set()), rt, 5
         )
         assert out == {}
-        rt.neo.query_frame_chunks.assert_not_awaited()
+        rt.ltm.query_frame_chunks.assert_not_awaited()
 
     async def test_exact_frame_and_anchor_outrank(self):
         rt = MagicMock()
-        rt.neo.query_frame_chunks = AsyncMock(
+        rt.ltm.query_frame_chunks = AsyncMock(
             return_value=[
                 {
                     "chunk_id": "c_exact_anchor",
@@ -95,7 +95,7 @@ class TestFrameChannelCollect:
 
     async def test_empty_store_result_returns_empty(self):
         rt = MagicMock()
-        rt.neo.query_frame_chunks = AsyncMock(return_value=[])
+        rt.ltm.query_frame_chunks = AsyncMock(return_value=[])
         out = await FrameChannel().collect(
             _ctx(q_frames={"F"}, expanded={"F"}, anchors=set()), rt, 5
         )
@@ -104,11 +104,11 @@ class TestFrameChannelCollect:
 
 class TestFrameChannelPromote:
     async def test_promote_extracts_and_writes(self, monkeypatch):
-        rt = ChannelStores(neo=MagicMock())
-        rt.neo._qry = AsyncMock(
+        rt = ChannelStores(ltm=MagicMock())
+        rt.ltm._qry = AsyncMock(
             return_value=[{"id": "c1", "text": "2pm | Mel: I went camping in the mountains."}]
         )
-        rt.neo.write_frames = AsyncMock(return_value=1)
+        rt.ltm.write_frames = AsyncMock(return_value=1)
         # stub extraction so the test stays offline (no spaCy/FrameNet load)
         monkeypatch.setattr(
             "graphknows.extraction.frames.extract_frames_from_chunk",
@@ -122,19 +122,19 @@ class TestFrameChannelPromote:
             ],
         )
         await FrameChannel().promote(rt, "sess", record=None)
-        rt.neo.write_frames.assert_awaited_once()
-        session_id, rows = rt.neo.write_frames.await_args.args
+        rt.ltm.write_frames.assert_awaited_once()
+        session_id, rows = rt.ltm.write_frames.await_args.args
         assert session_id == "sess"
         assert rows[0]["frame_type"] == "Residence"
         assert rows[0]["chunk_id"] == "c1"
         assert "mountains" in rows[0]["fillers"] and "Mel" in rows[0]["fillers"]
 
     async def test_promote_no_chunks_is_noop(self):
-        rt = ChannelStores(neo=MagicMock())
-        rt.neo._qry = AsyncMock(return_value=[])
-        rt.neo.write_frames = AsyncMock()
+        rt = ChannelStores(ltm=MagicMock())
+        rt.ltm._qry = AsyncMock(return_value=[])
+        rt.ltm.write_frames = AsyncMock()
         await FrameChannel().promote(rt, "sess", record=None)
-        rt.neo.write_frames.assert_not_awaited()
+        rt.ltm.write_frames.assert_not_awaited()
 
 
 pytestmark = pytest.mark.asyncio

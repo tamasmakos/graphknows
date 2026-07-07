@@ -19,12 +19,12 @@ class ChannelStores:
 
     The DETRetriever itself satisfies the same duck-typed contract on the query
     side, so ``collect`` receives the retriever and ``promote``/``ingest`` receive
-    this handle — both expose ``mg``/``pg``/``neo``/``embed_model``.
+    this handle — both expose ``stm``/``vec``/``ltm``/``embed_model``.
     """
 
-    mg: Any = None
-    pg: Any = None
-    neo: Any = None
+    stm: Any = None
+    vec: Any = None
+    ltm: Any = None
     embed_model: str = ""
 
 
@@ -86,8 +86,8 @@ class Channel:
 
     Subclasses set ``name`` (the trace/sources label) and ``profiles`` (which
     memory modes it runs in), plus whichever of the three hooks it needs. The
-    ``rt`` handle passed to the hooks exposes the shared stores (``rt.mg``,
-    ``rt.pg``, ``rt.neo``, ``rt.embed_model``) and, for the transitional adapter
+    ``rt`` handle passed to the hooks exposes the shared stores (``rt.stm``,
+    ``rt.vec``, ``rt.ltm``, ``rt.embed_model``) and, for the transitional adapter
     channels, the retriever's collector methods.
     """
 

@@ -51,8 +51,8 @@ class DialogCapture:
     and embeds turn text into the vector store.
 
     Attributes:
-        _mg: ArcadeDBSTMStore for interaction graph writes.
-        _pg: ArcadeDBVectorStore for stm_turns writes.
+        _stm: ArcadeDBSTMStore for interaction graph writes.
+        _vec: ArcadeDBVectorStore for stm_turns writes.
         _extractor: Entity extractor for turn text NER (optional).
         _embed_fn: Embedding callable.
         _prev_turn_ids: Tracks the last turn ID per dialog for NEXT edge linking.
@@ -60,13 +60,13 @@ class DialogCapture:
 
     def __init__(
         self,
-        mg_store: Any,
-        pg_store: Any,
+        stm_store: Any,
+        vec_store: Any,
         extractor: Any | None = None,
         embed_fn: Any | None = None,
     ) -> None:
-        self._mg = mg_store
-        self._pg = pg_store
+        self._stm = stm_store
+        self._vec = vec_store
         self._extractor = extractor
         if embed_fn is not None:
             self._embed_fn = embed_fn
@@ -99,7 +99,7 @@ class DialogCapture:
 
         # TURN node + NEXT edge
         try:
-            await self._mg.write_turn_node(
+            await self._stm.write_turn_node(
                 dialog_id=dialog_id,
                 session_id=session_id,
                 turn_id=turn.id,
@@ -110,7 +110,7 @@ class DialogCapture:
             )
             prev = self._prev_turn_ids.get(dialog_id)
             if prev:
-                await self._mg.write_turn_sequence(prev_turn_id=prev, next_turn_id=turn.id)
+                await self._stm.write_turn_sequence(prev_turn_id=prev, next_turn_id=turn.id)
             self._prev_turn_ids[dialog_id] = turn.id
         except Exception as exc:
             errors.append(f"turn_node: {exc}")
@@ -122,7 +122,7 @@ class DialogCapture:
             extraction = self._extractor.extract(turn.text)
 
             async def _turn_edge_writer(ent: dict[str, Any]) -> None:
-                await self._mg.write_turn_entity_edge(
+                await self._stm.write_turn_entity_edge(
                     turn_id=turn.id,
                     entity_name=ent["name"],
                     session_id=session_id,
@@ -131,14 +131,14 @@ class DialogCapture:
 
             try:
                 entity_count += await write_entity_nodes_and_edges(
-                    mg=self._mg,
+                    stm=self._stm,
                     session_id=session_id,
                     entities=extraction.entities,
                     edge_writer=_turn_edge_writer,
                 )
             except Exception as exc:
                 errors.append(f"entity_write: {exc}")
-            await write_relation_edges(self._mg, session_id, extraction.relations)
+            await write_relation_edges(self._stm, session_id, extraction.relations)
 
         # Embed turn text → stm_turns
         try:
@@ -154,7 +154,7 @@ class DialogCapture:
             }
             if extra_metadata:
                 turn_record["metadata"] = extra_metadata
-            await self._pg.write_stm_turn(turn_record)
+            await self._vec.write_stm_turn(turn_record)
         except Exception as exc:
             errors.append(f"pg_stm_turn: {exc}")
 

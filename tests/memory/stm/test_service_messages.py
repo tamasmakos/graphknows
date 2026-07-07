@@ -12,7 +12,7 @@ pytestmark = pytest.mark.asyncio
 
 
 def _make_svc():
-    mg = MagicMock()
+    stm = MagicMock()
     for attr in [
         "write_session_metadata",
         "write_dialog_node",
@@ -20,12 +20,12 @@ def _make_svc():
         "write_turn_sequence",
         "write_turn_entity_edge",
     ]:
-        setattr(mg, attr, AsyncMock(return_value=None))
-    pg = MagicMock()
-    pg.write_stm_turn = AsyncMock(return_value=None)
+        setattr(stm, attr, AsyncMock(return_value=None))
+    vec = MagicMock()
+    vec.write_stm_turn = AsyncMock(return_value=None)
     embed = MagicMock(return_value=[0.0] * 10)
-    svc = STMService(mg, pg, extractor=None, embed_fn=embed)
-    return svc, mg, pg
+    svc = STMService(stm, vec, extractor=None, embed_fn=embed)
+    return svc, stm, vec
 
 
 def _make_options(user_id="u1", agent_id="a1", run_id="r1", infer=True):
@@ -51,7 +51,7 @@ def _make_messages(n=2):
 async def test_ingest_messages_returns_ingest_result():
     from graphknows.memory.models.ingest import IngestResult
 
-    svc, mg, pg = _make_svc()
+    svc, stm, vec = _make_svc()
     messages = _make_messages(3)
     options = _make_options()
 
@@ -63,7 +63,7 @@ async def test_ingest_messages_returns_ingest_result():
 
 
 async def test_ingest_messages_chunk_count_matches_message_count():
-    svc, mg, pg = _make_svc()
+    svc, stm, vec = _make_svc()
     messages = _make_messages(5)
     options = _make_options()
 
@@ -74,7 +74,7 @@ async def test_ingest_messages_chunk_count_matches_message_count():
 
 async def test_ingest_messages_no_infer_skips_extractor():
     extractor = MagicMock()
-    svc, mg, pg = _make_svc()
+    svc, stm, vec = _make_svc()
     svc._extractor = extractor
     messages = _make_messages(2)
     options = _make_options(infer=False)

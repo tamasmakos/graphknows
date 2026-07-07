@@ -61,17 +61,17 @@ class AgenticRetriever(BaseGraphRetriever):
     def __init__(
         self,
         settings: "GraphKnowsSettings",
-        pg: Any,
-        neo: Any,
+        vec: Any,
+        ltm: Any,
         stm: Any,
     ) -> None:
         self._settings = settings
-        self._pg = pg
-        self._neo = neo
+        self._vec = vec
+        self._ltm = ltm
         self._stm = stm
         self._react: Any = None
         self._lm: Any = None
-        self._pg_bridge: Any = None
+        self._vec_bridge: Any = None
         self._last_session_id: str | None = None
         self._collected_chunks: list[dict] = []
         # DETRetriever instance — built once, shared across all retrieve() calls.
@@ -111,9 +111,9 @@ class AgenticRetriever(BaseGraphRetriever):
         from graphknows.memory.query.retriever import DETRetriever
 
         self._det = DETRetriever(
-            pg=self._pg,
-            neo=self._neo,
-            mg=self._stm,
+            vec=self._vec,
+            ltm=self._ltm,
+            stm=self._stm,
             embed_model=self._settings.embed_model,
             channels=build_channels(self._settings),
         )
@@ -267,7 +267,7 @@ class AgenticRetriever(BaseGraphRetriever):
         if not ids:
             return scored
         try:
-            rows = await self._neo._qry(
+            rows = await self._ltm._qry(
                 "MATCH (c:CHUNK) WHERE c.id IN $ids RETURN c.id AS id, c.community_weight AS w",
                 ids=ids,
             )
@@ -346,7 +346,7 @@ class AgenticRetriever(BaseGraphRetriever):
             react_failed = True
 
         # Step 3 — If agent failed completely, fall back to DETRetriever directly.
-        # Graceful degradation chain: ReAct → DETRetriever → pg.search_chunks.
+        # Graceful degradation chain: ReAct → DETRetriever → vec.search_chunks.
         if react_failed or not self._collected_chunks:
             if react_failed:
                 log.info("Falling back to DETRetriever.retrieve() after agent failure.")
@@ -365,22 +365,22 @@ class AgenticRetriever(BaseGraphRetriever):
                     search_type="AGENTIC",
                 )
             except Exception as fb_exc:
-                # Last-resort fallback: direct pg.search_chunks (simpler but always available).
-                log.warning("DETRetriever fallback failed (%s); using pg.search_chunks.", fb_exc)
+                # Last-resort fallback: direct vec.search_chunks (simpler but always available).
+                log.warning("DETRetriever fallback failed (%s); using vec.search_chunks.", fb_exc)
                 try:
                     from graphknows.memory.stores.embedder import embed
 
                     emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
                     emb = emb_array[0].tolist()
                     if scope == "stm":
-                        vector_chunks = await self._pg.search_chunks(
+                        vector_chunks = await self._vec.search_chunks(
                             emb, session_id=session_id, k=top_k
                         )
                     elif scope == "ltm":
-                        vector_chunks = await self._pg.search_chunks(emb, session_id="", k=top_k)
+                        vector_chunks = await self._vec.search_chunks(emb, session_id="", k=top_k)
                     else:
-                        _stm_c = await self._pg.search_chunks(emb, session_id=session_id, k=top_k)
-                        _ltm_c = await self._pg.search_chunks(emb, session_id="", k=top_k)
+                        _stm_c = await self._vec.search_chunks(emb, session_id=session_id, k=top_k)
+                        _ltm_c = await self._vec.search_chunks(emb, session_id="", k=top_k)
                         _seen_v: set[str] = set()
                         vector_chunks = []
                         for _r in _stm_c + _ltm_c:

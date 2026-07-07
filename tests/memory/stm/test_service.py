@@ -10,8 +10,8 @@ from graphknows.memory.stm import STMConfig, STMService
 
 
 def _make_service(extractor=None, embed_fn=None):
-    mg = MagicMock()
-    pg = MagicMock()
+    stm = MagicMock()
+    vec = MagicMock()
     for attr in [
         "write_session_metadata",
         "write_file_node",
@@ -23,15 +23,15 @@ def _make_service(extractor=None, embed_fn=None):
         "write_turn_sequence",
         "write_turn_entity_edge",
     ]:
-        setattr(mg, attr, AsyncMock(return_value=None))
-    pg.write_stm_chunk = AsyncMock(return_value=None)
-    pg.write_stm_turn = AsyncMock(return_value=None)
-    pg.search_stm_chunks = AsyncMock(return_value=[])
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    mg.query_entity_chunks = AsyncMock(return_value=[])
+        setattr(stm, attr, AsyncMock(return_value=None))
+    vec.write_stm_chunk = AsyncMock(return_value=None)
+    vec.write_stm_turn = AsyncMock(return_value=None)
+    vec.search_stm_chunks = AsyncMock(return_value=[])
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    stm.query_entity_chunks = AsyncMock(return_value=[])
     embed = embed_fn or MagicMock(return_value=[0.1] * 10)
-    svc = STMService(mg, pg, extractor=extractor, embed_fn=embed)
-    return svc, mg, pg, embed
+    svc = STMService(stm, vec, extractor=extractor, embed_fn=embed)
+    return svc, stm, vec, embed
 
 
 def test_stm_service_instantiates():
@@ -46,17 +46,17 @@ def test_stm_service_has_config():
 
 def test_stm_service_accepts_custom_config():
     cfg = STMConfig(chunk_size=256, entity_confidence=0.8)
-    mg = MagicMock()
-    pg = MagicMock()
+    stm = MagicMock()
+    vec = MagicMock()
     embed = MagicMock(return_value=[0.0] * 10)
-    svc = STMService(mg, pg, extractor=None, embed_fn=embed, config=cfg)
+    svc = STMService(stm, vec, extractor=None, embed_fn=embed, config=cfg)
     assert svc._config.chunk_size == 256
     assert svc._config.entity_confidence == 0.8
 
 
 @pytest.mark.asyncio
 async def test_ingest_calls_handler(tmp_path):
-    svc, mg, pg, embed = _make_service()
+    svc, stm, vec, embed = _make_service()
     result = await svc.ingest("Hello world", session_id="s1", title="Test")
     assert result.session_id == "s1"
     assert result.chunk_count >= 1
@@ -66,7 +66,7 @@ async def test_ingest_calls_handler(tmp_path):
 async def test_record_turn_creates_dialog_capture():
     from graphknows.memory.stm.dialog import Turn
 
-    svc, mg, pg, embed = _make_service()
+    svc, stm, vec, embed = _make_service()
     turn = Turn(id="t1", index=0, role="user", text="hello")
     result = await svc.record_turn("s1", "d1", turn)
     assert result.turn_id == "t1"

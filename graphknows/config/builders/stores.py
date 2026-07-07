@@ -103,8 +103,8 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     # each other's freshly-MERGEd CHUNK nodes only after an index-visibility lag,
     # which lets the dual chunk-write paths create duplicate nodes under load.
     client = build_arcadedb_client(settings)
-    mg = ArcadeDBSTMStore(client=client)
-    pg = ArcadeDBVectorStore(client=client)
+    stm = ArcadeDBSTMStore(client=client)
+    vec = ArcadeDBVectorStore(client=client)
 
     from graphknows.config.profiles import get_profile
 
@@ -114,8 +114,8 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     )
     rel_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
     return STMService(
-        mg,
-        pg,
+        stm,
+        vec,
         extractor,
         embed_fn=embed_one,
         rel_extractor=rel_extractor,
@@ -131,23 +131,23 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
 
     # Share ONE client across the flush stores. The graph-write path
-    # (neo.write_session_subgraph) and the vector-promote path (pg.promote_to_ltm)
+    # (ltm.write_session_subgraph) and the vector-promote path (vec.promote_to_ltm)
     # both MERGE CHUNK by id; on separate connections a node created by one is not
     # immediately visible to the other's CHUNK(id) unique index, so the MERGE
     # stops deduping and writes duplicate, half-un-embedded chunk nodes.
 
     profile = get_profile(settings)
     client = build_arcadedb_client(settings)
-    mg = ArcadeDBSTMStore(client=client)
-    pg = ArcadeDBVectorStore(client=client)
+    stm = ArcadeDBSTMStore(client=client)
+    vec = ArcadeDBVectorStore(client=client)
     relation_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
-    neo = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
+    ltm = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
     from graphknows.config.builders.channels import build_channels
 
     return LTMPromotionPipeline(
-        mg,
-        pg,
-        neo,
+        stm,
+        vec,
+        ltm,
         llm_api_key=settings.llm_api_key or "",
         llm_api_base=settings.llm_api_base or "",
         llm_model=settings.summarization_model or settings.llm_model,
@@ -163,25 +163,25 @@ def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
     from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
 
     profile = get_profile(settings)
-    mg = build_arcadedb_stm_store(settings)
-    pg = build_arcadedb_vector_store(settings)
-    flush_pg = build_arcadedb_vector_store(settings)
-    neo = build_arcadedb_ltm_store(settings)
+    stm = build_arcadedb_stm_store(settings)
+    vec = build_arcadedb_vector_store(settings)
+    flush_vec = build_arcadedb_vector_store(settings)
+    ltm = build_arcadedb_ltm_store(settings)
     extractor = _build_entity_extractor(
         "llm_assisted" if profile.extraction_uses_llm else "gliner2"
     )
     from graphknows.config.builders.channels import build_channels
 
     return CorpusIngestWorkflow(
-        mg_store=mg,
-        pg_store=pg,
-        neo_store=neo,
+        stm_store=stm,
+        vec_store=vec,
+        ltm_store=ltm,
         extractor=extractor,
         embed_fn=embed_one,
         llm_api_key=settings.llm_api_key or "",
         llm_api_base=settings.llm_api_base or "",
         rel_extractor=None,
         extraction_uses_llm=profile.extraction_uses_llm,
-        flush_pg_store=flush_pg,
+        flush_vec_store=flush_vec,
         channels=build_channels(settings),
     )

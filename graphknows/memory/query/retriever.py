@@ -178,15 +178,15 @@ class DETRetriever(BaseGraphRetriever):
 
     def __init__(
         self,
-        pg: IVectorDb,
-        neo: Any,
-        mg: ArcadeDBSTMStore,
+        vec: IVectorDb,
+        ltm: Any,
+        stm: ArcadeDBSTMStore,
         embed_model: str = "",
         channels: "list[Any] | None" = None,
     ) -> None:
-        self.pg = pg
-        self.neo = neo
-        self.mg = mg
+        self.vec = vec
+        self.ltm = ltm
+        self.stm = stm
         self.embed_model = embed_model
         # Channels provide ranked candidates; this spine fuses/reranks them and is
         # channel-blind. Defaults to the seven built-in collectors (behaviour
@@ -258,7 +258,7 @@ class DETRetriever(BaseGraphRetriever):
         # Fetch metadata for all candidates that lack it so shaping can run
         # before we cut to top_k — shaping affects ordering, not just display.
         needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
-        text_map = await self.pg.get_chunks_by_ids(needs_meta) if needs_meta else {}
+        text_map = await self.vec.get_chunks_by_ids(needs_meta) if needs_meta else {}
 
         # Apply _community_boost, PageRank boost, and _shape_score to every
         # candidate BEFORE sorting so the final order reflects the shaped score.
@@ -342,7 +342,7 @@ class DETRetriever(BaseGraphRetriever):
         forbidden = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.IGNORECASE)
         if forbidden.search(cypher_template):
             raise ValueError("Only read-only Cypher is permitted")
-        rows = await self.neo._qry(cypher_template, **(params or {}))
+        rows = await self.ltm._qry(cypher_template, **(params or {}))
         return [dict(r) for r in rows]
 
     async def _stm_entity_boost(
@@ -354,7 +354,7 @@ class DETRetriever(BaseGraphRetriever):
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if not words:
             return result
-        entity_chunks = await self.mg.query_entity_chunks(
+        entity_chunks = await self.stm.query_entity_chunks(
             session_id=session_id,
             entity_names=words,
             top_k=top_k,
@@ -425,7 +425,7 @@ class DETRetriever(BaseGraphRetriever):
             return result
 
         # Fetch a broad candidate pool via the OR pass.
-        or_chunks = await self.mg.full_text_search_chunks(
+        or_chunks = await self.stm.full_text_search_chunks(
             session_id=session_id,
             terms=specific,
             top_k=top_k * 3,
@@ -473,11 +473,11 @@ class DETRetriever(BaseGraphRetriever):
             f"toLower(e.name) CONTAINS '{w}'" if len(w) >= 5 else f"toLower(e.name) = '{w}'"
             for w in safe_words
         )
-        total_rows = await self.neo._qry("MATCH (c:CHUNK) RETURN count(c) AS n")
+        total_rows = await self.ltm._qry("MATCH (c:CHUNK) RETURN count(c) AS n")
         total = int(total_rows[0]["n"]) if total_rows else 0
         if total <= 0:
             return []
-        deg_rows = await self.neo._qry(
+        deg_rows = await self.ltm._qry(
             f"MATCH (e:ENTITY) WHERE {where_entity} "
             f"MATCH (e)<-[:MENTIONS]-(c:CHUNK) "
             f"RETURN e.name AS name, count(DISTINCT c) AS deg"
@@ -537,7 +537,7 @@ class DETRetriever(BaseGraphRetriever):
                 f"ORDER BY mc DESC LIMIT $top_k "
                 f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
             )
-            rows = await self.neo._qry(cypher, top_k=top_k, sid=session_filter)
+            rows = await self.ltm._qry(cypher, top_k=top_k, sid=session_filter)
         else:
             cypher = (
                 f"MATCH (e:ENTITY) WHERE {where_entity} "
@@ -547,7 +547,7 @@ class DETRetriever(BaseGraphRetriever):
                 f"ORDER BY mc DESC LIMIT $top_k "
                 f"RETURN c.id AS chunk_id, c.text AS text, entities, max_pr"
             )
-            rows = await self.neo._qry(cypher, top_k=top_k)
+            rows = await self.ltm._qry(cypher, top_k=top_k)
 
         for rank, row in enumerate(rows):
             # IDF smooth down-weight: multiply by the minimum IDF weight among
@@ -608,7 +608,7 @@ class DETRetriever(BaseGraphRetriever):
                 f"ORDER BY mc DESC LIMIT $top_k "
                 f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
             )
-            rows = await self.neo._qry(rel_cypher, top_k=top_k, sid=session_filter)
+            rows = await self.ltm._qry(rel_cypher, top_k=top_k, sid=session_filter)
         else:
             rel_cypher = (
                 f"MATCH (e:ENTITY) WHERE {where_entity} "
@@ -619,7 +619,7 @@ class DETRetriever(BaseGraphRetriever):
                 f"ORDER BY mc DESC LIMIT $top_k "
                 f"RETURN c.id AS chunk_id, c.text AS text, ents AS entities"
             )
-            rows = await self.neo._qry(rel_cypher, top_k=top_k)
+            rows = await self.ltm._qry(rel_cypher, top_k=top_k)
 
         for rank, row in enumerate(rows):
             _add_result(
@@ -655,7 +655,7 @@ class DETRetriever(BaseGraphRetriever):
         if not specific:
             return result
 
-        neo_ft = getattr(self.neo, "full_text_search_chunks", None)
+        neo_ft = getattr(self.ltm, "full_text_search_chunks", None)
         if not callable(neo_ft):
             return result
 
@@ -726,14 +726,14 @@ class DETRetriever(BaseGraphRetriever):
                 f"WHERE {where_iso} "
                 f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
             )
-            rows = await self.neo._qry(cypher, top_k=top_k, sid=session_id)
+            rows = await self.ltm._qry(cypher, top_k=top_k, sid=session_id)
         else:
             cypher = (
                 f"MATCH (c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
                 f"WHERE {where_iso} "
                 f"RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $top_k"
             )
-            rows = await self.neo._qry(cypher, top_k=top_k)
+            rows = await self.ltm._qry(cypher, top_k=top_k)
         for rank, row in enumerate(rows):
             _add_result(
                 result,
@@ -790,7 +790,7 @@ class DETRetriever(BaseGraphRetriever):
             return []
         # Fetch relation edges that have valid_at set.
         if session_id:
-            edge_rows = await self.neo._qry(
+            edge_rows = await self.ltm._qry(
                 "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
                 "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
                 "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
@@ -803,7 +803,7 @@ class DETRetriever(BaseGraphRetriever):
                 top_k=top_k * 2,
             )
         else:
-            edge_rows = await self.neo._qry(
+            edge_rows = await self.ltm._qry(
                 "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
                 "WHERE r.is_current IS NOT NULL AND r.valid_at IS NOT NULL "
                 "MATCH (c:CHUNK)-[:MENTIONS]->(a) "
@@ -842,7 +842,7 @@ class DETRetriever(BaseGraphRetriever):
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if scope not in ("ltm", "both"):
             return result
-        searcher = getattr(self.pg, "search_topics", None)
+        searcher = getattr(self.vec, "search_topics", None)
         if not callable(searcher):
             return result
         topics = await searcher(emb, k=2)
@@ -866,7 +866,7 @@ class DETRetriever(BaseGraphRetriever):
                 )
             if not tid:
                 continue
-            rows = await self.neo._qry(
+            rows = await self.ltm._qry(
                 "MATCH (t:TOPIC {id: $tid})<-[:IN_TOPIC]-(e:ENTITY) "
                 "MATCH (c:CHUNK)-[:MENTIONS]->(e) "
                 "RETURN DISTINCT c.id AS chunk_id, c.text AS text LIMIT $k",
@@ -905,18 +905,18 @@ class DETRetriever(BaseGraphRetriever):
             coros: list[Any] = []
             tagged: list[tuple[str, str]] = []
             if scope in ("stm", "both") and session_id:
-                coros.append(self.pg.search_stm_chunks(session_id, embedding, top_k=k))
+                coros.append(self.vec.search_stm_chunks(session_id, embedding, top_k=k))
                 tagged.append(("stm_chunk", tag))
-                coros.append(self.pg.search_stm_turns(session_id, embedding, top_k=k))
+                coros.append(self.vec.search_stm_turns(session_id, embedding, top_k=k))
                 tagged.append(("stm_turn", tag))
             if scope in ("ltm", "both"):
                 # Pass session_id so the vector store applies session-scoped over-fetching
                 # (k_pre = max(top_k * 20, 200)) and post-filters by session.  This prevents
                 # cross-session contamination when multiple sessions coexist in LTM.
                 ltm_sid = session_id or None
-                coros.append(self.pg.search_ltm_chunks(embedding, top_k=k, session_id=ltm_sid))
+                coros.append(self.vec.search_ltm_chunks(embedding, top_k=k, session_id=ltm_sid))
                 tagged.append(("ltm_chunk", tag))
-                coros.append(self.pg.search_ltm_turns(embedding, top_k=k, session_id=ltm_sid))
+                coros.append(self.vec.search_ltm_turns(embedding, top_k=k, session_id=ltm_sid))
                 tagged.append(("ltm_turn", tag))
             return coros, tagged
 

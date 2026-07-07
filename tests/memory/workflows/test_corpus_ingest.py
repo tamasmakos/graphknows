@@ -14,9 +14,9 @@ from graphknows.memory.workflows.corpus_ingest import (
 
 def _make_workflow() -> CorpusIngestWorkflow:
     return CorpusIngestWorkflow(
-        mg_store=MagicMock(),
-        pg_store=MagicMock(),
-        neo_store=MagicMock(),
+        stm_store=MagicMock(),
+        vec_store=MagicMock(),
+        ltm_store=MagicMock(),
         extractor=MagicMock(),
         embed_fn=MagicMock(),
         llm_api_key="",

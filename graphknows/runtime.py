@@ -87,31 +87,31 @@ class GraphKnowsRuntime:
         )
 
         s = self.settings
-        pg = build_arcadedb_vector_store(s)
-        neo = build_arcadedb_ltm_store(s)
-        mg = build_arcadedb_stm_store(s)
+        vec = build_arcadedb_vector_store(s)
+        ltm = build_arcadedb_ltm_store(s)
+        stm = build_arcadedb_stm_store(s)
         await asyncio.gather(
-            pg.connect(),  # vector: connect + ensure_schema
-            neo.connect(),
-            mg.connect(),
+            vec.connect(),  # vector: connect + ensure_schema
+            ltm.connect(),
+            stm.connect(),
         )
-        await neo.ensure_schema()
-        self._retriever_stores = [pg, neo, mg]
+        await ltm.ensure_schema()
+        self._retriever_stores = [vec, ltm, stm]
         from graphknows.config.profiles import get_profile
 
         profile = get_profile(s)
         if profile.retrieval == "agentic":
             from graphknows.memory.query.agentic import AgenticRetriever
 
-            self._retriever = AgenticRetriever(settings=s, pg=pg, neo=neo, stm=mg)
+            self._retriever = AgenticRetriever(settings=s, vec=vec, ltm=ltm, stm=stm)
         else:
             from graphknows.config.builders.channels import build_channels
             from graphknows.memory.query.retriever import DETRetriever
 
             self._retriever = DETRetriever(
-                pg=pg,
-                neo=neo,
-                mg=mg,
+                vec=vec,
+                ltm=ltm,
+                stm=stm,
                 embed_model=s.embed_model,
                 channels=build_channels(s),
             )

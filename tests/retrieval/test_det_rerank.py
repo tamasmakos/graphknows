@@ -31,24 +31,24 @@ def _fake_embed(texts, model):
 
 
 def _make_retriever():
-    pg = MagicMock()
-    neo = MagicMock()
-    mg = MagicMock()
+    vec = MagicMock()
+    ltm = MagicMock()
+    stm = MagicMock()
     # Retrieval is fail-loud: every awaited store method a collector touches must
     # be an AsyncMock or the (un-swallowed) await error propagates. Empty defaults;
     # individual tests override the channels they exercise.
-    mg.query_fact_subjects = AsyncMock(return_value=[])
-    mg.query_entity_chunks = AsyncMock(return_value=[])
-    mg.full_text_search_chunks = AsyncMock(return_value=[])
-    neo._qry = AsyncMock(return_value=[])
-    neo.full_text_search_chunks = AsyncMock(return_value=[])
-    pg.search_topics = AsyncMock(return_value=[])
-    pg.search_stm_chunks = AsyncMock(return_value=[])
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
-    return DETRetriever(pg=pg, neo=neo, mg=mg), pg, neo, mg
+    stm.query_fact_subjects = AsyncMock(return_value=[])
+    stm.query_entity_chunks = AsyncMock(return_value=[])
+    stm.full_text_search_chunks = AsyncMock(return_value=[])
+    ltm._qry = AsyncMock(return_value=[])
+    ltm.full_text_search_chunks = AsyncMock(return_value=[])
+    vec.search_topics = AsyncMock(return_value=[])
+    vec.search_stm_chunks = AsyncMock(return_value=[])
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
+    return DETRetriever(vec=vec, ltm=ltm, stm=stm), vec, ltm, stm
 
 
 # ---------------------------------------------------------------------------
@@ -224,19 +224,19 @@ def test_idf_weight_zero_freq():
 @pytest.mark.asyncio
 async def test_stm_bm25_contributes_source():
     """When STM full-text search returns a matching chunk, stm_text appears in sources."""
-    retriever, pg, neo, mg = _make_retriever()
+    retriever, vec, ltm, stm = _make_retriever()
 
-    mg.query_entity_chunks = AsyncMock(return_value=[])
-    mg.full_text_search_chunks = AsyncMock(
+    stm.query_entity_chunks = AsyncMock(return_value=[])
+    stm.full_text_search_chunks = AsyncMock(
         return_value=[
             {"chunk_id": "bm25-hit", "text": "violin concert performance", "metadata": {}},
         ]
     )
-    pg.search_stm_chunks = AsyncMock(return_value=[])
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
+    vec.search_stm_chunks = AsyncMock(return_value=[])
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
@@ -260,14 +260,14 @@ async def test_retrieve_signature_unchanged():
     """retrieve(query, session_id, top_k, scope) -> RetrievalContext must work."""
     from graphknows.memory.query.context import RetrievalContext
 
-    retriever, pg, neo, mg = _make_retriever()
-    mg.query_entity_chunks = AsyncMock(return_value=[])
-    mg.full_text_search_chunks = AsyncMock(return_value=[])
-    pg.search_stm_chunks = AsyncMock(return_value=[])
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
+    retriever, vec, ltm, stm = _make_retriever()
+    stm.query_entity_chunks = AsyncMock(return_value=[])
+    stm.full_text_search_chunks = AsyncMock(return_value=[])
+    vec.search_stm_chunks = AsyncMock(return_value=[])
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),

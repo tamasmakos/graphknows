@@ -44,28 +44,28 @@ class CorpusIngestWorkflow:
 
     def __init__(
         self,
-        mg_store: Any,
-        pg_store: Any,
-        neo_store: Any,
+        stm_store: Any,
+        vec_store: Any,
+        ltm_store: Any,
         extractor: Any,
         embed_fn: Any,
         llm_api_key: str = "",
         llm_api_base: str = "",
         rel_extractor: Any = None,
         extraction_uses_llm: bool = False,
-        flush_pg_store: Any | None = None,
+        flush_vec_store: Any | None = None,
         channels: list[Any] | None = None,
     ) -> None:
-        self._mg = mg_store
-        self._pg = pg_store
-        self._neo = neo_store
+        self._stm = stm_store
+        self._vec = vec_store
+        self._ltm = ltm_store
         self._extractor = extractor
         self._embed_fn = embed_fn
         self._llm_api_key = llm_api_key
         self._llm_api_base = llm_api_base
         self._rel_extractor = rel_extractor
         self._extraction_uses_llm = extraction_uses_llm
-        self._flush_pg_store = flush_pg_store
+        self._flush_vec_store = flush_vec_store
         self._channels = channels or []
 
     async def run(self, request: CorpusIngestRequest) -> CorpusIngestResult:
@@ -88,8 +88,8 @@ class CorpusIngestWorkflow:
         resolved_extractor = self._extractor
         resolved_rel_extractor = self._rel_extractor
         stm = STMService(
-            mg_store=self._mg,
-            pg_store=self._pg,
+            stm_store=self._stm,
+            vec_store=self._vec,
             extractor=resolved_extractor,
             embed_fn=self._embed_fn,
             rel_extractor=resolved_rel_extractor,
@@ -130,12 +130,12 @@ class CorpusIngestWorkflow:
 
         # Phase 2: flush STM → LTM. All stores now share the caller's event loop,
         # so the flusher can reuse the ingest vector store; an explicit
-        # flush_pg_store is still honoured when supplied.
-        flush_pg = self._flush_pg_store or self._pg
+        # flush_vec_store is still honoured when supplied.
+        flush_vec = self._flush_vec_store or self._vec
         pipeline = LTMPromotionPipeline(
-            mg_store=self._mg,
-            pg_store=flush_pg,
-            neo_store=self._neo,
+            stm_store=self._stm,
+            vec_store=flush_vec,
+            ltm_store=self._ltm,
             llm_api_key=self._llm_api_key,
             llm_api_base=self._llm_api_base,
             extraction_uses_llm=self._extraction_uses_llm,

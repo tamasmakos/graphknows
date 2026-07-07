@@ -54,7 +54,7 @@ class FrameChannel(Channel):
         """Extract frames from the session's LTM chunks and write the FRAME layer."""
         from graphknows.extraction.frames import extract_frames_from_chunk
 
-        rows = await rt.neo._qry(
+        rows = await rt.ltm._qry(
             "MATCH (c:CHUNK {session_id: $sid}) RETURN c.id AS id, c.text AS text",
             sid=session_id,
         )
@@ -79,7 +79,7 @@ class FrameChannel(Channel):
                     "fillers": fillers,
                 })
 
-        written = await rt.neo.write_frames(session_id, frame_rows)
+        written = await rt.ltm.write_frames(session_id, frame_rows)
         log.info("FrameChannel.promote session=%s chunks=%d frames=%d",
                  session_id, len(chunks), written)
         if record is not None and hasattr(record, "audit"):
@@ -97,7 +97,7 @@ class FrameChannel(Channel):
         expanded: set[str] = parse["expanded"]
         anchors: set[str] = parse["anchors"]
 
-        rows = await rt.neo.query_frame_chunks(ctx.session_id, list(expanded))
+        rows = await rt.ltm.query_frame_chunks(ctx.session_id, list(expanded))
         if not rows:
             return {}
 

@@ -36,18 +36,18 @@ class LTMPromotionPipeline:
 
     def __init__(
         self,
-        mg_store: Any,
-        pg_store: IVectorDb,
-        neo_store: Any,
+        stm_store: Any,
+        vec_store: IVectorDb,
+        ltm_store: Any,
         llm_api_key: str = "",
         llm_api_base: str = "",
         llm_model: str = "",
         extraction_uses_llm: bool = False,
         channels: list[Any] | None = None,
     ) -> None:
-        self._mg = mg_store
-        self._pg = pg_store
-        self._neo = neo_store
+        self._stm = stm_store
+        self._vec = vec_store
+        self._ltm = ltm_store
         self._llm_api_key = llm_api_key
         self._llm_api_base = llm_api_base
         self._llm_model = llm_model
@@ -57,7 +57,7 @@ class LTMPromotionPipeline:
 
     async def close(self) -> None:
         """Release all store connections."""
-        for store in (self._pg, self._mg, self._neo):
+        for store in (self._vec, self._stm, self._ltm):
             with contextlib.suppress(Exception):
                 await store.close()
 
@@ -156,12 +156,12 @@ class LTMPromotionPipeline:
         the vector store guards its schema DDL), so an unconditional call here is
         safe whether or not the stores were pre-connected by the builder.
         """
-        for store in (self._pg, self._mg, self._neo):
+        for store in (self._vec, self._stm, self._ltm):
             await store.connect()
 
     async def _copy_vector_to_ltm(self, session_id: str, record: PromotionRecord) -> None:
         try:
-            chunks_promoted, turns_promoted = await self._pg.promote_to_ltm(session_id)
+            chunks_promoted, turns_promoted = await self._vec.promote_to_ltm(session_id)
             record.chunks_promoted = chunks_promoted
             record.turns_promoted = turns_promoted
         except Exception as exc:
@@ -175,7 +175,7 @@ class LTMPromotionPipeline:
         community-weighted fusion), so llm_free skips this entirely.
         """
         try:
-            result = await self._neo.detect_communities()
+            result = await self._ltm.detect_communities()
         except Exception as exc:
             record.errors.append(f"gds: {exc}")
             log.warning("community detection failed: %s", exc)
@@ -195,10 +195,10 @@ class LTMPromotionPipeline:
                 from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
 
                 summarizer = TopicSummarizer(self._llm_api_key, self._llm_model, self._llm_api_base)
-            record.topics_created = await self._neo.write_topic_summaries(
+            record.topics_created = await self._ltm.write_topic_summaries(
                 session_id=session_id,
                 summarizer=summarizer,
-                pg_store=self._pg,
+                vec_store=self._vec,
                 gds_modularity=getattr(gds_result, "modularity", None),
                 community_algorithm=getattr(gds_result, "algorithm_used", None),
             )
@@ -208,7 +208,7 @@ class LTMPromotionPipeline:
 
     async def _read_stm(self, session_id: str) -> dict[str, Any]:
         try:
-            return cast(dict[str, Any], await self._mg.read_session_subgraph(session_id))
+            return cast(dict[str, Any], await self._stm.read_session_subgraph(session_id))
         except Exception as exc:
             log.warning("read_stm %s: %s", session_id, exc)
             return {"entities": [], "files": [], "chunks": [], "dialogs": [], "turns": []}
@@ -229,7 +229,7 @@ class LTMPromotionPipeline:
         if not assignments:
             return
         try:
-            await self._pg.write_community_assignments(
+            await self._vec.write_community_assignments(
                 session_id, [item.model_dump() for item in assignments]
             )
         except Exception as exc:
@@ -237,7 +237,7 @@ class LTMPromotionPipeline:
 
     async def _read_community_assignments(self) -> list[CommunityAssignment]:
         try:
-            rows = await self._neo._qry(
+            rows = await self._ltm._qry(
                 "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
                 "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e) "
                 "OPTIONAL MATCH (t:TURN)-[:HAS_ENTITY|MENTIONS]->(e) "
@@ -278,7 +278,7 @@ class LTMPromotionPipeline:
         nodes = 0
         edges = 0
         try:
-            result = await self._neo.write_session_subgraph(session_id, stm_data)
+            result = await self._ltm.write_session_subgraph(session_id, stm_data)
             nodes = result.get("nodes", 0)
             edges = result.get("edges", 0)
         except Exception as exc:
@@ -304,7 +304,7 @@ class LTMPromotionPipeline:
 
         rel_edges = 0
         try:
-            rel_edges = await self._neo.extract_and_write_relations(
+            rel_edges = await self._ltm.extract_and_write_relations(
                 stm_data=stm_data,
                 llm_api_key=self._llm_api_key,
                 session_id=session_id,
@@ -362,7 +362,7 @@ class LTMPromotionPipeline:
             for i, ent in enumerate(entities)
         ]
         try:
-            await self._pg.upsert_entities(entity_records)
+            await self._vec.upsert_entities(entity_records)
             log.info("_index_entities: upserted %d entity embeddings", len(entity_records))
         except Exception as exc:
             log.warning("_index_entities: upsert failed: %s", exc)
@@ -371,7 +371,7 @@ class LTMPromotionPipeline:
     async def _run_pagerank_persistence(self, record: PromotionRecord) -> None:
         """Compute and persist PageRank onto ENTITY nodes. Non-fatal."""
         try:
-            updated = await self._neo.compute_and_persist_pagerank()
+            updated = await self._ltm.compute_and_persist_pagerank()
             log.info("_run_pagerank_persistence: updated pagerank on %d ENTITY nodes", updated)
         except Exception as exc:
             log.warning("_run_pagerank_persistence failed (non-fatal): %s", exc)
@@ -381,7 +381,7 @@ class LTMPromotionPipeline:
         """Prune stale tombstoned and duplicate relation edges from LTM. Non-fatal."""
         for fn_name in ("prune_tombstoned_edges", "prune_duplicate_edges"):
             try:
-                deleted = await getattr(self._neo, fn_name)()
+                deleted = await getattr(self._ltm, fn_name)()
                 log.info("_run_graph_pruning %s: deleted %d edges", fn_name, deleted)
             except Exception as exc:
                 log.warning("_run_graph_pruning %s failed (non-fatal): %s", fn_name, exc)
@@ -397,7 +397,7 @@ class LTMPromotionPipeline:
             return
         from graphknows.memory.channels.base import ChannelStores
 
-        stores = ChannelStores(mg=self._mg, pg=self._pg, neo=self._neo)
+        stores = ChannelStores(stm=self._stm, vec=self._vec, ltm=self._ltm)
         for channel in self._channels:
             try:
                 await channel.promote(stores, session_id, record)
@@ -406,5 +406,5 @@ class LTMPromotionPipeline:
                 record.errors.append(f"channel_{channel.name}: {exc}")
 
     async def _clear_stm(self, session_id: str) -> None:
-        await self._mg.delete_session(session_id)
-        await self._pg.clear_stm(session_id)
+        await self._stm.delete_session(session_id)
+        await self._vec.clear_stm(session_id)

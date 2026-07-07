@@ -16,32 +16,32 @@ def _fake_embed(texts, model):
 
 
 def _make_retriever():
-    pg = MagicMock()
-    neo = MagicMock()
-    mg = MagicMock()
+    vec = MagicMock()
+    ltm = MagicMock()
+    stm = MagicMock()
     # Retrieval is fail-loud: every awaited store method a collector touches must
     # be an AsyncMock, or the (now un-swallowed) await error propagates. Defaults
     # return empty; individual tests override the channels they exercise.
-    mg.query_fact_subjects = AsyncMock(return_value=[])
-    mg.query_entity_chunks = AsyncMock(return_value=[])
-    mg.full_text_search_chunks = AsyncMock(return_value=[])
-    neo._qry = AsyncMock(return_value=[])
-    neo.full_text_search_chunks = AsyncMock(return_value=[])
-    pg.search_topics = AsyncMock(return_value=[])
-    pg.search_stm_chunks = AsyncMock(return_value=[])
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
-    retriever = DETRetriever(pg=pg, neo=neo, mg=mg)
-    return retriever, pg, neo, mg
+    stm.query_fact_subjects = AsyncMock(return_value=[])
+    stm.query_entity_chunks = AsyncMock(return_value=[])
+    stm.full_text_search_chunks = AsyncMock(return_value=[])
+    ltm._qry = AsyncMock(return_value=[])
+    ltm.full_text_search_chunks = AsyncMock(return_value=[])
+    vec.search_topics = AsyncMock(return_value=[])
+    vec.search_stm_chunks = AsyncMock(return_value=[])
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
+    retriever = DETRetriever(vec=vec, ltm=ltm, stm=stm)
+    return retriever, vec, ltm, stm
 
 
 @pytest.mark.asyncio
 async def test_all_three_collectors_contribute():
-    retriever, pg, neo, mg = _make_retriever()
+    retriever, vec, ltm, stm = _make_retriever()
 
-    mg.query_entity_chunks = AsyncMock(
+    stm.query_entity_chunks = AsyncMock(
         return_value=[
             {
                 "chunk_id": "stm-c1",
@@ -55,7 +55,7 @@ async def test_all_three_collectors_contribute():
 
     ltm_rows = [{"chunk_id": "ltm-c1", "text": "ltm entity chunk", "entities": ["alice"]}]
 
-    pg.search_stm_chunks = AsyncMock(
+    vec.search_stm_chunks = AsyncMock(
         return_value=[
             {
                 "id": "sem-c1",
@@ -67,10 +67,10 @@ async def test_all_three_collectors_contribute():
             }
         ]
     )
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     async def _ltm_traversal(words, session_id, top_k):
         return {
@@ -102,9 +102,9 @@ async def test_all_three_collectors_contribute():
 
 @pytest.mark.asyncio
 async def test_multi_source_chunk_ranks_higher():
-    retriever, pg, neo, mg = _make_retriever()
+    retriever, vec, ltm, stm = _make_retriever()
 
-    mg.query_entity_chunks = AsyncMock(
+    stm.query_entity_chunks = AsyncMock(
         return_value=[
             {
                 "chunk_id": "shared",
@@ -115,7 +115,7 @@ async def test_multi_source_chunk_ranks_higher():
             }
         ]
     )
-    pg.search_stm_chunks = AsyncMock(
+    vec.search_stm_chunks = AsyncMock(
         return_value=[
             {
                 "id": "shared",
@@ -135,10 +135,10 @@ async def test_multi_source_chunk_ranks_higher():
             },
         ]
     )
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
@@ -155,10 +155,10 @@ async def test_multi_source_chunk_ranks_higher():
 
 @pytest.mark.asyncio
 async def test_community_weight_boosts_semantic_hit_without_topic_chunk():
-    retriever, pg, neo, mg = _make_retriever()
+    retriever, vec, ltm, stm = _make_retriever()
 
-    mg.query_entity_chunks = AsyncMock(return_value=[])
-    pg.search_stm_chunks = AsyncMock(
+    stm.query_entity_chunks = AsyncMock(return_value=[])
+    vec.search_stm_chunks = AsyncMock(
         return_value=[
             {
                 "id": "community-hit",
@@ -178,10 +178,10 @@ async def test_community_weight_boosts_semantic_hit_without_topic_chunk():
             },
         ]
     )
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
@@ -196,19 +196,19 @@ async def test_community_weight_boosts_semantic_hit_without_topic_chunk():
 
 @pytest.mark.asyncio
 async def test_top_k_is_respected():
-    retriever, pg, neo, mg = _make_retriever()
+    retriever, vec, ltm, stm = _make_retriever()
 
-    mg.query_entity_chunks = AsyncMock(
+    stm.query_entity_chunks = AsyncMock(
         return_value=[
             {"chunk_id": f"e{i}", "text": f"entity {i}", "entity_names": [], "file_id": ""}
             for i in range(8)
         ]
     )
-    pg.search_stm_chunks = AsyncMock(return_value=[])
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
+    vec.search_stm_chunks = AsyncMock(return_value=[])
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
@@ -223,14 +223,14 @@ async def test_top_k_is_respected():
 async def test_collector_failure_raises_loudly():
     """A collector failure must propagate — no silent graceful degradation. A
     broken channel should surface immediately, not masquerade as thin recall."""
-    retriever, pg, neo, mg = _make_retriever()
+    retriever, vec, ltm, stm = _make_retriever()
 
-    mg.query_entity_chunks = AsyncMock(side_effect=RuntimeError("stm down"))
-    pg.search_stm_chunks = AsyncMock(return_value=[])
-    pg.search_stm_turns = AsyncMock(return_value=[])
-    pg.search_ltm_chunks = AsyncMock(return_value=[])
-    pg.search_ltm_turns = AsyncMock(return_value=[])
-    pg.get_chunks_by_ids = AsyncMock(return_value={})
+    stm.query_entity_chunks = AsyncMock(side_effect=RuntimeError("stm down"))
+    vec.search_stm_chunks = AsyncMock(return_value=[])
+    vec.search_stm_turns = AsyncMock(return_value=[])
+    vec.search_ltm_chunks = AsyncMock(return_value=[])
+    vec.search_ltm_turns = AsyncMock(return_value=[])
+    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
         patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
