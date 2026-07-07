@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Any
 
-from evaluation.client import GraphknowsMCPClient
+from graphknows.client import GraphKnowsMCPClient
 from evaluation.config import EvalConfig
 from evaluation.datamodels import EvalDocument, IngestResult
 
@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 class Ingestor:
     """Ingests a dialogue's documents into one memory session."""
 
-    def __init__(self, client: GraphknowsMCPClient, config: EvalConfig) -> None:
+    def __init__(self, client: GraphKnowsMCPClient, config: EvalConfig) -> None:
         self._client = client
         self._config = config
 

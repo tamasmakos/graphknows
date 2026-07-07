@@ -12,7 +12,7 @@ import os
 import re
 from collections.abc import Callable
 
-from evaluation.client import GraphknowsMCPClient
+from graphknows.client import GraphKnowsMCPClient
 from evaluation.config import EvalConfig
 from evaluation.datamodels import (
     CaseResult,
@@ -157,7 +157,7 @@ async def _run_dialogue(
     retriever: Retriever,
     generator: AnswerGenerator,
     dspy_scorer: DspyMetricScorer,
-    client: GraphknowsMCPClient,
+    client: GraphKnowsMCPClient,
     progress: tuple[int, int],
     on_progress: Callable[[list[CaseResult]], None] | None = None,
 ) -> list[CaseResult]:
@@ -230,7 +230,7 @@ async def run_evaluation(config: EvalConfig, *, run_id: str, limit: int, offset:
     total = sum(len(d.cases) for d in dialogues)
 
     cases: list[CaseResult] = []
-    async with GraphknowsMCPClient(
+    async with GraphKnowsMCPClient(
         config.command,
         request_timeout_s=config.request_timeout_s,
         env=_evaluation_env(config),

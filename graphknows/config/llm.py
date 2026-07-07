@@ -2,7 +2,7 @@
 
 Provides:
 - :func:`_extract_secret` — safely extract a secret from a config container.
-- :func:`_get_openrouter_api_key` — resolve OpenRouter API key.
+- :func:`get_openrouter_api_key` — resolve OpenRouter API key.
 - :func:`get_model_name` — look up model name by purpose.
 - :func:`get_temperature` — look up LLM temperature setting.
 - :func:`normalize_openrouter_model` — normalise a model string for DSPy.
@@ -76,7 +76,7 @@ def _extract_secret(container: Any, key: str) -> str | None:
     return str(value)  # type: ignore[return-value]
 
 
-def _get_openrouter_api_key(config: dict[str, Any] | None = None) -> str:
+def get_openrouter_api_key(config: dict[str, Any] | None = None) -> str:
     """Resolve OpenRouter API key from config or environment."""
     if config:
         infra = config.get("infra", {})
@@ -99,6 +99,10 @@ def _get_openrouter_api_key(config: dict[str, Any] | None = None) -> str:
         or _resolve(os.environ.get("OPEN_ROUTER_API"))
         or ""
     )
+
+
+# Deprecated private alias — prefer get_openrouter_api_key.
+_get_openrouter_api_key = get_openrouter_api_key
 
 
 def get_model_name(config: dict[str, Any], purpose: str | None = None) -> str:

@@ -51,9 +51,9 @@ def _build_openrouter_lm(
     max_tokens: int = 2048,
 ) -> dspy.LM:
     """Construct an OpenRouter-backed ``dspy.LM`` for grading."""
-    from graphknows.config.llm import _get_openrouter_api_key, normalize_openrouter_model
+    from graphknows.config.llm import get_openrouter_api_key, normalize_openrouter_model
 
-    resolved_key = api_key or _get_openrouter_api_key()
+    resolved_key = api_key or get_openrouter_api_key()
     if not resolved_key:
         raise RuntimeError(
             "DspyMetricScorer requires an OpenRouter API key (OPENROUTER_API_KEY)."

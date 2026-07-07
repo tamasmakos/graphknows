@@ -34,7 +34,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without 
     raise MissingExtraError("llm_assisted extraction", "assisted") from exc
 from pydantic import BaseModel, Field
 
-from graphknows.config.llm import _get_openrouter_api_key, build_lm
+from graphknows.config.llm import build_lm, get_openrouter_api_key
 from graphknows.extraction.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
 from graphknows.extraction.ontology.relation_filter import OntologyPredicateMapper
 from graphknows.extraction.utils import standardize_label
@@ -329,7 +329,7 @@ class DSPyExtractor(BaseExtractor):
             or llm_config.get("model")
         )
 
-        api_key = llm_config.get("api_key") or _get_openrouter_api_key(config)
+        api_key = llm_config.get("api_key") or get_openrouter_api_key(config)
         if not api_key:
             raise ValueError(
                 "llm_assisted extraction requires an LLM API key. "

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from evaluation.client import GraphknowsMCPClient
+from graphknows.client import GraphKnowsMCPClient
 from evaluation.config import EvalConfig
 from evaluation.datamodels import RetrievedPassage
 
@@ -29,7 +29,7 @@ def _parse_hits(result: Any) -> list[RetrievedPassage]:
 class Retriever:
     """Queries one memory session via the ``memory_query`` MCP tool."""
 
-    def __init__(self, client: GraphknowsMCPClient, config: EvalConfig) -> None:
+    def __init__(self, client: GraphKnowsMCPClient, config: EvalConfig) -> None:
         self._client = client
         self._config = config
 

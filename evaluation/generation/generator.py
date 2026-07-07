@@ -21,7 +21,7 @@ from evaluation.generation.signatures import (
     build_context,
     demos,
 )
-from graphknows.config.llm import _get_openrouter_api_key, normalize_openrouter_model
+from graphknows.config.llm import get_openrouter_api_key, normalize_openrouter_model
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class AnswerGenerator:
         api_key: str | None = None,
         max_tokens: int = 8192,  # base budget; reasoning models need >> the answer length
     ) -> None:
-        resolved_key = api_key or _get_openrouter_api_key()
+        resolved_key = api_key or get_openrouter_api_key()
         if not resolved_key:
             raise RuntimeError(
                 "AnswerGenerator requires an OpenRouter API key. "

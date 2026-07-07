@@ -1,8 +1,13 @@
-"""Small JSON-RPC stdio client for the graphknows MCP server."""
+"""Async JSON-RPC stdio client for the graphknows MCP server.
+
+Stdlib-only (asyncio + json) so it stays in the core install: any out-of-process
+consumer can drive ``graphknows-mcp`` without pulling the ML/extraction extras.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shlex
@@ -10,14 +15,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from graphknows.exceptions import GraphKnowsError
 
-class MCPClientError(RuntimeError):
+
+class MCPClientError(GraphKnowsError):
     """Raised when the MCP server returns a JSON-RPC error or malformed response."""
 
 
 @dataclass
-class GraphknowsMCPClient:
-    """Async JSON-RPC client for graphknows-mcp over stdio."""
+class GraphKnowsMCPClient:
+    """Async JSON-RPC client for ``graphknows-mcp`` over stdio."""
 
     command: Sequence[str] | str = "graphknows-mcp"
     request_timeout_s: float = 120.0
@@ -26,10 +33,12 @@ class GraphknowsMCPClient:
 
     _proc: asyncio.subprocess.Process | None = field(default=None, init=False, repr=False)
     _request_id: int = field(default=0, init=False)
-    _pending: dict[int, asyncio.Future[dict[str, Any]]] = field(default_factory=dict, init=False, repr=False)
+    _pending: dict[int, asyncio.Future[dict[str, Any]]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _reader_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
 
-    async def __aenter__(self) -> GraphknowsMCPClient:
+    async def __aenter__(self) -> GraphKnowsMCPClient:
         await self.start()
         return self
 
@@ -46,10 +55,8 @@ class GraphknowsMCPClient:
         # and prefer 'docker exec' if targeting the singleton container.
         if len(args) > 1 and args[0] == "docker":
             if args[1] == "run" and "--rm" not in args:
-                # Insert --rm after 'run'
                 args.insert(2, "--rm")
             elif args[1] == "exec" and "-i" not in args and "-it" not in args:
-                # Ensure interactive mode for stdio
                 args.insert(2, "-i")
 
         env = {**os.environ, **self.env}
@@ -68,7 +75,7 @@ class GraphknowsMCPClient:
                 {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": "graphknows-evaluation", "version": "0.1.0"},
+                    "clientInfo": {"name": "graphknows-client", "version": "1.0.0"},
                 },
             )
             await self.notify("notifications/initialized", {})
@@ -77,12 +84,9 @@ class GraphknowsMCPClient:
         """Terminate the MCP subprocess."""
         if self._reader_task is not None:
             self._reader_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._reader_task
-            except (asyncio.CancelledError, Exception):
-                pass
             self._reader_task = None
-        # Fail any futures still waiting
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(MCPClientError("MCP client closed"))
@@ -114,7 +118,6 @@ class GraphknowsMCPClient:
         while True:
             line = await proc.stdout.readline()
             if not line:
-                # EOF — server closed stdout
                 stderr = await self._read_stderr_tail(proc)
                 err = MCPClientError(f"MCP server closed stdout. stderr: {stderr}")
                 for fut in self._pending.values():
@@ -129,11 +132,11 @@ class GraphknowsMCPClient:
             rid = response.get("id")
             if rid is None:
                 continue  # notification or response without id
-            fut = self._pending.get(rid)
-            if fut is None:
+            pending = self._pending.get(rid)
+            if pending is None:
                 continue  # no one waiting — ignore
-            if not fut.done():
-                fut.set_result(response)
+            if not pending.done():
+                pending.set_result(response)
 
     async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Send a JSON-RPC request and return the response result."""
@@ -152,7 +155,7 @@ class GraphknowsMCPClient:
         try:
             self._write_payload(proc, payload)
             response = await asyncio.wait_for(fut, timeout=self.request_timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._pending.pop(request_id, None)
             raise
         except BaseException:
