@@ -13,7 +13,12 @@ from typing import Any
 
 from graphknows.adapters.langgraph.hooks import recall, remember
 
-__all__ = ["GraphKnowsStore", "recall", "remember"]
+# GraphKnowsStore is intentionally NOT in __all__: it requires the ``langgraph``
+# extra, so keeping it out of __all__ lets ``from ... import *`` pull the
+# pure-Python helpers without triggering the langgraph import. Explicit
+# ``from graphknows.adapters.langgraph import GraphKnowsStore`` still resolves it
+# (and raises MissingExtraError with an install hint when langgraph is absent).
+__all__ = ["recall", "remember"]
 
 
 def __getattr__(name: str) -> Any:

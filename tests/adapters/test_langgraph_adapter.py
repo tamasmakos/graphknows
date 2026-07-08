@@ -50,6 +50,18 @@ async def test_recall_reads_last_message_and_returns_memories() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recall_extracts_text_from_multimodal_content() -> None:
+    mem = _FakeMemory()
+    state = {
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "what is my cat?"}, {"type": "image_url", "image_url": "x"}]}
+        ]
+    }
+    await recall(state, memory=mem, session_id="s1")
+    assert mem.recall_calls[0]["query"] == "what is my cat?"
+
+
+@pytest.mark.asyncio
 async def test_recall_empty_messages_is_noop() -> None:
     mem = _FakeMemory()
     assert await recall({}, memory=mem, session_id="s1") == {"memories": []}

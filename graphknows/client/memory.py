@@ -68,9 +68,13 @@ class RemoteMemory:
         *,
         session_id: str = "",
         top_k: int = 5,
-        scope: str = "both",
+        scope: str = "stm",
     ) -> dict[str, Any]:
-        """Recall ranked hits (MCP ``memory_query``)."""
+        """Recall ranked hits (MCP ``memory_query``).
+
+        The default ``scope`` matches the in-process :class:`graphknows.Memory`
+        so the two transports return the same tier for the same call.
+        """
         return await self._call(
             "memory_query",
             {"query": query, "session_id": session_id, "top_k": top_k, "scope": scope},

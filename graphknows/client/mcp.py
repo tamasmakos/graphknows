@@ -7,7 +7,6 @@ consumer can drive ``graphknows-mcp`` without pulling the ML/extraction extras.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import os
 import shlex
@@ -84,8 +83,16 @@ class GraphKnowsMCPClient:
         """Terminate the MCP subprocess."""
         if self._reader_task is not None:
             self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
+            try:
                 await self._reader_task
+            except asyncio.CancelledError:
+                # Swallow the reader task's own cancellation (we cancelled it),
+                # but re-raise if *this* close() coroutine is being cancelled.
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+            except Exception:
+                pass
             self._reader_task = None
         for fut in self._pending.values():
             if not fut.done():
@@ -143,7 +150,7 @@ class GraphKnowsMCPClient:
         proc = self._require_proc()
         self._request_id += 1
         request_id = self._request_id
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         self._pending[request_id] = fut
         payload = {

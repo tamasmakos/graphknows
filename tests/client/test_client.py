@@ -59,6 +59,15 @@ class TestRemoteMemory:
         )
 
     @pytest.mark.asyncio
+    async def test_recall_default_scope_matches_in_process_memory(self) -> None:
+        # RemoteMemory must default scope="stm" to match graphknows.Memory.recall_memory.
+        client = GraphKnowsMCPClient()
+        client.call_tool = AsyncMock(return_value={"hits": []})
+        mem = RemoteMemory(client=client)
+        await mem.recall_memory("q", session_id="s1")
+        assert client.call_tool.await_args.args[1]["scope"] == "stm"
+
+    @pytest.mark.asyncio
     async def test_flush_and_purge(self) -> None:
         client = GraphKnowsMCPClient()
         client.call_tool = AsyncMock(return_value={})

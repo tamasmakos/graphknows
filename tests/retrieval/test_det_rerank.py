@@ -222,7 +222,7 @@ def test_idf_weight_zero_freq():
 
 
 @pytest.mark.asyncio
-async def teststm_bm25_contributes_source():
+async def test_stm_bm25_contributes_source():
     """When STM full-text search returns a matching chunk, stm_text appears in sources."""
     retriever, vec, ltm, stm = _make_retriever()
 

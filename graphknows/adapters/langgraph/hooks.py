@@ -21,7 +21,11 @@ class _Memory(Protocol):
 
 
 def _last_text(state: dict[str, Any], messages_key: str) -> str:
-    """Return the last message's text from a LangGraph-style messages list."""
+    """Return the last message's text from a LangGraph-style messages list.
+
+    Handles both plain-string content and LangChain multimodal content (a list
+    of blocks, where text blocks are ``{"type": "text", "text": ...}``).
+    """
     messages = state.get(messages_key) or []
     if not messages:
         return ""
@@ -29,6 +33,14 @@ def _last_text(state: dict[str, Any], messages_key: str) -> str:
     content = getattr(last, "content", None)
     if content is None and isinstance(last, dict):
         content = last.get("content")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        return " ".join(p for p in parts if p)
     return str(content or "")
 
 

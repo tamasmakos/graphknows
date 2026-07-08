@@ -114,13 +114,19 @@ class Memory:
         vec = build_arcadedb_vector_store(s)
         ltm = build_arcadedb_ltm_store(s)
         stm = build_arcadedb_stm_store(s)
-        await asyncio.gather(
-            vec.connect(),  # vector: connect + ensure_schema
-            ltm.connect(),
-            stm.connect(),
-        )
-        await ltm.ensure_schema()
+        # Record the stores before connecting so a failure during connect or
+        # ensure_schema is cleaned up by close() instead of orphaning open pools.
         self._retriever_stores = [vec, ltm, stm]
+        try:
+            await asyncio.gather(
+                vec.connect(),  # vector: connect + ensure_schema
+                ltm.connect(),
+                stm.connect(),
+            )
+            await ltm.ensure_schema()
+        except Exception:
+            await self.close()
+            raise
         from graphknows.config.profiles import get_profile
 
         profile = get_profile(s)
@@ -259,8 +265,10 @@ class Memory:
         )
 
         service = build_stm_service(self.settings)
-        await service.connect()
         try:
+            # connect() inside the try so a failure after the pool opens (schema
+            # DDL, transient ArcadeDB error) still runs close() in the finally.
+            await service.connect()
             # Only structured conversations go through the turn-based path. A plain
             # string (even without a title) must go through the text/chunk path —
             # the turn path creates no CHUNK nodes, leaving retrieval-over-chunks

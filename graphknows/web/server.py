@@ -7,12 +7,17 @@ import os
 from pathlib import Path
 from typing import Any
 
-import uvicorn
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
+try:
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on core-only installs
+    from graphknows.exceptions import MissingExtraError
+
+    raise MissingExtraError("The Memory Mirror web server", "web") from exc
 
 from graphknows.config import GraphKnowsSettings
 from graphknows.config.builders.stores import build_arcadedb_ltm_store, build_arcadedb_stm_store

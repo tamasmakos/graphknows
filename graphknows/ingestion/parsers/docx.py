@@ -28,7 +28,12 @@ class DocxParser(BaseParser):
         Returns:
             ParsedFile with ordered TextSegment list.
         """
-        from docx import Document
+        try:
+            from docx import Document
+        except ModuleNotFoundError as exc:
+            from graphknows.exceptions import MissingExtraError
+
+            raise MissingExtraError("DOCX parsing", "parsers") from exc
 
         doc = Document(io.BytesIO(data))
         text_parts: list[str] = []
