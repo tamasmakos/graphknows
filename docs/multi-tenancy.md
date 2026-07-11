@@ -82,14 +82,14 @@ with `memory_purge` instead.)
 
 ## Evaluations
 
-The benchmark harness uses namespaces so the three benchmarks coexist in one
-ArcadeDB server without contaminating each other (`eval_locomo`,
-`eval_longmemeval`, `eval_beam`). This also enables the fast tuning loop:
+The benchmark harness uses namespaces so each mode runs in its own database
+pair without contaminating the other (`eval_locomo_llm_free`,
+`eval_locomo_llm_assisted`). This also enables the fast tuning loop:
 
 ```bash
-python -m evaluation locomo --limit 20            # ingest once into eval_locomo
-python -m evaluation locomo --limit 20 --no-ingest  # tweak retrieval, reuse the graph
-python -m evaluation locomo --reset               # drop eval_locomo for a clean re-ingest
+python -m evaluation --limit 20                   # ingest once into eval_locomo_llm_free
+python -m evaluation --limit 20 --no-ingest       # tweak retrieval, reuse the graph
+python -m evaluation --reset                      # drop this mode's namespace, clean re-ingest
 ```
 
 See [`evaluation/README.md`](../evaluation/README.md).

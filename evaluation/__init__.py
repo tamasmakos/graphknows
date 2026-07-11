@@ -1,14 +1,12 @@
-"""Memory-benchmark evaluation frameworks for graphknows.
+"""Memory-benchmark evaluation framework for graphknows.
 
-Three benchmarks, one shared pipeline (ingest → retrieve → generate → LLM-judge):
+One shared pipeline (ingest → retrieve → generate → LLM-judge):
 
-* ``evaluation.locomo``      — long-term conversational memory QA
-* ``evaluation.longmemeval`` — long-term interactive assistant memory
-* ``evaluation.beam``        — very-long-conversation memory abilities
+* ``evaluation.locomo`` — long-term conversational memory QA
 
-Run with ``python -m evaluation <benchmark> [flags]``; bare flags default to
-locomo for backward compatibility. Shared infrastructure (datamodels, LLM
-client, ingestion/retrieval, judging, reporting) lives in ``evaluation.common``.
+Run with ``python -m evaluation [flags]``. Shared infrastructure (datamodels,
+LLM client, ingestion/retrieval, judging, reporting) lives in
+``evaluation.common``.
 """
 
 from evaluation.common.config import BaseEvalConfig

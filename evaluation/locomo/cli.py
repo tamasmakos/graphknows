@@ -64,6 +64,9 @@ async def _run_one(
     """Run a single mode and return (RunReport, ReportPaths)."""
     os.environ["GRAPHKNOWS_MODE"] = mode
     config = LocomoConfig()
+    # Per-mode namespace: llm_free and llm_assisted get physically separate
+    # database pairs so ingesting one never contaminates the other's graph.
+    config = config.model_copy(update={"namespace": f"{config.namespace}_{mode}"})
     os.environ["GRAPHKNOWS_NAMESPACE"] = config.namespace
     answerer, judge = build_llms(config)
     adapter = LocomoAdapter(config, answerer, judge)
@@ -88,9 +91,13 @@ async def amain(argv: list[str] | None = None) -> int:
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 
     if args.reset:
-        os.environ["GRAPHKNOWS_NAMESPACE"] = LocomoConfig().namespace
-        print(f"[eval] --reset: dropping namespace {LocomoConfig().namespace}")
-        await reset_namespace(LocomoConfig())
+        base = LocomoConfig()
+        modes = ["llm_free", "llm_assisted"] if args.compare else [args.mode]
+        for m in modes:
+            cfg = base.model_copy(update={"namespace": f"{base.namespace}_{m}"})
+            os.environ["GRAPHKNOWS_NAMESPACE"] = cfg.namespace
+            print(f"[eval] --reset: dropping namespace {cfg.namespace}")
+            await reset_namespace(cfg)
 
     if args.compare:
         print(
