@@ -175,20 +175,27 @@ async def _run_unit(
     client: GraphKnowsMCPClient,
     progress: tuple[int, int],
     on_progress,
+    reuse_ingest: bool = False,
 ) -> list[CaseResult]:
-    """Ingest one unit, then retrieve+generate+judge each of its questions."""
+    """Ingest one unit (unless reusing), then retrieve+generate+judge its questions."""
     case_idx, total = progress
-    session_id = f"{config.session_prefix}-{run_id}-{unit.group_id}"
+    # Deterministic per (benchmark, unit) so a --no-ingest re-run finds the same
+    # session in the namespace instead of re-ingesting.
+    session_id = f"{config.session_prefix}-{unit.group_id}"
     results: list[CaseResult] = []
 
-    print(f"\n[{unit.group_id}] ingesting {len(unit.documents)} docs …", flush=True)
     try:
-        ingest = await ingestor.ingest(session_id, unit.documents)
-        print(
-            f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
-            f"entities={ingest.entities} flush_nodes={ingest.flush_nodes}",
-            flush=True,
-        )
+        if reuse_ingest:
+            ingest = IngestResult()
+            print(f"\n[{unit.group_id}] reusing ingested graph (--no-ingest)", flush=True)
+        else:
+            print(f"\n[{unit.group_id}] ingesting {len(unit.documents)} docs …", flush=True)
+            ingest = await ingestor.ingest(session_id, unit.documents)
+            print(
+                f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
+                f"entities={ingest.entities} flush_nodes={ingest.flush_nodes}",
+                flush=True,
+            )
 
         for case in unit.cases:
             probe = await retriever.query(session_id, case.question, k=config.probe_k)
@@ -231,14 +238,34 @@ async def _run_unit(
     return results
 
 
+async def reset_namespace(config: BaseEvalConfig) -> None:
+    """Drop this benchmark's entire namespace (both physical databases).
+
+    A clean slate for one benchmark without touching any other. The MCP server
+    resolves the namespace from ``GRAPHKNOWS_NAMESPACE`` (set by the CLI), so the
+    explicit argument here just names it for the drop.
+    """
+    async with GraphKnowsMCPClient(
+        config.command, request_timeout_s=config.request_timeout_s, env=_evaluation_env()
+    ) as client:
+        result = await client.call_tool("memory_drop_namespace", {"namespace": config.namespace})
+        log.info("Reset namespace %s: %s", config.namespace, result)
+
+
 async def run_units(
     adapter: BenchmarkAdapter,
     config: BaseEvalConfig,
     units: list[IngestUnit],
     *,
     run_id: str,
+    reuse_ingest: bool = False,
 ) -> RunReport:
-    """Run all units through the pipeline and return a populated report."""
+    """Run all units through the pipeline and return a populated report.
+
+    With ``reuse_ingest`` the ingest+flush step is skipped and retrieval runs
+    against the namespace's already-ingested graph — the "just tweak retrieval"
+    loop, with no reingest cost.
+    """
     total = sum(len(u.cases) for u in units)
     cases: list[CaseResult] = []
 
@@ -247,10 +274,6 @@ async def run_units(
         request_timeout_s=config.request_timeout_s,
         env=_evaluation_env(),
     ) as client:
-        if config.pre_run_purge_ltm:
-            log.info("Purging all LTM before the run (pre_run_purge_ltm=True)")
-            await client.call_tool("memory_purge", {"scope": "ltm", "session_id": ""})
-
         ingestor = Ingestor(client, config)
         retriever = Retriever(client, config)
 
@@ -270,6 +293,7 @@ async def run_units(
                     client=client,
                     progress=(len(cases), total),
                     on_progress=_progress_ckpt,
+                    reuse_ingest=reuse_ingest,
                 )
             except Exception as exc:
                 if _is_credit_exhaustion(exc):

@@ -27,5 +27,6 @@ class LocomoConfig(BaseEvalConfig):
     max_chars_per_document: int = 8000
 
     # ── Lifecycle / output ───────────────────────────────────────────────────
+    namespace: str = "eval_locomo"
     session_prefix: str = "eval-locomo"
     output_dir: Path = Path("evaluation/results/locomo")

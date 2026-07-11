@@ -24,6 +24,8 @@ Three memory benchmarks over one shared pipeline
 # inside the workspace container
 python -m evaluation locomo --limit 20 --mode llm_free
 python -m evaluation locomo --limit 20 --compare          # llm_free vs llm_assisted table
+python -m evaluation locomo --limit 20 --no-ingest        # reuse the graph, tweak retrieval only
+python -m evaluation locomo --reset                       # drop this benchmark's namespace, then run
 python -m evaluation longmemeval --per-type 5             # 30-question stratified sample
 python -m evaluation longmemeval --all-questions
 python -m evaluation beam --chat-sizes 100K --conversations 0-4
@@ -31,6 +33,17 @@ python -m evaluation beam --chat-sizes 100K --conversations 0-4
 
 Bare flags (`python -m evaluation --limit 5`) run locomo for backward
 compatibility.
+
+### Namespaces and the reuse loop
+
+Each benchmark runs in its own physical database pair (namespace
+`eval_locomo` / `eval_longmemeval` / `eval_beam`), so the three coexist in one
+ArcadeDB server without contaminating each other — no more wiping LTM between
+runs. Because data persists in the namespace and session ids are deterministic,
+`--no-ingest` re-runs retrieval + scoring against the already-ingested graph
+(the "just tweak retrieval" loop, no reingest cost). `--reset` drops the
+benchmark's namespace for a clean re-ingest of that benchmark only. See
+[docs/multi-tenancy.md](../docs/multi-tenancy.md).
 
 ## Metrics
 
@@ -92,8 +105,10 @@ ingestion, retrieval, checkpointing, purging, reporting — is shared in
 
 ## Operational notes
 
-* Each ingest unit gets a fresh session; sessions are purged after their
-  questions run, and all LTM is wiped before a run (no cross-run contamination).
+* Each benchmark runs in its own namespace (database pair), so benchmarks never
+  contaminate each other and data persists between runs (reuse with `--no-ingest`,
+  reset with `--reset`). Within a benchmark, ingest is idempotent per unit
+  (deterministic session id + chunk-id MERGE).
 * Runs checkpoint every 30 cases and after every unit — a crash never loses
   completed work. Credit exhaustion (OpenRouter 402) stops the run cleanly and
   keeps partial results.

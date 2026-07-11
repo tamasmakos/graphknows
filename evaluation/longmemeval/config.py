@@ -27,5 +27,6 @@ class LongMemEvalConfig(BaseEvalConfig):
     max_chars_per_document: int = 12_000  # haystack sessions are short; generous cap
 
     # ── Lifecycle / output ───────────────────────────────────────────────────
+    namespace: str = "eval_longmemeval"
     session_prefix: str = "eval-lme"
     output_dir: Path = Path("evaluation/results/longmemeval")

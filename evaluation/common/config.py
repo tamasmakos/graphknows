@@ -32,10 +32,18 @@ class BaseEvalConfig(BaseModel):
     generation_model: str = ""  # → LLM_MODEL from .env (required — no hardcoded fallback)
     judge_model: str = ""  # → JUDGE_MODEL from .env, falling back to generation_model
 
+    # ── Isolation ────────────────────────────────────────────────────────────
+    # Each benchmark runs in its own physical database pair (stm_<ns>/ltm_<ns>), so
+    # benchmarks coexist without contaminating each other and a run can reuse an
+    # already-ingested graph (--no-ingest) instead of re-ingesting. Set per benchmark.
+    namespace: str = "eval"
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
     session_prefix: str = "eval"
-    purge: bool = True  # purge each unit's session after querying
-    pre_run_purge_ltm: bool = True  # wipe all LTM before the run (no cross-run contamination)
+    # Persist ingested data by default so a follow-up --no-ingest run can reuse it.
+    # Namespace isolation (not purging) is what keeps benchmarks from contaminating
+    # each other; a clean slate for one benchmark is `--reset` (drop its namespace).
+    purge: bool = False  # purge each unit's session after querying
 
     # ── Paths ────────────────────────────────────────────────────────────────
     data_root: Path = Path("evaluation/data")

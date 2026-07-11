@@ -20,7 +20,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from evaluation.common.datamodels import RunReport
-from evaluation.common.pipeline import build_llms, run_units
+from evaluation.common.pipeline import build_llms, reset_namespace, run_units
 from evaluation.common.reporting import ReportPaths, compare_modes, write_report
 from evaluation.locomo.adapter import LocomoAdapter
 from evaluation.locomo.config import LocomoConfig
@@ -45,19 +45,32 @@ def build_parser() -> argparse.ArgumentParser:
             "side-by-side per-category accuracy comparison table. Ignores --mode."
         ),
     )
+    parser.add_argument(
+        "--no-ingest",
+        action="store_true",
+        help="Reuse the already-ingested graph; skip ingest and only re-run retrieval+scoring.",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Drop this benchmark's namespace (both databases) for a clean re-ingest, then run.",
+    )
     return parser
 
 
-async def _run_one(mode: str, limit: int, offset: int, ts: str) -> tuple[RunReport, ReportPaths]:
+async def _run_one(
+    mode: str, limit: int, offset: int, ts: str, *, reuse_ingest: bool = False
+) -> tuple[RunReport, ReportPaths]:
     """Run a single mode and return (RunReport, ReportPaths)."""
     os.environ["GRAPHKNOWS_MODE"] = mode
     config = LocomoConfig()
+    os.environ["GRAPHKNOWS_NAMESPACE"] = config.namespace
     answerer, judge = build_llms(config)
     adapter = LocomoAdapter(config, answerer, judge)
     units = load_units(config, limit=limit, offset=offset)
     run_id = f"eval-{mode}-{ts}"
     try:
-        run = await run_units(adapter, config, units, run_id=run_id)
+        run = await run_units(adapter, config, units, run_id=run_id, reuse_ingest=reuse_ingest)
     finally:
         await answerer.aclose()
         await judge.aclose()
@@ -74,13 +87,22 @@ async def amain(argv: list[str] | None = None) -> int:
 
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 
+    if args.reset:
+        os.environ["GRAPHKNOWS_NAMESPACE"] = LocomoConfig().namespace
+        print(f"[eval] --reset: dropping namespace {LocomoConfig().namespace}")
+        await reset_namespace(LocomoConfig())
+
     if args.compare:
         print(
             f"[eval] --compare: running llm_free + llm_assisted  "
             f"limit={args.limit} offset={args.offset}"
         )
-        run_free, paths_free = await _run_one("llm_free", args.limit, args.offset, ts)
-        run_asst, paths_asst = await _run_one("llm_assisted", args.limit, args.offset, ts)
+        run_free, paths_free = await _run_one(
+            "llm_free", args.limit, args.offset, ts, reuse_ingest=args.no_ingest
+        )
+        run_asst, paths_asst = await _run_one(
+            "llm_assisted", args.limit, args.offset, ts, reuse_ingest=args.no_ingest
+        )
 
         table = compare_modes(run_free.cases, run_asst.cases)
         compare_path = Path(LocomoConfig().output_dir) / f"compare-{ts}.md"
@@ -102,7 +124,9 @@ async def amain(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"[eval] benchmark=locomo mode={args.mode}")
-    run, paths = await _run_one(args.mode, args.limit, args.offset, ts)
+    run, paths = await _run_one(
+        args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest
+    )
 
     print(
         f"\nAccuracy (LLM judge): {run.summary.get('accuracy', 0.0):.3f}  "

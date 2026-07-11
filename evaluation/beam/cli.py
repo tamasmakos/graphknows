@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from evaluation.beam.adapter import BeamAdapter
 from evaluation.beam.config import CHAT_SIZES, BeamConfig
 from evaluation.beam.dataset import QUESTION_TYPES, load_units
-from evaluation.common.pipeline import build_llms, run_units
+from evaluation.common.pipeline import build_llms, reset_namespace, run_units
 from evaluation.common.reporting import write_report
 
 
@@ -43,6 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mode", choices=["llm_free", "llm_assisted"], default="llm_free",
         help="MemoryMode passed to the MCP server.",
+    )
+    parser.add_argument(
+        "--no-ingest", action="store_true",
+        help="Reuse the already-ingested graph; skip ingest and re-run retrieval+scoring only.",
+    )
+    parser.add_argument(
+        "--reset", action="store_true",
+        help="Drop this benchmark's namespace for a clean re-ingest, then run.",
     )
     return parser
 
@@ -70,6 +78,10 @@ async def amain(argv: list[str] | None = None) -> int:
 
     os.environ["GRAPHKNOWS_MODE"] = args.mode
     config = BeamConfig()
+    os.environ["GRAPHKNOWS_NAMESPACE"] = config.namespace
+    if args.reset:
+        print(f"[eval] --reset: dropping namespace {config.namespace}")
+        await reset_namespace(config)
     units = load_units(
         config,
         chat_sizes=chat_sizes,
@@ -87,7 +99,9 @@ async def amain(argv: list[str] | None = None) -> int:
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     run_id = f"eval-{args.mode}-{ts}"
     try:
-        run = await run_units(adapter, config, units, run_id=run_id)
+        run = await run_units(
+            adapter, config, units, run_id=run_id, reuse_ingest=args.no_ingest
+        )
     finally:
         await answerer.aclose()
         await judge.aclose()

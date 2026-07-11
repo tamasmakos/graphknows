@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 
-from evaluation.common.pipeline import build_llms, run_units
+from evaluation.common.pipeline import build_llms, reset_namespace, run_units
 from evaluation.common.reporting import write_report
 from evaluation.longmemeval.adapter import LongMemEvalAdapter
 from evaluation.longmemeval.config import LongMemEvalConfig
@@ -48,6 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode", choices=["llm_free", "llm_assisted"], default="llm_free",
         help="MemoryMode passed to the MCP server.",
     )
+    parser.add_argument(
+        "--no-ingest", action="store_true",
+        help="Reuse the already-ingested graph; skip ingest and re-run retrieval+scoring only.",
+    )
+    parser.add_argument(
+        "--reset", action="store_true",
+        help="Drop this benchmark's namespace for a clean re-ingest, then run.",
+    )
     return parser
 
 
@@ -60,6 +68,7 @@ async def amain(argv: list[str] | None = None) -> int:
 
     os.environ["GRAPHKNOWS_MODE"] = args.mode
     config = LongMemEvalConfig()
+    os.environ["GRAPHKNOWS_NAMESPACE"] = config.namespace
     question_types = (
         [t.strip() for t in args.question_types.split(",") if t.strip()]
         if args.question_types
@@ -69,6 +78,10 @@ async def amain(argv: list[str] | None = None) -> int:
         unknown = set(question_types) - set(QUESTION_TYPES)
         if unknown:
             raise SystemExit(f"Unknown question types: {sorted(unknown)}")
+
+    if args.reset:
+        print(f"[eval] --reset: dropping namespace {config.namespace}")
+        await reset_namespace(config)
 
     units = load_units(
         config,
@@ -84,7 +97,9 @@ async def amain(argv: list[str] | None = None) -> int:
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     run_id = f"eval-{args.mode}-{ts}"
     try:
-        run = await run_units(adapter, config, units, run_id=run_id)
+        run = await run_units(
+            adapter, config, units, run_id=run_id, reuse_ingest=args.no_ingest
+        )
     finally:
         await answerer.aclose()
         await judge.aclose()

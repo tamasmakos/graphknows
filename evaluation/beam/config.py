@@ -24,5 +24,6 @@ class BeamConfig(BaseEvalConfig):
     max_chars_per_document: int = 8000  # chat batches are split, never truncated
 
     # ── Lifecycle / output ───────────────────────────────────────────────────
+    namespace: str = "eval_beam"
     session_prefix: str = "eval-beam"
     output_dir: Path = Path("evaluation/results/beam")
