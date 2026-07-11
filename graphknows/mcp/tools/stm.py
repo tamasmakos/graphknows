@@ -20,9 +20,15 @@ async def memory_ingest(
     memory_class: str = "raw_evidence",
     metadata: dict[str, Any] | None = None,
     text: str = "",
+    namespace: str = "",
 ) -> dict[str, Any]:
-    """Ingest text or a conversation thread into short-term memory."""
-    return await get_runtime().ingest_memory(
+    """Ingest text or a conversation thread into short-term memory.
+
+    ``namespace`` selects the tenant's isolated database pair (default: the
+    server's ``GRAPHKNOWS_NAMESPACE``).
+    """
+    runtime = await get_runtime(namespace)
+    return await runtime.ingest_memory(
         messages=messages,
         session_id=session_id,
         user_id=user_id,
@@ -42,9 +48,11 @@ async def memory_recall(
     session_id: str = "",
     top_k: int = 5,
     scope: str = "stm",
+    namespace: str = "",
 ) -> dict[str, Any]:
     """Recall ranked memory hits from STM, LTM, or both."""
-    return await get_runtime().recall_memory(
+    runtime = await get_runtime(namespace)
+    return await runtime.recall_memory(
         query,
         session_id=session_id,
         top_k=top_k,
@@ -53,6 +61,7 @@ async def memory_recall(
 
 
 @app.tool()
-async def memory_flush(session_id: str) -> dict[str, Any]:
+async def memory_flush(session_id: str, namespace: str = "") -> dict[str, Any]:
     """Flush a session from short-term memory into long-term memory."""
-    return await get_runtime().flush_memory(session_id)
+    runtime = await get_runtime(namespace)
+    return await runtime.flush_memory(session_id)

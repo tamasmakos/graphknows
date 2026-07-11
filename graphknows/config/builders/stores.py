@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from graphknows.config import GraphKnowsSettings
+from graphknows.config.namespace import db_names
 from graphknows.ports.relation_extractor import IRelationExtractor
 
 if TYPE_CHECKING:
@@ -48,31 +49,40 @@ def build_arcadedb_client(settings: GraphKnowsSettings) -> ArcadeDBClient:
     )
 
 
-def build_arcadedb_stm_store(settings: GraphKnowsSettings) -> ArcadeDBSTMStore:
+def build_arcadedb_stm_store(
+    settings: GraphKnowsSettings, namespace: str = ""
+) -> ArcadeDBSTMStore:
     """Build an ArcadeDBSTMStore (client not yet connected — call ensure_schema after connect)."""
     from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
 
+    stm_db, _ = db_names(namespace)
     client = build_arcadedb_client(settings)
-    return ArcadeDBSTMStore(client=client)
+    return ArcadeDBSTMStore(client=client, db=stm_db)
 
 
-def build_arcadedb_ltm_store(settings: GraphKnowsSettings) -> ArcadeDBLTMStore:
+def build_arcadedb_ltm_store(
+    settings: GraphKnowsSettings, namespace: str = ""
+) -> ArcadeDBLTMStore:
     """Build an ArcadeDBLTMStore from settings."""
     from graphknows.config.profiles import get_profile
     from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
 
     profile = get_profile(settings)
     relation_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
+    _, ltm_db = db_names(namespace)
     client = build_arcadedb_client(settings)
-    return ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
+    return ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor, db=ltm_db)
 
 
-def build_arcadedb_vector_store(settings: GraphKnowsSettings) -> ArcadeDBVectorStore:
+def build_arcadedb_vector_store(
+    settings: GraphKnowsSettings, namespace: str = ""
+) -> ArcadeDBVectorStore:
     """Build an ArcadeDBVectorStore from settings."""
     from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
 
+    stm_db, ltm_db = db_names(namespace)
     client = build_arcadedb_client(settings)
-    return ArcadeDBVectorStore(client=client)
+    return ArcadeDBVectorStore(client=client, stm_db=stm_db, ltm_db=ltm_db)
 
 
 # --- Service factories ---
@@ -87,7 +97,7 @@ def _build_entity_extractor(mode: str) -> Any:
     return GLiNER2EntityExtractor()
 
 
-def build_stm_service(settings: GraphKnowsSettings) -> Any:
+def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     """Build an STMService from settings (unconnected — call ``await service.connect()``).
 
     The service is returned without an open connection so the ArcadeDB client is
@@ -102,9 +112,10 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     # Share ONE client across the graph + vector stores. Separate connections see
     # each other's freshly-MERGEd CHUNK nodes only after an index-visibility lag,
     # which lets the dual chunk-write paths create duplicate nodes under load.
+    stm_db, ltm_db = db_names(namespace)
     client = build_arcadedb_client(settings)
-    stm = ArcadeDBSTMStore(client=client)
-    vec = ArcadeDBVectorStore(client=client)
+    stm = ArcadeDBSTMStore(client=client, db=stm_db)
+    vec = ArcadeDBVectorStore(client=client, stm_db=stm_db, ltm_db=ltm_db)
 
     from graphknows.config.profiles import get_profile
 
@@ -122,7 +133,7 @@ def build_stm_service(settings: GraphKnowsSettings) -> Any:
     )
 
 
-def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
+def build_promotion_pipeline(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     """Build an LTMPromotionPipeline from settings."""
     from graphknows.config.profiles import get_profile
     from graphknows.memory.flush import LTMPromotionPipeline
@@ -137,11 +148,12 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     # stops deduping and writes duplicate, half-un-embedded chunk nodes.
 
     profile = get_profile(settings)
+    stm_db, ltm_db = db_names(namespace)
     client = build_arcadedb_client(settings)
-    stm = ArcadeDBSTMStore(client=client)
-    vec = ArcadeDBVectorStore(client=client)
+    stm = ArcadeDBSTMStore(client=client, db=stm_db)
+    vec = ArcadeDBVectorStore(client=client, stm_db=stm_db, ltm_db=ltm_db)
     relation_extractor = build_relation_extractor(settings) if profile.extraction_uses_llm else None
-    ltm = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor)
+    ltm = ArcadeDBLTMStore(client=client, relation_extractor=relation_extractor, db=ltm_db)
     from graphknows.config.builders.channels import build_channels
 
     return LTMPromotionPipeline(
@@ -156,17 +168,17 @@ def build_promotion_pipeline(settings: GraphKnowsSettings) -> Any:
     )
 
 
-def build_corpus_workflow(settings: GraphKnowsSettings) -> Any:
+def build_corpus_workflow(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     """Build a CorpusIngestWorkflow from settings."""
     from graphknows.config.profiles import get_profile
     from graphknows.memory.stores.embedder import embed_one
     from graphknows.memory.workflows.corpus_ingest import CorpusIngestWorkflow
 
     profile = get_profile(settings)
-    stm = build_arcadedb_stm_store(settings)
-    vec = build_arcadedb_vector_store(settings)
-    flush_vec = build_arcadedb_vector_store(settings)
-    ltm = build_arcadedb_ltm_store(settings)
+    stm = build_arcadedb_stm_store(settings, namespace)
+    vec = build_arcadedb_vector_store(settings, namespace)
+    flush_vec = build_arcadedb_vector_store(settings, namespace)
+    ltm = build_arcadedb_ltm_store(settings, namespace)
     extractor = _build_entity_extractor(
         "llm_assisted" if profile.extraction_uses_llm else "gliner2"
     )

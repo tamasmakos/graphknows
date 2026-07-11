@@ -60,8 +60,13 @@ class Memory:
     ``Memory`` instance is safe for concurrent asyncio use.
     """
 
-    def __init__(self, settings: GraphKnowsSettings | None = None) -> None:
+    def __init__(
+        self, settings: GraphKnowsSettings | None = None, namespace: str | None = None
+    ) -> None:
         self.settings = settings or GraphKnowsSettings()
+        # The namespace selects a physical ArcadeDB database pair (stm_<ns>/ltm_<ns>);
+        # "" keeps the original stm/ltm. Explicit arg wins over the settings default.
+        self.namespace = self.settings.namespace if namespace is None else namespace
         self._retriever: Any = None
         self._retriever_stores: list[Any] = []
         self._connect_lock = asyncio.Lock()
@@ -111,9 +116,9 @@ class Memory:
         )
 
         s = self.settings
-        vec = build_arcadedb_vector_store(s)
-        ltm = build_arcadedb_ltm_store(s)
-        stm = build_arcadedb_stm_store(s)
+        vec = build_arcadedb_vector_store(s, self.namespace)
+        ltm = build_arcadedb_ltm_store(s, self.namespace)
+        stm = build_arcadedb_stm_store(s, self.namespace)
         # Record the stores before connecting so a failure during connect or
         # ensure_schema is cleaned up by close() instead of orphaning open pools.
         self._retriever_stores = [vec, ltm, stm]
@@ -264,7 +269,7 @@ class Memory:
             isinstance(messages, dict) and "role" in messages
         )
 
-        service = build_stm_service(self.settings)
+        service = build_stm_service(self.settings, self.namespace)
         try:
             # connect() inside the try so a failure after the pool opens (schema
             # DDL, transient ArcadeDB error) still runs close() in the finally.
@@ -332,7 +337,7 @@ class Memory:
         from graphknows.memory.models.promotion import PromotionRequest
         from graphknows.memory.stm._async_bridge import _run as bg_run
 
-        pipeline = build_promotion_pipeline(self.settings)
+        pipeline = build_promotion_pipeline(self.settings, self.namespace)
         request = PromotionRequest(
             session_id=session_id,
             run_gds=True,
@@ -373,11 +378,39 @@ class Memory:
             "errors": errors,
         }
 
+    async def drop_namespace(self) -> dict[str, Any]:
+        """Drop this runtime's entire namespace (both physical databases).
+
+        An O(1) reset — it removes the ``stm_<ns>``/``ltm_<ns>`` databases outright
+        instead of walking and DETACH-DELETE-ing every node. Refuses to drop the
+        default (``""``) namespace, whose databases (``stm``/``ltm``) are shared and
+        must be cleared with :meth:`purge_memory` instead of dropped.
+        """
+        from graphknows.config.builders.stores import build_arcadedb_client
+        from graphknows.config.namespace import db_names
+
+        if not self.namespace:
+            return {
+                "dropped": False,
+                "namespace": "",
+                "error": "refusing to drop the default namespace; use purge_memory instead",
+            }
+        stm_db, ltm_db = db_names(self.namespace)
+        await self.close()  # release any cached retriever stores bound to these DBs
+        client = build_arcadedb_client(self.settings)
+        await client.connect()
+        try:
+            await client.drop_database(stm_db)
+            await client.drop_database(ltm_db)
+        finally:
+            await client.close()
+        return {"dropped": True, "namespace": self.namespace, "databases": [stm_db, ltm_db]}
+
     async def _purge_stm(self, session_id: str, errors: list[str]) -> None:
         from graphknows.config.builders.stores import build_arcadedb_stm_store
 
         try:
-            stm_store = build_arcadedb_stm_store(self.settings)
+            stm_store = build_arcadedb_stm_store(self.settings, self.namespace)
             await stm_store.connect()
             try:
                 if session_id:
@@ -396,7 +429,7 @@ class Memory:
         )
 
         try:
-            ltm_store = build_arcadedb_ltm_store(self.settings)
+            ltm_store = build_arcadedb_ltm_store(self.settings, self.namespace)
             await ltm_store.connect()
             try:
                 if session_id:
@@ -409,7 +442,7 @@ class Memory:
                     # half-un-embedded chunk nodes. Keep the schema/indexes and
                     # delete all data instead.
                     await ltm_store.ensure_schema()
-                    vec_store = build_arcadedb_vector_store(self.settings)
+                    vec_store = build_arcadedb_vector_store(self.settings, self.namespace)
                     await vec_store.connect()
                     await vec_store.close()
                     await self._clear_ltm_all(ltm_store)
@@ -477,7 +510,7 @@ class Memory:
             from graphknows.config.builders.stores import build_corpus_workflow
             from graphknows.memory.workflows.corpus_ingest import CorpusIngestRequest
 
-            workflow = build_corpus_workflow(self.settings)
+            workflow = build_corpus_workflow(self.settings, self.namespace)
             result = await workflow.run(
                 CorpusIngestRequest(
                     documents=documents,
@@ -502,7 +535,7 @@ class Memory:
         """List LTM topic nodes."""
         from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
-        ltm = build_arcadedb_ltm_store(self.settings)
+        ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
         await ltm.connect()
         try:
             rows = await ltm._qry(
@@ -521,7 +554,7 @@ class Memory:
         """Return one LTM entity by name."""
         from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
-        ltm = build_arcadedb_ltm_store(self.settings)
+        ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
         await ltm.connect()
         try:
             rows = await ltm._qry(
@@ -558,7 +591,7 @@ class Memory:
         """List ENTITY nodes from the LTM graph, optionally scoped to one session."""
         from graphknows.config.builders.stores import build_arcadedb_ltm_store
 
-        ltm = build_arcadedb_ltm_store(self.settings)
+        ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
         await ltm.connect()
         try:
             if session_id:

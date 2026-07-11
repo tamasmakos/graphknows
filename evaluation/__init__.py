@@ -1,29 +1,32 @@
-"""LoCoMo evaluation framework for graphknows.
+"""Memory-benchmark evaluation frameworks for graphknows.
 
-One workflow: ingest → retrieve → DSPy generate → SemanticF1 (headline) + token-F1 (diagnostic).
-Run with ``python -m evaluation --limit N``.
+Three benchmarks, one shared pipeline (ingest → retrieve → generate → LLM-judge):
+
+* ``evaluation.locomo``      — long-term conversational memory QA
+* ``evaluation.longmemeval`` — long-term interactive assistant memory
+* ``evaluation.beam``        — very-long-conversation memory abilities
+
+Run with ``python -m evaluation <benchmark> [flags]``; bare flags default to
+locomo for backward compatibility. Shared infrastructure (datamodels, LLM
+client, ingestion/retrieval, judging, reporting) lives in ``evaluation.common``.
 """
 
-from __future__ import annotations
-
-from evaluation.config import EvalConfig
-from evaluation.datamodels import CaseResult, LocomoCase, RetrievedPassage, RunReport
+from evaluation.common.config import BaseEvalConfig
+from evaluation.common.datamodels import (
+    CaseResult,
+    EvalCase,
+    EvalDocument,
+    IngestUnit,
+    RetrievedPassage,
+    RunReport,
+)
 
 __all__ = [
+    "BaseEvalConfig",
     "CaseResult",
-    "EvalConfig",
-    "LocomoCase",
+    "EvalCase",
+    "EvalDocument",
+    "IngestUnit",
     "RetrievedPassage",
     "RunReport",
-    "run_evaluation",
 ]
-
-
-def __getattr__(name: str):  # noqa: ANN001
-    """Lazy-import ``run_evaluation`` so that ``import evaluation`` does not eagerly
-    pull in dspy/generation at collection time (dspy may be absent in the test env)."""
-    if name == "run_evaluation":
-        from evaluation.pipeline import run_evaluation  # noqa: PLC0415
-
-        return run_evaluation
-    raise AttributeError(f"module 'evaluation' has no attribute {name!r}")

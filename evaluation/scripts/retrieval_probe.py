@@ -34,7 +34,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from evaluation.dataset import build_documents, first_string, read_rows
+from evaluation.locomo.dataset import build_documents, first_string, read_rows
 from graphknows.config import GraphKnowsSettings
 from graphknows.runtime import GraphKnowsRuntime
 

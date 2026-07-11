@@ -197,8 +197,10 @@ class ArcadeDBLTMStore:
         self,
         client: ArcadeDBClient,
         relation_extractor: Any | None = None,
+        db: str = _LTM_DB,
     ) -> None:
         self._c = client
+        self._db = db
         self._relation_extractor = relation_extractor
         self._declared_edge_types: set[str] = set()
 
@@ -214,7 +216,7 @@ class ArcadeDBLTMStore:
     @property
     def database(self) -> str:
         """Name of the ArcadeDB database this store reads/writes."""
-        return _LTM_DB
+        return self._db
 
     async def connect(self) -> None:
         """Open the shared client connection. Idempotent.
@@ -230,10 +232,10 @@ class ArcadeDBLTMStore:
 
     async def ensure_indexes(self) -> None:
         """Create LTM database and schema. Idempotent."""
-        await self._c.create_database(_LTM_DB)
+        await self._c.create_database(self._db)
         for lang, stmt in _SCHEMA_DDL:
             try:
-                await self._c.command(_LTM_DB, stmt, language=lang)
+                await self._c.command(self._db, stmt, language=lang)
             except Exception as exc:
                 exc_s = str(exc).lower()
                 if "already exists" in exc_s or "duplicate" in exc_s:
@@ -251,10 +253,10 @@ class ArcadeDBLTMStore:
     # ------------------------------------------------------------------
 
     async def _cmd(self, cypher: str, **params: Any) -> list[dict]:
-        return await self._c.command(_LTM_DB, cypher, params=params or None)
+        return await self._c.command(self._db, cypher, params=params or None)
 
     async def _qry(self, cypher: str, **params: Any) -> list[dict]:
-        return await self._c.query(_LTM_DB, cypher, params=params or None)
+        return await self._c.query(self._db, cypher, params=params or None)
 
     async def _ensure_edge_type(self, edge_type: str) -> None:
         """Declare edge type before first MERGE (DDL idempotent)."""
@@ -264,7 +266,7 @@ class ArcadeDBLTMStore:
         if not safe:
             return
         try:
-            await self._c.command(_LTM_DB, f"CREATE EDGE TYPE {safe} IF NOT EXISTS", language="sql")
+            await self._c.command(self._db, f"CREATE EDGE TYPE {safe} IF NOT EXISTS", language="sql")
             self._declared_edge_types.add(edge_type)
         except Exception as exc:
             exc_s = str(exc).lower()

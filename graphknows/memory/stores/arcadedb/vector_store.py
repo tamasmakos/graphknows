@@ -169,8 +169,12 @@ class ArcadeDBVectorStore:
         _c: ArcadeDBClient (shared with STM and LTM stores, not owned here).
     """
 
-    def __init__(self, client: ArcadeDBClient) -> None:
+    def __init__(
+        self, client: ArcadeDBClient, stm_db: str = _STM_DB, ltm_db: str = _LTM_DB
+    ) -> None:
         self._c = client
+        self._stm_db = stm_db
+        self._ltm_db = ltm_db
         self._schema_ready = False
 
     # ------------------------------------------------------------------
@@ -199,16 +203,16 @@ class ArcadeDBVectorStore:
         # STM: extend existing CHUNK/TURN with embedding property + index
         for lang, stmt in _STM_EMB_DDL:
             try:
-                await self._c.command(_STM_DB, stmt.replace(_VEC_DIM, dim), language=lang)
+                await self._c.command(self._stm_db, stmt.replace(_VEC_DIM, dim), language=lang)
             except Exception as exc:
                 if "already exists" not in str(exc).lower():
                     logger.debug("STM emb DDL (non-fatal): %s | %s", stmt[:60], exc)
 
         # LTM: create database + schema
-        await self._c.create_database(_LTM_DB)
+        await self._c.create_database(self._ltm_db)
         for lang, stmt in _LTM_BASE_DDL:
             try:
-                await self._c.command(_LTM_DB, stmt.replace(_VEC_DIM, dim), language=lang)
+                await self._c.command(self._ltm_db, stmt.replace(_VEC_DIM, dim), language=lang)
             except Exception as exc:
                 if "already exists" not in str(exc).lower():
                     logger.debug("LTM DDL (non-fatal): %s | %s", stmt[:60], exc)
@@ -262,7 +266,7 @@ class ArcadeDBVectorStore:
         cid = chunk["id"]
         mc = (chunk.get("metadata") or {}).get("memory_class") or "raw_evidence"
         await self._c.command(
-            _STM_DB,
+            self._stm_db,
             "MERGE (n:CHUNK {id: $id}) SET n.session_id = $sid, n.text = $text, "
             "n.file_id = $fid, n.heading_path = $hp, n.memory_class = $mc, "
             "n.metadata = $meta",
@@ -277,13 +281,13 @@ class ArcadeDBVectorStore:
             },
         )
         if chunk.get("embedding"):
-            await self._set_embedding(_STM_DB, "CHUNK", cid, chunk["embedding"])
+            await self._set_embedding(self._stm_db, "CHUNK", cid, chunk["embedding"])
 
     async def write_stm_turn(self, turn: dict[str, Any]) -> None:
         """Merge a turn into STM and set its embedding."""
         tid = turn["id"]
         await self._c.command(
-            _STM_DB,
+            self._stm_db,
             "MERGE (n:TURN {id: $id}) SET n.session_id = $sid, n.role = $role, "
             "n.text = $text, n.dialog_id = $did, n.turn_index = $ti, "
             "n.metadata = $meta",
@@ -298,7 +302,7 @@ class ArcadeDBVectorStore:
             },
         )
         if turn.get("embedding"):
-            await self._set_embedding(_STM_DB, "TURN", tid, turn["embedding"])
+            await self._set_embedding(self._stm_db, "TURN", tid, turn["embedding"])
 
     # ------------------------------------------------------------------
     # STM search
@@ -316,7 +320,7 @@ class ArcadeDBVectorStore:
         k_pre = max(top_k * 20, 200)
         sql = _vec_search_sql("CHUNK[embedding]", embedding, k_pre)
         try:
-            rows = await self._c.query(_STM_DB, sql, language="sql")
+            rows = await self._c.query(self._stm_db, sql, language="sql")
         except Exception as exc:
             logger.warning("search_stm_chunks failed: %s", exc)
             return []
@@ -350,7 +354,7 @@ class ArcadeDBVectorStore:
         k_pre = max(top_k * 20, 200)
         sql = _vec_search_sql("TURN[embedding]", embedding, k_pre)
         try:
-            rows = await self._c.query(_STM_DB, sql, language="sql")
+            rows = await self._c.query(self._stm_db, sql, language="sql")
         except Exception as exc:
             logger.warning("search_stm_turns failed: %s", exc)
             return []
@@ -392,7 +396,7 @@ class ArcadeDBVectorStore:
         k_pre = max(top_k * 20, 200) if session_id else top_k
         sql = _vec_search_sql("CHUNK[embedding]", embedding, k_pre)
         try:
-            rows = await self._c.query(_LTM_DB, sql, language="sql")
+            rows = await self._c.query(self._ltm_db, sql, language="sql")
         except Exception as exc:
             logger.warning("search_ltm_chunks failed: %s", exc)
             return []
@@ -429,7 +433,7 @@ class ArcadeDBVectorStore:
         k_pre = max(top_k * 20, 200) if session_id else top_k
         sql = _vec_search_sql("TURN[embedding]", embedding, k_pre)
         try:
-            rows = await self._c.query(_LTM_DB, sql, language="sql")
+            rows = await self._c.query(self._ltm_db, sql, language="sql")
         except Exception as exc:
             logger.warning("search_ltm_turns failed: %s", exc)
             return []
@@ -488,7 +492,7 @@ class ArcadeDBVectorStore:
             return []
         sql = _vec_search_sql("ENTITY[embedding]", query_emb, k * 2)
         try:
-            rows = await self._c.query(_LTM_DB, sql, language="sql")
+            rows = await self._c.query(self._ltm_db, sql, language="sql")
         except Exception as exc:
             logger.debug("search_entities failed (non-fatal): %s", exc)
             return []
@@ -516,7 +520,7 @@ class ArcadeDBVectorStore:
             return []
         sql = _vec_search_sql("TOPIC[embedding]", query_emb, k * 2)
         try:
-            rows = await self._c.query(_LTM_DB, sql, language="sql")
+            rows = await self._c.query(self._ltm_db, sql, language="sql")
         except Exception as exc:
             logger.debug("search_topics failed (non-fatal): %s", exc)
             return []
@@ -546,7 +550,7 @@ class ArcadeDBVectorStore:
         if not chunk_ids:
             return {}
         result: dict[str, dict[str, Any]] = {}
-        for db in (_STM_DB, _LTM_DB):
+        for db in (self._stm_db, self._ltm_db):
             try:
                 rows = await self._c.query(
                     db,
@@ -581,7 +585,7 @@ class ArcadeDBVectorStore:
         for vtype in ("CHUNK", "TURN"):
             try:
                 await self._c.command(
-                    _STM_DB,
+                    self._stm_db,
                     f"MATCH (n:{vtype} {{session_id: $sid}}) DETACH DELETE n",
                     params={"sid": session_id},
                 )
@@ -591,7 +595,7 @@ class ArcadeDBVectorStore:
     async def delete_session(self, session_id: str) -> int:
         """Delete session data from both STM and LTM."""
         deleted = 0
-        for db in (_STM_DB, _LTM_DB):
+        for db in (self._stm_db, self._ltm_db):
             for vtype in ("CHUNK", "TURN"):
                 try:
                     rows = await self._c.query(
@@ -631,7 +635,7 @@ class ArcadeDBVectorStore:
         """Read vertices from STM and write to LTM for a given type."""
         try:
             rows = await self._c.query(
-                _STM_DB,
+                self._stm_db,
                 f"MATCH (n:{vtype} {{session_id: $sid}}) "
                 f"RETURN n.id AS id, n.session_id AS session_id, n.text AS text, "
                 f"n.file_id AS file_id, n.heading_path AS heading_path, "
@@ -662,28 +666,28 @@ class ArcadeDBVectorStore:
             else:
                 rows_id_only.append(rid)
 
-        tx = await self._c.begin(_LTM_DB)
+        tx = await self._c.begin(self._ltm_db)
         try:
             if rows_with_props:
                 # Build a generic SET from the union of all property keys present.
                 all_keys = {k for row in rows_with_props for k in row if k != "id"}
                 set_clauses = ", ".join(f"n.{k} = row.{k}" for k in sorted(all_keys))
                 await self._c.command(
-                    _LTM_DB,
+                    self._ltm_db,
                     f"UNWIND $rows AS row MERGE (n:{vtype} {{id: row.id}}) SET {set_clauses}",
                     params={"rows": rows_with_props},
                     session_id=tx,
                 )
             if rows_id_only:
                 await self._c.command(
-                    _LTM_DB,
+                    self._ltm_db,
                     f"UNWIND $rows AS row MERGE (n:{vtype} {{id: row}})",
                     params={"rows": rows_id_only},
                     session_id=tx,
                 )
-            await self._c.commit(_LTM_DB, tx)
+            await self._c.commit(self._ltm_db, tx)
         except Exception:
-            await self._c.rollback(_LTM_DB, tx)
+            await self._c.rollback(self._ltm_db, tx)
             raise
 
         # Embedding writes are per-item (SQL literal, cannot be batched via params).
@@ -694,7 +698,7 @@ class ArcadeDBVectorStore:
                 continue
             emb = r.get("embedding")
             if emb:
-                await self._set_embedding(_LTM_DB, vtype, rid, emb)
+                await self._set_embedding(self._ltm_db, vtype, rid, emb)
             count += 1
         return count
 
@@ -714,23 +718,23 @@ class ArcadeDBVectorStore:
             if e.get("name")
         ]
         if rows:
-            tx = await self._c.begin(_LTM_DB)
+            tx = await self._c.begin(self._ltm_db)
             try:
                 await self._c.command(
-                    _LTM_DB,
+                    self._ltm_db,
                     "UNWIND $rows AS row MERGE (n:ENTITY {name: row.name}) "
                     "SET n.label = row.label, n.chunk_count = row.cc",
                     params={"rows": rows},
                     session_id=tx,
                 )
-                await self._c.commit(_LTM_DB, tx)
+                await self._c.commit(self._ltm_db, tx)
             except Exception:
-                await self._c.rollback(_LTM_DB, tx)
+                await self._c.rollback(self._ltm_db, tx)
                 raise
         # Embedding writes are per-item (SQL literal, cannot be batched via params).
         for e in entities:
             if e.get("name") and e.get("embedding"):
-                await self._set_embedding_by_name(_LTM_DB, "ENTITY", e["name"], e["embedding"])
+                await self._set_embedding_by_name(self._ltm_db, "ENTITY", e["name"], e["embedding"])
 
     async def write_ltm_topic(self, topic: dict[str, Any]) -> None:
         """Upsert a topic into LTM."""
@@ -738,7 +742,7 @@ class ArcadeDBVectorStore:
         if not tid:
             return
         await self._c.command(
-            _LTM_DB,
+            self._ltm_db,
             "MERGE (n:TOPIC {id: $id}) SET n.community_id = $cid, n.summary = $summary",
             params={
                 "id": tid,
@@ -747,7 +751,7 @@ class ArcadeDBVectorStore:
             },
         )
         if topic.get("embedding"):
-            await self._set_embedding(_LTM_DB, "TOPIC", tid, topic["embedding"])
+            await self._set_embedding(self._ltm_db, "TOPIC", tid, topic["embedding"])
 
     async def write_community_assignments(
         self,
@@ -769,11 +773,11 @@ class ArcadeDBVectorStore:
             for tid in assignment.get("turn_ids") or []:
                 turn_rows.append({"id": tid, "sid": session_id, "cid": community_id, "w": weight})
 
-        tx = await self._c.begin(_LTM_DB)
+        tx = await self._c.begin(self._ltm_db)
         try:
             if chunk_rows:
                 await self._c.command(
-                    _LTM_DB,
+                    self._ltm_db,
                     "UNWIND $rows AS row "
                     "MATCH (n:CHUNK {id: row.id, session_id: row.sid}) "
                     "SET n.community_id = row.cid, n.community_weight = row.w",
@@ -782,14 +786,14 @@ class ArcadeDBVectorStore:
                 )
             if turn_rows:
                 await self._c.command(
-                    _LTM_DB,
+                    self._ltm_db,
                     "UNWIND $rows AS row "
                     "MATCH (n:TURN {id: row.id, session_id: row.sid}) "
                     "SET n.community_id = row.cid, n.community_weight = row.w",
                     params={"rows": turn_rows},
                     session_id=tx,
                 )
-            await self._c.commit(_LTM_DB, tx)
+            await self._c.commit(self._ltm_db, tx)
         except Exception:
-            await self._c.rollback(_LTM_DB, tx)
+            await self._c.rollback(self._ltm_db, tx)
             raise

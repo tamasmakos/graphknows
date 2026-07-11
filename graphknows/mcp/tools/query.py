@@ -14,6 +14,7 @@ async def memory_query(
     session_id: str = "",
     top_k: int = 10,
     scope: str = "both",
+    namespace: str = "",
 ) -> dict[str, Any]:
     """Retrieve the most relevant memory chunks for a query.
 
@@ -28,6 +29,8 @@ async def memory_query(
         top_k: Maximum hits to return (1-100, default 10).
         scope: Which memory tier to search — ``"stm"`` (session chunks),
             ``"ltm"`` (promoted long-term chunks), or ``"both"`` (default).
+        namespace: Tenant isolation boundary (default: the server's
+            ``GRAPHKNOWS_NAMESPACE``).
 
     Returns:
         Dict with a ``hits`` list, each hit containing ``text``, ``score``,
@@ -38,7 +41,7 @@ async def memory_query(
     if scope not in ("stm", "ltm", "both"):
         scope = "both"
 
-    retriever = await get_or_init_retriever()
+    retriever = await get_or_init_retriever(namespace)
     ctx = await retriever.retrieve(query, session_id, top_k=top_k, scope=scope)
 
     hits = [

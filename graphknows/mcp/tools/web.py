@@ -9,6 +9,9 @@ from graphknows.mcp._state import get_runtime
 
 
 @app.tool()
-def memory_mirror(session_id: str = "", scope: str = "ltm") -> dict[str, Any]:
+async def memory_mirror(
+    session_id: str = "", scope: str = "ltm", namespace: str = ""
+) -> dict[str, Any]:
     """Return a local Memory Mirror web UI link."""
-    return get_runtime().mirror(session_id=session_id, scope=scope)
+    runtime = await get_runtime(namespace)
+    return runtime.mirror(session_id=session_id, scope=scope)

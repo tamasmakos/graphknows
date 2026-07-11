@@ -1,16 +1,25 @@
-"""Smoke tests for the pipeline stages against a fake MCP client."""
+"""Pipeline stages against a fake MCP client, plus reporting aggregation."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from evaluation.config import EvalConfig
-from evaluation.datamodels import EvalDocument, IngestResult, LocomoCase
-from evaluation.ingestion import Ingestor
-from evaluation.pipeline import _build_case_result
-from evaluation.retrieval import Retriever
+from evaluation.common.config import BaseEvalConfig
+from evaluation.common.datamodels import (
+    CaseResult,
+    EvalCase,
+    EvalDocument,
+    IngestResult,
+    RetrievedPassage,
+    RunReport,
+)
+from evaluation.common.ingestion import Ingestor
+from evaluation.common.pipeline import build_case_result
+from evaluation.common.reporting import compare_modes, summarize, write_report
+from evaluation.common.retrieval import Retriever
 
 
 class FakeClient:
@@ -29,64 +38,95 @@ class FakeClient:
 async def test_ingestor_aggregates_and_flushes() -> None:
     client = FakeClient(
         {
-            "memory_ingest": {"chunks": 3, "entities": 2, "elapsed_s": 0.1},
-            "memory_flush": {"nodes": 5, "edges": 4, "elapsed_s": 0.2, "errors": []},
-            "ltm_entities": {"entities": [{"name": "Alex"}, {"name": "Prague"}]},
+            "memory_ingest": {"chunks": 3, "entities": 2, "elapsed_s": 0.5},
+            "memory_flush": {"nodes": 10, "edges": 4, "chunks": 3, "elapsed_s": 1.0},
+            "ltm_entities": {"entities": [{"name": "Caroline"}]},
         }
     )
-    config = EvalConfig(promote_to_ltm=True)
-    ingestor = Ingestor(client, config)  # type: ignore[arg-type]
-
-    result = await ingestor.ingest("sess-1", [EvalDocument(title="s1", text="hello")])
-
-    assert result.chunks == 3
-    assert result.entities == 2
-    assert result.flush_nodes == 5
-    assert result.ltm_entity_count == 2
-    assert [c[0] for c in client.calls] == ["memory_ingest", "memory_flush", "ltm_entities"]
+    ingestor = Ingestor(client, BaseEvalConfig())  # type: ignore[arg-type]
+    result = await ingestor.ingest(
+        "s1", [EvalDocument(title="d1", text="hello"), EvalDocument(title="d2", text="world")]
+    )
+    assert result.chunks == 6 and result.entities == 4
+    assert result.flush_nodes == 10 and result.ltm_entity_count == 1
+    assert [name for name, _ in client.calls] == [
+        "memory_ingest", "memory_ingest", "memory_flush", "ltm_entities",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_retriever_parses_passages() -> None:
+async def test_retriever_parses_hits() -> None:
     client = FakeClient(
-        {"memory_query": {"hits": [{"text": "Prague", "score": 0.4, "sources": "ltm_graph"}]}}
+        {"memory_query": {"hits": [{"text": "t", "score": 0.9, "sources": "ltm_graph"}]}}
     )
-    retriever = Retriever(client, EvalConfig())  # type: ignore[arg-type]
-
-    passages = await retriever.query("sess-1", "where?", k=5)
-
-    assert len(passages) == 1
-    assert passages[0].text == "Prague"
-    assert passages[0].is_ltm_graph is True
+    retriever = Retriever(client, BaseEvalConfig())  # type: ignore[arg-type]
+    passages = await retriever.query("s1", "q", k=5)
+    assert passages[0].text == "t" and passages[0].is_ltm_graph
+    assert client.calls[0][1]["top_k"] == 5
 
 
-def test_build_case_result_uses_semantic_f1_as_headline() -> None:
-    case = LocomoCase(
-        case_id="conv-26-q0001",
-        dialogue_id="conv-26",
-        question="Where?",
-        gold="Prague",
-        category="single_hop",
+def _result(score: float, category: str = "temporal", **metrics: Any) -> CaseResult:
+    return CaseResult(
+        case_id=f"c-{score}-{category}",
+        question="q",
+        gold="g",
+        category=category,
+        group_id="g1",
+        score=score,
+        generated_answer="a",
+        metrics={"judge_score": score, **metrics},
     )
-    result = _build_case_result(
+
+
+def test_build_case_result_diagnostics() -> None:
+    case = EvalCase(case_id="c1", group_id="g1", question="q", gold="Lake Tahoe")
+    passages = [RetrievedPassage(text="We kayaked at Lake Tahoe", score=0.8)]
+    result = build_case_result(
         case,
-        config=EvalConfig(),
-        session_id="sess-1",
-        passages=[],
-        probe=[],
-        generated_answer="Prague",
-        gen_usage={"gen_total_tokens": 42},
-        ingest=IngestResult(chunks=3),
-        semantic_f1=0.85,
+        config=BaseEvalConfig(),
+        session_id="s1",
+        passages=passages,
+        probe=passages,
+        context_passages=passages,
+        generated_answer="Lake Tahoe",
+        score=1.0,
+        judge_metrics={"judge_label": "CORRECT"},
+        lexical={},
+        gen_usage={"gen_total_tokens": 10},
+        ingest=IngestResult(chunks=5),
     )
-    # Headline score is SemanticF1, not token-F1.
-    assert result.score == 0.85
-    assert result.metrics["score_type"] == "semantic_f1"
-    assert result.metrics["semantic_f1"] == 0.85
-    # token_f1 is still present as a diagnostic column.
-    assert "token_f1" in result.metrics
-    assert result.metrics["token_f1"] == 1.0  # exact match → token-F1 = 1.0
-    assert result.metrics["gen_total_tokens"] == 42
-    assert result.metrics["ingested_chunks"] == 3
-    # judge_correct is gone.
-    assert "judge_correct" not in result.metrics
+    assert result.score == 1.0
+    assert result.metrics["gold_reachable_at_probe"] is True
+    assert result.metrics["gold_context_coverage"] == 1.0
+    assert result.metrics["ingested_chunks"] == 5
+    assert result.metadata["session_id"] == "s1"
+
+
+def test_summarize_accuracy_and_categories() -> None:
+    cases = [_result(1.0), _result(0.0), _result(1.0, category="single_hop")]
+    summary = summarize(cases)
+    assert summary["case_count"] == 3
+    assert summary["accuracy"] == round(2 / 3, 4)
+    assert summary["accuracy_by_category"]["temporal"] == 0.5
+    assert summary["accuracy_by_category"]["single_hop"] == 1.0
+    assert summary["category_counts"]["temporal"] == 2
+
+
+def test_write_report_produces_three_files(tmp_path: Path) -> None:
+    run = RunReport(
+        run_id="r1",
+        benchmark="locomo",
+        config={"top_k": 5},
+        cases=[_result(1.0, locomo_f1=0.8)],
+        summary=summarize([_result(1.0, locomo_f1=0.8)]),
+    )
+    paths = write_report(run, tmp_path)
+    assert paths.json_path.exists() and paths.csv_path.exists() and paths.markdown_path.exists()
+    assert "locomo_f1" in paths.csv_path.read_text(encoding="utf-8")
+    assert "Accuracy" in paths.markdown_path.read_text(encoding="utf-8")
+
+
+def test_compare_modes_table() -> None:
+    table = compare_modes([_result(1.0)], [_result(0.0)])
+    assert "| `temporal` | 1.000 | 0.000 | -1.000 |" in table
+    assert "**Overall**" in table

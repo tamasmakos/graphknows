@@ -27,6 +27,8 @@ rt = GraphKnowsRuntime(settings)
 | `GRAPHKNOWS_ARCADEDB_URL` | `http://localhost:2480` | ArcadeDB HTTP base URL. |
 | `GRAPHKNOWS_ARCADEDB_USER` | `root` | ArcadeDB user. |
 | `GRAPHKNOWS_ARCADEDB_PASSWORD` | `changeme` | ArcadeDB password. Required in production. |
+| `GRAPHKNOWS_NAMESPACE` | `""` | Tenant isolation boundary → physical database pair `stm_<ns>`/`ltm_<ns>` (`""` = the shared `stm`/`ltm`). The default when an MCP call omits `namespace`. See [multi-tenancy.md](multi-tenancy.md). |
+| `GRAPHKNOWS_MAX_OPEN_NAMESPACES` | `64` | MCP server cap on concurrently-open namespace runtimes (LRU-evicted). |
 | **Embeddings** | | |
 | `GRAPHKNOWS_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | Local sentence-transformers model, or a remote model id when `EMBED_API_BASE` is set. |
 | `GRAPHKNOWS_EMBED_API_BASE` | _(empty)_ | Set to use a remote OpenAI-compatible embeddings endpoint instead of local. |

@@ -121,8 +121,8 @@ class ArcadeDBSTMStore:
         client: Connected ``ArcadeDBClient`` instance.
     """
 
-    def __init__(self, client: ArcadeDBClient) -> None:
-        self._db = _DB
+    def __init__(self, client: ArcadeDBClient, db: str = _DB) -> None:
+        self._db = db
         self._c = client
 
     # ------------------------------------------------------------------
