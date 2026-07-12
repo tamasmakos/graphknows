@@ -87,6 +87,16 @@ services:
       arcadedb:
         condition: service_healthy
     restart: unless-stopped
+    # GPU for GLiNER2 NER (torch). Requires the NVIDIA Container Toolkit on the
+    # host; degrades gracefully to CPU if no GPU is present (the loader checks
+    # torch.cuda.is_available()). Remove this block on GPU-less hosts.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # Optional tracing. `--profile observability`.
   langfuse:

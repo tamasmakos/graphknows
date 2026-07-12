@@ -35,14 +35,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-# User requested spacy installation and model download at the compose/docker layer
-RUN pip install spacy && \
-    python -m spacy download en_core_web_lg
-
 # Bring in only the venv and the application source
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /build/graphknows ./graphknows
 COPY --from=builder /build/frontend ./frontend
+
+# spaCy model for GLiNER2 schema mining — installed INTO the venv the app uses
+# (a plain `spacy download` targets the system python, which the app never runs).
+RUN uv pip install --python /opt/venv/bin/python \
+    "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

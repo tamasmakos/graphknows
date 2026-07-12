@@ -65,6 +65,7 @@ def get_gliner2_model(config: dict[str, Any] | None = None):
                 model_name = _get_extraction_cfg(config).get("gliner_model", model_name)
             log.info("Loading GLiNER2 model (%s)...", model_name)
             GLINER2_MODEL = GLiNER2.from_pretrained(model_name)
+            _move_to_device(GLINER2_MODEL)
             log.info("GLiNER2 model loaded.")
         except Exception as e:
             log.error("Failed to load GLiNER2: %s", e)
@@ -73,6 +74,34 @@ def get_gliner2_model(config: dict[str, Any] | None = None):
                 "Check RAM availability — model requires ~2 GB. No silent fallback."
             ) from e
     return GLINER2_MODEL
+
+
+def _move_to_device(model: Any) -> None:
+    """Move GLiNER2 to the GPU when one is available (the model is a torch nn.Module).
+
+    Controlled by ``GRAPHKNOWS_GLINER_DEVICE`` (``auto`` default, or ``cpu``/``cuda``).
+    NER is the ingest bottleneck on CPU; on GPU the batched forward pass is where
+    the real speedup lands. Failure to move (no CUDA, OOM) falls back to CPU.
+    """
+    import os
+
+    choice = os.environ.get("GRAPHKNOWS_GLINER_DEVICE", "auto").strip().lower()
+    if choice == "cpu":
+        return
+    try:
+        import torch
+
+        want_gpu = choice == "cuda" or (choice == "auto" and torch.cuda.is_available())
+        if not want_gpu:
+            return
+        if not torch.cuda.is_available():
+            log.warning("GRAPHKNOWS_GLINER_DEVICE=cuda but no CUDA device; staying on CPU.")
+            return
+        model.to("cuda")
+        log.info("GLiNER2 moved to GPU (%s).", torch.cuda.get_device_name(0))
+    except Exception as exc:
+        # Never fail ingest over device placement — fall back to CPU.
+        log.warning("Could not move GLiNER2 to GPU (%s); staying on CPU.", exc)
 
 
 def get_max_concurrent(config: dict[str, Any], default: int = 8) -> int:
