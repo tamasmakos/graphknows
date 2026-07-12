@@ -24,7 +24,7 @@ services:
       # Give the JVM real heap: vector indexes (esp. 1536-dim remote embeddings)
       # are memory-hungry, and the default heap OOMs ("Java heap space") and
       # GC-thrashes under concurrent ingest. Tune GRAPHKNOWS_ARCADEDB_XMX to host RAM.
-      JAVA_OPTS: "-Xms2G -Xmx${GRAPHKNOWS_ARCADEDB_XMX:-8G} -Darcadedb.server.rootPassword=${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
+      JAVA_OPTS: "-Xms4G -Xmx${GRAPHKNOWS_ARCADEDB_XMX:-16G} -Darcadedb.server.rootPassword=${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
     volumes:
       - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped
