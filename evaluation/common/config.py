@@ -40,16 +40,23 @@ class BaseEvalConfig(BaseModel):
     namespace: str = "eval"
 
     # ── Concurrency ──────────────────────────────────────────────────────────
-    # Each ingest unit (one conversation) lives in its OWN physical database pair
-    # (namespace = <benchmark>_<mode>_<group_id>), so conversations share no graph
-    # and can run fully in parallel — the ENTITY(name) UNIQUE MERGE race that
-    # forced sequential ingest only exists *within* one namespace. These caps bound
-    # the fan-out against the MCP server / ArcadeDB / the LLM provider's rate limit.
-    unit_concurrency: int = Field(
-        default_factory=lambda: int(os.environ.get("EVAL_UNIT_CONCURRENCY", "3"))
+    # Ingest and answer are decoupled because they stress different resources:
+    #
+    #   Ingest is a bounded QUEUE. Each conversation runs the embedding model +
+    #   NER + vector-index build locally in the MCP-server process (~2 GB RSS per
+    #   concurrent ingest), so unbounded fan-out OOMs the box. `ingest_workers`
+    #   caps how many conversations ingest at once — the memory-safe batch width.
+    #
+    #   Answer/retrieve is PARALLEL. Once a conversation is ingested it is dropped
+    #   from the ingest queue and its questions answer concurrently; answering is
+    #   read-only + a remote LLM call (no local models), so it is cheap. Every
+    #   conversation's questions share one global `question_concurrency` cap, which
+    #   bounds total in-flight LLM calls against the provider's rate limit.
+    ingest_workers: int = Field(
+        default_factory=lambda: int(os.environ.get("EVAL_INGEST_WORKERS", "3"))
     )
     question_concurrency: int = Field(
-        default_factory=lambda: int(os.environ.get("EVAL_QUESTION_CONCURRENCY", "5"))
+        default_factory=lambda: int(os.environ.get("EVAL_QUESTION_CONCURRENCY", "8"))
     )
 
     # ── Lifecycle ────────────────────────────────────────────────────────────

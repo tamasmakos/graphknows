@@ -36,14 +36,23 @@ per conversation, so conversations must not share a graph. Physical separation
 guarantees it — entities, topics, PageRank and communities never merge across
 conversations, and the two modes never contaminate each other either.
 
-Because each conversation is isolated, they ingest and answer **concurrently**
-(no shared `ENTITY(name)` MERGE to race):
+Because each conversation is isolated, ingest and answer are **decoupled** and
+each is bounded by the resource it actually stresses:
 
-- `EVAL_UNIT_CONCURRENCY` (default 3) — conversations processed in parallel.
-- `EVAL_QUESTION_CONCURRENCY` (default 5) — questions answered in parallel within
-  a conversation (retrieve→generate→judge is read-only, no shared writes).
-- `EVAL_INGEST_CONCURRENCY` (default 1) — documents within one conversation stay
-  sequential; they share that conversation's graph.
+- **Ingest is a bounded queue.** `EVAL_INGEST_WORKERS` (default 3) — how many
+  conversations run the embedding + NER + vector-index build *at once*. This is
+  the memory knob: each concurrent ingest costs ~2 GB RSS in the MCP-server
+  process, so an unbounded fan-out OOMs the box. Raise it only as far as your RAM
+  allows.
+- **Answering is parallel.** `EVAL_QUESTION_CONCURRENCY` (default 8) — a *global*
+  cap on total in-flight questions across every conversation. Answering is
+  read-only + a remote LLM call (no local models), so it's cheap; this knob
+  tracks the LLM provider's rate limit, not memory. A conversation answers as
+  soon as it finishes ingest, while later conversations are still queued to
+  ingest.
+- `EVAL_INGEST_CONCURRENCY` (default 1) — documents *within* one conversation
+  stay sequential; they share that conversation's graph (the `ENTITY(name)` MERGE
+  would race otherwise).
 
 Data persists per conversation and session ids are deterministic, so
 `--no-ingest` re-runs retrieval + scoring against the already-ingested graphs
@@ -108,10 +117,10 @@ ingestion, retrieval, checkpointing, purging, reporting — is shared in
   and modes never contaminate each other and data persists between runs (reuse
   with `--no-ingest`, reset with `--reset`). Within a namespace, ingest is
   idempotent per unit (deterministic session id + chunk-id MERGE).
-* Conversations run in parallel (`EVAL_UNIT_CONCURRENCY`), and questions within a
-  conversation run in parallel (`EVAL_QUESTION_CONCURRENCY`) — physical
-  per-conversation isolation is what makes this safe. Raise them to stress-test
-  ArcadeDB concurrency; lower to 1 for a strictly serial run.
+* Ingest is a bounded queue (`EVAL_INGEST_WORKERS`, memory-bound) and answering
+  is globally parallel (`EVAL_QUESTION_CONCURRENCY`, rate-limit-bound) — physical
+  per-conversation isolation is what makes this safe. Lower both to 1 for a
+  strictly serial run.
 * Runs checkpoint every 30 cases and after every unit — a crash never loses
   completed work. Credit exhaustion (OpenRouter 402) stops the run cleanly and
   keeps partial results.

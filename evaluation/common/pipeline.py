@@ -192,44 +192,56 @@ class _Progress:
             return self._done
 
 
-async def _run_unit(
+async def _ingest_unit(
     unit: IngestUnit,
+    *,
+    config: BaseEvalConfig,
+    ingestor: Ingestor,
+    reuse_ingest: bool,
+) -> IngestResult:
+    """Ingest one conversation into its own namespace (the memory-heavy phase).
+
+    Called while holding an ingest-queue slot, so only ``ingest_workers``
+    conversations run the embedding model + NER + vector-index build at once.
+    """
+    if reuse_ingest:
+        print(f"\n[{unit.group_id}] reusing ingested graph (--no-ingest)", flush=True)
+        return IngestResult()
+    session_id = f"{config.session_prefix}-{unit.group_id}"
+    namespace = unit_namespace(config, unit.group_id)
+    print(f"\n[{unit.group_id}] ingesting {len(unit.documents)} docs …", flush=True)
+    ingest = await ingestor.ingest(session_id, unit.documents, namespace=namespace)
+    print(
+        f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
+        f"entities={ingest.entities} flush_nodes={ingest.flush_nodes}",
+        flush=True,
+    )
+    return ingest
+
+
+async def _answer_unit(
+    unit: IngestUnit,
+    ingest: IngestResult,
     *,
     adapter: BenchmarkAdapter,
     config: BaseEvalConfig,
-    ingestor: Ingestor,
     retriever: Retriever,
     client: GraphKnowsMCPClient,
     counter: _Progress,
-    reuse_ingest: bool = False,
+    answer_sem: asyncio.Semaphore,
 ) -> list[CaseResult]:
-    """Ingest one unit into its own namespace, then answer its questions.
+    """Answer one conversation's questions (the cheap, parallel phase).
 
-    Ingest is sequential (one unit's docs share its graph); questions run
-    concurrently (bounded by ``question_concurrency``) since retrieve→generate→
-    judge is read-only against the DB with no shared writes.
+    Runs after the ingest slot is released. Each question is retrieve→generate→
+    judge — read-only against the DB with no local models — gated only by the
+    *global* ``answer_sem`` shared across all conversations, so total in-flight
+    LLM calls stay bounded no matter how many conversations answer at once.
     """
-    # Deterministic per (benchmark, unit) so a --no-ingest re-run finds the same
-    # session in the namespace instead of re-ingesting.
     session_id = f"{config.session_prefix}-{unit.group_id}"
     namespace = unit_namespace(config, unit.group_id)
 
-    if reuse_ingest:
-        ingest = IngestResult()
-        print(f"\n[{unit.group_id}] reusing ingested graph (--no-ingest)", flush=True)
-    else:
-        print(f"\n[{unit.group_id}] ingesting {len(unit.documents)} docs …", flush=True)
-        ingest = await ingestor.ingest(session_id, unit.documents, namespace=namespace)
-        print(
-            f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
-            f"entities={ingest.entities} flush_nodes={ingest.flush_nodes}",
-            flush=True,
-        )
-
-    q_sem = asyncio.Semaphore(max(1, config.question_concurrency))
-
     async def _answer_one(idx: int, case: EvalCase) -> tuple[int, CaseResult]:
-        async with q_sem:
+        async with answer_sem:
             probe = await retriever.query(
                 session_id, case.question, k=config.probe_k, namespace=namespace
             )
@@ -261,9 +273,7 @@ async def _run_unit(
         )
         return idx, result
 
-    answered = await asyncio.gather(
-        *[_answer_one(i, c) for i, c in enumerate(unit.cases)]
-    )
+    answered = await asyncio.gather(*[_answer_one(i, c) for i, c in enumerate(unit.cases)])
     results = [r for _, r in sorted(answered, key=lambda t: t[0])]
 
     if config.purge:
@@ -292,18 +302,28 @@ async def run_units(
     run_id: str,
     reuse_ingest: bool = False,
 ) -> RunReport:
-    """Run all units through the pipeline concurrently and return a report.
+    """Run all units through the pipeline and return a report.
 
-    Units (conversations) run up to ``unit_concurrency`` at a time — safe because
-    each lives in its own database pair. With ``reuse_ingest`` the ingest+flush
-    step is skipped and retrieval runs against the namespace's already-ingested
-    graph — the "just tweak retrieval" loop, with no reingest cost.
+    Two decoupled stages per conversation, so each is bounded by the resource it
+    actually stresses:
+
+    * **Ingest** — a bounded queue: at most ``ingest_workers`` conversations hold
+      an ``ingest_sem`` slot and run the memory-heavy embedding/NER/vector build
+      at once. The rest wait their turn, keeping the MCP-server process off the
+      OOM line.
+    * **Answer** — parallel: as soon as a conversation finishes ingest it releases
+      its slot and its questions answer concurrently, gated only by the *global*
+      ``question_concurrency`` cap on total in-flight LLM calls. Conversations
+      that finished ingest answer while later ones are still queued to ingest.
+
+    With ``reuse_ingest`` the ingest stage is a no-op and everything is answering.
     """
     total = sum(len(u.cases) for u in units)
     counter = _Progress(total)
     results_by_unit: dict[int, list[CaseResult]] = {}
     ckpt_lock = asyncio.Lock()
-    unit_sem = asyncio.Semaphore(max(1, config.unit_concurrency))
+    ingest_sem = asyncio.Semaphore(max(1, config.ingest_workers))
+    answer_sem = asyncio.Semaphore(max(1, config.question_concurrency))
     stop = {"flag": False}
 
     def _ordered() -> list[CaseResult]:
@@ -320,28 +340,34 @@ async def run_units(
         async def _worker(idx: int, unit: IngestUnit) -> None:
             if stop["flag"]:
                 return
-            async with unit_sem:
-                if stop["flag"]:
-                    return
-                try:
-                    results = await _run_unit(
-                        unit,
-                        adapter=adapter,
-                        config=config,
-                        ingestor=ingestor,
-                        retriever=retriever,
-                        client=client,
-                        counter=counter,
-                        reuse_ingest=reuse_ingest,
+            try:
+                # Stage 1 — bounded ingest queue (memory-heavy, capped).
+                async with ingest_sem:
+                    if stop["flag"]:
+                        return
+                    ingest = await _ingest_unit(
+                        unit, config=config, ingestor=ingestor, reuse_ingest=reuse_ingest
                     )
-                except Exception as exc:
-                    stop["flag"] = True
-                    if _is_credit_exhaustion(exc):
-                        # No traceback: out-of-credits is an operational stop.
-                        log.error("Stopping — OpenRouter credits exhausted: %s", exc)  # noqa: TRY400
-                    else:
-                        log.exception("Stopping — unit %s failed", unit.group_id)
-                    return
+                # Stage 2 — parallel answering (cheap, global LLM cap). The ingest
+                # slot is already released, so a queued conversation can ingest now.
+                results = await _answer_unit(
+                    unit,
+                    ingest,
+                    adapter=adapter,
+                    config=config,
+                    retriever=retriever,
+                    client=client,
+                    counter=counter,
+                    answer_sem=answer_sem,
+                )
+            except Exception as exc:
+                stop["flag"] = True
+                if _is_credit_exhaustion(exc):
+                    # No traceback: out-of-credits is an operational stop.
+                    log.error("Stopping — OpenRouter credits exhausted: %s", exc)  # noqa: TRY400
+                else:
+                    log.exception("Stopping — unit %s failed", unit.group_id)
+                return
             async with ckpt_lock:
                 results_by_unit[idx] = results
                 _checkpoint(run_id, adapter, config, _ordered())
