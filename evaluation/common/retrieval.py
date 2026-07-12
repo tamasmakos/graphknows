@@ -33,7 +33,9 @@ class Retriever:
         self._client = client
         self._config = config
 
-    async def query(self, session_id: str, question: str, *, k: int) -> list[RetrievedPassage]:
+    async def query(
+        self, session_id: str, question: str, *, k: int, namespace: str = ""
+    ) -> list[RetrievedPassage]:
         """Return the top-``k`` passages for ``question`` in ``session_id``."""
         result = await self._client.call_tool(
             "memory_query",
@@ -42,6 +44,7 @@ class Retriever:
                 "session_id": session_id,
                 "top_k": k,
                 "scope": self._config.recall_scope,
+                "namespace": namespace,
             },
         )
         return _parse_hits(result)

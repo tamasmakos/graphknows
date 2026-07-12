@@ -13,9 +13,8 @@ _BENCHMARKS = ("locomo",)
 
 def main() -> None:
     argv = sys.argv[1:]
-    benchmark = "locomo"
     if argv and argv[0] in _BENCHMARKS:
-        benchmark, argv = argv[0], argv[1:]
+        argv = argv[1:]
     elif argv and not argv[0].startswith("-"):
         raise SystemExit(
             f"Unknown benchmark {argv[0]!r}. Choose from: {', '.join(_BENCHMARKS)}"

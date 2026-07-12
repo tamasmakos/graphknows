@@ -20,7 +20,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from evaluation.common.datamodels import RunReport
-from evaluation.common.pipeline import build_llms, reset_namespace, run_units
+from evaluation.common.pipeline import (
+    build_llms,
+    drop_namespaces,
+    run_units,
+    unit_namespace,
+)
 from evaluation.common.reporting import ReportPaths, compare_modes, write_report
 from evaluation.locomo.adapter import LocomoAdapter
 from evaluation.locomo.config import LocomoConfig
@@ -95,9 +100,13 @@ async def amain(argv: list[str] | None = None) -> int:
         modes = ["llm_free", "llm_assisted"] if args.compare else [args.mode]
         for m in modes:
             cfg = base.model_copy(update={"namespace": f"{base.namespace}_{m}"})
-            os.environ["GRAPHKNOWS_NAMESPACE"] = cfg.namespace
-            print(f"[eval] --reset: dropping namespace {cfg.namespace}")
-            await reset_namespace(cfg)
+            units = load_units(cfg, limit=args.limit, offset=args.offset)
+            namespaces = [unit_namespace(cfg, u.group_id) for u in units]
+            print(
+                f"[eval] --reset: dropping {len(namespaces)} per-conversation "
+                f"namespaces for {m}"
+            )
+            await drop_namespaces(cfg, namespaces)
 
     if args.compare:
         print(

@@ -52,6 +52,10 @@ class JudgeCache:
         if not _enabled():
             return
         path = self._dir / f"{_key(parts)}.json"
-        # Cache is best-effort; never fail a run over it.
+        # Cache is best-effort; never fail a run over it. Write to a unique temp
+        # file then atomically rename so a concurrent reader never sees a
+        # half-written file when many judges run in parallel.
         with contextlib.suppress(OSError):
-            path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+            tmp = path.with_suffix(f".{os.getpid()}.{id(value):x}.tmp")
+            tmp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)

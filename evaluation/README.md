@@ -27,16 +27,30 @@ python -m evaluation --limit 20 --no-ingest        # reuse the graph, tweak retr
 python -m evaluation --reset                       # drop this mode's namespace, then run
 ```
 
-### Namespaces and the reuse loop
+### Namespaces, isolation, and the reuse loop
 
-Each **mode** runs in its own physical database pair — namespace
-`eval_locomo_llm_free` / `eval_locomo_llm_assisted` — so the two modes coexist in
-one ArcadeDB server without contaminating each other's graph (ingesting one mode
-never merges entities into the other). Because data persists in the namespace and
-session ids are deterministic, `--no-ingest` re-runs retrieval + scoring against
-the already-ingested graph (the "just tweak retrieval" loop, no reingest cost).
-`--reset` drops the mode's namespace for a clean re-ingest (`--compare --reset`
-drops both). See [docs/multi-tenancy.md](../docs/multi-tenancy.md).
+Every **conversation** runs in its own physical database pair —
+`eval_locomo_<mode>_<conv_id>` (e.g. `eval_locomo_llm_free_conv_26`). This is the
+LoCoMo protocol: each question is tied to one conversation and memory is built
+per conversation, so conversations must not share a graph. Physical separation
+guarantees it — entities, topics, PageRank and communities never merge across
+conversations, and the two modes never contaminate each other either.
+
+Because each conversation is isolated, they ingest and answer **concurrently**
+(no shared `ENTITY(name)` MERGE to race):
+
+- `EVAL_UNIT_CONCURRENCY` (default 3) — conversations processed in parallel.
+- `EVAL_QUESTION_CONCURRENCY` (default 5) — questions answered in parallel within
+  a conversation (retrieve→generate→judge is read-only, no shared writes).
+- `EVAL_INGEST_CONCURRENCY` (default 1) — documents within one conversation stay
+  sequential; they share that conversation's graph.
+
+Data persists per conversation and session ids are deterministic, so
+`--no-ingest` re-runs retrieval + scoring against the already-ingested graphs
+(the "just tweak retrieval" loop, no reingest cost). `--reset` drops every
+per-conversation namespace in the run window for a clean re-ingest
+(`--compare --reset` does both modes). See
+[docs/multi-tenancy.md](../docs/multi-tenancy.md).
 
 ## Metrics
 
@@ -87,10 +101,14 @@ ingestion, retrieval, checkpointing, purging, reporting — is shared in
 
 ## Operational notes
 
-* Each mode runs in its own namespace (database pair), so llm_free and
-  llm_assisted never contaminate each other and data persists between runs
-  (reuse with `--no-ingest`, reset with `--reset`). Within a namespace, ingest is
+* Each conversation runs in its own namespace (database pair), so conversations
+  and modes never contaminate each other and data persists between runs (reuse
+  with `--no-ingest`, reset with `--reset`). Within a namespace, ingest is
   idempotent per unit (deterministic session id + chunk-id MERGE).
+* Conversations run in parallel (`EVAL_UNIT_CONCURRENCY`), and questions within a
+  conversation run in parallel (`EVAL_QUESTION_CONCURRENCY`) — physical
+  per-conversation isolation is what makes this safe. Raise them to stress-test
+  ArcadeDB concurrency; lower to 1 for a strictly serial run.
 * Runs checkpoint every 30 cases and after every unit — a crash never loses
   completed work. Credit exhaustion (OpenRouter 402) stops the run cleanly and
   keeps partial results.

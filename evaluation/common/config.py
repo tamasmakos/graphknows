@@ -7,9 +7,10 @@ mode; everything else lives in the config classes.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseEvalConfig(BaseModel):
@@ -37,6 +38,19 @@ class BaseEvalConfig(BaseModel):
     # benchmarks coexist without contaminating each other and a run can reuse an
     # already-ingested graph (--no-ingest) instead of re-ingesting. Set per benchmark.
     namespace: str = "eval"
+
+    # ── Concurrency ──────────────────────────────────────────────────────────
+    # Each ingest unit (one conversation) lives in its OWN physical database pair
+    # (namespace = <benchmark>_<mode>_<group_id>), so conversations share no graph
+    # and can run fully in parallel — the ENTITY(name) UNIQUE MERGE race that
+    # forced sequential ingest only exists *within* one namespace. These caps bound
+    # the fan-out against the MCP server / ArcadeDB / the LLM provider's rate limit.
+    unit_concurrency: int = Field(
+        default_factory=lambda: int(os.environ.get("EVAL_UNIT_CONCURRENCY", "3"))
+    )
+    question_concurrency: int = Field(
+        default_factory=lambda: int(os.environ.get("EVAL_QUESTION_CONCURRENCY", "5"))
+    )
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
     session_prefix: str = "eval"

@@ -17,7 +17,7 @@ from evaluation.common.datamodels import (
     RunReport,
 )
 from evaluation.common.ingestion import Ingestor
-from evaluation.common.pipeline import build_case_result
+from evaluation.common.pipeline import build_case_result, unit_namespace
 from evaluation.common.reporting import compare_modes, summarize, write_report
 from evaluation.common.retrieval import Retriever
 
@@ -45,13 +45,25 @@ async def test_ingestor_aggregates_and_flushes() -> None:
     )
     ingestor = Ingestor(client, BaseEvalConfig())  # type: ignore[arg-type]
     result = await ingestor.ingest(
-        "s1", [EvalDocument(title="d1", text="hello"), EvalDocument(title="d2", text="world")]
+        "s1",
+        [EvalDocument(title="d1", text="hello"), EvalDocument(title="d2", text="world")],
+        namespace="eval_locomo_llm_free_conv_26",
     )
     assert result.chunks == 6 and result.entities == 4
     assert result.flush_nodes == 10 and result.ltm_entity_count == 1
     assert [name for name, _ in client.calls] == [
         "memory_ingest", "memory_ingest", "memory_flush", "ltm_entities",
     ]
+    # Every call is routed to the unit's own namespace.
+    assert all(
+        args.get("namespace") == "eval_locomo_llm_free_conv_26" for _, args in client.calls
+    )
+
+
+def test_unit_namespace_is_per_conversation() -> None:
+    config = BaseEvalConfig().model_copy(update={"namespace": "eval_locomo_llm_free"})
+    assert unit_namespace(config, "conv-26") == "eval_locomo_llm_free_conv-26"
+    assert unit_namespace(config, "conv-30") == "eval_locomo_llm_free_conv-30"
 
 
 @pytest.mark.asyncio
@@ -60,9 +72,10 @@ async def test_retriever_parses_hits() -> None:
         {"memory_query": {"hits": [{"text": "t", "score": 0.9, "sources": "ltm_graph"}]}}
     )
     retriever = Retriever(client, BaseEvalConfig())  # type: ignore[arg-type]
-    passages = await retriever.query("s1", "q", k=5)
+    passages = await retriever.query("s1", "q", k=5, namespace="eval_locomo_llm_free_conv_26")
     assert passages[0].text == "t" and passages[0].is_ltm_graph
     assert client.calls[0][1]["top_k"] == 5
+    assert client.calls[0][1]["namespace"] == "eval_locomo_llm_free_conv_26"
 
 
 def _result(score: float, category: str = "temporal", **metrics: Any) -> CaseResult:

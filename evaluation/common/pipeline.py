@@ -10,6 +10,7 @@ identical across benchmarks and lives here.
 from __future__ import annotations
 
 import abc
+import asyncio
 import logging
 import os
 from typing import Any
@@ -164,92 +165,122 @@ def build_case_result(
     )
 
 
+def unit_namespace(config: BaseEvalConfig, group_id: str) -> str:
+    """Physical namespace for one ingest unit: ``<benchmark>_<mode>_<group_id>``.
+
+    Every conversation gets its OWN database pair, so conversations share no graph
+    (entities/topics/PageRank/communities never merge across them) — the paper's
+    "memory built per conversation", and the property that makes concurrent
+    ingest safe. The server sanitizes the name; pass the same raw string to
+    ingest / query / drop so it maps consistently.
+    """
+    return f"{config.namespace}_{group_id}"
+
+
+class _Progress:
+    """Shared, lock-guarded case counter for live progress across concurrent units."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self._done = 0
+        self._lock = asyncio.Lock()
+
+    async def bump(self) -> int:
+        async with self._lock:
+            self._done += 1
+            return self._done
+
+
 async def _run_unit(
     unit: IngestUnit,
     *,
     adapter: BenchmarkAdapter,
     config: BaseEvalConfig,
-    run_id: str,
     ingestor: Ingestor,
     retriever: Retriever,
     client: GraphKnowsMCPClient,
-    progress: tuple[int, int],
-    on_progress,
+    counter: _Progress,
     reuse_ingest: bool = False,
 ) -> list[CaseResult]:
-    """Ingest one unit (unless reusing), then retrieve+generate+judge its questions."""
-    case_idx, total = progress
+    """Ingest one unit into its own namespace, then answer its questions.
+
+    Ingest is sequential (one unit's docs share its graph); questions run
+    concurrently (bounded by ``question_concurrency``) since retrieve→generate→
+    judge is read-only against the DB with no shared writes.
+    """
     # Deterministic per (benchmark, unit) so a --no-ingest re-run finds the same
     # session in the namespace instead of re-ingesting.
     session_id = f"{config.session_prefix}-{unit.group_id}"
-    results: list[CaseResult] = []
+    namespace = unit_namespace(config, unit.group_id)
 
-    try:
-        if reuse_ingest:
-            ingest = IngestResult()
-            print(f"\n[{unit.group_id}] reusing ingested graph (--no-ingest)", flush=True)
-        else:
-            print(f"\n[{unit.group_id}] ingesting {len(unit.documents)} docs …", flush=True)
-            ingest = await ingestor.ingest(session_id, unit.documents)
-            print(
-                f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
-                f"entities={ingest.entities} flush_nodes={ingest.flush_nodes}",
-                flush=True,
+    if reuse_ingest:
+        ingest = IngestResult()
+        print(f"\n[{unit.group_id}] reusing ingested graph (--no-ingest)", flush=True)
+    else:
+        print(f"\n[{unit.group_id}] ingesting {len(unit.documents)} docs …", flush=True)
+        ingest = await ingestor.ingest(session_id, unit.documents, namespace=namespace)
+        print(
+            f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
+            f"entities={ingest.entities} flush_nodes={ingest.flush_nodes}",
+            flush=True,
+        )
+
+    q_sem = asyncio.Semaphore(max(1, config.question_concurrency))
+
+    async def _answer_one(idx: int, case: EvalCase) -> tuple[int, CaseResult]:
+        async with q_sem:
+            probe = await retriever.query(
+                session_id, case.question, k=config.probe_k, namespace=namespace
             )
-
-        for case in unit.cases:
-            probe = await retriever.query(session_id, case.question, k=config.probe_k)
             passages = probe[: config.top_k]
             context_passages = probe[: config.gen_context_k]
-
             answer, gen_usage = await adapter.answer(case, unit, context_passages)
             score, judge_metrics = await adapter.judge_case(case, answer)
             lexical = adapter.lexical_metrics(case, answer)
+        result = build_case_result(
+            case,
+            config=config,
+            session_id=session_id,
+            passages=passages,
+            probe=probe,
+            context_passages=context_passages,
+            generated_answer=answer,
+            score=score,
+            judge_metrics=judge_metrics,
+            lexical=lexical,
+            gen_usage=gen_usage,
+            ingest=ingest,
+        )
+        done = await counter.bump()
+        preview = answer[:50].replace("\n", " ")
+        print(
+            f"  [{done:4d}/{counter.total}] {case.case_id}  "
+            f"judge={score:.2f}  gen={preview!r}",
+            flush=True,
+        )
+        return idx, result
 
-            result = build_case_result(
-                case,
-                config=config,
-                session_id=session_id,
-                passages=passages,
-                probe=probe,
-                context_passages=context_passages,
-                generated_answer=answer,
-                score=score,
-                judge_metrics=judge_metrics,
-                lexical=lexical,
-                gen_usage=gen_usage,
-                ingest=ingest,
-            )
-            results.append(result)
+    answered = await asyncio.gather(
+        *[_answer_one(i, c) for i, c in enumerate(unit.cases)]
+    )
+    results = [r for _, r in sorted(answered, key=lambda t: t[0])]
 
-            case_idx += 1
-            preview = answer[:50].replace("\n", " ")
-            print(
-                f"  [{case_idx:3d}/{total}] {case.case_id}  "
-                f"judge={score:.2f}  gen={preview!r}",
-                flush=True,
-            )
-            if on_progress is not None and len(results) % 30 == 0:
-                on_progress(results)
-    finally:
-        if config.purge:
-            await client.call_tool("memory_purge", {"scope": "both", "session_id": session_id})
-
+    if config.purge:
+        await client.call_tool(
+            "memory_purge",
+            {"scope": "both", "session_id": session_id, "namespace": namespace},
+        )
     return results
 
 
-async def reset_namespace(config: BaseEvalConfig) -> None:
-    """Drop this benchmark's entire namespace (both physical databases).
-
-    A clean slate for one benchmark without touching any other. The MCP server
-    resolves the namespace from ``GRAPHKNOWS_NAMESPACE`` (set by the CLI), so the
-    explicit argument here just names it for the drop.
-    """
+async def drop_namespaces(config: BaseEvalConfig, namespaces: list[str]) -> None:
+    """Drop each named namespace (both physical databases) for a clean re-ingest."""
     async with GraphKnowsMCPClient(
         config.command, request_timeout_s=config.request_timeout_s, env=_evaluation_env()
     ) as client:
-        result = await client.call_tool("memory_drop_namespace", {"namespace": config.namespace})
-        log.info("Reset namespace %s: %s", config.namespace, result)
+        for ns in namespaces:
+            result = await client.call_tool("memory_drop_namespace", {"namespace": ns})
+            log.info("Dropped namespace %s: %s", ns, result)
 
 
 async def run_units(
@@ -260,14 +291,22 @@ async def run_units(
     run_id: str,
     reuse_ingest: bool = False,
 ) -> RunReport:
-    """Run all units through the pipeline and return a populated report.
+    """Run all units through the pipeline concurrently and return a report.
 
-    With ``reuse_ingest`` the ingest+flush step is skipped and retrieval runs
-    against the namespace's already-ingested graph — the "just tweak retrieval"
-    loop, with no reingest cost.
+    Units (conversations) run up to ``unit_concurrency`` at a time — safe because
+    each lives in its own database pair. With ``reuse_ingest`` the ingest+flush
+    step is skipped and retrieval runs against the namespace's already-ingested
+    graph — the "just tweak retrieval" loop, with no reingest cost.
     """
     total = sum(len(u.cases) for u in units)
-    cases: list[CaseResult] = []
+    counter = _Progress(total)
+    results_by_unit: dict[int, list[CaseResult]] = {}
+    ckpt_lock = asyncio.Lock()
+    unit_sem = asyncio.Semaphore(max(1, config.unit_concurrency))
+    stop = {"flag": False}
+
+    def _ordered() -> list[CaseResult]:
+        return [c for i in sorted(results_by_unit) for c in results_by_unit[i]]
 
     async with GraphKnowsMCPClient(
         config.command,
@@ -277,44 +316,43 @@ async def run_units(
         ingestor = Ingestor(client, config)
         retriever = Retriever(client, config)
 
-        for i, unit in enumerate(units, 1):
-
-            def _progress_ckpt(partial: list[CaseResult], _done: list[CaseResult] = cases) -> None:
-                _checkpoint(run_id, adapter, config, _done + partial)
-
-            try:
-                results = await _run_unit(
-                    unit,
-                    adapter=adapter,
-                    config=config,
-                    run_id=run_id,
-                    ingestor=ingestor,
-                    retriever=retriever,
-                    client=client,
-                    progress=(len(cases), total),
-                    on_progress=_progress_ckpt,
-                    reuse_ingest=reuse_ingest,
+        async def _worker(idx: int, unit: IngestUnit) -> None:
+            if stop["flag"]:
+                return
+            async with unit_sem:
+                if stop["flag"]:
+                    return
+                try:
+                    results = await _run_unit(
+                        unit,
+                        adapter=adapter,
+                        config=config,
+                        ingestor=ingestor,
+                        retriever=retriever,
+                        client=client,
+                        counter=counter,
+                        reuse_ingest=reuse_ingest,
+                    )
+                except Exception as exc:
+                    stop["flag"] = True
+                    if _is_credit_exhaustion(exc):
+                        # No traceback: out-of-credits is an operational stop.
+                        log.error("Stopping — OpenRouter credits exhausted: %s", exc)  # noqa: TRY400
+                    else:
+                        log.exception("Stopping — unit %s failed", unit.group_id)
+                    return
+            async with ckpt_lock:
+                results_by_unit[idx] = results
+                _checkpoint(run_id, adapter, config, _ordered())
+                log.info(
+                    "Checkpoint: %d units done, %d cases (last %s)",
+                    len(results_by_unit), sum(len(r) for r in results_by_unit.values()),
+                    unit.group_id,
                 )
-            except Exception as exc:
-                if _is_credit_exhaustion(exc):
-                    # No traceback: out-of-credits is an operational stop, not a bug.
-                    log.error(  # noqa: TRY400
-                        "Stopping after %d/%d units — OpenRouter credits exhausted: %s",
-                        i - 1, len(units), exc,
-                    )
-                else:
-                    log.exception(
-                        "Stopping after %d/%d units — unit %s failed",
-                        i - 1, len(units), unit.group_id,
-                    )
-                break
-            cases.extend(results)
-            _checkpoint(run_id, adapter, config, cases)
-            log.info(
-                "Checkpoint: %d cases after unit %s (%d/%d)",
-                len(cases), unit.group_id, i, len(units),
-            )
 
+        await asyncio.gather(*[_worker(i, u) for i, u in enumerate(units)])
+
+    cases = _ordered()
     return RunReport(
         run_id=run_id,
         benchmark=adapter.name,
