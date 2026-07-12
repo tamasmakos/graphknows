@@ -88,6 +88,12 @@ class GraphKnowsSettings(BaseSettings):
     embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="GRAPHKNOWS_EMBED_MODEL")
     embed_api_base: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_BASE")
     embed_api_key: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_KEY")
+    # Output dimensionality for remote embeddings (0 = model default). Matryoshka
+    # models (e.g. text-embedding-3-*) truncate server-side with minimal quality
+    # loss. Vector memory in the store scales linearly with this — the system is
+    # sized around 384-dim vectors, so keep remote embeddings at parity unless
+    # you deliberately re-size the store.
+    embed_dimensions: int = Field(default=0, alias="GRAPHKNOWS_EMBED_DIMENSIONS")
 
     # Chunking
     chunk_size: int = Field(default=1200, alias="GRAPHKNOWS_CHUNK_SIZE")

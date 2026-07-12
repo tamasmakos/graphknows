@@ -55,15 +55,21 @@ def _embed_local(texts: list[str], model_name: str) -> np.ndarray:
     return np.asarray(arr, dtype=np.float32)
 
 
-def _embed_remote(texts: list[str], model_name: str, api_base: str, api_key: str) -> np.ndarray:
+def _embed_remote(
+    texts: list[str], model_name: str, api_base: str, api_key: str, dimensions: int = 0
+) -> np.ndarray:
     truncated = [t[:_MAX_CHARS_PER_TEXT] for t in texts]
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    body: dict[str, Any] = {"model": model_name, "input": truncated}
+    if dimensions > 0:
+        # Matryoshka truncation server-side; the API re-normalizes the vectors.
+        body["dimensions"] = dimensions
     resp = httpx.post(
         f"{api_base.rstrip('/')}/embeddings",
         headers=headers,
-        json={"model": model_name, "input": truncated},
+        json=body,
         timeout=httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=5.0),
     )
     resp.raise_for_status()
@@ -96,7 +102,10 @@ def embed(texts: list[str], model_name: str = "") -> np.ndarray:
     s = _settings()
     model = model_name or s.embed_model
     if s.embed_api_base:
-        return _embed_remote(texts, model, s.embed_api_base, s.embed_api_key)
+        return _embed_remote(
+            texts, model, s.embed_api_base, s.embed_api_key,
+            dimensions=getattr(s, "embed_dimensions", 0),
+        )
     return _embed_local(texts, model)
 
 
