@@ -242,14 +242,39 @@ async def _answer_unit(
 
     async def _answer_one(idx: int, case: EvalCase) -> tuple[int, CaseResult]:
         async with answer_sem:
-            probe = await retriever.query(
-                session_id, case.question, k=config.probe_k, namespace=namespace
-            )
-            passages = probe[: config.top_k]
-            context_passages = probe[: config.gen_context_k]
-            answer, gen_usage = await adapter.answer(case, unit, context_passages)
-            score, judge_metrics = await adapter.judge_case(case, answer)
-            lexical = adapter.lexical_metrics(case, answer)
+            try:
+                probe = await retriever.query(
+                    session_id, case.question, k=config.probe_k, namespace=namespace
+                )
+                passages = probe[: config.top_k]
+                context_passages = probe[: config.gen_context_k]
+                answer, gen_usage = await adapter.answer(case, unit, context_passages)
+                score, judge_metrics = await adapter.judge_case(case, answer)
+                lexical = adapter.lexical_metrics(case, answer)
+            except Exception as exc:
+                # Credit exhaustion is the ONLY hard stop — re-raise it. Any other
+                # per-question failure (a transient empty completion, a provider
+                # 4xx, a flaky judge) is scored 0 and the run continues; a single
+                # bad question must never halt a 1540-question run.
+                if _is_credit_exhaustion(exc):
+                    raise
+                log.warning("Question %s failed (scored 0.0): %s", case.case_id, exc)
+                done = await counter.bump()
+                print(f"  [{done:4d}/{counter.total}] {case.case_id}  judge=0.00  ERROR", flush=True)
+                return idx, build_case_result(
+                    case,
+                    config=config,
+                    session_id=session_id,
+                    passages=[],
+                    probe=[],
+                    context_passages=[],
+                    generated_answer="",
+                    score=0.0,
+                    judge_metrics={"judge_label": "ERROR", "judge_reasoning": str(exc)[:200]},
+                    lexical={},
+                    gen_usage={},
+                    ingest=ingest,
+                )
         result = build_case_result(
             case,
             config=config,
@@ -361,12 +386,14 @@ async def run_units(
                     answer_sem=answer_sem,
                 )
             except Exception as exc:
-                stop["flag"] = True
                 if _is_credit_exhaustion(exc):
-                    # No traceback: out-of-credits is an operational stop.
+                    # Credits out is the only hard stop — no point continuing.
+                    stop["flag"] = True
                     log.error("Stopping — OpenRouter credits exhausted: %s", exc)  # noqa: TRY400
                 else:
-                    log.exception("Stopping — unit %s failed", unit.group_id)
+                    # One conversation failing (e.g. its ingest errored) skips that
+                    # conversation; the rest of the run continues.
+                    log.exception("Skipping unit %s — failed", unit.group_id)
                 return
             async with ckpt_lock:
                 results_by_unit[idx] = results
