@@ -30,6 +30,18 @@ class FakeLLM:
         return parse_json_object(text), usage
 
 
+class FakeJudge:
+    """Scripted DSPy-style judge: returns queued scores, records (q, gold, gen)."""
+
+    def __init__(self, scores: list[float]) -> None:
+        self._scores = list(scores)
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def judge(self, question: str, gold: str, generated: str) -> tuple[float, str]:
+        self.calls.append((question, gold, generated))
+        return self._scores.pop(0), "reason"
+
+
 @pytest.fixture(autouse=True)
 def _no_judge_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRAPHKNOWS_JUDGE_CACHE", "0")
@@ -66,24 +78,24 @@ class TestLocomoAdapter:
         assert "8 May 2023" in answerer.prompts[0][1]  # reference date injected
 
     @pytest.mark.asyncio
-    async def test_judge_correct_and_wrong(self) -> None:
-        judge = FakeLLM(
-            ['{"reasoning": "same date", "label": "CORRECT"}',
-             '{"reasoning": "different", "label": "WRONG"}']
-        )
+    async def test_judge_scores_map_to_labels(self) -> None:
+        judge = FakeJudge([1.0, 0.0, 0.5])
         adapter = LocomoAdapter(LocomoConfig(), FakeLLM([]), judge)
         score, metrics = await adapter.judge_case(_case(), "7 May 2023")
         assert score == 1.0 and metrics["judge_label"] == "CORRECT"
         score, _ = await adapter.judge_case(_case(), "12 Oct 2023")
         assert score == 0.0
+        score, metrics = await adapter.judge_case(_case(), "partly right")
+        assert score == 0.5 and metrics["judge_label"] == "CORRECT"  # >= 0.5 passes
 
     @pytest.mark.asyncio
     async def test_open_ended_gold_truncated_for_judge(self) -> None:
-        judge = FakeLLM(['{"reasoning": "ok", "label": "CORRECT"}'])
+        judge = FakeJudge([1.0])
         adapter = LocomoAdapter(LocomoConfig(), FakeLLM([]), judge)
         case = _case(category="open_ended", gold="painting; because she loves art")
         await adapter.judge_case(case, "painting")
-        assert "because she loves art" not in judge.prompts[0][1]
+        # The judge receives only the gold answer, not the trailing commentary.
+        assert judge.calls[0][1] == "painting"
 
     def test_lexical_metrics_present(self) -> None:
         adapter = LocomoAdapter(LocomoConfig(), FakeLLM([]), FakeLLM([]))

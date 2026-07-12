@@ -24,6 +24,7 @@ from evaluation.common.datamodels import (
     RetrievedPassage,
     RunReport,
 )
+from evaluation.common.dspy_judge import DSPyJudge
 from evaluation.common.ingestion import Ingestor
 from evaluation.common.lexical import gold_context_coverage, gold_max_overlap, gold_reachable
 from evaluation.common.llm import ChatLLM, CreditExhaustedError, resolve_model
@@ -39,7 +40,7 @@ class BenchmarkAdapter(abc.ABC):
 
     name: str = "benchmark"
 
-    def __init__(self, config: BaseEvalConfig, answerer: ChatLLM, judge: ChatLLM) -> None:
+    def __init__(self, config: BaseEvalConfig, answerer: ChatLLM, judge: DSPyJudge) -> None:
         self.config = config
         self.answerer = answerer
         self.judge = judge
@@ -59,12 +60,12 @@ class BenchmarkAdapter(abc.ABC):
         return {}
 
 
-def build_llms(config: BaseEvalConfig) -> tuple[ChatLLM, ChatLLM]:
-    """Construct the (answerer, judge) pair from config + environment."""
+def build_llms(config: BaseEvalConfig) -> tuple[ChatLLM, DSPyJudge]:
+    """Construct the (httpx answerer, DSPy judge) pair from config + environment."""
     gen_model = resolve_model(config.generation_model, "OPENROUTER_MODEL", "LLM_MODEL")
     judge_model = resolve_model(config.judge_model, "JUDGE_MODEL") or gen_model
     answerer = ChatLLM(gen_model, max_tokens=4096)
-    judge = ChatLLM(judge_model, max_tokens=2048)
+    judge = DSPyJudge(judge_model)
     return answerer, judge
 
 

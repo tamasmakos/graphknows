@@ -55,11 +55,14 @@ per-conversation namespace in the run window for a clean re-ingest
 ## Metrics
 
 The **headline metric is accuracy under an LLM judge** — the fraction of cases
-scoring ≥ 0.5. `locomo` uses a binary CORRECT/WRONG judge with lenient grading
-(partial credit on lists, paraphrase, superset, ±14-day date tolerance). Lexical
-`locomo_f1` / `token_f1` (official, paper-comparable) are still computed as free
-diagnostic columns; they punish verbose-but-correct answers and are **not** the
-headline.
+scoring ≥ 0.5. The judge is a **`dspy.Predict`** over a signature whose inputs are
+`(question, gold, generated)` and whose output is a `0.0–1.0` correctness score,
+fired with the same model used everywhere (`LLM_MODEL`, or `JUDGE_MODEL` if set)
+through OpenRouter and called concurrently via DSPy's async `acall`. Grading is
+lenient (partial credit on lists, paraphrase, superset, date-format tolerance).
+Lexical `locomo_f1` / `token_f1` (official, paper-comparable) are still computed
+as free diagnostic columns; they punish verbose-but-correct answers and are
+**not** the headline.
 
 Judge verdicts are cached on disk (`evaluation/results/.judge_cache/`) keyed by
 (question, gold, answer, prompt-version), so unchanged answers contribute

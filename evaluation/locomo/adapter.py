@@ -16,7 +16,7 @@ from evaluation.locomo import prompts
 log = logging.getLogger(__name__)
 
 # Bump when a prompt change should invalidate cached verdicts.
-_PROMPT_VERSION = "locomo-judge-v1"
+_PROMPT_VERSION = "locomo-judge-dspy-v1"
 
 
 def _judge_gold(case: EvalCase) -> str:
@@ -61,26 +61,18 @@ class LocomoAdapter(BenchmarkAdapter):
                 "judge_cached": True,
             }
 
-        prompt = prompts.JUDGE_PROMPT.format(question=case.question, gold=gold, answer=answer)
         try:
-            verdict, usage = await self.judge.generate_json(prompts.JUDGE_SYSTEM, prompt)
+            score, reasoning = await self.judge.judge(case.question, gold, answer)
         except Exception as exc:
             log.exception("Judge failed for %s (scored 0.0)", case.case_id)
             return 0.0, {"judge_label": "ERROR", "judge_reasoning": str(exc)[:200]}
 
-        label = str(verdict.get("label", "")).strip().upper()
-        score = 1.0 if label == "CORRECT" else 0.0
-        reasoning = str(verdict.get("reasoning", ""))
+        label = "CORRECT" if score >= 0.5 else "WRONG"
         self._cache.put(
             {"score": score, "label": label, "reasoning": reasoning},
             _PROMPT_VERSION, case.question, gold, answer,
         )
-        return score, {
-            "judge_label": label or "UNPARSEABLE",
-            "judge_reasoning": reasoning,
-            "judge_total_tokens": usage["total_tokens"],
-            "judge_cost_usd": usage["cost_usd"],
-        }
+        return score, {"judge_label": label, "judge_reasoning": reasoning}
 
     def lexical_metrics(self, case: EvalCase, answer: str) -> dict[str, Any]:
         return {
