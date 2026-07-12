@@ -141,6 +141,21 @@ class _STMIngestHandler:
         # setting INGEST_CHUNK_CONCURRENCY>1 after validating it for your store.
         cap = int(os.environ.get("INGEST_CHUNK_CONCURRENCY", "1"))
 
+        # Batch NER for ALL chunks in one GLiNER2 forward pass when the extractor
+        # supports it — one padded batch beats N per-chunk calls on the CPU-bound
+        # ingest path. Falls back to per-chunk extraction otherwise (e.g. tests).
+        # Check the class (not the instance) so a Mock's auto-created attributes
+        # don't spoof support — only a real extractor exposing extract_batch batches.
+        batch_extractions: list[ExtractionResult] | None = None
+        if (
+            self._extractor is not None
+            and hasattr(type(self._extractor), "extract_batch")
+            and cleaned_texts
+        ):
+            batch_extractions = await asyncio.to_thread(
+                self._extractor.extract_batch, cleaned_texts
+            )
+
         # Set chunk_index before building coroutines (captured by value via idx).
         for idx, seg in enumerate(parsed.segments):
             seg.metadata["chunk_index"] = idx
@@ -153,9 +168,12 @@ class _STMIngestHandler:
             seg = parsed.segments[idx]
             clean = cleaned_texts[idx]
             embedding: list[float] = batch_embeddings[idx] if use_batch else self._embed_fn(clean)
-            # Wrap synchronous GLiNER2 extraction in a thread so concurrent
-            # chunks overlap their model/network I/O with DB writes.
-            extraction = await asyncio.to_thread(self._extract, clean)
+            # Use the pre-batched extraction when available; else extract this chunk
+            # in a thread so its model I/O overlaps DB writes.
+            if batch_extractions is not None:
+                extraction = batch_extractions[idx]
+            else:
+                extraction = await asyncio.to_thread(self._extract, clean)
             temporal = self._resolve_temporal(extraction.entities, seg, metadata)
             chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
 

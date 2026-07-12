@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import re
 import sys
 import time
@@ -25,6 +26,9 @@ from graphknows.extraction.relations.object_cleaner import clean_relation_object
 log = logging.getLogger(__name__)
 
 _BASE_THRESHOLD: float = 0.35
+# Chunks per GLiNER2 forward pass in extract_batch. Larger = better throughput,
+# more peak RAM. Tunable for the ingest-bound path.
+_BATCH_SIZE: int = int(os.environ.get("GRAPHKNOWS_GLINER_BATCH_SIZE", "16"))
 _SPACY_MODEL = "en_core_web_lg"
 _MIN_ENTITY_LABEL_COUNT = 1
 _MIN_RELATION_TRIGGER_COUNT = 1
@@ -208,8 +212,15 @@ class _SpacySchemaMiner:
     def build(self, text: str) -> _DynamicSchema:
         self._ensure_loaded()
         assert self._nlp is not None
+        return self._build_from_doc(self._nlp(text))
 
-        doc = self._nlp(text)
+    def build_batch(self, texts: list[str]) -> list[_DynamicSchema]:
+        """Mine schemas for many chunks via one batched ``nlp.pipe`` pass."""
+        self._ensure_loaded()
+        assert self._nlp is not None
+        return [self._build_from_doc(doc) for doc in self._nlp.pipe(texts)]
+
+    def _build_from_doc(self, doc: Any) -> _DynamicSchema:
         hints = [
             _EntityHint(
                 text=ent.text.strip(),
@@ -345,7 +356,57 @@ class GLiNER2EntityExtractor:
             True,  # include_confidence
             True,  # include_spans
         )
+        return self._map_raw(raw, dynamic_schema)
 
+    def extract_batch(self, texts: list[str]) -> list[ExtractionResult]:
+        """Extract for many chunks in one batched GLiNER2 forward pass.
+
+        Same per-text result as :meth:`extract`, but the model runs the chunks as
+        padded batches (``batch_extract``) instead of one call each — the win is
+        amortized tokenization + fewer ONNX ``session.run`` calls, which is where
+        the CPU-bound ingest spends its time. Chunks whose spaCy schema mines no
+        entities skip the model entirely (empty result), same as :meth:`extract`.
+        """
+        if not texts:
+            return []
+        self._ensure_model_loaded()
+        assert self._gliner is not None
+
+        # Mine all chunk schemas in one batched spaCy pass, then batch the GLiNER2
+        # forward pass over the chunks that yielded entity labels.
+        dynamic_schemas = self._schema_miner.build_batch(texts)
+        results: list[ExtractionResult | None] = [None] * len(texts)
+        batch_texts: list[str] = []
+        batch_schemas: list[Any] = []
+        batch_dynamic: list[Any] = []
+        batch_idx: list[int] = []
+        for i, (text, dynamic_schema) in enumerate(zip(texts, dynamic_schemas, strict=True)):
+            if not dynamic_schema.entity_spec:
+                results[i] = ExtractionResult()
+                continue
+            batch_texts.append(text)
+            batch_schemas.append(self._build_gliner_schema(dynamic_schema))
+            batch_dynamic.append(dynamic_schema)
+            batch_idx.append(i)
+
+        if batch_texts:
+            raws = self._gliner.batch_extract(
+                batch_texts,
+                batch_schemas,
+                _BATCH_SIZE,
+                _BASE_THRESHOLD,
+                0,  # num_workers (0 = current process; ONNX is already threaded)
+                True,  # format_results
+                True,  # include_confidence
+                True,  # include_spans
+            )
+            for i, raw, dynamic_schema in zip(batch_idx, raws, batch_dynamic, strict=True):
+                results[i] = self._map_raw(raw, dynamic_schema)
+
+        return [r if r is not None else ExtractionResult() for r in results]
+
+    def _map_raw(self, raw: dict[str, Any], dynamic_schema: _DynamicSchema) -> ExtractionResult:
+        """Map one GLiNER2 raw result → ExtractionResult (entities + relations)."""
         entities: list[dict[str, Any]] = []
         for raw_label, spans in (raw.get("entities") or {}).items():
             schema_label = _schema_label(raw_label)
