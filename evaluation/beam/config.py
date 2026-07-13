@@ -19,11 +19,13 @@ class BeamConfig(BaseEvalConfig):
     # ── Dataset ──────────────────────────────────────────────────────────────
     data_root: Path = Path("evaluation/data/beam")
     questions_file: str = "beam_100K.json"
-    # A conversation is a handful of long sessions plus a profile doc.
-    max_documents: int = 12
-    # Effectively no clipping — BEAM's point is large-context ingestion; the
-    # ingest pipeline chunks each session itself.
-    max_chars_per_document: int = 200_000
+    # BEAM sessions are 150K-185K chars each. The loader splits every session on
+    # message boundaries into bounded documents (a single oversized ingest crashes
+    # the extraction model), so one conversation yields ~30-40 documents — enough
+    # headroom to ingest the full 100K-token history without dropping content.
+    max_documents: int = 80
+    # Per-document size bound the loader splits sessions to (not a clip).
+    max_chars_per_document: int = 16_000
 
     # ── Lifecycle / output ───────────────────────────────────────────────────
     namespace: str = "eval_beam"

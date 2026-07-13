@@ -58,17 +58,46 @@ def _clip(text: str, max_chars: int) -> str:
     return clean[: max(0, max_chars - 3)].rstrip() + "..."
 
 
-def _session_text(session: list[dict[str, Any]]) -> str:
-    lines: list[str] = []
+def _message_line(msg: Any) -> str:
+    if not isinstance(msg, dict):
+        return ""
+    content = str(msg.get("content") or "").strip()
+    if not content:
+        return ""
+    role = str(msg.get("role") or "message")
+    return f"{role}: {content}"
+
+
+def _split_session(session: list[dict[str, Any]], max_chars: int) -> list[str]:
+    """Split a session into bounded text blocks on message boundaries.
+
+    BEAM sessions run 150K-185K chars — far too large to ingest as one document
+    (a single oversized ingest crashes the extraction model). Splitting on message
+    boundaries keeps every message intact and every block within ``max_chars``,
+    preserving all content (unlike clipping). A lone message longer than
+    ``max_chars`` is hard-wrapped.
+    """
+    blocks: list[str] = []
+    current: list[str] = []
+    size = 0
     for msg in session:
-        if not isinstance(msg, dict):
+        line = _message_line(msg)
+        if not line:
             continue
-        content = str(msg.get("content") or "").strip()
-        if not content:
-            continue
-        role = str(msg.get("role") or "message")
-        lines.append(f"{role}: {content}")
-    return "\n".join(lines)
+        pieces = (
+            [line[i : i + max_chars] for i in range(0, len(line), max_chars)]
+            if len(line) > max_chars
+            else [line]
+        )
+        for piece in pieces:
+            if current and size + len(piece) > max_chars:
+                blocks.append("\n".join(current))
+                current, size = [], 0
+            current.append(piece)
+            size += len(piece) + 1
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
 
 
 def _session_anchor(session: list[dict[str, Any]]) -> str:
@@ -81,7 +110,7 @@ def _session_anchor(session: list[dict[str, Any]]) -> str:
 def build_documents(
     record: dict[str, Any], *, max_documents: int, max_chars: int
 ) -> list[EvalDocument]:
-    """Chat sessions + a user-profile document, ready to ingest."""
+    """User-profile document + chat sessions split into bounded ingest documents."""
     documents: list[EvalDocument] = []
 
     profile = record.get("user_profile") or {}
@@ -93,17 +122,16 @@ def build_documents(
             )
 
     chat = record.get("chat") or []
-    for index, session in enumerate(chat[: max(0, max_documents - len(documents))]):
+    for index, session in enumerate(chat):
         if not isinstance(session, list):
             continue
-        text = _clip(_session_text(session), max_chars)
-        if not text:
-            continue
-        documents.append(
-            EvalDocument(
-                title=f"session-{index}", text=text, anchor_date=_session_anchor(session)
-            )
-        )
+        anchor = _session_anchor(session)
+        blocks = _split_session(session, max_chars)
+        for part, block in enumerate(blocks):
+            if len(documents) >= max_documents:
+                return documents
+            title = f"session-{index}" if len(blocks) == 1 else f"session-{index}-part{part}"
+            documents.append(EvalDocument(title=title, text=block, anchor_date=anchor))
     return documents
 
 
