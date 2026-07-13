@@ -7,8 +7,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-MAX_CHUNK_TOKENS: int = 200
+MAX_CHUNK_TOKENS: int = 384
 MIN_CHUNK_TOKENS: int = 48
+MAX_CHUNK_OVERLAP: int = 64  # trailing tokens carried into the next chunk
 APPROX_CHARS_PER_TOKEN: int = 4  # rough estimate, no tokenizer dep
 
 
@@ -118,6 +119,7 @@ class BaseParser(ABC):
         path: str,
         body: str,
         max_tokens: int,
+        overlap: int = MAX_CHUNK_OVERLAP,
     ) -> list[tuple[str, str]]:
         """Split a large section to ``<= max_tokens``, preserving line/turn boundaries.
 
@@ -128,6 +130,11 @@ class BaseParser(ABC):
         readable retrieval depend on. Prose (a single long line/paragraph) and any
         single over-long turn fall back to spaCy sentence packing so a chunk never
         breaks a word.
+
+        Consecutive chunks overlap by up to ``overlap`` tokens: when a chunk is
+        flushed, its trailing whole units (turns/sentences) that fit in the overlap
+        budget seed the next chunk, so a fact spanning a chunk boundary is not lost
+        to retrieval.
         """
         from graphknows.ingestion.parsers._sentences import split_sentences
 
@@ -141,6 +148,18 @@ class BaseParser(ABC):
             units, joiner = lines, "\n"  # dialogue: one unit per turn
         else:
             units, joiner = split_sentences(body), " "  # prose: sentence units
+
+        def _tail(seq: list[str]) -> tuple[list[str], int]:
+            """Trailing whole units of *seq* fitting in the overlap budget (order kept)."""
+            carried: list[str] = []
+            toks = 0
+            for u in reversed(seq):
+                ut = _toks(u)
+                if toks + ut > overlap:
+                    break
+                carried.insert(0, u)
+                toks += ut
+            return carried, toks
 
         bodies: list[str] = []
         buf: list[str] = []
@@ -157,7 +176,7 @@ class BaseParser(ABC):
                 for sent in split_sentences(unit):
                     if sub and sub_tokens + _toks(sent) > max_tokens:
                         bodies.append(" ".join(sub))
-                        sub, sub_tokens = [], 0
+                        sub, sub_tokens = _tail(sub)
                     sub.append(sent)
                     sub_tokens += _toks(sent)
                 if sub:
@@ -165,7 +184,7 @@ class BaseParser(ABC):
                 continue
             if buf and buf_tokens + _toks(unit) > max_tokens:
                 bodies.append(joiner.join(buf))
-                buf, buf_tokens = [], 0
+                buf, buf_tokens = _tail(buf)
             buf.append(unit)
             buf_tokens += _toks(unit)
         if buf:
