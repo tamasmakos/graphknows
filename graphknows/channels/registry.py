@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from graphknows.channels.base import Channel
 from graphknows.channels.collectors import DEFAULT_COLLECTOR_CHANNELS
+from graphknows.channels.graph_ppr import GraphPPRChannel
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
 CHANNEL_REGISTRY: dict[str, type[Channel]] = {
     cls.name: cls for cls in DEFAULT_COLLECTOR_CHANNELS
 }
+# Personalized-PageRank graph channel — seeds on query entities, propagates over
+# the relation graph. Fused alongside the deterministic collectors.
+CHANNEL_REGISTRY[GraphPPRChannel.name] = GraphPPRChannel
 
 
 def register(name: str, channel_cls: type[Channel]) -> None:

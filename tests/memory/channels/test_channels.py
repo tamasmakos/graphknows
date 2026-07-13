@@ -28,7 +28,7 @@ def _ctx(**parse):
 
 
 class TestBuildChannels:
-    def test_default_seven_no_frames(self):
+    def test_default_channels_no_frames(self):
         s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
         names = [c.name for c in build_channels(s)]
         assert names == [
@@ -39,6 +39,7 @@ class TestBuildChannels:
             "ltm_bm25",
             "temporal",
             "topic",
+            "ppr",
         ]
         assert "frame" not in names
 
