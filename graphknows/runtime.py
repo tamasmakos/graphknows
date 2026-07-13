@@ -153,16 +153,18 @@ class Memory:
         return self._retriever
 
     async def doctor(self) -> dict[str, Any]:
-        """Check configured backend connectivity."""
+        """Check configured backend connectivity for this runtime's namespace."""
         from graphknows.config.builders.stores import build_arcadedb_client
         from graphknows.config.health import get_version
+        from graphknows.config.namespace import db_names
 
+        stm_db, ltm_db = db_names(self.namespace)
         result: dict[str, Any] = {"version": get_version()}
         try:
             c = build_arcadedb_client(self.settings)
             await c.connect()
-            result["arcadedb_stm"] = await c.database_exists("stm")
-            result["arcadedb_ltm"] = await c.database_exists("ltm")
+            result["arcadedb_stm"] = await c.database_exists(stm_db)
+            result["arcadedb_ltm"] = await c.database_exists(ltm_db)
             await c.close()
         except Exception as exc:
             result["arcadedb_stm"] = str(exc)
@@ -171,43 +173,45 @@ class Memory:
         return result
 
     async def stats(self, session_id: str = "") -> dict[str, Any]:
-        """Return STM and LTM memory statistics."""
+        """Return STM and LTM memory statistics for this runtime's namespace."""
         from graphknows.config.builders.stores import build_arcadedb_client
+        from graphknows.config.namespace import db_names
 
+        stm_db, ltm_db = db_names(self.namespace)
         c = build_arcadedb_client(self.settings)
         await c.connect()
         try:
             if session_id:
                 sid = session_id
                 stm_chunks = await c.query(
-                    "stm",
+                    stm_db,
                     "MATCH (n:CHUNK {session_id: $sid}) RETURN count(n) AS c",
                     params={"sid": sid},
                 )
                 stm_turns = await c.query(
-                    "stm",
+                    stm_db,
                     "MATCH (n:TURN {session_id: $sid}) RETURN count(n) AS c",
                     params={"sid": sid},
                 )
                 ltm_chunks = await c.query(
-                    "ltm",
+                    ltm_db,
                     "MATCH (n:CHUNK {session_id: $sid}) RETURN count(n) AS c",
                     params={"sid": sid},
                 )
                 ltm_turns = await c.query(
-                    "ltm",
+                    ltm_db,
                     "MATCH (n:TURN {session_id: $sid}) RETURN count(n) AS c",
                     params={"sid": sid},
                 )
             else:
-                stm_chunks = await c.query("stm", "MATCH (n:CHUNK) RETURN count(n) AS c")
-                stm_turns = await c.query("stm", "MATCH (n:TURN) RETURN count(n) AS c")
-                ltm_chunks = await c.query("ltm", "MATCH (n:CHUNK) RETURN count(n) AS c")
-                ltm_turns = await c.query("ltm", "MATCH (n:TURN) RETURN count(n) AS c")
+                stm_chunks = await c.query(stm_db, "MATCH (n:CHUNK) RETURN count(n) AS c")
+                stm_turns = await c.query(stm_db, "MATCH (n:TURN) RETURN count(n) AS c")
+                ltm_chunks = await c.query(ltm_db, "MATCH (n:CHUNK) RETURN count(n) AS c")
+                ltm_turns = await c.query(ltm_db, "MATCH (n:TURN) RETURN count(n) AS c")
 
-            ltm_entities = await c.query("ltm", "MATCH (n:ENTITY) RETURN count(n) AS c")
-            ltm_topics = await c.query("ltm", "MATCH (n:TOPIC) RETURN count(n) AS c")
-            ltm_sessions = await c.query("ltm", "MATCH (n:SESSION) RETURN count(n) AS c")
+            ltm_entities = await c.query(ltm_db, "MATCH (n:ENTITY) RETURN count(n) AS c")
+            ltm_topics = await c.query(ltm_db, "MATCH (n:TOPIC) RETURN count(n) AS c")
+            ltm_sessions = await c.query(ltm_db, "MATCH (n:SESSION) RETURN count(n) AS c")
 
             def _n(rows: list[dict[str, Any]]) -> int:
                 return int(rows[0].get("c") or 0) if rows else 0

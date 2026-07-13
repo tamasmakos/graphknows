@@ -20,12 +20,18 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on core-
     raise MissingExtraError("The Memory Mirror web server", "web") from exc
 
 from graphknows.config import GraphKnowsSettings
-from graphknows.config.builders.stores import build_arcadedb_ltm_store, build_arcadedb_stm_store
+from graphknows.config.builders.stores import (
+    build_arcadedb_client,
+    build_arcadedb_ltm_store,
+    build_arcadedb_stm_store,
+)
 from graphknows.config.links import DEFAULT_PORT
+from graphknows.config.namespace import db_names, namespaces_from_databases
 from graphknows.runtime import Memory
 
 _settings: GraphKnowsSettings | None = None
-_runtime: Memory | None = None
+# One Memory per namespace — the web server browses many tenants in one process.
+_runtimes: dict[str, Memory] = {}
 
 
 def get_settings() -> GraphKnowsSettings:
@@ -36,12 +42,11 @@ def get_settings() -> GraphKnowsSettings:
     return _settings
 
 
-def get_runtime() -> Memory:
-    """Return the process-level Memory backing the Memory Mirror web server."""
-    global _runtime
-    if _runtime is None:
-        _runtime = Memory(get_settings())
-    return _runtime
+def get_runtime(namespace: str = "") -> Memory:
+    """Return the Memory for *namespace*, creating and caching it lazily."""
+    if namespace not in _runtimes:
+        _runtimes[namespace] = Memory(get_settings(), namespace=namespace)
+    return _runtimes[namespace]
 
 
 def _frontend_dir() -> Path:
@@ -174,8 +179,8 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
     return node_cypher, edge_cypher, {"limit": limit}
 
 
-async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
-    ltm = build_arcadedb_ltm_store(get_settings())
+async def _ltm_graph(session_id: str, limit: int, namespace: str = "") -> dict[str, Any]:
+    ltm = build_arcadedb_ltm_store(get_settings(), namespace)
     await ltm.connect()
     try:
         node_cypher, edge_cypher, params = _ltm_queries(session_id, limit)
@@ -230,6 +235,81 @@ async def _ltm_graph(session_id: str, limit: int) -> dict[str, Any]:
     }
 
 
+async def _db_count(
+    client: Any, db: str, cypher: str, params: dict[str, Any] | None = None
+) -> int | None:
+    """Count rows for a query, returning None when the database is absent/unready."""
+    try:
+        rows = await client.query(db, cypher, params=params)
+        return int(rows[0].get("c") or 0) if rows else 0
+    except Exception:
+        return None
+
+
+async def _namespace_stats(client: Any, namespace: str, session_id: str = "") -> dict[str, Any]:
+    """Return STM + LTM node counts for one namespace (optionally scoped to a session)."""
+    stm_db, ltm_db = db_names(namespace)
+    node_filter = " {session_id: $sid}" if session_id else ""
+    scoped = {"sid": session_id} if session_id else None
+    (
+        stm_chunks,
+        stm_turns,
+        stm_entities,
+        stm_sessions,
+        ltm_chunks,
+        ltm_turns,
+        ltm_entities,
+        ltm_topics,
+        ltm_sessions,
+    ) = await asyncio.gather(
+        _db_count(client, stm_db, f"MATCH (n:CHUNK{node_filter}) RETURN count(n) AS c", scoped),
+        _db_count(client, stm_db, f"MATCH (n:TURN{node_filter}) RETURN count(n) AS c", scoped),
+        _db_count(client, stm_db, "MATCH (n:ENTITY) RETURN count(n) AS c"),
+        _db_count(client, stm_db, "MATCH (n:SESSION) RETURN count(n) AS c"),
+        _db_count(client, ltm_db, f"MATCH (n:CHUNK{node_filter}) RETURN count(n) AS c", scoped),
+        _db_count(client, ltm_db, f"MATCH (n:TURN{node_filter}) RETURN count(n) AS c", scoped),
+        _db_count(client, ltm_db, "MATCH (n:ENTITY) RETURN count(n) AS c"),
+        _db_count(client, ltm_db, "MATCH (n:TOPIC) RETURN count(n) AS c"),
+        _db_count(client, ltm_db, "MATCH (n:SESSION) RETURN count(n) AS c"),
+    )
+    return {
+        "namespace": namespace,
+        "stm_db": stm_db,
+        "ltm_db": ltm_db,
+        "stm": {
+            "sessions": stm_sessions,
+            "chunks": stm_chunks,
+            "turns": stm_turns,
+            "entities": stm_entities,
+        },
+        "ltm": {
+            "sessions": ltm_sessions,
+            "entities": ltm_entities,
+            "topics": ltm_topics,
+            "chunks": ltm_chunks,
+            "turns": ltm_turns,
+        },
+    }
+
+
+async def namespaces(_: Request) -> JSONResponse:
+    """List available namespaces with per-namespace STM + LTM metadata."""
+    try:
+        client = build_arcadedb_client(get_settings())
+        await client.connect()
+        try:
+            dbs = await client.list_databases()
+            names = namespaces_from_databases(dbs)
+            metadata = await asyncio.gather(*(_namespace_stats(client, ns) for ns in names))
+        finally:
+            await client.close()
+        return JSONResponse(
+            {"namespaces": metadata, "default_namespace": get_settings().namespace}
+        )
+    except Exception as exc:
+        return JSONResponse(_error_payload(exc), status_code=503)
+
+
 async def healthz(_: Request) -> JSONResponse:
     """Liveness probe — process is up (no backend calls)."""
     return JSONResponse({"status": "ok"})
@@ -254,21 +334,28 @@ async def health(_: Request) -> JSONResponse:
 
 
 async def stats(request: Request) -> JSONResponse:
-    """Return STM and LTM memory statistics."""
+    """Return STM and LTM memory statistics for the requested namespace."""
     try:
         session_id = request.query_params.get("session_id", "")
-        return JSONResponse(await get_runtime().stats(session_id=session_id))
+        namespace = request.query_params.get("namespace", "")
+        client = build_arcadedb_client(get_settings())
+        await client.connect()
+        try:
+            return JSONResponse(await _namespace_stats(client, namespace, session_id))
+        finally:
+            await client.close()
     except Exception as exc:
         return JSONResponse(_error_payload(exc), status_code=503)
 
 
-async def sessions(_: Request) -> JSONResponse:
-    """Return known session ids from STM and LTM stores."""
+async def sessions(request: Request) -> JSONResponse:
+    """Return known session ids from STM and LTM stores for the requested namespace."""
+    namespace = request.query_params.get("namespace", "")
     values: set[str] = set()
     errors: list[str] = []
 
     try:
-        stm = build_arcadedb_stm_store(get_settings())
+        stm = build_arcadedb_stm_store(get_settings(), namespace)
         await stm.connect()
         try:
             rows = await stm.client.query(
@@ -283,7 +370,7 @@ async def sessions(_: Request) -> JSONResponse:
         errors.append(f"stm: {exc}")
 
     try:
-        ltm = build_arcadedb_ltm_store(get_settings())
+        ltm = build_arcadedb_ltm_store(get_settings(), namespace)
         await ltm.connect()
         try:
             rows = await ltm._qry("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
@@ -300,6 +387,7 @@ async def graph(request: Request) -> JSONResponse:
     """Return normalized nodes and links for the requested graph scope."""
     scope = request.query_params.get("scope", "ltm").lower()
     session_id = request.query_params.get("session_id", "")
+    namespace = request.query_params.get("namespace", "")
     limit = max(10, min(int(request.query_params.get("limit", "200")), 1000))
 
     try:
@@ -312,7 +400,7 @@ async def graph(request: Request) -> JSONResponse:
                     },
                     status_code=400,
                 )
-            stm = build_arcadedb_stm_store(get_settings())
+            stm = build_arcadedb_stm_store(get_settings(), namespace)
             await stm.connect()
             try:
                 raw = await stm.get_session_graph(session_id)
@@ -325,7 +413,7 @@ async def graph(request: Request) -> JSONResponse:
                 {"error": "invalid_scope", "message": "scope must be 'stm' or 'ltm'."},
                 status_code=400,
             )
-        return JSONResponse(await _ltm_graph(session_id, limit))
+        return JSONResponse(await _ltm_graph(session_id, limit, namespace))
     except Exception as exc:
         return JSONResponse(_error_payload(exc), status_code=503)
 
@@ -335,6 +423,7 @@ async def recall(request: Request) -> JSONResponse:
     query = request.query_params.get("q", "").strip()
     session_id = request.query_params.get("session_id", "")
     scope = request.query_params.get("scope", "both")
+    namespace = request.query_params.get("namespace", "")
     top_k = max(1, min(int(request.query_params.get("top_k", "5")), 25))
     if not query:
         return JSONResponse({"hits": []})
@@ -344,7 +433,7 @@ async def recall(request: Request) -> JSONResponse:
             status_code=400,
         )
     try:
-        result = await get_runtime().recall_memory(
+        result = await get_runtime(namespace).recall_memory(
             query, session_id=session_id, top_k=top_k, scope=scope
         )
         return JSONResponse(result)
@@ -373,6 +462,7 @@ async def ingest(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+    namespace = str(form.get("namespace", "")).strip()
     title = str(form.get("title", "")).strip()
     try:
         raw_bytes = await file_field.read()  # type: ignore[union-attr]
@@ -383,7 +473,9 @@ async def ingest(request: Request) -> JSONResponse:
         )
 
     try:
-        result = await get_runtime().ingest_memory(text, session_id=session_id, title=title)
+        result = await get_runtime(namespace).ingest_memory(
+            text, session_id=session_id, title=title
+        )
         return JSONResponse(
             {
                 "file_id": result["file_id"],
@@ -405,6 +497,7 @@ async def flush_session(request: Request) -> JSONResponse:
         body = {}
 
     session_id = str(body.get("session_id", "")).strip()
+    namespace = str(body.get("namespace", "")).strip()
     if not session_id:
         return JSONResponse(
             {"error": "session_id_required", "message": "session_id is required to flush."},
@@ -412,7 +505,7 @@ async def flush_session(request: Request) -> JSONResponse:
         )
 
     try:
-        result = await get_runtime().flush_memory(session_id)
+        result = await get_runtime(namespace).flush_memory(session_id)
         return JSONResponse(
             {
                 "session_id": session_id,
@@ -439,6 +532,7 @@ def _routes() -> list[Any]:
         Route("/healthz", healthz),
         Route("/readyz", readyz),
         Route("/api/health", health),
+        Route("/api/namespaces", namespaces),
         Route("/api/stats", stats),
         Route("/api/sessions", sessions),
         Route("/api/graph", graph),

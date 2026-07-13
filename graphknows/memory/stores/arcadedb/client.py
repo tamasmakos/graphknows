@@ -124,6 +124,12 @@ class ArcadeDBClient:
             return bool(r.json().get("result", False))
         return False
 
+    async def list_databases(self) -> list[str]:
+        """Return the names of all databases on the ArcadeDB server."""
+        r = await self._c().get(f"{self._base}/api/v1/databases")
+        _raise_for_status(r)
+        return list(r.json().get("result", []))
+
     # ------------------------------------------------------------------
     # Query / command
     # ------------------------------------------------------------------

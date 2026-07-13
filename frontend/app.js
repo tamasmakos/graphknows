@@ -1,6 +1,9 @@
 ﻿const canvas = document.querySelector("#graphCanvas");
 const ctx = canvas.getContext("2d");
 const emptyState = document.querySelector("#emptyState");
+const namespaceSelect = document.querySelector("#namespaceSelect");
+const namespaceCards = document.querySelector("#namespaceCards");
+const nsRefreshButton = document.querySelector("#nsRefreshButton");
 const sessionInput = document.querySelector("#sessionInput");
 const sessionsList = document.querySelector("#sessions");
 const limitInput = document.querySelector("#limitInput");
@@ -64,6 +67,14 @@ function renderOpLog() {
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function currentScope() {
   return document.querySelector("input[name='scope']:checked").value;
+}
+
+function currentNamespace() {
+  return namespaceSelect.value || "";
+}
+
+function nsLabel(namespace) {
+  return namespace || "default";
 }
 
 function setText(el, value) {
@@ -333,6 +344,7 @@ async function loadStats() {
   try {
     const params = new URLSearchParams();
     if (sessionInput.value) params.set("session_id", sessionInput.value);
+    if (currentNamespace()) params.set("namespace", currentNamespace());
     const data = await fetchJson(`/api/stats?${params}`);
     setText(stmChunksEl, data.stm?.chunks ?? data.stm?.chunk_count ?? 0);
     setText(ltmTopicsEl, data.ltm?.topics ?? data.ltm?.topic_count ?? 0);
@@ -342,9 +354,83 @@ async function loadStats() {
   }
 }
 
+function metaCell(label, value) {
+  const shown = value === null || value === undefined ? "—" : value;
+  return `<span class="ns-metric"><b>${escapeHtml(String(shown))}</b> ${escapeHtml(label)}</span>`;
+}
+
+function renderNamespaceCards(entries, active) {
+  namespaceCards.innerHTML = "";
+  if (!entries.length) {
+    namespaceCards.innerHTML = `<div class="ns-empty">No namespaces found</div>`;
+    return;
+  }
+  for (const ns of entries) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `ns-card${ns.namespace === active ? " active" : ""}`;
+    const stm = ns.stm || {};
+    const ltm = ns.ltm || {};
+    card.innerHTML = `
+      <span class="ns-name">${escapeHtml(nsLabel(ns.namespace))}</span>
+      <span class="ns-dbs">${escapeHtml(ns.stm_db || "")} · ${escapeHtml(ns.ltm_db || "")}</span>
+      <span class="ns-row"><i>STM</i>${metaCell("sess", stm.sessions)}${metaCell("chunk", stm.chunks)}${metaCell("turn", stm.turns)}${metaCell("ent", stm.entities)}</span>
+      <span class="ns-row"><i>LTM</i>${metaCell("sess", ltm.sessions)}${metaCell("ent", ltm.entities)}${metaCell("topic", ltm.topics)}${metaCell("chunk", ltm.chunks)}${metaCell("turn", ltm.turns)}</span>
+    `;
+    card.addEventListener("click", () => {
+      if (namespaceSelect.value === ns.namespace) return;
+      namespaceSelect.value = ns.namespace;
+      onNamespaceChange();
+    });
+    namespaceCards.append(card);
+  }
+}
+
+async function loadNamespaces(preferred = null) {
+  const previous = preferred ?? namespaceSelect.value;
+  try {
+    const data = await fetchJson("/api/namespaces");
+    const entries = data.namespaces || [];
+    const values = entries.map((ns) => ns.namespace);
+
+    namespaceSelect.innerHTML = "";
+    for (const ns of entries) {
+      const option = document.createElement("option");
+      option.value = ns.namespace;
+      option.textContent = nsLabel(ns.namespace);
+      namespaceSelect.append(option);
+    }
+
+    // Preserve current selection; else fall back to the server default, else default.
+    let selected = previous;
+    if (!values.includes(selected)) {
+      selected = values.includes(data.default_namespace) ? data.default_namespace : (values[0] ?? "");
+    }
+    namespaceSelect.value = selected;
+
+    renderNamespaceCards(entries, namespaceSelect.value);
+  } catch (error) {
+    namespaceCards.innerHTML = `<div class="ns-empty ns-err">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function onNamespaceChange() {
+  updateFlushButton();
+  // Selecting a namespace clears session-scoped state — a session id belongs to
+  // one namespace's databases and rarely carries over.
+  loadSessions();
+  loadGraph();
+  // Reflect the new active card without a full metadata reload.
+  for (const card of namespaceCards.querySelectorAll(".ns-card")) {
+    card.classList.toggle("active", card.querySelector(".ns-name")?.textContent === nsLabel(currentNamespace()));
+  }
+}
+
 async function loadSessions() {
   try {
-    const data = await fetchJson("/api/sessions");
+    const params = new URLSearchParams();
+    if (currentNamespace()) params.set("namespace", currentNamespace());
+    const data = await fetchJson(`/api/sessions?${params}`);
     sessionsList.innerHTML = "";
     for (const sessionId of data.sessions || []) {
       const option = document.createElement("option");
@@ -370,6 +456,7 @@ async function loadGraph() {
 
   const params = new URLSearchParams({ scope, limit: limitInput.value || "200" });
   if (session) params.set("session_id", session);
+  if (currentNamespace()) params.set("namespace", currentNamespace());
   resultsEl.innerHTML = "";
   selectionEl.textContent = "Loading graphâ€¦";
   try {
@@ -420,6 +507,7 @@ async function search(event) {
   const effectiveScope = scope === "stm" ? "stm" : sessionInput.value.trim() ? "both" : "ltm";
   const params = new URLSearchParams({ q: query, scope: effectiveScope, top_k: "8" });
   if (sessionInput.value.trim()) params.set("session_id", sessionInput.value.trim());
+  if (currentNamespace()) params.set("namespace", currentNamespace());
   resultsEl.textContent = "Searchingâ€¦";
   try {
     const data = await fetchJson(`/api/recall?${params}`);
@@ -458,6 +546,7 @@ async function ingestFile(file) {
   const formData = new FormData();
   formData.append("file", file, file.name);
   formData.append("session_id", sessionId);
+  formData.append("namespace", currentNamespace());
   formData.append("title", file.name.replace(/\.[^.]+$/, ""));
 
   try {
@@ -553,6 +642,7 @@ async function flushSession() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         session_id: sessionId,
+        namespace: currentNamespace(),
         options: { clear_stm: true, run_gds: true, merge_entities: true },
       }),
     });
@@ -565,6 +655,7 @@ async function flushSession() {
     if (ltmRadio) { ltmRadio.checked = true; updateFlushButton(); }
     loadGraph();
     loadSessions();
+    loadNamespaces();
   } catch (error) {
     flushStatsSection.hidden = false;
     flushStatsGrid.innerHTML = "";
@@ -634,6 +725,8 @@ canvas.addEventListener("wheel", (event) => {
 // â”€â”€ Event wiring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 refreshButton.addEventListener("click", loadGraph);
 searchForm.addEventListener("submit", search);
+namespaceSelect.addEventListener("change", onNamespaceChange);
+nsRefreshButton.addEventListener("click", loadNamespaces);
 
 sessionInput.addEventListener("input", () => { updateFlushButton(); });
 sessionInput.addEventListener("change", loadGraph);
@@ -655,5 +748,12 @@ window.addEventListener("resize", resize);
 resize();
 updateFlushButton();
 loadHealth();
-loadSessions();
-loadGraph();
+
+// Resolve the namespace list before loading namespace-scoped graph/sessions so
+// the first requests target the right database pair.
+(async () => {
+  await loadNamespaces(urlParams.get("namespace"));
+  updateFlushButton();
+  loadSessions();
+  loadGraph();
+})();

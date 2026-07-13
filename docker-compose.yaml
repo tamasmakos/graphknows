@@ -17,14 +17,30 @@ x-graphknows-env: &graphknows-env
 
 services:
   arcadedb:
-    image: arcadedata/arcadedb:latest
+    # Pinned to >=26.3.2: that release adds the Graph Analytical View / OLAP
+    # engine. Without it, CALL algo.* (e.g. node2vec) runs through the OLTP
+    # path and can take minutes on our entity graph, blowing past the HTTP
+    # client's read timeout and looking hung. See ltm_store._entity_graph()
+    # and the analytical view created in ltm_store for the OLAP-backed path.
+    image: arcadedata/arcadedb:26.5.1
     ports:
       - "${GRAPHKNOWS_ARCADEDB_PORT:-2480}:2480"
     environment:
       # Give the JVM real heap: vector indexes (esp. 1536-dim remote embeddings)
-      # are memory-hungry, and the default heap OOMs ("Java heap space") and
-      # GC-thrashes under concurrent ingest. Tune GRAPHKNOWS_ARCADEDB_XMX to host RAM.
-      JAVA_OPTS: "-Xms4G -Xmx${GRAPHKNOWS_ARCADEDB_XMX:-16G} -Darcadedb.server.rootPassword=${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
+      # and graph algorithms are memory-hungry; the 2G default OOMs ("Java heap
+      # space") and wedges the whole server (every request then hangs).
+      #
+      # CRITICAL: the heap MUST be set via ARCADEDB_OPTS_MEMORY, not JAVA_OPTS.
+      # server.sh launches java as `$JAVA_OPTS $ARCADEDB_OPTS_MEMORY ...`, and the
+      # image ships ARCADEDB_OPTS_MEMORY="-Xms2G -Xmx2G". Since the last -Xmx on
+      # the JVM line wins, an -Xmx set in JAVA_OPTS is silently overridden back to
+      # 2G. (That's why the earlier 8G/16G "heap raise" commits had no effect.)
+      # Tune GRAPHKNOWS_ARCADEDB_XMX to host RAM.
+      ARCADEDB_OPTS_MEMORY: "-Xms4G -Xmx${GRAPHKNOWS_ARCADEDB_XMX:-16G}"
+      # Keep the image's tuned collector (generational ZGC) — setting JAVA_OPTS
+      # replaces the image default, so we must restate it here alongside the root
+      # password.
+      JAVA_OPTS: "-XX:+UseZGC -XX:+ZGenerational -Darcadedb.server.rootPassword=${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
     volumes:
       - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped

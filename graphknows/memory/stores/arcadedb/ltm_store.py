@@ -31,6 +31,12 @@ UTC = UTC
 _N2V_DIM = 64
 _N2V_KNN = 4
 _N2V_MIN_SIM = 0.5
+# Graph Analytical View (OLAP) that backs CALL algo.* — without a covering view
+# ArcadeDB runs graph algorithms through the OLTP path, orders of magnitude
+# slower (node2vec blows past the client read timeout and looks hung).
+# Requires ArcadeDB >=26.3.2. UPDATE MODE OFF keeps ingest commits cheap; we
+# REBUILD it on demand right before node2vec runs at promotion time.
+_OLAP_VIEW = "ltm_olap"
 # Structural/provenance edge types excluded when reading the entity-relation graph
 # (we want semantic relations, not graph plumbing).
 _NON_COMMUNITY_EDGE_TYPES = (
@@ -872,6 +878,31 @@ class ArcadeDBLTMStore:
                         "_write_community_ids failed for %r (cid=%s): %s", name, cid, exc
                     )
 
+    async def _ensure_analytical_view(self) -> None:
+        """Create + refresh the Graph OLAP view so CALL algo.* uses the CSR engine.
+
+        Without a covering Graph Analytical View, ArcadeDB runs graph algorithms
+        (node2vec) through the OLTP traversal path — orders of magnitude slower,
+        enough to exceed the client read timeout and look hung. Requires ArcadeDB
+        >=26.3.2. A full-graph view (no VERTEX/EDGE TYPES clause) covers every
+        type node2vec touches. Raises on failure so the caller falls back to the
+        pure-Python co-occurrence graph.
+        """
+        try:
+            await self._c.command(
+                self._db,
+                f"CREATE GRAPH ANALYTICAL VIEW {_OLAP_VIEW} UPDATE MODE OFF",
+                language="sql",
+            )
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                raise
+        # UPDATE MODE OFF marks the view stale on each commit; rebuild it against
+        # current data before running the algorithm.
+        await self._c.command(
+            self._db, f"REBUILD GRAPH ANALYTICAL VIEW {_OLAP_VIEW}", language="sql"
+        )
+
     async def _entity_graph(
         self,
     ) -> tuple[list[str], list[tuple[int, int]], list[float], str] | None:
@@ -889,6 +920,7 @@ class ArcadeDBLTMStore:
         except ImportError:
             return await self._cooccurrence_graph()
         try:
+            await self._ensure_analytical_view()
             rows = await self._qry(
                 f"CALL algo.node2vec({{walkLength:20,walks:20,dimensions:{_N2V_DIM}}}) "
                 "YIELD node, embedding WHERE node.name IS NOT NULL "

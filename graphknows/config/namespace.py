@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 
 # ArcadeDB database names are filesystem directory names; keep them to a safe
 # character set and a conservative length. The suffix we add is ``stm_``/``ltm_``.
@@ -51,3 +52,19 @@ def db_names(namespace: str) -> tuple[str, str]:
     if not ns:
         return ("stm", "ltm")
     return (f"stm_{ns}", f"ltm_{ns}")
+
+
+def namespaces_from_databases(databases: Iterable[str]) -> list[str]:
+    """Derive the available namespaces from a list of ArcadeDB database names.
+
+    Inverse of :func:`db_names`. ``stm_<ns>``/``ltm_<ns>`` map to ``<ns>``, and a
+    namespace is reported when *either* half of its pair exists. The default
+    (``""``) namespace — the canonical ``stm``/``ltm`` pair — is always included
+    and sorts first, so a browser can always select it.
+    """
+    found: set[str] = set()
+    for db in set(databases):
+        for prefix in ("stm_", "ltm_"):
+            if db.startswith(prefix) and len(db) > len(prefix):
+                found.add(db[len(prefix) :])
+    return [""] + sorted(found)

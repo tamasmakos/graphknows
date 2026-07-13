@@ -19,6 +19,11 @@
       <main class="workspace">
         <section class="graph-panel" aria-label="Memory graph">
           <div class="controls" aria-label="Graph controls">
+            <label title="Namespace = a physical ArcadeDB database pair (stm_<ns>/ltm_<ns>). Scopes every operation to that tenant.">
+              <span>Namespace</span>
+              <select id="namespaceSelect" autocomplete="off"></select>
+            </label>
+
             <label title="Session ID scopes STM operations. Required for STM graph, recall, ingest and flush.">
               <span>Session</span>
               <input id="sessionInput" list="sessions" placeholder="required for STM" autocomplete="off" />
@@ -47,6 +52,17 @@
         </section>
 
         <aside class="side-panel" aria-label="Operations and graph details">
+
+          <!-- Namespaces -->
+          <section class="namespaces-block">
+            <div class="namespaces-head">
+              <h2>Namespaces</h2>
+              <button id="nsRefreshButton" type="button" class="ns-refresh" title="Reload namespace list and metadata from ArcadeDB">↻</button>
+            </div>
+            <div id="namespaceCards" class="namespace-cards" aria-live="polite">
+              <div class="ns-empty">Loading namespaces…</div>
+            </div>
+          </section>
 
           <!-- Recall -->
           <section class="search-block">

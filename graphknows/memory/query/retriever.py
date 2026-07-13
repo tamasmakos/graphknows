@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import re
 from typing import Any
 
@@ -171,7 +172,7 @@ def _declarative_variant(question: str) -> str | None:
 # chunk), so seeding entity traversal on them floods recall with the whole
 # conversation. Such entities are dropped from traversal — the semantic and
 # full-text channels still cover their chunks.
-_ENTITY_SATURATION_RATIO: float = 0.5
+_ENTITY_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_ENTITY_SATURATION_RATIO", "0.5"))
 
 class DETRetriever(BaseGraphRetriever):
     """Deterministic three-collector hybrid retriever."""
