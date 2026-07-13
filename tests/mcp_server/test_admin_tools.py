@@ -10,7 +10,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_memory_purge_delegates_to_runtime() -> None:
     """memory_purge keeps the MCP adapter thin and calls the runtime facade."""
-    from graphknows.mcp.tools.admin import memory_purge
+    from graphknows.server.mcp.tools.admin import memory_purge
 
     runtime = MagicMock()
     runtime.purge_memory = AsyncMock(
@@ -24,7 +24,7 @@ async def test_memory_purge_delegates_to_runtime() -> None:
     )
 
     with patch(
-        "graphknows.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
+        "graphknows.server.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
     ) as get_runtime:
         result = await memory_purge(scope="both", session_id="sess-1")
 
@@ -38,13 +38,13 @@ async def test_memory_purge_delegates_to_runtime() -> None:
 @pytest.mark.asyncio
 async def test_memory_purge_routes_by_namespace() -> None:
     """An explicit namespace is routed to the matching runtime."""
-    from graphknows.mcp.tools.admin import memory_purge
+    from graphknows.server.mcp.tools.admin import memory_purge
 
     runtime = MagicMock()
     runtime.purge_memory = AsyncMock(return_value={"errors": []})
 
     with patch(
-        "graphknows.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
+        "graphknows.server.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
     ) as get_runtime:
         await memory_purge(scope="stm", session_id="s", namespace="acme")
 
@@ -54,7 +54,7 @@ async def test_memory_purge_routes_by_namespace() -> None:
 @pytest.mark.asyncio
 async def test_memory_drop_namespace_delegates() -> None:
     """memory_drop_namespace routes to the namespace's runtime and drops it."""
-    from graphknows.mcp.tools.admin import memory_drop_namespace
+    from graphknows.server.mcp.tools.admin import memory_drop_namespace
 
     runtime = MagicMock()
     runtime.drop_namespace = AsyncMock(
@@ -62,7 +62,7 @@ async def test_memory_drop_namespace_delegates() -> None:
     )
 
     with patch(
-        "graphknows.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
+        "graphknows.server.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
     ) as get_runtime:
         result = await memory_drop_namespace(namespace="acme")
 

@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from graphknows.extraction.ontology.loader import OntologyLoader, OntologyManifest
-from graphknows.extraction.ontology.router import OntologyRouter
+from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import OntologyLoader, OntologyManifest
+from graphknows.ingestion.extraction.relations.llm_assisted.ontology.router import OntologyRouter
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 REGISTRY_ROOT = (
-    Path(__file__).parent.parent.parent / "graphknows" / "extraction" / "ontology" / "assets"
+    Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "extraction" / "relations" / "llm_assisted" / "ontology" / "assets"
 )
 
 

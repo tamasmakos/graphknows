@@ -6,7 +6,7 @@ Run against a live ArcadeDB:
     pip install 'graphknows[langgraph,local-embeddings,extraction]'
     python examples/langgraph_agent.py
 
-The graph has two memory nodes wired from ``graphknows.adapters.langgraph``:
+The graph has two memory nodes wired from ``graphknows.integrations.langgraph``:
 ``recall`` injects prior memories for the latest user turn, and ``remember``
 persists the turn. A real agent would put an LLM call between them.
 """
@@ -20,7 +20,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from graphknows import Memory
-from graphknows.adapters.langgraph import recall, remember
+from graphknows.integrations.langgraph import recall, remember
 
 
 class State(TypedDict, total=False):

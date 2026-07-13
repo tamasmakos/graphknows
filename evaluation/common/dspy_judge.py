@@ -14,7 +14,7 @@ from typing import Any
 
 import dspy
 
-from graphknows.config.llm import get_openrouter_api_key
+from graphknows.llm import get_openrouter_api_key
 
 log = logging.getLogger(__name__)
 

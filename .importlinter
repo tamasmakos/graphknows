@@ -6,10 +6,30 @@ unmatched_ignore_imports_alerting = none
 name = Declared architecture layers
 type = layers
 layers =
-    graphknows.mcp
-    graphknows.web
-    graphknows.runtime
+    graphknows.server | graphknows.integrations
     graphknows.memory
-    graphknows.extraction
+    graphknows.ingestion | graphknows.retrieval
+    graphknows.channels
+    graphknows.ranking
+    graphknows.storage
+    graphknows.models | graphknows.settings | graphknows.llm
+    graphknows.exceptions
+
+[importlinter:contract:pipelines-independent]
+name = Ingestion and retrieval must not import each other
+type = independence
+modules =
     graphknows.ingestion
-    graphknows.config
+    graphknows.retrieval
+
+[importlinter:contract:client-stdlib-only]
+name = The out-of-process client SDK stays stdlib-only
+type = forbidden
+source_modules =
+    graphknows.integrations.client
+forbidden_modules =
+    graphknows.ingestion
+    graphknows.retrieval
+    graphknows.storage
+    graphknows.channels
+    graphknows.memory

@@ -1,4 +1,4 @@
-"""Unit tests for graphknows.client — stdlib-only, no live MCP server."""
+"""Unit tests for graphknows.integrations.client — stdlib-only, no live MCP server."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from graphknows.client import (
+from graphknows.integrations.client import (
     GraphKnowsMCPClient,
     MCPClientError,
     RemoteMemory,

@@ -1,182 +1,101 @@
-# tach.toml — module boundary enforcement for graphknows
-# Target architecture (2026-05-31): config is the composition root,
-# ingestion owns domain/ontology plugins, and memory owns reads + writes.
+# tach.toml — module boundary enforcement for graphknows 2.0
+# Capability-first architecture: core primitives at the bottom; ingestion and
+# retrieval are sibling pipelines that meet only through channels + storage;
+# the memory facade composes them; server/integrations sit on top.
 
 source_roots = ["."]
 
+# --- bottom layer: settings, models, exceptions, version, llm helper ---
 [[modules]]
-path = "graphknows.ports"
-depends_on = []
-
-# Stdlib-only out-of-process client SDK — depends on nothing but the root
-# exception hierarchy, so it installs and imports with the core package alone.
-[[modules]]
-path = "graphknows.client"
-depends_on = []
-
-# Framework adapters — hooks are duck-typed (take a memory instance), the
-# langgraph store touches only the root exception hierarchy.
-[[modules]]
-path = "graphknows.adapters"
+path = "graphknows.settings"
 depends_on = []
 
 [[modules]]
-path = "graphknows.ingestion.domain"
+path = "graphknows.models"
 depends_on = []
 
 [[modules]]
-path = "graphknows.config"
+path = "graphknows.llm"
+depends_on = []
+
+# Transport-neutral leaf utilities.
+[[modules]]
+path = "graphknows._async_bridge"
 depends_on = []
 
 [[modules]]
-path = "graphknows.config.adapters"
-depends_on = [ "graphknows.extraction", "graphknows.memory.stores", "graphknows.ports"]
+path = "graphknows.links"
+depends_on = []
 
+# --- storage: persistence + store protocols ---
+[[modules]]
+path = "graphknows.storage"
+depends_on = ["graphknows.settings"]
+
+# --- ranking: pure scoring primitives (RRF, rerank). A top-level shared leaf so
+#     both channels and retrieval reuse it without a channels<->retrieval edge. ---
+[[modules]]
+path = "graphknows.ranking"
+depends_on = ["graphknows.settings"]
+
+# --- channels: symmetric write/read signals ---
+[[modules]]
+path = "graphknows.channels"
+depends_on = ["graphknows.settings", "graphknows.storage", "graphknows.ranking"]
+
+# --- ingestion (write path) ---
 [[modules]]
 path = "graphknows.ingestion"
-depends_on = []
-
-[[modules]]
-path = "graphknows.extraction"
 depends_on = [
-  "graphknows.config",
-  "graphknows.ingestion.domain",
-  "graphknows.ports",
-  "graphknows.memory.stores",  # legacy (accepted 2026-07): frames.py reuses embedder — TODO invert
+  "graphknows._async_bridge",
+  "graphknows.settings",
+  "graphknows.models",
+  "graphknows.storage",
+  "graphknows.channels",
+  "graphknows.llm",
 ]
 
+# --- retrieval (read path) ---
 [[modules]]
-path = "graphknows.memory.models"
-depends_on = ["graphknows.memory"]
-
-[[modules]]
-path = "graphknows.memory.stores"
+path = "graphknows.retrieval"
 depends_on = [
-  "graphknows.ingestion.domain",
-  "graphknows.memory.ltm",
-  "graphknows.memory.models",  # legacy (accepted 2026-07): ltm_store imports gds.CommunityResult
-  "graphknows.config",         # legacy (accepted 2026-07): embedder reads GraphKnowsSettings
+  "graphknows._async_bridge",
+  "graphknows.settings",
+  "graphknows.models",
+  "graphknows.storage",
+  "graphknows.channels",
+  "graphknows.ranking",
+  "graphknows.llm",
 ]
 
-[[modules]]
-path = "graphknows.memory.temporal"
-depends_on = []
-
-[[modules]]
-path = "graphknows.memory.query"
-depends_on = [
-  "graphknows.config",
-  "graphknows.config.builders",
-  "graphknows.memory.models",
-  "graphknows.memory.stm",
-  "graphknows.memory.stores",
-  "graphknows.memory.temporal",
-  "graphknows.ports",
-  "graphknows.memory",  # legacy (accepted 2026-07): retriever imports channels.base/collectors
-]
-
-[[modules]]
-path = "graphknows.memory.stm"
-depends_on = [
-  "graphknows.extraction",
-  "graphknows.ingestion",
-  "graphknows.ingestion.domain",  # legacy (accepted 2026-07): ingest.py reads default taxonomy
-  "graphknows.memory.models",
-  "graphknows.memory.stores", "graphknows.memory.query", "graphknows.memory",
-  "graphknows.memory.temporal",
-]
-
-[[modules]]
-path = "graphknows.memory.ltm"
-depends_on = [
-  "graphknows.config",
-  "graphknows.memory.models",
-]
-
-[[modules]]
-path = "graphknows.memory.workflows"
-depends_on = [
-  "graphknows.extraction",
-  "graphknows.ingestion.domain",
-  "graphknows.memory",
-  "graphknows.memory.models",
-  "graphknows.memory.stm", "graphknows.config.builders",
-]
-
+# --- memory facade: the composition root ---
 [[modules]]
 path = "graphknows.memory"
 depends_on = [
-  "graphknows.config.adapters",
+  "graphknows._async_bridge",
+  "graphknows.links",
+  "graphknows.settings",
+  "graphknows.models",
+  "graphknows.storage",
+  "graphknows.channels",
   "graphknows.ingestion",
-  "graphknows.ingestion.domain",
-  "graphknows.memory.ltm",
-  "graphknows.memory.models",
-  "graphknows.memory.query",
-  "graphknows.memory.stm",
-  "graphknows.memory.stores",
-  "graphknows.ports",
-  "graphknows.extraction",  # legacy (accepted 2026-07): channels + extractor reuse extraction
-  "graphknows.config",      # legacy (accepted 2026-07): extractor reads GraphKnowsSettings
+  "graphknows.retrieval",
 ]
 
+# --- integrations + server (endpoints) ---
 [[modules]]
-path = "graphknows.config.builders"
+path = "graphknows.integrations"
 depends_on = [
-  "graphknows.config",
-  "graphknows.config.adapters",
-  "graphknows.extraction",
+  "graphknows._async_bridge","graphknows.memory", "graphknows.models", "graphknows.ingestion"]
+
+[[modules]]
+path = "graphknows.server"
+depends_on = [
+  "graphknows.links",
+  "graphknows.settings",
+  "graphknows.models",
+  "graphknows.storage",
   "graphknows.memory",
-  "graphknows.memory.stm",
-  "graphknows.memory.stores",
-  "graphknows.memory.workflows",
-  "graphknows.ports",
-]
-
-[[modules]]
-path = "graphknows.runtime"
-depends_on = [
-  "graphknows.config",
-  "graphknows.config.builders",
-  "graphknows.memory",
-  "graphknows.memory.models",
-  "graphknows.memory.query",
-  "graphknows.memory.stm",
-  "graphknows.memory.workflows",
-]
-
-[[modules]]
-path = "graphknows.mcp"
-depends_on = [
-  "graphknows.config",
-  "graphknows.config.builders",
-  "graphknows.memory.query",
-  "graphknows.memory.stores",
-  "graphknows.memory.stm",
-  "graphknows.mcp.tools",
-  "graphknows.runtime",
-]
-
-[[modules]]
-path = "graphknows.mcp.tools"
-depends_on = [
-  "graphknows.config",
-  "graphknows.config.builders",
-  "graphknows.ingestion.domain",
-  "graphknows.mcp",
-  "graphknows.web",
-  "graphknows.memory",
-  "graphknows.memory.models",
-  "graphknows.memory.query",
-  "graphknows.memory.stm",
-  "graphknows.memory.stores",
-  "graphknows.memory.workflows",
-]
-
-[[modules]]
-path = "graphknows.web"
-depends_on = [
-  "graphknows.config",
-  "graphknows.config.builders",
-  "graphknows.memory.models",
-  "graphknows.runtime",
+  "graphknows.retrieval",
+  "graphknows.ingestion",
 ]

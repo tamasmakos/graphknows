@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from graphknows.memory.temporal import filter_by_validity_window
+from graphknows.channels.temporal import filter_by_validity_window
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ class TestLTMSupersedence:
 
     def _make_store(self) -> Any:
         """Return an ArcadeDBLTMStore with a mocked ArcadeDBClient."""
-        from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
+        from graphknows.storage.arcadedb.ltm_store import ArcadeDBLTMStore
 
         client = MagicMock()
         client.command = AsyncMock(return_value=[])
@@ -287,7 +287,7 @@ class TestSTMBitemporalFieldForwarding:
     @pytest.mark.asyncio
     async def test_relation_edges_include_valid_at(self) -> None:
         """read_session_subgraph should include valid_at in relation_edges output."""
-        from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+        from graphknows.storage.arcadedb.stm_store import ArcadeDBSTMStore
 
         client = MagicMock()
         # Minimal stubs for all queries: return empty except relation_rows.

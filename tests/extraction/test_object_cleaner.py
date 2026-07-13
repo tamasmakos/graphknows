@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.extraction.relations.object_cleaner import clean_relation_object
-from graphknows.memory.extractor import _SpacySchemaMiner
+from graphknows.ingestion.extraction.relations.llm_free import clean_relation_object
+from graphknows.ingestion.extraction.entities.extractor import _SpacySchemaMiner
 
 _REL_TERMS = frozenset({"husband", "wife", "best friend"})
 

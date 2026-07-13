@@ -9,15 +9,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
-from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
-from graphknows.memory.stores.arcadedb.vector_store import ArcadeDBVectorStore
-from graphknows.ports import (
-    ILTMStore,
-    ISTMStore,
-    IVectorDb,
-    IVectorStore,
-)
+from graphknows.storage.arcadedb.ltm_store import ArcadeDBLTMStore
+from graphknows.storage.arcadedb.stm_store import ArcadeDBSTMStore
+from graphknows.storage.arcadedb.vector_store import ArcadeDBVectorStore
+from graphknows.storage.base import ILTMStore, ISTMStore, IVectorStore
 
 
 def _client() -> MagicMock:
@@ -34,7 +29,3 @@ def test_arcadedb_ltm_store_satisfies_iltmstore() -> None:
 
 def test_arcadedb_vector_store_satisfies_ivectorstore() -> None:
     assert isinstance(ArcadeDBVectorStore(client=_client()), IVectorStore)
-
-
-def test_ivectordb_is_deprecated_alias_of_ivectorstore() -> None:
-    assert IVectorDb is IVectorStore

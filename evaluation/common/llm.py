@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from graphknows.config.llm import get_openrouter_api_key, normalize_openrouter_model
+from graphknows.llm import get_openrouter_api_key, normalize_openrouter_model
 
 log = logging.getLogger(__name__)
 

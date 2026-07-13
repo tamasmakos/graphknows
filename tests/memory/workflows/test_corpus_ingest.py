@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from graphknows.memory.workflows.corpus_ingest import (
+from graphknows.ingestion.workflows.corpus_ingest import (
     CorpusIngestRequest,
     CorpusIngestWorkflow,
 )
@@ -58,11 +58,11 @@ async def test_workflow_calls_stm_then_flush() -> None:
 
     with (
         patch(
-            "graphknows.memory.stm.service.STMService",
+            "graphknows.ingestion.stm.service.STMService",
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.LTMPromotionPipeline",
+            "graphknows.ingestion.promotion.pipeline.LTMPromotionPipeline",
             return_value=mock_pipeline,
         ),
     ):
@@ -96,11 +96,11 @@ async def test_workflow_skips_docs_without_text() -> None:
 
     with (
         patch(
-            "graphknows.memory.stm.service.STMService",
+            "graphknows.ingestion.stm.service.STMService",
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.LTMPromotionPipeline",
+            "graphknows.ingestion.promotion.pipeline.LTMPromotionPipeline",
             return_value=mock_pipeline,
         ),
     ):
@@ -128,11 +128,11 @@ async def test_workflow_stm_failure_collected_in_errors() -> None:
 
     with (
         patch(
-            "graphknows.memory.stm.service.STMService",
+            "graphknows.ingestion.stm.service.STMService",
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.LTMPromotionPipeline",
+            "graphknows.ingestion.promotion.pipeline.LTMPromotionPipeline",
             return_value=mock_pipeline,
         ),
     ):
@@ -159,11 +159,11 @@ async def test_workflow_flush_failure_collected_in_errors() -> None:
 
     with (
         patch(
-            "graphknows.memory.stm.service.STMService",
+            "graphknows.ingestion.stm.service.STMService",
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.LTMPromotionPipeline",
+            "graphknows.ingestion.promotion.pipeline.LTMPromotionPipeline",
             return_value=mock_pipeline,
         ),
     ):
@@ -189,11 +189,11 @@ async def test_workflow_accepts_explicit_session_id() -> None:
 
     with (
         patch(
-            "graphknows.memory.stm.service.STMService",
+            "graphknows.ingestion.stm.service.STMService",
             return_value=mock_stm,
         ),
         patch(
-            "graphknows.memory.flush.LTMPromotionPipeline",
+            "graphknows.ingestion.promotion.pipeline.LTMPromotionPipeline",
             return_value=mock_pipeline,
         ),
     ):
@@ -217,8 +217,8 @@ async def test_corpus_ingest_connects_stm_on_caller_loop() -> None:
     mock_pipeline.promote = AsyncMock(return_value=_make_promote_result())
 
     with (
-        patch("graphknows.memory.stm.service.STMService", return_value=mock_stm),
-        patch("graphknows.memory.flush.LTMPromotionPipeline", return_value=mock_pipeline),
+        patch("graphknows.ingestion.stm.service.STMService", return_value=mock_stm),
+        patch("graphknows.ingestion.promotion.pipeline.LTMPromotionPipeline", return_value=mock_pipeline),
     ):
         request = CorpusIngestRequest(documents=[{"id": "d1", "text": "Test text."}])
         await wf.run(request)

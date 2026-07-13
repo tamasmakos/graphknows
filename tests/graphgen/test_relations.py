@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from graphknows.extraction.relations.dspy import DSPyExtractor
+from graphknows.ingestion.extraction.relations.llm_assisted.dspy import DSPyExtractor
 
 
 @pytest.mark.asyncio

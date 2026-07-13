@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from graphknows.memory.models.contracts import (
+from graphknows.ingestion.models.contracts import (
     CommunityAssignment,
     SessionSnapshot,
 )
-from graphknows.memory.models.promotion import PromotionRequest
+from graphknows.ingestion.models.promotion import PromotionRequest
 
 
 def test_session_snapshot_round_trips_store_shape() -> None:

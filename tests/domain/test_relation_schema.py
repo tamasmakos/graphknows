@@ -7,7 +7,7 @@ are excluded from extraction while remaining in the canonical vocabulary).
 
 from __future__ import annotations
 
-from graphknows.ingestion.domain.taxonomy import (
+from graphknows.ingestion.models.taxonomy import (
     TaxonomyConfig,
     build_relation_schema,
     get_default_taxonomy,
@@ -48,7 +48,7 @@ def test_build_relation_schema_falls_back_without_descriptions():
 
 
 def test_extractor_uses_taxonomy_relation_schema():
-    from graphknows.memory.extractor import _default_relation_schema
+    from graphknows.ingestion.extraction.entities.extractor import _default_relation_schema
 
     schema = _default_relation_schema()
     assert "attended" in schema

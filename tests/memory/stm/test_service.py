@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.memory.stm import STMConfig, STMService
+from graphknows.ingestion.stm import STMConfig, STMService
 
 
 def _make_service(extractor=None, embed_fn=None):
@@ -64,7 +64,7 @@ async def test_ingest_calls_handler(tmp_path):
 
 @pytest.mark.asyncio
 async def test_record_turn_creates_dialog_capture():
-    from graphknows.memory.stm.dialog import Turn
+    from graphknows.ingestion.stm.dialog import Turn
 
     svc, stm, vec, embed = _make_service()
     turn = Turn(id="t1", index=0, role="user", text="hello")

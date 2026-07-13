@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graphknows.memory.ltm.entity_resolution import EntityResolution
+from graphknows.ingestion.promotion.steps.entity_resolution import EntityResolution
 
 
 def _resolve(entities):

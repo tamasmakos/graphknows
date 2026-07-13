@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import inspect
 
-from graphknows.memory.stm import dialog, ingest, service
-from graphknows.memory.stm._entity_writer import (
+from graphknows.ingestion.stm import dialog, ingest, service
+from graphknows.ingestion.stm._entity_writer import (
     write_entity_nodes_and_edges,
     write_relation_edges,
 )

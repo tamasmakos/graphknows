@@ -25,12 +25,12 @@ import pytest
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-ASSETS_ROOT = REPO_ROOT / "graphknows" / "extraction" / "ontology" / "assets"
+ASSETS_ROOT = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations" / "llm_assisted" / "ontology" / "assets"
 PERSONAL_TTL = ASSETS_ROOT / "personal" / "personal.ttl"
 PERSONAL_SUMMARY = ASSETS_ROOT / "personal" / "personal-summary.jsonld"
 
-_ONTOLOGY_PKG = REPO_ROOT / "graphknows" / "extraction" / "ontology"
-_RELATIONS_PKG = REPO_ROOT / "graphknows" / "extraction" / "relations"
+_ONTOLOGY_PKG = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations" / "llm_assisted" / "ontology"
+_RELATIONS_PKG = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations"
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 def _loader_mod():
     return _load_module(
-        "graphknows.extraction.ontology.loader",
+        "graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader",
         _ONTOLOGY_PKG / "loader.py",
     )
 
@@ -63,7 +63,7 @@ def _router_mod():
     # Router imports loader; ensure loader is pre-loaded in sys.modules first.
     _loader_mod()
     return _load_module(
-        "graphknows.extraction.ontology.router",
+        "graphknows.ingestion.extraction.relations.llm_assisted.ontology.router",
         _ONTOLOGY_PKG / "router.py",
     )
 
@@ -72,15 +72,15 @@ def _filter_mod():
     # Relation filter imports loader lazily (inside functions) so no pre-load needed.
     _loader_mod()
     return _load_module(
-        "graphknows.extraction.ontology.relation_filter",
-        _ONTOLOGY_PKG / "relation_filter.py",
+        "graphknows.ingestion.extraction.relations.filter",
+        _RELATIONS_PKG / "filter.py",
     )
 
 
 def _utils_mod():
     return _load_module(
-        "graphknows.ingestion.domain.normalization",
-        REPO_ROOT / "graphknows" / "ingestion" / "domain" / "normalization.py",
+        "graphknows.ingestion.normalization",
+        REPO_ROOT / "graphknows" / "ingestion" / "normalization.py",
     )
 
 
@@ -401,12 +401,12 @@ class TestDspyExtractorExtractThenMap:
 
         # Load utils module the extractor depends on
         _load_module(
-            "graphknows.ingestion.domain.normalization",
-            REPO_ROOT / "graphknows" / "ingestion" / "domain" / "normalization.py",
+            "graphknows.ingestion.normalization",
+            REPO_ROOT / "graphknows" / "ingestion" / "normalization.py",
         )
         _load_module(
-            "graphknows.extraction.utils",
-            REPO_ROOT / "graphknows" / "extraction" / "utils.py",
+            "graphknows.ingestion.extraction.entities.graph_ops",
+            REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "entities" / "graph_ops.py",
         )
 
         with (
@@ -414,8 +414,8 @@ class TestDspyExtractorExtractThenMap:
             patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
         ):
             dspy_mod = _load_module(
-                "graphknows.extraction.relations.dspy",
-                _RELATIONS_PKG / "dspy.py",
+                "graphknows.ingestion.extraction.relations.llm_assisted.dspy",
+                _RELATIONS_PKG / "llm_assisted" / "dspy.py",
             )
             config = {
                 "llm": {

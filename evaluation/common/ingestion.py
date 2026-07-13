@@ -13,7 +13,7 @@ from typing import Any
 
 from evaluation.common.config import BaseEvalConfig
 from evaluation.common.datamodels import EvalDocument, IngestResult
-from graphknows.client import GraphKnowsMCPClient
+from graphknows.integrations.client import GraphKnowsMCPClient
 
 log = logging.getLogger(__name__)
 

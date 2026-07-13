@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graphknows.extraction.ontology.relation_filter import (
+from graphknows.ingestion.extraction.relations.filter import (
     RelationOntologyFilter,
     build_relation_filter,
 )

@@ -43,7 +43,7 @@ def _make_chunk(cid: str, text: str = "sample text", rrf_score: float = 0.01) ->
 
 def _make_retrieval_context(chunks: list[dict]):
     """Build a minimal RetrievalContext-like object for use in mocks."""
-    from graphknows.memory.query.context import RetrievalContext
+    from graphknows.retrieval.models.context import RetrievalContext
 
     return RetrievalContext(
         query="test",
@@ -64,17 +64,17 @@ async def _fake_to_thread(fn, *args, **kwargs):
 
 
 class TestDecompose:
-    """Tests for graphknows.memory.query.decompose.decompose()."""
+    """Tests for graphknows.retrieval.query.decompose.decompose()."""
 
     def test_imports_without_live_api(self):
         """decompose module must be importable without a live API connection."""
-        import graphknows.memory.query.decompose as mod  # noqa: F401
+        import graphknows.retrieval.query.decompose as mod  # noqa: F401
 
         assert callable(mod.decompose)
 
     def test_fallback_on_lm_error(self):
         """decompose() returns [query] when the LM raises any exception."""
-        from graphknows.memory.query.decompose import decompose
+        from graphknows.retrieval.query.decompose import decompose
 
         mock_lm = MagicMock()
 
@@ -82,7 +82,7 @@ class TestDecompose:
         mock_predict_instance = MagicMock()
         mock_predict_instance.side_effect = RuntimeError("LM unavailable")
 
-        with patch("graphknows.memory.query.decompose._dspy") as mock_dspy:
+        with patch("graphknows.retrieval.query.decompose._dspy") as mock_dspy:
             mock_dspy.Predict.return_value = mock_predict_instance
             # Build a real-looking Signature stub.
             mock_sig = MagicMock()
@@ -102,16 +102,16 @@ class TestDecompose:
 
     def test_fallback_when_dspy_unavailable(self):
         """decompose() returns [query] when dspy is not installed."""
-        from graphknows.memory.query.decompose import decompose
+        from graphknows.retrieval.query.decompose import decompose
 
-        with patch("graphknows.memory.query.decompose._dspy", None):
+        with patch("graphknows.retrieval.query.decompose._dspy", None):
             result = decompose("What is the capital of France and its population?")
 
         assert result == ["What is the capital of France and its population?"]
 
     def test_returns_sub_questions_with_mocked_lm(self):
         """decompose() parses LM output into multiple sub-questions."""
-        from graphknows.memory.query.decompose import decompose
+        from graphknows.retrieval.query.decompose import decompose
 
         raw_output = "1. Who founded the company?\n2. When did the founder leave?"
 
@@ -120,7 +120,7 @@ class TestDecompose:
 
         mock_pred_instance = MagicMock(return_value=mock_pred_result)
 
-        with patch("graphknows.memory.query.decompose._dspy") as mock_dspy:
+        with patch("graphknows.retrieval.query.decompose._dspy") as mock_dspy:
             # Make _build_signature return a stub class.
             mock_dspy.Signature = object  # base class
             mock_dspy.InputField = MagicMock(return_value=None)
@@ -130,7 +130,7 @@ class TestDecompose:
             mock_dspy.settings.context = MagicMock(return_value=_noop_context())
 
             # Patch _build_signature directly to avoid class-building complexity.
-            with patch("graphknows.memory.query.decompose._build_signature") as mock_build:
+            with patch("graphknows.retrieval.query.decompose._build_signature") as mock_build:
                 mock_sig_cls = MagicMock()
                 mock_build.return_value = mock_sig_cls
 
@@ -148,14 +148,14 @@ class TestDecompose:
 
     def test_empty_query_returns_empty_query(self):
         """decompose('') returns ['']."""
-        from graphknows.memory.query.decompose import decompose
+        from graphknows.retrieval.query.decompose import decompose
 
         result = decompose("")
         assert result == [""]
 
     def test_parse_sub_questions_numbered_period(self):
         """_parse_sub_questions handles '1. ...' prefix."""
-        from graphknows.memory.query.decompose import _parse_sub_questions
+        from graphknows.retrieval.query.decompose import _parse_sub_questions
 
         raw = "1. What is X?\n2. When did Y happen?\n3. Who is Z?"
         result = _parse_sub_questions(raw, "fallback")
@@ -163,7 +163,7 @@ class TestDecompose:
 
     def test_parse_sub_questions_numbered_paren(self):
         """_parse_sub_questions handles '1) ...' prefix."""
-        from graphknows.memory.query.decompose import _parse_sub_questions
+        from graphknows.retrieval.query.decompose import _parse_sub_questions
 
         raw = "1) Alpha\n2) Beta"
         result = _parse_sub_questions(raw, "fallback")
@@ -171,7 +171,7 @@ class TestDecompose:
 
     def test_parse_sub_questions_caps_at_max(self):
         """_parse_sub_questions returns at most MAX_SUBQUESTIONS items."""
-        from graphknows.memory.query.decompose import MAX_SUBQUESTIONS, _parse_sub_questions
+        from graphknows.retrieval.query.decompose import MAX_SUBQUESTIONS, _parse_sub_questions
 
         raw = "\n".join(f"{i}. Question {i}" for i in range(1, 10))
         result = _parse_sub_questions(raw, "fallback")
@@ -179,7 +179,7 @@ class TestDecompose:
 
     def test_parse_sub_questions_empty_returns_empty(self):
         """_parse_sub_questions returns [] for empty/blank input."""
-        from graphknows.memory.query.decompose import _parse_sub_questions
+        from graphknows.retrieval.query.decompose import _parse_sub_questions
 
         assert _parse_sub_questions("", "fallback") == []
         assert _parse_sub_questions("   \n  ", "fallback") == []
@@ -195,7 +195,7 @@ class TestAgenticRetrieverWithDET:
 
     def _make_retriever_with_stub_det(self):
         """Build an AgenticRetriever and replace its DETRetriever with a stub."""
-        from graphknows.memory.query.agentic import AgenticRetriever
+        from graphknows.retrieval.agentic import AgenticRetriever
 
         settings = _make_settings()
         vec = MagicMock()
@@ -215,7 +215,7 @@ class TestAgenticRetrieverWithDET:
     @pytest.mark.asyncio
     async def test_retrieve_returns_retrieval_context(self):
         """retrieve() returns a RetrievalContext with the correct query/session_id."""
-        from graphknows.memory.query.context import RetrievalContext
+        from graphknows.retrieval.models.context import RetrievalContext
 
         retriever, stub_det = self._make_retriever_with_stub_det()
         chunk_a = _make_chunk("c1", "Entity A was founded in 2010")
@@ -230,7 +230,7 @@ class TestAgenticRetrieverWithDET:
         retriever._last_session_id = "s1"
 
         with (
-            patch("graphknows.memory.query.decompose.decompose", return_value=["test query"]),
+            patch("graphknows.retrieval.query.decompose.decompose", return_value=["test query"]),
             patch("asyncio.to_thread", side_effect=_fake_to_thread),
         ):
             result = await retriever.retrieve("test query", session_id="s1", top_k=5)
@@ -266,7 +266,7 @@ class TestAgenticRetrieverWithDET:
 
         with (
             patch(
-                "graphknows.memory.query.decompose.decompose",
+                "graphknows.retrieval.query.decompose.decompose",
                 return_value=["sub-q1", "sub-q2"],
             ),
             patch("asyncio.to_thread", side_effect=_fake_to_thread),
@@ -302,7 +302,7 @@ class TestAgenticRetrieverWithDET:
             return result
 
         with (
-            patch("graphknows.memory.query.decompose.decompose", return_value=["query"]),
+            patch("graphknows.retrieval.query.decompose.decompose", return_value=["query"]),
             patch(
                 "asyncio.to_thread",
                 side_effect=_make_failing_then_succeeding_to_thread(),
@@ -317,8 +317,8 @@ class TestAgenticRetrieverWithDET:
     @pytest.mark.asyncio
     async def test_det_retriever_constructed_from_same_stores(self):
         """DETRetriever must be built from the same vec/ltm/stm stores."""
-        from graphknows.memory.query.agentic import AgenticRetriever
-        from graphknows.memory.query.retriever import DETRetriever
+        from graphknows.retrieval.agentic import AgenticRetriever
+        from graphknows.retrieval.retriever import DETRetriever
 
         settings = _make_settings()
         vec = MagicMock()
@@ -337,7 +337,7 @@ class TestAgenticRetrieverWithDET:
     @pytest.mark.asyncio
     async def test_det_retriever_cached(self):
         """_get_det_retriever() returns the same instance on repeated calls."""
-        from graphknows.memory.query.agentic import AgenticRetriever
+        from graphknows.retrieval.agentic import AgenticRetriever
 
         settings = _make_settings()
         retriever = AgenticRetriever(
@@ -351,8 +351,8 @@ class TestAgenticRetrieverWithDET:
     @pytest.mark.asyncio
     async def test_import_clean(self):
         """Both agentic and decompose modules import cleanly."""
-        import graphknows.memory.query.agentic  # noqa: F401
-        import graphknows.memory.query.decompose  # noqa: F401
+        import graphknows.retrieval.agentic  # noqa: F401
+        import graphknows.retrieval.query.decompose  # noqa: F401
 
     @pytest.mark.asyncio
     async def test_empty_collected_triggers_det_fallback(self):
@@ -370,7 +370,7 @@ class TestAgenticRetrieverWithDET:
         retriever._collected_chunks = []  # stays empty after react call
 
         with (
-            patch("graphknows.memory.query.decompose.decompose", return_value=["q"]),
+            patch("graphknows.retrieval.query.decompose.decompose", return_value=["q"]),
             patch("asyncio.to_thread", side_effect=_fake_to_thread),
         ):
             result = await retriever.retrieve("q", session_id="s1", top_k=5)
@@ -399,7 +399,7 @@ def _make_fake_react_that_calls_retrieve(retriever, stub_det):
 
     def _fake_react(query: str, session_id: str) -> MagicMock:
         # Simulate the retrieve tool call inside ReAct by pushing a chunk.
-        from graphknows.memory.stm._async_bridge import _run as bg_run
+        from graphknows._async_bridge import _run as bg_run
 
         ctx = bg_run(stub_det.retrieve(query, session_id=session_id, top_k=10, scope="both"))
         for c in ctx.fused_results:

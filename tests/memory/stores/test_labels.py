@@ -2,7 +2,7 @@
 
 import pytest
 
-from graphknows.memory.stores.arcadedb._labels import _safe_rel_label
+from graphknows.storage.arcadedb._labels import _safe_rel_label
 
 
 @pytest.mark.parametrize(

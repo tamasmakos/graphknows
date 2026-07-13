@@ -5,9 +5,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from graphknows.ingestion.parsers.base import ParsedFile, TextSegment
-from graphknows.memory.extractor import ExtractionResult
-from graphknows.memory.models.ingest import IngestResult
-from graphknows.memory.stm.ingest import _STMIngestHandler
+from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
+from graphknows.models.ingest import IngestResult
+from graphknows.ingestion.stm.ingest import _STMIngestHandler
 
 import pytest
 

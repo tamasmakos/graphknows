@@ -6,7 +6,7 @@ from typing import Any
 
 from evaluation.common.config import BaseEvalConfig
 from evaluation.common.datamodels import RetrievedPassage
-from graphknows.client import GraphKnowsMCPClient
+from graphknows.integrations.client import GraphKnowsMCPClient
 
 
 def _parse_hits(result: Any) -> list[RetrievedPassage]:

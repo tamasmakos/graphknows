@@ -23,7 +23,7 @@ import pytest
 
 def _make_store() -> tuple[Any, MagicMock]:
     """Return (ArcadeDBLTMStore, mock_client)."""
-    from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
+    from graphknows.storage.arcadedb.ltm_store import ArcadeDBLTMStore
 
     client = MagicMock()
     client.command = AsyncMock(return_value=[])
@@ -174,7 +174,7 @@ class TestFlushPipelineWS6Phases:
     """Verify flush.py calls the WS-6 phases with a fully mocked store."""
 
     def _make_flush(self, extraction_uses_llm: bool = False) -> Any:
-        from graphknows.memory.flush import LTMPromotionPipeline
+        from graphknows.ingestion.promotion.pipeline import LTMPromotionPipeline
 
         stm_store = MagicMock()
         stm_store.connect = AsyncMock(return_value=None)
@@ -223,7 +223,7 @@ class TestFlushPipelineWS6Phases:
 
     @pytest.mark.asyncio
     async def test_pagerank_persistence_called(self) -> None:
-        from graphknows.memory.models.promotion import PromotionRequest
+        from graphknows.ingestion.models.promotion import PromotionRequest
 
         pipeline, _, _, ltm_store = self._make_flush(extraction_uses_llm=False)
         req = PromotionRequest(session_id="s1", run_gds=False, clear_stm=False)
@@ -232,7 +232,7 @@ class TestFlushPipelineWS6Phases:
 
     @pytest.mark.asyncio
     async def test_graph_pruning_called(self) -> None:
-        from graphknows.memory.models.promotion import PromotionRequest
+        from graphknows.ingestion.models.promotion import PromotionRequest
 
         pipeline, _, _, ltm_store = self._make_flush(extraction_uses_llm=False)
         req = PromotionRequest(session_id="s1", run_gds=False, clear_stm=False)
@@ -243,8 +243,8 @@ class TestFlushPipelineWS6Phases:
     @pytest.mark.asyncio
     async def test_phases_non_fatal_when_store_lacks_methods(self) -> None:
         """If ltm_store doesn't expose new methods, pipeline must not crash."""
-        from graphknows.memory.flush import LTMPromotionPipeline
-        from graphknows.memory.models.promotion import PromotionRequest
+        from graphknows.ingestion.promotion.pipeline import LTMPromotionPipeline
+        from graphknows.ingestion.models.promotion import PromotionRequest
 
         stm_store = MagicMock()
         stm_store.connect = AsyncMock(return_value=None)

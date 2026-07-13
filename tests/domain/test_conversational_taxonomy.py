@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from graphknows.ingestion.domain.taxonomy import (
+from graphknows.ingestion.models.taxonomy import (
     TaxonomyConfig,
     get_default_taxonomy,
     load_taxonomy,
@@ -28,7 +28,7 @@ _YAML_PATH = (
     Path(__file__).parent.parent.parent
     / "graphknows"
     / "ingestion"
-    / "domain"
+    / "models"
     / "taxonomy.conversational.yaml"
 )
 
@@ -229,7 +229,7 @@ class TestLabelSpaceFromTaxonomy:
         pytest.importorskip("langchain_text_splitters", reason="ML deps not installed")
 
     def test_label_space_derived_from_taxonomy(self, monkeypatch):
-        from graphknows.extraction.entities.label_space import build_top_level_label_space
+        from graphknows.ingestion.extraction.entities.label_space import build_top_level_label_space
 
         monkeypatch.delenv("GRAPHKNOWS_TAXONOMY_FILE", raising=False)
         taxonomy = get_default_taxonomy()
@@ -240,7 +240,7 @@ class TestLabelSpaceFromTaxonomy:
         assert "RELATIONSHIP" in label_space
 
     def test_label_space_aliases_come_from_taxonomy(self, monkeypatch):
-        from graphknows.extraction.entities.label_space import build_top_level_label_space
+        from graphknows.ingestion.extraction.entities.label_space import build_top_level_label_space
 
         monkeypatch.delenv("GRAPHKNOWS_TAXONOMY_FILE", raising=False)
         taxonomy = get_default_taxonomy()

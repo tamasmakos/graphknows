@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-from graphknows.memory.query._rrf_common import idf_weight, pagerank_boost
-from graphknows.memory.query.rerank import rerank
-from graphknows.memory.query.retriever import DETRetriever, _bm25_rank
+from graphknows.ranking.rrf import idf_weight, pagerank_boost
+from graphknows.ranking.rerank import rerank
+from graphknows.retrieval.retriever import DETRetriever, _bm25_rank
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ def test_rerank_noop_when_model_absent():
         {"chunk_id": "c2", "text": "foo bar", "rrf_score": 0.5, "rank": 2},
     ]
     # Force the model-unavailable path by patching the cached model state.
-    from graphknows.memory.query import rerank as rerank_mod
+    from graphknows.ranking import rerank as rerank_mod
 
     sentinel = rerank_mod._NO_MODEL
     with patch.object(rerank_mod, "_model", sentinel), patch.object(
@@ -89,7 +89,7 @@ def test_rerank_top_k_respected_in_noop():
         {"chunk_id": f"c{i}", "text": f"text {i}", "rrf_score": float(i), "rank": i + 1}
         for i in range(10)
     ]
-    from graphknows.memory.query import rerank as rerank_mod
+    from graphknows.ranking import rerank as rerank_mod
 
     sentinel = rerank_mod._NO_MODEL
     with patch.object(rerank_mod, "_model", sentinel), patch.object(
@@ -106,7 +106,7 @@ def test_rerank_import_does_not_require_torch():
     # Explicitly reload to simulate a fresh import.
     import importlib
 
-    import graphknows.memory.query.rerank as mod
+    import graphknows.ranking.rerank as mod
 
     importlib.reload(mod)
     assert callable(mod.rerank)
@@ -173,7 +173,7 @@ def test_pagerank_boost_none_is_noop():
 
 
 def test_pagerank_boost_bounded():
-    from graphknows.memory.query._rrf_common import PAGERANK_MAX_BOOST
+    from graphknows.ranking.rrf import PAGERANK_MAX_BOOST
 
     assert pagerank_boost(1.0) == pytest.approx(1.0 + PAGERANK_MAX_BOOST, abs=1e-9)
     assert 1.0 < pagerank_boost(0.5) < 1.0 + PAGERANK_MAX_BOOST
@@ -239,7 +239,7 @@ async def test_stm_bm25_contributes_source():
     vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
-        patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
+        patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed),
         patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve("violin concert", session_id="s1", scope="stm")
@@ -258,7 +258,7 @@ async def test_stm_bm25_contributes_source():
 @pytest.mark.asyncio
 async def test_retrieve_signature_unchanged():
     """retrieve(query, session_id, top_k, scope) -> RetrievalContext must work."""
-    from graphknows.memory.query.context import RetrievalContext
+    from graphknows.retrieval.models.context import RetrievalContext
 
     retriever, vec, ltm, stm = _make_retriever()
     stm.query_entity_chunks = AsyncMock(return_value=[])
@@ -270,7 +270,7 @@ async def test_retrieve_signature_unchanged():
     vec.get_chunks_by_ids = AsyncMock(return_value={})
 
     with (
-        patch("graphknows.memory.query.retriever.embed", side_effect=_fake_embed),
+        patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed),
         patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
     ):
         ctx = await retriever.retrieve(

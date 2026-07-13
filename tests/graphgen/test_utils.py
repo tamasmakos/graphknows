@@ -8,12 +8,12 @@ from pathlib import Path
 
 import networkx as nx
 
-from graphknows.extraction.diagnostics import (
+from graphknows.ingestion.utils import (
     _sanitize_name,
     diagnostic_dir,
     diagnostics_enabled,
 )
-from graphknows.extraction.utils import (
+from graphknows.ingestion.extraction.entities.graph_ops import (
     create_output_directory,
     merge_node_into,
     standardize_label,
@@ -284,7 +284,7 @@ import pytest
 
 class TestEntityGroupConfig:
     def _make(self, tokens=None, patterns=None):
-        from graphknows.ingestion.domain.taxonomy import EntityGroupConfig
+        from graphknows.ingestion.models.taxonomy import EntityGroupConfig
 
         return EntityGroupConfig(
             children=[],
@@ -312,7 +312,7 @@ class TestEntityGroupConfig:
 
 class TestTaxonomyConfig:
     def _make(self):
-        from graphknows.ingestion.domain.taxonomy import EntityGroupConfig, TaxonomyConfig
+        from graphknows.ingestion.models.taxonomy import EntityGroupConfig, TaxonomyConfig
 
         return TaxonomyConfig(
             name="test",
@@ -337,13 +337,13 @@ class TestTaxonomyConfig:
 
 class TestLoadTaxonomy:
     def test_load_taxonomy_missing_file(self, tmp_path):
-        from graphknows.ingestion.domain.taxonomy import load_taxonomy
+        from graphknows.ingestion.models.taxonomy import load_taxonomy
 
         with pytest.raises(FileNotFoundError):
             load_taxonomy(str(tmp_path / "nonexistent.yaml"))
 
     def test_load_taxonomy_valid_yaml(self, tmp_path):
-        from graphknows.ingestion.domain.taxonomy import load_taxonomy
+        from graphknows.ingestion.models.taxonomy import load_taxonomy
 
         yaml_content = textwrap.dedent(
             """\
@@ -369,14 +369,14 @@ class TestLoadTaxonomy:
 
 class TestGetDefaultTaxonomy:
     def test_loads_without_env(self, monkeypatch):
-        from graphknows.ingestion.domain.taxonomy import get_default_taxonomy
+        from graphknows.ingestion.models.taxonomy import get_default_taxonomy
 
         monkeypatch.delenv("GRAPHKNOWS_TAXONOMY_FILE", raising=False)
         tax = get_default_taxonomy()
         assert tax.name  # non-empty name
 
     def test_respects_env_var(self, monkeypatch, tmp_path):
-        from graphknows.ingestion.domain.taxonomy import get_default_taxonomy
+        from graphknows.ingestion.models.taxonomy import get_default_taxonomy
 
         yaml_content = "name: custom\nentity_groups: {}\nrelation_types: []\n"
         custom_yaml = tmp_path / "custom.yaml"
@@ -386,7 +386,7 @@ class TestGetDefaultTaxonomy:
 
         # Patch the path resolution so it uses our tmp file directly
         with patch(
-            "graphknows.ingestion.domain.taxonomy.load_taxonomy",
+            "graphknows.ingestion.models.taxonomy.load_taxonomy",
             return_value=MagicMock(name="custom"),
         ) as mock_load:
             get_default_taxonomy()
@@ -402,22 +402,22 @@ class TestGetDefaultTaxonomy:
 
 class TestExtractSecret:
     def test_none_container_returns_none(self):
-        from graphknows.config.llm import _extract_secret
+        from graphknows.llm import _extract_secret
 
         assert _extract_secret(None, "api_key") is None
 
     def test_dict_with_key(self):
-        from graphknows.config.llm import _extract_secret
+        from graphknows.llm import _extract_secret
 
         assert _extract_secret({"api_key": "sk-abc"}, "api_key") == "sk-abc"
 
     def test_dict_missing_key(self):
-        from graphknows.config.llm import _extract_secret
+        from graphknows.llm import _extract_secret
 
         assert _extract_secret({"other": "x"}, "api_key") is None
 
     def test_pydantic_secret_value(self):
-        from graphknows.config.llm import _extract_secret
+        from graphknows.llm import _extract_secret
 
         mock = MagicMock()
         mock.api_key = MagicMock()
@@ -426,7 +426,7 @@ class TestExtractSecret:
         assert result == "real_key"
 
     def test_masked_secret_reads_from_env(self, monkeypatch):
-        from graphknows.config.llm import _MASKED_SECRET, _extract_secret
+        from graphknows.llm import _MASKED_SECRET, _extract_secret
 
         monkeypatch.setenv("API_KEY", "env_value")
         mock = MagicMock()
@@ -437,31 +437,31 @@ class TestExtractSecret:
 
 class TestGetModelName:
     def test_no_llm_section_raises(self):
-        from graphknows.config.llm import get_model_name
+        from graphknows.llm import get_model_name
 
         with pytest.raises(ValueError):
             get_model_name({})
 
     def test_extraction_purpose_uses_extraction_model(self):
-        from graphknows.config.llm import get_model_name
+        from graphknows.llm import get_model_name
 
         cfg = {"llm": {"extraction_model": "model-ext", "base_model": "model-base"}}
         assert get_model_name(cfg, purpose="extraction") == "model-ext"
 
     def test_summarization_purpose(self):
-        from graphknows.config.llm import get_model_name
+        from graphknows.llm import get_model_name
 
         cfg = {"llm": {"summarization_model": "model-sum"}}
         assert get_model_name(cfg, purpose="summarization") == "model-sum"
 
     def test_none_purpose_returns_base(self):
-        from graphknows.config.llm import get_model_name
+        from graphknows.llm import get_model_name
 
         cfg = {"llm": {"base_model": "model-base"}}
         assert get_model_name(cfg) == "model-base"
 
     def test_fallback_to_default_model(self):
-        from graphknows.config.llm import _DEFAULT_MODEL, get_model_name
+        from graphknows.llm import _DEFAULT_MODEL, get_model_name
 
         cfg = {"llm": {}}
         assert get_model_name(cfg) == _DEFAULT_MODEL
@@ -469,29 +469,29 @@ class TestGetModelName:
 
 class TestGetTemperature:
     def test_default_when_no_llm(self):
-        from graphknows.config.llm import get_temperature
+        from graphknows.llm import get_temperature
 
         assert get_temperature({}) == 0.0
 
     def test_reads_temperature(self):
-        from graphknows.config.llm import get_temperature
+        from graphknows.llm import get_temperature
 
         assert get_temperature({"llm": {"temperature": 0.7}}) == pytest.approx(0.7)
 
 
 class TestNormalizeOpenrouterModel:
     def test_adds_prefix(self):
-        from graphknows.config.llm import normalize_openrouter_model
+        from graphknows.llm import normalize_openrouter_model
 
         assert normalize_openrouter_model("gpt-4") == "openrouter/gpt-4"
 
     def test_idempotent_when_already_prefixed(self):
-        from graphknows.config.llm import normalize_openrouter_model
+        from graphknows.llm import normalize_openrouter_model
 
         assert normalize_openrouter_model("openrouter/gpt-4") == "openrouter/gpt-4"
 
     def test_none_returns_default(self):
-        from graphknows.config.llm import _DEFAULT_MODEL, normalize_openrouter_model
+        from graphknows.llm import _DEFAULT_MODEL, normalize_openrouter_model
 
         result = normalize_openrouter_model(None)
         assert result == f"openrouter/{_DEFAULT_MODEL}"
@@ -499,24 +499,24 @@ class TestNormalizeOpenrouterModel:
 
 class TestDiagnosticsEnabled:
     def test_false_when_none(self):
-        from graphknows.extraction.diagnostics import diagnostics_enabled
+        from graphknows.ingestion.utils import diagnostics_enabled
 
         assert diagnostics_enabled(None) is False
 
     def test_false_when_not_set(self):
-        from graphknows.extraction.diagnostics import diagnostics_enabled
+        from graphknows.ingestion.utils import diagnostics_enabled
 
         assert diagnostics_enabled({"extraction": {"diagnostic_mode": False}}) is False
 
     def test_true_when_enabled(self):
-        from graphknows.extraction.diagnostics import diagnostics_enabled
+        from graphknows.ingestion.utils import diagnostics_enabled
 
         assert diagnostics_enabled({"extraction": {"diagnostic_mode": True}}) is True
 
 
 class TestDiagnosticDir:
     def test_returns_correct_path(self):
-        from graphknows.extraction.diagnostics import diagnostic_dir
+        from graphknows.ingestion.utils import diagnostic_dir
 
         cfg = {
             "infra": {"output_dir": "/tmp/out"},
@@ -526,7 +526,7 @@ class TestDiagnosticDir:
         assert str(result) == "/tmp/out/diag"
 
     def test_defaults(self):
-        from graphknows.extraction.diagnostics import diagnostic_dir
+        from graphknows.ingestion.utils import diagnostic_dir
 
         result = diagnostic_dir({})
         assert result == Path("output") / "diagnostics"
@@ -534,29 +534,29 @@ class TestDiagnosticDir:
 
 class TestSanitizeName:
     def test_replaces_special_chars(self):
-        from graphknows.extraction.diagnostics import _sanitize_name
+        from graphknows.ingestion.utils import _sanitize_name
 
         assert _sanitize_name("foo/bar baz") == "foo_bar_baz"
 
     def test_empty_gives_diagnostic(self):
-        from graphknows.extraction.diagnostics import _sanitize_name
+        from graphknows.ingestion.utils import _sanitize_name
 
         assert _sanitize_name("") == "diagnostic"
 
 
 class TestJsonSafe:
     def test_plain_types_passthrough(self):
-        from graphknows.extraction.diagnostics import _json_safe
+        from graphknows.ingestion.utils import _json_safe
 
         assert _json_safe({"a": [1, 2]}) == {"a": [1, 2]}
 
     def test_path_to_str(self):
-        from graphknows.extraction.diagnostics import _json_safe
+        from graphknows.ingestion.utils import _json_safe
 
         assert _json_safe(Path("/tmp/file")) == "/tmp/file"
 
     def test_set_to_sorted_list(self):
-        from graphknows.extraction.diagnostics import _json_safe
+        from graphknows.ingestion.utils import _json_safe
 
         result = _json_safe({3, 1, 2})
         assert result == [1, 2, 3]
@@ -564,14 +564,14 @@ class TestJsonSafe:
 
 class TestWriteDiagnosticJson:
     def test_returns_none_when_disabled(self, tmp_path):
-        from graphknows.extraction.diagnostics import write_diagnostic_json
+        from graphknows.ingestion.utils import write_diagnostic_json
 
         cfg = {"extraction": {"diagnostic_mode": False}}
         result = write_diagnostic_json(cfg, "test", {"data": 1})
         assert result is None
 
     def test_writes_file_when_enabled(self, tmp_path):
-        from graphknows.extraction.diagnostics import write_diagnostic_json
+        from graphknows.ingestion.utils import write_diagnostic_json
 
         cfg = {
             "extraction": {"diagnostic_mode": True, "diagnostic_output_subdir": "diag"},
@@ -584,7 +584,7 @@ class TestWriteDiagnosticJson:
         assert data["value"] == 42
 
     def test_sanitizes_filename(self, tmp_path):
-        from graphknows.extraction.diagnostics import write_diagnostic_json
+        from graphknows.ingestion.utils import write_diagnostic_json
 
         cfg = {
             "extraction": {"diagnostic_mode": True, "diagnostic_output_subdir": "diag"},

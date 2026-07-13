@@ -6,24 +6,22 @@ entrypoint for all memory operations::
 
     from graphknows import Memory
 
-    mem = Memory()                                 # builds from env / .env
-    await mem.ingest_memory("some text", session_id="s1")
-    hits = await mem.recall_memory("my query", session_id="s1")
+    mem = Memory()                                    # builds from env / .env
+    await mem.add(messages, user_id="u1", run_id="r7")
+    hits = await mem.search("what did she decide?", user_id="u1")
+    await mem.flush(user_id="u1")                      # STM -> LTM promotion
 
 The same class backs the MCP stdio server and the web Memory Mirror, so every
 transport sees identical behaviour. For out-of-process use over MCP, see
-:mod:`graphknows.client`; to implement a custom storage backend, see
-:mod:`graphknows.ports`.
+:mod:`graphknows.integrations.client`; to implement a custom storage backend,
+see :mod:`graphknows.storage.base`.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-__version__ = "1.0.0"
-
-from graphknows.config import GraphKnowsSettings, MemoryMode
+from graphknows._version import __version__
 from graphknows.exceptions import (
     ConfigurationError,
     ExtractionError,
@@ -33,8 +31,14 @@ from graphknows.exceptions import (
     RetrievalError,
     StoreError,
 )
-from graphknows.memory.models.ingest import IngestResult
-from graphknows.runtime import Memory
+from graphknows.memory import Memory
+from graphknows.models import (
+    IngestResult,
+    Message,
+    MemoryScope,
+    normalize_messages,
+)
+from graphknows.settings import GraphKnowsSettings, MemoryMode
 
 # A library must not configure logging handlers; attach a NullHandler so records
 # are dropped unless the embedding application configures the root logger.
@@ -49,23 +53,11 @@ __all__ = [
     "IngestResult",
     "Memory",
     "MemoryMode",
+    "MemoryScope",
+    "Message",
     "MissingExtraError",
     "RetrievalError",
     "StoreError",
     "__version__",
+    "normalize_messages",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    """Provide the deprecated ``GraphKnowsRuntime`` alias with a warning."""
-    if name == "GraphKnowsRuntime":
-        import warnings
-
-        warnings.warn(
-            "graphknows.GraphKnowsRuntime is deprecated; use graphknows.Memory instead. "
-            "The alias will be removed in graphknows 2.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return Memory
-    raise AttributeError(f"module 'graphknows' has no attribute {name!r}")

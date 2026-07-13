@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.config import GraphKnowsSettings, MemoryMode
-from graphknows.config.builders.channels import build_channels
-from graphknows.memory.channels.base import Channel, ChannelContext, ChannelStores
-from graphknows.memory.channels.frame import FrameChannel
+from graphknows.settings import GraphKnowsSettings, MemoryMode
+from graphknows.channels.registry import default_channels as build_channels
+from graphknows.channels.base import Channel, ChannelContext, ChannelStores
+from graphknows.channels.frames import FrameChannel
 
 
 def _ctx(**parse):
@@ -121,7 +121,7 @@ class TestFrameChannelPromote:
         rt.ltm.write_frames = AsyncMock(return_value=1)
         # stub extraction so the test stays offline (no spaCy/FrameNet load)
         monkeypatch.setattr(
-            "graphknows.extraction.frames.extract_frames_from_chunk",
+            "graphknows.channels._framenet.extract_frames_from_chunk",
             lambda text, speakers: [
                 {
                     "frame": "Residence",

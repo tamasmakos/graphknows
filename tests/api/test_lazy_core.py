@@ -1,6 +1,6 @@
 """The core import surface must not pull the heavy ML/LLM stack.
 
-``import graphknows`` and ``import graphknows.client`` must work on a core-only
+``import graphknows`` and ``import graphknows.integrations.client`` must work on a core-only
 install (no local-embeddings/extraction/analytics/assisted extras) and must not
 eagerly import sentence-transformers, gliner2, spacy, igraph, leidenalg, torch,
 or dspy. This test fails if an eager import creeps back onto the core path.
@@ -35,4 +35,4 @@ def test_import_graphknows_is_light() -> None:
 
 
 def test_import_client_is_light() -> None:
-    assert _heavy_modules_after("import graphknows.client") == []
+    assert _heavy_modules_after("import graphknows.integrations.client") == []

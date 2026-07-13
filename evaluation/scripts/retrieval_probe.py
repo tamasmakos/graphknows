@@ -35,8 +35,8 @@ from pathlib import Path
 from typing import Any
 
 from evaluation.locomo.dataset import build_documents, first_string, read_rows
-from graphknows.config import GraphKnowsSettings
-from graphknows.runtime import GraphKnowsRuntime
+from graphknows.settings import GraphKnowsSettings
+from graphknows.memory import Memory as GraphKnowsRuntime
 
 # ---------------------------------------------------------------------------
 # Helpers

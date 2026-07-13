@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from graphknows.memory.extractor import ExtractionResult, GLiNER2EntityExtractor, _SpacySchemaMiner
+from graphknows.ingestion.extraction.entities.extractor import ExtractionResult, GLiNER2EntityExtractor, _SpacySchemaMiner
 
 
 class _Tok:

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from graphknows.memory.ltm.topic_summarizer import TopicSummarizer
+from graphknows.ingestion.promotion.steps.topic_summary import TopicSummarizer
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,7 @@ async def test_llm_path_returns_prediction(monkeypatch):
     with (
         patch("dspy.LM", return_value=fake_lm),
         patch(
-            "graphknows.memory.ltm.topic_summarizer.TopicSummaryModule", return_value=fake_module
+            "graphknows.ingestion.promotion.steps.topic_summary.TopicSummaryModule", return_value=fake_module
         ),
     ):
         summarizer = TopicSummarizer(api_key="sk-test", model="meta-llama/llama-3.1-8b-instruct")
@@ -72,7 +72,7 @@ async def test_llm_failure_returns_fallback(monkeypatch):
 
     with (
         patch("dspy.LM", return_value=fake_lm),
-        patch("graphknows.memory.ltm.topic_summarizer.TopicSummaryModule"),
+        patch("graphknows.ingestion.promotion.steps.topic_summary.TopicSummaryModule"),
     ):
         summarizer = TopicSummarizer(api_key="sk-test", model="meta-llama/llama-3.1-8b-instruct")
         summarizer._lm = fake_lm

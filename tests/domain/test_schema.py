@@ -8,7 +8,7 @@ import pytest
 
 def test_canonical_labels_are_uppercase():
     """Ensure all canonical labels follow UPPERCASE convention."""
-    from graphknows.ingestion.domain.schema import (
+    from graphknows.ingestion.models.schema import (
         LABEL_CHUNK,
         LABEL_DIALOG,
         LABEL_ENTITY,
@@ -35,7 +35,7 @@ def test_canonical_labels_are_uppercase():
 
 def test_canonical_relationships_are_uppercase():
     """Ensure all canonical relationship types follow UPPERCASE convention."""
-    from graphknows.ingestion.domain.schema import (
+    from graphknows.ingestion.models.schema import (
         REL_BELONGS_TO,
         REL_CO_OCCURS,
         REL_HAS_CHUNK,
@@ -129,7 +129,7 @@ def test_no_mixed_case_labels_in_codebase():
 
 def test_schema_ddl_uses_canonical_labels():
     """Verify that schema.py constraint definitions use the canonical constants."""
-    from graphknows.ingestion.domain.schema import CONSTRAINTS, INDEXES
+    from graphknows.ingestion.models.schema import CONSTRAINTS, INDEXES
 
     # All DDL should contain only uppercase labels
     all_ddl = "\n".join(CONSTRAINTS + INDEXES)

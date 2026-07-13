@@ -30,7 +30,7 @@ from evaluation.common.lexical import gold_context_coverage, gold_max_overlap, g
 from evaluation.common.llm import ChatLLM, CreditExhaustedError, resolve_model
 from evaluation.common.reporting import summarize, write_report
 from evaluation.common.retrieval import Retriever
-from graphknows.client import GraphKnowsMCPClient
+from graphknows.integrations.client import GraphKnowsMCPClient
 
 log = logging.getLogger(__name__)
 

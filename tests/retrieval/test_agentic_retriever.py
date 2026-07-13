@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-from graphknows.config import MemoryMode
-from graphknows.memory.query.agentic import AgenticRetriever
+from graphknows.settings import MemoryMode
+from graphknows.retrieval.agentic import AgenticRetriever
 
 
 def _make_settings():
@@ -50,7 +50,7 @@ def _stub_retriever_internals(retriever, fake_react=None):
 
 @pytest.mark.asyncio
 async def test_retrieve_returns_retrieval_context():
-    from graphknows.memory.query.context import RetrievalContext
+    from graphknows.retrieval.models.context import RetrievalContext
 
     retriever = _make_retriever()
     # Stub _get_react and _get_lm to avoid dspy network/auth
@@ -59,7 +59,7 @@ async def test_retrieve_returns_retrieval_context():
     with (
         patch.object(retriever, "_get_react", return_value=fake_react),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
-        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
     ):
         ctx = await retriever.retrieve("test query", session_id="s1", top_k=5)
@@ -86,7 +86,7 @@ async def test_lm_not_rebuilt_on_same_session_call():
     with (
         patch.object(retriever, "_get_lm", side_effect=_get_lm_counted),
         patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())),
-        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
     ):
         await retriever.retrieve("query one", session_id="s1", top_k=3)
@@ -109,7 +109,7 @@ async def test_react_not_rebuilt_within_same_session():
     with (
         patch.object(retriever, "_get_react", side_effect=_get_react_counting),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
-        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
     ):
         await retriever.retrieve("q1", session_id="s1", top_k=3)
@@ -145,7 +145,7 @@ async def test_react_failure_falls_back_to_vector_search():
     with (
         patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
-        patch("graphknows.memory.stores.embedder.embed", return_value=np.zeros((1, 10))),
+        patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_raise_first_then_pass),
     ):
         ctx = await retriever.retrieve("query", session_id="s1", top_k=5)
@@ -162,7 +162,7 @@ async def test_agentic_hit_scores_are_discriminative_not_flat():
     relevance signal. Pure positional RRF still varies trivially by rank, so we
     assert the score SPREAD tracks the input relevance (≫ positional-only spread).
     """
-    from graphknows.memory.query.context import RetrievalContext
+    from graphknows.retrieval.models.context import RetrievalContext
 
     retriever = _make_retriever()
     hop_chunks = [
@@ -187,7 +187,7 @@ async def test_agentic_hit_scores_are_discriminative_not_flat():
     with (
         patch.object(retriever, "_get_react", return_value=MagicMock(side_effect=_fake_react)),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
-        patch("graphknows.memory.query.decompose.decompose", return_value=["q"]),
+        patch("graphknows.retrieval.query.decompose.decompose", return_value=["q"]),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
     ):
         ctx = await retriever.retrieve("q", session_id="s1", top_k=4)

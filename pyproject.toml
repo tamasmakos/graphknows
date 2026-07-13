@@ -25,9 +25,10 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    # Lightweight core: config, ArcadeDB HTTP client, vectors, graph algorithms,
-    # chunking, temporal parsing. The graphknows.client SDK is stdlib-only and
-    # needs none of these beyond pydantic.
+    # Batteries-included: `pip install graphknows` gives a fully working llm_free
+    # memory service (GLiNER2 extraction, local embeddings, analytics, parsers) that
+    # also serves MCP out of the box. Only the llm_assisted stack (dspy/rdflib) is
+    # gated behind the single [assisted] extra.
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "python-dotenv>=1.0.0",
@@ -38,33 +39,27 @@ dependencies = [
     "pyyaml>=6.0",
     "langchain-text-splitters>=0.3.0",
     "dateparser>=1.2.0",
+    # extraction (llm_free) + embeddings
+    "gliner2>=0.1.0",
+    "spacy>=3.7.0",
+    "sentence-transformers>=3.0.0",
+    # community detection during flush
+    "igraph>=0.11.0",
+    "leidenalg>=0.10.0",
+    # document parsers
+    "python-docx>=1.1.0",
+    # plug-and-play MCP server
+    "mcp>=1.0.0",
+    # Memory Mirror web UI
+    "starlette>=1.0.1",
+    "uvicorn[standard]>=0.29.0",
 ]
 
-# Heavy ML/NLP and transport dependencies live behind extras so the default
-# install stays small. All are lazily imported and raise MissingExtraError with
-# an install hint when a feature needs an extra that is not installed.
 [project.optional-dependencies]
-# Local sentence-transformers embeddings (the default embedder). Omit to use a
-# remote OpenAI-compatible endpoint via GRAPHKNOWS_EMBED_API_BASE.
-local-embeddings = ["sentence-transformers>=3.0.0"]
-# Entity + relation extraction on the ingest path (llm_free mode).
-extraction = ["gliner2>=0.1.0", "spacy>=3.7.0"]
-# Community detection during flush (degrades gracefully when absent).
-analytics = ["igraph>=0.11.0", "leidenalg>=0.10.0"]
-# Non-plaintext document parsers.
-parsers = ["python-docx>=1.1.0"]
-# MCP stdio server (graphknows-mcp entry point).
-server = ["mcp>=1.0.0"]
-# Memory Mirror web UI (graphknows-web entry point).
-web = ["starlette>=1.0.1", "uvicorn[standard]>=0.29.0"]
-# llm_assisted mode: LLM-driven extraction + injectable RDF/OWL ontology.
+# llm_assisted mode: LLM-driven relation extraction + injectable RDF/OWL ontology.
+# The one extra: `pip install 'graphknows[assisted]'`. Lazily imported and guarded
+# by MissingExtraError, so the base install never pulls dspy/rdflib.
 assisted = ["dspy>=2.5.0", "rdflib>=7.0.0"]
-# LangGraph reference adapter (graphknows.adapters.langgraph).
-langgraph = ["langgraph>=0.2.0"]
-# Everything — the batteries-included install used by the Docker images.
-all = [
-    "graphknows[local-embeddings,extraction,analytics,parsers,server,web,assisted,langgraph]",
-]
 
 [project.urls]
 Homepage = "https://github.com/tamasmakos/graphknows"
@@ -77,7 +72,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "graphknows/__init__.py"
+path = "graphknows/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["graphknows"]
@@ -86,8 +81,8 @@ packages = ["graphknows"]
 exclude = ["evaluation", "examples", "tests", "research", ".scratch"]
 
 [project.scripts]
-graphknows-mcp = "graphknows.mcp.stdio_server:main"
-graphknows-web = "graphknows.web.server:main"
+graphknows-mcp = "graphknows.server.mcp.stdio_server:main"
+graphknows-web = "graphknows.server.web.server:main"
 
 # ── Dev tooling ────────────────────────────────────────────────────────────────
 
@@ -121,15 +116,16 @@ asyncio_mode = "auto"
 
 [[tool.mypy.overrides]]
 module = [
-    "graphknows.config",
+    "graphknows.settings",
 ]
 disable_error_code = ["misc"]
 
 [[tool.mypy.overrides]]
 module = [
-    "graphknows.memory.query.*",
-    "graphknows.memory.stores.*",
-    "graphknows.mcp.*",
+    "graphknows.retrieval.*",
+    "graphknows.storage.*",
+    "graphknows.server.mcp.*",
     "graphknows.ingestion.*",
+    "graphknows.channels.*",
 ]
 disable_error_code = ["no-any-return", "type-arg", "arg-type", "union-attr", "attr-defined", "return-value"]

@@ -19,7 +19,7 @@ def _arcadedb_reachable() -> bool:
     """Return True when ArcadeDB is up at the configured URL."""
     import httpx
 
-    from graphknows.config import GraphKnowsSettings
+    from graphknows.settings import GraphKnowsSettings
     try:
         s = GraphKnowsSettings()
         r = httpx.get(
@@ -46,8 +46,8 @@ async def test_ltm_ensure_schema_does_not_raise() -> None:
     if not _arcadedb_reachable():
         pytest.skip("ArcadeDB not reachable")
 
-    from graphknows.config import GraphKnowsSettings
-    from graphknows.config.builders.stores import build_arcadedb_ltm_store
+    from graphknows.settings import GraphKnowsSettings
+    from graphknows.storage import build_arcadedb_ltm_store
 
     s = GraphKnowsSettings()
     store = build_arcadedb_ltm_store(s)
@@ -71,14 +71,14 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
     if not _arcadedb_reachable():
         pytest.skip("ArcadeDB not reachable")
 
-    from graphknows.config import GraphKnowsSettings
-    from graphknows.config.builders.stores import (
+    from graphknows.settings import GraphKnowsSettings
+    from graphknows.storage import (
         build_arcadedb_ltm_store,
         build_arcadedb_stm_store,
         build_arcadedb_vector_store,
     )
-    from graphknows.memory.query.retriever import DETRetriever
-    from graphknows.memory.stores.embedder import embed_one
+    from graphknows.retrieval.retriever import DETRetriever
+    from graphknows.storage.embedder import embed_one
 
     s = GraphKnowsSettings()
     vec = build_arcadedb_vector_store(s)
@@ -141,8 +141,8 @@ async def test_entities_are_session_scoped_across_two_sessions() -> None:
     if not _arcadedb_reachable():
         pytest.skip("ArcadeDB not reachable")
 
-    from graphknows.config import GraphKnowsSettings
-    from graphknows.config.builders.stores import build_arcadedb_stm_store
+    from graphknows.settings import GraphKnowsSettings
+    from graphknows.storage import build_arcadedb_stm_store
 
     s = GraphKnowsSettings()
     stm = build_arcadedb_stm_store(s)

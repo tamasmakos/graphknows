@@ -1,7 +1,7 @@
 """Snapshot of the public API surface.
 
 The documented public surface of ``graphknows`` is exactly ``graphknows.__all__``
-plus ``graphknows.ports``, ``graphknows.client``, ``graphknows.adapters.*``, the
+plus ``graphknows.ports``, ``graphknows.integrations.client``, ``graphknows.integrations.*``, the
 two CLI entry points, and the MCP tool contract. This test pins the top-level
 export set so an accidental addition or removal is a deliberate, reviewed change
 (bump the snapshot in the same commit).
@@ -23,10 +23,13 @@ EXPECTED_PUBLIC_API = {
     "IngestResult",
     "Memory",
     "MemoryMode",
+    "MemoryScope",
+    "Message",
     "MissingExtraError",
     "RetrievalError",
     "StoreError",
     "__version__",
+    "normalize_messages",
 }
 
 
@@ -40,20 +43,14 @@ def test_every_exported_name_is_importable() -> None:
 
 
 def test_memory_is_the_facade() -> None:
-    from graphknows.runtime import Memory as RuntimeMemory
+    from graphknows.memory import Memory as RuntimeMemory
 
     assert graphknows.Memory is RuntimeMemory
 
 
-def test_graphknowsruntime_alias_is_deprecated() -> None:
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        alias = graphknows.GraphKnowsRuntime
-    assert alias is graphknows.Memory
-    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
-
-
-def test_ports_are_a_public_subpackage() -> None:
-    ports = importlib.import_module("graphknows.ports")
-    for name in ("IEmbedder", "IRelationExtractor", "IVectorStore", "ISTMStore", "ILTMStore"):
-        assert hasattr(ports, name)
+def test_store_protocols_are_public() -> None:
+    base = importlib.import_module("graphknows.storage.base")
+    for name in ("IEmbedder", "IVectorStore", "ISTMStore", "ILTMStore"):
+        assert hasattr(base, name)
+    relations = importlib.import_module("graphknows.ingestion.extraction.relations.base")
+    assert hasattr(relations, "IRelationExtractor")

@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from graphknows.memory.stores.arcadedb.client import ArcadeDBClient
-from graphknows.memory.stores.arcadedb.ltm_store import ArcadeDBLTMStore
-from graphknows.memory.stores.arcadedb.stm_store import ArcadeDBSTMStore
+from graphknows.storage.arcadedb.client import ArcadeDBClient
+from graphknows.storage.arcadedb.ltm_store import ArcadeDBLTMStore
+from graphknows.storage.arcadedb.stm_store import ArcadeDBSTMStore
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from graphknows.ingestion.domain.taxonomy import (
+from graphknows.ingestion.models.taxonomy import (
     EntityGroupConfig,
     TaxonomyConfig,
     get_default_taxonomy,
@@ -77,7 +77,7 @@ class TestGetDefaultTaxonomy:
 
 class TestImportBoundary:
     def test_domain_taxonomy_does_not_import_graphgen(self):
-        import graphknows.ingestion.domain.taxonomy as m
+        import graphknows.ingestion.models.taxonomy as m
 
         src = Path(m.__file__).read_text()
         tree = ast.parse(src)

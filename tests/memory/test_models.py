@@ -4,14 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.memory.models import (
-    EvidenceItem,
-    IngestRequest,
-    IngestResult,
-    MemoryClass,
-    PromotionRecord,
-    PromotionRequest,
-)
+from graphknows.ingestion.models import PromotionRecord, PromotionRequest
+from graphknows.models import EvidenceItem, IngestRequest, IngestResult, MemoryClass
 
 
 def test_ingest_request_frozen():

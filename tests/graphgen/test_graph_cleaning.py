@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graphknows.extraction.entities.canonicalization import (
+from graphknows.ingestion.extraction.entities.canonicalization import (
     are_potential_aliases,
     classify_surface_form,
     normalize_surface_form,

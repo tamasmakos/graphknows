@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graphknows.config.namespace import db_names, namespaces_from_databases, sanitize
+from graphknows.storage.namespace import db_names, namespaces_from_databases, sanitize
 
 
 class TestSanitize:

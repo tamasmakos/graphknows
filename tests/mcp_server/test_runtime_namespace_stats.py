@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from graphknows.runtime import Memory
+from graphknows.memory import Memory
 
 
 def _client_recording(query_dbs: list[str], exists_dbs: list[str]) -> MagicMock:
@@ -34,7 +34,7 @@ async def test_stats_targets_namespaced_databases() -> None:
     client = _client_recording(query_dbs, [])
 
     with patch(
-        "graphknows.config.builders.stores.build_arcadedb_client", return_value=client
+        "graphknows.storage.build_arcadedb_client", return_value=client
     ):
         await Memory(namespace="acme").stats(session_id="s1")
 
@@ -49,7 +49,7 @@ async def test_stats_default_namespace_uses_shared_databases() -> None:
     client = _client_recording(query_dbs, [])
 
     with patch(
-        "graphknows.config.builders.stores.build_arcadedb_client", return_value=client
+        "graphknows.storage.build_arcadedb_client", return_value=client
     ):
         await Memory(namespace="").stats()
 
@@ -62,7 +62,7 @@ async def test_doctor_checks_namespaced_databases() -> None:
     client = _client_recording([], exists_dbs)
 
     with patch(
-        "graphknows.config.builders.stores.build_arcadedb_client", return_value=client
+        "graphknows.storage.build_arcadedb_client", return_value=client
     ):
         result = await Memory(namespace="acme").doctor()
 

@@ -1,8 +1,8 @@
-"""Tests for graphknows.memory.models.memory_class."""
+"""Tests for graphknows.models.memory_class."""
 
 from __future__ import annotations
 
-from graphknows.memory.models.memory_class import MemoryClass
+from graphknows.models.memory_class import MemoryClass
 
 
 class TestMemoryClass:

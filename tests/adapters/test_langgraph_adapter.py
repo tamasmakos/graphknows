@@ -11,7 +11,7 @@ import importlib.util
 
 import pytest
 
-from graphknows.adapters.langgraph import recall, remember
+from graphknows.integrations.langgraph import recall, remember
 from graphknows.exceptions import MissingExtraError
 
 _HAS_LANGGRAPH = importlib.util.find_spec("langgraph") is not None
@@ -79,5 +79,5 @@ async def test_remember_ingests_last_message() -> None:
 @pytest.mark.skipif(_HAS_LANGGRAPH, reason="langgraph installed — guard not exercised")
 def test_store_import_without_langgraph_raises_missing_extra() -> None:
     with pytest.raises(MissingExtraError) as exc:
-        from graphknows.adapters.langgraph import GraphKnowsStore  # noqa: F401
+        from graphknows.integrations.langgraph import GraphKnowsStore  # noqa: F401
     assert exc.value.extra == "langgraph"
