@@ -47,9 +47,18 @@ def test_build_relation_schema_falls_back_without_descriptions():
     assert set(schema) == {"likes", "owns"}
 
 
-def test_extractor_uses_taxonomy_relation_schema():
-    from graphknows.ingestion.extraction.entities.extractor import _default_relation_schema
+def test_extractor_defaults_to_open_vocabulary():
+    """The live extractor has NO taxonomy relation schema — mined labels only.
 
-    schema = _default_relation_schema()
-    assert "attended" in schema
-    assert "friend_of" not in schema and "lives_in" not in schema
+    An explicitly passed schema (escape hatch) is still honored.
+    """
+    from unittest.mock import MagicMock
+
+    from graphknows.ingestion.extraction.entities.extractor import GLiNER2EntityExtractor
+
+    extractor = GLiNER2EntityExtractor(schema_miner=MagicMock())
+    assert extractor._relation_schema == {}
+
+    explicit = build_relation_schema(get_default_taxonomy())
+    extractor = GLiNER2EntityExtractor(schema_miner=MagicMock(), relation_schema=explicit)
+    assert extractor._relation_schema == explicit

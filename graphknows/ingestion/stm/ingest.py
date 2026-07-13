@@ -52,13 +52,6 @@ class _STMIngestHandler:
 
             self._embed_fn = embed_one
 
-        # Ontology curation layer — applied AFTER extraction to drop relations
-        # whose label is not part of the configured taxonomy.
-        from graphknows.ingestion.extraction.relations.filter import RelationOntologyFilter
-        from graphknows.ingestion.models.taxonomy import get_default_taxonomy
-
-        self._relation_filter = RelationOntologyFilter(get_default_taxonomy().relation_types)
-
     async def ingest_text(
         self,
         text: str,
@@ -281,9 +274,10 @@ class _STMIngestHandler:
         if filtered:
             await self._store.write_entities_bulk(session_id, chunk_id, filtered)
 
-        # GLiNER2 relations — ontology-filtered, evidenced to this chunk.
-        gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
-        for rel in gliner_relations:
+        # GLiNER2 relations — open-vocabulary labels, already precision-gated in
+        # the extractor (dep-path/frame corroboration), evidenced to this chunk.
+        # No ontology filter here: it would reject every open-vocab label.
+        for rel in extraction.relations:
             await self._store.write_relation(
                 rel["head"],
                 rel["relation"],
@@ -291,7 +285,7 @@ class _STMIngestHandler:
                 fact=rel.get("evidence", "") or text,
                 chunk_id=chunk_id,
                 confidence=rel.get("score", 0.5),
-                source="gliner",
+                source=rel.get("source", "gliner"),
             )
 
         # DSPy ontology-guided relations (llm_assisted mode only).

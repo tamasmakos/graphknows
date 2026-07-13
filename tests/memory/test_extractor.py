@@ -24,10 +24,17 @@ class _Tok:
         self.lemma_ = lemma
         self.pos_ = pos
         self._ancestors = ancestors or []
+        self.children: list[_Tok] = []
+        self.head = self
 
     @property
     def ancestors(self) -> list[_Tok]:
         return self._ancestors
+
+
+def _no_frames(sents):
+    """frame_fn stub: no accepted FrameNet frames for any sentence."""
+    return [{} for _ in sents]
 
 
 def test_extraction_result_has_entities_and_relations_fields():
@@ -60,17 +67,20 @@ def test_spacy_schema_miner_builds_entity_and_relation_specs_from_doc():
             SimpleNamespace(text="ChatGPT", label_="PRODUCT", root=right, sent=sent),
         ]
     )
-    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc)
+    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc, frame_fn=_no_frames)
 
     schema = miner.build("OpenAI built ChatGPT.")
 
     assert schema.entity_spec["org"]["description"]
     assert schema.entity_spec["product"]["threshold"] == pytest.approx(0.35)
     assert schema.label_to_type == {"org": "ORG", "product": "PRODUCT"}
-    assert "build" in schema.relation_spec
-    assert "ORG" not in schema.relation_spec["build"]
-    assert "OpenAI -> build -> ChatGPT" in schema.relation_spec["build"]
-    assert "avoid selecting whole clauses" in schema.relation_spec["build"]
+    # WordNet canonicalization: build -> construct (first lemma of first verb synset).
+    assert "construct" in schema.relation_spec
+    assert "ORG" not in schema.relation_spec["construct"]
+    assert "OpenAI -> build -> ChatGPT" in schema.relation_spec["construct"]
+    assert "avoid selecting whole clauses" in schema.relation_spec["construct"]
+    # Dep-path corroboration recorded for the entity pair (agreement-gate input).
+    assert schema.relation_support["construct"][("chatgpt", "openai")] == {"dep"}
 
 
 def test_spacy_schema_miner_skips_prepositions_adjectives_and_parent_verbs():
@@ -87,7 +97,7 @@ def test_spacy_schema_miner_skips_prepositions_adjectives_and_parent_verbs():
             SimpleNamespace(text="Green Deal", label_="PRODUCT", root=right, sent=sent),
         ]
     )
-    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc)
+    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc, frame_fn=_no_frames)
 
     schema = miner.build("The Commission said it supports the Green Deal.")
 
@@ -99,11 +109,40 @@ def test_spacy_schema_miner_skips_prepositions_adjectives_and_parent_verbs():
     assert "german" not in schema.relation_spec
 
 
-def test_extract_builds_fresh_schema_and_parses_entities_and_relations():
+def test_spacy_schema_miner_frame_first_labeling():
+    """A trigger covered by an accepted FrameNet frame gets the frame label."""
+    root = _Tok(1, "lives", "live", "VERB")
+    left = _Tok(0, "Melanie", "Melanie", "PROPN", [root])
+    right = _Tok(2, "Boston", "Boston", "PROPN", [root])
+    sent = SimpleNamespace(start=0)
+    doc = SimpleNamespace(
+        ents=[
+            SimpleNamespace(text="Melanie", label_="PERSON", root=left, sent=sent),
+            SimpleNamespace(text="Boston", label_="GPE", root=right, sent=sent),
+        ]
+    )
+    miner = _SpacySchemaMiner(
+        nlp_loader=lambda _name: lambda _text: doc,
+        frame_fn=lambda sents: [{1: ("Residence", 0.6, root)} for _ in sents],
+    )
+
+    schema = miner.build("Melanie lives in Boston.")
+
+    assert "RESIDENCE" in schema.relation_spec
+    assert "live" not in schema.relation_spec  # frame label wins over the lemma
+    assert "FrameNet Residence" in schema.relation_spec["RESIDENCE"]
+    assert "trigger: 'live'" in schema.relation_spec["RESIDENCE"]
+    # Both signals corroborate: the dep-path trigger IS the frame's LU target.
+    assert schema.relation_support["RESIDENCE"][("boston", "melanie")] == {"dep", "frame"}
+
+
+def _mock_extractor(relation_support, raw_relations):
+    """Extractor with a mocked GLiNER2 model + mined-schema stub."""
     schema = SimpleNamespace(
         entity_spec={"org": {"description": "dynamic org", "threshold": 0.35}},
         relation_spec={"build": "dynamic relation"},
         label_to_type={"org": "ORG"},
+        relation_support=relation_support,
     )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
@@ -115,32 +154,92 @@ def test_extract_builds_fresh_schema_and_parses_entities_and_relations():
     mock_model.create_schema.return_value = mock_schema
     mock_model.extract.return_value = {
         "entities": {"org": [{"text": "OpenAI", "confidence": 0.95}]},
-        "relation_extraction": {
-            "build": [
-                {
-                    "head": {"text": "OpenAI", "confidence": 0.9},
-                    "tail": {"text": "ChatGPT", "confidence": 0.8},
-                }
-            ]
-        },
+        "relation_extraction": raw_relations,
     }
     extractor = GLiNER2EntityExtractor(
         model_loader=lambda: mock_model,
         schema_miner=schema_miner,
     )
+    return extractor, schema, mock_schema, mock_model
+
+
+_RAW_BUILD_RELATION = {
+    "build": [
+        {
+            "head": {"text": "OpenAI", "confidence": 0.9},
+            "tail": {"text": "ChatGPT", "confidence": 0.8},
+        }
+    ]
+}
+
+
+def test_extract_builds_fresh_schema_and_parses_entities_and_relations():
+    support = {"build": {("chatgpt", "openai"): {"dep"}}}
+    extractor, schema, mock_schema, mock_model = _mock_extractor(support, _RAW_BUILD_RELATION)
 
     result = extractor.extract("OpenAI built ChatGPT.")
 
     mock_schema.entities.assert_called_once_with(schema.entity_spec)
-    # Entities stay dynamic (spaCy-mined), but RELATIONS come from the configured
-    # taxonomy's canonical predicate schema, NOT the per-chunk mined relation_spec.
-    mock_schema.relations.assert_called_once_with(extractor._relation_schema)
-    assert "build" not in extractor._relation_schema  # mined lemma not used
+    # Open vocabulary: the per-chunk mined relation_spec IS the schema.
+    mock_schema.relations.assert_called_once_with(schema.relation_spec)
+    assert extractor._relation_schema == {}
     mock_model.extract.assert_called_once()
     assert result.entities == [{"name": "OpenAI", "type": "ORG", "score": 0.95}]
     assert result.relations[0]["head"] == "OpenAI"
     assert result.relations[0]["tail"] == "ChatGPT"
     assert result.relations[0]["score"] == pytest.approx(0.8)
+    assert result.relations[0]["source"] == "gliner+dep"
+
+
+def test_agreement_gate_drops_uncorroborated_relation():
+    """A GLiNER2 triplet with no mined dep/frame support for the pair is dropped."""
+    support = {"build": {("keras", "google"): {"dep"}}}  # different pair
+    extractor, _schema, _ms, _mm = _mock_extractor(support, _RAW_BUILD_RELATION)
+
+    result = extractor.extract("OpenAI built ChatGPT.")
+
+    assert result.relations == []
+
+
+def test_agreement_gate_boosts_when_both_signals_agree():
+    support = {"build": {("chatgpt", "openai"): {"dep", "frame"}}}
+    extractor, _schema, _ms, _mm = _mock_extractor(support, _RAW_BUILD_RELATION)
+
+    result = extractor.extract("OpenAI built ChatGPT.")
+
+    assert result.relations[0]["source"] == "gliner+dep+frame"
+    assert result.relations[0]["score"] == pytest.approx(min(1.0, 0.8 * 1.15))
+
+
+def test_explicit_relation_schema_escape_hatch_bypasses_gate():
+    """An explicitly passed taxonomy schema is honored and skips corroboration."""
+    schema = SimpleNamespace(
+        entity_spec={"org": {"description": "dynamic org", "threshold": 0.35}},
+        relation_spec={"build": "dynamic relation"},
+        label_to_type={"org": "ORG"},
+        relation_support={},
+    )
+    schema_miner = MagicMock()
+    schema_miner.build.return_value = schema
+    schema_miner.nlp = _SpacySchemaMiner().nlp
+    mock_schema = MagicMock()
+    mock_model = MagicMock()
+    mock_model.create_schema.return_value = mock_schema
+    mock_model.extract.return_value = {
+        "entities": {},
+        "relation_extraction": _RAW_BUILD_RELATION,
+    }
+    taxonomy_schema = {"created": "one entity created another"}
+    extractor = GLiNER2EntityExtractor(
+        model_loader=lambda: mock_model,
+        schema_miner=schema_miner,
+        relation_schema=taxonomy_schema,
+    )
+
+    result = extractor.extract("OpenAI built ChatGPT.")
+
+    mock_schema.relations.assert_called_once_with(taxonomy_schema)
+    assert result.relations[0]["source"] == "gliner"
 
 
 def test_extract_returns_empty_when_spacy_mines_no_entity_schema():

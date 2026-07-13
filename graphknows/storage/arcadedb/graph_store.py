@@ -47,6 +47,9 @@ _VEC_DIM = "__VEC_DIM__"
 
 # Known single-valued relation predicates — a new fact tombstones the old edge
 # (sets invalid_at / is_current=false) instead of coexisting with it.
+# The FrameNet-derived labels (RESIDENCE, BEING_EMPLOYED) map the obvious
+# open-vocabulary frame names onto the same behavior. Phase 3 consolidation
+# replaces this hardcoded set with frame-semantics-driven functional detection.
 _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
     {
         "WORKS_AS",
@@ -59,6 +62,8 @@ _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
         "AFFILIATED_WITH",
         "BELONGS_TO",
         "LED_BY",
+        "RESIDENCE",
+        "BEING_EMPLOYED",
     }
 )
 
