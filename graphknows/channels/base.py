@@ -48,6 +48,7 @@ class ChannelContext:
         "query",
         "scope",
         "session_id",
+        "state",
         "words",
         "words_graph",
     )
@@ -61,10 +62,13 @@ class ChannelContext:
         emb2: list[float] | None,
         words: list[str],
         words_graph: list[str],
+        state: str | None = None,
     ) -> None:
         self.query = query
         self.session_id = session_id
         self.scope = scope
+        # Lifecycle filter derived from scope (raw / consolidated / None=both).
+        self.state = state
         self.emb = emb
         self.emb2 = emb2
         self.words = words

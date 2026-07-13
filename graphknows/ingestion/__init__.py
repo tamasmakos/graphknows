@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
-    """Build an STMService (unconnected — call ``await service.connect()``).
+    """Build an STMService over the golden GraphStore (unconnected).
 
     Returned without an open connection so the ArcadeDB client binds to the
     caller's event loop when ``connect()`` is awaited, not to a background loop.
@@ -27,23 +27,15 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     from graphknows.ingestion.extraction.entities import build_entity_extractor
     from graphknows.ingestion.extraction.relations import build_relation_extractor
     from graphknows.ingestion.stm.service import STMService
-    from graphknows.storage import build_arcadedb_client, db_names
-    from graphknows.storage.arcadedb.stm_store import ArcadeDBSTMStore
-    from graphknows.storage.arcadedb.vector_store import ArcadeDBVectorStore
+    from graphknows.storage import build_graph_store
     from graphknows.storage.embedder import embed_one
 
-    # Share ONE client across the graph + vector stores (index-visibility races
-    # under separate connections otherwise duplicate CHUNK nodes).
-    stm_db, ltm_db = db_names(namespace)
-    client = build_arcadedb_client(settings)
-    stm = ArcadeDBSTMStore(client=client, db=stm_db)
-    vec = ArcadeDBVectorStore(client=client, stm_db=stm_db, ltm_db=ltm_db)
     return STMService(
-        stm,
-        vec,
+        build_graph_store(settings, namespace),
         build_entity_extractor(settings),
         embed_fn=embed_one,
         rel_extractor=build_relation_extractor(settings),
+        embed_dims=settings.embed_dimensions,
     )
 
 

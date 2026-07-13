@@ -29,7 +29,7 @@ def _client_recording(query_dbs: list[str], exists_dbs: list[str]) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_stats_targets_namespaced_databases() -> None:
+async def test_stats_targets_namespaced_database() -> None:
     query_dbs: list[str] = []
     client = _client_recording(query_dbs, [])
 
@@ -38,13 +38,12 @@ async def test_stats_targets_namespaced_databases() -> None:
     ):
         await Memory(namespace="acme").stats(session_id="s1")
 
-    # Every query goes to the namespace's pair — never the shared default.
-    assert set(query_dbs) == {"stm_acme", "ltm_acme"}
-    assert "stm" not in query_dbs and "ltm" not in query_dbs
+    # Every query goes to the namespace's single golden database.
+    assert set(query_dbs) == {"mem_acme"}
 
 
 @pytest.mark.asyncio
-async def test_stats_default_namespace_uses_shared_databases() -> None:
+async def test_stats_default_namespace_uses_shared_database() -> None:
     query_dbs: list[str] = []
     client = _client_recording(query_dbs, [])
 
@@ -53,11 +52,11 @@ async def test_stats_default_namespace_uses_shared_databases() -> None:
     ):
         await Memory(namespace="").stats()
 
-    assert set(query_dbs) == {"stm", "ltm"}
+    assert set(query_dbs) == {"mem"}
 
 
 @pytest.mark.asyncio
-async def test_doctor_checks_namespaced_databases() -> None:
+async def test_doctor_checks_namespaced_database() -> None:
     exists_dbs: list[str] = []
     client = _client_recording([], exists_dbs)
 
@@ -66,6 +65,5 @@ async def test_doctor_checks_namespaced_databases() -> None:
     ):
         result = await Memory(namespace="acme").doctor()
 
-    assert exists_dbs == ["stm_acme", "ltm_acme"]
-    assert result["arcadedb_stm"] is True
-    assert result["arcadedb_ltm"] is True
+    assert exists_dbs == ["mem_acme"]
+    assert result["arcadedb"] is True

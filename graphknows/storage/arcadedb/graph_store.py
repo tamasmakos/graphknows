@@ -1022,6 +1022,43 @@ class GraphStore:
         logger.info("compute_and_persist_pagerank: updated %d ENTITY nodes", updated)
         return updated
 
+    async def consolidate_session(self, session_id: str) -> int:
+        """Flip lifecycle ``state`` raw -> consolidated in place (Phase-1 shim).
+
+        This is the thin structural consolidation for Phase 1 — NOT the full
+        Phase-3 pipeline (entity merge / relation canonicalize / topics). It
+        flips the session's SESSION + CHUNK nodes, and every ``raw`` ENTITY and
+        relation edge (entities/relations are namespace-global, so any still-raw
+        artifact is promoted). Nothing is deleted; data stays queryable.
+
+        Returns the number of CHUNK nodes flipped for this session.
+        """
+        now = datetime.now(UTC).isoformat()
+        # Count first (query endpoint rejects a mutating SET...RETURN as
+        # non-idempotent), then flip via the command endpoint.
+        chunk_rows = await self._qry(
+            "MATCH (c:CHUNK {session_id: $sid}) WHERE c.state = 'raw' RETURN count(c) AS n",
+            sid=session_id,
+        )
+        await self._cmd(
+            "MATCH (c:CHUNK {session_id: $sid}) WHERE c.state = 'raw' "
+            "SET c.state = 'consolidated'",
+            sid=session_id,
+        )
+        await self._cmd(
+            "MATCH (s:SESSION {session_id: $sid}) "
+            "SET s.state = 'consolidated', s.consolidated_at = $now",
+            sid=session_id,
+            now=now,
+        )
+        await self._cmd("MATCH (e:ENTITY) WHERE e.state = 'raw' SET e.state = 'consolidated'")
+        await self._cmd(
+            "MATCH (:ENTITY)-[r]->(:ENTITY) WHERE r.state = 'raw' SET r.state = 'consolidated'"
+        )
+        flipped = int(chunk_rows[0].get("n") or 0) if chunk_rows else 0
+        logger.info("consolidate_session %s: flipped %d chunks", session_id, flipped)
+        return flipped
+
     # ------------------------------------------------------------------
     # Deletion
     # ------------------------------------------------------------------

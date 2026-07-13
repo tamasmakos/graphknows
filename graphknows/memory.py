@@ -64,8 +64,8 @@ class Memory:
         self, settings: GraphKnowsSettings | None = None, namespace: str | None = None
     ) -> None:
         self.settings = settings or GraphKnowsSettings()
-        # The namespace selects a physical ArcadeDB database pair (stm_<ns>/ltm_<ns>);
-        # "" keeps the original stm/ltm. Explicit arg wins over the settings default.
+        # The namespace selects one physical ArcadeDB database (mem_<ns>, "" -> mem,
+        # the golden layer). Explicit arg wins over the settings default.
         self.namespace = self.settings.namespace if namespace is None else namespace
         self._retriever: Any = None
         self._retriever_stores: list[Any] = []
@@ -110,106 +110,90 @@ class Memory:
 
     async def _build_retriever(self) -> Any:
         from graphknows.retrieval import build_retriever
-        from graphknows.storage import (
-            build_arcadedb_ltm_store,
-            build_arcadedb_stm_store,
-            build_arcadedb_vector_store,
-        )
+        from graphknows.storage import build_graph_store
+        from graphknows.storage.embedder import embed_dim
 
         s = self.settings
-        vec = build_arcadedb_vector_store(s, self.namespace)
-        ltm = build_arcadedb_ltm_store(s, self.namespace)
-        stm = build_arcadedb_stm_store(s, self.namespace)
-        # Record the stores before connecting so a failure during connect or
+        store = build_graph_store(s, self.namespace)
+        # Record the store before connecting so a failure during connect or
         # ensure_schema is cleaned up by close() instead of orphaning open pools.
-        self._retriever_stores = [vec, ltm, stm]
+        self._retriever_stores = [store]
         try:
-            await asyncio.gather(
-                vec.connect(),  # vector: connect + ensure_schema
-                ltm.connect(),
-                stm.connect(),
-            )
-            await ltm.ensure_schema()
+            await store.connect()
+            dims = s.embed_dimensions or embed_dim()
+            await store.ensure_schema(dims)
         except Exception:
             await self.close()
             raise
         # The mode fork (deterministic vs agentic) lives in build_retriever.
-        self._retriever = build_retriever(s, vec=vec, ltm=ltm, stm=stm)
+        self._retriever = build_retriever(s, store=store)
         return self._retriever
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity for this runtime's namespace."""
         from graphknows.storage import build_arcadedb_client
         from graphknows._version import get_version
-        from graphknows.storage.namespace import db_names
+        from graphknows.storage.namespace import db_name
 
-        stm_db, ltm_db = db_names(self.namespace)
+        db = db_name(self.namespace)
         result: dict[str, Any] = {"version": get_version()}
         try:
             c = build_arcadedb_client(self.settings)
             await c.connect()
-            result["arcadedb_stm"] = await c.database_exists(stm_db)
-            result["arcadedb_ltm"] = await c.database_exists(ltm_db)
+            result["arcadedb"] = await c.database_exists(db)
             await c.close()
         except Exception as exc:
-            result["arcadedb_stm"] = str(exc)
-            result["arcadedb_ltm"] = str(exc)
+            result["arcadedb"] = str(exc)
         result["pid"] = os.getpid()
         return result
 
     async def stats(self, session_id: str = "") -> dict[str, Any]:
-        """Return STM and LTM memory statistics for this runtime's namespace."""
-        from graphknows.storage import build_arcadedb_client
-        from graphknows.storage.namespace import db_names
+        """Return golden-layer memory statistics for this runtime's namespace.
 
-        stm_db, ltm_db = db_names(self.namespace)
+        Counts come from the single database (``mem``/``mem_<ns>``); the
+        ``raw``/``consolidated`` split is reported per lifecycle ``state``.
+        """
+        from graphknows.storage import build_arcadedb_client
+        from graphknows.storage.namespace import db_name
+
+        db = db_name(self.namespace)
         c = build_arcadedb_client(self.settings)
         await c.connect()
         try:
             if session_id:
                 sid = session_id
-                stm_chunks = await c.query(
-                    stm_db,
-                    "MATCH (n:CHUNK {session_id: $sid}) RETURN count(n) AS c",
+                raw_chunks = await c.query(
+                    db,
+                    "MATCH (n:CHUNK {session_id: $sid}) WHERE n.state = 'raw' "
+                    "RETURN count(n) AS c",
                     params={"sid": sid},
                 )
-                stm_turns = await c.query(
-                    stm_db,
-                    "MATCH (n:TURN {session_id: $sid}) RETURN count(n) AS c",
-                    params={"sid": sid},
-                )
-                ltm_chunks = await c.query(
-                    ltm_db,
-                    "MATCH (n:CHUNK {session_id: $sid}) RETURN count(n) AS c",
-                    params={"sid": sid},
-                )
-                ltm_turns = await c.query(
-                    ltm_db,
-                    "MATCH (n:TURN {session_id: $sid}) RETURN count(n) AS c",
+                cons_chunks = await c.query(
+                    db,
+                    "MATCH (n:CHUNK {session_id: $sid}) WHERE n.state = 'consolidated' "
+                    "RETURN count(n) AS c",
                     params={"sid": sid},
                 )
             else:
-                stm_chunks = await c.query(stm_db, "MATCH (n:CHUNK) RETURN count(n) AS c")
-                stm_turns = await c.query(stm_db, "MATCH (n:TURN) RETURN count(n) AS c")
-                ltm_chunks = await c.query(ltm_db, "MATCH (n:CHUNK) RETURN count(n) AS c")
-                ltm_turns = await c.query(ltm_db, "MATCH (n:TURN) RETURN count(n) AS c")
+                raw_chunks = await c.query(
+                    db, "MATCH (n:CHUNK) WHERE n.state = 'raw' RETURN count(n) AS c"
+                )
+                cons_chunks = await c.query(
+                    db, "MATCH (n:CHUNK) WHERE n.state = 'consolidated' RETURN count(n) AS c"
+                )
 
-            ltm_entities = await c.query(ltm_db, "MATCH (n:ENTITY) RETURN count(n) AS c")
-            ltm_topics = await c.query(ltm_db, "MATCH (n:TOPIC) RETURN count(n) AS c")
-            ltm_sessions = await c.query(ltm_db, "MATCH (n:SESSION) RETURN count(n) AS c")
+            entities = await c.query(db, "MATCH (n:ENTITY) RETURN count(n) AS c")
+            topics = await c.query(db, "MATCH (n:TOPIC) RETURN count(n) AS c")
+            sessions = await c.query(db, "MATCH (n:SESSION) RETURN count(n) AS c")
 
             def _n(rows: list[dict[str, Any]]) -> int:
                 return int(rows[0].get("c") or 0) if rows else 0
 
             return {
-                "stm": {"chunks": _n(stm_chunks), "turns": _n(stm_turns)},
-                "ltm": {
-                    "sessions": _n(ltm_sessions),
-                    "entities": _n(ltm_entities),
-                    "topics": _n(ltm_topics),
-                    "chunks": _n(ltm_chunks),
-                    "turns": _n(ltm_turns),
-                },
+                "sessions": _n(sessions),
+                "entities": _n(entities),
+                "topics": _n(topics),
+                "chunks": {"raw": _n(raw_chunks), "consolidated": _n(cons_chunks)},
             }
         finally:
             await c.close()
@@ -321,31 +305,37 @@ class Memory:
         return {"hits": _format_fused_hits(ctx.fused_results, session_id)}
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
-        """Promote a session from STM into LTM."""
-        from graphknows.ingestion import build_promotion_pipeline
-        from graphknows.ingestion.models.promotion import PromotionRequest
-        from graphknows._async_bridge import _run as bg_run
+        """Consolidate a session in place (Phase-1 shim).
 
-        pipeline = build_promotion_pipeline(self.settings, self.namespace)
-        request = PromotionRequest(
-            session_id=session_id,
-            run_gds=True,
-            clear_stm=True,
-            merge_entities=True,
-        )
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, lambda: bg_run(pipeline.promote(request)))
-        await loop.run_in_executor(None, lambda: bg_run(pipeline.close()))
+        The full STM->LTM promotion pipeline is retired in the golden layer.
+        For Phase 1 this recomputes PageRank over the entity graph and flips the
+        session's lifecycle ``state`` raw -> consolidated in place; nothing is
+        deleted. The full consolidation pipeline (entity merge, relation
+        canonicalize, topics) lands in Phase 3.
+        """
+        import time
+
+        t0 = time.monotonic()
+        errors: list[str] = []
+        pagerank_updated = 0
+        chunks_flipped = 0
+        try:
+            await self._get_retriever()  # ensures the store is connected + schema'd
+            store = self._retriever_stores[0]
+            pagerank_updated = await store.compute_and_persist_pagerank()
+            chunks_flipped = await store.consolidate_session(session_id)
+        except Exception as exc:
+            errors.append(str(exc))
 
         return {
-            "nodes": result.nodes_written,
-            "edges": result.edges_written,
-            "chunks": result.chunks_promoted,
-            "turns": result.turns_promoted,
-            "topics_created": result.topics_created,
-            "merged_entities": result.merged_entities,
-            "elapsed_s": round(result.elapsed_s, 3),
-            "errors": list(result.errors),
+            "nodes": pagerank_updated,
+            "edges": 0,
+            "chunks": chunks_flipped,
+            "turns": 0,
+            "topics_created": 0,
+            "merged_entities": 0,
+            "elapsed_s": round(time.monotonic() - t0, 3),
+            "errors": errors,
         }
 
     # ------------------------------------------------------------------
@@ -422,34 +412,49 @@ class Memory:
         return await self.flush_memory(sid)
 
     async def purge_memory(self, scope: str = "both", session_id: str = "") -> dict[str, Any]:
-        """Purge STM and/or LTM memory."""
+        """Purge memory for this namespace (golden layer, single database).
+
+        ``scope`` is retained for API/deprecation compatibility but no longer
+        selects a physical store — there is one database. ``session_id`` deletes
+        just that session's subgraph; otherwise all data is cleared (schema and
+        indexes are preserved). ``stm_deleted``/``ltm_deleted`` are kept in the
+        result for MCP-consumer compatibility and both mirror the single delete.
+        """
+        from graphknows.storage import build_graph_store
+
         errors: list[str] = []
-        stm_deleted = False
-        ltm_deleted = False
-        if scope in ("stm", "both"):
-            await self._purge_stm(session_id, errors)
-            stm_deleted = True
-        if scope in ("ltm", "both"):
-            await self._purge_ltm(session_id, errors)
-            ltm_deleted = True
+        deleted = False
+        try:
+            store = build_graph_store(self.settings, self.namespace)
+            await store.connect()
+            try:
+                if session_id:
+                    await store.delete_session(session_id)
+                else:
+                    await store.clear_all()
+                deleted = True
+            finally:
+                await store.close()
+        except Exception as exc:
+            errors.append(f"arcadedb: {exc}")
         return {
             "scope": scope,
             "session_id": session_id or "(all)",
-            "stm_deleted": stm_deleted,
-            "ltm_deleted": ltm_deleted,
+            "stm_deleted": deleted,
+            "ltm_deleted": deleted,
             "errors": errors,
         }
 
     async def drop_namespace(self) -> dict[str, Any]:
-        """Drop this runtime's entire namespace (both physical databases).
+        """Drop this runtime's entire namespace database (``mem_<ns>``).
 
-        An O(1) reset — it removes the ``stm_<ns>``/``ltm_<ns>`` databases outright
-        instead of walking and DETACH-DELETE-ing every node. Refuses to drop the
-        default (``""``) namespace, whose databases (``stm``/``ltm``) are shared and
-        must be cleared with :meth:`purge_memory` instead of dropped.
+        An O(1) reset — it removes the database outright instead of walking and
+        DETACH-DELETE-ing every node. Refuses to drop the default (``""``)
+        namespace, whose database (``mem``) is shared and must be cleared with
+        :meth:`purge_memory` instead of dropped.
         """
         from graphknows.storage import build_arcadedb_client
-        from graphknows.storage.namespace import db_names
+        from graphknows.storage.namespace import db_name
 
         if not self.namespace:
             return {
@@ -457,105 +462,15 @@ class Memory:
                 "namespace": "",
                 "error": "refusing to drop the default namespace; use purge_memory instead",
             }
-        stm_db, ltm_db = db_names(self.namespace)
-        await self.close()  # release any cached retriever stores bound to these DBs
+        db = db_name(self.namespace)
+        await self.close()  # release any cached retriever store bound to this DB
         client = build_arcadedb_client(self.settings)
         await client.connect()
         try:
-            await client.drop_database(stm_db)
-            await client.drop_database(ltm_db)
+            await client.drop_database(db)
         finally:
             await client.close()
-        return {"dropped": True, "namespace": self.namespace, "databases": [stm_db, ltm_db]}
-
-    async def _purge_stm(self, session_id: str, errors: list[str]) -> None:
-        from graphknows.storage import build_arcadedb_stm_store
-
-        try:
-            stm_store = build_arcadedb_stm_store(self.settings, self.namespace)
-            await stm_store.connect()
-            try:
-                if session_id:
-                    await stm_store.delete_session(session_id)
-                else:
-                    await stm_store.drop_database()
-            finally:
-                await stm_store.close()
-        except Exception as exc:
-            errors.append(f"arcadedb stm: {exc}")
-
-    async def _purge_ltm(self, session_id: str, errors: list[str]) -> None:
-        from graphknows.storage import (
-            build_arcadedb_ltm_store,
-            build_arcadedb_vector_store,
-        )
-
-        try:
-            ltm_store = build_arcadedb_ltm_store(self.settings, self.namespace)
-            await ltm_store.connect()
-            try:
-                if session_id:
-                    await self._delete_ltm_session(ltm_store, session_id)
-                else:
-                    # Do NOT drop+recreate the database. A freshly recreated DB
-                    # leaves the CHUNK(id) UNIQUE index unbuilt for the very next
-                    # flush, so MERGE stops deduping and the two flush write-paths
-                    # (graph subgraph-write + vector promote) insert duplicate,
-                    # half-un-embedded chunk nodes. Keep the schema/indexes and
-                    # delete all data instead.
-                    await ltm_store.ensure_schema()
-                    vec_store = build_arcadedb_vector_store(self.settings, self.namespace)
-                    await vec_store.connect()
-                    await vec_store.close()
-                    await self._clear_ltm_all(ltm_store)
-            finally:
-                await ltm_store.close()
-        except Exception as exc:
-            errors.append(f"arcadedb ltm: {exc}")
-
-    @staticmethod
-    async def _clear_ltm_all(ltm_store: Any) -> None:
-        """Delete all LTM data while preserving schema and indexes."""
-        import contextlib
-
-        labels = (
-            "CHUNK",
-            "TURN",
-            "ENTITY",
-            "TOPIC",
-            "DIALOG",
-            "FILE",
-            "SESSION",
-            "TEMPORAL",
-            "FRAME",
-        )
-        for label in labels:
-            with contextlib.suppress(Exception):
-                await ltm_store._cmd(f"MATCH (n:{label}) DETACH DELETE n")
-
-    @staticmethod
-    async def _delete_ltm_session(ltm_store: Any, session_id: str) -> None:
-        await ltm_store._cmd(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
-            "DETACH DELETE c",
-            sid=session_id,
-        )
-        await ltm_store._cmd(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE) DETACH DELETE f",
-            sid=session_id,
-        )
-        await ltm_store._cmd(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(:DIALOG)-[:HAS_TURN]->(t:TURN) "
-            "DETACH DELETE t",
-            sid=session_id,
-        )
-        await ltm_store._cmd(
-            "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(d:DIALOG) DETACH DELETE d",
-            sid=session_id,
-        )
-        await ltm_store._cmd("MATCH (sess:SESSION {id: $sid}) DETACH DELETE sess", sid=session_id)
-        await ltm_store._cmd("MATCH (e:ENTITY) WHERE NOT (e)--() DETACH DELETE e")
-        await ltm_store._cmd("MATCH (n:FRAME {session_id: $sid}) DETACH DELETE n", sid=session_id)
+        return {"dropped": True, "namespace": self.namespace, "databases": [db]}
 
     async def corpus_ingest(
         self,

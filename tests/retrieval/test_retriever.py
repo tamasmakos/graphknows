@@ -11,10 +11,9 @@ from graphknows.retrieval.retriever import DETRetriever
 
 
 def _make_retriever():
-    vec = MagicMock()
-    ltm = MagicMock()
-    stm = MagicMock()
-    return DETRetriever(vec=vec, ltm=ltm, stm=stm), vec, ltm, stm
+    store = MagicMock()
+    store._qry = AsyncMock(return_value=[])
+    return DETRetriever(store=store), store
 
 
 # ---------------------------------------------------------------------------
@@ -24,14 +23,14 @@ def _make_retriever():
 
 @pytest.mark.asyncio
 async def test_execute_cypher_rejects_fstring_interpolation():
-    retriever, _, _, _ = _make_retriever()
+    retriever, _ = _make_retriever()
     with pytest.raises(ValueError, match="interpolation"):
         await retriever.execute_cypher("MATCH (n {name: {name}}) RETURN n")
 
 
 @pytest.mark.asyncio
 async def test_execute_cypher_rejects_write_keywords():
-    retriever, _, _, _ = _make_retriever()
+    retriever, _ = _make_retriever()
     for kw in ["CREATE", "MERGE", "SET", "DELETE", "DETACH DELETE", "DROP"]:
         with pytest.raises(ValueError, match="read-only"):
             await retriever.execute_cypher(f"{kw} (n:Entity) RETURN n")
@@ -39,8 +38,8 @@ async def test_execute_cypher_rejects_write_keywords():
 
 @pytest.mark.asyncio
 async def test_execute_cypher_allows_read_cypher():
-    retriever, _, ltm, _ = _make_retriever()
-    ltm._qry = AsyncMock(return_value=[{"name": "Alice"}])
+    retriever, store = _make_retriever()
+    store._qry = AsyncMock(return_value=[{"name": "Alice"}])
 
     result = await retriever.execute_cypher(
         "MATCH (n:Entity) WHERE n.name = $name RETURN n.name AS name",
@@ -51,8 +50,8 @@ async def test_execute_cypher_allows_read_cypher():
 
 @pytest.mark.asyncio
 async def test_execute_cypher_empty_params():
-    retriever, _, ltm, _ = _make_retriever()
-    ltm._qry = AsyncMock(return_value=[])
+    retriever, store = _make_retriever()
+    store._qry = AsyncMock(return_value=[])
     result = await retriever.execute_cypher("MATCH (n:Entity) RETURN n LIMIT 5")
     assert result == []
 

@@ -31,23 +31,17 @@ def _fake_embed(texts, model):
 
 
 def _make_retriever():
-    vec = MagicMock()
-    ltm = MagicMock()
-    stm = MagicMock()
+    store = MagicMock()
     # Retrieval is fail-loud: every awaited store method a collector touches must
     # be an AsyncMock or the (un-swallowed) await error propagates. Empty defaults;
     # individual tests override the channels they exercise.
-    stm.query_entity_chunks = AsyncMock(return_value=[])
-    stm.full_text_search_chunks = AsyncMock(return_value=[])
-    ltm._qry = AsyncMock(return_value=[])
-    ltm.full_text_search_chunks = AsyncMock(return_value=[])
-    vec.search_topics = AsyncMock(return_value=[])
-    vec.search_stm_chunks = AsyncMock(return_value=[])
-    vec.search_stm_turns = AsyncMock(return_value=[])
-    vec.search_ltm_chunks = AsyncMock(return_value=[])
-    vec.search_ltm_turns = AsyncMock(return_value=[])
-    vec.get_chunks_by_ids = AsyncMock(return_value={})
-    return DETRetriever(vec=vec, ltm=ltm, stm=stm), vec, ltm, stm
+    store.query_entity_chunks = AsyncMock(return_value=[])
+    store.full_text_search_chunks = AsyncMock(return_value=[])
+    store.query_temporal_chunks = AsyncMock(return_value=[])
+    store.search_topics = AsyncMock(return_value=[])
+    store.search_chunks_ann = AsyncMock(return_value=[])
+    store.get_chunks_by_ids = AsyncMock(return_value={})
+    return DETRetriever(store=store), store
 
 
 # ---------------------------------------------------------------------------
@@ -221,32 +215,23 @@ def test_idf_weight_zero_freq():
 
 
 @pytest.mark.asyncio
-async def test_stm_bm25_contributes_source():
-    """When STM full-text search returns a matching chunk, stm_text appears in sources."""
-    retriever, vec, ltm, stm = _make_retriever()
+async def test_bm25_contributes_source():
+    """When full-text search returns a matching chunk, the text source appears."""
+    retriever, store = _make_retriever()
 
-    stm.query_entity_chunks = AsyncMock(return_value=[])
-    stm.full_text_search_chunks = AsyncMock(
+    store.full_text_search_chunks = AsyncMock(
         return_value=[
-            {"chunk_id": "bm25-hit", "text": "violin concert performance", "metadata": {}},
+            {"chunk_id": "bm25-hit", "text": "violin concert performance"},
         ]
     )
-    vec.search_stm_chunks = AsyncMock(return_value=[])
-    vec.search_stm_turns = AsyncMock(return_value=[])
-    vec.search_ltm_chunks = AsyncMock(return_value=[])
-    vec.search_ltm_turns = AsyncMock(return_value=[])
-    vec.get_chunks_by_ids = AsyncMock(return_value={})
 
-    with (
-        patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
-    ):
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
         ctx = await retriever.retrieve("violin concert", session_id="s1", scope="stm")
 
     chunk_ids = {fr["chunk_id"] for fr in ctx.fused_results}
     assert "bm25-hit" in chunk_ids
     hit = next(fr for fr in ctx.fused_results if fr["chunk_id"] == "bm25-hit")
-    assert "stm_text" in hit["sources"]
+    assert "text" in hit["sources"]
 
 
 # ---------------------------------------------------------------------------
@@ -259,19 +244,9 @@ async def test_retrieve_signature_unchanged():
     """retrieve(query, session_id, top_k, scope) -> RetrievalContext must work."""
     from graphknows.retrieval.models.context import RetrievalContext
 
-    retriever, vec, ltm, stm = _make_retriever()
-    stm.query_entity_chunks = AsyncMock(return_value=[])
-    stm.full_text_search_chunks = AsyncMock(return_value=[])
-    vec.search_stm_chunks = AsyncMock(return_value=[])
-    vec.search_stm_turns = AsyncMock(return_value=[])
-    vec.search_ltm_chunks = AsyncMock(return_value=[])
-    vec.search_ltm_turns = AsyncMock(return_value=[])
-    vec.get_chunks_by_ids = AsyncMock(return_value={})
+    retriever, store = _make_retriever()
 
-    with (
-        patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed),
-        patch.object(retriever, "ltm_entity_traversal", new=AsyncMock(return_value={})),
-    ):
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
         ctx = await retriever.retrieve(
             query="test query",
             session_id="session-42",

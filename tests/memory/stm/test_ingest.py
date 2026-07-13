@@ -31,26 +31,23 @@ def _make_parsed(n_segments: int = 2) -> ParsedFile:
 
 
 def _make_handler(extractor=None, embed_fn=None):
-    stm = MagicMock()
-    vec = MagicMock()
+    store = MagicMock()
     for attr in [
-        "write_session_metadata",
-        "write_file_node",
-        "write_chunk_node",
-        "write_entity_node",
-        "write_chunk_entity_edge",
-        "write_chunk_entities_bulk",
-        "write_relation_edge",
+        "ensure_session",
+        "ensure_file",
+        "write_chunk",
+        "write_entities_bulk",
+        "write_relation",
+        "write_temporal",
     ]:
-        setattr(stm, attr, AsyncMock(return_value=None))
-    vec.write_stm_chunk = AsyncMock(return_value=None)
+        setattr(store, attr, AsyncMock(return_value=None))
     embed = embed_fn or MagicMock(return_value=[0.1] * 10)
-    handler = _STMIngestHandler(stm, vec, extractor=extractor, embed_fn=embed)
-    return handler, stm, vec, embed
+    handler = _STMIngestHandler(store, extractor=extractor, embed_fn=embed)
+    return handler, store, embed
 
 
 async def test_ingest_parsed_returns_ingest_result():
-    handler, stm, vec, embed = _make_handler()
+    handler, store, embed = _make_handler()
     parsed = _make_parsed(2)
     result = await handler.ingest_parsed(parsed, "session1")
     assert isinstance(result, IngestResult)
@@ -59,7 +56,7 @@ async def test_ingest_parsed_returns_ingest_result():
 
 
 async def test_ingest_text_no_extractor():
-    handler, stm, vec, embed = _make_handler(extractor=None)
+    handler, store, embed = _make_handler(extractor=None)
     result = await handler.ingest_text("Hello world", session_id="s1", title="Test")
     assert result.entity_count == 0
     assert result.chunk_count >= 1
@@ -70,22 +67,22 @@ async def test_ingest_text_with_extractor():
     extractor.extract.return_value = ExtractionResult(
         entities=[{"name": "Alice", "type": "PERSON", "score": 0.9}]
     )
-    handler, stm, vec, embed = _make_handler(extractor=extractor)
+    handler, store, embed = _make_handler(extractor=extractor)
     result = await handler.ingest_text("Alice is here", session_id="s2")
     assert result.entity_count == 1
 
 
-async def test_write_session_metadata_called():
-    handler, stm, vec, embed = _make_handler()
+async def test_ensure_session_called():
+    handler, store, embed = _make_handler()
     await handler.ingest_text("x", session_id="s3")
-    stm.write_session_metadata.assert_called_once()
+    store.ensure_session.assert_awaited_once()
 
 
-async def test_write_stm_chunk_called_per_segment():
-    handler, stm, vec, embed = _make_handler()
+async def test_write_chunk_called_per_segment():
+    handler, store, embed = _make_handler()
     parsed = _make_parsed(3)
     await handler.ingest_parsed(parsed, "s4")
-    assert vec.write_stm_chunk.call_count == 3
+    assert store.write_chunk.await_count == 3
 
 
 async def test_rel_extractor_skipped_with_fewer_than_2_entities():
@@ -94,7 +91,7 @@ async def test_rel_extractor_skipped_with_fewer_than_2_entities():
     extractor.extract.return_value = ExtractionResult(
         entities=[{"name": "Alice", "type": "PERSON", "score": 0.9}]
     )
-    handler, stm, vec, embed = _make_handler(extractor=extractor)
+    handler, store, embed = _make_handler(extractor=extractor)
     handler._rel_extractor = rel_extractor
     await handler.ingest_text("Alice alone", session_id="s5")
     rel_extractor.extract.assert_not_called()

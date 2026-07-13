@@ -27,11 +27,10 @@ def _make_settings():
 
 def _make_retriever():
     settings = _make_settings()
-    vec = MagicMock()
-    vec.search_chunks = AsyncMock(return_value=[])
-    ltm = MagicMock()
-    stm = MagicMock()
-    return AgenticRetriever(settings=settings, vec=vec, ltm=ltm, stm=stm)
+    store = MagicMock()
+    store.search_chunks_ann = AsyncMock(return_value=[])
+    store._qry = AsyncMock(return_value=[])
+    return AgenticRetriever(settings=settings, store=store)
 
 
 async def _fake_to_thread(fn, *args, **kwargs):
@@ -131,7 +130,7 @@ async def test_react_failure_falls_back_to_vector_search():
         "cosine_score": 0.8,
         "metadata": {},
     }
-    retriever._vec.search_chunks = AsyncMock(return_value=[fake_chunk])
+    retriever._store.search_chunks_ann = AsyncMock(return_value=[fake_chunk])
 
     call_count = 0
 
@@ -182,7 +181,7 @@ async def test_agentic_hit_scores_are_discriminative_not_flat():
         )
     )
     retriever._det = det
-    retriever._ltm._qry = AsyncMock(return_value=[])
+    retriever._store._qry = AsyncMock(return_value=[])
 
     with (
         patch.object(retriever, "_get_react", return_value=MagicMock(side_effect=_fake_react)),

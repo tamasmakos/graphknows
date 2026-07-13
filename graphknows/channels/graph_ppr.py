@@ -20,9 +20,7 @@ import logging
 from typing import Any
 
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
-from graphknows.ingestion.models.taxonomy import STRUCTURAL_REL_TYPES
 from graphknows.ranking.rrf import rrf_score
-from graphknows.storage.arcadedb._sql import sanitize
 
 log = logging.getLogger(__name__)
 
@@ -30,9 +28,6 @@ _DAMPING = 0.85
 _ITERATIONS = 40
 _TOP_ENTITIES = 12  # entities whose chunks are surfaced
 _MIN_GRAPH_NODES = 3
-
-# Edge types carrying no semantic entity->entity meaning (structure/plumbing).
-_STRUCTURAL_TYPES = STRUCTURAL_REL_TYPES
 
 
 class GraphPPRChannel(Channel):
@@ -56,28 +51,21 @@ class GraphPPRChannel(Channel):
         top = {names[i]: scores[i] for i in ranked[:_TOP_ENTITIES] if scores[i] > 0.0}
         if not top:
             return {}
-        return await self._chunks_for_entities(rt, ctx.session_id, top, top_k)
+        return await self._chunks_for_entities(rt, ctx.session_id, ctx.state, top, top_k)
 
     @staticmethod
     async def _relation_graph(rt: Any) -> tuple[list[str], list[tuple[int, int, float]]]:
         """Directed weighted ENTITY->ENTITY graph from semantic (non-structural) edges."""
-        skip = ", ".join(f"'{t}'" for t in sorted(_STRUCTURAL_TYPES))
-        rows = await rt.ltm._qry(
-            "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
-            "WHERE a.name IS NOT NULL AND b.name IS NOT NULL AND a.name <> b.name "
-            f"AND NOT type(r) IN [{skip}] "
-            "AND (r.is_current = true OR r.is_current IS NULL) "
-            "RETURN a.name AS src, b.name AS tgt, coalesce(r.weight, 1.0) AS w"
-        )
+        rows = await rt.store.entity_relation_graph()
         idx: dict[str, int] = {}
         edges: list[tuple[int, int, float]] = []
         for row in rows:
-            s, t = row.get("src"), row.get("tgt")
+            s, t = row.get("src"), row.get("dst")
             if not s or not t:
                 continue
             si = idx.setdefault(s, len(idx))
             ti = idx.setdefault(t, len(idx))
-            edges.append((si, ti, float(row.get("w") or 1.0)))
+            edges.append((si, ti, float(row.get("weight") or 1.0)))
         names = [""] * len(idx)
         for name, i in idx.items():
             names[i] = name
@@ -85,47 +73,32 @@ class GraphPPRChannel(Channel):
 
     @staticmethod
     async def _chunks_for_entities(
-        rt: Any, session_id: str, entity_scores: dict[str, float], top_k: int
+        rt: Any, session_id: str, state: str | None, entity_scores: dict[str, float], top_k: int
     ) -> CollectResult:
-        """Chunks mentioning the top-PPR entities, ranked by summed PPR mass."""
-        safe = {sanitize(n): sc for n, sc in entity_scores.items()}
-        where = " OR ".join(f"e.name = '{n}'" for n in safe)
-        if not where:
-            return {}
-        if session_id:
-            rows = await rt.ltm._qry(
-                "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(:FILE)"
-                "-[:HAS_CHUNK]->(c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-                f"WHERE {where} "
-                "WITH c, collect(DISTINCT e.name) AS entities "
-                "RETURN c.id AS chunk_id, c.text AS text, entities",
-                sid=session_id,
-            )
-        else:
-            rows = await rt.ltm._qry(
-                "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-                f"WHERE {where} "
-                "WITH c, collect(DISTINCT e.name) AS entities "
-                "RETURN c.id AS chunk_id, c.text AS text, entities"
-            )
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for row in rows:
-            ents = row.get("entities") or []
-            mass = sum(safe.get(e, 0.0) for e in ents)
-            if mass > 0.0:
-                scored.append((mass, row))
-        scored.sort(key=lambda x: x[0], reverse=True)
+        """Chunks mentioning the top-PPR entities, ranked by summed PPR mass.
 
+        One entity lookup per top entity (the per-conversation graph is tiny);
+        each chunk accumulates the PPR mass of every top entity it mentions.
+        """
+        mass: dict[str, float] = {}
+        texts: dict[str, str] = {}
+        for name, score in entity_scores.items():
+            rows = await rt.store.query_entity_chunks([name], session_id or None, top_k, state)
+            for r in rows:
+                cid = r["chunk_id"]
+                mass[cid] = mass.get(cid, 0.0) + score
+                texts.setdefault(cid, r.get("text", ""))
+        ranked = sorted(mass.items(), key=lambda x: -x[1])[:top_k]
         result: CollectResult = {}
-        for rank, (mass, row) in enumerate(scored[:top_k]):
-            result[row["chunk_id"]] = (
+        for rank, (cid, m) in enumerate(ranked):
+            result[cid] = (
                 rrf_score(rank, boost=2.0),
                 {
-                    "text": row.get("text", ""),
-                    "entities": row.get("entities", []),
+                    "text": texts.get(cid, ""),
+                    "entities": [],
                     "sources": {"ppr"},
                     "doc_id": "",
-                    "metadata": {"ppr_mass": round(mass, 6)},
+                    "metadata": {"ppr_mass": round(m, 6)},
                 },
             )
         return result

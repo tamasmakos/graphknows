@@ -1,9 +1,10 @@
 """retrieval — the read path: collect (channels) -> rank (RRF/rerank) -> context.
 
-``build_retriever(settings, vec, ltm, stm)`` is the one place the memory mode
-selects a retrieval strategy: ``llm_assisted`` returns the agentic retriever
-(which wraps the deterministic engine with a ReAct loop); ``llm_free`` returns
-the deterministic engine driven by the configured channels.
+``build_retriever(settings, store)`` is the one place the memory mode selects a
+retrieval strategy: ``llm_assisted`` returns the agentic retriever (which wraps
+the deterministic engine with a ReAct loop); ``llm_free`` returns the
+deterministic engine driven by the configured channels. Both read from the one
+per-namespace :class:`~graphknows.storage.arcadedb.graph_store.GraphStore`.
 """
 
 from __future__ import annotations
@@ -21,23 +22,19 @@ if TYPE_CHECKING:
 def build_retriever(
     settings: GraphKnowsSettings,
     *,
-    vec: Any,
-    ltm: Any,
-    stm: Any,
+    store: Any,
 ) -> Any:
-    """Return the retriever for the active memory mode (connected stores injected)."""
+    """Return the retriever for the active memory mode (connected store injected)."""
     if settings.mode is MemoryMode.llm_assisted:
         from graphknows.retrieval.agentic import AgenticRetriever
 
-        return AgenticRetriever(settings=settings, vec=vec, ltm=ltm, stm=stm)
+        return AgenticRetriever(settings=settings, store=store)
 
     from graphknows.channels.registry import default_channels
     from graphknows.retrieval.retriever import DETRetriever
 
     return DETRetriever(
-        vec=vec,
-        ltm=ltm,
-        stm=stm,
+        store=store,
         embed_model=settings.embed_model,
         channels=default_channels(settings),
     )

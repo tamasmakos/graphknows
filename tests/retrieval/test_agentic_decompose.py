@@ -198,13 +198,11 @@ class TestAgenticRetrieverWithDET:
         from graphknows.retrieval.agentic import AgenticRetriever
 
         settings = _make_settings()
-        vec = MagicMock()
-        ltm = MagicMock()
-        ltm._qry = AsyncMock(return_value=[])
-        stm = MagicMock()
-        stm.get_session_graph = AsyncMock(return_value={"nodes": []})
+        store = MagicMock()
+        store._qry = AsyncMock(return_value=[])
+        store.query_entity_chunks = AsyncMock(return_value=[])
 
-        retriever = AgenticRetriever(settings=settings, vec=vec, ltm=ltm, stm=stm)
+        retriever = AgenticRetriever(settings=settings, store=store)
 
         # Stub DETRetriever
         stub_det = MagicMock()
@@ -315,24 +313,20 @@ class TestAgenticRetrieverWithDET:
         assert any(r["chunk_id"] == "fb1" for r in result.fused_results)
 
     @pytest.mark.asyncio
-    async def test_det_retriever_constructed_from_same_stores(self):
-        """DETRetriever must be built from the same vec/ltm/stm stores."""
+    async def test_det_retriever_constructed_from_same_store(self):
+        """DETRetriever must be built from the same GraphStore."""
         from graphknows.retrieval.agentic import AgenticRetriever
         from graphknows.retrieval.retriever import DETRetriever
 
         settings = _make_settings()
-        vec = MagicMock()
-        ltm = MagicMock()
-        ltm._qry = AsyncMock(return_value=[])
-        stm = MagicMock()
+        store = MagicMock()
+        store._qry = AsyncMock(return_value=[])
 
-        retriever = AgenticRetriever(settings=settings, vec=vec, ltm=ltm, stm=stm)
+        retriever = AgenticRetriever(settings=settings, store=store)
         det = retriever._get_det_retriever()
 
         assert isinstance(det, DETRetriever)
-        assert det.vec is vec
-        assert det.ltm is ltm
-        assert det.stm is stm
+        assert det.store is store
 
     @pytest.mark.asyncio
     async def test_det_retriever_cached(self):
@@ -340,9 +334,7 @@ class TestAgenticRetrieverWithDET:
         from graphknows.retrieval.agentic import AgenticRetriever
 
         settings = _make_settings()
-        retriever = AgenticRetriever(
-            settings=settings, vec=MagicMock(), ltm=MagicMock(), stm=MagicMock()
-        )
+        retriever = AgenticRetriever(settings=settings, store=MagicMock())
 
         det1 = retriever._get_det_retriever()
         det2 = retriever._get_det_retriever()

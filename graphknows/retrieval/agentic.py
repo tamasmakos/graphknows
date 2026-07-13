@@ -62,14 +62,10 @@ class AgenticRetriever(BaseGraphRetriever):
     def __init__(
         self,
         settings: "GraphKnowsSettings",
-        vec: Any,
-        ltm: Any,
-        stm: Any,
+        store: Any,
     ) -> None:
         self._settings = settings
-        self._vec = vec
-        self._ltm = ltm
-        self._stm = stm
+        self._store = store
         self._react: Any = None
         self._lm: Any = None
         self._vec_bridge: Any = None
@@ -112,9 +108,7 @@ class AgenticRetriever(BaseGraphRetriever):
         from graphknows.retrieval.retriever import DETRetriever
 
         self._det = DETRetriever(
-            vec=self._vec,
-            ltm=self._ltm,
-            stm=self._stm,
+            store=self._store,
             embed_model=self._settings.embed_model,
             channels=build_channels(self._settings),
         )
@@ -137,7 +131,7 @@ class AgenticRetriever(BaseGraphRetriever):
         from graphknows.channels.temporal import filter_by_validity_window
 
         det = self._get_det_retriever()
-        stm = self._stm
+        store = self._store
         # Reuse or initialize the chunks buffer; closures below capture this reference.
         self._collected_chunks.clear()
         collected = self._collected_chunks
@@ -169,21 +163,20 @@ class AgenticRetriever(BaseGraphRetriever):
                 log.warning("retrieve tool failed for %r: %s", subquery, exc)
                 return []
 
-        # ---- Tool 2: entity lookup (STM graph) ------------------------
+        # ---- Tool 2: entity lookup (graph store) ----------------------
         def lookup_entity(name: str) -> list[dict]:
-            """Look up an entity by name in the short-term memory graph.
+            """Look up chunks mentioning an entity by name in the memory graph.
 
             Args:
-                name: Entity name or partial name to look up in the STM graph.
+                name: Entity name or partial name to look up (case-insensitive).
 
             Returns:
-                List of entity dicts whose name contains *name* (case-insensitive).
+                List of chunk dicts (chunk_id, text) that mention the entity.
             """
             try:
-                result = bg_run(stm.get_session_graph(session_id=session_id))
-                nodes = result.get("nodes", [])
-                q_lower = name.lower()
-                return [n for n in nodes if q_lower in str(n.get("name", "")).lower()]
+                return bg_run(
+                    store.query_entity_chunks([name], session_id or None, 10, None)
+                )
             except Exception as exc:
                 log.warning("lookup_entity failed for %r: %s", name, exc)
                 return []
@@ -268,9 +261,11 @@ class AgenticRetriever(BaseGraphRetriever):
         if not ids:
             return scored
         try:
-            rows = await self._ltm._qry(
-                "MATCH (c:CHUNK) WHERE c.id IN $ids RETURN c.id AS id, c.community_weight AS w",
-                ids=ids,
+            from graphknows.storage.arcadedb._sql import quoted_list
+
+            rows = await self._store._qry(
+                f"MATCH (c:CHUNK) WHERE c.chunk_id IN {quoted_list(ids)} "
+                "RETURN c.chunk_id AS id, c.community_weight AS w"
             )
         except Exception as exc:
             log.debug("community-weight lookup skipped: %s", exc)
@@ -364,29 +359,20 @@ class AgenticRetriever(BaseGraphRetriever):
                     search_type="AGENTIC",
                 )
             except Exception as fb_exc:
-                # Last-resort fallback: direct vec.search_chunks (simpler but always available).
-                log.warning("DETRetriever fallback failed (%s); using vec.search_chunks.", fb_exc)
+                # Last-resort fallback: direct ANN over the graph store (simpler
+                # but always available).
+                log.warning(
+                    "DETRetriever fallback failed (%s); using store.search_chunks_ann.", fb_exc
+                )
                 try:
+                    from graphknows.retrieval.retriever import _scope_to_state
                     from graphknows.storage.embedder import embed
 
                     emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
                     emb = emb_array[0].tolist()
-                    if scope == "stm":
-                        vector_chunks = await self._vec.search_chunks(
-                            emb, session_id=session_id, k=top_k
-                        )
-                    elif scope == "ltm":
-                        vector_chunks = await self._vec.search_chunks(emb, session_id="", k=top_k)
-                    else:
-                        _stm_c = await self._vec.search_chunks(emb, session_id=session_id, k=top_k)
-                        _ltm_c = await self._vec.search_chunks(emb, session_id="", k=top_k)
-                        _seen_v: set[str] = set()
-                        vector_chunks = []
-                        for _r in _stm_c + _ltm_c:
-                            if _r["chunk_id"] not in _seen_v:
-                                _seen_v.add(_r["chunk_id"])
-                                vector_chunks.append(_r)
-                        vector_chunks = vector_chunks[:top_k]
+                    vector_chunks = await self._store.search_chunks_ann(
+                        emb, top_k, session_id or None, _scope_to_state(scope)
+                    )
 
                     fused_fb: list[dict] = []
                     for i, r in enumerate(vector_chunks):

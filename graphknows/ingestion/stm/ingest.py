@@ -1,4 +1,10 @@
-"""_STMIngestHandler: STM ingestion logic (moved from memory/ingestor.py)."""
+"""_STMIngestHandler: ingest parsed text / turns into the golden GraphStore.
+
+Writes CHUNK spine + ENTITY/MENTIONS + RELATION(evidence) + TEMPORAL against a
+single per-namespace ``GraphStore`` (state defaults ``raw``). The text path
+chunks a parsed file; the turn path (Phase-1 bridge) writes one CHUNK per
+message with ``kind='turn'`` through the same write helper.
+"""
 
 from __future__ import annotations
 
@@ -14,35 +20,29 @@ from graphknows.ingestion.parsers.base import ParsedFile
 from graphknows.ingestion.parsers.registry import get_parser
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.models.ingest import IngestResult
-from graphknows.ingestion.stm._entity_writer import (
-    graph_entities,
-    write_chunk_entities_and_edges_bulk,
-)
+from graphknows.ingestion.stm._entity_writer import graph_entities
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
 
 class _STMIngestHandler:
-    """Ingest parsed text into STM (ArcadeDB evidence graph + vector store).
+    """Ingest parsed text into the golden GraphStore (state='raw').
 
     Attributes:
-        _stm: ArcadeDBSTMStore for session evidence graph writes.
-        _vec: ArcadeDBVectorStore for stm_chunks writes.
+        _store: GraphStore for the single per-namespace database.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Callable that takes text and returns list[float] embedding.
-        _rel_extractor: Optional relation extractor.
+        _rel_extractor: Optional relation extractor (llm_assisted).
     """
 
     def __init__(
         self,
-        stm_store: Any,
-        vec_store: Any,
+        store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
     ) -> None:
-        self._stm = stm_store
-        self._vec = vec_store
+        self._store = store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
         if embed_fn is not None:
@@ -53,10 +53,7 @@ class _STMIngestHandler:
             self._embed_fn = embed_one
 
         # Ontology curation layer — applied AFTER extraction to drop relations
-        # whose label is not part of the configured taxonomy. The relation model
-        # now emits the taxonomy's canonical predicates, so the allow-list is the
-        # taxonomy vocabulary (not the unrelated schema-org property set, which
-        # silently dropped every conversational predicate).
+        # whose label is not part of the configured taxonomy.
         from graphknows.ingestion.extraction.relations.filter import RelationOntologyFilter
         from graphknows.ingestion.models.taxonomy import get_default_taxonomy
 
@@ -70,18 +67,7 @@ class _STMIngestHandler:
         source_hint: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> IngestResult:
-        """Ingest raw text into STM.
-
-        Args:
-            text: Raw source text.
-            session_id: Session namespace.
-            title: Optional human title.
-            source_hint: Original path/URL for provenance.
-            metadata: Extra key/value pairs stored on the FILE node.
-
-        Returns:
-            IngestResult with counts and timing.
-        """
+        """Ingest raw text into the GraphStore."""
         parser = get_parser(source_hint or ".txt")
         parsed = parser.parse(text, source_hint=source_hint, title=title)
         return await self._ingest_parsed(parsed, session_id, metadata or {})
@@ -92,16 +78,7 @@ class _STMIngestHandler:
         session_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> IngestResult:
-        """Ingest an already-parsed ParsedFile into STM.
-
-        Args:
-            parsed: Pre-parsed file output from any BaseParser.
-            session_id: Session namespace.
-            metadata: Extra key/value pairs stored on the FILE node.
-
-        Returns:
-            IngestResult with counts and timing.
-        """
+        """Ingest an already-parsed ParsedFile into the GraphStore."""
         return await self._ingest_parsed(parsed, session_id, metadata or {})
 
     async def _ingest_parsed(
@@ -116,7 +93,7 @@ class _STMIngestHandler:
         cleaned_texts = [self._clean_text(seg.text) for seg in parsed.segments]
 
         # Batch all embeddings in one HTTP round-trip when using the default
-        # embed_one function.  If embed_fn has been overridden (e.g. in tests),
+        # embed_one function. If embed_fn has been overridden (e.g. in tests),
         # fall back to per-chunk calls to preserve the injection contract.
         use_batch = False
         batch_embeddings: list[list[float]] = []
@@ -131,21 +108,13 @@ class _STMIngestHandler:
                 arr: np.ndarray = embed_batch(cleaned_texts)
                 batch_embeddings = [arr[i].tolist() for i in range(len(cleaned_texts))]
 
-        # Bounded chunk-level concurrency.  Each chunk coroutine runs extraction
-        # (CPU/model I/O) and DB writes concurrently; a semaphore caps parallelism.
-        # All chunks run on the caller's event loop (the same loop the store client
-        # was connected on) via a single asyncio.gather.
-        # Default 1 (sequential): the ENTITY(name) index is UNIQUE, so concurrent
-        # MERGEs of a shared entity name across chunks can race on the unique key.
-        # Opt into parallelism (e.g. for the LLM-heavy llm_assisted ingest) by
-        # setting INGEST_CHUNK_CONCURRENCY>1 after validating it for your store.
+        # Bounded chunk-level concurrency. Default 1 (sequential): the
+        # ENTITY(name_norm) index is UNIQUE, so concurrent MERGEs of a shared
+        # entity name across chunks can race on the unique key. Opt into
+        # parallelism by setting INGEST_CHUNK_CONCURRENCY>1.
         cap = int(os.environ.get("INGEST_CHUNK_CONCURRENCY", "1"))
 
-        # Batch NER for ALL chunks in one GLiNER2 forward pass when the extractor
-        # supports it — one padded batch beats N per-chunk calls on the CPU-bound
-        # ingest path. Falls back to per-chunk extraction otherwise (e.g. tests).
-        # Check the class (not the instance) so a Mock's auto-created attributes
-        # don't spoof support — only a real extractor exposing extract_batch batches.
+        # Batch NER for ALL chunks in one GLiNER2 forward pass when supported.
         batch_extractions: list[ExtractionResult] | None = None
         if (
             self._extractor is not None
@@ -156,43 +125,35 @@ class _STMIngestHandler:
                 self._extractor.extract_batch, cleaned_texts
             )
 
-        # Set chunk_index before building coroutines (captured by value via idx).
         for idx, seg in enumerate(parsed.segments):
             seg.metadata["chunk_index"] = idx
 
         async def _process_chunk(idx: int) -> int:
-            """Run extraction + graph + vector writes for chunk at *idx*.
-
-            Returns the entity count for this chunk.
-            """
             seg = parsed.segments[idx]
             clean = cleaned_texts[idx]
             embedding: list[float] = batch_embeddings[idx] if use_batch else self._embed_fn(clean)
-            # Use the pre-batched extraction when available; else extract this chunk
-            # in a thread so its model I/O overlaps DB writes.
             if batch_extractions is not None:
                 extraction = batch_extractions[idx]
             else:
                 extraction = await asyncio.to_thread(self._extract, clean)
             temporal = self._resolve_temporal(extraction.entities, seg, metadata)
             chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
-
-            # Await store methods directly — no nested _run; we are already
-            # executing inside the background loop.
-            ec = await self._write_chunk_to_mg_async(
-                session_id, parsed.source_id, chunk_id, clean, seg, extraction, temporal
+            return await self._write_extracted(
+                session_id=session_id,
+                file_id=parsed.source_id,
+                chunk_id=chunk_id,
+                text=clean,
+                seq=idx,
+                kind="text",
+                speaker="",
+                embedding=embedding,
+                extraction=extraction,
+                temporal=temporal,
+                memory_class=seg.metadata.get("memory_class")
+                or metadata.get("memory_class")
+                or "raw_evidence",
+                atom_type=seg.metadata.get("atom_type") or "text",
             )
-            await self._write_chunk_to_pg_async(
-                session_id,
-                parsed.source_id,
-                chunk_id,
-                clean,
-                seg,
-                embedding,
-                graph_entities(extraction.entities),
-                {**metadata, "temporal": temporal} if temporal else metadata,
-            )
-            return ec
 
         async def _run_all() -> list[int]:
             sem = asyncio.Semaphore(cap)
@@ -225,6 +186,46 @@ class _STMIngestHandler:
             errors=[],
         )
 
+    async def ingest_turn(
+        self,
+        session_id: str,
+        file_id: str,
+        seq: int,
+        role: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+        infer: bool = True,
+    ) -> int:
+        """Write one conversation turn as a CHUNK(kind='turn'). Returns entity count.
+
+        Phase-1 bridge: gives the messages path the same full extraction (ENTITY
+        + MENTIONS + evidenced relations + temporal) the text/chunk path has.
+        ``infer=False`` writes the embedded turn without entity/relation extraction.
+        """
+        metadata = metadata or {}
+        clean = self._clean_text(text) or text
+        if not clean.strip():
+            return 0
+        embedding = self._embed_fn(clean)
+        extraction = await asyncio.to_thread(self._extract, clean) if infer else ExtractionResult()
+        anchor = metadata.get("timestamp") or metadata.get("anchor_date")
+        temporal = self._resolve_temporal_entities(extraction.entities, anchor)
+        chunk_id = hashlib.sha256(f"{session_id}:{file_id}:{seq}:{clean}".encode()).hexdigest()[:16]
+        return await self._write_extracted(
+            session_id=session_id,
+            file_id=file_id,
+            chunk_id=chunk_id,
+            text=clean,
+            seq=seq,
+            kind="turn",
+            speaker=role,
+            embedding=embedding,
+            extraction=extraction,
+            temporal=temporal,
+            memory_class=metadata.get("memory_class") or "raw_evidence",
+            atom_type="turn",
+        )
+
     # ------------------------------------------------------------------
     # Private step methods
     # ------------------------------------------------------------------
@@ -236,26 +237,91 @@ class _STMIngestHandler:
         metadata: dict[str, Any],
         t0: float,
     ) -> None:
-        await self._stm.write_session_metadata(session_id, {"started_at": t0})
-        await self._stm.write_file_node(
-            session_id=session_id,
+        await self._store.ensure_session(session_id, started_at=str(t0))
+        await self._store.ensure_file(
             file_id=parsed.source_id,
-            title=parsed.title,
-            parser_name=parsed.parser_name,
-            source_hint=metadata.get("source_hint", ""),
+            session_id=session_id,
+            name=parsed.title,
+            media_type=parsed.parser_name,
         )
+
+    async def _write_extracted(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+        chunk_id: str,
+        text: str,
+        seq: int,
+        kind: str,
+        speaker: str,
+        embedding: list[float],
+        extraction: ExtractionResult,
+        temporal: list[dict[str, str]],
+        memory_class: str,
+        atom_type: str,
+    ) -> int:
+        """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count."""
+        filtered = graph_entities(extraction.entities)
+        await self._store.write_chunk(
+            {
+                "chunk_id": chunk_id,
+                "session_id": session_id,
+                "file_id": file_id,
+                "text": text,
+                "seq": seq,
+                "kind": kind,
+                "speaker": speaker,
+                "memory_class": memory_class,
+                "atom_type": atom_type,
+                "entity_names": [e["name"] for e in filtered],
+                "embedding": embedding,
+            }
+        )
+        if filtered:
+            await self._store.write_entities_bulk(session_id, chunk_id, filtered)
+
+        # GLiNER2 relations — ontology-filtered, evidenced to this chunk.
+        gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
+        for rel in gliner_relations:
+            await self._store.write_relation(
+                rel["head"],
+                rel["relation"],
+                rel["tail"],
+                fact=rel.get("evidence", "") or text,
+                chunk_id=chunk_id,
+                confidence=rel.get("score", 0.5),
+                source="gliner",
+            )
+
+        # DSPy ontology-guided relations (llm_assisted mode only).
+        if self._rel_extractor is not None and len(extraction.entities) >= 2:
+            raw = await self._rel_extractor.extract_relations(text=text)
+            dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
+            for triplet in dspy_triplets:
+                subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
+                props = triplet[3] if len(triplet) > 3 else {}
+                confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
+                evidence = props.get("evidence", "") if isinstance(props, dict) else ""
+                await self._store.write_relation(
+                    subj,
+                    rel_name,
+                    obj,
+                    fact=evidence or text,
+                    chunk_id=chunk_id,
+                    confidence=confidence,
+                    source="dspy",
+                )
+
+        iso_dates = [t["iso"] for t in temporal if t.get("iso")]
+        if iso_dates:
+            await self._store.write_temporal(chunk_id, iso_dates)
+        return len(filtered)
 
     def _resolve_temporal(
         self, entities: list[dict[str, Any]], seg: Any, metadata: dict[str, Any]
     ) -> list[dict[str, str]]:
-        """Resolve DATE/TIME spans to ISO dates, anchored on any supplied date.
-
-        The anchor for relative expressions ("last Saturday") is taken from the
-        segment metadata, then the file metadata; absent an anchor only absolute
-        dates resolve.
-        """
-        from graphknows.channels.temporal import resolve_temporal
-
+        """Resolve DATE/TIME spans to ISO dates, anchored on any supplied date."""
         seg_meta = getattr(seg, "metadata", {}) or {}
         anchor = (
             seg_meta.get("timestamp")
@@ -263,12 +329,19 @@ class _STMIngestHandler:
             or metadata.get("anchor_date")
             or metadata.get("timestamp")
         )
+        return self._resolve_temporal_entities(entities, anchor)
+
+    @staticmethod
+    def _resolve_temporal_entities(
+        entities: list[dict[str, Any]], anchor: Any
+    ) -> list[dict[str, str]]:
+        from graphknows.channels.temporal import resolve_temporal
+
         return resolve_temporal(entities, anchor)
 
     def _make_chunk_id(self, session_id: str, source_id: str, seg: Any) -> str:
         # Include the chunk text in the key: char_offset alone collides when a
-        # section yields several chunks that resolve to the same offset (e.g.
-        # sentence-packed dialogue), which would overwrite all but one chunk.
+        # section yields several chunks that resolve to the same offset.
         key = f"{session_id}:{source_id}::{seg.char_offset}::{seg.text}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
@@ -277,110 +350,8 @@ class _STMIngestHandler:
         return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
 
     def _extract(self, clean_text: str) -> ExtractionResult:
-        # One GLiNER2 call returns both entities and relations — capture both.
         if self._extractor is not None:
             from typing import cast
 
             return cast(ExtractionResult, self._extractor.extract(clean_text))
         return ExtractionResult()
-
-    async def _write_chunk_to_mg_async(
-        self,
-        session_id: str,
-        source_id: str,
-        chunk_id: str,
-        clean_text: str,
-        seg: Any,
-        extraction: ExtractionResult,
-        temporal: list[dict[str, str]] | None = None,
-    ) -> int:
-        """Write a chunk's CHUNK node, entity nodes/edges, and relation edges.
-
-        Awaits store methods directly on the caller's event loop (the same loop
-        the store client was connected on). Returns the entity count for this chunk.
-        """
-        chunk_metadata = {**seg.metadata, "temporal": temporal} if temporal else seg.metadata
-        await self._stm.write_chunk_node(
-            session_id=session_id,
-            file_id=source_id,
-            chunk_id=chunk_id,
-            text=clean_text,
-            heading_path=seg.heading_path,
-            metadata=chunk_metadata,
-        )
-        # Bulk entity write: CHUNK node must exist before edges (written above).
-        entity_count = await write_chunk_entities_and_edges_bulk(
-            stm=self._stm,
-            session_id=session_id,
-            chunk_id=chunk_id,
-            entities=extraction.entities,
-        )
-        # GLiNER2 relations — ontology-filtered, then written sequentially.
-        # Relation writes use transactions with tombstoning logic; leave sequential.
-        gliner_relations = self._relation_filter.filter(extraction.relations, label_key="relation")
-        for rel in gliner_relations:
-            await self._stm.write_relation_edge(
-                session_id=session_id,
-                subject_name=rel["head"],
-                relation_name=rel["relation"],
-                object_name=rel["tail"],
-                fact=rel.get("evidence", "") or clean_text,
-                confidence=rel.get("score", 0.5),
-                chunk_id=chunk_id,
-            )
-
-        # DSPy ontology-guided relation extraction (llm_assisted mode only).
-        if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            raw = await self._rel_extractor.extract_relations(text=clean_text)
-            dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
-            for triplet in dspy_triplets:
-                subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
-                props = triplet[3] if len(triplet) > 3 else {}
-                confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
-                evidence = props.get("evidence", "") if isinstance(props, dict) else ""
-                await self._stm.write_relation_edge(
-                    session_id=session_id,
-                    subject_name=subj,
-                    relation_name=rel_name,
-                    object_name=obj,
-                    fact=evidence or clean_text,
-                    confidence=confidence,
-                    chunk_id=chunk_id,
-                )
-            log.debug(
-                "DSPy extraction session=%s chunk=%s: %d triples",
-                session_id,
-                chunk_id[:8],
-                len(dspy_triplets),
-            )
-        return entity_count
-
-    async def _write_chunk_to_pg_async(
-        self,
-        session_id: str,
-        source_id: str,
-        chunk_id: str,
-        clean_text: str,
-        seg: Any,
-        embedding: list[float],
-        entities: list[dict[str, Any]],
-        metadata: dict[str, Any],
-    ) -> None:
-        """Async version of _write_chunk_to_pg for the concurrent chunk path."""
-        await self._vec.write_stm_chunk(
-            {
-                "id": chunk_id,
-                "session_id": session_id,
-                "file_id": source_id,
-                "text": clean_text,
-                "heading_path": seg.heading_path,
-                "embedding": embedding,
-                "metadata": {
-                    **seg.metadata,
-                    **metadata,
-                    "atom_type": seg.metadata.get("atom_type", "text"),
-                    "memory_class": seg.metadata.get("memory_class", "raw_evidence"),
-                    "entity_names": [e["name"] for e in entities],
-                },
-            }
-        )

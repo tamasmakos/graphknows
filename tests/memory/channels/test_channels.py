@@ -32,11 +32,9 @@ class TestBuildChannels:
         s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
         names = [c.name for c in build_channels(s)]
         assert names == [
-            "stm_entity",
-            "ltm_entity",
+            "entity",
             "vector",
-            "stm_bm25",
-            "ltm_bm25",
+            "bm25",
             "temporal",
             "topic",
             "ppr",
@@ -49,8 +47,8 @@ class TestBuildChannels:
 
     def test_enabled_selects_named_subset(self):
         s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
-        names = [c.name for c in build_channels(s, enabled=["vector", "stm_bm25"])]
-        assert names == ["vector", "stm_bm25"]
+        names = [c.name for c in build_channels(s, enabled=["vector", "bm25"])]
+        assert names == ["vector", "bm25"]
 
     def test_enabled_unknown_name_raises(self):
         s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
