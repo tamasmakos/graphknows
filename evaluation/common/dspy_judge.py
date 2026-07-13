@@ -36,8 +36,29 @@ class JudgeSignature(dspy.Signature):
     score: float = dspy.OutputField(desc="correctness from 0.0 (wrong) to 1.0 (fully correct)")
 
 
+class RubricSignature(dspy.Signature):
+    """Grade whether the generated answer satisfies a rubric, when there is no single gold answer.
+
+    Some questions (e.g. BEAM instruction/preference following) have no reference
+    string — correctness is defined by a rubric of criteria the answer must meet.
+    Score 1.0 when the answer satisfies all criteria, 0.0 when it violates them or
+    ignores the instruction, and a value in between for partial satisfaction.
+    """
+
+    question: str = dspy.InputField(desc="the question or instruction asked")
+    rubric: str = dspy.InputField(desc="the grading criteria the answer must satisfy")
+    generated: str = dspy.InputField(desc="the answer to evaluate")
+    reasoning: str = dspy.OutputField(desc="one sentence justifying the score")
+    score: float = dspy.OutputField(desc="rubric satisfaction from 0.0 (fails) to 1.0 (fully meets)")
+
+
 class DSPyJudge:
-    """One ``dspy.Predict`` judge bound to the configured OpenRouter model."""
+    """One ``dspy.Predict`` judge bound to the configured OpenRouter model.
+
+    Exposes two graders over the same LM: :meth:`judge` (gold-string correctness)
+    and :meth:`judge_rubric` (criteria satisfaction, for questions with no single
+    reference answer).
+    """
 
     def __init__(self, model: str, *, temperature: float = 0.0, max_tokens: int = 2048) -> None:
         if not model:
@@ -50,10 +71,18 @@ class DSPyJudge:
         self._lm = dspy.LM(lm_model, api_key=key, temperature=temperature, max_tokens=max_tokens)
         dspy.configure(lm=self._lm)
         self._predict = dspy.Predict(JudgeSignature)
+        self._rubric_predict = dspy.Predict(RubricSignature)
 
     async def judge(self, question: str, gold: str, generated: str) -> tuple[float, str]:
-        """Return ``(score_in_0_1, reasoning)`` for one triple."""
+        """Return ``(score_in_0_1, reasoning)`` for one gold-string triple."""
         pred = await self._predict.acall(question=question, gold=gold, generated=generated)
+        return _clamp01(getattr(pred, "score", 0.0)), str(getattr(pred, "reasoning", "")).strip()
+
+    async def judge_rubric(self, question: str, rubric: str, generated: str) -> tuple[float, str]:
+        """Return ``(score_in_0_1, reasoning)`` grading an answer against a rubric."""
+        pred = await self._rubric_predict.acall(
+            question=question, rubric=rubric, generated=generated
+        )
         return _clamp01(getattr(pred, "score", 0.0)), str(getattr(pred, "reasoning", "")).strip()
 
     async def aclose(self) -> None:
