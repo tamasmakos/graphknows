@@ -13,10 +13,11 @@ from typing import TYPE_CHECKING, Any
 
 from graphknows.settings import GraphKnowsSettings
 from graphknows.storage.base import IEmbedder, ILTMStore, ISTMStore, IVectorStore
-from graphknows.storage.namespace import db_names
+from graphknows.storage.namespace import db_name, db_names
 
 if TYPE_CHECKING:
     from graphknows.storage.arcadedb.client import ArcadeDBClient
+    from graphknows.storage.arcadedb.graph_store import GraphStore
     from graphknows.storage.arcadedb.ltm_store import ArcadeDBLTMStore
     from graphknows.storage.arcadedb.stm_store import ArcadeDBSTMStore
     from graphknows.storage.arcadedb.vector_store import ArcadeDBVectorStore
@@ -61,6 +62,17 @@ def build_arcadedb_ltm_store(
     )
 
 
+def build_graph_store(settings: GraphKnowsSettings, namespace: str = "") -> GraphStore:
+    """Build a single-database :class:`GraphStore` for a namespace (golden layer).
+
+    The store is not yet connected — the caller awaits ``connect()`` (and
+    ``ensure_schema(dims)`` on write paths) on its own event loop.
+    """
+    from graphknows.storage.arcadedb.graph_store import GraphStore
+
+    return GraphStore(client=build_arcadedb_client(settings), db=db_name(namespace))
+
+
 def build_arcadedb_vector_store(
     settings: GraphKnowsSettings, namespace: str = ""
 ) -> ArcadeDBVectorStore:
@@ -81,6 +93,7 @@ def __getattr__(name: str) -> Any:
         "ArcadeDBLTMStore": ("graphknows.storage.arcadedb", "ArcadeDBLTMStore"),
         "ArcadeDBSTMStore": ("graphknows.storage.arcadedb", "ArcadeDBSTMStore"),
         "ArcadeDBVectorStore": ("graphknows.storage.arcadedb", "ArcadeDBVectorStore"),
+        "GraphStore": ("graphknows.storage.arcadedb.graph_store", "GraphStore"),
         "embed": ("graphknows.storage.embedder", "embed"),
         "embed_one": ("graphknows.storage.embedder", "embed_one"),
         "get_embedder": ("graphknows.storage.embedder", "get_embedder"),
@@ -103,5 +116,7 @@ __all__ = [
     "build_arcadedb_ltm_store",
     "build_arcadedb_stm_store",
     "build_arcadedb_vector_store",
+    "build_graph_store",
+    "db_name",
     "db_names",
 ]

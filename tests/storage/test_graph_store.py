@@ -1,0 +1,461 @@
+"""Unit + integration tests for the single-database GraphStore (golden layer).
+
+Unit tests mock ArcadeDBClient (same style as tests/memory/stores) and assert
+the SQL/Cypher shapes the Phase-1b/1c rewiring will depend on. The integration
+test runs only when ArcadeDB is reachable and exercises the full write→read
+round trip on a scratch ``mem_test_<uuid>`` database.
+"""
+
+from __future__ import annotations
+
+import uuid
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from graphknows.storage.arcadedb.graph_store import (
+    _CHUNK_BATCH,
+    _CORE_DDL,
+    GraphStore,
+)
+from graphknows.storage.namespace import db_name, namespaces_from_databases
+
+
+def _mock_client(query_rows: list[dict] | None = None) -> MagicMock:
+    client = MagicMock()
+    client.command = AsyncMock(return_value=[])
+    client.query = AsyncMock(return_value=query_rows or [])
+    client.create_database = AsyncMock()
+    client.drop_database = AsyncMock()
+    return client
+
+
+def _command_strings(client: MagicMock) -> list[str]:
+    return [call.args[1] for call in client.command.await_args_list]
+
+
+# ---------------------------------------------------------------------------
+# Namespace resolution
+# ---------------------------------------------------------------------------
+
+
+def test_db_name_mapping() -> None:
+    assert db_name("") == "mem"
+    assert db_name("  ") == "mem"
+    assert db_name("acme") == "mem_acme"
+    assert db_name("Acme Corp!") == "mem_acme_corp"
+
+
+def test_namespaces_from_databases_recognizes_mem_prefix() -> None:
+    namespaces = namespaces_from_databases(["mem", "mem_acme", "stm_beta", "ltm_beta", "other"])
+    assert namespaces[0] == ""
+    assert "acme" in namespaces
+    assert "beta" in namespaces
+    assert "other" not in namespaces
+
+
+# ---------------------------------------------------------------------------
+# Schema DDL
+# ---------------------------------------------------------------------------
+
+
+def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
+    stmts = [stmt for _, stmt in _CORE_DDL]
+    type_stmts = [s for s in stmts if s.startswith(("CREATE VERTEX TYPE", "CREATE EDGE TYPE"))]
+
+    def created(kind: str, name: str) -> bool:
+        return any(s.startswith(f"CREATE {kind} TYPE {name} ") for s in type_stmts)
+
+    # Golden vertices
+    for vertex in ("SESSION", "FILE", "CHUNK", "ENTITY", "TEMPORAL", "TOPIC", "FRAME"):
+        assert created("VERTEX", vertex), f"missing vertex {vertex}"
+    # Golden edges
+    for edge in ("PART_OF", "IN_SESSION", "MENTIONS", "MENTIONS_DATE", "HAS_TOPIC", "EVOKED_BY"):
+        assert created("EDGE", edge), f"missing edge {edge}"
+    # Dead schema must NOT be recreated
+    for vertex in ("DIALOG", "TURN", "SEGMENT", "DOC", "SESSIONENTITY"):
+        assert not created("VERTEX", vertex), f"dead vertex {vertex} present"
+    for edge in (
+        "HAS_CHUNK",
+        "HAS_TURN",
+        "HAS_ENTITY",
+        "NEXT",
+        "IN_TOPIC",
+        "CO_OCCURS",
+        "APPEARED_IN",
+        "CONTAINS_DOC",
+        "IN_COMMUNITY",
+        "HAS_FILE",
+    ):
+        assert not created("EDGE", edge), f"dead edge {edge} present"
+
+    # Golden naming conventions: unique keys and no legacy properties.
+    joined = " | ".join(stmts)
+    assert "CREATE INDEX ON ENTITY(name_norm) UNIQUE" in joined
+    assert "CREATE INDEX ON CHUNK(chunk_id) UNIQUE" in joined
+    assert "CREATE INDEX ON TEMPORAL(date) UNIQUE" in joined
+    assert "FRAME.chunk_id" not in joined  # evidence via EVOKED_BY edge
+    assert "ENTITY.label" not in joined  # `type`, not `label`
+    # Lifecycle state is NOTUNIQUE-indexed on CHUNK and ENTITY.
+    assert "CREATE INDEX ON CHUNK(state) NOTUNIQUE" in joined
+    assert "CREATE INDEX ON ENTITY(state) NOTUNIQUE" in joined
+
+
+@pytest.mark.asyncio
+async def test_ensure_schema_injects_dims_and_swallows_already_exists() -> None:
+    client = _mock_client()
+    client.command = AsyncMock(side_effect=Exception("Type already exists"))
+    store = GraphStore(client=client, db="mem")
+    await store.ensure_schema(dims=8)  # must not raise
+    client.create_database.assert_awaited_once_with("mem")
+    vector_stmts = [s for s in _command_strings(client) if "LSM_VECTOR" in s]
+    assert vector_stmts, "no vector-index DDL executed"
+    assert all("dimensions:8" in s for s in vector_stmts)
+    assert not any("__VEC_DIM__" in s for s in _command_strings(client))
+
+
+@pytest.mark.asyncio
+async def test_ensure_schema_raises_on_real_error() -> None:
+    client = _mock_client()
+    client.command = AsyncMock(side_effect=Exception("connection refused"))
+    store = GraphStore(client=client)
+    with pytest.raises(Exception, match="connection refused"):
+        await store.ensure_schema(dims=8)
+
+
+# ---------------------------------------------------------------------------
+# Entity writes — name_norm casefolding
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_entities_bulk_casefolds_name_norm() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_entities_bulk(
+        session_id="s1",
+        chunk_id="c1",
+        entities=[
+            {"name": "Melanie", "type": "PERSON", "confidence": 0.9},
+            {"name": "  STRASSE  Café ", "type": "PLACE"},
+        ],
+    )
+    assert client.command.await_count == 2
+    node_call = client.command.await_args_list[0]
+    rows = node_call.kwargs["params"]["rows"]
+    assert rows[0]["nn"] == "melanie"
+    assert rows[0]["name"] == "Melanie"
+    # casefold (not lower) + whitespace collapse
+    assert rows[1]["nn"] == "strasse café"
+    assert "MERGE (e:ENTITY {name_norm: row.nn})" in node_call.args[1]
+    # MENTIONS pass carries confidence
+    edge_call = client.command.await_args_list[1]
+    assert "MERGE (c)-[m:MENTIONS]->(e)" in edge_call.args[1]
+    assert "m.confidence" in edge_call.args[1]
+
+
+@pytest.mark.asyncio
+async def test_write_entities_bulk_noop_on_empty() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_entities_bulk(session_id="s1", chunk_id="c1", entities=[])
+    client.command.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Relation writes — evidence append + tombstoning
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_relation_evidence_append_sql_shape() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_relation(
+        src_name="Melanie",
+        predicate="LIKES",
+        dst_name="Camping",
+        fact="Melanie likes camping",
+        chunk_id="chunk-1",
+        confidence=0.8,
+        source="gliner",
+    )
+    stmts = _command_strings(client)
+    # Edge type declared before MERGE
+    assert any(s.startswith("CREATE EDGE TYPE LIKES") for s in stmts)
+    merge = next(s for s in stmts if "MERGE (a)-[r:LIKES]->(b)" in s)
+    # Endpoints merged on name_norm; evidence appended as a deduped quoted literal.
+    assert "MERGE (a:ENTITY {name_norm: $src_nn})" in merge
+    assert "WHEN 'chunk-1' IN coalesce(r.evidence, []) THEN r.evidence" in merge
+    assert "ELSE coalesce(r.evidence, []) + ['chunk-1']" in merge
+    # Golden naming: confidence / valid_at / is_current / state / source
+    for fragment in ("r.confidence", "r.valid_at", "r.is_current = true", "r.state", "r.source"):
+        assert fragment in merge
+    merge_call = next(
+        c for c in client.command.await_args_list if "MERGE (a)-[r:LIKES]->(b)" in c.args[1]
+    )
+    assert merge_call.kwargs["params"]["src_nn"] == "melanie"
+    assert merge_call.kwargs["params"]["dst_nn"] == "camping"
+    # LIKES is multi-valued: no tombstone pass
+    assert not any("r.invalid_at = $now" in s for s in stmts)
+
+
+@pytest.mark.asyncio
+async def test_write_relation_single_valued_tombstones() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_relation(
+        src_name="Melanie",
+        predicate="LIVES_IN",
+        dst_name="Toronto",
+        chunk_id="chunk-2",
+    )
+    stmts = _command_strings(client)
+    tombstone = next(s for s in stmts if "r.invalid_at = $now" in s)
+    assert "is_current: true" in tombstone
+    assert "r.is_current = false" in tombstone
+    assert "[r:LIVES_IN" in tombstone
+
+
+@pytest.mark.asyncio
+async def test_write_relation_skips_unlabelable_predicate() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_relation(src_name="a", predicate="123!!", dst_name="b")
+    client.command.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Read API — state filter threading
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_chunks_ann_filters_state_and_session() -> None:
+    rows = [
+        {"@rid": "#1:0", "chunk_id": "c1", "session_id": "s1", "state": "raw",
+         "text": "a", "distance": 0.1},
+        {"@rid": "#1:1", "chunk_id": "c2", "session_id": "s1", "state": "consolidated",
+         "text": "b", "distance": 0.2},
+        {"@rid": "#1:2", "chunk_id": "c3", "session_id": "s2", "state": "raw",
+         "text": "c", "distance": 0.3},
+    ]
+    client = _mock_client(query_rows=rows)
+    store = GraphStore(client=client)
+    out = await store.search_chunks_ann([0.1] * 8, top_k=10, session_id="s1", state="raw")
+    assert [r["chunk_id"] for r in out] == ["c1"]
+    assert out[0]["cosine_score"] == pytest.approx(0.9)
+    # vectorNeighbors SQL over the CHUNK embedding index
+    sql = client.query.await_args_list[0].args[1]
+    assert 'vectorNeighbors("CHUNK[embedding]"' in sql
+
+
+@pytest.mark.asyncio
+async def test_full_text_search_threads_state_filter_into_cypher() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.full_text_search_chunks(["camping"], session_id="s1", state="raw")
+    cypher = client.query.await_args_list[0].args[1]
+    assert "toLower(c.text) CONTAINS 'camping'" in cypher
+    assert "c.session_id = 's1'" in cypher
+    assert "c.state = 'raw'" in cypher
+
+
+@pytest.mark.asyncio
+async def test_query_entity_chunks_threads_state_and_strips_quotes() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.query_entity_chunks(["O'Melanie", "war"], state="consolidated")
+    cypher = client.query.await_args_list[0].args[1]
+    # sanitize() strips quotes; long names use CONTAINS on name_norm, short exact.
+    assert "e.name_norm CONTAINS 'omelanie'" in cypher
+    assert "e.name_norm = 'war'" in cypher
+    assert "c.state = 'consolidated'" in cypher
+
+
+@pytest.mark.asyncio
+async def test_query_temporal_chunks_year_prefix_and_state() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.query_temporal_chunks(["2023", "2023-05-07"], state="raw")
+    cypher = client.query.await_args_list[0].args[1]
+    assert "d.date = '2023'" in cypher
+    assert "d.date STARTS WITH '2023-'" in cypher
+    assert "d.date = '2023-05-07'" in cypher
+    assert "c.state = 'raw'" in cypher
+    assert "MENTIONS_DATE" in cypher
+
+
+@pytest.mark.asyncio
+async def test_query_frame_chunks_traverses_evoked_by() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.query_frame_chunks(["Motion"], session_id="s1")
+    cypher = client.query.await_args_list[0].args[1]
+    assert "(n:FRAME)-[:EVOKED_BY]->(c:CHUNK)" in cypher
+    assert "n.frame_type IN ['Motion']" in cypher
+    assert "n.session_id = 's1'" in cypher
+
+
+@pytest.mark.asyncio
+async def test_entity_relation_graph_excludes_structural_types() -> None:
+    client = _mock_client(
+        query_rows=[
+            {"src": "Melanie", "type": "LIKES", "dst": "Camping",
+             "weight": 0.8, "is_current": True},
+        ]
+    )
+    store = GraphStore(client=client)
+    rows = await store.entity_relation_graph()
+    assert rows == [
+        {"src": "Melanie", "type": "LIKES", "dst": "Camping", "weight": 0.8, "is_current": True}
+    ]
+    cypher = client.query.await_args_list[0].args[1]
+    assert "NOT type(r) IN [" in cypher
+    assert "'MENTIONS'" in cypher
+
+
+# ---------------------------------------------------------------------------
+# Bulk chunk writes — batching cap
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_chunks_bulk_batches_at_cap() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    n = _CHUNK_BATCH * 2 + 5  # 45 with the default cap of 20 → 3 batches
+    chunks = [
+        {"chunk_id": f"c{i}", "session_id": "s1", "file_id": "f1", "text": f"t{i}", "seq": i}
+        for i in range(n)
+    ]
+    await store.write_chunks_bulk(chunks)
+    merge_calls = [
+        c for c in client.command.await_args_list if "MERGE (c:CHUNK {chunk_id: row.cid})" in c.args[1]
+    ]
+    assert len(merge_calls) == 3
+    assert [len(c.kwargs["params"]["rows"]) for c in merge_calls] == [
+        _CHUNK_BATCH,
+        _CHUNK_BATCH,
+        5,
+    ]
+    # Each batch also writes PART_OF edges; state lands 'raw' on create.
+    edge_calls = [c for c in client.command.await_args_list if "PART_OF" in c.args[1]]
+    assert len(edge_calls) == 3
+    assert "coalesce(c.state, 'raw')" in merge_calls[0].args[1]
+
+
+@pytest.mark.asyncio
+async def test_write_chunk_embedding_is_inline_literal() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_chunk(
+        {"chunk_id": "c1", "session_id": "s1", "file_id": "f1", "text": "t",
+         "embedding": [0.5, -0.25]}
+    )
+    emb_stmt = next(s for s in _command_strings(client) if "n.embedding =" in s)
+    # Inline SQL literal, never a parameter (LSM_VECTOR constraint).
+    assert "n.embedding = [0.5,-0.25]" in emb_stmt
+
+
+# ---------------------------------------------------------------------------
+# Integration (live ArcadeDB only)
+# ---------------------------------------------------------------------------
+
+
+def _arcadedb_reachable() -> bool:
+    """Return True when ArcadeDB is up at the configured URL."""
+    import httpx
+
+    from graphknows.settings import GraphKnowsSettings
+
+    try:
+        s = GraphKnowsSettings()
+        r = httpx.get(
+            f"{s.arcadedb_url}/api/v1/exists/ltm",
+            auth=(s.arcadedb_user, s.arcadedb_password),
+            timeout=3,
+        )
+    except Exception:
+        return False
+    else:
+        return r.status_code == 200
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_graph_store_round_trip_on_scratch_database() -> None:
+    """Full write→read round trip on a scratch mem_test_<uuid> database."""
+    if not _arcadedb_reachable():
+        pytest.skip("ArcadeDB not reachable")
+
+    from graphknows.settings import GraphKnowsSettings
+    from graphknows.storage import build_arcadedb_client
+
+    s = GraphKnowsSettings()
+    client = build_arcadedb_client(s)
+    db = f"mem_test_{uuid.uuid4().hex[:8]}"
+    store = GraphStore(client=client, db=db)
+    await store.connect()
+    try:
+        await store.ensure_schema(dims=8)
+        await store.ensure_schema(dims=8)  # idempotent second run
+
+        await store.ensure_session("sess-1", started_at="2026-07-13T00:00:00Z")
+        await store.ensure_file("file-1", "sess-1", name="conv.txt", media_type="text/plain")
+
+        emb_a = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        emb_b = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        await store.write_chunks_bulk(
+            [
+                {"chunk_id": "chunk-a", "session_id": "sess-1", "file_id": "file-1",
+                 "text": "Melanie went camping in Banff.", "seq": 0, "embedding": emb_a},
+                {"chunk_id": "chunk-b", "session_id": "sess-1", "file_id": "file-1",
+                 "text": "Caroline moved to Toronto.", "seq": 1, "embedding": emb_b},
+            ]
+        )
+        await store.write_entities_bulk(
+            "sess-1", "chunk-a",
+            [{"name": "Melanie", "type": "PERSON", "confidence": 0.9},
+             {"name": "Banff", "type": "PLACE", "confidence": 0.8}],
+        )
+        # Same relation from two chunks → evidence list must accumulate both.
+        await store.write_relation(
+            "Melanie", "LIKES", "Camping", fact="Melanie likes camping",
+            chunk_id="chunk-a", confidence=0.7, source="gliner",
+        )
+        await store.write_relation(
+            "Melanie", "LIKES", "Camping", chunk_id="chunk-b", confidence=0.9,
+        )
+
+        # ANN read-back
+        ann = await store.search_chunks_ann(emb_a, top_k=2, session_id="sess-1", state="raw")
+        assert ann and ann[0]["chunk_id"] == "chunk-a"
+
+        # Entity traversal
+        ent = await store.query_entity_chunks(["Melanie"], session_id="sess-1", top_k=5)
+        assert any(r["chunk_id"] == "chunk-a" for r in ent)
+
+        # Relation graph (structural edges excluded, semantic edge present)
+        graph = await store.entity_relation_graph()
+        assert any(r["type"] == "LIKES" and r["src"] == "Melanie" for r in graph)
+
+        # Evidence provenance accumulated across both writes; confidence keeps max.
+        rows = await store._qry(
+            "MATCH (a:ENTITY {name_norm: 'melanie'})-[r:LIKES]->(b) "
+            "RETURN r.evidence AS evidence, r.confidence AS confidence, r.fact AS fact"
+        )
+        assert rows, "LIKES edge not found"
+        assert set(rows[0]["evidence"]) == {"chunk-a", "chunk-b"}
+        assert rows[0]["confidence"] == pytest.approx(0.9)
+        assert rows[0]["fact"] == "Melanie likes camping"
+
+        # get_chunks_by_ids
+        by_id = await store.get_chunks_by_ids(["chunk-a", "chunk-b"])
+        assert set(by_id) == {"chunk-a", "chunk-b"}
+        assert by_id["chunk-a"]["state"] == "raw"
+    finally:
+        try:
+            await store.drop_database()
+        finally:
+            await store.close()

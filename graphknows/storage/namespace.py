@@ -42,6 +42,17 @@ def sanitize(namespace: str) -> str:
     return ns
 
 
+def db_name(namespace: str) -> str:
+    """Return the single-database name for a namespace (golden layer).
+
+    ``""`` → ``"mem"``; ``"acme"`` → ``"mem_acme"``.
+    """
+    ns = sanitize(namespace)
+    if not ns:
+        return "mem"
+    return f"mem_{ns}"
+
+
 def db_names(namespace: str) -> tuple[str, str]:
     """Return the ``(stm_db, ltm_db)`` database names for a namespace.
 
@@ -57,14 +68,15 @@ def db_names(namespace: str) -> tuple[str, str]:
 def namespaces_from_databases(databases: Iterable[str]) -> list[str]:
     """Derive the available namespaces from a list of ArcadeDB database names.
 
-    Inverse of :func:`db_names`. ``stm_<ns>``/``ltm_<ns>`` map to ``<ns>``, and a
-    namespace is reported when *either* half of its pair exists. The default
-    (``""``) namespace — the canonical ``stm``/``ltm`` pair — is always included
+    Inverse of :func:`db_names` / :func:`db_name`. ``stm_<ns>``/``ltm_<ns>``
+    (legacy pair) and ``mem_<ns>`` (single golden-layer database) all map to
+    ``<ns>``; a namespace is reported when any of its databases exists. The
+    default (``""``) namespace — ``stm``/``ltm``/``mem`` — is always included
     and sorts first, so a browser can always select it.
     """
     found: set[str] = set()
     for db in set(databases):
-        for prefix in ("stm_", "ltm_"):
+        for prefix in ("stm_", "ltm_", "mem_"):
             if db.startswith(prefix) and len(db) > len(prefix):
                 found.add(db[len(prefix) :])
     return [""] + sorted(found)
