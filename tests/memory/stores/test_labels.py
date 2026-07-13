@@ -30,6 +30,8 @@ from graphknows.storage.arcadedb._labels import _safe_rel_label
         # Valid passthrough
         ("FOUNDED_BY", "FOUNDED_BY"),
         ("CO_OCCURS", "CO_OCCURS"),
+        ("temporal", "REL_TEMPORAL"),
+        ("frame", "REL_FRAME"),
     ],
 )
 def test_safe_rel_label(raw: str, expected: str) -> None:

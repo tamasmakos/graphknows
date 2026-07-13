@@ -69,6 +69,20 @@ def pagerank_boost(pagerank: float) -> float:
     return 1.0 + raw_boost * PAGERANK_MAX_BOOST
 
 
+def community_boost(weight: object) -> float:
+    """Return a bounded (1.0–3.0) score multiplier from a chunk's community weight.
+
+    Chunks in denser, more cohesive communities are boosted. Missing, zero, or
+    malformed weights are a clean no-op (multiply by 1.0), so this never
+    regresses when community detection did not run.
+    """
+    try:
+        w = float(weight) if weight is not None else 1.0
+    except (TypeError, ValueError):
+        w = 1.0
+    return max(1.0, min(w, 3.0))
+
+
 def idf_weight(doc_freq: int, corpus_size: int) -> float:
     """Return a smooth IDF down-weight for an entity based on its corpus frequency.
 

@@ -19,6 +19,7 @@ from typing import Any
 
 from graphknows.storage.models.gds import CommunityResult
 from graphknows.storage.arcadedb._labels import _safe_rel_label
+from graphknows.storage.arcadedb._sql import sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
@@ -40,8 +41,8 @@ _OLAP_VIEW = "ltm_olap"
 # Structural/provenance edge types excluded when reading the entity-relation graph
 # (we want semantic relations, not graph plumbing).
 _NON_COMMUNITY_EDGE_TYPES = (
-    "['MENTIONS','HAS_CHUNK','IN_SESSION','IN_TOPIC','IN_COMMUNITY','HAS_TURN',"
-    "'HAS_ENTITY','CO_OCCURS','APPEARED_IN','MENTIONS_DATE','NEXT','CONTAINS_DOC']"
+    "['MENTIONS','HAS_CHUNK','IN_SESSION','IN_TOPIC','HAS_TURN',"
+    "'HAS_ENTITY','MENTIONS_DATE','NEXT']"
 )
 
 # ---------------------------------------------------------------------------
@@ -105,25 +106,6 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY SESSION.id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY SESSION.flushed_at IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON SESSION(id) UNIQUE"),
-    ("sql", "CREATE VERTEX TYPE SEGMENT"),
-    ("sql", "CREATE PROPERTY SEGMENT.segment_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEGMENT.ingested_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEGMENT.run_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEGMENT.git_revision IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEGMENT.config_hash IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEGMENT.pipeline_version IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEGMENT.source_count IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY SEGMENT.input_dir IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SEGMENT.taxonomy_name IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON SEGMENT(segment_id) UNIQUE"),
-    ("sql", "CREATE VERTEX TYPE DOC"),
-    ("sql", "CREATE PROPERTY DOC.id IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON DOC(id) UNIQUE"),
-    ("sql", "CREATE VERTEX TYPE SESSIONENTITY"),
-    ("sql", "CREATE PROPERTY SESSIONENTITY.id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SESSIONENTITY.session_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SESSIONENTITY.name IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON SESSIONENTITY(session_id) NOTUNIQUE"),
     # Canonical temporal nodes — one global node per resolved ISO date.
     ("sql", "CREATE VERTEX TYPE TEMPORAL"),
     ("sql", "CREATE PROPERTY TEMPORAL.iso IF NOT EXISTS STRING"),
@@ -151,10 +133,6 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE HAS_TURN"),
     ("sql", "CREATE EDGE TYPE NEXT"),
     ("sql", "CREATE EDGE TYPE IN_TOPIC"),
-    ("sql", "CREATE EDGE TYPE IN_COMMUNITY"),
-    ("sql", "CREATE EDGE TYPE CO_OCCURS"),
-    ("sql", "CREATE EDGE TYPE APPEARED_IN"),
-    ("sql", "CREATE EDGE TYPE CONTAINS_DOC"),
     ("sql", "CREATE EDGE TYPE HAS_ENTITY"),
 ]
 
@@ -1265,11 +1243,11 @@ class ArcadeDBLTMStore:
         """
         if not terms:
             return []
-        safe = [t.replace("'", "") for t in terms]
+        safe = [sanitize(t) for t in terms]
         op = " AND " if require_all else " OR "
         text_where = op.join(f"toLower(c.text) CONTAINS '{t}'" for t in safe)
         if session_id:
-            safe_sid = session_id.replace("'", "")
+            safe_sid = sanitize(session_id)
             full_where = f"({text_where}) AND c.session_id = '{safe_sid}'"
         else:
             full_where = text_where
@@ -1297,12 +1275,10 @@ class ArcadeDBLTMStore:
     async def _get_entity_by_name_async(self, name: str) -> dict[str, Any] | None:
         rows = await self._qry(
             "MATCH (e:ENTITY) WHERE toLower(e.name) = toLower($name) "
-            "OPTIONAL MATCH (e)-[:APPEARED_IN]->(seg:SEGMENT) "
             "RETURN e.id AS id, e.name AS name, e.label AS label, e.type AS type, "
             "e.confidence AS confidence, e.community_id AS community_id, "
             "e.pagerank AS pagerank, e.betweenness AS betweenness, "
-            "e.ingested_at AS ingested_at, e.merged_session_count AS merged_session_count, "
-            "count(DISTINCT seg) AS segment_count",
+            "e.ingested_at AS ingested_at, e.merged_session_count AS merged_session_count",
             name=name,
         )
         if not rows:

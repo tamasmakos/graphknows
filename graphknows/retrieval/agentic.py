@@ -28,6 +28,7 @@ try:
 except ImportError:  # pragma: no cover - optional deployment dependency
     dspy = None  # type: ignore[assignment]
 
+from graphknows.ranking.rrf import community_boost
 from graphknows.retrieval.base import BaseGraphRetriever
 
 if TYPE_CHECKING:
@@ -279,9 +280,7 @@ class AgenticRetriever(BaseGraphRetriever):
             return scored
         boosted: list[tuple[float, dict]] = []
         for score, r in scored:
-            w = weights.get(r["chunk_id"])
-            boost = max(1.0, min(float(w), 3.0)) if w else 1.0
-            boosted.append((score * boost, r))
+            boosted.append((score * community_boost(weights.get(r["chunk_id"])), r))
         return boosted
 
     # ------------------------------------------------------------------

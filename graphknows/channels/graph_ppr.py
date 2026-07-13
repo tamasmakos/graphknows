@@ -20,7 +20,9 @@ import logging
 from typing import Any
 
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
+from graphknows.ingestion.models.taxonomy import STRUCTURAL_REL_TYPES
 from graphknows.ranking.rrf import rrf_score
+from graphknows.storage.arcadedb._sql import sanitize
 
 log = logging.getLogger(__name__)
 
@@ -30,13 +32,7 @@ _TOP_ENTITIES = 12  # entities whose chunks are surfaced
 _MIN_GRAPH_NODES = 3
 
 # Edge types carrying no semantic entity->entity meaning (structure/plumbing).
-_STRUCTURAL_TYPES = frozenset(
-    {
-        "MENTIONS", "HAS_CHUNK", "HAS_ENTITY", "HAS_FILE", "HAS_TURN", "IN_SESSION",
-        "IN_TOPIC", "IN_COMMUNITY", "IN_DIALOG", "PART_OF", "NEXT", "APPEARED_IN",
-        "CONTAINS_DOC", "MENTIONS_DATE", "HAPPENED_ON",
-    }
-)
+_STRUCTURAL_TYPES = STRUCTURAL_REL_TYPES
 
 
 class GraphPPRChannel(Channel):
@@ -92,7 +88,7 @@ class GraphPPRChannel(Channel):
         rt: Any, session_id: str, entity_scores: dict[str, float], top_k: int
     ) -> CollectResult:
         """Chunks mentioning the top-PPR entities, ranked by summed PPR mass."""
-        safe = {n.replace("'", ""): sc for n, sc in entity_scores.items()}
+        safe = {sanitize(n): sc for n, sc in entity_scores.items()}
         where = " OR ".join(f"e.name = '{n}'" for n in safe)
         if not where:
             return {}

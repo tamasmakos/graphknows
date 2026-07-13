@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from graphknows.storage.arcadedb._labels import _safe_rel_label
+from graphknows.storage.arcadedb._sql import sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,6 @@ _SCHEMA_DDL = [
     "CREATE VERTEX TYPE TURN IF NOT EXISTS",
     # Edge types
     "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS",
-    "CREATE EDGE TYPE HAS_FILE IF NOT EXISTS",
     "CREATE EDGE TYPE HAS_CHUNK IF NOT EXISTS",
     "CREATE EDGE TYPE HAS_ENTITY IF NOT EXISTS",
     "CREATE EDGE TYPE HAS_TURN IF NOT EXISTS",
@@ -587,7 +587,7 @@ class ArcadeDBSTMStore:
         """
         if not entity_names:
             return []
-        safe = [n.replace("'", "") for n in entity_names]
+        safe = [sanitize(n) for n in entity_names]
         # Short tokens (< 5 chars) use exact match to avoid substring false positives
         # (e.g. "war" matching "edward", "warren").  Longer tokens use CONTAINS.
         where_parts = " OR ".join(
@@ -605,21 +605,6 @@ class ArcadeDBSTMStore:
         )
         return [{"chunk_id": r["chunk_id"], "text": r["text"]} for r in rows]
 
-    async def query_fact_subjects(self, session_id: str) -> list[str]:
-        """Return distinct subjects of wired typed fact edges (ENTITY->ENTITY) in *session_id*.
-
-        Only edges that carry ``chunk_id`` provenance are considered, so this
-        surfaces the fact-graph the fact-lookup retrieval mode can route from.
-        """
-        rows = await self._c.query(
-            self._db,
-            "MATCH (a:ENTITY {session_id: $sid})-[r]->(b:ENTITY) "
-            "WHERE r.chunk_id IS NOT NULL AND r.chunk_id <> '' "
-            "RETURN DISTINCT a.name AS name",
-            params={"sid": session_id},
-        )
-        return [r["name"] for r in rows if r.get("name")]
-
     async def full_text_search_chunks(
         self,
         session_id: str,
@@ -633,7 +618,7 @@ class ArcadeDBSTMStore:
         """
         if not terms:
             return []
-        safe = [t.replace("'", "") for t in terms]
+        safe = [sanitize(t) for t in terms]
         op = " AND " if require_all else " OR "
         where_parts = op.join(f"toLower(c.text) CONTAINS '{t}'" for t in safe)
         rows = await self._c.query(

@@ -18,9 +18,8 @@ _VERTEX_TYPE_NAMES: frozenset[str] = frozenset(
         "DIALOG",
         "TURN",
         "TOPIC",
-        "SEGMENT",
-        "DOC",
-        "SESSIONENTITY",
+        "TEMPORAL",
+        "FRAME",
         "V",
         "E",
     }

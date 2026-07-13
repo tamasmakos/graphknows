@@ -22,7 +22,6 @@ def _make_retriever():
     # Retrieval is fail-loud: every awaited store method a collector touches must
     # be an AsyncMock, or the (now un-swallowed) await error propagates. Defaults
     # return empty; individual tests override the channels they exercise.
-    stm.query_fact_subjects = AsyncMock(return_value=[])
     stm.query_entity_chunks = AsyncMock(return_value=[])
     stm.full_text_search_chunks = AsyncMock(return_value=[])
     ltm._qry = AsyncMock(return_value=[])

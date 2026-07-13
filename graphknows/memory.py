@@ -527,9 +527,6 @@ class Memory:
             "FILE",
             "SESSION",
             "TEMPORAL",
-            "SEGMENT",
-            "DOC",
-            "SESSIONENTITY",
             "FRAME",
         )
         for label in labels:

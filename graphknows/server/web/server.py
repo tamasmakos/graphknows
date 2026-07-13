@@ -130,7 +130,7 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
     if session_id:
         node_cypher = """
         MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(x)-[:HAS_ENTITY|MENTIONS]-(e:ENTITY)
-        OPTIONAL MATCH (e)-[:IN_COMMUNITY|IN_TOPIC]->(t:TOPIC)
+        OPTIONAL MATCH (e)-[:IN_TOPIC]->(t:TOPIC)
         WITH DISTINCT e, t
         RETURN coalesce(e.id, e.name) AS id,
                coalesce(e.name, e.id) AS label,
@@ -145,7 +145,8 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
         edge_cypher = """
         MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(x)-[:HAS_ENTITY|MENTIONS]-(a:ENTITY)
         MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(y)-[:HAS_ENTITY|MENTIONS]-(b:ENTITY)
-        MATCH (a)-[r:CO_OCCURS]-(b)
+        MATCH (a)-[r]->(b)
+        WHERE a <> b
         WITH DISTINCT a, b, r LIMIT $limit
         RETURN coalesce(a.id, a.name) AS source,
                coalesce(b.id, b.name) AS target,
@@ -156,7 +157,7 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
 
     node_cypher = """
     MATCH (e:ENTITY)
-    OPTIONAL MATCH (e)-[:IN_COMMUNITY|IN_TOPIC]->(t:TOPIC)
+    OPTIONAL MATCH (e)-[:IN_TOPIC]->(t:TOPIC)
     RETURN coalesce(e.id, e.name) AS id,
            coalesce(e.name, e.id) AS label,
            coalesce(e.label, e.type, 'Entity') AS type,

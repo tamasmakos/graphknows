@@ -36,6 +36,7 @@ from graphknows.storage.base import IVectorStore
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
+    community_boost,
     idf_weight,
     pagerank_boost,
     rrf_score,
@@ -43,6 +44,8 @@ from graphknows.ranking.rrf import (
 from graphknows.ranking.rrf import shape_score as _shape_score
 from graphknows.retrieval.base import BaseGraphRetriever
 from graphknows.channels.base import ChannelContext
+from graphknows.ingestion.models.taxonomy import STRUCTURAL_REL_TYPES
+from graphknows.storage.arcadedb._sql import sanitize
 from graphknows.retrieval.models.context import RetrievalContext
 from graphknows.ranking.rerank import rerank as _ce_rerank
 from graphknows.storage.arcadedb.stm_store import ArcadeDBSTMStore
@@ -127,18 +130,7 @@ def _bm25_rank(
     return [(s, c) for s, c in paired if s > 0.0]
 
 
-_STRUCTURAL_REL_TYPES = frozenset(
-    {
-        "MENTIONS",
-        "HAS_CHUNK",
-        "IN_SESSION",
-        "IN_TOPIC",
-        "IN_COMMUNITY",
-        "HAS_TURN",
-        "IN_DIALOG",
-        "PART_OF",
-    }
-)
+_STRUCTURAL_REL_TYPES = STRUCTURAL_REL_TYPES
 
 
 _Q_STRIP = re.compile(
@@ -520,12 +512,12 @@ class DETRetriever(BaseGraphRetriever):
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         if not words:
             return result
-        safe = [w.replace("'", "") for w in words]
+        safe = [sanitize(w) for w in words]
         disc = await self._discriminative_entities(safe, session_filter)
         if not disc:
             return result
         # disc is now list[tuple[name, idf_w]] — build lookup and name list.
-        idf_lookup: dict[str, float] = {n.replace("'", ""): w for n, w in disc}
+        idf_lookup: dict[str, float] = {sanitize(n): w for n, w in disc}
         safe_names = list(idf_lookup.keys())
         # Exact-match the (already query-matched, non-saturated) entity names.
         where_entity = " OR ".join(f"e.name = '{n}'" for n in safe_names)
@@ -713,7 +705,7 @@ class DETRetriever(BaseGraphRetriever):
             return result
 
         # Dynamic WHERE: exact iso match, or year-prefix match for 4-digit years.
-        safe = [c.replace("'", "") for c in candidates]
+        safe = [sanitize(c) for c in candidates]
         conds = []
         for c in safe:
             conds.append(f"d.iso = '{c}'")
@@ -987,8 +979,4 @@ def _add_result(
 
 def _community_boost(metadata: dict[str, Any]) -> float:
     """Return a bounded score multiplier from community metadata."""
-    try:
-        weight = float(metadata.get("community_weight", 1.0))
-    except (TypeError, ValueError):
-        weight = 1.0
-    return max(1.0, min(weight, 3.0))
+    return community_boost(metadata.get("community_weight", 1.0))
