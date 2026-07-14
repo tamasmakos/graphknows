@@ -78,6 +78,23 @@ async def test_retriever_parses_hits() -> None:
     assert client.calls[0][1]["namespace"] == "eval_locomo_llm_free_conv_26"
 
 
+@pytest.mark.asyncio
+async def test_gen_context_k_100_probes_and_slices_100() -> None:
+    """End-to-end depth plumbing: gen_context_k=100 → probe_k>=100 → the retriever
+    requests >=100 passages and the generator context is sliced to exactly 100."""
+    config = BaseEvalConfig(gen_context_k=100)
+    assert config.probe_k >= 100  # validator coverage
+    hits = [{"text": f"p{i}", "score": 1.0 - i / 200} for i in range(120)]
+    client = FakeClient({"memory_query": {"hits": hits}})
+    retriever = Retriever(client, config)  # type: ignore[arg-type]
+    probe = await retriever.query("s1", "q", k=config.probe_k, namespace="ns")
+    # The MCP tool caps at 100; here the fake returns everything, so assert the
+    # eval REQUESTED at least 100 (not silently capped at 25/50 on our side).
+    assert client.calls[0][1]["top_k"] >= 100
+    context_passages = probe[: config.gen_context_k]
+    assert len(context_passages) == 100
+
+
 def _result(score: float, category: str = "temporal", **metrics: Any) -> CaseResult:
     return CaseResult(
         case_id=f"c-{score}-{category}",

@@ -60,6 +60,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Drop this benchmark's namespace (both databases) for a clean re-ingest, then run.",
     )
+    parser.add_argument(
+        "--gen-context-k",
+        type=int,
+        default=None,
+        help=(
+            "Passages fed to the generator (default 25). Sets EVAL_GEN_CONTEXT_K; "
+            "probe_k auto-raises to cover it. Capped at 100 (MCP memory_query limit)."
+        ),
+    )
     return parser
 
 
@@ -92,6 +101,11 @@ async def amain(argv: list[str] | None = None) -> int:
 
     if not os.environ.get("LLM_MODEL", "").strip():
         raise SystemExit("LLM_MODEL is not set in .env — set it before running the evaluation.")
+
+    # --gen-context-k overrides EVAL_GEN_CONTEXT_K, read by BaseEvalConfig when it
+    # constructs the config inside _run_one (below). probe_k auto-covers it there.
+    if args.gen_context_k is not None:
+        os.environ["EVAL_GEN_CONTEXT_K"] = str(args.gen_context_k)
 
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 

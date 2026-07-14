@@ -15,8 +15,10 @@ from evaluation.locomo import prompts
 
 log = logging.getLogger(__name__)
 
-# Bump when a prompt change should invalidate cached verdicts.
-_PROMPT_VERSION = "locomo-judge-dspy-v1"
+# Bump when a prompt change should invalidate cached verdicts. Bumped for the
+# two-stage judge: the headline score is now the STAGE-2 verdict (not raw
+# stage-1 SemanticF1), so old single-stage cache entries must not be reused.
+_PROMPT_VERSION = "locomo-judge-two-stage-v1"
 
 
 def _judge_gold(case: EvalCase) -> str:
@@ -52,27 +54,45 @@ class LocomoAdapter(BenchmarkAdapter):
         }
 
     async def judge_case(self, case: EvalCase, answer: str) -> tuple[float, dict[str, Any]]:
+        # NOTE: the headline `score` is now the STAGE-2 verdict from the two-stage
+        # judge, not the raw stage-1 SemanticF1. This intentionally redefines the
+        # LoCoMo score (baseline reset expected). Stage-1 `semantic_f1` is still
+        # recorded alongside it so the two can be compared per case.
         gold = _judge_gold(case)
         cached = self._cache.get(_PROMPT_VERSION, case.question, gold, answer)
         if cached is not None:
             return float(cached["score"]), {
                 "judge_label": cached.get("label", ""),
                 "judge_reasoning": cached.get("reasoning", ""),
+                "semantic_f1": cached.get("semantic_f1"),
+                "token_f1": cached.get("token_f1"),
                 "judge_cached": True,
             }
 
         try:
-            score, reasoning = await self.judge.judge(case.question, gold, answer)
+            score, jm = await self.judge.judge_two_stage(case.question, gold, answer)
         except Exception as exc:
             log.exception("Judge failed for %s (scored 0.0)", case.case_id)
             return 0.0, {"judge_label": "ERROR", "judge_reasoning": str(exc)[:200]}
 
         label = "CORRECT" if score >= 0.5 else "WRONG"
+        reasoning = jm.get("judge_reasoning", "")
         self._cache.put(
-            {"score": score, "label": label, "reasoning": reasoning},
+            {
+                "score": score,
+                "label": label,
+                "reasoning": reasoning,
+                "semantic_f1": jm.get("semantic_f1"),
+                "token_f1": jm.get("token_f1"),
+            },
             _PROMPT_VERSION, case.question, gold, answer,
         )
-        return score, {"judge_label": label, "judge_reasoning": reasoning}
+        return score, {
+            "judge_label": label,
+            "judge_reasoning": reasoning,
+            "semantic_f1": jm.get("semantic_f1"),
+            "token_f1": jm.get("token_f1"),
+        }
 
     def lexical_metrics(self, case: EvalCase, answer: str) -> dict[str, Any]:
         return {

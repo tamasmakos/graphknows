@@ -31,7 +31,11 @@ class FakeLLM:
 
 
 class FakeJudge:
-    """Scripted DSPy-style judge: returns queued scores, records (q, gold, gen)."""
+    """Scripted DSPy-style judge: returns queued scores, records (q, gold, gen).
+
+    LoCoMo's adapter uses the two-stage judge, so ``judge_two_stage`` returns the
+    queued value as the STAGE-2 verdict (the headline score) plus a metrics dict.
+    """
 
     def __init__(self, scores: list[float]) -> None:
         self._scores = list(scores)
@@ -40,6 +44,18 @@ class FakeJudge:
     async def judge(self, question: str, gold: str, generated: str) -> tuple[float, str]:
         self.calls.append((question, gold, generated))
         return self._scores.pop(0), "reason"
+
+    async def judge_two_stage(
+        self, question: str, gold: str, generated: str
+    ) -> tuple[float, dict[str, Any]]:
+        self.calls.append((question, gold, generated))
+        score = self._scores.pop(0)
+        return score, {
+            "semantic_f1": score,
+            "token_f1": 0.0,
+            "judge_score": score,
+            "judge_reasoning": "reason",
+        }
 
 
 @pytest.fixture(autouse=True)
@@ -83,6 +99,8 @@ class TestLocomoAdapter:
         adapter = LocomoAdapter(LocomoConfig(), FakeLLM([]), judge)
         score, metrics = await adapter.judge_case(_case(), "7 May 2023")
         assert score == 1.0 and metrics["judge_label"] == "CORRECT"
+        # Stage-1 SemanticF1 is recorded alongside the stage-2 headline score.
+        assert metrics["semantic_f1"] == 1.0
         score, _ = await adapter.judge_case(_case(), "12 Oct 2023")
         assert score == 0.0
         score, metrics = await adapter.judge_case(_case(), "partly right")

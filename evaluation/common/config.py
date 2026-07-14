@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BaseEvalConfig(BaseModel):
@@ -24,7 +24,13 @@ class BaseEvalConfig(BaseModel):
 
     # ── Retrieval ────────────────────────────────────────────────────────────
     top_k: int = 5  # scored retrieval depth (for the avg_hit_score diagnostic)
-    gen_context_k: int = 25  # passages handed to the generator (the expensive knob)
+    # Passages handed to the generator (the expensive knob). Overridable per run
+    # via EVAL_GEN_CONTEXT_K so a caller can sweep 25/50/100 without code edits.
+    # NOTE: the MCP memory_query tool clamps top_k at 100, so 100 is the ceiling
+    # a single retrieval can feed the generator.
+    gen_context_k: int = Field(
+        default_factory=lambda: int(os.environ.get("EVAL_GEN_CONTEXT_K", "25"))
+    )
     probe_k: int = 50  # gold-reachability probe depth (diagnostic only; not fed to LLM)
     recall_scope: str = "both"  # stm | ltm | both
     promote_to_ltm: bool = True
@@ -69,3 +75,15 @@ class BaseEvalConfig(BaseModel):
     # ── Paths ────────────────────────────────────────────────────────────────
     data_root: Path = Path("evaluation/data")
     output_dir: Path = Path("evaluation/results")
+
+    @model_validator(mode="after")
+    def _probe_covers_gen_context(self) -> BaseEvalConfig:
+        """Guarantee the probe returns at least as many passages as the generator
+        consumes. The pipeline slices ``context = probe[:gen_context_k]``, so if
+        ``probe_k < gen_context_k`` the generator is silently starved (e.g. a
+        gen_context_k of 100 against the default probe_k of 50 would only ever
+        feed 50 passages). Auto-raise probe_k to cover it (frozen model → bypass
+        the setattr guard once, during validation)."""
+        if self.probe_k < self.gen_context_k:
+            object.__setattr__(self, "probe_k", self.gen_context_k)
+        return self
