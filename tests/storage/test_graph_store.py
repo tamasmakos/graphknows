@@ -463,11 +463,14 @@ async def test_entity_relation_graph_excludes_structural_types() -> None:
 
 @pytest.mark.asyncio
 async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> None:
+    # The rel query returns coalesce(r.predicate, type(r)) — the RAW label, so a
+    # reserved-word verb (find, stored as edge type REL_FIND) reads as "find" here
+    # and is NOT dropped; only ACTIVITY_ONGOING is noise.
     rel_rows = [
         {"s": "Jon", "p": "ACTIVITY_START_ACTIVITY", "o": "dance studio", "ev": ["c1"]},
         {"s": "Gina", "p": "SUPPORT", "o": "Jon", "ev": ["c2"]},
-        {"s": "Jon", "p": "REL_NSUBJ", "o": "something", "ev": ["c3"]},  # noise
-        {"s": "Jon", "p": "ACTIVITY_ONGOING_ACTIVITY", "o": "walking", "ev": []},  # noise
+        {"s": "Gina", "p": "FIND", "o": "fashion pieces", "ev": ["c3"]},  # reserved-word verb → KEPT
+        {"s": "Jon", "p": "ACTIVITY_ONGOING_ACTIVITY", "o": "walking", "ev": []},  # noise → dropped
         {"s": "Jon", "p": "VISITING", "o": "Rome", "ev": []},  # plain (unevidenced)
     ]
     frame_rows = [
@@ -480,18 +483,21 @@ async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> Non
 
     facts = await store.entity_fact_context(["Jon", "Gina"])
 
-    # Frame instance (>=2 roles) ranks first; noise predicates dropped.
+    # Frame instance (>=2 roles) ranks first; only ACTIVITY_ONGOING dropped.
     assert facts[0] == "Activity_start: Agent=Jon, Activity=dance studio"
     assert "Jon activity start activity dance studio" in facts
     assert "Gina support Jon" in facts
+    assert "Gina find fashion pieces" in facts  # reserved-word verb survived
     assert "Jon visiting Rome" in facts
-    assert not any("rel " in f or "activity ongoing" in f for f in facts)
+    assert not any("activity ongoing" in f for f in facts)
     # Evidenced relations precede the bare (unevidenced) VISITING relation.
     assert facts.index("Gina support Jon") < facts.index("Jon visiting Rome")
 
-    # Query keyed on interpolated name_norm list literal (IN-$list workaround).
+    # Query: both directions, current-only, raw predicate, name_norm list literal.
     rel_cypher = client.query.await_args_list[0].args[1]
-    assert "a.name_norm IN ['gina','jon']" in rel_cypher
+    assert "a.name_norm IN ['gina','jon'] OR b.name_norm IN ['gina','jon']" in rel_cypher
+    assert "r.is_current = true OR r.is_current IS NULL" in rel_cypher
+    assert "coalesce(r.predicate, type(r))" in rel_cypher
     assert "NOT type(r) IN [" in rel_cypher
 
 
@@ -524,14 +530,19 @@ async def test_entity_fact_context_soft_fails_on_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_query_entities_matches_short_exact_long_contains() -> None:
+async def test_resolve_query_entities_matches_word_boundary() -> None:
     client = _mock_client(query_rows=[{"name": "Jon"}, {"name": "Gina"}])
     store = GraphStore(client=client)
-    names = await store.resolve_query_entities(["jon", "dance", "of"])  # "of" too short
+    names = await store.resolve_query_entities(["jon", "studio", "of"])  # "of" too short
     assert names == ["Jon", "Gina"]
     cypher = client.query.await_args_list[0].args[1]
-    assert "e.name_norm = 'jon'" in cypher  # short token → exact
-    assert "e.name_norm CONTAINS 'dance'" in cypher  # long token → contains
+    # Word-boundary: exact, or a whole space-delimited word — NOT intra-word substring
+    # (so "there" never resolves "theresa").
+    assert "e.name_norm = 'jon'" in cypher
+    assert "e.name_norm ENDS WITH ' studio'" in cypher  # "studio" -> "dance studio"
+    assert "e.name_norm STARTS WITH 'studio '" in cypher
+    assert "e.name_norm CONTAINS ' studio '" in cypher
+    assert "CONTAINS 'studio'" not in cypher  # never a bare intra-word substring
     assert "'of'" not in cypher  # < 3 chars filtered out
     assert "LIMIT 6" in cypher
 

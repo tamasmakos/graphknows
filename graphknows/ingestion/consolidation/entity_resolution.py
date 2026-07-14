@@ -83,9 +83,26 @@ def _standard_key(name: str) -> str:
     return " ".join(toks)
 
 
+# spaCy NER types that mark a PROPER-NOUN entity. The morphological
+# standardization layer must never singularize/merge these — a team "Warriors"
+# (ORG) must not collapse onto the common noun "warrior", nor "Philippines" (GPE)
+# onto "philippine". Only untyped / common-noun entities are morphologically merged.
+_PROPER_TYPES: frozenset[str] = frozenset(
+    {
+        "PERSON", "ORG", "GPE", "LOC", "FAC", "NORP",
+        "PRODUCT", "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE",
+    }
+)
+
+
 def _is_person(entity: dict[str, Any], speakers: set[str]) -> bool:
     """Direct person signal: spaCy PERSON type, or a known session speaker."""
     return (entity.get("type") or "").upper() == "PERSON" or entity["name_norm"] in speakers
+
+
+def _is_proper(entity: dict[str, Any]) -> bool:
+    """True when the entity's spaCy NER type marks it a proper noun."""
+    return (entity.get("type") or "").upper() in _PROPER_TYPES
 
 
 def _canonical(members: list[dict[str, Any]]) -> dict[str, Any]:
@@ -106,8 +123,8 @@ async def _merge_standardized(store: Any) -> int:
     speakers = set(await store.distinct_speakers())
     groups: dict[str, list[dict[str, Any]]] = {}
     for e in entities:
-        if _is_person(e, speakers):
-            continue  # persons are the nickname layer's job (never singularized)
+        if _is_person(e, speakers) or _is_proper(e):
+            continue  # persons -> nickname layer; other proper nouns never singularized
         groups.setdefault(_standard_key(e["name"]), []).append(e)
 
     merged = 0

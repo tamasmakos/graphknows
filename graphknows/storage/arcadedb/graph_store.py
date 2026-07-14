@@ -285,12 +285,13 @@ def _fact_exclude_literal() -> str:
 
 
 def _is_noise_predicate(predicate: str) -> bool:
-    """True for predicates that carry no fact-sheet signal despite surviving the
-    ENTITY->ENTITY relation query: the ``REL_*`` generic dependency-grammar dump
-    and the ``ACTIVITY_ONGOING_*`` frame spam (``ACTIVITY_START_*`` is kept — it
-    is the higher-signal decision/onset event)."""
-    p = predicate.upper()
-    return p.startswith("REL_") or p.startswith("ACTIVITY_ONGOING")
+    """True for the ``ACTIVITY_ONGOING_*`` frame-spam predicate (``ACTIVITY_START_*``
+    is kept — the higher-signal decision/onset event).
+
+    Applied to the RAW ``r.predicate`` label, so reserved-word verbs that the edge
+    TYPE escapes as ``REL_*`` (find->REL_FIND) are NOT dropped — they read as their
+    real predicate ("find") here."""
+    return predicate.upper().startswith("ACTIVITY_ONGOING")
 
 
 class GraphStore:
@@ -1192,18 +1193,25 @@ class GraphStore:
     async def resolve_query_entities(self, words: list[str], cap: int = 6) -> list[str]:
         """Resolve query tokens to ENTITY surface names for the fact-sheet.
 
-        Short tokens (< 5 chars) match ``name_norm`` exactly (avoids substring
-        false positives like "war" in "edward"); longer tokens CONTAINS-match.
-        Soft-fails to ``[]`` — this is a best-effort enrichment, never a hard
+        A token matches ``name_norm`` only on a WORD boundary — exact, or as a
+        whole space-delimited word of a multi-word entity ("studio" -> "dance
+        studio"). Intra-word substrings do NOT match (so "there" never resolves
+        "theresa"). Soft-fails to ``[]`` — best-effort enrichment, never a hard
         dependency of retrieval.
         """
         toks = sorted({w.strip().casefold() for w in words if w and len(w.strip()) >= 3})
         if not toks:
             return []
-        conds = " OR ".join(
-            f"e.name_norm = {quote(t)}" if len(t) < 5 else f"e.name_norm CONTAINS {quote(t)}"
-            for t in toks
-        )
+
+        def _word_boundary(t: str) -> str:
+            return (
+                f"(e.name_norm = {quote(t)} "
+                f"OR e.name_norm STARTS WITH {quote(t + ' ')} "
+                f"OR e.name_norm ENDS WITH {quote(' ' + t)} "
+                f"OR e.name_norm CONTAINS {quote(' ' + t + ' ')})"
+            )
+
+        conds = " OR ".join(_word_boundary(t) for t in toks)
         try:
             rows = await self._qry(
                 f"MATCH (e:ENTITY) WHERE {conds} "
@@ -1238,10 +1246,17 @@ class GraphStore:
         name_lit = quoted_list(norms)
         try:
             rel_rows = await self._qry(
+                # Both directions so object-side facts surface ("Caroline HAS Luna"
+                # when the query resolves Luna). Only current (non-tombstoned) edges.
+                # Use r.predicate (the raw human-readable label) not type(r): the edge
+                # TYPE is REL_-prefixed for reserved-word predicates (find->REL_FIND),
+                # which the noise filter would then drop as if it were noise.
                 f"MATCH (a:ENTITY)-[r]->(b:ENTITY) "
-                f"WHERE a.name_norm IN {name_lit} "
+                f"WHERE (a.name_norm IN {name_lit} OR b.name_norm IN {name_lit}) "
+                f"AND (r.is_current = true OR r.is_current IS NULL) "
                 f"AND NOT type(r) IN {_fact_exclude_literal()} "
-                f"RETURN a.name AS s, type(r) AS p, b.name AS o, r.evidence AS ev"
+                f"RETURN a.name AS s, coalesce(r.predicate, type(r)) AS p, "
+                f"b.name AS o, r.evidence AS ev"
             )
             frame_rows = await self._qry(
                 f"MATCH (fi:FRAME_INSTANCE)-[:PLAYS_ROLE]->(seed:ENTITY) "
@@ -1278,9 +1293,15 @@ class GraphStore:
             fact = f"{s} {p.replace('_', ' ').lower()} {o}"
             (evidenced if r.get("ev") else plain).append(fact)
 
+        # Interleave: give frames at most half the cap, THEN evidenced relations,
+        # then the rest. A frame-dense conversation (dozens of instances) would
+        # otherwise fill the whole cap with frames and starve the relation facts —
+        # including the object-side and reserved-word predicates surfaced above.
+        half = max(1, max_facts // 2)
+        ranked = frame_facts[:half] + evidenced + frame_facts[half:] + plain
         out: list[str] = []
         seen: set[str] = set()
-        for fact in frame_facts + evidenced + plain:
+        for fact in ranked:
             if fact in seen:
                 continue
             seen.add(fact)
