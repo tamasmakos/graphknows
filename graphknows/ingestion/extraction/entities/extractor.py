@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.gliner_model import load_gliner2_model
-from graphknows.ingestion.extraction.relations.svo import extract_svo, parse_speaker
+from graphknows.ingestion.extraction.relations.svo import extract_relations, parse_speaker
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,14 @@ _BASE_THRESHOLD: float = 0.35
 # Chunks per GLiNER2 forward pass in extract_batch. Larger = better throughput,
 # more peak RAM. Tunable for the ingest-bound path.
 _BATCH_SIZE: int = int(os.environ.get("GRAPHKNOWS_GLINER_BATCH_SIZE", "16"))
+# GLiNER2 attends better to short spans: the ENTITY + relation pass runs on
+# ~128-token / 32-overlap sub-windows of each 384-token retrieval chunk rather
+# than the whole blob — more entities, and (unlike per-sentence) windows still
+# hold the 2+ entities a relation needs. Windows attribute back to the parent
+# chunk_id; the spaCy/SVO pass still sees the full chunk. Tokens are approximated
+# by whitespace words (no tokenizer dependency); both knobs are tunable.
+_EXTRACT_WINDOW_TOKENS: int = 128
+_EXTRACT_WINDOW_OVERLAP: int = 32
 _SPACY_MODEL = "en_core_web_lg"
 _MIN_ENTITY_LABEL_COUNT = 1
 _MAX_ENTITY_LABELS = 24
@@ -69,8 +77,10 @@ class _DynamicSchema:
     entity_spec: dict[str, dict[str, Any]]
     relation_spec: dict[str, str]
     label_to_type: dict[str, str]
-    # SVO triples mined for the chunk (the candidate facts). Each is the dict
-    # returned by ``extract_svo``; consumed by the _map_raw corroboration gate.
+    # Relation triples mined for the chunk (the candidate facts): verb-SVO plus
+    # rich dependency-grammar triples (copular/possessive/appositive/noun-prep),
+    # each dict as returned by ``extract_relations``; consumed by the _map_raw
+    # corroboration/structural gate (rich triples ride the structural keep).
     svo_triples: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -150,6 +160,51 @@ def _gliner_corroboration(
             if conf >= _BASE_THRESHOLD:
                 return conf
     return None
+
+
+def _sub_windows(text: str) -> list[str]:
+    """Slide a ~128-word / 32-overlap window over a chunk for the GLiNER2 pass.
+
+    Windows snap to whitespace so no word is split; a chunk that fits in one
+    window is returned unchanged (so short turns cost exactly one forward pass).
+    """
+    words = text.split()
+    step = _EXTRACT_WINDOW_TOKENS - _EXTRACT_WINDOW_OVERLAP
+    if len(words) <= _EXTRACT_WINDOW_TOKENS or step <= 0:
+        return [text]
+    windows: list[str] = []
+    for start in range(0, len(words), step):
+        windows.append(" ".join(words[start : start + _EXTRACT_WINDOW_TOKENS]))
+        if start + _EXTRACT_WINDOW_TOKENS >= len(words):
+            break
+    return windows
+
+
+def _merge_raw(acc: dict[str, Any] | None, raw: dict[str, Any]) -> dict[str, Any]:
+    """Fold one sub-window's GLiNER2 raw result into a per-chunk accumulator.
+
+    Entity spans dedup by casefolded text (keep the max confidence) so the same
+    name seen in overlapping windows becomes one entity; relation triplets (used
+    only for SVO corroboration lookup) are concatenated per label.
+    """
+    if acc is None:
+        acc = {"entities": {}, "relation_extraction": {}}
+    ents: dict[str, list[dict[str, Any]]] = acc["entities"]
+    for label, spans in (raw.get("entities") or {}).items():
+        bucket = ents.setdefault(label, [])
+        for span in spans or []:
+            name = (span.get("text") or "").strip().casefold()
+            existing = next(
+                (s for s in bucket if (s.get("text") or "").strip().casefold() == name), None
+            )
+            if existing is None:
+                bucket.append(dict(span))
+            elif float(span.get("confidence", 0.0)) > float(existing.get("confidence", 0.0)):
+                existing["confidence"] = span.get("confidence")
+    rels: dict[str, list[Any]] = acc["relation_extraction"]
+    for label, triplets in (raw.get("relation_extraction") or {}).items():
+        rels.setdefault(label, []).extend(triplets or [])
+    return acc
 
 
 class _SpacySchemaMiner:
@@ -235,8 +290,13 @@ class _SpacySchemaMiner:
         label_counts: Counter[str] = Counter()
         for sent in doc.sents:
             speaker = _speaker_at(line_speakers, sent.start_char)
-            for triple in extract_svo(sent, speaker, speakers):
+            for triple in extract_relations(sent, speaker, speakers):
                 svo_triples.append(triple)
+                # Only verb-SVO predicates join the GLiNER2 validation schema;
+                # rich structural triples (IS_A/HAS/prep) ride the structural
+                # keep in _map_raw and carry no verb/prep to describe.
+                if triple.get("pattern", "svo") != "svo":
+                    continue
                 label = triple["relation"]
                 label_counts[label] += 1
                 label_verb.setdefault(label, (triple["verb"], triple["prep"]))
@@ -321,52 +381,63 @@ class GLiNER2EntityExtractor:
         if not dynamic_schema.entity_spec:
             return ExtractionResult()
 
+        # Run the GLiNER2 pass on sub-windows of the chunk and merge each window's
+        # entities/relations back onto the parent chunk (schema built once).
         gliner_schema = self._build_gliner_schema(dynamic_schema)
-        raw = self._gliner.extract(
-            text,
-            gliner_schema,
-            _BASE_THRESHOLD,
-            True,  # format_results
-            True,  # include_confidence
-            True,  # include_spans
-        )
-        return self._map_raw(raw, dynamic_schema)
+        merged: dict[str, Any] | None = None
+        for window in _sub_windows(text):
+            raw = self._gliner.extract(
+                window,
+                gliner_schema,
+                _BASE_THRESHOLD,
+                True,  # format_results
+                True,  # include_confidence
+                True,  # include_spans
+            )
+            merged = _merge_raw(merged, raw)
+        return self._map_raw(merged or {}, dynamic_schema)
 
     def extract_batch(self, texts: list[str]) -> list[ExtractionResult]:
         """Extract for many chunks in one batched GLiNER2 forward pass.
 
-        Same per-text result as :meth:`extract`, but the model runs the chunks as
-        padded batches (``batch_extract``) instead of one call each — the win is
-        amortized tokenization + fewer ONNX ``session.run`` calls, which is where
-        the CPU-bound ingest spends its time. Chunks whose spaCy schema mines no
-        entities skip the model entirely (empty result), same as :meth:`extract`.
+        Same per-text result as :meth:`extract`, but the model runs the chunks'
+        sub-windows as padded batches (``batch_extract``) instead of one call
+        each — the win is amortized tokenization + fewer ONNX ``session.run``
+        calls, which is where the CPU-bound ingest spends its time. Chunks whose
+        spaCy schema mines no entities skip the model entirely (empty result),
+        same as :meth:`extract`.
         """
         if not texts:
             return []
         self._ensure_model_loaded()
         assert self._gliner is not None
 
-        # Mine all chunk schemas in one batched spaCy pass, then batch the GLiNER2
-        # forward pass over the chunks that yielded entity labels.
+        # Mine all chunk schemas in one batched spaCy pass. Each chunk that
+        # yielded entity labels is expanded into ~128-token sub-windows; ALL
+        # sub-windows across ALL chunks go into ONE batched GLiNER2 forward pass
+        # (schema built once per chunk, reused across its windows), then each
+        # window's raw result is merged back onto its parent chunk before mapping.
         dynamic_schemas = self._schema_miner.build_batch(texts)
         results: list[ExtractionResult | None] = [None] * len(texts)
-        batch_texts: list[str] = []
-        batch_schemas: list[Any] = []
-        batch_dynamic: list[Any] = []
-        batch_idx: list[int] = []
+        sub_texts: list[str] = []
+        sub_schemas: list[Any] = []
+        sub_parent: list[int] = []
+        parent_dynamic: dict[int, Any] = {}
         for i, (text, dynamic_schema) in enumerate(zip(texts, dynamic_schemas, strict=True)):
             if not dynamic_schema.entity_spec:
                 results[i] = ExtractionResult()
                 continue
-            batch_texts.append(text)
-            batch_schemas.append(self._build_gliner_schema(dynamic_schema))
-            batch_dynamic.append(dynamic_schema)
-            batch_idx.append(i)
+            gliner_schema = self._build_gliner_schema(dynamic_schema)
+            parent_dynamic[i] = dynamic_schema
+            for window in _sub_windows(text):
+                sub_texts.append(window)
+                sub_schemas.append(gliner_schema)
+                sub_parent.append(i)
 
-        if batch_texts:
+        if sub_texts:
             raws = self._gliner.batch_extract(
-                batch_texts,
-                batch_schemas,
+                sub_texts,
+                sub_schemas,
                 _BATCH_SIZE,
                 _BASE_THRESHOLD,
                 0,  # num_workers (0 = current process; ONNX is already threaded)
@@ -374,8 +445,11 @@ class GLiNER2EntityExtractor:
                 True,  # include_confidence
                 True,  # include_spans
             )
-            for i, raw, dynamic_schema in zip(batch_idx, raws, batch_dynamic, strict=True):
-                results[i] = self._map_raw(raw, dynamic_schema)
+            merged: dict[int, dict[str, Any]] = {}
+            for parent_i, raw in zip(sub_parent, raws, strict=True):
+                merged[parent_i] = _merge_raw(merged.get(parent_i), raw)
+            for i, raw in merged.items():
+                results[i] = self._map_raw(raw, parent_dynamic[i])
 
         final = [r if r is not None else ExtractionResult() for r in results]
         # Guardrail: the label space is open — log its size per batch so a
@@ -417,6 +491,12 @@ class GLiNER2EntityExtractor:
         #     BOTH arguments are named (speaker name / spaCy-typed entity), a
         #     high-confidence structural fact. An uncorroborated triple with a
         #     bare common-noun argument is dropped (idiom / parse noise).
+        #   * rich structural triples (pattern != 'svo': copular IS_A / possessive
+        #     HAS / appositive / noun-prep) are high-precision by construction, so
+        #     they are kept at the same 0.6 structural prior when BOTH args are
+        #     named OR the pattern is copular/appositive/possessive with a named
+        #     head — GLiNER2 agreement is not required (its schema is verb-only).
+        _NAMED_HEAD_PATTERNS = ("copular", "appositive", "possessive")
         gliner_rels = raw.get("relation_extraction") or {}
         relations: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
@@ -425,10 +505,13 @@ class GLiNER2EntityExtractor:
             key = (head.casefold(), label, tail.casefold())
             if key in seen:
                 continue
+            pattern = triple.get("pattern", "svo")
             conf = _gliner_corroboration(gliner_rels.get(label), head, tail)
             if conf is not None:
                 source, score = "svo+gliner", conf
             elif triple["head_named"] and triple["tail_named"]:
+                source, score = "svo", 0.6
+            elif pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]:
                 source, score = "svo", 0.6
             else:
                 continue

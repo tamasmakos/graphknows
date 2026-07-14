@@ -10,7 +10,10 @@ import pytest
 from graphknows.ingestion.extraction.entities.extractor import (
     ExtractionResult,
     GLiNER2EntityExtractor,
+    _EXTRACT_WINDOW_OVERLAP,
+    _EXTRACT_WINDOW_TOKENS,
     _SpacySchemaMiner,
+    _sub_windows,
 )
 
 
@@ -85,6 +88,17 @@ def _svo(head, relation, tail, *, head_named, tail_named, verb="work", prep="as"
         "tail": tail,
         "verb": verb,
         "prep": prep,
+        "head_named": head_named,
+        "tail_named": tail_named,
+    }
+
+
+def _rich(head, relation, tail, pattern, *, head_named, tail_named):
+    return {
+        "head": head,
+        "relation": relation,
+        "tail": tail,
+        "pattern": pattern,
         "head_named": head_named,
         "tail_named": tail_named,
     }
@@ -266,3 +280,110 @@ def test_ensure_model_loaded_raises_if_model_loader_returns_none():
 
     with pytest.raises(RuntimeError, match="GLiNER2 model failed to load"):
         extractor._ensure_model_loaded()
+
+
+# --- D1: rich structural relations ride the structural keep -----------------
+
+
+def test_rich_copular_kept_structurally_without_corroboration():
+    """A copular IS_A with a named head survives at the 0.6 structural prior."""
+    svo = [_rich("Caroline", "IS_A", "nurse", "copular", head_named=True, tail_named=False)]
+    extractor, *_ = _mock_extractor(svo, {})  # GLiNER2 emits no relations
+
+    result = extractor.extract("Caroline: I am a nurse.")
+
+    r = result.relations[0]
+    assert (r["head"], r["relation"], r["tail"]) == ("Caroline", "IS_A", "nurse")
+    assert r["source"] == "svo" and r["score"] == pytest.approx(0.6)
+
+
+def test_rich_possessive_kept_with_named_head_only():
+    svo = [_rich("Caroline", "HAS", "studio", "possessive", head_named=True, tail_named=False)]
+    extractor, *_ = _mock_extractor(svo, {})
+
+    result = extractor.extract("Caroline: That is my studio.")
+
+    assert (result.relations[0]["relation"], result.relations[0]["source"]) == ("HAS", "svo")
+
+
+def test_rich_noun_prep_dropped_unless_both_named():
+    """noun_prep is not a named-head pattern; a common-noun tail drops it."""
+    svo = [_rich("Paris", "FROM", "friend", "noun_prep", head_named=True, tail_named=False)]
+    extractor, *_ = _mock_extractor(svo, {})
+
+    assert extractor.extract("Paris letter from a friend.").relations == []
+
+
+def test_rich_copular_dropped_when_head_not_named():
+    svo = [_rich("brother", "IS_A", "nurse", "copular", head_named=False, tail_named=False)]
+    extractor, *_ = _mock_extractor(svo, {})
+
+    assert extractor.extract("My brother is a nurse.").relations == []
+
+
+# --- D4: 128/32 sub-windowing ----------------------------------------------
+
+
+def test_sub_windows_short_text_is_single_window():
+    assert _sub_windows("just a short chunk of text") == ["just a short chunk of text"]
+
+
+def test_sub_windows_splits_long_text_with_overlap_on_word_boundaries():
+    words = [f"w{i}" for i in range(300)]
+    text = " ".join(words)
+
+    wins = _sub_windows(text)
+
+    assert len(wins) > 1
+    # No window exceeds the budget and none splits a word.
+    assert all(len(w.split()) <= _EXTRACT_WINDOW_TOKENS for w in wins)
+    # Adjacent windows overlap: window 2 begins one step in.
+    step = _EXTRACT_WINDOW_TOKENS - _EXTRACT_WINDOW_OVERLAP
+    assert wins[1].split()[0] == f"w{step}"
+    # Full coverage: the last word is present in the final window.
+    assert "w299" in wins[-1].split()
+
+
+def test_extract_batch_windows_a_chunk_and_dedups_entities_to_parent():
+    """Sub-windows of one chunk share an entity -> one entity, mapped to that chunk."""
+    long_text = " ".join(f"word{i}" for i in range(300))
+    schema = SimpleNamespace(
+        entity_spec={"person": {"description": "p", "threshold": 0.35}},
+        relation_spec={},
+        label_to_type={"person": "PERSON"},
+        svo_triples=[],
+    )
+    schema_miner = MagicMock()
+    schema_miner.build_batch.return_value = [schema]
+
+    mock_model = MagicMock()
+    mock_model.create_schema.return_value = MagicMock()
+    calls: dict[str, int] = {}
+
+    def fake_batch_extract(texts, schemas, *args, **kwargs):
+        # Windowing happened: more than one sub-window, schemas parallel to texts.
+        calls["n_windows"] = len(texts)
+        assert len(texts) == len(schemas) > 1
+        return [
+            {
+                "entities": {
+                    "person": [
+                        {"text": "Caroline", "confidence": 0.9},  # shared across windows
+                        {"text": f"Person{i}", "confidence": 0.8},  # window-specific
+                    ]
+                },
+                "relation_extraction": {},
+            }
+            for i in range(len(texts))
+        ]
+
+    mock_model.batch_extract.side_effect = fake_batch_extract
+    extractor = GLiNER2EntityExtractor(model_loader=lambda: mock_model, schema_miner=schema_miner)
+
+    results = extractor.extract_batch([long_text])
+
+    assert len(results) == 1
+    names = [e["name"] for e in results[0].entities]
+    assert names.count("Caroline") == 1  # deduped across overlapping windows
+    assert "Person0" in names  # window-specific entities attributed to the parent
+    assert calls["n_windows"] > 1
