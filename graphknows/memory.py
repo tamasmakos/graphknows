@@ -305,23 +305,28 @@ class Memory:
         return {"hits": _format_fused_hits(ctx.fused_results, session_id)}
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
-        """Consolidate a session in place (Phase-1 shim).
+        """Consolidate a session in place.
 
         The full STM->LTM promotion pipeline is retired in the golden layer.
-        For Phase 1 this recomputes PageRank over the entity graph and flips the
-        session's lifecycle ``state`` raw -> consolidated in place; nothing is
-        deleted. The full consolidation pipeline (entity merge, relation
-        canonicalize, topics) lands in Phase 3.
+        This resolves duplicate/junk ENTITY nodes (layered resolver: junk-hub
+        filter, name-standardization merge, person-nickname merge), then
+        recomputes PageRank over the *merged* entity graph and flips the
+        session's lifecycle ``state`` raw -> consolidated in place. Nothing else
+        is deleted; relation canonicalize / topics land later.
         """
         import time
+
+        from graphknows.ingestion.consolidation import resolve_entities
 
         t0 = time.monotonic()
         errors: list[str] = []
         pagerank_updated = 0
         chunks_flipped = 0
+        resolution = {"dropped": 0, "merged": 0}
         try:
             await self._get_retriever()  # ensures the store is connected + schema'd
             store = self._retriever_stores[0]
+            resolution = await resolve_entities(store, session_id)
             pagerank_updated = await store.compute_and_persist_pagerank()
             chunks_flipped = await store.consolidate_session(session_id)
         except Exception as exc:
@@ -333,7 +338,8 @@ class Memory:
             "chunks": chunks_flipped,
             "turns": 0,
             "topics_created": 0,
-            "merged_entities": 0,
+            "entities_dropped": resolution["dropped"],
+            "merged_entities": resolution["merged"],
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }

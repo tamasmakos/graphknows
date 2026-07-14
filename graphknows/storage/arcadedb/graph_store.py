@@ -1027,6 +1027,177 @@ class GraphStore:
         logger.info("compute_and_persist_pagerank: updated %d ENTITY nodes", updated)
         return updated
 
+    # ------------------------------------------------------------------
+    # Entity resolution primitives (consolidation / flush path)
+    # ------------------------------------------------------------------
+
+    async def list_entities(self) -> list[dict[str, Any]]:
+        """List every ENTITY with its incoming-MENTIONS count (namespace-wide).
+
+        Returns rows of ``{name_norm, name, type, mention_count}``. Entities are
+        namespace-global, so this is not session-scoped — it feeds the layered
+        entity resolver, which decides drops/merges over the whole graph.
+        """
+        rows = await self._qry(
+            "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL "
+            "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e) "
+            "RETURN e.name_norm AS name_norm, e.name AS name, e.type AS type, "
+            "count(c) AS mention_count"
+        )
+        return [
+            {
+                "name_norm": r["name_norm"],
+                "name": r.get("name") or r["name_norm"],
+                "type": r.get("type") or "",
+                "mention_count": int(r.get("mention_count") or 0),
+            }
+            for r in rows
+            if r.get("name_norm")
+        ]
+
+    async def distinct_speakers(self) -> list[str]:
+        """Casefolded distinct CHUNK.speaker values (the known session speakers)."""
+        rows = await self._qry(
+            "MATCH (c:CHUNK) WHERE c.speaker IS NOT NULL AND c.speaker <> '' "
+            "RETURN DISTINCT c.speaker AS speaker"
+        )
+        return [str(r["speaker"]).casefold() for r in rows if r.get("speaker")]
+
+    async def drop_entities(self, name_norms: list[str]) -> int:
+        """DETACH DELETE the given ENTITY nodes (removes MENTIONS/RELATION edges).
+
+        Used by the junk/hub filter. Returns the number of nodes deleted.
+        """
+        norms = [n for n in name_norms if n]
+        if not norms:
+            return 0
+        rows = await self._qry(
+            f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(norms)} "
+            "RETURN count(e) AS n"
+        )
+        await self._cmd(
+            f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(norms)} DETACH DELETE e"
+        )
+        return int(rows[0].get("n") or 0) if rows else 0
+
+    async def _repoint_relation(
+        self, src_name: str, dst_name: str, row: dict[str, Any]
+    ) -> None:
+        """Re-create one loser relation edge on the winner via write_relation.
+
+        Reuses the audited write_relation (evidence-append dedup, max confidence,
+        edge-type declaration, single-valued supersede). Each evidence chunk is
+        replayed so the winner edge accumulates the loser's full provenance.
+        """
+        predicate = row.get("predicate") or row.get("t") or ""
+        if not predicate or not src_name or not dst_name:
+            return
+        conf = float(row.get("confidence") or 0.5)
+        fact = row.get("fact") or ""
+        valid_at = row.get("valid_at") or None
+        source = row.get("source") or ""
+        evidence = [e for e in (row.get("evidence") or []) if e]
+        if not evidence:
+            await self.write_relation(
+                src_name, predicate, dst_name, fact=fact, confidence=conf,
+                valid_at=valid_at, source=source,
+            )
+            return
+        for cid in evidence:
+            await self.write_relation(
+                src_name, predicate, dst_name, fact=fact, chunk_id=cid,
+                confidence=conf, valid_at=valid_at, source=source,
+            )
+
+    async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
+        """Merge the loser ENTITY into the winner. Idempotent and self-safe.
+
+        - Re-points loser MENTIONS (CHUNK->loser) onto the winner (MERGE dedups;
+          max confidence kept).
+        - Re-points loser semantic RELATION edges (both directions) onto the
+          winner, skipping self-loops, via write_relation (merges evidence /
+          keeps max confidence).
+        - Appends the loser's name + aliases to the winner's aliases (deduped).
+        - DETACH DELETE the loser.
+
+        Returns True when a merge happened, False when it was a no-op (loser or
+        winner missing, or same node).
+        """
+        if not winner_norm or not loser_norm or winner_norm == loser_norm:
+            return False
+        loser = await self._qry(
+            "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS name, e.aliases AS aliases LIMIT 1",
+            nn=loser_norm,
+        )
+        if not loser:
+            return False  # already gone — idempotent
+        winner = await self._qry(
+            "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS name, e.aliases AS aliases LIMIT 1",
+            nn=winner_norm,
+        )
+        if not winner:
+            return False  # winner must exist
+        loser_name = loser[0].get("name") or loser_norm
+        loser_aliases = list(loser[0].get("aliases") or [])
+        winner_name = winner[0].get("name") or winner_norm
+        aliases = list(winner[0].get("aliases") or [])
+
+        # 1. Re-point MENTIONS onto the winner (old loser edges vanish on delete).
+        await self._cmd(
+            "MATCH (c:CHUNK)-[m:MENTIONS]->(:ENTITY {name_norm: $loser}) "
+            "MATCH (w:ENTITY {name_norm: $winner}) "
+            "MERGE (c)-[nm:MENTIONS]->(w) "
+            "SET nm.confidence = CASE "
+            "    WHEN coalesce(m.confidence, 0) > coalesce(nm.confidence, 0) "
+            "    THEN m.confidence ELSE nm.confidence END",
+            loser=loser_norm,
+            winner=winner_norm,
+        )
+
+        # 2. Re-point semantic RELATION edges (both directions), skip self-loops.
+        struct = _structural_types_literal()
+        out_rows = await self._qry(
+            "MATCH (:ENTITY {name_norm: $loser})-[r]->(b:ENTITY) "
+            f"WHERE NOT type(r) IN {struct} "
+            "RETURN type(r) AS t, b.name AS dst, b.name_norm AS dst_nn, "
+            "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
+            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source",
+            loser=loser_norm,
+        )
+        in_rows = await self._qry(
+            "MATCH (a:ENTITY)-[r]->(:ENTITY {name_norm: $loser}) "
+            f"WHERE NOT type(r) IN {struct} "
+            "RETURN type(r) AS t, a.name AS src, a.name_norm AS src_nn, "
+            "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
+            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source",
+            loser=loser_norm,
+        )
+        for row in out_rows:
+            if row.get("dst_nn") == winner_norm:
+                continue
+            await self._repoint_relation(winner_name, row.get("dst") or row.get("dst_nn"), row)
+        for row in in_rows:
+            if row.get("src_nn") == winner_norm:
+                continue
+            await self._repoint_relation(row.get("src") or row.get("src_nn"), winner_name, row)
+
+        # 3. Fold the loser's surface + aliases into the winner's aliases.
+        for a in [loser_name, *loser_aliases]:
+            if a and a != winner_name and a not in aliases:
+                aliases.append(a)
+        await self._cmd(
+            "MATCH (w:ENTITY {name_norm: $winner}) SET w.aliases = $aliases",
+            winner=winner_norm,
+            aliases=aliases,
+        )
+
+        # 4. Remove the loser (and its now-orphaned original edges).
+        await self._cmd(
+            "MATCH (lo:ENTITY {name_norm: $loser}) DETACH DELETE lo", loser=loser_norm
+        )
+        logger.info("merge_entities: %s -> %s", loser_norm, winner_norm)
+        return True
+
     async def consolidate_session(self, session_id: str) -> int:
         """Flip lifecycle ``state`` raw -> consolidated in place (Phase-1 shim).
 

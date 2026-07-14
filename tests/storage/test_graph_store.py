@@ -359,6 +359,105 @@ async def test_write_chunk_embedding_is_inline_literal() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Entity resolution primitives (consolidation / flush path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_entities_counts_mentions() -> None:
+    client = _mock_client(
+        query_rows=[
+            {"name_norm": "melanie", "name": "Melanie", "type": "PERSON", "mention_count": 3},
+            {"name_norm": "others", "name": "others", "type": None, "mention_count": 0},
+        ]
+    )
+    store = GraphStore(client=client)
+    out = await store.list_entities()
+    assert out == [
+        {"name_norm": "melanie", "name": "Melanie", "type": "PERSON", "mention_count": 3},
+        {"name_norm": "others", "name": "others", "type": "", "mention_count": 0},
+    ]
+    cypher = client.query.await_args_list[0].args[1]
+    assert "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e)" in cypher
+    assert "count(c) AS mention_count" in cypher
+
+
+@pytest.mark.asyncio
+async def test_drop_entities_detach_deletes_by_name_norm() -> None:
+    client = _mock_client(query_rows=[{"n": 2}])
+    store = GraphStore(client=client)
+    n = await store.drop_entities(["others", "kind"])
+    assert n == 2
+    delete_stmt = next(s for s in _command_strings(client) if "DETACH DELETE e" in s)
+    assert "e.name_norm IN ['others','kind']" in delete_stmt
+
+
+@pytest.mark.asyncio
+async def test_drop_entities_noop_on_empty() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    assert await store.drop_entities([]) == 0
+    client.command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_merge_entities_repoints_mentions_relations_and_deletes_loser() -> None:
+    client = _mock_client()
+    client.query = AsyncMock(
+        side_effect=[
+            [{"name": "Mel", "aliases": []}],  # loser lookup
+            [{"name": "Melanie", "aliases": []}],  # winner lookup
+            [  # outgoing loser relation edges
+                {"t": "LIKES", "dst": "Camping", "dst_nn": "camping",
+                 "predicate": "LIKES", "fact": "", "evidence": ["c1"],
+                 "confidence": 0.8, "valid_at": None, "source": "gliner"},
+            ],
+            [],  # incoming loser relation edges
+        ]
+    )
+    store = GraphStore(client=client)
+    merged = await store.merge_entities("melanie", "mel")
+    assert merged is True
+
+    stmts = _command_strings(client)
+    # MENTIONS re-pointed onto the winner.
+    assert any("MERGE (c)-[nm:MENTIONS]->(w)" in s for s in stmts)
+    # Relation re-created on the winner via write_relation (LIKES edge).
+    merge_rel = next(s for s in stmts if "MERGE (a)-[r:LIKES]->(b)" in s)
+    rel_call = next(
+        c for c in client.command.await_args_list if "MERGE (a)-[r:LIKES]->(b)" in c.args[1]
+    )
+    assert rel_call.kwargs["params"]["src_nn"] == "melanie"
+    assert rel_call.kwargs["params"]["dst_nn"] == "camping"
+    assert "chunk_id" not in merge_rel or "c1" in str(rel_call.kwargs["params"])
+    # Loser surface folded into winner aliases.
+    alias_call = next(
+        c for c in client.command.await_args_list if "SET w.aliases = $aliases" in c.args[1]
+    )
+    assert "Mel" in alias_call.kwargs["params"]["aliases"]
+    # Loser removed.
+    assert any("DETACH DELETE lo" in s for s in stmts)
+
+
+@pytest.mark.asyncio
+async def test_merge_entities_noop_when_loser_missing() -> None:
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[])  # loser lookup returns nothing
+    store = GraphStore(client=client)
+    assert await store.merge_entities("melanie", "mel") is False
+    client.command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_merge_entities_noop_on_same_node() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    assert await store.merge_entities("melanie", "melanie") is False
+    client.query.assert_not_awaited()
+    client.command.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # Integration (live ArcadeDB only)
 # ---------------------------------------------------------------------------
 
