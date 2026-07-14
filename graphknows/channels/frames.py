@@ -1,11 +1,13 @@
 """FrameChannel — FrameNet semantic-frame retrieval signal.
 
 Chunks are frame-tagged at ingest by cosine-matching their embedding to the
-FrameNet frame-definition index (see ``_frame_index``); this channel matches the
-query the same way and joins on the shared frame type:
-- collect(): match the query embedding to its top-k FrameNet frames, look up the
-  chunks those frames were evoked in (FRAME-[:EVOKED_BY]->CHUNK), rank by the
-  summed query-frame cosine, and emit RRF candidates.
+FrameNet frame-definition index (see ``_frame_index``); each evoked FRAME node
+carries the frame's definition embedding, so this channel matches the query with a
+namespace-local graph vector search over those embeddings:
+- collect(): ANN-search the query embedding against the FRAME.embedding of frames
+  evoked in this namespace (GraphStore.query_frames_by_embedding), which joins
+  FRAME-[:EVOKED_BY]->CHUNK, rank the chunks by their frame's match score, and emit
+  RRF candidates.
 - promote(): dormant LU-based extraction path (frames are now written at ingest,
   so it is no longer invoked on the live flush shim); retained for reference.
 
@@ -111,19 +113,13 @@ class FrameChannel(Channel):
                 record.audit.frames_written = written
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
-        """Match the query embedding to FrameNet frames and rank the chunks they evoke."""
-        from graphknows.channels._frame_index import match_frames
-
-        # Query frames by embedding cosine (top-k, reusing the query embedding the
-        # retriever already computed), mirroring how chunks are frame-tagged at
-        # ingest. Weight each query frame by its cosine so chunks evoking the
-        # strongest query frames rank first.
-        weight = {name: sim for name, sim in match_frames(ctx.emb, top_k=top_k)}
-        if not weight:
-            return {}
-
-        rows = await rt.store.query_frame_chunks(
-            list(weight), ctx.session_id or None, ctx.state
+        """Vector-search the namespace-local FRAME summaries and rank the chunks they evoke."""
+        # Namespace-local graph vector search over the FRAME.embedding of frames
+        # actually evoked in this namespace (each carries its definition embedding),
+        # replacing the global numpy lookup. Chunks are scored by their frame's
+        # query-match cosine, so chunks evoking the strongest frames rank first.
+        rows = await rt.store.query_frames_by_embedding(
+            ctx.emb, top_k, ctx.session_id or None, ctx.state
         )
         if not rows:
             return {}
@@ -134,7 +130,7 @@ class FrameChannel(Channel):
 
         chunk_score: dict[str, float] = defaultdict(float)
         for r in rows:
-            chunk_score[r["chunk_id"]] += weight.get(r["frame_type"], 0.0)
+            chunk_score[r["chunk_id"]] += r.get("score", 0.0)
 
         ranked = sorted(chunk_score, key=lambda c: -chunk_score[c])[:top_k]
         result: CollectResult = {}

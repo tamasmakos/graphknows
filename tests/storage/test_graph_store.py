@@ -300,6 +300,72 @@ async def test_query_frame_chunks_traverses_evoked_by() -> None:
 
 
 @pytest.mark.asyncio
+async def test_core_ddl_frame_carries_summary_and_vector_index() -> None:
+    joined = " | ".join(stmt for _, stmt in _CORE_DDL)
+    assert "CREATE PROPERTY FRAME.summary" in joined
+    assert "CREATE PROPERTY FRAME.embedding" in joined
+    assert "ON FRAME(embedding) LSM_VECTOR" in joined
+
+
+@pytest.mark.asyncio
+async def test_write_frames_persists_summary_and_embedding() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    await store.write_frames(
+        "s1",
+        [
+            {
+                "frame_type": "Process_start",
+                "chunk_id": "c1",
+                "summary": "the beginning of a process",
+                "embedding": [0.1, 0.2, 0.3],
+            }
+        ],
+    )
+    cmds = _command_strings(client)
+    # summary rides the UNWIND MERGE as a param
+    merge = client.command.await_args_list[0]
+    assert "n.summary = r.summary" in merge.args[1]
+    assert merge.kwargs["params"]["rows"][0]["summary"] == "the beginning of a process"
+    # embedding written as an inline literal via _set_embedding on FRAME(id)
+    emb_stmt = next(s for s in cmds if "SET n.embedding = [" in s and "FRAME" in s)
+    assert "s1:c1:0" not in emb_stmt  # id is a bound $key param, not interpolated
+    emb_call = next(
+        c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]
+    )
+    assert emb_call.kwargs["params"]["key"] == "s1:c1:0"
+
+
+@pytest.mark.asyncio
+async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
+    client = _mock_client()
+    # ANN pass returns two frames; join pass returns their evoked chunks.
+    client.query = AsyncMock(
+        side_effect=[
+            [
+                {"id": "s1:c1:0", "session_id": "s1", "frame_type": "Process_start",
+                 "distance": 0.6},
+                {"id": "s1:c2:0", "session_id": "other", "frame_type": "Motion",
+                 "distance": 0.5},  # filtered out by session
+            ],
+            [{"id": "s1:c1:0", "frame_type": "Process_start", "chunk_id": "c1"}],
+        ]
+    )
+    store = GraphStore(client=client, db="mem")
+    rows = await store.query_frames_by_embedding([0.1, 0.2], top_k=5, session_id="s1")
+    ann_sql = client.query.await_args_list[0].args[1]
+    assert 'vectorNeighbors("FRAME[embedding]"' in ann_sql
+    join_cypher = client.query.await_args_list[1].args[1]
+    assert "(n:FRAME)-[:EVOKED_BY]->(c:CHUNK)" in join_cypher
+    assert "s1:c1:0" in join_cypher  # only the session-matching frame id
+    assert "s1:c2:0" not in join_cypher
+    assert rows == [
+        {"chunk_id": "c1", "frame_type": "Process_start",
+         "score": pytest.approx(0.4)},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_entity_relation_graph_excludes_structural_types() -> None:
     client = _mock_client(
         query_rows=[

@@ -160,9 +160,18 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY FRAME.speaker IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME.fes IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME.fillers IF NOT EXISTS LIST"),
+    # The frame's definition text + its embedding, so a chunk's evoked frames are
+    # vector-matchable by meaning against a query (see query_frames_by_embedding).
+    ("sql", "CREATE PROPERTY FRAME.summary IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME.embedding IF NOT EXISTS LIST"),
     ("sql", "CREATE INDEX ON FRAME(id) UNIQUE"),
     ("sql", "CREATE INDEX ON FRAME(session_id) NOTUNIQUE"),
     ("sql", "CREATE INDEX ON FRAME(frame_type) NOTUNIQUE"),
+    (
+        "sql",
+        f"CREATE INDEX IF NOT EXISTS ON FRAME(embedding) LSM_VECTOR "
+        f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
+    ),
     # Community-quality vertex — one per Louvain community_id, holding the
     # native modularityScore/conductance metrics (see compute_community_quality).
     ("sql", "CREATE VERTEX TYPE COMMUNITY IF NOT EXISTS"),
@@ -614,10 +623,11 @@ class GraphStore:
         """Bulk-write FRAME vertices + EVOKED_BY evidence edges to their chunks.
 
         Each ``frames`` item: ``{frame_type, chunk_id, lu, speaker,
-        fes: [[role, filler], ...], fillers: [str, ...], confidence?}``.
-        ``id`` is deterministic per (session, chunk, index) so re-runs MERGE
-        idempotently. Evidence is the FRAME-[:EVOKED_BY]->CHUNK edge — there is
-        no ``chunk_id`` property on FRAME.
+        fes: [[role, filler], ...], fillers: [str, ...], confidence?, summary?,
+        embedding?}``. ``id`` is deterministic per (session, chunk, index) so
+        re-runs MERGE idempotently. Evidence is the FRAME-[:EVOKED_BY]->CHUNK
+        edge — there is no ``chunk_id`` property on FRAME. Embeddings are written
+        per row as inline literals (LIST params conflict with the LSM_VECTOR index).
         """
         if not frames:
             return 0
@@ -632,6 +642,7 @@ class GraphStore:
                 "fes": json.dumps(f.get("fes", [])),
                 "fillers": [str(x).lower() for x in f.get("fillers", [])],
                 "conf": float(f.get("confidence", 1.0)),
+                "summary": f.get("summary", "") or "",
             }
             for i, f in enumerate(frames)
         ]
@@ -639,7 +650,8 @@ class GraphStore:
             "UNWIND $rows AS r "
             "MERGE (n:FRAME {id: r.id}) "
             "SET n.session_id = r.sid, n.frame_type = r.ft, "
-            "n.lu = r.lu, n.speaker = r.spk, n.fes = r.fes, n.fillers = r.fillers",
+            "n.lu = r.lu, n.speaker = r.spk, n.fes = r.fes, n.fillers = r.fillers, "
+            "n.summary = r.summary",
             rows=rows,
         )
         await self._cmd(
@@ -649,6 +661,10 @@ class GraphStore:
             "SET ev.confidence = r.conf",
             rows=rows,
         )
+        for i, f in enumerate(frames):
+            emb = f.get("embedding")
+            if emb:
+                await self._set_embedding("FRAME", "id", f"{session_id}:{f['chunk_id']}:{i}", emb)
         return len(rows)
 
     async def write_topics(self, topics: list[dict[str, Any]]) -> int:
@@ -894,6 +910,61 @@ class GraphStore:
             if len(results) >= top_k:
                 break
         return results
+
+    async def query_frames_by_embedding(
+        self,
+        embedding: list[float],
+        top_k: int,
+        session_id: str | None = None,
+        state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """ANN over FRAME.embedding, then join FRAME-[:EVOKED_BY]->CHUNK.
+
+        Vector-searches the frame SUMMARIES actually evoked in this namespace, then
+        returns the evoked chunks tagged with the frame match score (1 - cosine
+        distance). Namespace-local — replaces the global numpy frame lookup on the
+        query side. session/state filters apply over an over-fetched candidate set
+        (vectorNeighbors has no WHERE support).
+        """
+        if not embedding:
+            return []
+        k_pre = max(top_k * 20, 200) if (session_id or state) else top_k
+        sql = _vec_search_sql("FRAME[embedding]", embedding, k_pre)
+        try:
+            rows = await self._c.query(self._db, sql, language="sql")
+        except Exception as exc:
+            logger.warning("query_frames_by_embedding failed: %s", exc)
+            return []
+        # Dedup by frame id + apply session filter; keep the best score per frame.
+        score: dict[str, float] = {}
+        for r in rows:
+            fid = r.get("id")
+            if not fid or fid in score:
+                continue
+            if session_id and r.get("session_id") != session_id:
+                continue
+            dist = float(r.get("distance") or 1.0)
+            score[fid] = max(0.0, 1.0 - dist)
+            if len(score) >= top_k:
+                break
+        if not score:
+            return []
+        where = f"n.id IN {quoted_list(list(score))}"
+        if state:
+            where += f" AND c.state = {quote(state)}"
+        joined = await self._qry(
+            f"MATCH (n:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE {where} "
+            f"RETURN n.id AS id, n.frame_type AS frame_type, c.chunk_id AS chunk_id"
+        )
+        return [
+            {
+                "chunk_id": r["chunk_id"],
+                "frame_type": r.get("frame_type"),
+                "score": score.get(r.get("id"), 0.0),
+            }
+            for r in joined
+            if r.get("chunk_id")
+        ]
 
     async def query_frame_chunks(
         self,

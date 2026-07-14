@@ -19,10 +19,19 @@ import os
 import re
 import threading
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 log = logging.getLogger(__name__)
+
+# Similarity floor for a chunk/query to "evoke" a frame. Absolute cosines run low
+# under the remote embedder (~0.30-0.39), so this is a permissive gate applied on
+# TOP of top-k: a frame matches when it is both top-k and above this floor.
+DEFAULT_MIN_SIM: float = 0.20
+
+# Shared, namespace-independent ArcadeDB catalog of frame definitions.
+_CATALOG_DB = "frames"
 
 _lock = threading.Lock()
 _names: list[str] | None = None
@@ -106,7 +115,7 @@ def _ensure(force: bool = False) -> tuple[list[str], np.ndarray]:
 
 
 def match_frames(
-    embedding: list[float] | np.ndarray, top_k: int = 5, min_sim: float = 0.0
+    embedding: list[float] | np.ndarray, top_k: int = 5, min_sim: float = DEFAULT_MIN_SIM
 ) -> list[tuple[str, float]]:
     """Top-k FrameNet frames for a PRE-COMPUTED embedding, ranked by cosine.
 
@@ -130,9 +139,84 @@ def match_frames(
 
 
 def match_frames_text(
-    text: str, top_k: int = 5, min_sim: float = 0.0
+    text: str, top_k: int = 5, min_sim: float = DEFAULT_MIN_SIM
 ) -> list[tuple[str, float]]:
     """Embed ``text`` then match — convenience for the query side."""
     from graphknows.channels._framenet import _embed_norm
 
     return match_frames(_embed_norm([text])[0], top_k=top_k, min_sim=min_sim)
+
+
+def frame_summary(name: str) -> str:
+    """The frame's definition text — the FRAME node's ``summary``."""
+    from graphknows.channels._framenet import _frame_def
+
+    return _frame_def(name)
+
+
+def frame_embedding(name: str) -> list[float]:
+    """The frame DEFINITION embedding from the runtime index (L2-normalized).
+
+    Reuses the already-built matrix, so populating a FRAME node's embedding at
+    ingest is a copy — never a per-chunk re-embed.
+    """
+    names, mat = _ensure()
+    try:
+        i = names.index(name)
+    except ValueError:
+        return []
+    return mat[i].tolist()
+
+
+async def ensure_frame_catalog(client: Any, db: str = _CATALOG_DB, dims: int | None = None) -> int:
+    """Build the shared, namespace-independent ``frames`` ArcadeDB catalog (idempotent).
+
+    Vertex ``FRAME_DEF(name UNIQUE, summary, embedding + LSM_VECTOR COSINE)`` populated
+    with all FrameNet frames from the in-process matrix (the same source as the disk
+    cache), so the ~1221 definitions are embedded once. This is persistent, shareable
+    reference data — it is NOT per-namespace and NOT on the ingest/query hot path
+    (ingest copies embeddings from the matrix; query vector-searches namespace-local
+    FRAME nodes). Returns the FRAME_DEF count.
+    """
+    from graphknows.storage.arcadedb.graph_store import _emb_sql
+
+    names, mat = _ensure()
+    dims = dims or int(mat.shape[1])
+    await client.create_database(db)  # idempotent
+
+    # Idempotent guard: skip the (one-time) 1221-row populate if already built.
+    try:
+        rows = await client.query(db, "SELECT count(*) AS c FROM FRAME_DEF", language="sql")
+        if rows and int(rows[0].get("c") or 0) >= len(names):
+            return int(rows[0]["c"])
+    except Exception:  # noqa: BLE001 — FRAME_DEF type not created yet
+        pass
+
+    ddl = [
+        "CREATE VERTEX TYPE FRAME_DEF IF NOT EXISTS",
+        "CREATE PROPERTY FRAME_DEF.name IF NOT EXISTS STRING",
+        "CREATE PROPERTY FRAME_DEF.summary IF NOT EXISTS STRING",
+        "CREATE PROPERTY FRAME_DEF.embedding IF NOT EXISTS LIST",
+        "CREATE INDEX IF NOT EXISTS ON FRAME_DEF(name) UNIQUE",
+        f"CREATE INDEX IF NOT EXISTS ON FRAME_DEF(embedding) LSM_VECTOR "
+        f"METADATA {{dimensions:{dims},distanceFunction:'COSINE'}}",
+    ]
+    for stmt in ddl:
+        try:
+            await client.command(db, stmt, language="sql")
+        except Exception as exc:  # noqa: BLE001
+            if "already exists" not in str(exc).lower():
+                raise
+
+    # Per-row upsert: the embedding must be an inline literal (LIST params conflict
+    # with the LSM_VECTOR index), so it cannot ride a batched UNWIND param — same
+    # constraint the golden store honours for CHUNK/ENTITY/TOPIC embeddings.
+    for i, name in enumerate(names):
+        await client.command(
+            db,
+            f"MERGE (n:FRAME_DEF {{name: $name}}) "
+            f"SET n.summary = $summary, n.embedding = {_emb_sql(mat[i].tolist())}",
+            params={"name": name, "summary": frame_summary(name)},
+        )
+    log.info("Frame catalog built: %d FRAME_DEF in db=%s", len(names), db)
+    return len(names)

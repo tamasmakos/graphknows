@@ -24,9 +24,10 @@ from graphknows.ingestion.stm._entity_writer import graph_entities
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
-# Frames matched per chunk by embedding cosine (top-k, not an absolute threshold —
-# cosines run low under the remote embedder).
+# Frames matched per chunk by embedding cosine: top-k AND above a similarity floor
+# (cosines run low under the remote embedder, ~0.3, so the floor is permissive).
 _FRAME_TOP_K = 5
+_FRAME_MIN_SIM = 0.20
 
 
 class _STMIngestHandler:
@@ -281,12 +282,19 @@ class _STMIngestHandler:
             await self._store.write_entities_bulk(session_id, chunk_id, filtered)
 
         # FRAME layer — match the chunk's embedding against FrameNet definitions
-        # (top-k, reusing the embedding already computed above; no re-embed) so
-        # abstract/general questions can reach this chunk by the frame it evokes.
+        # (top-k + min-sim floor, reusing the embedding already computed above; no
+        # re-embed) so abstract/general questions can reach this chunk by the frame
+        # it evokes. Each FRAME node carries the frame's summary + definition
+        # embedding (copied from the catalog, not recomputed) so the query side can
+        # vector-search the frames evoked in this namespace.
         if self._enable_frames:
-            from graphknows.channels._frame_index import match_frames
+            from graphknows.channels._frame_index import (
+                frame_embedding,
+                frame_summary,
+                match_frames,
+            )
 
-            matches = match_frames(embedding, top_k=_FRAME_TOP_K)
+            matches = match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
             if matches:
                 await self._store.write_frames(
                     session_id,
@@ -299,6 +307,8 @@ class _STMIngestHandler:
                             "fes": [],
                             "fillers": [],
                             "confidence": sim,
+                            "summary": frame_summary(name),
+                            "embedding": frame_embedding(name),
                         }
                         for name, sim in matches
                     ],
