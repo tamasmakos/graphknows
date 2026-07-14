@@ -66,11 +66,14 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
     def created(kind: str, name: str) -> bool:
         return any(s.startswith(f"CREATE {kind} TYPE {name} ") for s in type_stmts)
 
-    # Golden vertices
-    for vertex in ("SESSION", "FILE", "CHUNK", "ENTITY", "TEMPORAL", "TOPIC", "FRAME"):
+    # Golden vertices (COMMUNITY holds native community-quality metrics — WS D3)
+    for vertex in ("SESSION", "FILE", "CHUNK", "ENTITY", "TEMPORAL", "TOPIC", "FRAME", "COMMUNITY"):
         assert created("VERTEX", vertex), f"missing vertex {vertex}"
-    # Golden edges
-    for edge in ("PART_OF", "IN_SESSION", "MENTIONS", "MENTIONS_DATE", "HAS_TOPIC", "EVOKED_BY"):
+    # Golden edges (IN_COMMUNITY links ENTITY->COMMUNITY — WS D3, no longer dead)
+    for edge in (
+        "PART_OF", "IN_SESSION", "MENTIONS", "MENTIONS_DATE", "HAS_TOPIC", "EVOKED_BY",
+        "IN_COMMUNITY",
+    ):
         assert created("EDGE", edge), f"missing edge {edge}"
     # Dead schema must NOT be recreated
     for vertex in ("DIALOG", "TURN", "SEGMENT", "DOC", "SESSIONENTITY"):
@@ -84,7 +87,6 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
         "CO_OCCURS",
         "APPEARED_IN",
         "CONTAINS_DOC",
-        "IN_COMMUNITY",
         "HAS_FILE",
     ):
         assert not created("EDGE", edge), f"dead edge {edge} present"
@@ -666,6 +668,99 @@ async def test_compute_communities_soft_fails_on_empty_result() -> None:
     assert not any(
         "e.community_id = $cid" in c.args[1] for c in client.command.await_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_compute_community_quality_writes_community_vertices() -> None:
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "RETURN DISTINCT type(r) AS t" in cypher:
+            return [{"t": "WORKS_AT"}, {"t": "LIVES_IN"}]
+        if "algo.modularityScore" in cypher:
+            return [{"modularity": 0.42, "communities": 2, "edgeCount": 7}]
+        if "algo.conductance" in cypher:
+            return [
+                {"community": 1, "conductance": 0.1, "internalEdges": 5,
+                 "boundaryEdges": 1, "nodeCount": 4},
+                {"community": 2, "conductance": 0.8, "internalEdges": 1,
+                 "boundaryEdges": 4, "nodeCount": 3},
+            ]
+        if "count(e) AS size" in cypher:
+            return [{"cid": 1, "size": 4}, {"cid": 2, "size": 3}]
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    result = await store.compute_community_quality()
+    assert result == {"modularity": 0.42, "communities": 2, "communities_scored": 2}
+    # modularityScore/conductance are scoped to the semantic rel-type allowlist.
+    assert any(
+        "algo.conductance('community_id', ['LIVES_IN','WORKS_AT'])" in c.args[1]
+        for c in client.query.await_args_list
+    )
+    merge_calls = [c for c in client.command.await_args_list if "MERGE (k:COMMUNITY" in c.args[1]]
+    assert len(merge_calls) == 2
+    by_cid = {c.kwargs["params"]["cid"]: c.kwargs["params"] for c in merge_calls}
+    assert by_cid[1]["cond"] == 0.1 and by_cid[1]["size"] == 4 and by_cid[1]["mod"] == 0.42
+    assert by_cid[2]["cond"] == 0.8 and by_cid[2]["be"] == 4
+    # Entities linked to their COMMUNITY vertex graph-natively.
+    assert any(
+        "MERGE (e)-[:IN_COMMUNITY]->(k)" in c.args[1] for c in client.command.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_compute_community_quality_soft_fails_to_zero_on_algo_error() -> None:
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "RETURN DISTINCT type(r) AS t" in cypher:
+            return [{"t": "WORKS_AT"}]
+        if "algo.modularityScore" in cypher:
+            raise Exception("algo.modularityScore not supported")
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    result = await store.compute_community_quality()
+    assert result == {"modularity": 0.0, "communities": 0, "communities_scored": 0}
+    assert not any("MERGE (k:COMMUNITY" in c.args[1] for c in client.command.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_compute_community_quality_skips_when_no_semantic_edges() -> None:
+    client = _mock_client(query_rows=[])  # no distinct rel types
+    store = GraphStore(client=client)
+    result = await store.compute_community_quality()
+    assert result == {"modularity": 0.0, "communities": 0, "communities_scored": 0}
+    assert not any("algo.modularityScore" in c.args[1] for c in client.query.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_chunk_community_weights_tight_community_outweighs_loose() -> None:
+    """Quality-adjusted weight: same-size communities, but the tight (low
+    conductance) one must produce a higher weight than the loose one."""
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "MENTIONS]->(e:ENTITY)" in cypher:
+            return [
+                {"chunk_id": "tight", "cid": 1, "cnt": 3},
+                {"chunk_id": "loose", "cid": 2, "cnt": 3},
+            ]
+        if "count(e) AS size" in cypher:
+            return [{"cid": 1, "size": 10}, {"cid": 2, "size": 10}]
+        if "MATCH (k:COMMUNITY)" in cypher:
+            return [{"cid": 1, "conductance": 0.1}, {"cid": 2, "conductance": 0.9}]
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    weights = await store.chunk_community_weights(["tight", "loose"])
+    assert weights["tight"] == pytest.approx(9.0)  # 10 * (1 - 0.1)
+    assert weights["loose"] == pytest.approx(1.0)  # 10 * (1 - 0.9)
+    assert weights["tight"] > weights["loose"]
 
 
 @pytest.mark.asyncio

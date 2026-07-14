@@ -328,6 +328,7 @@ class Memory:
         pagerank_updated = 0
         graph_embeddings_computed = 0
         communities_computed = 0
+        community_quality = {"modularity": 0.0, "communities": 0, "communities_scored": 0}
         chunks_flipped = 0
         resolution = {"dropped": 0, "merged": 0}
         try:
@@ -348,6 +349,7 @@ class Memory:
                 skip_view_ensure=True
             )
             communities_computed = await store.compute_communities(skip_view_ensure=True)
+            community_quality = await store.compute_community_quality(skip_view_ensure=True)
             chunks_flipped = await store.consolidate_session(session_id)
         except Exception as exc:
             errors.append(str(exc))
@@ -362,6 +364,8 @@ class Memory:
             "merged_entities": resolution["merged"],
             "graph_embeddings_computed": graph_embeddings_computed,
             "communities_computed": communities_computed,
+            "modularity": community_quality["modularity"],
+            "communities_scored": community_quality["communities_scored"],
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }

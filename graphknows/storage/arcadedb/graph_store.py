@@ -163,6 +163,17 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE INDEX ON FRAME(id) UNIQUE"),
     ("sql", "CREATE INDEX ON FRAME(session_id) NOTUNIQUE"),
     ("sql", "CREATE INDEX ON FRAME(frame_type) NOTUNIQUE"),
+    # Community-quality vertex — one per Louvain community_id, holding the
+    # native modularityScore/conductance metrics (see compute_community_quality).
+    ("sql", "CREATE VERTEX TYPE COMMUNITY IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY COMMUNITY.community_id IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY COMMUNITY.conductance IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY COMMUNITY.internal_edges IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY COMMUNITY.boundary_edges IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY COMMUNITY.node_count IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY COMMUNITY.modularity IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY COMMUNITY.size IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE INDEX ON COMMUNITY(community_id) UNIQUE"),
     # ---- Edge types -------------------------------------------------------
     ("sql", "CREATE EDGE TYPE PART_OF IF NOT EXISTS"),  # CHUNK -> FILE
     ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE -> SESSION
@@ -172,6 +183,7 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE HAS_TOPIC IF NOT EXISTS"),  # CHUNK -> TOPIC
     ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK
     ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE EDGE TYPE IN_COMMUNITY IF NOT EXISTS"),  # ENTITY -> COMMUNITY
 ]
 
 
@@ -1194,15 +1206,134 @@ class GraphStore:
         logger.info("compute_communities: wrote %d ENTITY community_id(s)", updated)
         return updated
 
+    async def _semantic_rel_types_literal(self) -> str:
+        """Cypher list literal of distinct ENTITY->ENTITY semantic relation types.
+
+        Structural types (MENTIONS/PART_OF/…) are excluded — the same policy as
+        the pagerank path — so the community-quality algos score the meaningful
+        relation graph, not CHUNK->ENTITY provenance or ENTITY->COMMUNITY links.
+        Returns ``[]`` when the graph has no semantic entity-entity edges.
+        """
+        struct = _structural_types_literal()
+        rows = await self._qry(
+            f"MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE NOT type(r) IN {struct} "
+            "RETURN DISTINCT type(r) AS t"
+        )
+        return quoted_list(sorted({r["t"] for r in rows if r.get("t")}))
+
+    async def compute_community_quality(self, skip_view_ensure: bool = False) -> dict[str, Any]:
+        """Score community structure via native modularityScore + conductance.
+
+        Runs after ``compute_communities`` (reads the ``community_id`` it wrote).
+        Both algos are scoped to the semantic entity-entity relation types (see
+        ``_semantic_rel_types_literal``) so CHUNK->ENTITY / ENTITY->COMMUNITY
+        edges don't pollute the metrics. Persists a **COMMUNITY vertex** per
+        ``community_id`` (chosen over per-ENTITY props: it makes community-level
+        quality directly queryable and enables the quality-adjusted hop signal in
+        ``chunk_community_weights``), each carrying its conductance / edge counts
+        / size and the shared global modularity, plus an ``IN_COMMUNITY`` edge
+        ENTITY->COMMUNITY. Soft-fails to a zero result on any algo error — never
+        raises out of flush.
+
+        Args:
+            skip_view_ensure: Skip rebuilding the analytical view (the caller
+                already did so in this pass).
+
+        Returns:
+            ``{"modularity": float, "communities": int, "communities_scored": int}``.
+        """
+        empty = {"modularity": 0.0, "communities": 0, "communities_scored": 0}
+        try:
+            if not skip_view_ensure:
+                await self._ensure_analytical_view()
+            rel_types = await self._semantic_rel_types_literal()
+            if rel_types == "[]":
+                logger.info("compute_community_quality: no semantic edges; skipping")
+                return empty
+            mod_rows = await self._qry(
+                f"CALL algo.modularityScore('community_id', {rel_types}) "
+                "YIELD modularity, communities, edgeCount "
+                "RETURN modularity, communities, edgeCount"
+            )
+            cond_rows = await self._qry(
+                f"CALL algo.conductance('community_id', {rel_types}) "
+                "YIELD community, conductance, internalEdges, boundaryEdges, nodeCount "
+                "RETURN community, conductance, internalEdges, boundaryEdges, nodeCount"
+            )
+        except Exception as exc:
+            logger.info("compute_community_quality: native algo unavailable (%s); skipping", exc)
+            return empty
+
+        if not mod_rows:
+            logger.info("compute_community_quality: modularityScore returned no rows; skipping")
+            return empty
+        modularity = float(mod_rows[0].get("modularity") or 0.0)
+        communities = int(mod_rows[0].get("communities") or 0)
+
+        # Per-community entity counts (the persisted ``size``; conductance's
+        # nodeCount can differ by the isolated COMMUNITY vertex, so we keep both).
+        size_rows = await self._qry(
+            "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
+            "RETURN e.community_id AS cid, count(e) AS size"
+        )
+        sizes = {r["cid"]: int(r.get("size") or 0) for r in size_rows if r.get("cid") is not None}
+
+        scored = 0
+        for r in cond_rows:
+            cid = r.get("community")
+            if cid is None:
+                continue
+            try:
+                await self._cmd(
+                    "MERGE (k:COMMUNITY {community_id: $cid}) "
+                    "SET k.conductance = $cond, k.internal_edges = $ie, "
+                    "    k.boundary_edges = $be, k.node_count = $nc, "
+                    "    k.modularity = $mod, k.size = $size",
+                    cid=int(cid),
+                    cond=float(r.get("conductance") or 0.0),
+                    ie=int(r.get("internalEdges") or 0),
+                    be=int(r.get("boundaryEdges") or 0),
+                    nc=int(r.get("nodeCount") or 0),
+                    mod=modularity,
+                    size=sizes.get(int(cid), 0),
+                )
+                scored += 1
+            except Exception as exc:
+                logger.warning("compute_community_quality: community %r failed: %s", cid, exc)
+
+        # Link entities to their community vertex (only communities that got a
+        # COMMUNITY vertex will MERGE — arbitrary Louvain ids are reused, so this
+        # is self-healing across flushes).
+        try:
+            await self._cmd(
+                "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
+                "MATCH (k:COMMUNITY {community_id: e.community_id}) "
+                "MERGE (e)-[:IN_COMMUNITY]->(k)"
+            )
+        except Exception as exc:
+            logger.warning("compute_community_quality: IN_COMMUNITY link failed: %s", exc)
+
+        logger.info(
+            "compute_community_quality: modularity=%.4f, scored %d/%d communities",
+            modularity, scored, communities,
+        )
+        return {"modularity": modularity, "communities": communities, "communities_scored": scored}
+
     async def chunk_community_weights(self, chunk_ids: list[str]) -> dict[str, float]:
-        """Community-size boost weight per chunk, from its MENTIONS-linked entities.
+        """Quality-adjusted community boost weight per chunk, from its entities.
 
         For each chunk, takes the majority (most-mentioned) non-null
-        ``community_id`` among the entities it mentions and returns that
-        community's size (entity count) as the raw weight — bounded downstream
-        by ``ranking.rrf.community_boost``. Chunks with no community-tagged
-        entities are absent from the result (callers default to 1.0, a no-op).
-        Feeds ``DETRetriever._community_boost`` / ``AgenticRetriever
+        ``community_id`` among the entities it mentions and returns a weight that
+        blends the community's size with its **conductance** (a hop-reasoning
+        signal): ``size * (1 - conductance)``. A tight, well-separated community
+        (low conductance) is a trustworthy hub for intra-community expansion, so
+        chunks anchored in it get a larger multi-hop boost; a loose community
+        (high conductance) is down-weighted. Communities without a COMMUNITY
+        quality vertex fall back to raw size, so this never regresses when the
+        quality algos didn't run. Bounded downstream by
+        ``ranking.rrf.community_boost``; chunks with no community-tagged entities
+        are absent (callers default to 1.0, a no-op). Feeds
+        ``DETRetriever._community_boost`` / ``AgenticRetriever
         ._apply_community_weights`` in both profiles.
         """
         ids = [c for c in chunk_ids if c]
@@ -1219,10 +1350,19 @@ class GraphStore:
                 "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
                 "RETURN e.community_id AS cid, count(e) AS size"
             )
+            quality_rows = await self._qry(
+                "MATCH (k:COMMUNITY) WHERE k.community_id IS NOT NULL "
+                "RETURN k.community_id AS cid, k.conductance AS conductance"
+            )
         except Exception as exc:
             logger.debug("chunk_community_weights failed (non-fatal): %s", exc)
             return {}
         sizes = {r["cid"]: int(r.get("size") or 1) for r in size_rows if r.get("cid") is not None}
+        conductance = {
+            r["cid"]: float(r["conductance"])
+            for r in quality_rows
+            if r.get("cid") is not None and r.get("conductance") is not None
+        }
         # Rows are globally sorted by cnt desc, so the first row seen for a given
         # chunk is that chunk's majority community (highest-cnt row wins).
         majority: dict[str, Any] = {}
@@ -1230,7 +1370,15 @@ class GraphStore:
             cid = r.get("chunk_id")
             if cid and cid not in majority:
                 majority[cid] = r.get("cid")
-        return {cid: float(sizes.get(comm, 1)) for cid, comm in majority.items()}
+
+        def _weight(comm: Any) -> float:
+            size = float(sizes.get(comm, 1))
+            cond = conductance.get(comm)
+            if cond is None:
+                return size  # no quality vertex — raw size (no regression)
+            return size * max(0.0, 1.0 - cond)
+
+        return {cid: _weight(comm) for cid, comm in majority.items()}
 
     async def similar_entities_by_embedding(
         self, name: str, top_k: int = 5
