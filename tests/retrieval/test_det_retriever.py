@@ -30,6 +30,8 @@ def _make_retriever():
     store.search_chunks_ann = AsyncMock(return_value=[])
     store.get_chunks_by_ids = AsyncMock(return_value={})
     store.chunk_community_weights = AsyncMock(return_value={})
+    store.resolve_query_entities = AsyncMock(return_value=[])
+    store.entity_fact_context = AsyncMock(return_value=[])
     retriever = DETRetriever(store=store)
     return retriever, store
 
@@ -56,6 +58,34 @@ async def test_all_collectors_contribute():
     assert "bm25-c1" in chunk_ids
     assert "sem-c1" in chunk_ids
     assert not any(cid.startswith("topic:") for cid in chunk_ids)
+
+
+@pytest.mark.asyncio
+async def test_fact_context_attached_when_enabled(monkeypatch):
+    monkeypatch.setenv("GRAPHKNOWS_FACT_CONTEXT", "true")
+    retriever, store = _make_retriever()
+    store.resolve_query_entities = AsyncMock(return_value=["Jon"])
+    store.entity_fact_context = AsyncMock(return_value=["Jon visiting Rome"])
+
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
+        ctx = await retriever.retrieve("where did jon go", session_id="s1", scope="both")
+
+    assert ctx.facts == ["Jon visiting Rome"]
+    store.resolve_query_entities.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fact_context_disabled_by_flag(monkeypatch):
+    monkeypatch.setenv("GRAPHKNOWS_FACT_CONTEXT", "false")
+    retriever, store = _make_retriever()
+    store.resolve_query_entities = AsyncMock(return_value=["Jon"])
+    store.entity_fact_context = AsyncMock(return_value=["Jon visiting Rome"])
+
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
+        ctx = await retriever.retrieve("where did jon go", session_id="s1", scope="both")
+
+    assert ctx.facts == []
+    store.resolve_query_entities.assert_not_awaited()
 
 
 @pytest.mark.asyncio

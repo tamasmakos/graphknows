@@ -457,6 +457,86 @@ async def test_entity_relation_graph_excludes_structural_types() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Structured fact context (D8 fact-sheet)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> None:
+    rel_rows = [
+        {"s": "Jon", "p": "ACTIVITY_START_ACTIVITY", "o": "dance studio", "ev": ["c1"]},
+        {"s": "Gina", "p": "SUPPORT", "o": "Jon", "ev": ["c2"]},
+        {"s": "Jon", "p": "REL_NSUBJ", "o": "something", "ev": ["c3"]},  # noise
+        {"s": "Jon", "p": "ACTIVITY_ONGOING_ACTIVITY", "o": "walking", "ev": []},  # noise
+        {"s": "Jon", "p": "VISITING", "o": "Rome", "ev": []},  # plain (unevidenced)
+    ]
+    frame_rows = [
+        {"frame": "Activity_start", "roles": ["Agent=Jon", "Activity=dance studio"]},
+        {"frame": "Visiting", "roles": ["Agent=Jon"]},  # < 2 role fills → dropped
+    ]
+    client = _mock_client()
+    client.query = AsyncMock(side_effect=[rel_rows, frame_rows])
+    store = GraphStore(client=client)
+
+    facts = await store.entity_fact_context(["Jon", "Gina"])
+
+    # Frame instance (>=2 roles) ranks first; noise predicates dropped.
+    assert facts[0] == "Activity_start: Agent=Jon, Activity=dance studio"
+    assert "Jon activity start activity dance studio" in facts
+    assert "Gina support Jon" in facts
+    assert "Jon visiting Rome" in facts
+    assert not any("rel " in f or "activity ongoing" in f for f in facts)
+    # Evidenced relations precede the bare (unevidenced) VISITING relation.
+    assert facts.index("Gina support Jon") < facts.index("Jon visiting Rome")
+
+    # Query keyed on interpolated name_norm list literal (IN-$list workaround).
+    rel_cypher = client.query.await_args_list[0].args[1]
+    assert "a.name_norm IN ['gina','jon']" in rel_cypher
+    assert "NOT type(r) IN [" in rel_cypher
+
+
+@pytest.mark.asyncio
+async def test_entity_fact_context_caps_at_max_facts() -> None:
+    rel_rows = [
+        {"s": "Jon", "p": "SUPPORT", "o": f"person{i}", "ev": ["c"]} for i in range(10)
+    ]
+    client = _mock_client()
+    client.query = AsyncMock(side_effect=[rel_rows, []])
+    store = GraphStore(client=client)
+    facts = await store.entity_fact_context(["Jon"], max_facts=3)
+    assert len(facts) == 3
+
+
+@pytest.mark.asyncio
+async def test_entity_fact_context_empty_on_no_entities() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    assert await store.entity_fact_context([]) == []
+    client.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_entity_fact_context_soft_fails_on_error() -> None:
+    client = _mock_client()
+    client.query = AsyncMock(side_effect=RuntimeError("boom"))
+    store = GraphStore(client=client)
+    assert await store.entity_fact_context(["Jon"]) == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_query_entities_matches_short_exact_long_contains() -> None:
+    client = _mock_client(query_rows=[{"name": "Jon"}, {"name": "Gina"}])
+    store = GraphStore(client=client)
+    names = await store.resolve_query_entities(["jon", "dance", "of"])  # "of" too short
+    assert names == ["Jon", "Gina"]
+    cypher = client.query.await_args_list[0].args[1]
+    assert "e.name_norm = 'jon'" in cypher  # short token → exact
+    assert "e.name_norm CONTAINS 'dance'" in cypher  # long token → contains
+    assert "'of'" not in cypher  # < 3 chars filtered out
+    assert "LIMIT 6" in cypher
+
+
+# ---------------------------------------------------------------------------
 # Bulk chunk writes — batching cap
 # ---------------------------------------------------------------------------
 

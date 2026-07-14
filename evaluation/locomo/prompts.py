@@ -80,7 +80,7 @@ the memories: doing Y because of Z means without Z, "likely no"; a recent bad ex
 outweighs an older positive pattern; partial evidence for a trait earns a qualified \
 "somewhat", not a flat "no".
 
-Memories (oldest first, each prefixed with its date):
+{facts}Memories (oldest first, each prefixed with its date):
 {memories}
 
 Question: {question}

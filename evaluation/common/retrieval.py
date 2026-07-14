@@ -35,8 +35,13 @@ class Retriever:
 
     async def query(
         self, session_id: str, question: str, *, k: int, namespace: str = ""
-    ) -> list[RetrievedPassage]:
-        """Return the top-``k`` passages for ``question`` in ``session_id``."""
+    ) -> tuple[list[RetrievedPassage], list[str]]:
+        """Return the top-``k`` passages and the structured fact-sheet.
+
+        The fact-sheet (D8) is the ``memory_query`` response's ``facts`` list —
+        the query entities' typed relations + frame role fills — threaded to the
+        answerer alongside the passages. Empty when GRAPHKNOWS_FACT_CONTEXT is off.
+        """
         result = await self._client.call_tool(
             "memory_query",
             {
@@ -47,4 +52,6 @@ class Retriever:
                 "namespace": namespace,
             },
         )
-        return _parse_hits(result)
+        facts_raw = result.get("facts", []) if isinstance(result, dict) else []
+        facts = [str(f) for f in facts_raw if f]
+        return _parse_hits(result), facts

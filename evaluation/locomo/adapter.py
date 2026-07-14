@@ -18,7 +18,23 @@ log = logging.getLogger(__name__)
 # Bump when a prompt change should invalidate cached verdicts. Bumped for the
 # two-stage judge: the headline score is now the STAGE-2 verdict (not raw
 # stage-1 SemanticF1), so old single-stage cache entries must not be reused.
-_PROMPT_VERSION = "locomo-judge-two-stage-v1"
+_PROMPT_VERSION = "locomo-judge-two-stage-v2-facts"
+
+
+def _render_facts(facts: list[str] | None) -> str:
+    """Render the D8 fact-sheet as a prompt block, or "" when there are none.
+
+    Empty facts yield "" so the formatted prompt is byte-identical to the
+    pre-D8 baseline (the ``{facts}`` slot sits immediately before "Memories"),
+    keeping the GRAPHKNOWS_FACT_CONTEXT=off arm a true baseline.
+    """
+    if not facts:
+        return ""
+    lines = "\n".join(f"- {f}" for f in facts)
+    return (
+        "Known facts (structured, extracted from the conversations):\n"
+        f"{lines}\n\n"
+    )
 
 
 def _judge_gold(case: EvalCase) -> str:
@@ -37,10 +53,15 @@ class LocomoAdapter(BenchmarkAdapter):
         self._cache = JudgeCache("locomo")
 
     async def answer(
-        self, case: EvalCase, unit: IngestUnit, passages: list[RetrievedPassage]
+        self,
+        case: EvalCase,
+        unit: IngestUnit,
+        passages: list[RetrievedPassage],
+        facts: list[str] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         prompt = prompts.ANSWER_PROMPT.format(
             reference_date=unit.reference_date or "2023",
+            facts=_render_facts(facts),
             memories=format_memories(passages),
             question=case.question,
         )

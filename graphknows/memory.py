@@ -305,7 +305,10 @@ class Memory:
             scope = "both"
         retriever = await self._get_retriever()
         ctx = await retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
-        return {"hits": _format_fused_hits(ctx.fused_results, session_id)}
+        return {
+            "hits": _format_fused_hits(ctx.fused_results, session_id),
+            "facts": list(getattr(ctx, "facts", []) or []),
+        }
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Consolidate a session in place.

@@ -65,7 +65,11 @@ class BeamAdapter(BenchmarkAdapter):
         self._cache = JudgeCache("beam")
 
     async def answer(
-        self, case: EvalCase, unit: IngestUnit, passages: list[RetrievedPassage]
+        self,
+        case: EvalCase,
+        unit: IngestUnit,
+        passages: list[RetrievedPassage],
+        facts: list[str] | None = None,  # D8 fact-sheet — unused by beam
     ) -> tuple[str, dict[str, Any]]:
         prompt = prompts.ANSWER_PROMPT.format(
             memories=format_memories(passages),

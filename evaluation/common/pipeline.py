@@ -47,9 +47,17 @@ class BenchmarkAdapter(abc.ABC):
 
     @abc.abstractmethod
     async def answer(
-        self, case: EvalCase, unit: IngestUnit, passages: list[RetrievedPassage]
+        self,
+        case: EvalCase,
+        unit: IngestUnit,
+        passages: list[RetrievedPassage],
+        facts: list[str] | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Generate an answer; return ``(answer, usage_metrics)``."""
+        """Generate an answer; return ``(answer, usage_metrics)``.
+
+        ``facts`` is the D8 structured fact-sheet for the query entities (empty
+        when disabled); adapters that don't consume it may ignore the argument.
+        """
 
     @abc.abstractmethod
     async def judge_case(self, case: EvalCase, answer: str) -> tuple[float, dict[str, Any]]:
@@ -243,12 +251,12 @@ async def _answer_unit(
     async def _answer_one(idx: int, case: EvalCase) -> tuple[int, CaseResult]:
         async with answer_sem:
             try:
-                probe = await retriever.query(
+                probe, facts = await retriever.query(
                     session_id, case.question, k=config.probe_k, namespace=namespace
                 )
                 passages = probe[: config.top_k]
                 context_passages = probe[: config.gen_context_k]
-                answer, gen_usage = await adapter.answer(case, unit, context_passages)
+                answer, gen_usage = await adapter.answer(case, unit, context_passages, facts)
                 score, judge_metrics = await adapter.judge_case(case, answer)
                 lexical = adapter.lexical_metrics(case, answer)
             except Exception as exc:

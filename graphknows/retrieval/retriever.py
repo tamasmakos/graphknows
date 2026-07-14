@@ -172,6 +172,18 @@ def _declarative_variant(question: str) -> str | None:
 # full-text channels still cover their chunks.
 _ENTITY_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_ENTITY_SATURATION_RATIO", "0.5"))
 
+
+def _fact_context_enabled() -> bool:
+    """Whether the D8 structured fact-sheet is fed to the generator (default on).
+
+    Read at call time (not import time) so the eval A/B can flip
+    ``GRAPHKNOWS_FACT_CONTEXT`` per MCP-server subprocess.
+    """
+    return os.environ.get("GRAPHKNOWS_FACT_CONTEXT", "true").strip().lower() not in (
+        "0", "false", "no",
+    )
+
+
 class DETRetriever(BaseGraphRetriever):
     """Deterministic three-collector hybrid retriever."""
 
@@ -303,6 +315,19 @@ class DETRetriever(BaseGraphRetriever):
         for i, item in enumerate(fused):
             item["rank"] = i + 1
 
+        # Structured fact-sheet (D8): resolve the QUERY's candidate entities from
+        # the graph tokens, then surface their typed relations + frame-instance
+        # role fills. Soft-fail — a fact-context error never degrades recall.
+        facts: list[str] = []
+        if _fact_context_enabled():
+            try:
+                resolved = await self.store.resolve_query_entities(words_graph)
+                if resolved:
+                    facts = await self.store.entity_fact_context(resolved)
+            except Exception as exc:  # pragma: no cover - defensive soft-fail
+                log.debug("fact context failed (soft): %s", exc)
+                facts = []
+
         # Transparency trace: how each surviving candidate scored.
         trace = {
             "query": query,
@@ -327,6 +352,7 @@ class DETRetriever(BaseGraphRetriever):
             fused_results=fused,
             search_type="DET",
             trace=trace,
+            facts=facts,
         )
 
     async def execute_cypher(

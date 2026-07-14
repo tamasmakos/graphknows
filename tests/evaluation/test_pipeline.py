@@ -72,8 +72,11 @@ async def test_retriever_parses_hits() -> None:
         {"memory_query": {"hits": [{"text": "t", "score": 0.9, "sources": "ltm_graph"}]}}
     )
     retriever = Retriever(client, BaseEvalConfig())  # type: ignore[arg-type]
-    passages = await retriever.query("s1", "q", k=5, namespace="eval_locomo_llm_free_conv_26")
+    passages, facts = await retriever.query(
+        "s1", "q", k=5, namespace="eval_locomo_llm_free_conv_26"
+    )
     assert passages[0].text == "t" and passages[0].is_ltm_graph
+    assert facts == []
     assert client.calls[0][1]["top_k"] == 5
     assert client.calls[0][1]["namespace"] == "eval_locomo_llm_free_conv_26"
 
@@ -87,7 +90,7 @@ async def test_gen_context_k_100_probes_and_slices_100() -> None:
     hits = [{"text": f"p{i}", "score": 1.0 - i / 200} for i in range(120)]
     client = FakeClient({"memory_query": {"hits": hits}})
     retriever = Retriever(client, config)  # type: ignore[arg-type]
-    probe = await retriever.query("s1", "q", k=config.probe_k, namespace="ns")
+    probe, _facts = await retriever.query("s1", "q", k=config.probe_k, namespace="ns")
     # The MCP tool caps at 100; here the fake returns everything, so assert the
     # eval REQUESTED at least 100 (not silently capped at 25/50 on our side).
     assert client.calls[0][1]["top_k"] >= 100

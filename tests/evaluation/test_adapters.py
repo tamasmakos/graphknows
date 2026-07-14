@@ -94,6 +94,35 @@ class TestLocomoAdapter:
         assert "8 May 2023" in answerer.prompts[0][1]  # reference date injected
 
     @pytest.mark.asyncio
+    async def test_answer_prompt_includes_facts_block_when_present(self) -> None:
+        answerer = FakeLLM(["ANSWER: x"])
+        adapter = LocomoAdapter(LocomoConfig(), answerer, FakeLLM([]))
+        await adapter.answer(
+            _case(), _unit(), _passages(), ["Jon visiting Rome", "Gina support Jon"]
+        )
+        prompt = answerer.prompts[0][1]
+        assert "Known facts" in prompt
+        assert "- Jon visiting Rome" in prompt
+        assert "- Gina support Jon" in prompt
+
+    @pytest.mark.asyncio
+    async def test_answer_prompt_byte_identical_to_baseline_when_no_facts(self) -> None:
+        # facts=[] and facts=None must both render the pre-D8 prompt verbatim.
+        base = FakeLLM(["ANSWER: a"])
+        empty = FakeLLM(["ANSWER: b"])
+        none = FakeLLM(["ANSWER: c"])
+        LocomoConfig()
+        await LocomoAdapter(LocomoConfig(), base, FakeLLM([])).answer(_case(), _unit(), _passages())
+        await LocomoAdapter(LocomoConfig(), empty, FakeLLM([])).answer(
+            _case(), _unit(), _passages(), []
+        )
+        await LocomoAdapter(LocomoConfig(), none, FakeLLM([])).answer(
+            _case(), _unit(), _passages(), None
+        )
+        assert base.prompts[0][1] == empty.prompts[0][1] == none.prompts[0][1]
+        assert "Known facts" not in base.prompts[0][1]
+
+    @pytest.mark.asyncio
     async def test_judge_scores_map_to_labels(self) -> None:
         judge = FakeJudge([1.0, 0.0, 0.5])
         adapter = LocomoAdapter(LocomoConfig(), FakeLLM([]), judge)

@@ -56,4 +56,5 @@ async def memory_query(
         }
         for fc in ctx.fused_results
     ]
-    return {"hits": hits, "total": len(hits), "query": query, "scope": scope}
+    facts = list(getattr(ctx, "facts", []) or [])
+    return {"hits": hits, "total": len(hits), "query": query, "scope": scope, "facts": facts}

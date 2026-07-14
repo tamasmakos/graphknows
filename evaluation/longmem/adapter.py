@@ -27,7 +27,11 @@ class LongMemAdapter(BenchmarkAdapter):
         self._cache = JudgeCache("longmem")
 
     async def answer(
-        self, case: EvalCase, unit: IngestUnit, passages: list[RetrievedPassage]
+        self,
+        case: EvalCase,
+        unit: IngestUnit,
+        passages: list[RetrievedPassage],
+        facts: list[str] | None = None,  # D8 fact-sheet — unused by longmem
     ) -> tuple[str, dict[str, Any]]:
         prompt = prompts.ANSWER_PROMPT.format(
             reference_date=unit.reference_date or case.question_date or "2023",

@@ -272,6 +272,27 @@ def _structural_types_literal() -> str:
     return quoted_list(sorted(STRUCTURAL_REL_TYPES))
 
 
+def _fact_exclude_literal() -> str:
+    """Edge types excluded from the fact-sheet relation query.
+
+    Structural spine edges (STRUCTURAL_REL_TYPES — already covers MENTIONS) plus
+    IN_COMMUNITY, so ``entity_fact_context`` only surfaces semantic ENTITY->ENTITY
+    facts, not graph plumbing.
+    """
+    from graphknows.ingestion.models.taxonomy import STRUCTURAL_REL_TYPES
+
+    return quoted_list(sorted(STRUCTURAL_REL_TYPES | {"IN_COMMUNITY"}))
+
+
+def _is_noise_predicate(predicate: str) -> bool:
+    """True for predicates that carry no fact-sheet signal despite surviving the
+    ENTITY->ENTITY relation query: the ``REL_*`` generic dependency-grammar dump
+    and the ``ACTIVITY_ONGOING_*`` frame spam (``ACTIVITY_START_*`` is kept — it
+    is the higher-signal decision/onset event)."""
+    p = predicate.upper()
+    return p.startswith("REL_") or p.startswith("ACTIVITY_ONGOING")
+
+
 class GraphStore:
     """Single-database ArcadeDB store for one namespace (golden layer).
 
@@ -1163,6 +1184,110 @@ class GraphStore:
         )
         session_names = {r["name"] for r in ent_rows if r.get("name")}
         return [r for r in result if r["src"] in session_names and r["dst"] in session_names]
+
+    # ------------------------------------------------------------------
+    # Read API — structured fact context (fact-sheet for the generator)
+    # ------------------------------------------------------------------
+
+    async def resolve_query_entities(self, words: list[str], cap: int = 6) -> list[str]:
+        """Resolve query tokens to ENTITY surface names for the fact-sheet.
+
+        Short tokens (< 5 chars) match ``name_norm`` exactly (avoids substring
+        false positives like "war" in "edward"); longer tokens CONTAINS-match.
+        Soft-fails to ``[]`` — this is a best-effort enrichment, never a hard
+        dependency of retrieval.
+        """
+        toks = sorted({w.strip().casefold() for w in words if w and len(w.strip()) >= 3})
+        if not toks:
+            return []
+        conds = " OR ".join(
+            f"e.name_norm = {quote(t)}" if len(t) < 5 else f"e.name_norm CONTAINS {quote(t)}"
+            for t in toks
+        )
+        try:
+            rows = await self._qry(
+                f"MATCH (e:ENTITY) WHERE {conds} "
+                f"RETURN DISTINCT e.name AS name LIMIT {int(cap)}"
+            )
+        except Exception as exc:
+            logger.debug("resolve_query_entities failed (soft): %s", exc)
+            return []
+        return [r["name"] for r in rows if r.get("name")]
+
+    async def entity_fact_context(
+        self, entity_names: list[str], max_facts: int = 15
+    ) -> list[str]:
+        """Compact structured fact-sheet for the given entities (for the generator).
+
+        Two graph reads keyed on ``name_norm`` (interpolated list literal — the
+        store's IN-$list workaround):
+        - typed ENTITY->ENTITY relations (structural + IN_COMMUNITY excluded),
+          formatted ``"{subject} {predicate} {object}"`` with the predicate made
+          readable (underscores -> spaces, lower-cased);
+        - FULL FRAME_INSTANCE role fills touching any seed entity (every co-role,
+          not just the seed's own), formatted ``"{frame}: role1=filler1, role2=…"``.
+
+        Noise filter + prioritisation: ``REL_*`` / ``ACTIVITY_ONGOING_*`` predicates
+        dropped; frame instances with < 2 role fills dropped; frames and evidenced
+        relations ranked before bare relations; identical strings deduped; capped
+        at ``max_facts``. Soft-fails to ``[]`` (never raises into retrieval).
+        """
+        norms = sorted({_name_norm(n) for n in entity_names if n and n.strip()})
+        if not norms:
+            return []
+        name_lit = quoted_list(norms)
+        try:
+            rel_rows = await self._qry(
+                f"MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                f"WHERE a.name_norm IN {name_lit} "
+                f"AND NOT type(r) IN {_fact_exclude_literal()} "
+                f"RETURN a.name AS s, type(r) AS p, b.name AS o, r.evidence AS ev"
+            )
+            frame_rows = await self._qry(
+                f"MATCH (fi:FRAME_INSTANCE)-[:PLAYS_ROLE]->(seed:ENTITY) "
+                f"WHERE seed.name_norm IN {name_lit} "
+                f"WITH DISTINCT fi "
+                f"MATCH (fi)-[p:PLAYS_ROLE]->(o:ENTITY) "
+                # Group per instance (fi.id), not per frame TYPE — otherwise every
+                # instance of a type collapses into one giant concatenated fact.
+                f"RETURN fi.id AS id, fi.frame AS frame, "
+                f"collect(p.role + '=' + o.name) AS roles"
+            )
+        except Exception as exc:
+            logger.debug("entity_fact_context failed (soft): %s", exc)
+            return []
+
+        # Frame instances first (highest structural signal); drop < 2 role fills.
+        frame_facts: list[str] = []
+        for r in frame_rows:
+            frame = str(r.get("frame") or "").strip()
+            roles = [str(x).strip() for x in (r.get("roles") or []) if x and "=" in str(x)]
+            if not frame or len(roles) < 2:
+                continue
+            frame_facts.append(f"{frame}: {', '.join(roles)}")
+
+        # Relations: evidenced ones outrank bare ones; noise predicates dropped.
+        evidenced: list[str] = []
+        plain: list[str] = []
+        for r in rel_rows:
+            s = str(r.get("s") or "").strip()
+            p = str(r.get("p") or "").strip()
+            o = str(r.get("o") or "").strip()
+            if not s or not p or not o or _is_noise_predicate(p):
+                continue
+            fact = f"{s} {p.replace('_', ' ').lower()} {o}"
+            (evidenced if r.get("ev") else plain).append(fact)
+
+        out: list[str] = []
+        seen: set[str] = set()
+        for fact in frame_facts + evidenced + plain:
+            if fact in seen:
+                continue
+            seen.add(fact)
+            out.append(fact)
+            if len(out) >= max_facts:
+                break
+        return out
 
     # ------------------------------------------------------------------
     # Graph analytics

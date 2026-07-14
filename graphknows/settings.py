@@ -110,6 +110,12 @@ class GraphKnowsSettings(BaseSettings):
     # GRAPHKNOWS_ENABLE_FRAMES=false.
     enable_frames: bool = Field(default=True, alias="GRAPHKNOWS_ENABLE_FRAMES")
 
+    # Structured fact-context (D8): surface query entities' typed relations +
+    # frame-instance role fills as a compact fact-sheet fed to the generator
+    # alongside the passages. ON by default; disable with
+    # GRAPHKNOWS_FACT_CONTEXT=false for the A/B baseline.
+    fact_context: bool = Field(default=True, alias="GRAPHKNOWS_FACT_CONTEXT")
+
     # Session lifecycle
     session_ttl_minutes: int = Field(default=60, alias="GRAPHKNOWS_SESSION_TTL_MINUTES")
 
