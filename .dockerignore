@@ -53,3 +53,6 @@ LICENSE
 README*
 docker-compose*.yaml
 Makefile
+# ...but README.md must stay in context: pyproject declares it as the package
+# readme, so the hatchling build backend needs it to build the wheel.
+!README.md

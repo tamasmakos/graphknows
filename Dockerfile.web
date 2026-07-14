@@ -14,13 +14,17 @@ WORKDIR /build
 RUN pip install --no-cache-dir uv
 
 # Copy manifests first (layer caching), then source so uv can build the package.
+# README.md is required: pyproject declares `readme = "README.md"`, so the
+# hatchling build backend fails ("Readme file does not exist") without it.
 COPY pyproject.toml ./
 COPY uv.lock* ./
+COPY README.md ./
 COPY graphknows/ ./graphknows/
 
 RUN uv venv /opt/venv && \
     uv pip install --python /opt/venv/bin/python --no-cache ".[all]" && \
-    /opt/venv/bin/python -m spacy download en_core_web_lg
+    uv pip install --python /opt/venv/bin/python --no-cache \
+        "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
 # ─── runtime stage ─────────────────────────────────────────────────────────────
 FROM python:3.13-slim AS runtime

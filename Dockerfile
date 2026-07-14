@@ -6,8 +6,10 @@ WORKDIR /build
 # uv for fast, reproducible installs
 RUN pip install --no-cache-dir uv
 
-# Copy workspace manifests first — maximise layer caching
-COPY pyproject.toml uv.lock ./
+# Copy workspace manifests first — maximise layer caching.
+# README.md is required: pyproject declares `readme = "README.md"`, so the
+# hatchling build backend fails ("Readme file does not exist") without it.
+COPY pyproject.toml uv.lock README.md ./
 COPY graphknows ./graphknows
 COPY frontend ./frontend
 

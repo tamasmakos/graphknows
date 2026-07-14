@@ -86,3 +86,6 @@ AGENTS.md
 # local analysis scratch (not committed)
 .scratch/
 evaluation/results/.judge_cache/
+
+# Local reference clone (framenet-tools) — unused by code, kept for reference only
+graphknows/utils/

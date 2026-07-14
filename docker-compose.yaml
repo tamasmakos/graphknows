@@ -58,7 +58,17 @@ services:
       context: .
       dockerfile: Dockerfile
     command: graphknows-mcp
-    environment: *graphknows-env
+    # Bind-mount the repo so code edits take effect on `restart` without a
+    # rebuild. PYTHONPATH=/app makes the live source shadow the copy installed
+    # into the image venv: the `graphknows-mcp` console script imports
+    # `graphknows`, which then resolves to /app/graphknows first. Dependencies
+    # still come from the image — a pyproject/uv.lock change still needs
+    # `docker compose build`.
+    volumes:
+      - .:/app
+    environment:
+      <<: *graphknows-env
+      PYTHONPATH: /app
     depends_on:
       arcadedb:
         condition: service_healthy
@@ -70,11 +80,19 @@ services:
       dockerfile: Dockerfile.web
     ports:
       - "${GRAPHKNOWS_WEB_PORT:-8800}:8800"
+    # Bind-mount the repo so backend (graphknows) and frontend (static SPA)
+    # edits take effect on `restart` without a rebuild. PYTHONPATH=/app makes
+    # the live source shadow the image-installed copy; GRAPHKNOWS_FRONTEND_DIR
+    # already points at /app/frontend, which the mount now serves live. Deps
+    # still come from the image (pyproject/uv.lock changes need a rebuild).
+    volumes:
+      - .:/app
     environment:
       <<: *graphknows-env
       GRAPHKNOWS_WEB_HOST: "0.0.0.0"
       GRAPHKNOWS_WEB_PORT: "8800"
       GRAPHKNOWS_FRONTEND_DIR: "/app/frontend"
+      PYTHONPATH: /app
     depends_on:
       arcadedb:
         condition: service_healthy
