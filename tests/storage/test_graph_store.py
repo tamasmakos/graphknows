@@ -508,7 +508,12 @@ async def test_compute_and_persist_pagerank_native_success() -> None:
     store = GraphStore(client=client)
     updated = await store.compute_and_persist_pagerank()
     assert updated == 2
-    assert any("CALL algo.pageRank()" in c.args[1] for c in client.query.await_args_list)
+    # ArcadeDB yields the pagerank column as `score`; YIELDing `rank` binds an
+    # unknown field that comes back null and silently forces the numpy fallback.
+    assert any(
+        "CALL algo.pageRank()" in c.args[1] and "YIELD node, score" in c.args[1]
+        for c in client.query.await_args_list
+    )
     set_calls = [c for c in client.command.await_args_list if "e.pagerank = $pr" in c.args[1]]
     assert len(set_calls) == 2
     prs = sorted(c.kwargs["params"]["pr"] for c in set_calls)

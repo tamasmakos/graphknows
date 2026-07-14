@@ -1018,10 +1018,9 @@ class GraphStore:
         Cypher does not honour a ``node:ENTITY`` label predicate inside a
         ``CALL ... YIELD ... WHERE`` clause, it silently matches zero rows)
         first. **On ANY failure** (view creation, unsupported algo, timeout,
-        empty graph, or every yielded ``rank`` coming back null — observed on
-        a real ~190-entity graph on ArcadeDB 26.5.1, see WS4 verification)
-        this falls back to the in-process numpy power-iteration implementation
-        (``_pagerank_numpy_fallback``) so a flush never comes up empty.
+        or empty graph) this falls back to the in-process numpy power-iteration
+        implementation (``_pagerank_numpy_fallback``) so a flush never comes up
+        empty.
 
         Args:
             skip_view_ensure: Skip rebuilding the analytical view (the caller
@@ -1033,10 +1032,15 @@ class GraphStore:
         try:
             if not skip_view_ensure:
                 await self._ensure_analytical_view()
+            # ArcadeDB's algo.pageRank yields the score column as `score`, not
+            # `rank` — YIELDing `rank` binds an unknown field that comes back
+            # null for every row, which the null-filter below then discards,
+            # silently forcing the numpy fallback. Alias `score AS rank` so the
+            # rest of this method keeps reading `rank`.
             rows = await self._qry(
-                "CALL algo.pageRank() YIELD node, rank "
+                "CALL algo.pageRank() YIELD node, score "
                 "WHERE node.name_norm IS NOT NULL "
-                "RETURN node.name_norm AS nn, rank"
+                "RETURN node.name_norm AS nn, score AS rank"
             )
             # A row with a null rank is not a usable result — treat "every rank
             # is null" the same as "no rows" so we don't persist meaningless
