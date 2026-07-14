@@ -85,7 +85,9 @@ _LU_POS = {"VERB": "v", "NOUN": "n", "ADJ": "a"}
 _MAIN_VERB_DEPS = {"ROOT", "conj", "xcomp", "ccomp", "advcl", "acl", "relcl"}
 
 
-def lu_candidate_frames(text: str, nlp: Any, top_k: int = 4) -> list[tuple[str, float]]:
+def lu_candidate_frames(
+    text: str, nlp: Any, top_k: int = 4, embedding: list[float] | None = None
+) -> list[tuple[str, float]]:
     """Candidate frames = the CLAUSE MAIN VERB's LU frames, ranked by embedding fit.
 
     Frame identification is hard zero-shot: definition-embedding alone picks
@@ -97,8 +99,11 @@ def lu_candidate_frames(text: str, nlp: Any, top_k: int = 4) -> list[tuple[str, 
     DEFINITION embeds against the sentence (semantic fit) — the intersection of
     "the verb evokes it" and "it fits the sentence". Falls back to all verbs, then
     all content words, when the parse yields no main verb.
+
+    ``embedding`` (the chunk's already-computed vector) is used for the ranking so
+    ingest never re-embeds the same text; only when it is None do we embed ``text``.
     """
-    from graphknows.channels._frame_index import match_frames_text
+    from graphknows.channels._frame_index import match_frames, match_frames_text
     from graphknows.channels._framenet import _lus
 
     doc = nlp(text)
@@ -116,8 +121,13 @@ def lu_candidate_frames(text: str, nlp: Any, top_k: int = 4) -> list[tuple[str, 
                 cand |= set(lui.get((t.lemma_.lower(), pos), ()))  # type: ignore[arg-type]
     if not cand:
         return []
-    # Rank the LU-valid candidates by embedding fit to the sentence.
-    ranked = match_frames_text(text, top_k=200, min_sim=0.0)
+    # Rank the LU-valid candidates by embedding fit — reuse the precomputed chunk
+    # embedding when available (no re-embed), else embed the text once.
+    ranked = (
+        match_frames(embedding, top_k=200, min_sim=0.0)
+        if embedding is not None
+        else match_frames_text(text, top_k=200, min_sim=0.0)
+    )
     order = {name: sim for name, sim in ranked}
     scored = sorted(cand, key=lambda f: -order.get(f, 0.0))[:top_k]
     return [(f, order.get(f, 0.0)) for f in scored]

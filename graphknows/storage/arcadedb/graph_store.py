@@ -24,6 +24,7 @@ ArcadeDB constraints honoured here:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -306,6 +307,10 @@ class GraphStore:
         self._c = client
         self._db = db
         self._declared_edge_types: set[str] = set()
+        # Namespace-global community size/conductance maps for chunk_community_weights.
+        # These change only at consolidation; cached so every retrieve() doesn't
+        # re-scan the whole graph. Invalidated when communities recompute.
+        self._community_maps: tuple[dict[Any, float], dict[Any, float]] | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -743,79 +748,96 @@ class GraphStore:
     ) -> int:
         """MERGE role-filled FRAME_INSTANCE vertices + PLAYS_ROLE / convenience edges.
 
-        Each ``instances`` item: ``{id, frame, match_sim, role_confidence,
-        roles: {role_name: [filler_name, ...]}}``. Per instance:
-        - MERGE the FRAME_INSTANCE (key ``id``) and a FRAME_EVOKED_IN edge to the
-          evidence CHUNK.
-        - MERGE each filler ENTITY (``name_norm`` keyed, same dedup as
-          ``write_entities_bulk``) and a FRAME_INSTANCE-[:PLAYS_ROLE {role}]->ENTITY
-          edge — one per (instance, role, filler).
-        - ALSO write flattened ENTITY->ENTITY convenience relations via
-          ``write_relation`` (``source='frame'``) from the primary agent-like role
-          filler to every other role filler, predicate ``f"{FRAME}_{ROLE}"``, so
-          they ride the normal RELATION layer and retrieval. Self-pairs skipped.
+        Each ``instances`` item: ``{frame, match_sim, role_confidence,
+        roles: {role_name: [filler_name, ...]}}``.
 
-        Idempotent (all MERGE). Returns the number of instances written.
+        A FRAME_INSTANCE is a FACT, not a per-chunk artifact: its id is a content
+        hash of ``frame`` + the sorted role/filler signature, so the same event
+        stated in several chunks MERGEs onto ONE node accumulating a
+        FRAME_EVOKED_IN edge per evidence chunk (the same model RELATION.evidence
+        uses) — instead of a duplicate node per chunk. Any ``id`` on the input is
+        ignored. Writes are batched: one UNWIND for the instances+evidence edges,
+        one for all PLAYS_ROLE edges (ENTITY fillers MERGE on ``name_norm``).
+        Flattened ENTITY->ENTITY convenience relations (``source='frame'``, from
+        the primary agent-like role filler to each other filler, predicate
+        ``f"{FRAME}_{ROLE}"``) ride the normal RELATION layer via ``write_relation``.
+
+        Idempotent (all MERGE). Returns the number of instances processed.
         """
         if not instances:
             return 0
-        written = 0
+        inst_rows: list[dict[str, Any]] = []
+        role_rows: list[dict[str, Any]] = []
+        conv: list[tuple[str, str, str, float]] = []
         for inst in instances:
-            fid = str(inst.get("id") or "").strip()
             frame = str(inst.get("frame") or "").strip()
             roles: dict[str, list[str]] = inst.get("roles") or {}
-            if not fid or not frame:
+            if not frame:
                 continue
-            role_conf = float(inst.get("role_confidence") or 0.0)
-            await self._cmd(
-                "MATCH (c:CHUNK {chunk_id: $cid}) "
-                "MERGE (fi:FRAME_INSTANCE {id: $fid}) "
-                "SET fi.frame = $frame, fi.chunk_id = $cid, fi.session_id = $sid, "
-                "    fi.match_sim = $ms, fi.role_confidence = $rc "
-                "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)",
-                cid=chunk_id,
-                fid=fid,
-                frame=frame,
-                sid=session_id,
-                ms=float(inst.get("match_sim") or 0.0),
-                rc=role_conf,
+            # Content-hash id: same (frame + role fills) -> same node across chunks.
+            sig = sorted(
+                f"{r}={_name_norm(str(f))}"
+                for r, fs in roles.items()
+                for f in (fs or [])
+                if str(f).strip()
             )
-            # PLAYS_ROLE edges — MERGE each filler ENTITY on name_norm.
+            if not sig:
+                continue
+            fid = f"{frame}:{hashlib.sha1('|'.join(sig).encode()).hexdigest()[:16]}"  # noqa: S324
+            role_conf = float(inst.get("role_confidence") or 0.0)
+            inst_rows.append(
+                {
+                    "fid": fid, "frame": frame, "cid": chunk_id, "sid": session_id,
+                    "ms": float(inst.get("match_sim") or 0.0), "rc": role_conf,
+                }
+            )
             for role, fillers in roles.items():
                 for filler in fillers or []:
                     name = str(filler).strip()
-                    if not name:
-                        continue
-                    await self._cmd(
-                        "MATCH (fi:FRAME_INSTANCE {id: $fid}) "
-                        "MERGE (e:ENTITY {name_norm: $nn}) "
-                        "SET e.name = coalesce(e.name, $name), "
-                        "    e.state = coalesce(e.state, 'raw') "
-                        "MERGE (fi)-[:PLAYS_ROLE {role: $role}]->(e)",
-                        fid=fid,
-                        nn=_name_norm(name),
-                        name=name,
-                        role=role,
-                    )
-            # Flattened convenience relations: primary agent-like filler -> others.
+                    if name:
+                        role_rows.append(
+                            {"fid": fid, "nn": _name_norm(name), "name": name, "role": role}
+                        )
             subj = _primary_filler(roles)
             if subj:
                 subj_norm = _name_norm(subj)
                 for role, fillers in roles.items():
                     for filler in fillers or []:
                         obj = str(filler).strip()
-                        if not obj or _name_norm(obj) == subj_norm:
-                            continue  # skip self-pairs
-                        await self.write_relation(
-                            subj,
-                            f"{frame}_{role}",
-                            obj,
-                            chunk_id=chunk_id,
-                            confidence=role_conf or 0.5,
-                            source="frame",
-                        )
-            written += 1
-        return written
+                        if obj and _name_norm(obj) != subj_norm:
+                            conv.append((subj, f"{frame}_{role}", obj, role_conf or 0.5))
+        if not inst_rows:
+            return 0
+        # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
+        await self._cmd(
+            "UNWIND $rows AS row "
+            "MATCH (c:CHUNK {chunk_id: row.cid}) "
+            "MERGE (fi:FRAME_INSTANCE {id: row.fid}) "
+            "SET fi.frame = row.frame, fi.session_id = row.sid, "
+            "    fi.chunk_id = coalesce(fi.chunk_id, row.cid), "
+            "    fi.match_sim = CASE WHEN row.ms > coalesce(fi.match_sim, 0) "
+            "                        THEN row.ms ELSE fi.match_sim END, "
+            "    fi.role_confidence = CASE WHEN row.rc > coalesce(fi.role_confidence, 0) "
+            "                              THEN row.rc ELSE fi.role_confidence END "
+            "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)",
+            rows=inst_rows,
+        )
+        # Batch 2: PLAYS_ROLE edges (filler ENTITY MERGE on name_norm).
+        if role_rows:
+            await self._cmd(
+                "UNWIND $rows AS row "
+                "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
+                "MERGE (e:ENTITY {name_norm: row.nn}) "
+                "SET e.name = coalesce(e.name, row.name), e.state = coalesce(e.state, 'raw') "
+                "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
+                rows=role_rows,
+            )
+        # Convenience relations dedup + accumulate evidence via write_relation.
+        for subj, pred, obj, conf in conv:
+            await self.write_relation(
+                subj, pred, obj, chunk_id=chunk_id, confidence=conf, source="frame"
+            )
+        return len(inst_rows)
 
     async def write_topics(self, topics: list[dict[str, Any]]) -> int:
         """Upsert TOPIC vertices + HAS_TOPIC edges from their evidence chunks.
@@ -1366,6 +1388,22 @@ class GraphStore:
                 degree[nn] = degree.get(nn, 0) + int(r.get("deg") or 0)
         return degree
 
+    async def _bulk_set_entity_scalar(self, prop: str, rows: list[dict[str, Any]]) -> int:
+        """Persist a scalar property onto many ENTITY nodes in one UNWIND command.
+
+        ``rows``: ``[{"nn": name_norm, "v": value}, ...]``. ``prop`` is a code-owned
+        column name (pagerank / community_id), interpolated safely. Replaces the
+        per-entity SET loops that issued one round-trip per entity.
+        """
+        rows = [r for r in rows if r.get("nn") is not None]
+        if not rows:
+            return 0
+        await self._cmd(
+            f"UNWIND $rows AS r MATCH (e:ENTITY {{name_norm: r.nn}}) SET e.{prop} = r.v",
+            rows=rows,
+        )
+        return len(rows)
+
     async def compute_and_persist_pagerank(self, skip_view_ensure: bool = False) -> int:
         """Compute PageRank over the entity-relation graph and persist ``pagerank``.
 
@@ -1413,19 +1451,9 @@ class GraphStore:
             )
             return await self._pagerank_numpy_fallback()
 
-        updated = 0
-        for r in rows:
-            try:
-                await self._cmd(
-                    "MATCH (e:ENTITY {name_norm: $nn}) SET e.pagerank = $pr",
-                    nn=r["nn"],
-                    pr=float(r.get("rank") or 0.0),
-                )
-                updated += 1
-            except Exception as exc:
-                logger.warning(
-                    "compute_and_persist_pagerank: entity %r failed: %s", r["nn"], exc
-                )
+        updated = await self._bulk_set_entity_scalar(
+            "pagerank", [{"nn": r["nn"], "v": float(r.get("rank") or 0.0)} for r in rows]
+        )
         logger.info(
             "compute_and_persist_pagerank: native algo.pageRank updated %d ENTITY nodes", updated
         )
@@ -1537,17 +1565,10 @@ class GraphStore:
             logger.info("compute_communities: no rows returned; skipping")
             return 0
 
-        updated = 0
-        for r in rows:
-            try:
-                await self._cmd(
-                    "MATCH (e:ENTITY {name_norm: $nn}) SET e.community_id = $cid",
-                    nn=r["nn"],
-                    cid=int(r["cid"]),
-                )
-                updated += 1
-            except Exception as exc:
-                logger.warning("compute_communities: entity %r failed: %s", r["nn"], exc)
+        updated = await self._bulk_set_entity_scalar(
+            "community_id", [{"nn": r["nn"], "v": int(r["cid"])} for r in rows]
+        )
+        self._invalidate_community_maps()
         logger.info("compute_communities: wrote %d ENTITY community_id(s)", updated)
         return updated
 
@@ -1658,6 +1679,7 @@ class GraphStore:
         except Exception as exc:
             logger.warning("compute_community_quality: IN_COMMUNITY link failed: %s", exc)
 
+        self._invalidate_community_maps()
         logger.info(
             "compute_community_quality: modularity=%.4f, scored %d/%d communities",
             modularity, scored, communities,
@@ -1691,23 +1713,10 @@ class GraphStore:
                 f"RETURN c.chunk_id AS chunk_id, e.community_id AS cid, count(e) AS cnt "
                 f"ORDER BY cnt DESC"
             )
-            size_rows = await self._qry(
-                "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
-                "RETURN e.community_id AS cid, count(e) AS size"
-            )
-            quality_rows = await self._qry(
-                "MATCH (k:COMMUNITY) WHERE k.community_id IS NOT NULL "
-                "RETURN k.community_id AS cid, k.conductance AS conductance"
-            )
+            sizes, conductance = await self._community_size_conductance()
         except Exception as exc:
             logger.debug("chunk_community_weights failed (non-fatal): %s", exc)
             return {}
-        sizes = {r["cid"]: int(r.get("size") or 1) for r in size_rows if r.get("cid") is not None}
-        conductance = {
-            r["cid"]: float(r["conductance"])
-            for r in quality_rows
-            if r.get("cid") is not None and r.get("conductance") is not None
-        }
         # Rows are globally sorted by cnt desc, so the first row seen for a given
         # chunk is that chunk's majority community (highest-cnt row wins).
         majority: dict[str, Any] = {}
@@ -1724,6 +1733,35 @@ class GraphStore:
             return size * max(0.0, 1.0 - cond)
 
         return {cid: _weight(comm) for cid, comm in majority.items()}
+
+    async def _community_size_conductance(self) -> tuple[dict[Any, float], dict[Any, float]]:
+        """(sizes, conductance) per community_id — namespace-global, cached.
+
+        Rebuilt lazily and reused across retrieve() calls; invalidated by
+        ``_invalidate_community_maps`` whenever communities/quality recompute.
+        """
+        if self._community_maps is not None:
+            return self._community_maps
+        size_rows = await self._qry(
+            "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
+            "RETURN e.community_id AS cid, count(e) AS size"
+        )
+        quality_rows = await self._qry(
+            "MATCH (k:COMMUNITY) WHERE k.community_id IS NOT NULL "
+            "RETURN k.community_id AS cid, k.conductance AS conductance"
+        )
+        sizes = {r["cid"]: int(r.get("size") or 1) for r in size_rows if r.get("cid") is not None}
+        conductance = {
+            r["cid"]: float(r["conductance"])
+            for r in quality_rows
+            if r.get("cid") is not None and r.get("conductance") is not None
+        }
+        self._community_maps = (sizes, conductance)
+        return self._community_maps
+
+    def _invalidate_community_maps(self) -> None:
+        """Drop the cached community size/conductance maps (call after recompute)."""
+        self._community_maps = None
 
     async def similar_entities_by_embedding(
         self, name: str, top_k: int = 5
@@ -1832,17 +1870,9 @@ class GraphStore:
             rank = new_rank
         rank = new_rank
 
-        updated = 0
-        for i, nn in enumerate(names):
-            try:
-                await self._cmd(
-                    "MATCH (e:ENTITY {name_norm: $nn}) SET e.pagerank = $pr",
-                    nn=nn,
-                    pr=float(rank[i]),
-                )
-                updated += 1
-            except Exception as exc:
-                logger.warning("_pagerank_numpy_fallback: entity %r failed: %s", nn, exc)
+        updated = await self._bulk_set_entity_scalar(
+            "pagerank", [{"nn": nn, "v": float(rank[i])} for i, nn in enumerate(names)]
+        )
         logger.info("_pagerank_numpy_fallback: updated %d ENTITY nodes", updated)
         return updated
 

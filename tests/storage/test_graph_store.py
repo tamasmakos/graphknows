@@ -241,13 +241,13 @@ async def test_write_relation_skips_unlabelable_predicate() -> None:
 async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
-    # A 3-role instance: Employee (agent-like) + Position + Employer.
+    # A 3-role instance: Employee (agent-like) + Position + Employer. The `id` is
+    # content-hashed at write time (any input id is ignored).
     await store.write_frame_instances(
         session_id="s1",
         chunk_id="c1",
         instances=[
             {
-                "id": "c1:Being_employed:0",
                 "frame": "Being_employed",
                 "match_sim": 0.42,
                 "role_confidence": 0.95,
@@ -261,20 +261,22 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     )
     stmts = _command_strings(client)
 
-    # FRAME_INSTANCE vertex + FRAME_EVOKED_IN evidence edge.
-    fi = next(s for s in stmts if "MERGE (fi:FRAME_INSTANCE {id: $fid})" in s)
-    assert "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)" in fi
-    assert "MATCH (c:CHUNK {chunk_id: $cid})" in fi
+    # FRAME_INSTANCE vertex + FRAME_EVOKED_IN evidence edge, batched via UNWIND.
+    fi_call = next(c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1])
+    assert "UNWIND $rows AS row" in fi_call.args[1]
+    assert "MERGE (fi:FRAME_INSTANCE {id: row.fid})" in fi_call.args[1]
+    assert "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)" in fi_call.args[1]
+    inst_rows = fi_call.kwargs["params"]["rows"]
+    assert len(inst_rows) == 1
+    # Content-hash id: same (frame + role fills) -> same node across chunks.
+    assert inst_rows[0]["fid"].startswith("Being_employed:")
 
-    # One PLAYS_ROLE edge per (instance, role, filler) — 3 roles, 1 filler each.
-    role_stmts = [s for s in stmts if "MERGE (fi)-[:PLAYS_ROLE {role: $role}]->(e)" in s]
-    assert len(role_stmts) == 3
-    role_params = [
-        c.kwargs["params"]["role"]
-        for c in client.command.await_args_list
-        if "PLAYS_ROLE" in c.args[1]
-    ]
-    assert set(role_params) == {"Employee", "Position", "Employer"}
+    # PLAYS_ROLE edges batched in one UNWIND — 3 roles, 1 filler each.
+    role_call = next(c for c in client.command.await_args_list if "PLAYS_ROLE {role: row.role}" in c.args[1])
+    role_rows = role_call.kwargs["params"]["rows"]
+    assert len(role_rows) == 3
+    assert {r["role"] for r in role_rows} == {"Employee", "Position", "Employer"}
+    assert all(r["fid"] == inst_rows[0]["fid"] for r in role_rows)
 
     # Convenience relations: primary (Employee=Caroline) -> the 2 other fillers.
     # Predicate = f"{FRAME}_{ROLE}" via write_relation → _safe_rel_label upper-cases.
@@ -746,9 +748,10 @@ async def test_compute_and_persist_pagerank_native_success() -> None:
         "CALL algo.pageRank()" in c.args[1] and "YIELD node, score" in c.args[1]
         for c in client.query.await_args_list
     )
-    set_calls = [c for c in client.command.await_args_list if "e.pagerank = $pr" in c.args[1]]
-    assert len(set_calls) == 2
-    prs = sorted(c.kwargs["params"]["pr"] for c in set_calls)
+    # Persisted in one batched UNWIND, not a per-entity SET loop.
+    set_calls = [c for c in client.command.await_args_list if "SET e.pagerank = r.v" in c.args[1]]
+    assert len(set_calls) == 1
+    prs = sorted(r["v"] for r in set_calls[0].kwargs["params"]["rows"])
     assert prs == [0.15, 0.42]
 
 
@@ -769,8 +772,9 @@ async def test_compute_and_persist_pagerank_falls_back_to_numpy_on_native_failur
     store = GraphStore(client=client)
     updated = await store.compute_and_persist_pagerank()
     assert updated == 2  # numpy fallback still wrote both entities
-    set_calls = [c for c in client.command.await_args_list if "e.pagerank = $pr" in c.args[1]]
-    assert len(set_calls) == 2
+    set_calls = [c for c in client.command.await_args_list if "SET e.pagerank = r.v" in c.args[1]]
+    assert len(set_calls) == 1
+    assert len(set_calls[0].kwargs["params"]["rows"]) == 2
 
 
 @pytest.mark.asyncio
@@ -795,8 +799,9 @@ async def test_compute_and_persist_pagerank_falls_back_when_all_ranks_null() -> 
     store = GraphStore(client=client)
     updated = await store.compute_and_persist_pagerank()
     assert updated == 2  # fell back to numpy, still wrote both entities
-    set_calls = [c for c in client.command.await_args_list if "e.pagerank = $pr" in c.args[1]]
-    assert len(set_calls) == 2
+    set_calls = [c for c in client.command.await_args_list if "SET e.pagerank = r.v" in c.args[1]]
+    assert len(set_calls) == 1
+    assert len(set_calls[0].kwargs["params"]["rows"]) == 2
 
 
 @pytest.mark.asyncio
@@ -873,9 +878,9 @@ async def test_compute_communities_writes_community_id() -> None:
     store = GraphStore(client=client)
     updated = await store.compute_communities()
     assert updated == 2
-    set_calls = [c for c in client.command.await_args_list if "e.community_id = $cid" in c.args[1]]
-    assert len(set_calls) == 2
-    assert all(c.kwargs["params"]["cid"] == 2 for c in set_calls)
+    set_calls = [c for c in client.command.await_args_list if "SET e.community_id = r.v" in c.args[1]]
+    assert len(set_calls) == 1  # one batched UNWIND
+    assert all(r["v"] == 2 for r in set_calls[0].kwargs["params"]["rows"])
 
 
 @pytest.mark.asyncio

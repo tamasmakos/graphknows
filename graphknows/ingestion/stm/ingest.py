@@ -321,7 +321,9 @@ class _STMIngestHandler:
         # second GLiNER2 schema pass, so only on fact-bearing chunks. Distinct from
         # the FRAME chunk-tag layer above.
         if self._enable_frames:
-            instances = await asyncio.to_thread(self._frame_instances, text, chunk_id, speaker)
+            instances = await asyncio.to_thread(
+                self._frame_instances, text, chunk_id, speaker, embedding
+            )
             if instances:
                 await self._store.write_frame_instances(session_id, chunk_id, instances)
 
@@ -364,16 +366,17 @@ class _STMIngestHandler:
         return len(filtered)
 
     def _frame_instances(
-        self, text: str, chunk_id: str, speaker: str
+        self, text: str, chunk_id: str, speaker: str, embedding: list[float] | None = None
     ) -> list[dict[str, Any]]:
         """Frame-guided role extraction for one chunk → write dicts (thread-run).
 
         Reuses the entity extractor's already-loaded spaCy + GLiNER2 (no second
-        load). Speaker/speakers come from the chunk's turn-lines (same logic the
+        load) and the chunk's already-computed ``embedding`` for frame ranking (no
+        re-embed). Speaker/speakers come from the chunk's turn-lines (same logic the
         SVO pass uses), falling back to the passed ``speaker``. Returns
-        ``[{id, frame, match_sim, role_confidence, roles}]`` (0-1 items per short
-        text, per the role-fillability gate). Empty if the extractor doesn't
-        expose reusable models (e.g. a test stub).
+        ``[{frame, match_sim, role_confidence, roles}]`` (0-1 items per short text,
+        per the role-fillability gate; the FRAME_INSTANCE id is content-hashed at
+        write time). Empty if the extractor doesn't expose reusable models.
         """
         extractor = self._extractor
         if extractor is None or not hasattr(extractor, "nlp") or not hasattr(extractor, "gliner"):
@@ -393,17 +396,17 @@ class _STMIngestHandler:
         nlp = extractor.nlp
         gliner = extractor.gliner
         instances = extract_frame_instances(
-            text, primary, speakers, gliner, lambda t: lu_candidate_frames(t, nlp)
+            text, primary, speakers, gliner,
+            lambda t: lu_candidate_frames(t, nlp, embedding=embedding),
         )
         return [
             {
-                "id": f"{chunk_id}:{inst.frame}:{i}",
                 "frame": inst.frame,
                 "match_sim": inst.match_sim,
                 "role_confidence": inst.role_confidence,
                 "roles": inst.roles,
             }
-            for i, inst in enumerate(instances)
+            for inst in instances
         ]
 
     def _resolve_temporal(
