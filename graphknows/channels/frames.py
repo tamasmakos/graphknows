@@ -1,24 +1,24 @@
-"""FrameChannel — deterministic FrameNet semantic-frame retrieval signal.
+"""FrameChannel — FrameNet semantic-frame retrieval signal.
 
-Owned end-to-end:
-- promote(): at flush, extract frames from the session's LTM chunks and write a
-  FRAME layer (one node per frame evoked in a chunk, with FE fillers + speaker).
-- collect(): parse the query into frames + anchors, match FRAME nodes by frame
-  type (ontology-expanded), rank chunks by an instance-join score (exact-frame
-  weight x anchor-in-role bonus), and emit RRF candidates.
+Chunks are frame-tagged at ingest by cosine-matching their embedding to the
+FrameNet frame-definition index (see ``_frame_index``); this channel matches the
+query the same way and joins on the shared frame type:
+- collect(): match the query embedding to its top-k FrameNet frames, look up the
+  chunks those frames were evoked in (FRAME-[:EVOKED_BY]->CHUNK), rank by the
+  summed query-frame cosine, and emit RRF candidates.
+- promote(): dormant LU-based extraction path (frames are now written at ingest,
+  so it is no longer invoked on the live flush shim); retained for reference.
 
-Abstract-question gate: when the query evokes no concrete frame (pure inference
-questions like "would X be religious"), collect() returns nothing — frames only
-help where there's structure to match, and staying silent avoids displacing the
-vector channel on those questions.
+Frames give abstract/general questions ("what did they start?") a route to
+concrete chunks by the frame they evoke, complementing the lexical/vector
+channels. Fully embedding-based, so the channel is valid in both profiles.
 
-Schema: the FRAME vertex/indexes live in ltm_store._SCHEMA_DDL (ensured on
-connect). Extraction cost is ~spaCy+embed per sentence, run once per session at
-flush; fully local/API-free, so the channel is valid in both profiles.
+Schema: the FRAME vertex/EVOKED_BY edge live in the GraphStore core DDL.
 """
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections import defaultdict
 from typing import Any
@@ -28,10 +28,32 @@ from graphknows.ranking.rrf import rrf_score
 
 log = logging.getLogger(__name__)
 
-_EXACT_FRAME_WEIGHT = 2.0
-_EXPANDED_FRAME_WEIGHT = 1.0
-_ANCHOR_BONUS = 1.6
 _SPEAKER_LINE = re.compile(r"^.*?\|\s*(\w+):")
+
+# A frame evoked in more than this fraction of a session's chunks is saturated:
+# like the conversation participants (see the entity-saturation drop), a generic
+# frame such as ``Activity_ongoing`` matches nearly every chunk, so returning its
+# chunks floods recall with the whole conversation and carries no discriminative
+# signal. Such query-frames are dropped from the join.
+_FRAME_SATURATION_RATIO: float = float(
+    os.environ.get("GRAPHKNOWS_FRAME_SATURATION_RATIO", "0.5")
+)
+
+
+async def _session_chunk_count(rt: Any, session_id: str, state: str | None) -> int:
+    """Total CHUNK count for a session (optionally filtered by lifecycle state)."""
+    if state:
+        rows = await rt.store._qry(
+            "MATCH (c:CHUNK) WHERE c.session_id = $sid AND c.state = $st "
+            "RETURN count(c) AS c",
+            sid=session_id, st=state,
+        )
+    else:
+        rows = await rt.store._qry(
+            "MATCH (c:CHUNK) WHERE c.session_id = $sid RETURN count(c) AS c",
+            sid=session_id,
+        )
+    return int(rows[0]["c"]) if rows else 0
 
 
 def _session_speakers(chunk_texts: list[str]) -> list[str]:
@@ -89,27 +111,30 @@ class FrameChannel(Channel):
                 record.audit.frames_written = written
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
-        """Match FRAME nodes to the query's frames and rank chunks (instance-join)."""
-        parse = ctx.frame_parse()
-        q_frames: set[str] = parse["q_frames"]
-        if not q_frames:
-            return {}  # abstract-question gate: no concrete frame to match
-        expanded: set[str] = parse["expanded"]
-        anchors: set[str] = parse["anchors"]
+        """Match the query embedding to FrameNet frames and rank the chunks they evoke."""
+        from graphknows.channels._frame_index import match_frames
+
+        # Query frames by embedding cosine (top-k, reusing the query embedding the
+        # retriever already computed), mirroring how chunks are frame-tagged at
+        # ingest. Weight each query frame by its cosine so chunks evoking the
+        # strongest query frames rank first.
+        weight = {name: sim for name, sim in match_frames(ctx.emb, top_k=top_k)}
+        if not weight:
+            return {}
 
         rows = await rt.store.query_frame_chunks(
-            list(expanded), ctx.session_id or None, ctx.state
+            list(weight), ctx.session_id or None, ctx.state
         )
+        if not rows:
+            return {}
+
+        rows = await self._drop_saturated(rows, ctx, rt)
         if not rows:
             return {}
 
         chunk_score: dict[str, float] = defaultdict(float)
         for r in rows:
-            base = _EXACT_FRAME_WEIGHT if r["frame_type"] in q_frames else _EXPANDED_FRAME_WEIGHT
-            inst_ents = set(r["fillers"]) | ({r["speaker"]} if r["speaker"] else set())
-            if anchors & inst_ents:
-                base *= _ANCHOR_BONUS
-            chunk_score[r["chunk_id"]] += base
+            chunk_score[r["chunk_id"]] += weight.get(r["frame_type"], 0.0)
 
         ranked = sorted(chunk_score, key=lambda c: -chunk_score[c])[:top_k]
         result: CollectResult = {}
@@ -120,3 +145,29 @@ class FrameChannel(Channel):
                  "doc_id": "", "metadata": {}},
             )
         return result
+
+    @staticmethod
+    async def _drop_saturated(
+        rows: list[dict[str, Any]], ctx: ChannelContext, rt: Any
+    ) -> list[dict[str, Any]]:
+        """Drop rows whose frame is evoked in >50% of the session's chunks.
+
+        Session-scoped only; without a session there is no corpus to measure
+        saturation against, so the rows pass through unchanged.
+        """
+        if not ctx.session_id:
+            return rows
+        total = await _session_chunk_count(rt, ctx.session_id, ctx.state)
+        if not total:
+            return rows
+        cover: dict[str, set[str]] = defaultdict(set)
+        for r in rows:
+            cover[r["frame_type"]].add(r["chunk_id"])
+        saturated = {
+            ft for ft, cs in cover.items()
+            if len(cs) / total > _FRAME_SATURATION_RATIO
+        }
+        if not saturated:
+            return rows
+        log.debug("frame channel dropping saturated frames: %s", sorted(saturated))
+        return [r for r in rows if r["frame_type"] not in saturated]

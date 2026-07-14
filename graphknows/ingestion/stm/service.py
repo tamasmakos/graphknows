@@ -44,12 +44,14 @@ class STMService:
         rel_extractor: Any | None = None,
         embed_dims: int = 0,
         config: STMConfig | None = None,
+        enable_frames: bool = False,
     ) -> None:
         self._store = store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
         self._embed_dims = embed_dims
         self._config = config or STMConfig()
+        self._enable_frames = enable_frames
 
         if embed_fn is not None:
             self._embed_fn = embed_fn
@@ -88,6 +90,7 @@ class STMService:
                 extractor=self._extractor,
                 embed_fn=self._embed_fn,
                 rel_extractor=self._rel_extractor,
+                enable_frames=self._enable_frames,
             )
         return self._ingest_handler
 

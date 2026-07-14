@@ -24,6 +24,10 @@ from graphknows.ingestion.stm._entity_writer import graph_entities
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
+# Frames matched per chunk by embedding cosine (top-k, not an absolute threshold —
+# cosines run low under the remote embedder).
+_FRAME_TOP_K = 5
+
 
 class _STMIngestHandler:
     """Ingest parsed text into the golden GraphStore (state='raw').
@@ -41,10 +45,12 @@ class _STMIngestHandler:
         extractor: Any,
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
+        enable_frames: bool = False,
     ) -> None:
         self._store = store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
+        self._enable_frames = enable_frames
         if embed_fn is not None:
             self._embed_fn = embed_fn
         else:
@@ -273,6 +279,30 @@ class _STMIngestHandler:
         )
         if filtered:
             await self._store.write_entities_bulk(session_id, chunk_id, filtered)
+
+        # FRAME layer — match the chunk's embedding against FrameNet definitions
+        # (top-k, reusing the embedding already computed above; no re-embed) so
+        # abstract/general questions can reach this chunk by the frame it evokes.
+        if self._enable_frames:
+            from graphknows.channels._frame_index import match_frames
+
+            matches = match_frames(embedding, top_k=_FRAME_TOP_K)
+            if matches:
+                await self._store.write_frames(
+                    session_id,
+                    [
+                        {
+                            "frame_type": name,
+                            "chunk_id": chunk_id,
+                            "lu": "",
+                            "speaker": speaker or "",
+                            "fes": [],
+                            "fillers": [],
+                            "confidence": sim,
+                        }
+                        for name, sim in matches
+                    ],
+                )
 
         # GLiNER2 relations — open-vocabulary labels, already precision-gated in
         # the extractor (dep-path/frame corroboration), evidenced to this chunk.

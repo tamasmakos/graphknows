@@ -65,49 +65,69 @@ class TestChannelBaseDefaults:
 
 
 class TestFrameChannelCollect:
-    async def test_abstract_gate_returns_empty_without_touching_store(self):
-        """No concrete query frame -> return {} and never query the store."""
+    async def test_no_matched_frames_returns_empty_without_touching_store(self, monkeypatch):
+        """Query embedding matches no frame -> return {} and never query the store."""
+        monkeypatch.setattr(
+            "graphknows.channels._frame_index.match_frames", lambda emb, top_k=5: []
+        )
         rt = MagicMock()
         rt.store.query_frame_chunks = AsyncMock()
-        out = await FrameChannel().collect(
-            _ctx(q_frames=set(), expanded=set(), anchors=set()), rt, 5
-        )
+        out = await FrameChannel().collect(_ctx(), rt, 5)
         assert out == {}
         rt.store.query_frame_chunks.assert_not_awaited()
 
-    async def test_exact_frame_and_anchor_outrank(self):
+    async def test_stronger_query_frame_outranks(self, monkeypatch):
+        monkeypatch.setattr(
+            "graphknows.channels._frame_index.match_frames",
+            lambda emb, top_k=5: [("Process_start", 0.42), ("Activity_start", 0.30)],
+        )
         rt = MagicMock()
+        rt.store._qry = AsyncMock(return_value=[{"c": 10}])  # 10 session chunks
         rt.store.query_frame_chunks = AsyncMock(
             return_value=[
-                {
-                    "chunk_id": "c_exact_anchor",
-                    "frame_type": "Residence",
-                    "speaker": "melanie",
-                    "fillers": ["beach"],
-                },
-                {
-                    "chunk_id": "c_expanded",
-                    "frame_type": "Temporary_stay",
-                    "speaker": "caroline",
-                    "fillers": ["x"],
-                },
+                {"chunk_id": "c_strong", "frame_type": "Process_start",
+                 "speaker": "mel", "fillers": []},
+                {"chunk_id": "c_weak", "frame_type": "Activity_start",
+                 "speaker": "car", "fillers": []},
             ]
         )
-        ctx = _ctx(
-            q_frames={"Residence"}, expanded={"Residence", "Temporary_stay"}, anchors={"melanie"}
-        )
-        out = await FrameChannel().collect(ctx, rt, 5)
-        assert set(out) == {"c_exact_anchor", "c_expanded"}
-        # exact frame (2.0) x anchor bonus (1.6) must rank above expanded (1.0)
-        assert out["c_exact_anchor"][0] > out["c_expanded"][0]
-        assert out["c_exact_anchor"][1]["sources"] == {"frame"}
+        out = await FrameChannel().collect(_ctx(), rt, 5)
+        assert set(out) == {"c_strong", "c_weak"}
+        # chunk evoking the higher-cosine query frame ranks first
+        assert out["c_strong"][0] > out["c_weak"][0]
+        assert out["c_strong"][1]["sources"] == {"frame"}
+        # store queried with exactly the matched frame names
+        args = rt.store.query_frame_chunks.await_args.args
+        assert set(args[0]) == {"Process_start", "Activity_start"}
 
-    async def test_empty_store_result_returns_empty(self):
+    async def test_saturated_frame_dropped(self, monkeypatch):
+        """A frame evoked in >50% of session chunks is dropped as non-discriminative."""
+        monkeypatch.setattr(
+            "graphknows.channels._frame_index.match_frames",
+            lambda emb, top_k=5: [("Activity_ongoing", 0.35), ("Process_start", 0.34)],
+        )
+        rt = MagicMock()
+        rt.store._qry = AsyncMock(return_value=[{"c": 4}])  # 4 session chunks
+        rt.store.query_frame_chunks = AsyncMock(
+            return_value=[
+                # Activity_ongoing floods 3/4 chunks -> saturated, dropped.
+                {"chunk_id": "c1", "frame_type": "Activity_ongoing", "speaker": "", "fillers": []},
+                {"chunk_id": "c2", "frame_type": "Activity_ongoing", "speaker": "", "fillers": []},
+                {"chunk_id": "c3", "frame_type": "Activity_ongoing", "speaker": "", "fillers": []},
+                {"chunk_id": "c4", "frame_type": "Process_start", "speaker": "", "fillers": []},
+            ]
+        )
+        out = await FrameChannel().collect(_ctx(), rt, 5)
+        assert set(out) == {"c4"}  # only the discriminative frame's chunk survives
+
+    async def test_empty_store_result_returns_empty(self, monkeypatch):
+        monkeypatch.setattr(
+            "graphknows.channels._frame_index.match_frames",
+            lambda emb, top_k=5: [("F", 0.4)],
+        )
         rt = MagicMock()
         rt.store.query_frame_chunks = AsyncMock(return_value=[])
-        out = await FrameChannel().collect(
-            _ctx(q_frames={"F"}, expanded={"F"}, anchors=set()), rt, 5
-        )
+        out = await FrameChannel().collect(_ctx(), rt, 5)
         assert out == {}
 
 

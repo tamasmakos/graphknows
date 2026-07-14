@@ -36,6 +36,7 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
         embed_fn=embed_one,
         rel_extractor=build_relation_extractor(settings),
         embed_dims=settings.embed_dimensions,
+        enable_frames=settings.enable_frames,
     )
 
 
