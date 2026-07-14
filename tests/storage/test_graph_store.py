@@ -458,6 +458,273 @@ async def test_merge_entities_noop_on_same_node() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Graph analytics (WS4) — native ArcadeDB algos + numpy pagerank fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_analytical_view_creates_and_rebuilds() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store._ensure_analytical_view()
+    stmts = _command_strings(client)
+    assert any("CREATE GRAPH ANALYTICAL VIEW mem_olap UPDATE MODE OFF" in s for s in stmts)
+    assert any("REBUILD GRAPH ANALYTICAL VIEW mem_olap" in s for s in stmts)
+    # Both statements ride the SQL endpoint (CALL is cypher-only, DDL is sql-only).
+    assert all(c.kwargs.get("language") == "sql" for c in client.command.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_ensure_analytical_view_swallows_already_exists() -> None:
+    client = _mock_client()
+
+    async def command_side_effect(db, cmd, language="cypher", params=None, session_id=None):
+        if cmd.startswith("CREATE GRAPH ANALYTICAL VIEW"):
+            raise Exception("view already exists")
+        return []
+
+    client.command = AsyncMock(side_effect=command_side_effect)
+    store = GraphStore(client=client)
+    await store._ensure_analytical_view()  # must not raise
+    assert any(
+        "REBUILD GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_analytical_view_raises_on_real_error() -> None:
+    client = _mock_client()
+    client.command = AsyncMock(side_effect=Exception("connection refused"))
+    store = GraphStore(client=client)
+    with pytest.raises(Exception, match="connection refused"):
+        await store._ensure_analytical_view()
+
+
+@pytest.mark.asyncio
+async def test_compute_and_persist_pagerank_native_success() -> None:
+    client = _mock_client(
+        query_rows=[{"nn": "melanie", "rank": 0.42}, {"nn": "caroline", "rank": 0.15}]
+    )
+    store = GraphStore(client=client)
+    updated = await store.compute_and_persist_pagerank()
+    assert updated == 2
+    assert any("CALL algo.pageRank()" in c.args[1] for c in client.query.await_args_list)
+    set_calls = [c for c in client.command.await_args_list if "e.pagerank = $pr" in c.args[1]]
+    assert len(set_calls) == 2
+    prs = sorted(c.kwargs["params"]["pr"] for c in set_calls)
+    assert prs == [0.15, 0.42]
+
+
+@pytest.mark.asyncio
+async def test_compute_and_persist_pagerank_falls_back_to_numpy_on_native_failure() -> None:
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "algo.pageRank" in cypher:
+            raise Exception("CommandSQLParsingException: algo.pageRank unsupported")
+        if "RETURN e.name_norm AS nn" in cypher:
+            return [{"nn": "melanie"}, {"nn": "caroline"}]
+        if "RETURN DISTINCT a.name_norm AS src" in cypher:
+            return [{"src": "melanie", "dst": "caroline", "w": 1.0}]
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    updated = await store.compute_and_persist_pagerank()
+    assert updated == 2  # numpy fallback still wrote both entities
+    set_calls = [c for c in client.command.await_args_list if "e.pagerank = $pr" in c.args[1]]
+    assert len(set_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_compute_and_persist_pagerank_falls_back_when_all_ranks_null() -> None:
+    """Regression guard: on a real ~190-entity ArcadeDB 26.5.1 graph,
+    ``CALL algo.pageRank()`` returns rows with every ``rank`` null (verified
+    live during WS4) — that must be treated as a failure, not persisted as
+    meaningless zeros.
+    """
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "algo.pageRank" in cypher:
+            return [{"nn": "melanie", "rank": None}, {"nn": "caroline", "rank": None}]
+        if "RETURN e.name_norm AS nn" in cypher:
+            return [{"nn": "melanie"}, {"nn": "caroline"}]
+        if "RETURN DISTINCT a.name_norm AS src" in cypher:
+            return [{"src": "melanie", "dst": "caroline", "w": 1.0}]
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    updated = await store.compute_and_persist_pagerank()
+    assert updated == 2  # fell back to numpy, still wrote both entities
+    set_calls = [c for c in client.command.await_args_list if "e.pagerank = $pr" in c.args[1]]
+    assert len(set_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_compute_and_persist_pagerank_skip_view_ensure_avoids_rebuild() -> None:
+    client = _mock_client(query_rows=[{"nn": "melanie", "rank": 0.5}])
+    store = GraphStore(client=client)
+    await store.compute_and_persist_pagerank(skip_view_ensure=True)
+    assert not any(
+        "GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_compute_graph_embeddings_writes_list_property() -> None:
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "algo.node2vec" in cypher:
+            return [{"nn": "melanie", "embedding": [0.1, 0.2, 0.3]}]
+        if "(a:ENTITY)-[r]->(b:ENTITY)" in cypher:
+            return [{"nn": "melanie", "deg": 2}]
+        if "(a:ENTITY)<-[r]-(b:ENTITY)" in cypher:
+            return [{"nn": "melanie", "deg": 2}]
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    updated = await store.compute_graph_embeddings()
+    assert updated == 1
+    # Inline literal, not a $param (ArcadeDB double-wraps LIST-typed params in
+    # SET — verified live; see the _emb_sql usage in the source).
+    set_call = next(
+        c for c in client.command.await_args_list if "e.graph_embedding = [" in c.args[1]
+    )
+    assert "e.graph_embedding = [0.1,0.2,0.3]" in set_call.args[1]
+    assert set_call.kwargs["params"] == {"nn": "melanie"}
+
+
+@pytest.mark.asyncio
+async def test_compute_graph_embeddings_skips_sparse_entities() -> None:
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "algo.node2vec" in cypher:
+            return [{"nn": "loner", "embedding": [0.1, 0.2]}]
+        # Degree queries return nothing for "loner" -> total degree 0 < 3.
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    updated = await store.compute_graph_embeddings()
+    assert updated == 0
+    # View-ensure DDL runs, but no ENTITY was actually written.
+    assert not any(
+        "e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_compute_graph_embeddings_soft_fails_on_native_error() -> None:
+    client = _mock_client()
+    client.query = AsyncMock(side_effect=Exception("algo.node2vec not supported"))
+    store = GraphStore(client=client)
+    updated = await store.compute_graph_embeddings()
+    assert updated == 0
+    assert not any(
+        "e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_compute_communities_writes_community_id() -> None:
+    client = _mock_client(query_rows=[{"nn": "melanie", "cid": 2}, {"nn": "caroline", "cid": 2}])
+    store = GraphStore(client=client)
+    updated = await store.compute_communities()
+    assert updated == 2
+    set_calls = [c for c in client.command.await_args_list if "e.community_id = $cid" in c.args[1]]
+    assert len(set_calls) == 2
+    assert all(c.kwargs["params"]["cid"] == 2 for c in set_calls)
+
+
+@pytest.mark.asyncio
+async def test_compute_communities_soft_fails_to_zero_on_error() -> None:
+    client = _mock_client()
+    client.query = AsyncMock(side_effect=Exception("algo.louvain not supported"))
+    store = GraphStore(client=client)
+    updated = await store.compute_communities()
+    assert updated == 0
+    assert not any(
+        "e.community_id = $cid" in c.args[1] for c in client.command.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_compute_communities_soft_fails_on_empty_result() -> None:
+    client = _mock_client(query_rows=[])
+    store = GraphStore(client=client)
+    assert await store.compute_communities() == 0
+    assert not any(
+        "e.community_id = $cid" in c.args[1] for c in client.command.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_chunk_community_weights_majority_and_size() -> None:
+    client = _mock_client()
+
+    async def query_side_effect(db, cypher, params=None):
+        if "MENTIONS]->(e:ENTITY)" in cypher:
+            # Pre-sorted by cnt desc, as ArcadeDB's ORDER BY would return.
+            return [
+                {"chunk_id": "c1", "cid": 2, "cnt": 3},
+                {"chunk_id": "c2", "cid": 1, "cnt": 2},
+                {"chunk_id": "c1", "cid": 1, "cnt": 1},
+            ]
+        if "count(e) AS size" in cypher:
+            return [{"cid": 1, "size": 5}, {"cid": 2, "size": 8}]
+        return []
+
+    client.query = AsyncMock(side_effect=query_side_effect)
+    store = GraphStore(client=client)
+    weights = await store.chunk_community_weights(["c1", "c2"])
+    assert weights == {"c1": 8.0, "c2": 5.0}
+
+
+@pytest.mark.asyncio
+async def test_chunk_community_weights_noop_on_empty() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    assert await store.chunk_community_weights([]) == {}
+    client.query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chunk_community_weights_soft_fails_on_error() -> None:
+    client = _mock_client()
+    client.query = AsyncMock(side_effect=Exception("boom"))
+    store = GraphStore(client=client)
+    assert await store.chunk_community_weights(["c1"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_similar_entities_by_embedding_cosine_ranks() -> None:
+    client = _mock_client(
+        query_rows=[
+            {"nn": "melanie", "name": "Melanie", "emb": [1.0, 0.0]},
+            {"nn": "mel", "name": "Mel", "emb": [1.0, 0.0]},  # identical -> sim 1.0
+            {"nn": "camping", "name": "Camping", "emb": [0.0, 1.0]},  # orthogonal -> sim 0.0
+        ]
+    )
+    store = GraphStore(client=client)
+    out = await store.similar_entities_by_embedding("Melanie", top_k=5)
+    assert [r["name_norm"] for r in out] == ["mel", "camping"]
+    assert out[0]["similarity"] == pytest.approx(1.0)
+    assert out[1]["similarity"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_similar_entities_by_embedding_empty_when_seed_missing() -> None:
+    client = _mock_client(query_rows=[{"nn": "other", "name": "Other", "emb": [1.0, 0.0]}])
+    store = GraphStore(client=client)
+    assert await store.similar_entities_by_embedding("Melanie") == []
+
+
+# ---------------------------------------------------------------------------
 # Integration (live ArcadeDB only)
 # ---------------------------------------------------------------------------
 

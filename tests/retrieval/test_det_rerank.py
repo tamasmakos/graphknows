@@ -41,6 +41,7 @@ def _make_retriever():
     store.search_topics = AsyncMock(return_value=[])
     store.search_chunks_ann = AsyncMock(return_value=[])
     store.get_chunks_by_ids = AsyncMock(return_value={})
+    store.chunk_community_weights = AsyncMock(return_value={})
     return DETRetriever(store=store), store
 
 

@@ -249,11 +249,12 @@ class AgenticRetriever(BaseGraphRetriever):
     ) -> list[tuple[float, dict]]:
         """Scale fused RRF scores by each chunk's community weight.
 
-        GDS (llm_assisted) persists ``CHUNK.community_weight``; chunks in denser,
-        more cohesive communities are boosted (bounded 1-3x, matching the
-        DETRetriever ``_community_boost``). A single batched lookup keeps it cheap;
-        chunks without a weight (or synthetic ``topic:`` entries) are left at 1.0,
-        so this never regresses when GDS did not run.
+        Weight comes from ``GraphStore.chunk_community_weights`` (WS4): the
+        size of the majority native-Louvain community among a chunk's
+        MENTIONS-linked entities, matching the DETRetriever ``_community_boost``
+        wiring so both profiles share one signal. A single batched lookup keeps
+        it cheap; chunks without a weight (or synthetic ``topic:`` entries) are
+        left at 1.0, so this never regresses when community detection did not run.
         """
         if not scored:
             return scored
@@ -261,16 +262,10 @@ class AgenticRetriever(BaseGraphRetriever):
         if not ids:
             return scored
         try:
-            from graphknows.storage.arcadedb._sql import quoted_list
-
-            rows = await self._store._qry(
-                f"MATCH (c:CHUNK) WHERE c.chunk_id IN {quoted_list(ids)} "
-                "RETURN c.chunk_id AS id, c.community_weight AS w"
-            )
+            weights = await self._store.chunk_community_weights(ids)
         except Exception as exc:
             log.debug("community-weight lookup skipped: %s", exc)
             return scored
-        weights = {r["id"]: r.get("w") for r in rows if r.get("w") is not None}
         if not weights:
             return scored
         boosted: list[tuple[float, dict]] = []

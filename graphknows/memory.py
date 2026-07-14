@@ -8,11 +8,14 @@ lifecycles, background-loop details, or promotion ordering.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from typing import Any
 
 from graphknows.settings import GraphKnowsSettings
+
+logger = logging.getLogger(__name__)
 
 _STM_RECALL_WEIGHT: float = 0.6
 _LTM_RECALL_WEIGHT: float = 0.4
@@ -310,9 +313,11 @@ class Memory:
         The full STM->LTM promotion pipeline is retired in the golden layer.
         This resolves duplicate/junk ENTITY nodes (layered resolver: junk-hub
         filter, name-standardization merge, person-nickname merge), then
-        recomputes PageRank over the *merged* entity graph and flips the
-        session's lifecycle ``state`` raw -> consolidated in place. Nothing else
-        is deleted; relation canonicalize / topics land later.
+        recomputes PageRank/node2vec embeddings/communities over the *merged*
+        entity graph (native ArcadeDB algos, each with its own soft-fail —
+        see ``GraphStore.compute_and_persist_pagerank`` et al.) and flips the
+        session's lifecycle ``state`` raw -> consolidated in place. Nothing
+        else is deleted; relation canonicalize / topics land later.
         """
         import time
 
@@ -321,13 +326,28 @@ class Memory:
         t0 = time.monotonic()
         errors: list[str] = []
         pagerank_updated = 0
+        graph_embeddings_computed = 0
+        communities_computed = 0
         chunks_flipped = 0
         resolution = {"dropped": 0, "merged": 0}
         try:
             await self._get_retriever()  # ensures the store is connected + schema'd
             store = self._retriever_stores[0]
             resolution = await resolve_entities(store, session_id)
-            pagerank_updated = await store.compute_and_persist_pagerank()
+            # Rebuild the analytical view once and share it across all three
+            # algos below (each is skip_view_ensure=True) — rebuilding is not
+            # free. A failure here is non-fatal: each algo call still runs and
+            # handles its own failure (pagerank falls back to numpy; the other
+            # two soft-fail to 0), it just retries the (already-failed) view.
+            try:
+                await store._ensure_analytical_view()
+            except Exception as exc:
+                logger.warning("flush_memory: analytical view ensure failed: %s", exc)
+            pagerank_updated = await store.compute_and_persist_pagerank(skip_view_ensure=True)
+            graph_embeddings_computed = await store.compute_graph_embeddings(
+                skip_view_ensure=True
+            )
+            communities_computed = await store.compute_communities(skip_view_ensure=True)
             chunks_flipped = await store.consolidate_session(session_id)
         except Exception as exc:
             errors.append(str(exc))
@@ -340,6 +360,8 @@ class Memory:
             "topics_created": 0,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],
+            "graph_embeddings_computed": graph_embeddings_computed,
+            "communities_computed": communities_computed,
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }

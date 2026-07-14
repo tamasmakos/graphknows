@@ -45,6 +45,11 @@ _CHUNK_BATCH = 20
 # ensure_schema(dims) so the index matches the configured embedder.
 _VEC_DIM = "__VEC_DIM__"
 
+# Graph OLAP analytical view backing `CALL algo.*` (pageRank/node2vec/louvain).
+# Ported from the retired ltm_store._ensure_analytical_view — see that method's
+# docstring for why the view is required (CSR engine vs. slow OLTP traversal).
+_OLAP_VIEW = "mem_olap"
+
 # Known single-valued relation predicates — a new fact tombstones the old edge
 # (sets invalid_at / is_current=false) instead of coexisting with it.
 # The FrameNet-derived labels (RESIDENCE, BEING_EMPLOYED) map the obvious
@@ -952,17 +957,334 @@ class GraphStore:
     # Graph analytics
     # ------------------------------------------------------------------
 
-    async def compute_and_persist_pagerank(self) -> int:
-        """Compute in-process PageRank over the entity-relation graph and
-        persist ``pagerank`` (and degree centrality) on ENTITY nodes.
+    async def _ensure_analytical_view(self) -> None:
+        """Create + rebuild the Graph OLAP view so ``CALL algo.*`` uses the CSR engine.
 
-        Returns the number of ENTITY nodes updated. Soft-fails to 0 when numpy
-        is unavailable or the graph is empty.
+        Ported from the retired ``ltm_store._ensure_analytical_view``. Without a
+        covering Graph Analytical View, ArcadeDB runs graph algorithms through
+        the OLTP traversal path — orders of magnitude slower, enough to exceed
+        the client read timeout and look hung. Requires ArcadeDB >=26.3.2. A
+        full-graph view (no VERTEX/EDGE TYPES clause) covers every type the
+        native algos touch. ``UPDATE MODE OFF`` marks the view stale on each
+        commit, so it is rebuilt against current data on every call — cheap
+        relative to a wrong/stale result, but not free, so callers running
+        several algos in one pass (see ``memory.flush_memory``) should call
+        this once and pass ``skip_view_ensure=True`` to the rest. Raises on
+        failure so callers can decide how to react (pagerank falls back to
+        numpy; node2vec/louvain soft-fail to 0).
+        """
+        try:
+            await self._c.command(
+                self._db,
+                f"CREATE GRAPH ANALYTICAL VIEW {_OLAP_VIEW} UPDATE MODE OFF",
+                language="sql",
+            )
+        except Exception as exc:
+            if "already exists" not in str(exc).lower():
+                raise
+        await self._c.command(
+            self._db, f"REBUILD GRAPH ANALYTICAL VIEW {_OLAP_VIEW}", language="sql"
+        )
+
+    async def _entity_degree_map(self) -> dict[str, int]:
+        """Total (in+out) semantic-relation degree per ENTITY, keyed by ``name_norm``.
+
+        Structural edge types are excluded (same policy as ``entity_relation_graph``
+        / the numpy pagerank). Two directed queries avoid relying on ArcadeDB's
+        undirected Cypher pattern support.
+        """
+        struct = _structural_types_literal()
+        out_rows = await self._qry(
+            f"MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE NOT type(r) IN {struct} "
+            "RETURN a.name_norm AS nn, count(r) AS deg"
+        )
+        in_rows = await self._qry(
+            f"MATCH (a:ENTITY)<-[r]-(b:ENTITY) WHERE NOT type(r) IN {struct} "
+            "RETURN a.name_norm AS nn, count(r) AS deg"
+        )
+        degree: dict[str, int] = {}
+        for r in out_rows + in_rows:
+            nn = r.get("nn")
+            if nn:
+                degree[nn] = degree.get(nn, 0) + int(r.get("deg") or 0)
+        return degree
+
+    async def compute_and_persist_pagerank(self, skip_view_ensure: bool = False) -> int:
+        """Compute PageRank over the entity-relation graph and persist ``pagerank``.
+
+        Tries ArcadeDB's native ``CALL algo.pageRank()`` (scoped to ENTITY rows
+        via ``node.name_norm IS NOT NULL`` — ``name_norm`` is ENTITY-only in
+        this schema, and is the scoping filter that actually works: ArcadeDB's
+        Cypher does not honour a ``node:ENTITY`` label predicate inside a
+        ``CALL ... YIELD ... WHERE`` clause, it silently matches zero rows)
+        first. **On ANY failure** (view creation, unsupported algo, timeout,
+        empty graph, or every yielded ``rank`` coming back null — observed on
+        a real ~190-entity graph on ArcadeDB 26.5.1, see WS4 verification)
+        this falls back to the in-process numpy power-iteration implementation
+        (``_pagerank_numpy_fallback``) so a flush never comes up empty.
+
+        Args:
+            skip_view_ensure: Skip rebuilding the analytical view (the caller
+                already did so in this pass — see ``_ensure_analytical_view``).
+
+        Returns:
+            Number of ENTITY nodes updated with a pagerank score.
+        """
+        try:
+            if not skip_view_ensure:
+                await self._ensure_analytical_view()
+            rows = await self._qry(
+                "CALL algo.pageRank() YIELD node, rank "
+                "WHERE node.name_norm IS NOT NULL "
+                "RETURN node.name_norm AS nn, rank"
+            )
+            # A row with a null rank is not a usable result — treat "every rank
+            # is null" the same as "no rows" so we don't persist meaningless
+            # zeros over a graph that never actually got ranked.
+            rows = [r for r in rows if r.get("nn") and r.get("rank") is not None]
+            if not rows:
+                raise RuntimeError("native algo.pageRank returned no usable (non-null) ranks")
+        except Exception as exc:
+            logger.info(
+                "compute_and_persist_pagerank: native algo.pageRank unavailable (%s); "
+                "falling back to numpy",
+                exc,
+            )
+            return await self._pagerank_numpy_fallback()
+
+        updated = 0
+        for r in rows:
+            try:
+                await self._cmd(
+                    "MATCH (e:ENTITY {name_norm: $nn}) SET e.pagerank = $pr",
+                    nn=r["nn"],
+                    pr=float(r.get("rank") or 0.0),
+                )
+                updated += 1
+            except Exception as exc:
+                logger.warning(
+                    "compute_and_persist_pagerank: entity %r failed: %s", r["nn"], exc
+                )
+        logger.info(
+            "compute_and_persist_pagerank: native algo.pageRank updated %d ENTITY nodes", updated
+        )
+        return updated
+
+    async def compute_graph_embeddings(
+        self, dimensions: int = 32, skip_view_ensure: bool = False
+    ) -> int:
+        """Compute node2vec embeddings over the entity-relation graph -> ``ENTITY.graph_embedding``.
+
+        New capability (no numpy equivalent — this is not a fallback-guarded
+        replacement of an existing feature). Soft-fails to 0 on any error or
+        an empty result; entities with fewer than 3 semantic-relation edges are
+        skipped (too sparse for a meaningful walk-based embedding).
+
+        Args:
+            dimensions: node2vec embedding dimension.
+            skip_view_ensure: Skip rebuilding the analytical view (see
+                ``_ensure_analytical_view``).
+
+        Returns:
+            Number of ENTITY nodes updated with a ``graph_embedding``.
+        """
+        try:
+            if not skip_view_ensure:
+                await self._ensure_analytical_view()
+            # Scoped via node.name_norm IS NOT NULL, not node:ENTITY — see
+            # compute_and_persist_pagerank's docstring for why the label
+            # predicate doesn't work in ArcadeDB's Cypher.
+            rows = await self._qry(
+                f"CALL algo.node2vec({{walkLength:20,walks:20,dimensions:{int(dimensions)}}}) "
+                "YIELD node, embedding "
+                "WHERE node.name_norm IS NOT NULL "
+                "RETURN node.name_norm AS nn, embedding"
+            )
+        except Exception as exc:
+            logger.info("compute_graph_embeddings: native node2vec unavailable (%s); skipping", exc)
+            return 0
+
+        rows = [r for r in rows if r.get("nn") and r.get("embedding")]
+        if not rows:
+            logger.info("compute_graph_embeddings: no embeddings returned; skipping")
+            return 0
+
+        # A genuinely empty degree map (no entity has any semantic relation)
+        # still means every entity is sparse — only a *failed* lookup disables
+        # the filter, tracked separately so it isn't mistaken for "empty".
+        degree_available = True
+        try:
+            degree = await self._entity_degree_map()
+        except Exception as exc:
+            logger.warning(
+                "compute_graph_embeddings: degree lookup failed (%s); skipping sparsity filter",
+                exc,
+            )
+            degree = {}
+            degree_available = False
+
+        updated = 0
+        for r in rows:
+            nn = r["nn"]
+            if degree_available and degree.get(nn, 0) < 3:
+                continue
+            try:
+                # Inline literal, not a $param — verified live that ArcadeDB's
+                # Cypher SET double-wraps a LIST-typed param (n.prop becomes
+                # [[...]] instead of [...]), same reason _set_embedding uses
+                # an inline literal for CHUNK/ENTITY/TOPIC.embedding.
+                emb_literal = _emb_sql([float(x) for x in r["embedding"]])
+                await self._cmd(
+                    f"MATCH (e:ENTITY {{name_norm: $nn}}) SET e.graph_embedding = {emb_literal}",
+                    nn=nn,
+                )
+                updated += 1
+            except Exception as exc:
+                logger.warning("compute_graph_embeddings: entity %r failed: %s", nn, exc)
+        logger.info("compute_graph_embeddings: wrote %d ENTITY graph_embedding(s)", updated)
+        return updated
+
+    async def compute_communities(self, skip_view_ensure: bool = False) -> int:
+        """Compute community_id via ArcadeDB's native Louvain -> ``ENTITY.community_id``.
+
+        Replaces the retired igraph/leidenalg community step; runs in both
+        llm_free and llm_assisted modes (plan §1: ``graph_embedding``/community
+        are both-modes signals now). New capability — soft-fails to 0 on any
+        error or an empty result; no fallback required.
+
+        Args:
+            skip_view_ensure: Skip rebuilding the analytical view (see
+                ``_ensure_analytical_view``).
+
+        Returns:
+            Number of ENTITY nodes updated with a ``community_id``.
+        """
+        try:
+            if not skip_view_ensure:
+                await self._ensure_analytical_view()
+            rows = await self._qry(
+                "CALL algo.louvain() YIELD node, communityId "
+                "WHERE node.name_norm IS NOT NULL "
+                "RETURN node.name_norm AS nn, communityId AS cid"
+            )
+        except Exception as exc:
+            logger.info("compute_communities: native louvain unavailable (%s); skipping", exc)
+            return 0
+
+        rows = [r for r in rows if r.get("nn") and r.get("cid") is not None]
+        if not rows:
+            logger.info("compute_communities: no rows returned; skipping")
+            return 0
+
+        updated = 0
+        for r in rows:
+            try:
+                await self._cmd(
+                    "MATCH (e:ENTITY {name_norm: $nn}) SET e.community_id = $cid",
+                    nn=r["nn"],
+                    cid=int(r["cid"]),
+                )
+                updated += 1
+            except Exception as exc:
+                logger.warning("compute_communities: entity %r failed: %s", r["nn"], exc)
+        logger.info("compute_communities: wrote %d ENTITY community_id(s)", updated)
+        return updated
+
+    async def chunk_community_weights(self, chunk_ids: list[str]) -> dict[str, float]:
+        """Community-size boost weight per chunk, from its MENTIONS-linked entities.
+
+        For each chunk, takes the majority (most-mentioned) non-null
+        ``community_id`` among the entities it mentions and returns that
+        community's size (entity count) as the raw weight — bounded downstream
+        by ``ranking.rrf.community_boost``. Chunks with no community-tagged
+        entities are absent from the result (callers default to 1.0, a no-op).
+        Feeds ``DETRetriever._community_boost`` / ``AgenticRetriever
+        ._apply_community_weights`` in both profiles.
+        """
+        ids = [c for c in chunk_ids if c]
+        if not ids:
+            return {}
+        try:
+            rows = await self._qry(
+                f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
+                f"WHERE c.chunk_id IN {quoted_list(ids)} AND e.community_id IS NOT NULL "
+                f"RETURN c.chunk_id AS chunk_id, e.community_id AS cid, count(e) AS cnt "
+                f"ORDER BY cnt DESC"
+            )
+            size_rows = await self._qry(
+                "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
+                "RETURN e.community_id AS cid, count(e) AS size"
+            )
+        except Exception as exc:
+            logger.debug("chunk_community_weights failed (non-fatal): %s", exc)
+            return {}
+        sizes = {r["cid"]: int(r.get("size") or 1) for r in size_rows if r.get("cid") is not None}
+        # Rows are globally sorted by cnt desc, so the first row seen for a given
+        # chunk is that chunk's majority community (highest-cnt row wins).
+        majority: dict[str, Any] = {}
+        for r in rows:
+            cid = r.get("chunk_id")
+            if cid and cid not in majority:
+                majority[cid] = r.get("cid")
+        return {cid: float(sizes.get(comm, 1)) for cid, comm in majority.items()}
+
+    async def similar_entities_by_embedding(
+        self, name: str, top_k: int = 5
+    ) -> list[dict[str, Any]]:
+        """Entities most similar to *name* by cosine over ``graph_embedding``.
+
+        In-Python cosine over every ENTITY.graph_embedding — entity counts are
+        small (tens-hundreds per namespace), so no vector index is needed.
+        Returns rows of ``{name, name_norm, similarity}`` excluding the seed
+        itself, empty when the seed or the corpus lacks embeddings.
         """
         try:
             import numpy as np
         except ImportError:
-            logger.info("compute_and_persist_pagerank: numpy unavailable, skipping")
+            return []
+        seed_nn = _name_norm(name)
+        rows = await self._qry(
+            "MATCH (e:ENTITY) WHERE e.graph_embedding IS NOT NULL "
+            "RETURN e.name_norm AS nn, e.name AS name, e.graph_embedding AS emb"
+        )
+        seed_emb: list[float] | None = None
+        candidates: list[tuple[str, str, list[float]]] = []
+        for r in rows:
+            emb = r.get("emb")
+            if not emb:
+                continue
+            if r.get("nn") == seed_nn:
+                seed_emb = emb
+            else:
+                candidates.append((r.get("nn"), r.get("name") or r.get("nn"), emb))
+        if seed_emb is None or not candidates:
+            return []
+        seed = np.asarray(seed_emb, dtype=float)
+        seed = seed / (np.linalg.norm(seed) + 1e-9)
+        scored: list[tuple[float, str, str]] = []
+        for nn, disp_name, emb in candidates:
+            v = np.asarray(emb, dtype=float)
+            v = v / (np.linalg.norm(v) + 1e-9)
+            scored.append((float(seed @ v), nn, disp_name))
+        scored.sort(key=lambda x: -x[0])
+        return [
+            {"name_norm": nn, "name": disp_name, "similarity": sim}
+            for sim, nn, disp_name in scored[:top_k]
+        ]
+
+    async def _pagerank_numpy_fallback(self) -> int:
+        """In-process PageRank over the entity-relation graph (numpy power iteration).
+
+        The pre-WS4 implementation, kept as the safety net for
+        ``compute_and_persist_pagerank`` when ArcadeDB's native
+        ``CALL algo.pageRank()`` is unavailable or fails. Persists ``pagerank``
+        on ENTITY nodes. Returns the number of ENTITY nodes updated. Soft-fails
+        to 0 when numpy is unavailable or the graph is empty.
+        """
+        try:
+            import numpy as np
+        except ImportError:
+            logger.info("_pagerank_numpy_fallback: numpy unavailable, skipping")
             return 0
 
         try:
@@ -977,7 +1299,7 @@ class GraphStore:
                 "coalesce(r.confidence, 1.0) AS w"
             )
         except Exception as exc:
-            logger.warning("compute_and_persist_pagerank: graph query failed: %s", exc)
+            logger.warning("_pagerank_numpy_fallback: graph query failed: %s", exc)
             return 0
 
         names = [r["nn"] for r in entity_rows if r.get("nn")]
@@ -1023,8 +1345,8 @@ class GraphStore:
                 )
                 updated += 1
             except Exception as exc:
-                logger.warning("compute_and_persist_pagerank: entity %r failed: %s", nn, exc)
-        logger.info("compute_and_persist_pagerank: updated %d ENTITY nodes", updated)
+                logger.warning("_pagerank_numpy_fallback: entity %r failed: %s", nn, exc)
+        logger.info("_pagerank_numpy_fallback: updated %d ENTITY nodes", updated)
         return updated
 
     # ------------------------------------------------------------------

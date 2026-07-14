@@ -255,6 +255,9 @@ class DETRetriever(BaseGraphRetriever):
         # before we cut to top_k — shaping affects ordering, not just display.
         needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
         text_map = await self.store.get_chunks_by_ids(needs_meta) if needs_meta else {}
+        # Community boost (WS4): derived from each chunk's MENTIONS-linked
+        # entities' native-Louvain community_id, not stored per-chunk metadata.
+        community_weights = await self.store.chunk_community_weights(list(combined.keys()))
 
         # Apply _community_boost, PageRank boost, and _shape_score to every
         # candidate BEFORE sorting so the final order reflects the shaped score.
@@ -262,6 +265,8 @@ class DETRetriever(BaseGraphRetriever):
         for cid, (base_score, info) in combined.items():
             fc = text_map.get(cid, {})
             meta = fc.get("metadata") or info.get("metadata") or {}
+            if cid in community_weights:
+                meta = {**meta, "community_weight": community_weights[cid]}
             # PageRank centrality boost: e.pagerank from WS-6 ENTITY projection.
             # Absent/zero → pagerank_boost returns 1.0 (no effect).
             pr = float(meta.get("pagerank", 0.0) or 0.0)

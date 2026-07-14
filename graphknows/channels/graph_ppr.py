@@ -29,6 +29,15 @@ _ITERATIONS = 40
 _TOP_ENTITIES = 12  # entities whose chunks are surfaced
 _MIN_GRAPH_NODES = 3
 
+# Graph-embedding seed expansion (WS4): pulls in entities structurally close to
+# a token-matched seed (via ENTITY.graph_embedding cosine) but missed by name
+# overlap — e.g. a query mentioning "Caroline" also seeding her tightly-linked
+# but differently-named collaborators. Capped so a broad query (many token
+# matches) can't turn into an unbounded number of embedding scans.
+_EMBED_SEED_MIN_SIM = 0.7
+_EMBED_SEED_EXPAND_TOP_K = 3
+_EMBED_SEED_MAX_QUERIES = 5
+
 
 class GraphPPRChannel(Channel):
     """Personalized PageRank over the entity relation graph, seeded on the query."""
@@ -46,6 +55,7 @@ class GraphPPRChannel(Channel):
         seeds = _seed_indices(names, words)
         if not seeds:
             return {}
+        seeds = await self._expand_seeds_by_embedding(rt, names, seeds)
         scores = _personalized_pagerank(len(names), edges, seeds)
         ranked = sorted(range(len(names)), key=lambda i: scores[i], reverse=True)
         top = {names[i]: scores[i] for i in ranked[:_TOP_ENTITIES] if scores[i] > 0.0}
@@ -70,6 +80,32 @@ class GraphPPRChannel(Channel):
         for name, i in idx.items():
             names[i] = name
         return names, edges
+
+    @staticmethod
+    async def _expand_seeds_by_embedding(rt: Any, names: list[str], seeds: list[int]) -> list[int]:
+        """Add graph-embedding-similar entities to the seed set (best-effort, WS4).
+
+        ``ENTITY.graph_embedding`` (native node2vec, written at consolidation)
+        surfaces entities structurally close to a token-matched seed but missed
+        by name overlap. Soft-fails to the original seeds — no embeddings yet,
+        or the similarity lookup erroring, is a clean no-op.
+        """
+        name_idx = {n: i for i, n in enumerate(names)}
+        expanded = set(seeds)
+        for i in seeds[:_EMBED_SEED_MAX_QUERIES]:
+            try:
+                similar = await rt.store.similar_entities_by_embedding(
+                    names[i], top_k=_EMBED_SEED_EXPAND_TOP_K
+                )
+            except Exception:
+                continue
+            for row in similar:
+                if float(row.get("similarity") or 0.0) < _EMBED_SEED_MIN_SIM:
+                    continue
+                j = name_idx.get(row.get("name"))
+                if j is not None:
+                    expanded.add(j)
+        return list(expanded)
 
     @staticmethod
     async def _chunks_for_entities(
