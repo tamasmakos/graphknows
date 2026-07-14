@@ -1,4 +1,4 @@
-"""Unit tests for the dynamic spaCy-hinted GLiNER2 extractor."""
+"""Unit tests for the dynamic spaCy-hinted GLiNER2 extractor (SVO-primary)."""
 
 from __future__ import annotations
 
@@ -7,34 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from graphknows.ingestion.extraction.entities.extractor import ExtractionResult, GLiNER2EntityExtractor, _SpacySchemaMiner
-
-
-class _Tok:
-    def __init__(
-        self,
-        idx: int,
-        text: str,
-        lemma: str,
-        pos: str,
-        ancestors: list[_Tok] | None = None,
-    ) -> None:
-        self.i = idx
-        self.text = text
-        self.lemma_ = lemma
-        self.pos_ = pos
-        self._ancestors = ancestors or []
-        self.children: list[_Tok] = []
-        self.head = self
-
-    @property
-    def ancestors(self) -> list[_Tok]:
-        return self._ancestors
-
-
-def _no_frames(sents):
-    """frame_fn stub: no accepted FrameNet frames for any sentence."""
-    return [{} for _ in sents]
+from graphknows.ingestion.extraction.entities.extractor import (
+    ExtractionResult,
+    GLiNER2EntityExtractor,
+    _SpacySchemaMiner,
+)
 
 
 def test_extraction_result_has_entities_and_relations_fields():
@@ -44,7 +21,7 @@ def test_extraction_result_has_entities_and_relations_fields():
             {
                 "head": "OpenAI",
                 "head_type": "ORG",
-                "relation": "build",
+                "relation": "BUILD",
                 "tail": "ChatGPT",
                 "tail_type": "PRODUCT",
                 "score": 1.0,
@@ -53,107 +30,45 @@ def test_extraction_result_has_entities_and_relations_fields():
     )
 
     assert result.entities[0]["name"] == "OpenAI"
-    assert result.relations[0]["relation"] == "build"
+    assert result.relations[0]["relation"] == "BUILD"
 
 
-def test_spacy_schema_miner_builds_entity_and_relation_specs_from_doc():
-    root = _Tok(1, "built", "build", "VERB")
-    left = _Tok(0, "OpenAI", "OpenAI", "PROPN", [root])
-    right = _Tok(2, "ChatGPT", "ChatGPT", "PROPN", [root])
-    sent = SimpleNamespace(start=0)
-    doc = SimpleNamespace(
-        ents=[
-            SimpleNamespace(text="OpenAI", label_="ORG", root=left, sent=sent),
-            SimpleNamespace(text="ChatGPT", label_="PRODUCT", root=right, sent=sent),
-        ]
-    )
-    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc, frame_fn=_no_frames)
+def test_spacy_schema_miner_mines_entity_and_svo_schema():
+    """Real spaCy: entity schema from NER, relation schema + triples from SVO."""
+    miner = _SpacySchemaMiner()
 
-    schema = miner.build("OpenAI built ChatGPT.")
+    schema = miner.build("Caroline: I work as a nurse.")
 
-    assert schema.entity_spec["org"]["description"]
-    assert schema.entity_spec["product"]["threshold"] == pytest.approx(0.35)
-    assert schema.label_to_type == {"org": "ORG", "product": "PRODUCT"}
-    # WordNet canonicalization: build -> construct (first lemma of first verb synset).
-    assert "construct" in schema.relation_spec
-    assert "ORG" not in schema.relation_spec["construct"]
-    assert "OpenAI -> build -> ChatGPT" in schema.relation_spec["construct"]
-    assert "avoid selecting whole clauses" in schema.relation_spec["construct"]
-    # Dep-path corroboration recorded for the entity pair (agreement-gate input).
-    assert schema.relation_support["construct"][("chatgpt", "openai")] == {"dep"}
+    assert "person" in schema.entity_spec
+    assert schema.entity_spec["person"]["threshold"] == pytest.approx(0.35)
+    assert schema.label_to_type["person"] == "PERSON"
+    # Open-vocab predicate: the label is the verb + preposition the text stated.
+    assert "WORK_AS" in schema.relation_spec
+    # The first-person subject resolved to the utterance speaker.
+    triples = {(t["head"], t["relation"], t["tail"]) for t in schema.svo_triples}
+    assert ("Caroline", "WORK_AS", "nurse") in triples
 
 
-def test_spacy_schema_miner_skips_prepositions_adjectives_and_parent_verbs():
-    said = _Tok(1, "said", "say", "VERB")
-    support = _Tok(2, "supports", "support", "VERB", [said])
-    german = _Tok(4, "German", "german", "ADJ", [support, said])
-    in_token = _Tok(3, "in", "in", "ADP", [german, support, said])
-    left = _Tok(0, "Commission", "Commission", "PROPN", [said])
-    right = _Tok(5, "Green Deal", "Green Deal", "PROPN", [in_token, german, support, said])
-    sent = SimpleNamespace(start=0)
-    doc = SimpleNamespace(
-        ents=[
-            SimpleNamespace(text="Commission", label_="ORG", root=left, sent=sent),
-            SimpleNamespace(text="Green Deal", label_="PRODUCT", root=right, sent=sent),
-        ]
-    )
-    miner = _SpacySchemaMiner(nlp_loader=lambda _name: lambda _text: doc, frame_fn=_no_frames)
-
-    schema = miner.build("The Commission said it supports the Green Deal.")
-
-    assert "support" in schema.relation_spec
-    assert "Commission -> support -> Green Deal" in schema.relation_spec["support"]
-    assert "dependency path:" in schema.relation_spec["support"]
-    assert "say" not in schema.relation_spec
-    assert "in" not in schema.relation_spec
-    assert "german" not in schema.relation_spec
-
-
-def test_spacy_schema_miner_frame_first_labeling():
-    """A trigger covered by an accepted FrameNet frame gets the frame label."""
-    root = _Tok(1, "lives", "live", "VERB")
-    left = _Tok(0, "Melanie", "Melanie", "PROPN", [root])
-    right = _Tok(2, "Boston", "Boston", "PROPN", [root])
-    sent = SimpleNamespace(start=0)
-    doc = SimpleNamespace(
-        ents=[
-            SimpleNamespace(text="Melanie", label_="PERSON", root=left, sent=sent),
-            SimpleNamespace(text="Boston", label_="GPE", root=right, sent=sent),
-        ]
-    )
-    miner = _SpacySchemaMiner(
-        nlp_loader=lambda _name: lambda _text: doc,
-        frame_fn=lambda sents: [{1: ("Residence", 0.6, root)} for _ in sents],
-    )
-
-    schema = miner.build("Melanie lives in Boston.")
-
-    assert "RESIDENCE" in schema.relation_spec
-    assert "live" not in schema.relation_spec  # frame label wins over the lemma
-    assert "FrameNet Residence" in schema.relation_spec["RESIDENCE"]
-    assert "trigger: 'live'" in schema.relation_spec["RESIDENCE"]
-    # Both signals corroborate: the dep-path trigger IS the frame's LU target.
-    assert schema.relation_support["RESIDENCE"][("boston", "melanie")] == {"dep", "frame"}
-
-
-def _mock_extractor(relation_support, raw_relations):
-    """Extractor with a mocked GLiNER2 model + mined-schema stub."""
+def _mock_extractor(svo_triples, raw_relations, raw_entities=None):
+    """Extractor with a mocked GLiNER2 model and a hand-built dynamic schema."""
     schema = SimpleNamespace(
-        entity_spec={"org": {"description": "dynamic org", "threshold": 0.35}},
-        relation_spec={"build": "dynamic relation"},
-        label_to_type={"org": "ORG"},
-        relation_support=relation_support,
+        entity_spec={"person": {"description": "dynamic person", "threshold": 0.35}},
+        relation_spec={"WORK_AS": "dynamic relation"},
+        label_to_type={"person": "PERSON"},
+        svo_triples=svo_triples,
     )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
-    # Object cleaning parses the relation tail with the miner's spaCy pipeline.
-    schema_miner.nlp = _SpacySchemaMiner().nlp
 
     mock_schema = MagicMock()
     mock_model = MagicMock()
     mock_model.create_schema.return_value = mock_schema
     mock_model.extract.return_value = {
-        "entities": {"org": [{"text": "OpenAI", "confidence": 0.95}]},
+        "entities": (
+            raw_entities
+            if raw_entities is not None
+            else {"person": [{"text": "Caroline", "confidence": 0.95}]}
+        ),
         "relation_extraction": raw_relations,
     }
     extractor = GLiNER2EntityExtractor(
@@ -163,72 +78,133 @@ def _mock_extractor(relation_support, raw_relations):
     return extractor, schema, mock_schema, mock_model
 
 
-_RAW_BUILD_RELATION = {
-    "build": [
-        {
-            "head": {"text": "OpenAI", "confidence": 0.9},
-            "tail": {"text": "ChatGPT", "confidence": 0.8},
-        }
-    ]
-}
+def _svo(head, relation, tail, *, head_named, tail_named, verb="work", prep="as"):
+    return {
+        "head": head,
+        "relation": relation,
+        "tail": tail,
+        "verb": verb,
+        "prep": prep,
+        "head_named": head_named,
+        "tail_named": tail_named,
+    }
 
 
-def test_extract_builds_fresh_schema_and_parses_entities_and_relations():
-    support = {"build": {("chatgpt", "openai"): {"dep"}}}
-    extractor, schema, mock_schema, mock_model = _mock_extractor(support, _RAW_BUILD_RELATION)
+def test_svo_triple_promoted_when_gliner_corroborates_object():
+    svo = [_svo("Caroline", "WORK_AS", "nurse", head_named=True, tail_named=False)]
+    raw = {
+        "WORK_AS": [
+            {
+                "head": {"text": "Caroline", "confidence": 0.8},
+                "tail": {"text": "nurse", "confidence": 0.7},
+            }
+        ]
+    }
+    extractor, schema, mock_schema, _mm = _mock_extractor(svo, raw)
 
-    result = extractor.extract("OpenAI built ChatGPT.")
+    result = extractor.extract("Caroline: I work as a nurse.")
 
-    mock_schema.entities.assert_called_once_with(schema.entity_spec)
-    # Open vocabulary: the per-chunk mined relation_spec IS the schema.
+    # The mined SVO predicate vocabulary IS the GLiNER2 relation schema.
     mock_schema.relations.assert_called_once_with(schema.relation_spec)
-    assert extractor._relation_schema == {}
-    mock_model.extract.assert_called_once()
-    assert result.entities == [{"name": "OpenAI", "type": "ORG", "score": 0.95}]
-    assert result.relations[0]["head"] == "OpenAI"
-    assert result.relations[0]["tail"] == "ChatGPT"
-    assert result.relations[0]["score"] == pytest.approx(0.8)
-    assert result.relations[0]["source"] == "gliner+dep"
+    r = result.relations[0]
+    assert (r["head"], r["relation"], r["tail"]) == ("Caroline", "WORK_AS", "nurse")
+    assert r["source"] == "svo+gliner"
+    assert r["score"] == pytest.approx(0.7)  # min(head, tail) GLiNER2 confidence
+    assert r["head_type"] == "PERSON"  # from the entity list
+    assert r["tail_type"] == "ENTITY"  # common noun, not an extracted entity
 
 
-def test_agreement_gate_drops_uncorroborated_relation():
-    """A GLiNER2 triplet with no mined dep/frame support for the pair is dropped."""
-    support = {"build": {("keras", "google"): {"dep"}}}  # different pair
-    extractor, _schema, _ms, _mm = _mock_extractor(support, _RAW_BUILD_RELATION)
+def test_structural_svo_kept_when_both_named_without_corroboration():
+    svo = [_svo("Gina", "VISIT", "Rome", head_named=True, tail_named=True, verb="visit", prep="")]
+    extractor, *_ = _mock_extractor(svo, {})  # GLiNER2 emits no relations
 
-    result = extractor.extract("OpenAI built ChatGPT.")
+    result = extractor.extract("Gina: I visited Rome.")
+
+    r = result.relations[0]
+    assert (r["relation"], r["tail"]) == ("VISIT", "Rome")
+    assert r["source"] == "svo"
+    assert r["score"] == pytest.approx(0.6)
+
+
+def test_uncorroborated_svo_with_common_noun_object_dropped():
+    """A tail that is a bare common noun needs GLiNER2 corroboration to survive."""
+    svo = [_svo("Caroline", "WORK_AS", "nurse", head_named=True, tail_named=False)]
+    extractor, *_ = _mock_extractor(svo, {})
+
+    result = extractor.extract("Caroline: I work as a nurse.")
 
     assert result.relations == []
 
 
-def test_agreement_gate_boosts_when_both_signals_agree():
-    support = {"build": {("chatgpt", "openai"): {"dep", "frame"}}}
-    extractor, _schema, _ms, _mm = _mock_extractor(support, _RAW_BUILD_RELATION)
+def test_subthreshold_gliner_confidence_is_not_corroboration():
+    svo = [_svo("Caroline", "WORK_AS", "nurse", head_named=True, tail_named=False)]
+    raw = {
+        "WORK_AS": [
+            {
+                "head": {"text": "Caroline", "confidence": 0.9},
+                "tail": {"text": "nurse", "confidence": 0.2},  # min 0.2 < 0.35
+            }
+        ]
+    }
+    extractor, *_ = _mock_extractor(svo, raw)
 
-    result = extractor.extract("OpenAI built ChatGPT.")
+    result = extractor.extract("Caroline: I work as a nurse.")
 
-    assert result.relations[0]["source"] == "gliner+dep+frame"
-    assert result.relations[0]["score"] == pytest.approx(min(1.0, 0.8 * 1.15))
+    assert result.relations == []
 
 
-def test_explicit_relation_schema_escape_hatch_bypasses_gate():
-    """An explicitly passed taxonomy schema is honored and skips corroboration."""
+def test_gliner_tail_match_is_lenient_substring():
+    """GLiNER2's object surface may be longer than the SVO head-noun ('a nurse')."""
+    svo = [_svo("Caroline", "WORK_AS", "nurse", head_named=True, tail_named=False)]
+    raw = {
+        "WORK_AS": [
+            {
+                "head": {"text": "Caroline", "confidence": 0.8},
+                "tail": {"text": "a nurse", "confidence": 0.6},
+            }
+        ]
+    }
+    extractor, *_ = _mock_extractor(svo, raw)
+
+    result = extractor.extract("Caroline: I work as a nurse.")
+
+    assert result.relations[0]["source"] == "svo+gliner"
+
+
+def test_subject_agreement_rescues_coreferent_object():
+    """GLiNER2 names the object differently ('Luna') but agrees on the subject."""
+    svo = [_svo("Gina", "ADOPT", "cat", head_named=True, tail_named=False, verb="adopt", prep="")]
+    raw = {
+        "ADOPT": [
+            {
+                "head": {"text": "Gina", "confidence": 0.9},
+                "tail": {"text": "Luna", "confidence": 0.9},  # coreferent, != "cat"
+            }
+        ]
+    }
+    extractor, *_ = _mock_extractor(svo, raw)
+
+    result = extractor.extract("Gina: I adopted a cat named Luna.")
+
+    r = result.relations[0]
+    assert (r["relation"], r["tail"]) == ("ADOPT", "cat")  # SVO's cleaner object
+    assert r["source"] == "svo+gliner"
+
+
+def test_explicit_relation_schema_overrides_mined_svo_schema():
+    """An explicitly passed taxonomy schema (escape hatch) is handed to GLiNER2."""
     schema = SimpleNamespace(
-        entity_spec={"org": {"description": "dynamic org", "threshold": 0.35}},
-        relation_spec={"build": "dynamic relation"},
-        label_to_type={"org": "ORG"},
-        relation_support={},
+        entity_spec={"person": {"description": "p", "threshold": 0.35}},
+        relation_spec={"WORK_AS": "desc"},
+        label_to_type={"person": "PERSON"},
+        svo_triples=[],
     )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
-    schema_miner.nlp = _SpacySchemaMiner().nlp
     mock_schema = MagicMock()
     mock_model = MagicMock()
     mock_model.create_schema.return_value = mock_schema
-    mock_model.extract.return_value = {
-        "entities": {},
-        "relation_extraction": _RAW_BUILD_RELATION,
-    }
+    mock_model.extract.return_value = {"entities": {}, "relation_extraction": {}}
     taxonomy_schema = {"created": "one entity created another"}
     extractor = GLiNER2EntityExtractor(
         model_loader=lambda: mock_model,
@@ -236,14 +212,16 @@ def test_explicit_relation_schema_escape_hatch_bypasses_gate():
         relation_schema=taxonomy_schema,
     )
 
-    result = extractor.extract("OpenAI built ChatGPT.")
+    extractor.extract("OpenAI built ChatGPT.")
 
     mock_schema.relations.assert_called_once_with(taxonomy_schema)
-    assert result.relations[0]["source"] == "gliner"
+    assert extractor._relation_schema == taxonomy_schema
 
 
 def test_extract_returns_empty_when_spacy_mines_no_entity_schema():
-    schema = SimpleNamespace(entity_spec={}, relation_spec={}, label_to_type={})
+    schema = SimpleNamespace(
+        entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[]
+    )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
     mock_model = MagicMock()
@@ -260,6 +238,7 @@ def test_extract_filters_low_confidence_and_blank_entities():
         entity_spec={"person": {"description": "dynamic person", "threshold": 0.35}},
         relation_spec={},
         label_to_type={"person": "PERSON"},
+        svo_triples=[],
     )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema

@@ -32,6 +32,14 @@ from graphknows.storage.arcadedb._labels import _safe_rel_label
         ("CO_OCCURS", "CO_OCCURS"),
         ("temporal", "REL_TEMPORAL"),
         ("frame", "REL_FRAME"),
+        # SQL reserved keyword → REL_ prefix (open-vocab predicates: match, like…)
+        ("MATCH", "REL_MATCH"),
+        ("match", "REL_MATCH"),
+        ("like", "REL_LIKE"),
+        ("SET", "REL_SET"),
+        # A compound label containing a reserved word is not itself reserved
+        ("MATCH_WITH", "MATCH_WITH"),
+        ("WORK_AS", "WORK_AS"),
     ],
 )
 def test_safe_rel_label(raw: str, expected: str) -> None:
