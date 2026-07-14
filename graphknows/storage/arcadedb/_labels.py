@@ -22,6 +22,7 @@ _VERTEX_TYPE_NAMES: frozenset[str] = frozenset(
         "TOPIC",
         "TEMPORAL",
         "FRAME",
+        "FRAME_INSTANCE",
         "V",
         "E",
     }

@@ -66,13 +66,18 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
     def created(kind: str, name: str) -> bool:
         return any(s.startswith(f"CREATE {kind} TYPE {name} ") for s in type_stmts)
 
-    # Golden vertices (COMMUNITY holds native community-quality metrics — WS D3)
-    for vertex in ("SESSION", "FILE", "CHUNK", "ENTITY", "TEMPORAL", "TOPIC", "FRAME", "COMMUNITY"):
+    # Golden vertices (COMMUNITY holds native community-quality metrics — WS D3;
+    # FRAME_INSTANCE is the role-filled frame layer — WS D3)
+    for vertex in (
+        "SESSION", "FILE", "CHUNK", "ENTITY", "TEMPORAL", "TOPIC", "FRAME", "COMMUNITY",
+        "FRAME_INSTANCE",
+    ):
         assert created("VERTEX", vertex), f"missing vertex {vertex}"
-    # Golden edges (IN_COMMUNITY links ENTITY->COMMUNITY — WS D3, no longer dead)
+    # Golden edges (IN_COMMUNITY links ENTITY->COMMUNITY — WS D3, no longer dead;
+    # PLAYS_ROLE / FRAME_EVOKED_IN are the FRAME_INSTANCE layer edges)
     for edge in (
         "PART_OF", "IN_SESSION", "MENTIONS", "MENTIONS_DATE", "HAS_TOPIC", "EVOKED_BY",
-        "IN_COMMUNITY",
+        "IN_COMMUNITY", "PLAYS_ROLE", "FRAME_EVOKED_IN",
     ):
         assert created("EDGE", edge), f"missing edge {edge}"
     # Dead schema must NOT be recreated
@@ -224,6 +229,74 @@ async def test_write_relation_skips_unlabelable_predicate() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
     await store.write_relation(src_name="a", predicate="123!!", dst_name="b")
+    client.command.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Frame-instance writes — PLAYS_ROLE + FRAME_EVOKED_IN + convenience relations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_frame_instances_edges_and_convenience_relations() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    # A 3-role instance: Employee (agent-like) + Position + Employer.
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id="c1",
+        instances=[
+            {
+                "id": "c1:Being_employed:0",
+                "frame": "Being_employed",
+                "match_sim": 0.42,
+                "role_confidence": 0.95,
+                "roles": {
+                    "Employee": ["Caroline"],
+                    "Position": ["nurse"],
+                    "Employer": ["hospital"],
+                },
+            }
+        ],
+    )
+    stmts = _command_strings(client)
+
+    # FRAME_INSTANCE vertex + FRAME_EVOKED_IN evidence edge.
+    fi = next(s for s in stmts if "MERGE (fi:FRAME_INSTANCE {id: $fid})" in s)
+    assert "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)" in fi
+    assert "MATCH (c:CHUNK {chunk_id: $cid})" in fi
+
+    # One PLAYS_ROLE edge per (instance, role, filler) — 3 roles, 1 filler each.
+    role_stmts = [s for s in stmts if "MERGE (fi)-[:PLAYS_ROLE {role: $role}]->(e)" in s]
+    assert len(role_stmts) == 3
+    role_params = [
+        c.kwargs["params"]["role"]
+        for c in client.command.await_args_list
+        if "PLAYS_ROLE" in c.args[1]
+    ]
+    assert set(role_params) == {"Employee", "Position", "Employer"}
+
+    # Convenience relations: primary (Employee=Caroline) -> the 2 other fillers.
+    # Predicate = f"{FRAME}_{ROLE}" via write_relation → _safe_rel_label upper-cases.
+    merges = [s for s in stmts if "MERGE (a)-[r:" in s]
+    assert any("[r:BEING_EMPLOYED_POSITION]->(b)" in s for s in merges)
+    assert any("[r:BEING_EMPLOYED_EMPLOYER]->(b)" in s for s in merges)
+    # N-1 convenience relations for N=3 fillers (Caroline is the subject, skipped).
+    assert len(merges) == 2
+    # source='frame' rides the normal RELATION layer.
+    rel_call = next(
+        c for c in client.command.await_args_list if "[r:BEING_EMPLOYED_POSITION]" in c.args[1]
+    )
+    assert rel_call.kwargs["params"]["source"] == "frame"
+    assert rel_call.kwargs["params"]["src_nn"] == "caroline"
+    assert rel_call.kwargs["params"]["dst_nn"] == "nurse"
+
+
+@pytest.mark.asyncio
+async def test_write_frame_instances_noop_on_empty() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    assert await store.write_frame_instances("s1", "c1", []) == 0
     client.command.assert_not_awaited()
 
 

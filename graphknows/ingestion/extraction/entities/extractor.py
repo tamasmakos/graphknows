@@ -343,6 +343,24 @@ class GLiNER2EntityExtractor:
         # taxonomy-guided extraction) is honored when passed.
         self._relation_schema: dict[str, str] = dict(relation_schema) if relation_schema else {}
 
+    @property
+    def nlp(self) -> Any:
+        """The loaded spaCy pipeline (shared with the schema miner; loads lazily).
+
+        Reused by the frame-SRL ingest pass so a second ``en_core_web_lg`` is
+        never loaded.
+        """
+        return self._schema_miner.nlp
+
+    @property
+    def gliner(self) -> Any:
+        """The loaded GLiNER2 model (loads lazily on first access).
+
+        Reused by the frame-SRL ingest pass so a second GLiNER2 is never loaded.
+        """
+        self._ensure_model_loaded()
+        return self._gliner
+
     def _ensure_model_loaded(self) -> None:
         """Load GLiNER2 model on first extraction call."""
         if self._gliner is not None:

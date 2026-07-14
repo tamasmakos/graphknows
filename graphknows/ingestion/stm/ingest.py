@@ -314,6 +314,17 @@ class _STMIngestHandler:
                     ],
                 )
 
+        # FRAME_INSTANCE layer — frame-guided semantic role labeling. The chunk's
+        # top FrameNet frames (main-verb LUs, embedding-ranked) become a GLiNER2
+        # core-FE schema; the role-fillability gate keeps 0-1 filled instances per
+        # short text. Reuses the extractor's spaCy + GLiNER2 (no second load); a
+        # second GLiNER2 schema pass, so only on fact-bearing chunks. Distinct from
+        # the FRAME chunk-tag layer above.
+        if self._enable_frames:
+            instances = await asyncio.to_thread(self._frame_instances, text, chunk_id, speaker)
+            if instances:
+                await self._store.write_frame_instances(session_id, chunk_id, instances)
+
         # GLiNER2 relations — open-vocabulary labels, already precision-gated in
         # the extractor (dep-path/frame corroboration), evidenced to this chunk.
         # No ontology filter here: it would reject every open-vocab label.
@@ -351,6 +362,49 @@ class _STMIngestHandler:
         if iso_dates:
             await self._store.write_temporal(chunk_id, iso_dates)
         return len(filtered)
+
+    def _frame_instances(
+        self, text: str, chunk_id: str, speaker: str
+    ) -> list[dict[str, Any]]:
+        """Frame-guided role extraction for one chunk → write dicts (thread-run).
+
+        Reuses the entity extractor's already-loaded spaCy + GLiNER2 (no second
+        load). Speaker/speakers come from the chunk's turn-lines (same logic the
+        SVO pass uses), falling back to the passed ``speaker``. Returns
+        ``[{id, frame, match_sim, role_confidence, roles}]`` (0-1 items per short
+        text, per the role-fillability gate). Empty if the extractor doesn't
+        expose reusable models (e.g. a test stub).
+        """
+        extractor = self._extractor
+        if extractor is None or not hasattr(extractor, "nlp") or not hasattr(extractor, "gliner"):
+            return []
+        from graphknows.ingestion.extraction.entities.extractor import _line_speakers
+        from graphknows.ingestion.extraction.relations.frame_srl import (
+            extract_frame_instances,
+            lu_candidate_frames,
+        )
+
+        line_speakers = _line_speakers(text)
+        speakers = sorted({s for _, s in line_speakers if s})
+        primary = speaker or (speakers[0] if speakers else "")
+        if primary and primary not in speakers:
+            speakers = sorted({*speakers, primary})
+
+        nlp = extractor.nlp
+        gliner = extractor.gliner
+        instances = extract_frame_instances(
+            text, primary, speakers, gliner, lambda t: lu_candidate_frames(t, nlp)
+        )
+        return [
+            {
+                "id": f"{chunk_id}:{inst.frame}:{i}",
+                "frame": inst.frame,
+                "match_sim": inst.match_sim,
+                "role_confidence": inst.role_confidence,
+                "roles": inst.roles,
+            }
+            for i, inst in enumerate(instances)
+        ]
 
     def _resolve_temporal(
         self, entities: list[dict[str, Any]], seg: Any, metadata: dict[str, Any]

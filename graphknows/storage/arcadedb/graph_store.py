@@ -73,7 +73,9 @@ _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
 )
 
 # Vertex labels wiped by clear_all() / walked by delete_session().
-_VERTEX_LABELS = ("FRAME", "CHUNK", "FILE", "TOPIC", "TEMPORAL", "ENTITY", "SESSION")
+_VERTEX_LABELS = (
+    "FRAME_INSTANCE", "FRAME", "CHUNK", "FILE", "TOPIC", "TEMPORAL", "ENTITY", "SESSION"
+)
 
 # ---------------------------------------------------------------------------
 # DDL — golden-layer schema (plan §1). Order matters: types before properties,
@@ -172,6 +174,20 @@ _CORE_DDL: list[tuple[str, str]] = [
         f"CREATE INDEX IF NOT EXISTS ON FRAME(embedding) LSM_VECTOR "
         f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
     ),
+    # Role-filled frame instances (WS/D3 layer). Distinct from the FRAME
+    # chunk-tag layer above: one FRAME_INSTANCE = one evoked frame whose CORE
+    # frame elements were GLiNER2-filled with entity fillers, linked to those
+    # entities by PLAYS_ROLE {role} edges and to its evidence CHUNK by
+    # FRAME_EVOKED_IN.
+    ("sql", "CREATE VERTEX TYPE FRAME_INSTANCE IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.frame IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.chunk_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.session_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.match_sim IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.role_confidence IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE INDEX ON FRAME_INSTANCE(id) UNIQUE"),
+    ("sql", "CREATE INDEX ON FRAME_INSTANCE(frame) NOTUNIQUE"),
     # Community-quality vertex — one per Louvain community_id, holding the
     # native modularityScore/conductance metrics (see compute_community_quality).
     ("sql", "CREATE VERTEX TYPE COMMUNITY IF NOT EXISTS"),
@@ -193,7 +209,40 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK
     ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE IN_COMMUNITY IF NOT EXISTS"),  # ENTITY -> COMMUNITY
+    ("sql", "CREATE EDGE TYPE PLAYS_ROLE IF NOT EXISTS"),  # FRAME_INSTANCE -> ENTITY
+    ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
+    ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK
 ]
+
+# Role names (in priority order) that act as the agent-like subject of a frame
+# instance for the flattened convenience relations. The first present role's
+# first filler becomes the relation subject; every other role filler is an object.
+_AGENT_ROLE_PRIORITY: tuple[str, ...] = (
+    "Agent",
+    "Employee",
+    "Owner",
+    "Creator",
+    "Speaker",
+    "Participant_1",
+    "Cognizer",
+    "Experiencer",
+)
+
+
+def _primary_filler(roles: dict[str, list[str]]) -> str:
+    """Subject filler for a frame instance's flattened relations.
+
+    First filler of the highest-priority agent-like role present, else the first
+    filler of the first role. Empty when no role has a filler.
+    """
+    for role in _AGENT_ROLE_PRIORITY:
+        fillers = roles.get(role)
+        if fillers:
+            return str(fillers[0]).strip()
+    for fillers in roles.values():
+        if fillers:
+            return str(fillers[0]).strip()
+    return ""
 
 
 def _emb_sql(emb: list[float]) -> str:
@@ -666,6 +715,85 @@ class GraphStore:
             if emb:
                 await self._set_embedding("FRAME", "id", f"{session_id}:{f['chunk_id']}:{i}", emb)
         return len(rows)
+
+    async def write_frame_instances(
+        self, session_id: str, chunk_id: str, instances: list[dict[str, Any]]
+    ) -> int:
+        """MERGE role-filled FRAME_INSTANCE vertices + PLAYS_ROLE / convenience edges.
+
+        Each ``instances`` item: ``{id, frame, match_sim, role_confidence,
+        roles: {role_name: [filler_name, ...]}}``. Per instance:
+        - MERGE the FRAME_INSTANCE (key ``id``) and a FRAME_EVOKED_IN edge to the
+          evidence CHUNK.
+        - MERGE each filler ENTITY (``name_norm`` keyed, same dedup as
+          ``write_entities_bulk``) and a FRAME_INSTANCE-[:PLAYS_ROLE {role}]->ENTITY
+          edge — one per (instance, role, filler).
+        - ALSO write flattened ENTITY->ENTITY convenience relations via
+          ``write_relation`` (``source='frame'``) from the primary agent-like role
+          filler to every other role filler, predicate ``f"{FRAME}_{ROLE}"``, so
+          they ride the normal RELATION layer and retrieval. Self-pairs skipped.
+
+        Idempotent (all MERGE). Returns the number of instances written.
+        """
+        if not instances:
+            return 0
+        written = 0
+        for inst in instances:
+            fid = str(inst.get("id") or "").strip()
+            frame = str(inst.get("frame") or "").strip()
+            roles: dict[str, list[str]] = inst.get("roles") or {}
+            if not fid or not frame:
+                continue
+            role_conf = float(inst.get("role_confidence") or 0.0)
+            await self._cmd(
+                "MATCH (c:CHUNK {chunk_id: $cid}) "
+                "MERGE (fi:FRAME_INSTANCE {id: $fid}) "
+                "SET fi.frame = $frame, fi.chunk_id = $cid, fi.session_id = $sid, "
+                "    fi.match_sim = $ms, fi.role_confidence = $rc "
+                "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)",
+                cid=chunk_id,
+                fid=fid,
+                frame=frame,
+                sid=session_id,
+                ms=float(inst.get("match_sim") or 0.0),
+                rc=role_conf,
+            )
+            # PLAYS_ROLE edges — MERGE each filler ENTITY on name_norm.
+            for role, fillers in roles.items():
+                for filler in fillers or []:
+                    name = str(filler).strip()
+                    if not name:
+                        continue
+                    await self._cmd(
+                        "MATCH (fi:FRAME_INSTANCE {id: $fid}) "
+                        "MERGE (e:ENTITY {name_norm: $nn}) "
+                        "SET e.name = coalesce(e.name, $name), "
+                        "    e.state = coalesce(e.state, 'raw') "
+                        "MERGE (fi)-[:PLAYS_ROLE {role: $role}]->(e)",
+                        fid=fid,
+                        nn=_name_norm(name),
+                        name=name,
+                        role=role,
+                    )
+            # Flattened convenience relations: primary agent-like filler -> others.
+            subj = _primary_filler(roles)
+            if subj:
+                subj_norm = _name_norm(subj)
+                for role, fillers in roles.items():
+                    for filler in fillers or []:
+                        obj = str(filler).strip()
+                        if not obj or _name_norm(obj) == subj_norm:
+                            continue  # skip self-pairs
+                        await self.write_relation(
+                            subj,
+                            f"{frame}_{role}",
+                            obj,
+                            chunk_id=chunk_id,
+                            confidence=role_conf or 0.5,
+                            source="frame",
+                        )
+            written += 1
+        return written
 
     async def write_topics(self, topics: list[dict[str, Any]]) -> int:
         """Upsert TOPIC vertices + HAS_TOPIC edges from their evidence chunks.
@@ -1790,7 +1918,7 @@ class GraphStore:
         Namespace-global vertices (ENTITY, TOPIC, TEMPORAL) are untouched —
         they may be evidenced by other sessions.
         """
-        for label in ("FRAME", "CHUNK", "FILE"):
+        for label in ("FRAME_INSTANCE", "FRAME", "CHUNK", "FILE"):
             try:
                 await self._cmd(
                     f"MATCH (n:{label} {{session_id: $sid}}) DETACH DELETE n",
