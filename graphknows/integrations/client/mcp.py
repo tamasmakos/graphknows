@@ -26,7 +26,14 @@ class GraphKnowsMCPClient:
     """Async JSON-RPC client for ``graphknows-mcp`` over stdio."""
 
     command: Sequence[str] | str = "graphknows-mcp"
-    request_timeout_s: float = 120.0
+    # One memory_ingest call runs the whole extraction stack for a document, and
+    # the FIRST one also pays the extraction model's cold start (~100s on CPU for
+    # the relex model). At the old 120s the first ingest raced its own model load
+    # and lost: documents failed silently, leaving a partially-populated graph
+    # (38 of 63 chunks, no relations at all) that still answered questions and so
+    # looked like a valid run. Generous by default; the retry/abort behaviour that
+    # matters lives at the call sites, not here.
+    request_timeout_s: float = float(os.environ.get("GRAPHKNOWS_MCP_TIMEOUT_S", "900"))
     env: dict[str, str] = field(default_factory=dict)
     initialize: bool = True
 
