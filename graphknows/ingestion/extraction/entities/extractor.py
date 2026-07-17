@@ -1,19 +1,31 @@
-"""Dynamic spaCy-hinted GLiNER2 extractor for the memory ingestion pipeline.
+"""Dynamic spaCy-hinted relex extractor for the memory ingestion pipeline.
 
-spaCy runs once per chunk. It mines the ENTITY schema GLiNER2 receives (entity
-labels come from spaCy NER) and — the primary source of relations — the
-subject-centric SVO triples of every clause (see
-:mod:`graphknows.ingestion.extraction.relations.svo`): the open-vocabulary
-predicate is what the text says (WORK_AS, LOSE_AT, ADOPT), the subject resolves
-to the utterance speaker for first/second-person clauses, and date/phatic/
-dangling noise is dropped at the source.
+spaCy runs once per chunk and mines the two label vocabularies the extraction
+model needs: the ENTITY labels (from spaCy NER) and the open-vocabulary predicate
+labels of every clause (see :mod:`graphknows.ingestion.extraction.relations.svo`)
+— the predicate is what the text actually says (WORK_AS, LOSE_AT, ADOPT), the
+subject resolves to the utterance speaker for first/second-person clauses, and
+date/phatic/dangling noise is dropped at the source. Supplying labels the text
+itself produced is what makes a label-conditioned extractor usable on open
+dialogue at all, so that half of the old design is unchanged.
 
-GLiNER2 is a *validator*, not a relation source. The RELATION schema handed to
-GLiNER2 is built FROM the mined SVO predicate labels, so an SVO triple is
-promoted to ``svo+gliner`` (with GLiNER2's confidence) when GLiNER2 independently
-emits that predicate with a matching object. An SVO triple GLiNER2 does not
-corroborate is kept only when both arguments are named (a high-confidence
-structural fact); otherwise it is dropped as idiom / parse noise.
+What changed is the model. GLiNER2 could only *corroborate* a mined SVO triple:
+it emitted a predicate, and agreement promoted the triple to ``svo+gliner``.
+relex (knowledgator/gliner-relex-large-v1.0) extracts entities and relations
+JOINTLY and returns typed, span-grounded head/tail pairs — so its output IS the
+fact, not a vote on someone else's. Two relation sources survive:
+
+* ``relex`` — the model emitted (head, predicate, tail) under a mined predicate
+  label, kept at its own score.
+* ``svo`` — a mined triple relex did not emit, kept at a fixed 0.6 structural
+  prior when BOTH arguments are named, or the pattern is copular/appositive/
+  possessive with a named head. This retains the durable identity/possession
+  facts ("I'm a nurse", "Caroline's dog") that a verb-relation model has no
+  predicate label to express.
+
+One forward pass per WHOLE chunk: relex has no fixed max length, so the old
+128-token sub-windowing (~4 calls/chunk, needed because GLiNER2 attended poorly
+to long spans) is gone.
 """
 
 from __future__ import annotations
@@ -30,29 +42,61 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.gliner_model import load_gliner2_model
-from graphknows.ingestion.extraction.relations.svo import extract_relations, parse_speaker
+from graphknows.ingestion.extraction.relations.svo import (
+    extract_relations,
+    noun_supersense,
+    parse_speaker,
+)
 
 log = logging.getLogger(__name__)
 
-_BASE_THRESHOLD: float = 0.35
-# Chunks per GLiNER2 forward pass in extract_batch. Larger = better throughput,
-# more peak RAM. Tunable for the ingest-bound path.
-_BATCH_SIZE: int = int(os.environ.get("GRAPHKNOWS_GLINER_BATCH_SIZE", "16"))
-# GLiNER2 attends better to short spans: the ENTITY + relation pass runs on
-# ~128-token / 32-overlap sub-windows of each 384-token retrieval chunk rather
-# than the whole blob — more entities, and (unlike per-sentence) windows still
-# hold the 2+ entities a relation needs. Windows attribute back to the parent
-# chunk_id; the spaCy/SVO pass still sees the full chunk. Tokens are approximated
-# by whitespace words (no tokenizer dependency); both knobs are tunable.
-_EXTRACT_WINDOW_TOKENS: int = 128
-_EXTRACT_WINDOW_OVERLAP: int = 32
+_BASE_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_THRESHOLD", "0.35"))
+# relex classifies a candidate entity PAIR as bearing a relation; its own card
+# recommends a markedly higher floor here than for entity spans (0.7-0.9 vs
+# 0.3-0.5), because a low relation threshold pairs up every co-occurring entity.
+_RELATION_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_RELATION_THRESHOLD", "0.7"))
+# Floor on relex's entity-PAIR candidate score. Without it every co-occurring
+# pair of entities is a relation candidate and gets scored against every supplied
+# predicate, which manufactures confident nonsense between unrelated spans.
+_ADJACENCY_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_ADJACENCY", "0.6"))
+
+# relex is ZERO-SHOT: it can only assign a type it was handed, so feeding it only
+# the labels spaCy happened to observe in one chunk collapses the type space —
+# a chunk whose NER found just PERSON types "LGBTQ support group" and "lake
+# sunrise" as person. This is spaCy's own NER inventory rendered in the natural
+# language relex expects, UNIONed with the chunk's observed labels, plus the
+# conversational types spaCy has no tag for at all (occupation/animal/activity/
+# emotion) — the ones dialogue is actually made of. Not a domain taxonomy: no
+# entity is required to exist, and the miner still decides what it saw.
+_BASE_ENTITY_LABELS: tuple[str, ...] = (
+    "person", "organization", "location", "date", "time", "event",
+    "work_of_art", "product", "nationality_or_group", "facility", "language",
+    "law", "money", "quantity",
+    "occupation", "animal", "activity", "emotion", "food", "artifact",
+)
+
+# relex has no speaker resolution, so it happily returns "I"/"you"/"we" as PERSON
+# spans and would create an ENTITY node called "I" that every speaker's facts
+# collapse onto. The SVO path resolves these to the utterance speaker
+# (svo._resolve); a relex relation anchored on a bare pronoun carries no
+# recoverable referent, so it is dropped and the SVO triple for the same clause
+# is the one that survives.
+_PRONOUNS: frozenset[str] = frozenset(
+    {
+        "i", "me", "my", "mine", "myself",
+        "you", "your", "yours", "yourself",
+        "we", "us", "our", "ours", "ourselves",
+        "he", "him", "his", "she", "her", "hers",
+        "they", "them", "their", "theirs",
+        "it", "its", "this", "that", "these", "those",
+    }
+)
 _SPACY_MODEL = "en_core_web_lg"
 _MIN_ENTITY_LABEL_COUNT = 1
 _MAX_ENTITY_LABELS = 24
 # SVO mines one predicate per clause verb, so a multi-turn dialogue chunk yields
-# many distinct labels — raised from the entity-pair era's 64 so GLiNER2's
-# validation schema covers them (only the labels in the schema can be
-# corroborated to svo+gliner; uncorroborated triples still survive structurally).
+# many distinct labels. relex scores every supplied relation label against every
+# candidate entity pair, so this cap is now a COST knob as well as a recall one.
 _MAX_RELATION_LABELS = 96
 
 
@@ -90,15 +134,45 @@ def _schema_label(value: str) -> str:
     return label or "entity"
 
 
-def _text_match(a: str, b: str) -> bool:
-    """Lenient casefolded argument match: equal, or a >=4-char containment.
+def _clean_surface(text: str) -> str:
+    """Strip enclosing quotes/brackets and trailing punctuation from a span.
 
-    The length floor stops short-string false positives ('us' in 'justin').
+    relex returns the span exactly as the text wrote it, so a quoted title comes
+    back as ``"Becoming Nicole"`` WITH its quote marks. That is wrong as an entity
+    surface, and it is actively corrupting: the store's merge key is derived from
+    this string, ArcadeDB strips the quotes when persisting ``name_norm`` but not
+    ``name``, so the two fields diverge, a later MERGE cannot find the record it
+    just wrote, and the write fails on the ENTITY[name_norm] UNIQUE index — taking
+    the caller's whole document down with it.
     """
-    if a == b:
-        return True
-    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
-    return len(short) >= 4 and short in long_
+    cleaned = " ".join((text or "").split())
+    prev = None
+    while cleaned and cleaned != prev:
+        prev = cleaned
+        cleaned = cleaned.strip("\"'“”‘’`()[]{}")
+        cleaned = cleaned.strip(" .,;:!?")
+    return cleaned
+
+
+def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
+    """Type for a relation argument: spaCy/GLiNER2 NER label, else WordNet supersense.
+
+    NER only labels NAMED entities, so before this fell back to a bare "ENTITY"
+    the great majority of dialogue relation arguments (common nouns — "a nurse",
+    "cat", "job") reached the graph untyped, leaving the type space too degenerate
+    to condition on. The supersense ("noun.person", "noun.artifact", ...) is
+    already computed inside svo's concreteness gates and was being discarded.
+
+    Returns "" — NOT a placeholder — when the argument is neither NER-typed nor in
+    WordNet. ENTITY.type is written first-write-wins (``coalesce``), so emitting a
+    placeholder here would let a relation argument squat on the vertex and block
+    the real NER label a later chunk assigns to the same entity.
+    """
+    named = next(
+        (e["type"] for e in entities if e["name"].casefold() == arg.casefold()),
+        "",
+    )
+    return named or noun_supersense(arg)
 
 
 def _svo_relation_description(verb: str, prep: str) -> str:
@@ -133,78 +207,6 @@ def _speaker_at(line_speakers: list[tuple[int, str]], char: int) -> str:
             break
         speaker = sp
     return speaker
-
-
-def _gliner_corroboration(
-    triplets: list[dict[str, Any]] | None, svo_head: str, svo_tail: str
-) -> float | None:
-    """GLiNER2 confidence when a triplet under this label agrees with the SVO
-    triple on its object OR its (resolved) subject, else None.
-
-    Object agreement is the primary signal. Subject agreement is the fallback:
-    GLiNER2 often names the same object by a coreferent surface the SVO head-noun
-    does not share ("a cat named Luna" -> GLiNER2 'Luna', SVO 'cat'), so a match
-    on the resolved speaker keeps the fact with the SVO parse's cleaner object.
-    Matching is lenient (:func:`_text_match`); a sub-threshold GLiNER2 confidence
-    is not a validation.
-    """
-    head, tail = svo_head.casefold(), svo_tail.casefold()
-    for triplet in triplets or []:
-        g_head = (triplet.get("head", {}).get("text") or "").strip().casefold()
-        g_tail = (triplet.get("tail", {}).get("text") or "").strip().casefold()
-        if (g_tail and _text_match(tail, g_tail)) or (g_head and _text_match(head, g_head)):
-            conf = min(
-                float(triplet.get("head", {}).get("confidence", 0.0)),
-                float(triplet.get("tail", {}).get("confidence", 0.0)),
-            )
-            if conf >= _BASE_THRESHOLD:
-                return conf
-    return None
-
-
-def _sub_windows(text: str) -> list[str]:
-    """Slide a ~128-word / 32-overlap window over a chunk for the GLiNER2 pass.
-
-    Windows snap to whitespace so no word is split; a chunk that fits in one
-    window is returned unchanged (so short turns cost exactly one forward pass).
-    """
-    words = text.split()
-    step = _EXTRACT_WINDOW_TOKENS - _EXTRACT_WINDOW_OVERLAP
-    if len(words) <= _EXTRACT_WINDOW_TOKENS or step <= 0:
-        return [text]
-    windows: list[str] = []
-    for start in range(0, len(words), step):
-        windows.append(" ".join(words[start : start + _EXTRACT_WINDOW_TOKENS]))
-        if start + _EXTRACT_WINDOW_TOKENS >= len(words):
-            break
-    return windows
-
-
-def _merge_raw(acc: dict[str, Any] | None, raw: dict[str, Any]) -> dict[str, Any]:
-    """Fold one sub-window's GLiNER2 raw result into a per-chunk accumulator.
-
-    Entity spans dedup by casefolded text (keep the max confidence) so the same
-    name seen in overlapping windows becomes one entity; relation triplets (used
-    only for SVO corroboration lookup) are concatenated per label.
-    """
-    if acc is None:
-        acc = {"entities": {}, "relation_extraction": {}}
-    ents: dict[str, list[dict[str, Any]]] = acc["entities"]
-    for label, spans in (raw.get("entities") or {}).items():
-        bucket = ents.setdefault(label, [])
-        for span in spans or []:
-            name = (span.get("text") or "").strip().casefold()
-            existing = next(
-                (s for s in bucket if (s.get("text") or "").strip().casefold() == name), None
-            )
-            if existing is None:
-                bucket.append(dict(span))
-            elif float(span.get("confidence", 0.0)) > float(existing.get("confidence", 0.0)):
-                existing["confidence"] = span.get("confidence")
-    rels: dict[str, list[Any]] = acc["relation_extraction"]
-    for label, triplets in (raw.get("relation_extraction") or {}).items():
-        rels.setdefault(label, []).extend(triplets or [])
-    return acc
 
 
 class _SpacySchemaMiner:
@@ -380,94 +382,82 @@ class GLiNER2EntityExtractor:
         self._gliner = model
         log.info("GLiNER2 model loaded in %.1fs", time.monotonic() - start)
 
-    def _build_gliner_schema(self, dynamic_schema: _DynamicSchema) -> Any:
+    def _relex(self, text: str, dynamic_schema: _DynamicSchema) -> tuple[list, list]:
+        """One relex forward pass over a WHOLE chunk. Returns (entities, relations).
+
+        No sub-windowing: relex has no fixed max length, and the old 128-token
+        windows existed because GLiNER2 attended poorly to long spans — they cost
+        ~4 model calls per chunk. One call per chunk both simplifies the merge away
+        and offsets relex being the larger model.
+        """
         assert self._gliner is not None
-        schema = self._gliner.create_schema()
-        if dynamic_schema.entity_spec:
-            schema.entities(dynamic_schema.entity_spec)
         relation_spec = self._relation_schema or dynamic_schema.relation_spec
-        if relation_spec:
-            schema.relations(relation_spec)
-        return schema
+        # Observed labels first (they carry the chunk's own evidence), then the
+        # base inventory — relex cannot emit a type it was not given.
+        labels = list(
+            dict.fromkeys([*dynamic_schema.entity_spec.keys(), *_BASE_ENTITY_LABELS])
+        )
+        # Serialised inside the model wrapper (see gliner_model._SerialInference):
+        # this model is shared across concurrently-ingesting conversations AND
+        # with the frame-SRL pass, and its inference() is not reentrant.
+        out = self._gliner.inference(
+            texts=[text],
+            labels=labels,
+            relations=list(relation_spec.keys()),
+            threshold=_BASE_THRESHOLD,
+            adjacency_threshold=_ADJACENCY_THRESHOLD,
+            relation_threshold=_RELATION_THRESHOLD,
+            return_relations=bool(relation_spec),
+            flat_ner=False,
+        )
+        # inference() returns (entities, relations) ONLY when return_relations is
+        # true; with it false it returns the entities list alone. A chunk whose
+        # SVO pass mined no predicates takes that branch, so unpacking blind
+        # raises ValueError and loses the chunk's entities too.
+        entities, relations = out if isinstance(out, tuple) else (out, [])
+        return (entities[0] if entities else []), (relations[0] if relations else [])
 
     def extract(self, text: str) -> ExtractionResult:
-        """Extract entities and relations using a spaCy-mined GLiNER2 schema."""
+        """Extract entities and relations using a spaCy-mined relex schema."""
         self._ensure_model_loaded()
         assert self._gliner is not None
 
         dynamic_schema = self._schema_miner.build(text)
         if not dynamic_schema.entity_spec:
             return ExtractionResult()
-
-        # Run the GLiNER2 pass on sub-windows of the chunk and merge each window's
-        # entities/relations back onto the parent chunk (schema built once).
-        gliner_schema = self._build_gliner_schema(dynamic_schema)
-        merged: dict[str, Any] | None = None
-        for window in _sub_windows(text):
-            raw = self._gliner.extract(
-                window,
-                gliner_schema,
-                _BASE_THRESHOLD,
-                True,  # format_results
-                True,  # include_confidence
-                True,  # include_spans
-            )
-            merged = _merge_raw(merged, raw)
-        return self._map_raw(merged or {}, dynamic_schema)
+        ents, rels = self._relex(text, dynamic_schema)
+        return self._map_relex(ents, rels, dynamic_schema)
 
     def extract_batch(self, texts: list[str]) -> list[ExtractionResult]:
-        """Extract for many chunks in one batched GLiNER2 forward pass.
+        """Extract for many chunks. Same per-text result as :meth:`extract`.
 
-        Same per-text result as :meth:`extract`, but the model runs the chunks'
-        sub-windows as padded batches (``batch_extract``) instead of one call
-        each — the win is amortized tokenization + fewer ONNX ``session.run``
-        calls, which is where the CPU-bound ingest spends its time. Chunks whose
-        spaCy schema mines no entities skip the model entirely (empty result),
-        same as :meth:`extract`.
+        relex takes ONE label set per call, but the entity/relation vocabularies
+        are mined PER CHUNK — so chunks cannot share a forward pass without
+        pooling their schemas, which would let a chunk match another chunk's
+        predicates. One call per chunk keeps the per-chunk schema honest; the
+        old 4-windows-per-chunk fan-out is what actually cost the calls, and that
+        is gone. Chunks whose spaCy schema mines no entities skip the model
+        entirely (empty result), same as :meth:`extract`.
         """
         if not texts:
             return []
         self._ensure_model_loaded()
         assert self._gliner is not None
 
-        # Mine all chunk schemas in one batched spaCy pass. Each chunk that
-        # yielded entity labels is expanded into ~128-token sub-windows; ALL
-        # sub-windows across ALL chunks go into ONE batched GLiNER2 forward pass
-        # (schema built once per chunk, reused across its windows), then each
-        # window's raw result is merged back onto its parent chunk before mapping.
+        # Mine all chunk schemas in one batched spaCy pass.
         dynamic_schemas = self._schema_miner.build_batch(texts)
         results: list[ExtractionResult | None] = [None] * len(texts)
-        sub_texts: list[str] = []
-        sub_schemas: list[Any] = []
-        sub_parent: list[int] = []
-        parent_dynamic: dict[int, Any] = {}
         for i, (text, dynamic_schema) in enumerate(zip(texts, dynamic_schemas, strict=True)):
             if not dynamic_schema.entity_spec:
                 results[i] = ExtractionResult()
                 continue
-            gliner_schema = self._build_gliner_schema(dynamic_schema)
-            parent_dynamic[i] = dynamic_schema
-            for window in _sub_windows(text):
-                sub_texts.append(window)
-                sub_schemas.append(gliner_schema)
-                sub_parent.append(i)
-
-        if sub_texts:
-            raws = self._gliner.batch_extract(
-                sub_texts,
-                sub_schemas,
-                _BATCH_SIZE,
-                _BASE_THRESHOLD,
-                0,  # num_workers (0 = current process; ONNX is already threaded)
-                True,  # format_results
-                True,  # include_confidence
-                True,  # include_spans
-            )
-            merged: dict[int, dict[str, Any]] = {}
-            for parent_i, raw in zip(sub_parent, raws, strict=True):
-                merged[parent_i] = _merge_raw(merged.get(parent_i), raw)
-            for i, raw in merged.items():
-                results[i] = self._map_raw(raw, parent_dynamic[i])
+            try:
+                ents, rels = self._relex(text, dynamic_schema)
+            except Exception as exc:  # noqa: BLE001 — one bad chunk must not kill ingest
+                log.warning("relex failed on chunk %d (%s); skipping", i, exc)
+                results[i] = ExtractionResult()
+                continue
+            results[i] = self._map_relex(ents, rels, dynamic_schema)
 
         final = [r if r is not None else ExtractionResult() for r in results]
         # Guardrail: the label space is open — log its size per batch so a
@@ -482,76 +472,122 @@ class GLiNER2EntityExtractor:
             )
         return final
 
-    def _map_raw(self, raw: dict[str, Any], dynamic_schema: _DynamicSchema) -> ExtractionResult:
-        """Map one GLiNER2 raw result → ExtractionResult (entities + relations)."""
-        entities: list[dict[str, Any]] = []
-        for raw_label, spans in (raw.get("entities") or {}).items():
-            schema_label = _schema_label(raw_label)
-            canonical = dynamic_schema.label_to_type.get(schema_label, raw_label.upper())
-            for span in spans or []:
-                conf = float(span.get("confidence", 0.0))
-                if conf < _BASE_THRESHOLD:
-                    continue
-                name = span.get("text", "").strip()
-                if not name:
-                    continue
-                entities.append({"name": name, "type": canonical, "score": conf})
+    def _map_relex(
+        self,
+        raw_entities: list[dict[str, Any]],
+        raw_relations: list[dict[str, Any]],
+        dynamic_schema: _DynamicSchema,
+    ) -> ExtractionResult:
+        """Map one relex (entities, relations) pair → ExtractionResult.
 
-        # SVO-primary relations. The spaCy SVO triples mined for this chunk are the
-        # candidate facts; GLiNER2 (its relation schema built FROM the SVO
-        # predicate labels) is a validator, not an independent source:
-        #   * svo+gliner — GLiNER2 emitted a relation under the same predicate
-        #     label agreeing on the object (or, as a fallback, the resolved
-        #     subject). Kept with GLiNER2's confidence. This rescues clean facts
-        #     with a common-noun object ("WORK_AS -> nurse", "ADOPT -> cat") that
-        #     structural gating drops.
-        #   * svo — no GLiNER2 corroboration; kept at a fixed 0.6 prior ONLY when
-        #     BOTH arguments are named (speaker name / spaCy-typed entity), a
-        #     high-confidence structural fact. An uncorroborated triple with a
-        #     bare common-noun argument is dropped (idiom / parse noise).
-        #   * rich structural triples (pattern != 'svo': copular IS_A / possessive
-        #     HAS / appositive / noun-prep) are high-precision by construction, so
-        #     they are kept at the same 0.6 structural prior when BOTH args are
-        #     named OR the pattern is copular/appositive/possessive with a named
-        #     head — GLiNER2 agreement is not required (its schema is verb-only).
-        _NAMED_HEAD_PATTERNS = ("copular", "appositive", "possessive")
-        gliner_rels = raw.get("relation_extraction") or {}
+        relex extracts entities and relations JOINTLY, returning typed head/tail
+        spans — so unlike the GLiNER2 era its relations are facts in their own
+        right, not corroboration of an SVO triple. Two relation sources survive:
+
+          * ``relex`` — the model emitted (head, predicate, tail) under a
+            SVO-mined predicate label, with both arguments span-grounded and
+            typed. Kept at the model's own score.
+          * ``svo`` — a mined triple relex did NOT emit, kept at the same fixed
+            0.6 structural prior as before and under the same gates: BOTH
+            arguments named, or a copular/appositive/possessive pattern with a
+            named head. This retains the durable identity/possession facts
+            ("I'm a nurse", "Caroline's dog") that a verb-relation model has no
+            predicate label for.
+        """
+        # Dedupe by the graph's OWN merge key. ENTITY.name_norm is UNIQUE-indexed
+        # and written with a batched UNWIND+MERGE, so the same name twice in one
+        # chunk's list is not a harmless repeat — ArcadeDB raises
+        # DuplicatedKeyException and the whole DOCUMENT's ingest dies, silently
+        # removing every chunk in it from the graph. relex runs with
+        # flat_ner=False and therefore returns OVERLAPPING spans: one surface can
+        # come back several times under different labels ("Becoming Nicole" as
+        # both work_of_art and person). Highest score wins the type.
+        best: dict[str, dict[str, Any]] = {}
+        for span in raw_entities or []:
+            conf = float(span.get("score", 0.0) or 0.0)
+            if conf < _BASE_THRESHOLD:
+                continue
+            name = _clean_surface(str(span.get("text") or ""))
+            label = str(span.get("label") or "").strip()
+            if not name or not label or name.casefold() in _PRONOUNS:
+                continue
+            # relex echoes the schema key it was given (lowercased spaCy label);
+            # map back to the canonical NER type the graph stores.
+            canonical = dynamic_schema.label_to_type.get(_schema_label(label), label.upper())
+            key = " ".join(name.split()).casefold()  # mirrors graph_store._name_norm
+            prev = best.get(key)
+            if prev is None or conf > prev["score"]:
+                best[key] = {"name": name, "type": canonical, "score": conf}
+        entities: list[dict[str, Any]] = list(best.values())
+
         relations: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
-        for triple in dynamic_schema.svo_triples:
-            head, label, tail = triple["head"], triple["relation"], triple["tail"]
+
+        def _add(head: str, label: str, tail: str, score: float, source: str,
+                 head_type: str = "", tail_type: str = "") -> None:
+            # Same cleaning as the entity pass: these strings become ENTITY merge
+            # keys via write_relation, so a quoted surface here corrupts the graph
+            # exactly as it does there.
+            head, tail = _clean_surface(head), _clean_surface(tail)
+            if not head or not label or not tail or head.casefold() == tail.casefold():
+                return
+            if head.casefold() in _PRONOUNS or tail.casefold() in _PRONOUNS:
+                return
             key = (head.casefold(), label, tail.casefold())
             if key in seen:
-                continue
-            pattern = triple.get("pattern", "svo")
-            conf = _gliner_corroboration(gliner_rels.get(label), head, tail)
-            if conf is not None:
-                source, score = "svo+gliner", conf
-            elif triple["head_named"] and triple["tail_named"]:
-                source, score = "svo", 0.6
-            elif pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]:
-                source, score = "svo", 0.6
-            else:
-                continue
+                return
             seen.add(key)
-            head_type = next(
-                (e["type"] for e in entities if e["name"].casefold() == head.casefold()),
-                "ENTITY",
-            )
-            tail_type = next(
-                (e["type"] for e in entities if e["name"].casefold() == tail.casefold()),
-                "ENTITY",
-            )
             relations.append(
                 {
                     "head": head,
-                    "head_type": head_type,
+                    "head_type": head_type or _arg_type(head, entities),
                     "relation": label,
                     "tail": tail,
-                    "tail_type": tail_type,
+                    "tail_type": tail_type or _arg_type(tail, entities),
                     "score": score,
                     "source": source,
                 }
             )
+
+        def _canon(raw_label: str) -> str:
+            """relex label -> the canonical type the graph stores.
+
+            An OBSERVED label maps back to its spaCy tag (person -> PERSON); a
+            base-inventory label spaCy has no tag for (occupation, activity) has
+            no mapping and stands on its own, upper-cased. Returning "" here would
+            silently demote relex's own typing to the WordNet-supersense fallback.
+            """
+            raw_label = raw_label.strip()
+            if not raw_label:
+                return ""
+            return dynamic_schema.label_to_type.get(_schema_label(raw_label), raw_label.upper())
+
+        for rel in raw_relations or []:
+            score = float(rel.get("score", 0.0) or 0.0)
+            if score < _RELATION_THRESHOLD:
+                continue
+            head_d, tail_d = rel.get("head") or {}, rel.get("tail") or {}
+            # relex types its own arguments — richer than the NER label / WordNet
+            # supersense fallback, so prefer it and only fall back when absent.
+            _add(
+                str(head_d.get("text") or ""),
+                str(rel.get("relation") or "").strip(),
+                str(tail_d.get("text") or ""),
+                score,
+                "relex",
+                head_type=_canon(str(head_d.get("type") or "")),
+                tail_type=_canon(str(tail_d.get("type") or "")),
+            )
+
+        _NAMED_HEAD_PATTERNS = ("copular", "appositive", "possessive")
+        for triple in dynamic_schema.svo_triples:
+            pattern = triple.get("pattern", "svo")
+            if triple["head_named"] and triple["tail_named"]:
+                pass
+            elif pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]:
+                pass
+            else:
+                continue
+            _add(triple["head"], triple["relation"], triple["tail"], 0.6, "svo")
 
         return ExtractionResult(entities=entities, relations=relations)

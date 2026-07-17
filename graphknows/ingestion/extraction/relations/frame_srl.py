@@ -150,30 +150,43 @@ class FrameInstance:
 def _fill_roles(
     text: str, frame: str, gliner: Any, speaker: str, speakers: list[str]
 ) -> tuple[dict[str, list[str]], float]:
-    """Run GLiNER2 with the frame's core-FE schema; return {role: [fillers]}, max_conf."""
+    """Fill the frame's core FEs by typing spans with the FE names as labels.
+
+    This is span typing, not relation extraction: the frame's core frame-element
+    names ARE the label set, so a span labelled "Employee" is that role's filler.
+    Runs on the shared extraction model (``extractor.gliner``) to avoid loading a
+    second ~0.5B model per worker — which is why this must speak that model's API
+    and not GLiNER2's ``create_schema``/``extract``.
+    """
     spec = _role_schema(frame)
     if not spec:
         return {}, 0.0
-    schema = gliner.create_schema()
-    schema.entities(spec)
-    raw = gliner.extract(text, schema, _ROLE_THRESHOLD, True, True, True)
+    # With return_relations=False the model returns ONLY the entities list, not
+    # an (entities, relations) tuple — unpacking blind raises ValueError.
+    out = gliner.inference(
+        texts=[text],
+        labels=list(spec.keys()),
+        relations=[],
+        threshold=_ROLE_THRESHOLD,
+        return_relations=False,
+        flat_ner=False,
+    )
+    entities = out[0] if isinstance(out, tuple) else out
+    spans = entities[0] if entities else []
     roles: dict[str, list[str]] = {}
     max_conf = 0.0
-    for role, spans in (raw.get("entities") or {}).items():
-        fillers: list[str] = []
-        for s in spans or []:
-            surface = (s.get("text") or "").strip()
-            if not surface:
-                continue
-            conf = float(s.get("confidence", 0.0))
-            max_conf = max(max_conf, conf)
-            # Resolve 1st/2nd-person fillers to the speaker (the dominant subject).
-            resolved = _resolve_surface(surface, speaker, speakers)
-            if resolved and resolved not in fillers:
-                fillers.append(resolved)
-        if fillers:
-            roles[role] = fillers
-    return roles, max_conf
+    for s in spans or []:
+        role = str(s.get("label") or "").strip()
+        surface = str(s.get("text") or "").strip()
+        if not role or not surface:
+            continue
+        conf = float(s.get("score", 0.0) or 0.0)
+        max_conf = max(max_conf, conf)
+        # Resolve 1st/2nd-person fillers to the speaker (the dominant subject).
+        resolved = _resolve_surface(surface, speaker, speakers)
+        if resolved and resolved not in roles.setdefault(role, []):
+            roles[role].append(resolved)
+    return {r: f for r, f in roles.items() if f}, max_conf
 
 
 _PRON = {"i", "me", "my", "myself", "we", "us", "our", "you", "your"}
@@ -202,7 +215,7 @@ def extract_frame_instances(
     Args:
         text: the chunk text.
         speaker, speakers: for speaker resolution of pronoun fillers.
-        gliner: a loaded GLiNER2 model (create_schema/extract).
+        gliner: the shared extraction model (``inference``); see _fill_roles.
         candidate_frames: fn(text) -> [(frame_name, cosine)], the embedding matcher
             (top frames the text evokes). Trying the top-k lets the best-filling
             frame win when the single best-cosine frame is wrong.

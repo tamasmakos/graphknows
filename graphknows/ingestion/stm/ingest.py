@@ -339,6 +339,8 @@ class _STMIngestHandler:
                 chunk_id=chunk_id,
                 confidence=rel.get("score", 0.5),
                 source=rel.get("source", "gliner"),
+                src_type=rel.get("head_type", ""),
+                dst_type=rel.get("tail_type", ""),
             )
 
         # DSPy ontology-guided relations (llm_assisted mode only).

@@ -58,23 +58,6 @@ def _phatic(verb_lemma: str) -> bool:
         return False
 
 
-@lru_cache(maxsize=8192)
-def _is_concrete(head_lemma: str) -> bool:
-    """True if the noun's first WordNet sense is a concrete/referable thing.
-
-    Unknown words (not in WordNet, e.g. proper names) pass — they're usually
-    named entities, which are always keepable. Gates possessive HAS tails so
-    "HAS dog/studio/kids" survive but "HAS passion/memory/go-to" are dropped.
-    """
-    try:
-        from nltk.corpus import wordnet as wn
-
-        ss = wn.synsets(head_lemma, pos=wn.NOUN)
-        return not ss or ss[0].lexname() in _CONCRETE_NOUN
-    except LookupError:
-        return True
-
-
 def _resolve(tok: Any, speaker: str, speakers: list[str]) -> str:
     """Resolve a 1st/2nd-person pronoun to the speaker (or the other of two)."""
     low = tok.text.lower()
@@ -217,14 +200,40 @@ def extract_svo(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, 
 
 
 @lru_cache(maxsize=8192)
+def noun_supersense(phrase: str) -> str:
+    """WordNet supersense of a noun phrase's head ("noun.artifact"), or "" if OOV.
+
+    The lexicographer file of the head noun's first sense — the same signal
+    :func:`_known_concrete_noun` already reduces to a bool.
+    spaCy NER types only NAMED entities, but dialogue relation arguments
+    are overwhelmingly common nouns ("a nurse", "cat", "job"), so without this
+    they reach the graph as untyped ENTITY vertices. Head = rightmost token,
+    matching the head-noun convention _clean_np produces.
+    """
+    head = phrase.strip().split()[-1].lower() if phrase.strip() else ""
+    if not head:
+        return ""
+    try:
+        from nltk.corpus import wordnet as wn
+        from nltk.stem import WordNetLemmatizer
+
+        ss = wn.synsets(WordNetLemmatizer().lemmatize(head, "n"), pos=wn.NOUN)
+    except LookupError:
+        return ""
+    return ss[0].lexname() if ss else ""
+
+
+@lru_cache(maxsize=8192)
 def _known_concrete_noun(lemma: str) -> bool:
     """True if *lemma* has a WordNet noun sense whose first supersense is concrete.
 
-    Stricter than :func:`_is_concrete` (which lets unknown words pass, for proper
-    names): an IS_A descriptor must be a KNOWN dictionary role/thing noun, so the
-    out-of-vocabulary capitalized interjections that flood turn-structured
-    dialogue ("Thanks", "Woah", "Yep", "Congrats" — spaCy tags them NOUN/PROPN)
-    are rejected instead of slipping through the unknown-word exemption.
+    Out-of-vocabulary words are REJECTED. An unnamed IS_A descriptor or possessive
+    tail must be a KNOWN dictionary role/thing noun, so the out-of-vocabulary
+    capitalized interjections that flood turn-structured dialogue ("Thanks",
+    "Woah", "Yep", "Congrats" — spaCy tags them NOUN/PROPN) and conversational
+    slang ("fam", "fave", "edu") are dropped rather than admitted as facts. Named
+    arguments bypass this via ``_named(tok)``, which is where the proper-name
+    exemption belongs.
     """
     try:
         from nltk.corpus import wordnet as wn
@@ -303,7 +312,13 @@ def _possessive(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, 
             thing = _clean_np(tok, speaker, speakers)
             if not thing or thing.lower() == possessor.lower() or _has_meta(tok):
                 continue
-            if not _named(tok) and not _is_concrete((tok.lemma_ or tok.text).lower()):
+            # Strict (KNOWN-concrete) gate, not the lenient _is_concrete: the
+            # lenient one passes out-of-vocabulary words so proper names survive,
+            # but conversational slang is OOV too, so "HAS fam / fave / edu"
+            # sailed through as possession facts. A tail that is not a named
+            # entity must be a known dictionary thing-noun. Named tails still
+            # pass via _named(tok) — the exemption is preserved where it belongs.
+            if not _named(tok) and not _known_concrete_noun((tok.lemma_ or tok.text).lower()):
                 continue
             out.append({"head": possessor, "relation": "HAS", "tail": thing,
                         "pattern": "possessive", "head_named": pnamed,
