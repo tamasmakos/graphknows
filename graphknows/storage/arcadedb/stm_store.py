@@ -12,7 +12,6 @@ import datetime
 import logging
 from typing import Any
 
-from graphknows.storage.arcadedb._labels import _safe_rel_label
 from graphknows.storage.arcadedb._sql import sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
@@ -75,6 +74,10 @@ _SCHEMA_DDL = [
     "CREATE EDGE TYPE HAS_TURN IF NOT EXISTS",
     "CREATE EDGE TYPE MENTIONS IF NOT EXISTS",
     "CREATE EDGE TYPE NEXT IF NOT EXISTS",
+    # Every semantic ENTITY->ENTITY fact, regardless of predicate — the predicate
+    # is the `predicate` PROPERTY, not the type name (see GraphStore._CORE_DDL).
+    "CREATE EDGE TYPE REL IF NOT EXISTS",
+    "CREATE PROPERTY REL.predicate IF NOT EXISTS STRING",
     # Properties — must be declared before indexing them (ArcadeDB requires the
     # property to exist on the type before CREATE INDEX).
     "CREATE PROPERTY SESSION.id IF NOT EXISTS STRING",
@@ -501,21 +504,11 @@ class ArcadeDBSTMStore:
         ``fact`` the source sentence/clause, so structured retrieval can route a
         fact back to its evidence passage. Both are first-write-wins.
         """
-        safe = _safe_rel_label(relation_name)
-        if not safe:
+        relation_name = (relation_name or "").strip()
+        if not relation_name:
             return
 
         now = datetime.datetime.utcnow().isoformat()
-
-        # Ensure the edge type is declared — ArcadeDB requires this before MERGE.
-        try:
-            await self._c.command(
-                self._db,
-                f"CREATE EDGE TYPE {safe} IF NOT EXISTS",
-                language="sql",
-            )
-        except Exception:
-            logger.debug("Edge type DDL skipped for %s", safe, exc_info=True)
 
         tx = await self._c.begin(self._db)
         try:
@@ -523,15 +516,17 @@ class ArcadeDBSTMStore:
             if relation_name in _SINGLE_VALUED_RELATIONS:
                 await self._c.command(
                     self._db,
-                    f"""
-                    MATCH (a:ENTITY {{name: $subject, session_id: $session_id}})
-                          -[r:{safe} {{session_id: $session_id, is_current: true}}]
+                    """
+                    MATCH (a:ENTITY {name: $subject, session_id: $session_id})
+                          -[r:REL {predicate: $predicate, session_id: $session_id,
+                                   is_current: true}]
                           ->(b:ENTITY)
                     WHERE toLower(b.name) <> toLower($object)
                     SET r.is_current = false, r.valid_to = $now
                     """,
                     params={
                         "subject": subject_name,
+                        "predicate": relation_name,
                         "session_id": session_id,
                         "object": object_name,
                         "now": now,
@@ -542,10 +537,10 @@ class ArcadeDBSTMStore:
             # Upsert endpoint entities and MERGE the relation edge.
             await self._c.command(
                 self._db,
-                f"""
-                MERGE (a:ENTITY {{name: $subject, session_id: $session_id}})
-                MERGE (b:ENTITY {{name: $object, session_id: $session_id}})
-                MERGE (a)-[r:{safe} {{session_id: $session_id}}]->(b)
+                """
+                MERGE (a:ENTITY {name: $subject, session_id: $session_id})
+                MERGE (b:ENTITY {name: $object, session_id: $session_id})
+                MERGE (a)-[r:REL {predicate: $predicate, session_id: $session_id}]->(b)
                 SET r.fact       = coalesce(r.fact, $fact),
                     r.chunk_id   = coalesce(r.chunk_id, $chunk_id),
                     r.confidence = $confidence,
@@ -557,6 +552,7 @@ class ArcadeDBSTMStore:
                 params={
                     "subject": subject_name,
                     "object": object_name,
+                    "predicate": relation_name,
                     "session_id": session_id,
                     "fact": fact,
                     "chunk_id": chunk_id,
@@ -855,9 +851,9 @@ class ArcadeDBSTMStore:
         relation_rows = await self._c.query(
             self._db,
             """
-            MATCH (a:ENTITY {session_id: $sid})-[r]->(b:ENTITY {session_id: $sid})
-            WHERE r.session_id = $sid AND r.is_current = true AND type(r) <> 'REL'
-            RETURN a.name AS source, type(r) AS relation,
+            MATCH (a:ENTITY {session_id: $sid})-[r:REL]->(b:ENTITY {session_id: $sid})
+            WHERE r.session_id = $sid AND r.is_current = true
+            RETURN a.name AS source, r.predicate AS relation,
                    b.name AS target, r.confidence AS confidence,
                    r.valid_from AS valid_at, r.created_at AS created_at
             """,

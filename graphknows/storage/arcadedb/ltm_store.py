@@ -1,7 +1,8 @@
 """ArcadeDB LTM graph store.
 
-All graph queries use ArcadeDB openCypher. Dynamic relation edges require
-declaring the edge type before MERGE (ArcadeDB constraint).
+All graph queries use ArcadeDB openCypher. Every semantic ENTITY->ENTITY fact is
+the single ``REL`` edge type carrying the open-vocabulary predicate as its
+``predicate`` property, so no per-predicate edge type is declared at write time.
 
 Community detection runs as a Python-native Leiden fallback inside
 write_topic_summaries.
@@ -17,10 +18,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from graphknows.storage.models.gds import CommunityResult
-from graphknows.storage.arcadedb._labels import _safe_rel_label
 from graphknows.storage.arcadedb._sql import sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
+from graphknows.storage.models.gds import CommunityResult
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +38,6 @@ _N2V_MIN_SIM = 0.5
 # Requires ArcadeDB >=26.3.2. UPDATE MODE OFF keeps ingest commits cheap; we
 # REBUILD it on demand right before node2vec runs at promotion time.
 _OLAP_VIEW = "ltm_olap"
-# Structural/provenance edge types excluded when reading the entity-relation graph
-# (we want semantic relations, not graph plumbing).
-_NON_COMMUNITY_EDGE_TYPES = (
-    "['MENTIONS','HAS_CHUNK','IN_SESSION','IN_TOPIC','HAS_TURN',"
-    "'HAS_ENTITY','MENTIONS_DATE','NEXT']"
-)
 
 # ---------------------------------------------------------------------------
 # DDL
@@ -134,6 +128,11 @@ _SCHEMA_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE NEXT"),
     ("sql", "CREATE EDGE TYPE IN_TOPIC"),
     ("sql", "CREATE EDGE TYPE HAS_ENTITY"),
+    # Every semantic ENTITY->ENTITY fact, regardless of predicate — the predicate
+    # is the `predicate` PROPERTY, not the type name (see GraphStore._CORE_DDL).
+    ("sql", "CREATE EDGE TYPE REL"),
+    ("sql", "CREATE PROPERTY REL.predicate IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON REL(predicate) NOTUNIQUE"),
 ]
 
 
@@ -186,7 +185,6 @@ class ArcadeDBLTMStore:
         self._c = client
         self._db = db
         self._relation_extractor = relation_extractor
-        self._declared_edge_types: set[str] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -242,25 +240,8 @@ class ArcadeDBLTMStore:
     async def _qry(self, cypher: str, **params: Any) -> list[dict]:
         return await self._c.query(self._db, cypher, params=params or None)
 
-    async def _ensure_edge_type(self, edge_type: str) -> None:
-        """Declare edge type before first MERGE (DDL idempotent)."""
-        if edge_type in self._declared_edge_types:
-            return
-        safe = _safe_rel_label(edge_type)
-        if not safe:
-            return
-        try:
-            await self._c.command(self._db, f"CREATE EDGE TYPE {safe} IF NOT EXISTS", language="sql")
-            self._declared_edge_types.add(edge_type)
-        except Exception as exc:
-            exc_s = str(exc).lower()
-            if "already exists" in exc_s or "duplicate" in exc_s:
-                self._declared_edge_types.add(edge_type)
-            else:
-                logger.warning("ensure_edge_type %s failed: %s", safe, exc)
-                raise
 
-    async def _supersede_ltm_edge(self, safe_rel: str, src: str, tgt: str, now: str) -> None:
+    async def _supersede_ltm_edge(self, predicate: str, src: str, tgt: str, now: str) -> None:
         """Tombstone any current LTM relation edge for (src, predicate) that points
         to a different target.
 
@@ -270,17 +251,18 @@ class ArcadeDBLTMStore:
         """
         try:
             await self._cmd(
-                f"MATCH (a:ENTITY {{name: $src}})"
-                f"-[r:{safe_rel} {{is_current: true}}]"
-                f"->(b:ENTITY) "
-                f"WHERE toLower(b.name) <> toLower($tgt) "
-                f"SET r.invalid_at = $now, r.is_current = false",
+                "MATCH (a:ENTITY {name: $src})"
+                "-[r:REL {predicate: $predicate, is_current: true}]"
+                "->(b:ENTITY) "
+                "WHERE toLower(b.name) <> toLower($tgt) "
+                "SET r.invalid_at = $now, r.is_current = false",
                 src=src,
                 tgt=tgt,
+                predicate=predicate,
                 now=now,
             )
         except Exception as exc:
-            logger.debug("_supersede_ltm_edge %s (%s → ≠%s) skipped: %s", safe_rel, src, tgt, exc)
+            logger.debug("_supersede_ltm_edge %s (%s → ≠%s) skipped: %s", predicate, src, tgt, exc)
 
     # ------------------------------------------------------------------
     # Session subgraph write (main flush path)
@@ -296,22 +278,14 @@ class ArcadeDBLTMStore:
         (``runtime.flush_memory`` → ``run_in_executor``) while the ArcadeDB
         client is bound to the server's main loop, so a begin/commit pair would
         land on different connections and ArcadeDB would discard the
-        transaction's writes silently. Relation edge types are pre-declared via
-        ``_ensure_edge_type`` before first use.
+        transaction's writes silently. Every semantic relation is the single REL
+        type declared in the DDL, so no per-predicate type pre-declaration runs.
         """
         now = datetime.now(UTC).isoformat()
         nodes = edges = 0
         entity_by_name: dict[str, dict[str, Any]] = {
             e["name"]: e for e in stm_data.get("entities", [])
         }
-
-        # Pre-declare relation edge types (DDL auto-commits).
-        for r in stm_data.get("relation_edges", []):
-            rel = r.get("relation")
-            if rel:
-                safe = _safe_rel_label(rel)
-                if safe:
-                    await self._ensure_edge_type(safe)
 
         # SESSION node
         await self._cmd(
@@ -452,8 +426,8 @@ class ArcadeDBLTMStore:
             src, rel, tgt = r.get("source"), r.get("relation"), r.get("target")
             if not (src and rel and tgt):
                 continue
-            safe = _safe_rel_label(rel)
-            if not safe:
+            rel = str(rel).strip()
+            if not rel:
                 continue
 
             # Temporal metadata forwarded from STM edge (may be absent for legacy data).
@@ -462,20 +436,21 @@ class ArcadeDBLTMStore:
 
             # Supersedence: tombstone older current edges for single-valued predicates.
             if rel.upper() in _LTM_SINGLE_VALUED_RELATIONS:
-                await self._supersede_ltm_edge(safe, src, tgt, now)
+                await self._supersede_ltm_edge(rel, src, tgt, now)
 
             await self._cmd(
-                f"MERGE (a:ENTITY {{name: $src}}) "
-                f"MERGE (b:ENTITY {{name: $tgt}}) "
-                f"MERGE (a)-[r:{safe}]->(b) "
-                f"SET r.weight = coalesce(r.weight, 0) + 1, "
-                f"    r.session_id = $sid, "
-                f"    r.valid_at = coalesce(r.valid_at, $valid_at), "
-                f"    r.invalid_at = null, "
-                f"    r.is_current = true, "
-                f"    r.created_at = coalesce(r.created_at, $created_at)",
+                "MERGE (a:ENTITY {name: $src}) "
+                "MERGE (b:ENTITY {name: $tgt}) "
+                "MERGE (a)-[r:REL {predicate: $predicate}]->(b) "
+                "SET r.weight = coalesce(r.weight, 0) + 1, "
+                "    r.session_id = $sid, "
+                "    r.valid_at = coalesce(r.valid_at, $valid_at), "
+                "    r.invalid_at = null, "
+                "    r.is_current = true, "
+                "    r.created_at = coalesce(r.created_at, $created_at)",
                 src=src,
                 tgt=tgt,
+                predicate=rel,
                 sid=session_id,
                 valid_at=edge_valid_at or None,
                 created_at=edge_created_at,
@@ -565,8 +540,8 @@ class ArcadeDBLTMStore:
                 "MATCH (e:ENTITY) WHERE e.name IS NOT NULL RETURN e.name AS name"
             )
             edge_rows = await self._qry(
-                "MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE r.is_current = true OR r.is_current IS NULL "
-                f"AND NOT type(r) IN {_NON_COMMUNITY_EDGE_TYPES} "
+                "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
+                "WHERE r.is_current = true OR r.is_current IS NULL "
                 "RETURN DISTINCT a.name AS src, b.name AS tgt, "
                 "coalesce(r.weight, 1.0) AS w"
             )
@@ -743,29 +718,29 @@ class ArcadeDBLTMStore:
         now_ts = datetime.now(UTC).isoformat()
         edges = 0
         for src, rel, tgt, _meta in all_triplets:
-            safe = _safe_rel_label(rel)
-            if not safe:
+            rel = str(rel).strip()
+            if not rel:
                 continue
             src_canon = canonical.get(src.upper().replace("_", " "), src)
             tgt_canon = canonical.get(tgt.upper().replace("_", " "), tgt)
-            await self._ensure_edge_type(safe)
             # Supersede single-valued predicates before upserting.
             if rel.upper() in _LTM_SINGLE_VALUED_RELATIONS:
-                await self._supersede_ltm_edge(safe, src_canon, tgt_canon, now_ts)
+                await self._supersede_ltm_edge(rel, src_canon, tgt_canon, now_ts)
             await self._cmd(
-                f"MERGE (a:ENTITY {{name: $src}}) "
-                f"SET a.type = coalesce(a.type, $src_t) "
-                f"MERGE (b:ENTITY {{name: $tgt}}) "
-                f"SET b.type = coalesce(b.type, $tgt_t) "
-                f"MERGE (a)-[r:{safe}]->(b) "
-                f"SET r.weight = coalesce(r.weight, 0) + 1, "
-                f"    r.session_id = $sid, "
-                f"    r.valid_at = coalesce(r.valid_at, null), "
-                f"    r.invalid_at = null, "
-                f"    r.is_current = true, "
-                f"    r.created_at = coalesce(r.created_at, $now)",
+                "MERGE (a:ENTITY {name: $src}) "
+                "SET a.type = coalesce(a.type, $src_t) "
+                "MERGE (b:ENTITY {name: $tgt}) "
+                "SET b.type = coalesce(b.type, $tgt_t) "
+                "MERGE (a)-[r:REL {predicate: $predicate}]->(b) "
+                "SET r.weight = coalesce(r.weight, 0) + 1, "
+                "    r.session_id = $sid, "
+                "    r.valid_at = coalesce(r.valid_at, null), "
+                "    r.invalid_at = null, "
+                "    r.is_current = true, "
+                "    r.created_at = coalesce(r.created_at, $now)",
                 src=src_canon,
                 tgt=tgt_canon,
+                predicate=rel,
                 sid=session_id,
                 src_t=entity_by_name.get(src_canon, {}).get("type", "ENTITY"),
                 tgt_t=entity_by_name.get(tgt_canon, {}).get("type", "ENTITY"),
@@ -945,10 +920,9 @@ class ArcadeDBLTMStore:
                 if count >= _N2V_KNN:
                     break
 
-        # Explicit typed relation edges (structural signal).
+        # Explicit semantic relation edges (structural signal).
         rel_rows = await self._qry(
-            "MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE a.name < b.name "
-            f"AND NOT type(r) IN {_NON_COMMUNITY_EDGE_TYPES} "
+            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE a.name < b.name "
             "RETURN DISTINCT a.name AS a, b.name AS b"
         )
         for r in rel_rows:

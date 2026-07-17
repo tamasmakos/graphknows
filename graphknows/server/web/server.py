@@ -145,12 +145,12 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
         edge_cypher = """
         MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(x)-[:HAS_ENTITY|MENTIONS]-(a:ENTITY)
         MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(y)-[:HAS_ENTITY|MENTIONS]-(b:ENTITY)
-        MATCH (a)-[r]->(b)
+        MATCH (a)-[r:REL]->(b)
         WHERE a <> b
         WITH DISTINCT a, b, r LIMIT $limit
         RETURN coalesce(a.id, a.name) AS source,
                coalesce(b.id, b.name) AS target,
-               coalesce(r.label, type(r)) AS label,
+               coalesce(r.label, r.predicate) AS label,
                coalesce(r.weight, 1) AS weight
         """
         return node_cypher, edge_cypher, {"session_id": session_id, "limit": limit}
@@ -169,9 +169,9 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
     LIMIT $limit
     """
     edge_cypher = """
-    MATCH (a:ENTITY)-[r]->(b:ENTITY)
+    MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)
     WHERE a <> b
-    WITH a, b, type(r) AS label, coalesce(r.weight, 1) AS weight LIMIT $limit
+    WITH a, b, r.predicate AS label, coalesce(r.weight, 1) AS weight LIMIT $limit
     RETURN coalesce(a.id, a.name) AS source,
            coalesce(b.id, b.name) AS target,
            label,

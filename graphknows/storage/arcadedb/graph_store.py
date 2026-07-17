@@ -30,7 +30,6 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from graphknows.storage.arcadedb._labels import _safe_rel_label
 from graphknows.storage.arcadedb._sql import quote, quoted_list, sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
@@ -211,40 +210,18 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE IN_COMMUNITY IF NOT EXISTS"),  # ENTITY -> COMMUNITY
     ("sql", "CREATE EDGE TYPE PLAYS_ROLE IF NOT EXISTS"),  # FRAME_INSTANCE -> ENTITY
+    # Every semantic ENTITY->ENTITY fact, regardless of predicate. The predicate is
+    # the `predicate` PROPERTY, not the type name: the vocabulary is open and mostly
+    # single-use, so a type-per-predicate minted hundreds of near-empty types (and a
+    # CREATE EDGE TYPE DDL round-trip on the ingest hot path) while readers already
+    # keyed off r.predicate — the type name was never authoritative, because
+    # reserved-word predicates had to be escaped (find -> REL_FIND).
+    ("sql", "CREATE EDGE TYPE REL IF NOT EXISTS"),  # ENTITY -> ENTITY
+    ("sql", "CREATE PROPERTY REL.predicate IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON REL (predicate) NOTUNIQUE"),
     ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
     ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK
 ]
-
-# Role names (in priority order) that act as the agent-like subject of a frame
-# instance for the flattened convenience relations. The first present role's
-# first filler becomes the relation subject; every other role filler is an object.
-_AGENT_ROLE_PRIORITY: tuple[str, ...] = (
-    "Agent",
-    "Employee",
-    "Owner",
-    "Creator",
-    "Speaker",
-    "Participant_1",
-    "Cognizer",
-    "Experiencer",
-)
-
-
-def _primary_filler(roles: dict[str, list[str]]) -> str:
-    """Subject filler for a frame instance's flattened relations.
-
-    First filler of the highest-priority agent-like role present, else the first
-    filler of the first role. Empty when no role has a filler.
-    """
-    for role in _AGENT_ROLE_PRIORITY:
-        fillers = roles.get(role)
-        if fillers:
-            return str(fillers[0]).strip()
-    for fillers in roles.values():
-        if fillers:
-            return str(fillers[0]).strip()
-    return ""
-
 
 def _emb_sql(emb: list[float]) -> str:
     """Format an embedding as an ArcadeDB SQL array literal (inline, not a param)."""
@@ -266,35 +243,6 @@ def _name_norm(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-def _structural_types_literal() -> str:
-    """Structural edge types as a Cypher list literal (no IN $list support)."""
-    from graphknows.ingestion.models.taxonomy import STRUCTURAL_REL_TYPES
-
-    return quoted_list(sorted(STRUCTURAL_REL_TYPES))
-
-
-def _fact_exclude_literal() -> str:
-    """Edge types excluded from the fact-sheet relation query.
-
-    Structural spine edges (STRUCTURAL_REL_TYPES — already covers MENTIONS) plus
-    IN_COMMUNITY, so ``entity_fact_context`` only surfaces semantic ENTITY->ENTITY
-    facts, not graph plumbing.
-    """
-    from graphknows.ingestion.models.taxonomy import STRUCTURAL_REL_TYPES
-
-    return quoted_list(sorted(STRUCTURAL_REL_TYPES | {"IN_COMMUNITY"}))
-
-
-def _is_noise_predicate(predicate: str) -> bool:
-    """True for the ``ACTIVITY_ONGOING_*`` frame-spam predicate (``ACTIVITY_START_*``
-    is kept — the higher-signal decision/onset event).
-
-    Applied to the RAW ``r.predicate`` label, so reserved-word verbs that the edge
-    TYPE escapes as ``REL_*`` (find->REL_FIND) are NOT dropped — they read as their
-    real predicate ("find") here."""
-    return predicate.upper().startswith("ACTIVITY_ONGOING")
-
-
 class GraphStore:
     """Single-database ArcadeDB store for one namespace (golden layer).
 
@@ -306,7 +254,6 @@ class GraphStore:
     def __init__(self, client: ArcadeDBClient, db: str = _DB) -> None:
         self._c = client
         self._db = db
-        self._declared_edge_types: set[str] = set()
         # Namespace-global community size/conductance maps for chunk_community_weights.
         # These change only at consolidation; cached so every retrieve() doesn't
         # re-scan the whole graph. Invalidated when communities recompute.
@@ -376,23 +323,6 @@ class GraphStore:
 
     async def _qry(self, cypher: str, **params: Any) -> list[dict]:
         return await self._c.query(self._db, cypher, params=params or None)
-
-    async def _ensure_edge_type(self, safe_label: str) -> None:
-        """Declare a dynamic relation edge type before first MERGE (idempotent)."""
-        if safe_label in self._declared_edge_types:
-            return
-        try:
-            await self._c.command(
-                self._db, f"CREATE EDGE TYPE {safe_label} IF NOT EXISTS", language="sql"
-            )
-            self._declared_edge_types.add(safe_label)
-        except Exception as exc:
-            exc_s = str(exc).lower()
-            if "already exists" in exc_s or "duplicate" in exc_s:
-                self._declared_edge_types.add(safe_label)
-            else:
-                logger.warning("ensure_edge_type %s failed: %s", safe_label, exc)
-                raise
 
     async def _set_embedding(
         self, vertex_type: str, key_prop: str, key: str, emb: list[float]
@@ -536,20 +466,29 @@ class GraphStore:
         """
         if not entities:
             return
-        rows: list[dict[str, Any]] = []
+        # Collapse rows on the MERGE key before they reach the UNWIND. Two rows
+        # sharing a name_norm are not a harmless repeat: the UNWIND MERGEs both
+        # before the UNIQUE index settles, ArcadeDB raises DuplicatedKeyException,
+        # and the caller's WHOLE DOCUMENT fails — silently deleting every chunk in
+        # it from the graph. Extractors that emit overlapping spans (the same
+        # surface under several labels) hit this routinely, so the guard belongs
+        # here, at the write, rather than in each caller. Max confidence wins.
+        by_key: dict[str, dict[str, Any]] = {}
         for e in entities:
             name = str(e.get("name") or "").strip()
             if not name:
                 continue
             conf = e.get("confidence", e.get("score", 1.0))
-            rows.append(
-                {
-                    "nn": _name_norm(name),
-                    "name": name,
-                    "etype": e.get("type") or "ENTITY",
-                    "conf": float(conf) if isinstance(conf, (int, float)) else 1.0,
-                }
-            )
+            row = {
+                "nn": _name_norm(name),
+                "name": name,
+                "etype": e.get("type") or "ENTITY",
+                "conf": float(conf) if isinstance(conf, (int, float)) else 1.0,
+            }
+            prev = by_key.get(row["nn"])
+            if prev is None or row["conf"] > prev["conf"]:
+                by_key[row["nn"]] = row
+        rows: list[dict[str, Any]] = list(by_key.values())
         if not rows:
             return
 
@@ -586,7 +525,7 @@ class GraphStore:
             rows=rows,
         )
 
-    async def _supersede_edge(self, safe_rel: str, src_norm: str, dst_norm: str, now: str) -> None:
+    async def _supersede_edge(self, predicate: str, src_norm: str, dst_norm: str, now: str) -> None:
         """Tombstone any current edge for (src, predicate) pointing elsewhere.
 
         Called only for single-valued predicates. Sets ``invalid_at``/
@@ -594,18 +533,19 @@ class GraphStore:
         """
         try:
             await self._cmd(
-                f"MATCH (a:ENTITY {{name_norm: $src}})"
-                f"-[r:{safe_rel} {{is_current: true}}]"
-                f"->(b:ENTITY) "
-                f"WHERE b.name_norm <> $dst "
-                f"SET r.invalid_at = $now, r.is_current = false",
+                "MATCH (a:ENTITY {name_norm: $src})"
+                "-[r:REL {predicate: $predicate, is_current: true}]"
+                "->(b:ENTITY) "
+                "WHERE b.name_norm <> $dst "
+                "SET r.invalid_at = $now, r.is_current = false",
                 src=src_norm,
                 dst=dst_norm,
+                predicate=predicate,
                 now=now,
             )
         except Exception as exc:
             logger.debug(
-                "_supersede_edge %s (%s -> !=%s) skipped: %s", safe_rel, src_norm, dst_norm, exc
+                "_supersede_edge %s (%s -> !=%s) skipped: %s", predicate, src_norm, dst_norm, exc
             )
 
     async def write_relation(
@@ -618,23 +558,30 @@ class GraphStore:
         confidence: float = 0.5,
         valid_at: str | None = None,
         source: str = "",
+        src_type: str = "",
+        dst_type: str = "",
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
         On a duplicate (src, predicate, dst) the ``chunk_id`` is appended to the
         edge's ``evidence`` list (deduplicated) and ``confidence`` keeps the max.
         Single-valued predicates tombstone the previous current edge first.
+
+        ``src_type``/``dst_type`` type the MERGEd ENTITY endpoints (NER label, else
+        WordNet supersense). They are ``coalesce``d, so an existing type is never
+        overwritten — a later untyped mention cannot erase an earlier NER label.
+        Without them the endpoints of a relation are created untyped, which is how
+        the great majority of ENTITY vertices ended up with no type at all.
         """
-        safe = _safe_rel_label(predicate)
-        if not safe or not src_name or not dst_name:
+        predicate = predicate.strip()
+        if not predicate or not src_name or not dst_name:
             return
         src_norm = _name_norm(src_name)
         dst_norm = _name_norm(dst_name)
         now = datetime.now(UTC).isoformat()
 
-        await self._ensure_edge_type(safe)
         if predicate.upper() in _SINGLE_VALUED_RELATIONS:
-            await self._supersede_edge(safe, src_norm, dst_norm, now)
+            await self._supersede_edge(predicate, src_norm, dst_norm, now)
 
         # Evidence is appended via an interpolated quoted literal — openCypher
         # cannot express "$param IN list-property" reliably.
@@ -648,10 +595,12 @@ class GraphStore:
         )
         await self._cmd(
             f"MERGE (a:ENTITY {{name_norm: $src_nn}}) "
-            f"SET a.name = coalesce(a.name, $src), a.state = coalesce(a.state, 'raw') "
+            f"SET a.name = coalesce(a.name, $src), a.state = coalesce(a.state, 'raw'), "
+            f"    a.type = coalesce(a.type, $src_type) "
             f"MERGE (b:ENTITY {{name_norm: $dst_nn}}) "
-            f"SET b.name = coalesce(b.name, $dst), b.state = coalesce(b.state, 'raw') "
-            f"MERGE (a)-[r:{safe}]->(b) "
+            f"SET b.name = coalesce(b.name, $dst), b.state = coalesce(b.state, 'raw'), "
+            f"    b.type = coalesce(b.type, $dst_type) "
+            f"MERGE (a)-[r:REL {{predicate: $predicate}}]->(b) "
             f"SET r.predicate = $predicate, "
             f"    r.fact = coalesce(r.fact, $fact), "
             f"    {evidence_set}"
@@ -674,6 +623,8 @@ class GraphStore:
             conf=float(confidence),
             valid_at=valid_at or None,
             source=source,
+            src_type=src_type or None,
+            dst_type=dst_type or None,
             now=now,
         )
 
@@ -746,7 +697,7 @@ class GraphStore:
     async def write_frame_instances(
         self, session_id: str, chunk_id: str, instances: list[dict[str, Any]]
     ) -> int:
-        """MERGE role-filled FRAME_INSTANCE vertices + PLAYS_ROLE / convenience edges.
+        """MERGE role-filled FRAME_INSTANCE vertices + PLAYS_ROLE edges.
 
         Each ``instances`` item: ``{frame, match_sim, role_confidence,
         roles: {role_name: [filler_name, ...]}}``.
@@ -758,9 +709,15 @@ class GraphStore:
         uses) — instead of a duplicate node per chunk. Any ``id`` on the input is
         ignored. Writes are batched: one UNWIND for the instances+evidence edges,
         one for all PLAYS_ROLE edges (ENTITY fillers MERGE on ``name_norm``).
-        Flattened ENTITY->ENTITY convenience relations (``source='frame'``, from
-        the primary agent-like role filler to each other filler, predicate
-        ``f"{FRAME}_{ROLE}"``) ride the normal RELATION layer via ``write_relation``.
+
+        The reified (FRAME_INSTANCE)-[:PLAYS_ROLE {role}]->(ENTITY) form is the
+        ONLY representation. A flattened ENTITY->ENTITY projection (predicate
+        ``f"{FRAME}_{ROLE}"``) was written here too and has been removed: it was a
+        lossy re-encoding of these same PLAYS_ROLE edges (it only linked one
+        agent-like filler to the others, so it lost fills), it minted one edge
+        TYPE per frame/role pair, and ``entity_fact_context`` reads the reified
+        form directly — so the flat copy only re-stated the same facts in a second
+        format that the fact-sheet dedup could not match, consuming the cap twice.
 
         Idempotent (all MERGE). Returns the number of instances processed.
         """
@@ -768,7 +725,6 @@ class GraphStore:
             return 0
         inst_rows: list[dict[str, Any]] = []
         role_rows: list[dict[str, Any]] = []
-        conv: list[tuple[str, str, str, float]] = []
         for inst in instances:
             frame = str(inst.get("frame") or "").strip()
             roles: dict[str, list[str]] = inst.get("roles") or {}
@@ -798,14 +754,6 @@ class GraphStore:
                         role_rows.append(
                             {"fid": fid, "nn": _name_norm(name), "name": name, "role": role}
                         )
-            subj = _primary_filler(roles)
-            if subj:
-                subj_norm = _name_norm(subj)
-                for role, fillers in roles.items():
-                    for filler in fillers or []:
-                        obj = str(filler).strip()
-                        if obj and _name_norm(obj) != subj_norm:
-                            conv.append((subj, f"{frame}_{role}", obj, role_conf or 0.5))
         if not inst_rows:
             return 0
         # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
@@ -822,20 +770,30 @@ class GraphStore:
             "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)",
             rows=inst_rows,
         )
-        # Batch 2: PLAYS_ROLE edges (filler ENTITY MERGE on name_norm).
+        # Batch 2a: MERGE the distinct filler ENTITIES first, on their own.
+        # role_rows is keyed (fid, nn, role), so ONE entity filling TWO roles of a
+        # frame repeats its name_norm — and MERGEing the entity inside the same
+        # UNWIND as the edge creates it twice before the ENTITY[name_norm] UNIQUE
+        # index settles, raising DuplicatedKeyException and failing the caller's
+        # whole document. ("Being_named" with Entity=X and Name=X is exactly this.)
+        # Collapsing on the merge key first makes the edge pass a pure MATCH.
         if role_rows:
+            ent_rows = list(
+                {r["nn"]: {"nn": r["nn"], "name": r["name"]} for r in role_rows}.values()
+            )
+            await self._cmd(
+                "UNWIND $rows AS row "
+                "MERGE (e:ENTITY {name_norm: row.nn}) "
+                "SET e.name = coalesce(e.name, row.name), e.state = coalesce(e.state, 'raw')",
+                rows=ent_rows,
+            )
+            # Batch 2b: now every filler exists — the edge pass only MATCHes.
             await self._cmd(
                 "UNWIND $rows AS row "
                 "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
-                "MERGE (e:ENTITY {name_norm: row.nn}) "
-                "SET e.name = coalesce(e.name, row.name), e.state = coalesce(e.state, 'raw') "
+                "MATCH (e:ENTITY {name_norm: row.nn}) "
                 "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
                 rows=role_rows,
-            )
-        # Convenience relations dedup + accumulate evidence via write_relation.
-        for subj, pred, obj, conf in conv:
-            await self.write_relation(
-                subj, pred, obj, chunk_id=chunk_id, confidence=conf, source="frame"
             )
         return len(inst_rows)
 
@@ -1172,18 +1130,21 @@ class GraphStore:
     async def entity_relation_graph(
         self, session_id: str | None = None
     ) -> list[dict[str, Any]]:
-        """Semantic ENTITY->ENTITY relation rows, excluding structural edges.
+        """Semantic ENTITY->ENTITY relation rows (the REL layer).
+
+        Structural edges are distinct types, so scoping the match to ``REL``
+        excludes them by construction — no exclusion list is needed. ``type`` is
+        the ``predicate`` property, not the edge type name.
 
         Returns rows of {src, type, dst, weight, is_current} for PPR/pagerank.
         With ``session_id`` set, rows are restricted to entities mentioned by
         that session's chunks.
         """
         rows = await self._qry(
-            "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
             "WHERE a.name IS NOT NULL AND b.name IS NOT NULL AND a.name <> b.name "
-            f"AND NOT type(r) IN {_structural_types_literal()} "
             "AND (r.is_current = true OR r.is_current IS NULL) "
-            "RETURN a.name AS src, type(r) AS type, b.name AS dst, "
+            "RETURN a.name AS src, r.predicate AS type, b.name AS dst, "
             "coalesce(r.confidence, 1.0) AS weight, r.is_current AS is_current"
         )
         result = [
@@ -1245,22 +1206,34 @@ class GraphStore:
         return [r["name"] for r in rows if r.get("name")]
 
     async def entity_fact_context(
-        self, entity_names: list[str], max_facts: int = 15
+        self, entity_names: list[str], max_facts: int = 40
     ) -> list[str]:
         """Compact structured fact-sheet for the given entities (for the generator).
 
         Two graph reads keyed on ``name_norm`` (interpolated list literal — the
         store's IN-$list workaround):
-        - typed ENTITY->ENTITY relations (structural + IN_COMMUNITY excluded),
-          formatted ``"{subject} {predicate} {object}"`` with the predicate made
-          readable (underscores -> spaces, lower-cased);
+        - semantic ENTITY->ENTITY relations (the ``REL`` layer; structural edges are
+          other types and never match), formatted ``"{subject} {predicate} {object}"``
+          with the predicate made readable (underscores -> spaces, lower-cased);
         - FULL FRAME_INSTANCE role fills touching any seed entity (every co-role,
           not just the seed's own), formatted ``"{frame}: role1=filler1, role2=…"``.
 
-        Noise filter + prioritisation: ``REL_*`` / ``ACTIVITY_ONGOING_*`` predicates
-        dropped; frame instances with < 2 role fills dropped; frames and evidenced
-        relations ranked before bare relations; identical strings deduped; capped
-        at ``max_facts``. Soft-fails to ``[]`` (never raises into retrieval).
+        The two reads are complementary, not overlapping: frame facts come ONLY
+        from the reified PLAYS_ROLE layer, since the flattened ``{FRAME}_{ROLE}``
+        projection that used to restate them as REL edges is no longer written.
+
+        Prioritisation: frame instances with < 2 role fills dropped; frames and
+        evidenced relations ranked before bare relations; identical strings
+        deduped; capped at ``max_facts``. Soft-fails to ``[]`` (never raises into
+        retrieval).
+
+        ``max_facts`` is the graph's ENTIRE bandwidth into the answer, and it
+        binds hardest on exactly the questions the graph should win: a
+        list/aggregation question ("what books has X read", "what events has X
+        attended") needs every matching tail, and a cap of 15 — shared with the
+        frame facts — silently truncates the list the question is asking for.
+        Each fact is one short line, so the cost of a larger cap is tens of
+        tokens against a generator context measured in thousands.
         """
         norms = sorted({_name_norm(n) for n in entity_names if n and n.strip()})
         if not norms:
@@ -1270,14 +1243,12 @@ class GraphStore:
             rel_rows = await self._qry(
                 # Both directions so object-side facts surface ("Caroline HAS Luna"
                 # when the query resolves Luna). Only current (non-tombstoned) edges.
-                # Use r.predicate (the raw human-readable label) not type(r): the edge
-                # TYPE is REL_-prefixed for reserved-word predicates (find->REL_FIND),
-                # which the noise filter would then drop as if it were noise.
-                f"MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                # REL is the single semantic ENTITY->ENTITY type; the predicate is
+                # its `predicate` property (the raw human-readable label).
+                f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
                 f"WHERE (a.name_norm IN {name_lit} OR b.name_norm IN {name_lit}) "
                 f"AND (r.is_current = true OR r.is_current IS NULL) "
-                f"AND NOT type(r) IN {_fact_exclude_literal()} "
-                f"RETURN a.name AS s, coalesce(r.predicate, type(r)) AS p, "
+                f"RETURN a.name AS s, r.predicate AS p, "
                 f"b.name AS o, r.evidence AS ev"
             )
             frame_rows = await self._qry(
@@ -1303,14 +1274,14 @@ class GraphStore:
                 continue
             frame_facts.append(f"{frame}: {', '.join(roles)}")
 
-        # Relations: evidenced ones outrank bare ones; noise predicates dropped.
+        # Relations: evidenced ones outrank bare ones.
         evidenced: list[str] = []
         plain: list[str] = []
         for r in rel_rows:
             s = str(r.get("s") or "").strip()
             p = str(r.get("p") or "").strip()
             o = str(r.get("o") or "").strip()
-            if not s or not p or not o or _is_noise_predicate(p):
+            if not s or not p or not o:
                 continue
             fact = f"{s} {p.replace('_', ' ').lower()} {o}"
             (evidenced if r.get("ev") else plain).append(fact)
@@ -1372,13 +1343,12 @@ class GraphStore:
         / the numpy pagerank). Two directed queries avoid relying on ArcadeDB's
         undirected Cypher pattern support.
         """
-        struct = _structural_types_literal()
         out_rows = await self._qry(
-            f"MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE NOT type(r) IN {struct} "
+            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
             "RETURN a.name_norm AS nn, count(r) AS deg"
         )
         in_rows = await self._qry(
-            f"MATCH (a:ENTITY)<-[r]-(b:ENTITY) WHERE NOT type(r) IN {struct} "
+            "MATCH (a:ENTITY)<-[r:REL]-(b:ENTITY) "
             "RETURN a.name_norm AS nn, count(r) AS deg"
         )
         degree: dict[str, int] = {}
@@ -1573,19 +1543,17 @@ class GraphStore:
         return updated
 
     async def _semantic_rel_types_literal(self) -> str:
-        """Cypher list literal of distinct ENTITY->ENTITY semantic relation types.
+        """Cypher list literal of the semantic ENTITY->ENTITY relation types, or ``[]``.
 
-        Structural types (MENTIONS/PART_OF/…) are excluded — the same policy as
-        the pagerank path — so the community-quality algos score the meaningful
+        Every semantic fact is one ``REL`` type (the predicate is a property), and
+        structural types (MENTIONS/PART_OF/…) are distinct types that this never
+        matches — so the community-quality algos stay scoped to the meaningful
         relation graph, not CHUNK->ENTITY provenance or ENTITY->COMMUNITY links.
-        Returns ``[]`` when the graph has no semantic entity-entity edges.
+        Existence is still probed rather than hardcoded because the caller must
+        skip the algos entirely on a graph with no semantic edges.
         """
-        struct = _structural_types_literal()
-        rows = await self._qry(
-            f"MATCH (a:ENTITY)-[r]->(b:ENTITY) WHERE NOT type(r) IN {struct} "
-            "RETURN DISTINCT type(r) AS t"
-        )
-        return quoted_list(sorted({r["t"] for r in rows if r.get("t")}))
+        rows = await self._qry("MATCH (:ENTITY)-[r:REL]->(:ENTITY) RETURN count(r) AS n")
+        return "['REL']" if (rows and (rows[0].get("n") or 0)) else "[]"
 
     async def compute_community_quality(self, skip_view_ensure: bool = False) -> dict[str, Any]:
         """Score community structure via native modularityScore + conductance.
@@ -1827,9 +1795,8 @@ class GraphStore:
                 "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL RETURN e.name_norm AS nn"
             )
             edge_rows = await self._qry(
-                "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
+                "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
                 "WHERE (r.is_current = true OR r.is_current IS NULL) "
-                f"AND NOT type(r) IN {_structural_types_literal()} "
                 "RETURN DISTINCT a.name_norm AS src, b.name_norm AS dst, "
                 "coalesce(r.confidence, 1.0) AS w"
             )
@@ -1935,10 +1902,10 @@ class GraphStore:
         """Re-create one loser relation edge on the winner via write_relation.
 
         Reuses the audited write_relation (evidence-append dedup, max confidence,
-        edge-type declaration, single-valued supersede). Each evidence chunk is
-        replayed so the winner edge accumulates the loser's full provenance.
+        single-valued supersede). Each evidence chunk is replayed so the winner
+        edge accumulates the loser's full provenance.
         """
-        predicate = row.get("predicate") or row.get("t") or ""
+        predicate = row.get("predicate") or ""
         if not predicate or not src_name or not dst_name:
             return
         conf = float(row.get("confidence") or 0.5)
@@ -2004,19 +1971,16 @@ class GraphStore:
         )
 
         # 2. Re-point semantic RELATION edges (both directions), skip self-loops.
-        struct = _structural_types_literal()
         out_rows = await self._qry(
-            "MATCH (:ENTITY {name_norm: $loser})-[r]->(b:ENTITY) "
-            f"WHERE NOT type(r) IN {struct} "
-            "RETURN type(r) AS t, b.name AS dst, b.name_norm AS dst_nn, "
+            "MATCH (:ENTITY {name_norm: $loser})-[r:REL]->(b:ENTITY) "
+            "RETURN b.name AS dst, b.name_norm AS dst_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
             "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source",
             loser=loser_norm,
         )
         in_rows = await self._qry(
-            "MATCH (a:ENTITY)-[r]->(:ENTITY {name_norm: $loser}) "
-            f"WHERE NOT type(r) IN {struct} "
-            "RETURN type(r) AS t, a.name AS src, a.name_norm AS src_nn, "
+            "MATCH (a:ENTITY)-[r:REL]->(:ENTITY {name_norm: $loser}) "
+            "RETURN a.name AS src, a.name_norm AS src_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
             "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source",
             loser=loser_norm,

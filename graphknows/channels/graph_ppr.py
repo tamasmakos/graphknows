@@ -65,7 +65,7 @@ class GraphPPRChannel(Channel):
 
     @staticmethod
     async def _relation_graph(rt: Any) -> tuple[list[str], list[tuple[int, int, float]]]:
-        """Directed weighted ENTITY->ENTITY graph from semantic (non-structural) edges."""
+        """Directed weighted ENTITY->ENTITY graph from the semantic REL edge layer."""
         rows = await rt.store.entity_relation_graph()
         idx: dict[str, int] = {}
         edges: list[tuple[int, int, float]] = []

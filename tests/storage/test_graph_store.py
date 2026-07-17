@@ -188,9 +188,10 @@ async def test_write_relation_evidence_append_sql_shape() -> None:
         source="gliner",
     )
     stmts = _command_strings(client)
-    # Edge type declared before MERGE
-    assert any(s.startswith("CREATE EDGE TYPE LIKES") for s in stmts)
-    merge = next(s for s in stmts if "MERGE (a)-[r:LIKES]->(b)" in s)
+    # One REL type carries every predicate as a property, so no per-predicate
+    # CREATE EDGE TYPE DDL runs on the ingest path at all.
+    assert not any(s.startswith("CREATE EDGE TYPE") for s in stmts)
+    merge = next(s for s in stmts if "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in s)
     # Endpoints merged on name_norm; evidence appended as a deduped quoted literal.
     assert "MERGE (a:ENTITY {name_norm: $src_nn})" in merge
     assert "WHEN 'chunk-1' IN coalesce(r.evidence, []) THEN r.evidence" in merge
@@ -199,10 +200,11 @@ async def test_write_relation_evidence_append_sql_shape() -> None:
     for fragment in ("r.confidence", "r.valid_at", "r.is_current = true", "r.state", "r.source"):
         assert fragment in merge
     merge_call = next(
-        c for c in client.command.await_args_list if "MERGE (a)-[r:LIKES]->(b)" in c.args[1]
+        c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1]
     )
     assert merge_call.kwargs["params"]["src_nn"] == "melanie"
     assert merge_call.kwargs["params"]["dst_nn"] == "camping"
+    assert merge_call.kwargs["params"]["predicate"] == "LIKES"
     # LIKES is multi-valued: no tombstone pass
     assert not any("r.invalid_at = $now" in s for s in stmts)
 
@@ -221,14 +223,31 @@ async def test_write_relation_single_valued_tombstones() -> None:
     tombstone = next(s for s in stmts if "r.invalid_at = $now" in s)
     assert "is_current: true" in tombstone
     assert "r.is_current = false" in tombstone
-    assert "[r:LIVES_IN" in tombstone
+    # Scoped by the predicate PROPERTY, not a per-predicate edge type.
+    assert "[r:REL {predicate: $predicate, is_current: true}]" in tombstone
+    tomb_call = next(c for c in client.command.await_args_list if "r.invalid_at = $now" in c.args[1])
+    assert tomb_call.kwargs["params"]["predicate"] == "LIVES_IN"
 
 
 @pytest.mark.asyncio
-async def test_write_relation_skips_unlabelable_predicate() -> None:
+async def test_write_relation_accepts_predicate_that_is_not_a_valid_type_name() -> None:
+    """A predicate is data, not a type name, so it need not be a legal identifier.
+
+    Previously the predicate became the edge TYPE, so anything unusable as DDL
+    (leading digit, punctuation) was silently DROPPED — losing the fact outright.
+    """
     client = _mock_client()
     store = GraphStore(client=client)
     await store.write_relation(src_name="a", predicate="123!!", dst_name="b")
+    merge_call = next(c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1])
+    assert merge_call.kwargs["params"]["predicate"] == "123!!"
+
+
+@pytest.mark.asyncio
+async def test_write_relation_skips_empty_predicate() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_relation(src_name="a", predicate="   ", dst_name="b")
     client.command.assert_not_awaited()
 
 
@@ -278,20 +297,12 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     assert {r["role"] for r in role_rows} == {"Employee", "Position", "Employer"}
     assert all(r["fid"] == inst_rows[0]["fid"] for r in role_rows)
 
-    # Convenience relations: primary (Employee=Caroline) -> the 2 other fillers.
-    # Predicate = f"{FRAME}_{ROLE}" via write_relation → _safe_rel_label upper-cases.
-    merges = [s for s in stmts if "MERGE (a)-[r:" in s]
-    assert any("[r:BEING_EMPLOYED_POSITION]->(b)" in s for s in merges)
-    assert any("[r:BEING_EMPLOYED_EMPLOYER]->(b)" in s for s in merges)
-    # N-1 convenience relations for N=3 fillers (Caroline is the subject, skipped).
-    assert len(merges) == 2
-    # source='frame' rides the normal RELATION layer.
-    rel_call = next(
-        c for c in client.command.await_args_list if "[r:BEING_EMPLOYED_POSITION]" in c.args[1]
-    )
-    assert rel_call.kwargs["params"]["source"] == "frame"
-    assert rel_call.kwargs["params"]["src_nn"] == "caroline"
-    assert rel_call.kwargs["params"]["dst_nn"] == "nurse"
+    # The reified PLAYS_ROLE form is the ONLY representation: no flattened
+    # ENTITY->ENTITY projection is written. The old behaviour emitted
+    # f"{FRAME}_{ROLE}" convenience edges (BEING_EMPLOYED_POSITION, ...), which
+    # minted one edge TYPE per frame/role pair and re-stated the PLAYS_ROLE facts
+    # in a second format that the fact-sheet dedup could not match.
+    assert not [s for s in stmts if "MERGE (a)-[r:" in s]
 
 
 @pytest.mark.asyncio
@@ -441,7 +452,7 @@ async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
 
 
 @pytest.mark.asyncio
-async def test_entity_relation_graph_excludes_structural_types() -> None:
+async def test_entity_relation_graph_matches_only_semantic_rel_edges() -> None:
     client = _mock_client(
         query_rows=[
             {"src": "Melanie", "type": "LIKES", "dst": "Camping",
@@ -454,8 +465,11 @@ async def test_entity_relation_graph_excludes_structural_types() -> None:
         {"src": "Melanie", "type": "LIKES", "dst": "Camping", "weight": 0.8, "is_current": True}
     ]
     cypher = client.query.await_args_list[0].args[1]
-    assert "NOT type(r) IN [" in cypher
-    assert "'MENTIONS'" in cypher
+    # Structural edges (MENTIONS/PART_OF/…) are their own types, so scoping the
+    # traversal to REL excludes them by construction — no exclusion list needed.
+    assert "(a:ENTITY)-[r:REL]->(b:ENTITY)" in cypher
+    assert "NOT type(r) IN [" not in cypher
+    assert "r.predicate AS type" in cypher
 
 
 # ---------------------------------------------------------------------------
@@ -465,14 +479,14 @@ async def test_entity_relation_graph_excludes_structural_types() -> None:
 
 @pytest.mark.asyncio
 async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> None:
-    # The rel query returns coalesce(r.predicate, type(r)) — the RAW label, so a
-    # reserved-word verb (find, stored as edge type REL_FIND) reads as "find" here
-    # and is NOT dropped; only ACTIVITY_ONGOING is noise.
+    # The rel query returns r.predicate — the RAW label. Predicates are data, so a
+    # reserved-word verb ("find") needs no escaping and reads back verbatim.
+    # Frame facts arrive ONLY via frame_rows (the reified PLAYS_ROLE layer); the
+    # flattened f"{FRAME}_{ROLE}" projection is no longer written, so no predicate
+    # here restates a frame — which is what the old noise filter existed to undo.
     rel_rows = [
-        {"s": "Jon", "p": "ACTIVITY_START_ACTIVITY", "o": "dance studio", "ev": ["c1"]},
         {"s": "Gina", "p": "SUPPORT", "o": "Jon", "ev": ["c2"]},
         {"s": "Gina", "p": "FIND", "o": "fashion pieces", "ev": ["c3"]},  # reserved-word verb → KEPT
-        {"s": "Jon", "p": "ACTIVITY_ONGOING_ACTIVITY", "o": "walking", "ev": []},  # noise → dropped
         {"s": "Jon", "p": "VISITING", "o": "Rome", "ev": []},  # plain (unevidenced)
     ]
     frame_rows = [
@@ -485,13 +499,12 @@ async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> Non
 
     facts = await store.entity_fact_context(["Jon", "Gina"])
 
-    # Frame instance (>=2 roles) ranks first; only ACTIVITY_ONGOING dropped.
+    # Frame instance (>=2 roles) ranks first; the 1-role frame is dropped.
     assert facts[0] == "Activity_start: Agent=Jon, Activity=dance studio"
-    assert "Jon activity start activity dance studio" in facts
+    assert not any(f.startswith("Visiting:") for f in facts)
     assert "Gina support Jon" in facts
     assert "Gina find fashion pieces" in facts  # reserved-word verb survived
     assert "Jon visiting Rome" in facts
-    assert not any("activity ongoing" in f for f in facts)
     # Evidenced relations precede the bare (unevidenced) VISITING relation.
     assert facts.index("Gina support Jon") < facts.index("Jon visiting Rome")
 
@@ -499,8 +512,11 @@ async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> Non
     rel_cypher = client.query.await_args_list[0].args[1]
     assert "a.name_norm IN ['gina','jon'] OR b.name_norm IN ['gina','jon']" in rel_cypher
     assert "r.is_current = true OR r.is_current IS NULL" in rel_cypher
-    assert "coalesce(r.predicate, type(r))" in rel_cypher
-    assert "NOT type(r) IN [" in rel_cypher
+    assert "r.predicate AS p" in rel_cypher
+    assert "(a:ENTITY)-[r:REL]->(b:ENTITY)" in rel_cypher
+    # Structural edges are separate types, so scoping to REL excludes them by
+    # construction — the old exclusion list is gone.
+    assert "NOT type(r) IN [" not in rel_cypher
 
 
 @pytest.mark.asyncio
@@ -642,7 +658,7 @@ async def test_merge_entities_repoints_mentions_relations_and_deletes_loser() ->
             [{"name": "Mel", "aliases": []}],  # loser lookup
             [{"name": "Melanie", "aliases": []}],  # winner lookup
             [  # outgoing loser relation edges
-                {"t": "LIKES", "dst": "Camping", "dst_nn": "camping",
+                {"dst": "Camping", "dst_nn": "camping",
                  "predicate": "LIKES", "fact": "", "evidence": ["c1"],
                  "confidence": 0.8, "valid_at": None, "source": "gliner"},
             ],
@@ -656,13 +672,14 @@ async def test_merge_entities_repoints_mentions_relations_and_deletes_loser() ->
     stmts = _command_strings(client)
     # MENTIONS re-pointed onto the winner.
     assert any("MERGE (c)-[nm:MENTIONS]->(w)" in s for s in stmts)
-    # Relation re-created on the winner via write_relation (LIKES edge).
-    merge_rel = next(s for s in stmts if "MERGE (a)-[r:LIKES]->(b)" in s)
+    # Relation re-created on the winner via write_relation (REL/LIKES edge).
+    merge_rel = next(s for s in stmts if "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in s)
     rel_call = next(
-        c for c in client.command.await_args_list if "MERGE (a)-[r:LIKES]->(b)" in c.args[1]
+        c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1]
     )
     assert rel_call.kwargs["params"]["src_nn"] == "melanie"
     assert rel_call.kwargs["params"]["dst_nn"] == "camping"
+    assert rel_call.kwargs["params"]["predicate"] == "LIKES"
     assert "chunk_id" not in merge_rel or "c1" in str(rel_call.kwargs["params"])
     # Loser surface folded into winner aliases.
     alias_call = next(
@@ -821,9 +838,9 @@ async def test_compute_graph_embeddings_writes_list_property() -> None:
     async def query_side_effect(db, cypher, params=None):
         if "algo.node2vec" in cypher:
             return [{"nn": "melanie", "embedding": [0.1, 0.2, 0.3]}]
-        if "(a:ENTITY)-[r]->(b:ENTITY)" in cypher:
+        if "(a:ENTITY)-[r:REL]->(b:ENTITY)" in cypher:
             return [{"nn": "melanie", "deg": 2}]
-        if "(a:ENTITY)<-[r]-(b:ENTITY)" in cypher:
+        if "(a:ENTITY)<-[r:REL]-(b:ENTITY)" in cypher:
             return [{"nn": "melanie", "deg": 2}]
         return []
 
@@ -910,8 +927,9 @@ async def test_compute_community_quality_writes_community_vertices() -> None:
     client = _mock_client()
 
     async def query_side_effect(db, cypher, params=None):
-        if "RETURN DISTINCT type(r) AS t" in cypher:
-            return [{"t": "WORKS_AT"}, {"t": "LIVES_IN"}]
+        # Semantic-edge existence probe: every predicate lives on the one REL type.
+        if "(:ENTITY)-[r:REL]->(:ENTITY) RETURN count(r) AS n" in cypher:
+            return [{"n": 7}]
         if "algo.modularityScore" in cypher:
             return [{"modularity": 0.42, "communities": 2, "edgeCount": 7}]
         if "algo.conductance" in cypher:
@@ -931,7 +949,7 @@ async def test_compute_community_quality_writes_community_vertices() -> None:
     assert result == {"modularity": 0.42, "communities": 2, "communities_scored": 2}
     # modularityScore/conductance are scoped to the semantic rel-type allowlist.
     assert any(
-        "algo.conductance('community_id', ['LIVES_IN','WORKS_AT'])" in c.args[1]
+        "algo.conductance('community_id', ['REL'])" in c.args[1]
         for c in client.query.await_args_list
     )
     merge_calls = [c for c in client.command.await_args_list if "MERGE (k:COMMUNITY" in c.args[1]]
@@ -1142,8 +1160,9 @@ async def test_graph_store_round_trip_on_scratch_database() -> None:
         assert any(r["type"] == "LIKES" and r["src"] == "Melanie" for r in graph)
 
         # Evidence provenance accumulated across both writes; confidence keeps max.
+        # One REL type for every predicate; LIKES is the `predicate` property.
         rows = await store._qry(
-            "MATCH (a:ENTITY {name_norm: 'melanie'})-[r:LIKES]->(b) "
+            "MATCH (a:ENTITY {name_norm: 'melanie'})-[r:REL {predicate: 'LIKES'}]->(b) "
             "RETURN r.evidence AS evidence, r.confidence AS confidence, r.fact AS fact"
         )
         assert rows, "LIKES edge not found"
@@ -1160,3 +1179,76 @@ async def test_graph_store_round_trip_on_scratch_database() -> None:
             await store.drop_database()
         finally:
             await store.close()
+
+
+@pytest.mark.asyncio
+async def test_write_entities_bulk_collapses_duplicate_merge_keys() -> None:
+    """Two rows sharing a name_norm must never reach the UNWIND.
+
+    Regression: the UNWIND MERGEd both before the ENTITY[name_norm] UNIQUE index
+    settled, ArcadeDB raised DuplicatedKeyException, and the caller's whole
+    DOCUMENT failed — silently deleting every chunk in it from the graph. An
+    extractor running with flat_ner=False returns overlapping spans, so the same
+    surface arrives under several labels routinely.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client)
+
+    await store.write_entities_bulk(
+        "s1",
+        "c1",
+        [
+            {"name": "Becoming Nicole", "type": "WORK_OF_ART", "score": 0.7},
+            {"name": "becoming  nicole", "type": "PERSON", "score": 0.9},  # same merge key
+            {"name": "Caroline", "type": "PERSON", "score": 0.8},
+        ],
+    )
+
+    call = next(c for c in client.command.await_args_list if "MERGE (e:ENTITY" in c.args[1])
+    rows = call.kwargs["params"]["rows"]
+    keys = [r["nn"] for r in rows]
+    assert len(keys) == len(set(keys)), "duplicate merge keys reached the UNWIND"
+    assert sorted(keys) == ["becoming nicole", "caroline"]
+    # Highest confidence wins the type.
+    nicole = next(r for r in rows if r["nn"] == "becoming nicole")
+    assert nicole["conf"] == pytest.approx(0.9)
+    assert nicole["etype"] == "PERSON"
+
+
+@pytest.mark.asyncio
+async def test_write_frame_instances_merges_fillers_before_the_edge_pass() -> None:
+    """One entity filling TWO roles must not MERGE twice in one UNWIND.
+
+    Regression: role_rows is keyed (fid, nn, role), so a frame like Being_named
+    with Entity=X and Name=X repeats X's name_norm. MERGEing the ENTITY inside the
+    edge UNWIND created it twice before ENTITY[name_norm] settled ->
+    DuplicatedKeyException -> the caller's whole DOCUMENT failed to ingest.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client)
+
+    await store.write_frame_instances(
+        "s1",
+        "c1",
+        [{
+            "frame": "Being_named",
+            "match_sim": 0.9,
+            "role_confidence": 0.9,
+            # SAME filler in two roles — the shape that broke ingest.
+            "roles": {"Entity": ["Becoming Nicole"], "Name": ["Becoming Nicole"]},
+        }],
+    )
+
+    stmts = _command_strings(client)
+    ent_call = next(
+        c for c in client.command.await_args_list
+        if "MERGE (e:ENTITY {name_norm: row.nn})" in c.args[1]
+        and "PLAYS_ROLE" not in c.args[1]
+    )
+    keys = [r["nn"] for r in ent_call.kwargs["params"]["rows"]]
+    assert keys == ["becoming nicole"], "filler must be collapsed to ONE merge key"
+
+    # The edge pass must only MATCH the entity, never MERGE it.
+    edge = next(s for s in stmts if "PLAYS_ROLE {role: row.role}" in s)
+    assert "MATCH (e:ENTITY {name_norm: row.nn})" in edge
+    assert "MERGE (e:ENTITY" not in edge, "edge pass must not create entities"
