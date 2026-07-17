@@ -28,8 +28,12 @@ class BaseEvalConfig(BaseModel):
     # via EVAL_GEN_CONTEXT_K so a caller can sweep 25/50/100 without code edits.
     # NOTE: the MCP memory_query tool clamps top_k at 100, so 100 is the ceiling
     # a single retrieval can feed the generator.
+    # Default 50, raised from 25: evidence-rank attribution on conv-26 found 29 of
+    # 81 failures had their gold evidence retrieved at ranks 26-36 — reachable,
+    # fetched, then cut by the 25 window. The adapter re-sorts passages
+    # chronologically for the prompt, so inclusion is what matters, not rank.
     gen_context_k: int = Field(
-        default_factory=lambda: int(os.environ.get("EVAL_GEN_CONTEXT_K", "25"))
+        default_factory=lambda: int(os.environ.get("EVAL_GEN_CONTEXT_K", "50"))
     )
     probe_k: int = 50  # gold-reachability probe depth (diagnostic only; not fed to LLM)
     recall_scope: str = "both"  # stm | ltm | both
@@ -48,18 +52,25 @@ class BaseEvalConfig(BaseModel):
     # ── Concurrency ──────────────────────────────────────────────────────────
     # Ingest and answer are decoupled because they stress different resources:
     #
-    #   Ingest is a bounded QUEUE. Each conversation runs the embedding model +
-    #   NER + vector-index build locally in the MCP-server process (~2 GB RSS per
-    #   concurrent ingest), so unbounded fan-out OOMs the box. `ingest_workers`
-    #   caps how many conversations ingest at once — the memory-safe batch width.
+    #   Ingest is a bounded QUEUE, and its width is 1. Every conversation shares
+    #   ONE extraction model in the MCP-server process, and that model's
+    #   inference() is not reentrant — it is serialised behind a lock (see
+    #   gliner_model._SerialInference). So concurrent conversations cannot
+    #   actually extract in parallel: they only queue on that lock, and the wait
+    #   counts against each document's MCP request timeout. At width 3 that
+    #   timed out 20 documents across four conversations and left their graphs
+    #   half-built. Width 1 is not a throughput sacrifice — the model was always
+    #   the serial resource — it just stops the queue forming inside the timeout.
     #
     #   Answer/retrieve is PARALLEL. Once a conversation is ingested it is dropped
     #   from the ingest queue and its questions answer concurrently; answering is
     #   read-only + a remote LLM call (no local models), so it is cheap. Every
     #   conversation's questions share one global `question_concurrency` cap, which
-    #   bounds total in-flight LLM calls against the provider's rate limit.
+    #   bounds total in-flight LLM calls against the provider's rate limit. This is
+    #   what keeps a full run's wall-clock down: later conversations ingest while
+    #   earlier ones answer.
     ingest_workers: int = Field(
-        default_factory=lambda: int(os.environ.get("EVAL_INGEST_WORKERS", "3"))
+        default_factory=lambda: int(os.environ.get("EVAL_INGEST_WORKERS", "1"))
     )
     question_concurrency: int = Field(
         default_factory=lambda: int(os.environ.get("EVAL_QUESTION_CONCURRENCY", "8"))
