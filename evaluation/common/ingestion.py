@@ -40,18 +40,35 @@ class Ingestor:
         sem = asyncio.Semaphore(cap)
 
         async def _ingest_one(index: int, doc: EvalDocument) -> dict[str, Any]:
+            title = doc.title or f"{session_id}-doc-{index}"
             async with sem:
-                result = await self._client.call_tool(
-                    "memory_ingest",
-                    {
-                        "text": doc.text,
-                        "session_id": session_id,
-                        "title": doc.title or f"{session_id}-doc-{index}",
-                        "metadata": {"anchor_date": doc.anchor_date},
-                        "namespace": namespace,
-                    },
-                )
-            return result if isinstance(result, dict) else {"result": result}
+                try:
+                    result = await self._client.call_tool(
+                        "memory_ingest",
+                        {
+                            "text": doc.text,
+                            "session_id": session_id,
+                            "title": title,
+                            "metadata": {"anchor_date": doc.anchor_date},
+                            "namespace": namespace,
+                        },
+                    )
+                except Exception as exc:  # noqa: BLE001 — report, don't kill the run
+                    log.error("INGEST FAILED doc=%s (%s): %s", title, type(exc).__name__, exc)
+                    print(f"  !! ingest failed: doc={title} {type(exc).__name__}: "
+                          f"{str(exc)[:400]}", flush=True)
+                    return {"error": str(exc)[:400]}
+            out = result if isinstance(result, dict) else {"result": result}
+            # A failed tool call comes back as {"text": "<error>"} (see
+            # normalize_tool_result) — the reason was RIGHT THERE and discarded,
+            # so a document that dropped its whole chunk set looked identical to
+            # one that succeeded. Extraction failures silently delete evidence
+            # from every question; never swallow them.
+            if "chunks" not in out:
+                detail = out.get("text") or out.get("error") or str(out)[:400]
+                log.error("INGEST FAILED doc=%s: %s", title, detail)
+                print(f"  !! ingest failed: doc={title} :: {str(detail)[:400]}", flush=True)
+            return out
 
         outputs: list[dict[str, Any]] = await asyncio.gather(
             *[_ingest_one(i, d) for i, d in enumerate(documents)]

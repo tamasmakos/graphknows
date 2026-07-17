@@ -219,9 +219,27 @@ async def _ingest_unit(
     namespace = unit_namespace(config, unit.group_id)
     print(f"\n[{unit.group_id}] ingesting {len(unit.documents)} docs …", flush=True)
     ingest = await ingestor.ingest(session_id, unit.documents, namespace=namespace)
+    # ingest_error_count was computed and never surfaced: a run in which EVERY
+    # document failed still printed "ingest done: chunks=0" and went on to answer
+    # 152 questions against a partially-written graph. A failed document is not a
+    # question-level flake — it silently removes evidence from every question — so
+    # it is loud, and a total failure is fatal rather than merely reported.
+    if ingest.ingest_error_count:
+        print(
+            f"[{unit.group_id}] !! INGEST ERRORS: {ingest.ingest_error_count}/"
+            f"{len(unit.documents)} documents failed — the graph is INCOMPLETE",
+            flush=True,
+        )
+    if ingest.ingest_error_count >= len(unit.documents):
+        raise RuntimeError(
+            f"[{unit.group_id}] every document failed to ingest "
+            f"({ingest.ingest_error_count}/{len(unit.documents)}); "
+            f"scoring this run would measure a graph that was never built"
+        )
     print(
         f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
-        f"entities={ingest.entities} flush_nodes={ingest.flush_nodes}",
+        f"entities={ingest.entities} flush_nodes={ingest.flush_nodes} "
+        f"errors={ingest.ingest_error_count}",
         flush=True,
     )
     return ingest

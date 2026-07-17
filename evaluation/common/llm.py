@@ -29,6 +29,12 @@ log = logging.getLogger(__name__)
 
 _API_BASE = "https://openrouter.ai/api/v1"
 _MAX_ATTEMPTS = 6
+# Sentinel "status" for a 2xx response whose completion body is empty. Not a real
+# HTTP code — the transport succeeded, the model just returned no usable text.
+_EMPTY_BODY = 0
+# Temperature for re-issuing a call that came back empty. Must be > 0: the retry
+# exists to obtain a DIFFERENT sample, and the configured temperature is 0.
+_EMPTY_RETRY_TEMPERATURE = 0.4
 
 
 class CreditExhaustedError(RuntimeError):
@@ -98,10 +104,22 @@ class ChatLLM:
         if json_mode:
             body["response_format"] = {"type": "json_object"}
 
+        saw_empty = False
         for attempt in range(_MAX_ATTEMPTS):
             try:
+                # A retry only helps if it can produce a DIFFERENT result. At
+                # temperature 0 the call is deterministic, so re-issuing it after
+                # an empty completion just reproduces the empty completion — the
+                # run burned 6 attempts and ~75s per question to arrive back at
+                # the same body. Sampling breaks the tie (same remedy as the
+                # temp-0.4 retry on judge parse failure). Transport/HTTP retries
+                # keep the configured temperature: those failures are genuinely
+                # transient and the deterministic answer is the one we want.
+                call_body = body
+                if saw_empty:
+                    call_body = {**body, "temperature": _EMPTY_RETRY_TEMPERATURE}
                 response = await self._client.post(
-                    "/chat/completions", json=body, headers=self._headers
+                    "/chat/completions", json=call_body, headers=self._headers
                 )
                 if response.status_code == 402:
                     raise CreditExhaustedError(response.text[:500])
@@ -111,7 +129,11 @@ class ChatLLM:
                 payload = response.json()
                 text = _first_content(payload)
                 if text is None:
-                    raise _RetryableHTTPError(200, "empty completion body")
+                    saw_empty = True
+                    finish = ((payload.get("choices") or [{}])[0]).get("finish_reason")
+                    raise _RetryableHTTPError(
+                        _EMPTY_BODY, f"empty completion body (finish_reason={finish!r})"
+                    )
                 return text, _usage(payload)
             except CreditExhaustedError:
                 raise
@@ -120,12 +142,22 @@ class ChatLLM:
                     raise RuntimeError(
                         f"LLM call failed after {_MAX_ATTEMPTS} attempts: {exc}"
                     ) from exc
-                wait = 30 * (attempt + 1) if exc.status == 429 else 5 * (attempt + 1)
+                # An empty body is not congestion — the provider answered, and the
+                # next attempt only differs by its sample. Backing off 5-25s per
+                # attempt bought nothing but wall-clock, so resample immediately.
+                if exc.status == _EMPTY_BODY:
+                    wait = 0
+                elif exc.status == 429:
+                    wait = 30 * (attempt + 1)
+                else:
+                    wait = 5 * (attempt + 1)
                 log.warning(
-                    "Retryable LLM error (HTTP %s) attempt %d/%d, waiting %ds: %s",
-                    exc.status, attempt + 1, _MAX_ATTEMPTS, wait, exc.detail[:200],
+                    "Retryable LLM error (%s) attempt %d/%d, waiting %ds: %s",
+                    "empty body" if exc.status == _EMPTY_BODY else f"HTTP {exc.status}",
+                    attempt + 1, _MAX_ATTEMPTS, wait, exc.detail[:200],
                 )
-                await asyncio.sleep(wait)
+                if wait:
+                    await asyncio.sleep(wait)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 if attempt == _MAX_ATTEMPTS - 1:
                     raise RuntimeError(
@@ -149,12 +181,29 @@ class ChatLLM:
 
 class _RetryableHTTPError(Exception):
     def __init__(self, status: int, detail: str) -> None:
-        super().__init__(f"HTTP {status}")
+        # The detail belongs IN the message: this exception's str() is what the
+        # per-question handler records as the failure reason, and reporting only
+        # the status made an empty 200 body read as "LLM call failed: HTTP 200"
+        # — a success code presented as the cause.
+        where = "empty body" if status == _EMPTY_BODY else f"HTTP {status}"
+        super().__init__(f"{where}: {detail}" if detail else where)
         self.status = status
         self.detail = detail
 
 
 def _first_content(payload: dict[str, Any]) -> str | None:
+    """Answer text from a response: ``content`` only.
+
+    Reasoning models (the configured deepseek-v4-flash among them) return a
+    ``reasoning`` channel beside ``content``, and can return an empty ``content``
+    with text stranded in ``reasoning``. Do NOT fall back to it: that was tried
+    and measured, and it is worse than failing. ``reasoning`` is a scratchpad —
+    it reads "We need to answer: ..." — so promoting it to the answer produced 9
+    chain-of-thought answers that scored 0.0 each, turning 5 honest errors into 9
+    silent wrong answers (accuracy 0.526 -> 0.520). The empty body is recovered by
+    RESAMPLING instead (see the temperature bump in ``generate``), which can
+    actually return content.
+    """
     choices = payload.get("choices") or []
     if not choices:
         return None
