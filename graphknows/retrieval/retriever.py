@@ -15,10 +15,14 @@ WS-2 additions
   over chunk texts, feeding one RRF source.
 * Cross-encoder rerank — the top ~50 RRF candidates are re-scored by a local
   CPU cross-encoder (``rerank.py``); no-op when the model is unavailable.
-* PageRank boost — ``e.pagerank`` from ENTITY nodes is folded into the fusion
-  score with a bounded log-compressed multiplier.  Absent/zero → no effect.
-* IDF discriminativeness — entities are smooth-IDF-down-weighted instead of
-  hard-dropped when they appear in >50% of the corpus.
+* PageRank boost — NOT ACTIVE. ``pagerank_boost`` is applied, but it reads
+  ``pagerank`` from CHUNK metadata while the value is persisted on ENTITY nodes
+  and ``get_chunks_by_ids`` never returns it, so the multiplier is always 1.0.
+  Wiring it would need a chunk-level rollup (cf. ``chunk_community_weights``)
+  and should be measured before being believed.
+* IDF discriminativeness — NOT ACTIVE. ``ranking.idf_weight`` exists but nothing
+  calls it, and ``_ENTITY_SATURATION_RATIO`` is read from the environment and
+  never used. Entities are neither down-weighted nor dropped by frequency.
 * Temporal recency boost — relation-edge ``_temporal_score`` from
   ``filter_by_validity_window`` is folded into temporal-traversal candidates.
 """
