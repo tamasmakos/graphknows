@@ -10,9 +10,14 @@ from evaluation.locomo.config import LocomoConfig
 
 
 def test_default_unchanged() -> None:
-    """Defaults are the shipped baseline: gen_context_k=25, probe_k=50."""
+    """Defaults are the shipped baseline: gen_context_k=50, probe_k=50.
+
+    gen_context_k was raised 25 -> 50 after evidence-rank attribution on conv-26
+    showed 29 of 81 failures had their gold evidence retrieved at ranks 26-36 —
+    fetched by the probe, then cut by the 25-passage window.
+    """
     cfg = BaseEvalConfig()
-    assert cfg.gen_context_k == 25
+    assert cfg.gen_context_k == 50
     assert cfg.probe_k == 50
 
 

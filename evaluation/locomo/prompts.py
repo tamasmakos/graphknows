@@ -1,4 +1,4 @@
-"""LoCoMo prompts: staged-reasoning answer generation + lenient binary judge.
+"""LoCoMo prompts: staged-reasoning answer generation + binary judge (semantic leniency, strict dates).
 
 Design notes (each choice is load-bearing):
 
@@ -9,10 +9,13 @@ Design notes (each choice is load-bearing):
   select → time-ground → include → commit) because the dominant failure modes
   on this benchmark are early-stopping on the first relevant memory, dropped
   list items, and relative-date mistakes.
-* The judge is **binary and lenient** (partial credit, paraphrase, superset,
-  date tolerance). Lexical/token F1 punishes verbose-but-correct answers; the
-  binary judge measures whether the memory system recalled the right fact,
-  which is the quantity under test.
+* The judge is **binary, semantically lenient, temporally strict**: paraphrase,
+  partial list credit, and same-referent matches still count, but dates carry NO
+  tolerance — after resolving relative references, the answer must denote the
+  exact gold day. (The former ±14-day window both masked real temporal misses
+  and was applied inconsistently by the judge model.) Lexical/token F1 punishes
+  verbose-but-correct answers; the binary judge measures whether the memory
+  system recalled the right fact, which is the quantity under test.
 """
 
 ANSWER_SYSTEM = ""  # single user-message prompt; keeps provider routing simple
@@ -25,6 +28,10 @@ retrieved memories from those conversations. Work through the stages below IN OR
 Read every memory from first to last and note each one relevant to the question. Do NOT \
 stop at the first relevant memory: supporting details are often scattered, and a memory \
 near the end is exactly as likely to hold the answer as one near the start.
+Match MEANING, not wording: the memories almost never reuse the question's exact words. \
+"Signed up to be a mentor for LGBTQ youth" answers a question about "joining a mentorship \
+program"; "sent in applications to agencies" answers one about "applying". A memory is \
+relevant when it describes the same real-world event in any phrasing.
 
 ## Stage 2 — CHECK ATTRIBUTION
 Confirm each relevant memory is about the right person. If the question asks about person \
@@ -62,7 +69,10 @@ shortly before D.
 - If several similar events exist at different dates, enumerate them with dates before \
 choosing: past tense + "the" → the instance closest before the reference date; future \
 tense ("plans to") → the earliest planned date.
-- Give dates at day/month/year granularity — never carry a clock time into the answer.
+- Give dates at day/month/year granularity — never carry a clock time into the answer. \
+When the memories pin down the DAY (stated outright, or derivable from a message date \
+plus "yesterday"/"last weekend"), answer with the full day-month-year; "July 2023" when \
+"10 July 2023" is derivable loses credit for imprecision.
 
 ## Stage 6 — INCLUSION CHECK (lists and counts)
 If you found an item during reasoning, include it unless you have strong evidence it is \
@@ -72,7 +82,10 @@ memory list for missed items.
 
 ## Stage 7 — COMMIT
 Answer directly and specifically. Never reply "not specified" or "the memories don't \
-say" when ANY memory is relevant — give the best supported answer. Never output a name, \
+say" when ANY memory is relevant — give the best supported answer. Before concluding \
+that information is absent, re-run Stage 1 once looking ONLY for paraphrases of the \
+question's event: absence conclusions are the most common error and are almost always a \
+missed rewording, not missing information. Never output a name, \
 date, or number that appears in no memory. Reasonable deduction is allowed (a game \
 exclusive to one platform implies owning that platform); invention is not.
 - For hypothetical/opinion questions ("Would X do Y?"), follow the direct causal chain in \
@@ -107,9 +120,13 @@ same positive/negative family are paraphrases of each other ("proud" ≈ "fulfil
 "accomplished"). Judge meaning, not wording.
 3. EXTRA DETAIL IS FINE: an answer containing the gold's key fact plus additional \
 supported detail is CORRECT — never penalize for being more specific or more complete.
-4. DATE TOLERANCE: dates within 14 days of each other match; durations within 50% match \
-("5 months" ≈ "six months"). A specific date consistent with a vague gold reference \
-matches, and resolving "last year" to the actual year is CORRECT.
+4. DATES ARE STRICT — NO TOLERANCE: first resolve any relative reference to an absolute \
+date (gold "the Sunday before 25 May 2023" means 21 May 2023; resolving "last year" to \
+the actual year is required, not penalized). After resolution, the generated answer must \
+denote the SAME day: 20 May 2023 against a gold of 21 May 2023 is WRONG. If the gold \
+gives only a month or year, matching at that granularity suffices; if the gold specifies \
+a day, the generated answer must give that exact day. Durations must match exactly \
+("5 months" vs "six months" is WRONG).
 5. SAME REFERENT: if both answers point at the same entity, person, or event — even \
 described differently — label CORRECT.
 6. SEMANTIC OVERLAP: different level of detail or scope is not WRONG if the core idea of \

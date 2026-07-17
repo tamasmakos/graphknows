@@ -18,7 +18,10 @@ log = logging.getLogger(__name__)
 # Bump when a prompt change should invalidate cached verdicts. Bumped for the
 # two-stage judge: the headline score is now the STAGE-2 verdict (not raw
 # stage-1 SemanticF1), so old single-stage cache entries must not be reused.
-_PROMPT_VERSION = "locomo-judge-two-stage-v2-facts"
+# v3: date tolerance removed from the judge (strict same-day matching). The
+# version string keys the judge cache — bumping it is what invalidates verdicts
+# cached under the lenient prompt; without the bump they replay silently.
+_PROMPT_VERSION = "locomo-judge-two-stage-v3-strict-dates"
 
 
 def _render_facts(facts: list[str] | None) -> str:

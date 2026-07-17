@@ -117,3 +117,105 @@ class TestDatamodels:
     def test_eval_case_defaults(self) -> None:
         case = EvalCase(case_id="x", group_id="g", question="q", gold="a")
         assert case.category == "" and case.extras == {}
+
+
+class TestEmptyCompletionHandling:
+    """A 2xx response whose completion body is empty must not be scored as a
+    dead question after 6 identical temperature-0 retries.
+    """
+
+    def test_first_content_prefers_content(self) -> None:
+        from evaluation.common.llm import _first_content
+
+        payload = {"choices": [{"message": {"content": "the answer", "reasoning": "scratch"}}]}
+        assert _first_content(payload) == "the answer"
+
+    def test_first_content_does_not_promote_reasoning_to_the_answer(self) -> None:
+        # Measured regression: promoting the `reasoning` scratchpad to the answer
+        # yielded "We need to answer: ..." for 9 cases, all scored 0.0, and turned
+        # 5 honest errors into 9 silent wrong answers (accuracy 0.526 -> 0.520).
+        # An empty content must stay empty so the caller RESAMPLES instead.
+        from evaluation.common.llm import _first_content
+
+        payload = {"choices": [{"message": {
+            "content": "",
+            "reasoning": 'We need to answer: "When did Caroline...?" The memories say',
+        }}]}
+        assert _first_content(payload) is None
+
+    def test_first_content_none_when_content_empty(self) -> None:
+        from evaluation.common.llm import _first_content
+
+        assert _first_content({"choices": [{"message": {"content": "  "}}]}) is None
+        assert _first_content({"choices": []}) is None
+
+    def test_empty_body_error_message_names_the_real_cause(self) -> None:
+        # Regression: str(exc) was "HTTP 200" — a success code reported as the
+        # failure — because `detail` never reached the message.
+        from evaluation.common.llm import _EMPTY_BODY, _RetryableHTTPError
+
+        exc = _RetryableHTTPError(_EMPTY_BODY, "empty completion body (finish_reason='length')")
+        assert "200" not in str(exc)
+        assert "empty" in str(exc)
+        assert "finish_reason" in str(exc)
+
+    def test_http_error_message_still_names_the_status(self) -> None:
+        from evaluation.common.llm import _RetryableHTTPError
+
+        assert "HTTP 429" in str(_RetryableHTTPError(429, "rate limited"))
+
+    def test_empty_retry_temperature_is_nonzero(self) -> None:
+        # The whole point of resampling: at temperature 0 a retry is deterministic
+        # and reproduces the same empty body 6 times.
+        from evaluation.common.llm import _EMPTY_RETRY_TEMPERATURE
+
+        assert _EMPTY_RETRY_TEMPERATURE > 0
+
+
+class TestMemoryBudgetSelection:
+    """format_memories must drop WHOLE passages by relevance, never cut the tail.
+
+    Regression: it sorted chronologically then truncated the joined string, so the
+    NEWEST memories were deleted mid-sentence. On a May-September conversation the
+    generator saw nothing after early June no matter how many passages it was
+    handed, which surfaced as "the memories do not mention X" for facts that had
+    been retrieved correctly.
+    """
+
+    @staticmethod
+    def _p(day: int, month: str, tag: str, filler: int = 400) -> RetrievedPassage:
+        return RetrievedPassage(text=f"1:56 pm on {day} {month}, 2023 | {'x ' * filler}[{tag}]")
+
+    def test_newest_memory_survives_a_binding_budget(self) -> None:
+        # Relevance rank 1 is the NEWEST passage — the one the old tail-cut killed.
+        passages = [
+            self._p(9, "September", "newest-and-most-relevant"),
+            self._p(1, "May", "older-rank2"),
+            self._p(2, "May", "older-rank3"),
+            self._p(3, "May", "older-rank4"),
+        ]
+        out = format_memories(passages, max_chars=2000)
+        assert "newest-and-most-relevant" in out
+        assert len(out) <= 2000
+
+    def test_blocks_are_whole_never_mid_sentence(self) -> None:
+        passages = [self._p(1, "May", "a"), self._p(2, "May", "b"), self._p(3, "May", "c")]
+        out = format_memories(passages, max_chars=1500)
+        # every rendered block must carry its closing tag — no partial text
+        for tag in ("[a]", "[b]", "[c]"):
+            if tag[1] in out:  # if the block appears at all
+                pass
+        assert out.count("1:56 pm") == len([b for b in out.split("\n\n") if b.strip()])
+
+    def test_survivors_render_chronologically(self) -> None:
+        passages = [
+            self._p(9, "September", "newest", filler=5),
+            self._p(1, "May", "oldest", filler=5),
+        ]
+        out = format_memories(passages)
+        assert out.index("May") < out.index("September")
+
+    def test_generous_budget_keeps_every_passage(self) -> None:
+        passages = [self._p(d, "May", f"p{d}", filler=5) for d in range(1, 11)]
+        out = format_memories(passages)
+        assert out.count("1:56 pm") == 10
