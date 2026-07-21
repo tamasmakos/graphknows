@@ -371,6 +371,8 @@ class GraphStore(ArcadeStoreBase):
         source: str = "",
         src_type: str = "",
         dst_type: str = "",
+        ontology_property: str = "",
+        map_score: float = 0.0,
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
@@ -383,6 +385,10 @@ class GraphStore(ArcadeStoreBase):
         overwritten — a later untyped mention cannot erase an earlier NER label.
         Without them the endpoints of a relation are created untyped, which is how
         the great majority of ENTITY vertices ended up with no type at all.
+
+        ``ontology_property``/``map_score`` annotate the edge with the ontology
+        property its predicate mapped onto, when an ontology is configured. They
+        are annotations only — an unmapped predicate is written unchanged.
         """
         predicate = predicate.strip()
         if not predicate or not src_name or not dst_name:
@@ -424,6 +430,8 @@ class GraphStore(ArcadeStoreBase):
             f"    r.is_current = true, "
             f"    r.state = coalesce(r.state, 'raw'), "
             f"    r.source = coalesce(r.source, $source), "
+            f"    r.ontology_property = coalesce(r.ontology_property, $ont_prop), "
+            f"    r.map_score = coalesce(r.map_score, $map_score), "
             f"    r.created_at = coalesce(r.created_at, $now)",
             src_nn=src_norm,
             dst_nn=dst_norm,
@@ -436,6 +444,8 @@ class GraphStore(ArcadeStoreBase):
             source=source,
             src_type=src_type or None,
             dst_type=dst_type or None,
+            ont_prop=ontology_property or None,
+            map_score=float(map_score) or None,
             now=now,
         )
 

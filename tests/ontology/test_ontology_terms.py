@@ -115,6 +115,37 @@ class TestOntologyIndex:
         assert idx.match_classes([0.0] * 384) == []
         assert idx.match_classes([0.1, 0.2]) == []  # wrong dimensionality
 
+    def test_every_term_self_matches(self) -> None:
+        """A term's own index_text must retrieve that term — not its neighbour.
+
+        Regression: the matrix row order comes from the term list, but terms were
+        built from an rdflib subject SET (process-randomised order) and the disk
+        cache validated only the row COUNT. A cached matrix then paired with a
+        differently-ordered term list, returning cosine 1.0 for the wrong label.
+        """
+        from graphknows.storage.embedder import embed_one
+
+        idx = load_ontology_index(str(PERSONAL_TTL))
+        assert idx is not None
+        for term in idx.classes:
+            hit = idx.match_classes(embed_one(term.index_text), top_k=1, min_sim=0.0)
+            assert hit and hit[0][0].label == term.label, (
+                f"{term.label} self-matched to {hit[0][0].label if hit else None}"
+            )
+        for term in idx.properties:
+            hit = idx.match_properties(embed_one(term.index_text), top_k=1, min_sim=0.0)
+            assert hit and hit[0][0].label == term.label
+
+    def test_term_order_is_deterministic_across_loads(self) -> None:
+        """Row order must not depend on set iteration, or the cache misaligns."""
+        first = [t.uri for t in load_ontology_terms(PERSONAL_TTL)]
+        second = [t.uri for t in load_ontology_terms(PERSONAL_TTL)]
+        assert first == second
+        # Classes precede properties, each block internally sorted by URI.
+        terms = load_ontology_terms(PERSONAL_TTL)
+        class_uris = [t.uri for t in terms if t.kind == "class"]
+        assert class_uris == sorted(class_uris)
+
     def test_term_embedding_is_a_copy_not_a_recompute(self) -> None:
         idx = load_ontology_index(str(PERSONAL_TTL))
         assert idx is not None

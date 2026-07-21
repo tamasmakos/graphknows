@@ -37,7 +37,7 @@ import re
 import sys
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -524,20 +524,41 @@ class GLiNER2EntityExtractor:
         self._gliner = model
         log.info("GLiNER2 model loaded in %.1fs", time.monotonic() - start)
 
-    def _relex(self, text: str, dynamic_schema: _DynamicSchema) -> tuple[list, list]:
+    def _relex(
+        self,
+        text: str,
+        dynamic_schema: _DynamicSchema,
+        extra_entity_labels: Sequence[str] | None = None,
+        extra_relation_labels: dict[str, str] | None = None,
+    ) -> tuple[list, list]:
         """One relex forward pass over a WHOLE chunk. Returns (entities, relations).
 
         No sub-windowing: relex has no fixed max length, and the old 128-token
         windows existed because GLiNER2 attended poorly to long spans — they cost
         ~4 model calls per chunk. One call per chunk both simplifies the merge away
         and offsets relex being the larger model.
+
+        ``extra_entity_labels``/``extra_relation_labels`` are ontology terms
+        selected for THIS chunk. They are unioned in, never substituted: the
+        mined vocabulary keeps its precedence, so ontology injection can only add
+        candidates, never suppress an entity the text actually states.
         """
         assert self._gliner is not None
-        relation_spec = self._relation_schema or dynamic_schema.relation_spec
+        relation_spec = dict(self._relation_schema or dynamic_schema.relation_spec)
+        if extra_relation_labels:
+            for label, description in extra_relation_labels.items():
+                relation_spec.setdefault(label, description)
         # Observed labels first (they carry the chunk's own evidence), then the
-        # base inventory — relex cannot emit a type it was not given.
+        # ontology's suggestions, then the base inventory — relex cannot emit a
+        # type it was not given.
         labels = list(
-            dict.fromkeys([*dynamic_schema.entity_spec.keys(), *_BASE_ENTITY_LABELS])
+            dict.fromkeys(
+                [
+                    *dynamic_schema.entity_spec.keys(),
+                    *(extra_entity_labels or ()),
+                    *_BASE_ENTITY_LABELS,
+                ]
+            )
         )
         # Serialised inside the model wrapper (see gliner_model._SerialInference):
         # this model is shared across concurrently-ingesting conversations AND
@@ -559,18 +580,37 @@ class GLiNER2EntityExtractor:
         entities, relations = out if isinstance(out, tuple) else (out, [])
         return (entities[0] if entities else []), (relations[0] if relations else [])
 
-    def extract(self, text: str) -> ExtractionResult:
-        """Extract entities and relations using a spaCy-mined relex schema."""
+    def extract(
+        self,
+        text: str,
+        extra_entity_labels: Sequence[str] | None = None,
+        extra_relation_labels: dict[str, str] | None = None,
+    ) -> ExtractionResult:
+        """Extract entities and relations using a spaCy-mined relex schema.
+
+        Args:
+            text: The chunk to extract from.
+            extra_entity_labels: Ontology class labels to offer for this chunk.
+            extra_relation_labels: Ontology property label -> definition, offered
+                as additional relation predicates for this chunk.
+        """
         self._ensure_model_loaded()
         assert self._gliner is not None
 
         dynamic_schema = self._schema_miner.build(text)
         if not dynamic_schema.entity_spec:
             return ExtractionResult()
-        ents, rels = self._relex(text, dynamic_schema)
+        ents, rels = self._relex(
+            text, dynamic_schema, extra_entity_labels, extra_relation_labels
+        )
         return self._map_relex(ents, rels, dynamic_schema)
 
-    def extract_batch(self, texts: list[str]) -> list[ExtractionResult]:
+    def extract_batch(
+        self,
+        texts: list[str],
+        extra_entity_labels: Sequence[Sequence[str]] | None = None,
+        extra_relation_labels: Sequence[dict[str, str]] | None = None,
+    ) -> list[ExtractionResult]:
         """Extract for many chunks. Same per-text result as :meth:`extract`.
 
         relex takes ONE label set per call, but the entity/relation vocabularies
@@ -580,6 +620,10 @@ class GLiNER2EntityExtractor:
         old 4-windows-per-chunk fan-out is what actually cost the calls, and that
         is gone. Chunks whose spaCy schema mines no entities skip the model
         entirely (empty result), same as :meth:`extract`.
+
+        ``extra_entity_labels``/``extra_relation_labels``, when given, are
+        PER-TEXT and must be the same length as ``texts`` — ontology terms are
+        selected per chunk, so they cannot be shared across the batch.
         """
         if not texts:
             return []
@@ -594,7 +638,12 @@ class GLiNER2EntityExtractor:
                 results[i] = ExtractionResult()
                 continue
             try:
-                ents, rels = self._relex(text, dynamic_schema)
+                ents, rels = self._relex(
+                    text,
+                    dynamic_schema,
+                    extra_entity_labels[i] if extra_entity_labels else None,
+                    extra_relation_labels[i] if extra_relation_labels else None,
+                )
             except Exception as exc:  # noqa: BLE001 — one bad chunk must not kill ingest
                 log.warning("relex failed on chunk %d (%s); skipping", i, exc)
                 results[i] = ExtractionResult()

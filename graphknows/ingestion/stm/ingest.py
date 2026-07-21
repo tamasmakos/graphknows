@@ -28,6 +28,18 @@ log = logging.getLogger("graphknows.ingestion.stm.ingest")
 _FRAME_TOP_K = 5
 _FRAME_MIN_SIM = 0.20
 
+# Ontology classes tagged onto a chunk as MATCHES_CLASS edges. Deliberately
+# narrower than the label-injection top-k: injected labels are cheap guesses the
+# extractor can ignore, whereas a persisted tag is signal retrieval will trust.
+_ONT_TAG_TOP_K = 3
+
+# Floor for mapping an entity TYPE onto an ontology class by embedding. Measured
+# against personal.ttl with bge-small, correct mappings (PERSON->Person 0.66,
+# LOCATION->Place 0.54, DATE->TimePoint 0.45) sit above it while wrong ones
+# (OCCUPATION->Possession 0.43, ANIMAL->Emotion 0.38) fall below. Leaving an
+# entity unmapped is the safe outcome, so the floor errs high.
+_ONT_CLASS_MIN_SIM = 0.45
+
 
 class _STMIngestHandler:
     """Ingest parsed text into the golden GraphStore (state='raw').
@@ -37,6 +49,8 @@ class _STMIngestHandler:
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Callable that takes text and returns list[float] embedding.
         _rel_extractor: Optional relation extractor (llm_assisted).
+        _ontology: Optional OntologyIndex; steers extraction labels and links
+            the written entities/chunks to their ontology terms.
     """
 
     def __init__(
@@ -46,11 +60,27 @@ class _STMIngestHandler:
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
         enable_frames: bool = False,
+        ontology_index: Any | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
         self._enable_frames = enable_frames
+        self._ontology = ontology_index
+        # Predicate mapping uses char-n-gram TF-IDF plus a surface-alias table
+        # ("is friends with" -> friend_of), which suits multi-word predicates.
+        # Class mapping deliberately does NOT: on single-word type labels the
+        # n-gram similarity is dominated by shared suffixes and confidently
+        # returns nonsense (LOCATION -> Organization, ANIMAL -> Goal), so types
+        # are matched against the class DEFINITIONS by embedding instead.
+        self._property_mapper: Any = None
+        self._uri_by_label: dict[str, str] = {}
+        self._type_cache: dict[str, tuple[str, str, float]] = {}
+        if ontology_index is not None:
+            from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
+
+            self._property_mapper = OntologyPredicateMapper(ontology_index.property_labels)
+            self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
         if embed_fn is not None:
             self._embed_fn = embed_fn
         else:
@@ -91,27 +121,18 @@ class _STMIngestHandler:
         # writing (no double-clean).
         cleaned_texts = [self._clean_text(seg.text) for seg in parsed.segments]
 
-        # Batch all embeddings in one HTTP round-trip when using the default
-        # embed_one function. If embed_fn has been overridden (e.g. in tests),
-        # fall back to per-chunk calls to preserve the injection contract.
-        use_batch = False
-        batch_embeddings: list[list[float]] = []
-        if cleaned_texts:
-            from graphknows.storage.embedder import embed as embed_batch
-            from graphknows.storage.embedder import embed_one
-
-            if self._embed_fn is embed_one:
-                use_batch = True
-                import numpy as np  # embed_batch returns np.ndarray
-
-                arr: np.ndarray = embed_batch(cleaned_texts)
-                batch_embeddings = [arr[i].tolist() for i in range(len(cleaned_texts))]
+        use_batch, batch_embeddings = self._precompute_embeddings(cleaned_texts)
 
         # Bounded chunk-level concurrency. Default 1 (sequential): the
         # ENTITY(name_norm) index is UNIQUE, so concurrent MERGEs of a shared
         # entity name across chunks can race on the unique key. Opt into
         # parallelism by setting INGEST_CHUNK_CONCURRENCY>1.
         cap = int(os.environ.get("INGEST_CHUNK_CONCURRENCY", "1"))
+
+        # Per-chunk ontology label hints, reusing the embeddings above (no
+        # re-embed). Empty when no ontology is configured, which is the default.
+        ont_classes = [self._match_classes(e) for e in batch_embeddings]
+        entity_hints, relation_hints = self._label_hints(batch_embeddings)
 
         # Batch NER for ALL chunks in one GLiNER2 forward pass when supported.
         batch_extractions: list[ExtractionResult] | None = None
@@ -121,7 +142,7 @@ class _STMIngestHandler:
             and cleaned_texts
         ):
             batch_extractions = await asyncio.to_thread(
-                self._extractor.extract_batch, cleaned_texts
+                self._extractor.extract_batch, cleaned_texts, entity_hints, relation_hints
             )
 
         for idx, seg in enumerate(parsed.segments):
@@ -152,6 +173,7 @@ class _STMIngestHandler:
                 or metadata.get("memory_class")
                 or "raw_evidence",
                 atom_type=seg.metadata.get("atom_type") or "text",
+                ontology_classes=ont_classes[idx] if idx < len(ont_classes) else [],
             )
 
         async def _run_all() -> tuple[list[int], list[str]]:
@@ -225,7 +247,19 @@ class _STMIngestHandler:
         if not clean.strip():
             return 0
         embedding = self._embed_fn(clean)
-        extraction = await asyncio.to_thread(self._extract, clean) if infer else ExtractionResult()
+        # Same ontology steering as the chunk path — the turn's own embedding
+        # selects the candidate labels, so no extra embedding call.
+        ent_hints, rel_hints = self._label_hints([embedding])
+        extraction = (
+            await asyncio.to_thread(
+                self._extract,
+                clean,
+                ent_hints[0] if ent_hints else None,
+                rel_hints[0] if rel_hints else None,
+            )
+            if infer
+            else ExtractionResult()
+        )
         anchor = metadata.get("timestamp") or metadata.get("anchor_date")
         temporal = self._resolve_temporal_entities(extraction.entities, anchor)
         chunk_id = hashlib.sha256(f"{session_id}:{file_id}:{seq}:{clean}".encode()).hexdigest()[:16]
@@ -242,6 +276,7 @@ class _STMIngestHandler:
             temporal=temporal,
             memory_class=metadata.get("memory_class") or "raw_evidence",
             atom_type="turn",
+            ontology_classes=self._match_classes(embedding) if infer else [],
         )
 
     # ------------------------------------------------------------------
@@ -278,6 +313,7 @@ class _STMIngestHandler:
         temporal: list[dict[str, str]],
         memory_class: str,
         atom_type: str,
+        ontology_classes: list[tuple[str, float]] | None = None,
     ) -> int:
         """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count."""
         filtered = graph_entities(extraction.entities)
@@ -298,6 +334,11 @@ class _STMIngestHandler:
         )
         if filtered:
             await self._store.write_entities_bulk(session_id, chunk_id, filtered)
+
+        # Ontology layer — tag the chunk with the classes it evokes and link each
+        # entity to its class. Both are additive: an entity that maps to nothing
+        # keeps its extracted type and is written exactly as before.
+        await self._link_ontology(chunk_id, filtered, ontology_classes or [])
 
         # FRAME layer — match the chunk's embedding against FrameNet definitions
         # (top-k + min-sim floor, reusing the embedding already computed above; no
@@ -347,8 +388,12 @@ class _STMIngestHandler:
 
         # GLiNER2 relations — open-vocabulary labels, already precision-gated in
         # the extractor (dep-path/frame corroboration), evidenced to this chunk.
-        # No ontology filter here: it would reject every open-vocab label.
+        # The ontology ANNOTATES rather than filters: a predicate that maps to an
+        # ontology property records that mapping, and one that maps to nothing is
+        # still written under its extracted label. A filter here would reject
+        # every open-vocab label, which is why one was refused before.
         for rel in extraction.relations:
+            ont_property, map_score = self._map_predicate(rel["relation"])
             await self._store.write_relation(
                 rel["head"],
                 rel["relation"],
@@ -359,6 +404,8 @@ class _STMIngestHandler:
                 source=rel.get("source", "gliner"),
                 src_type=rel.get("head_type", ""),
                 dst_type=rel.get("tail_type", ""),
+                ontology_property=ont_property,
+                map_score=map_score,
             )
 
         # DSPy ontology-guided relations (llm_assisted mode only).
@@ -384,6 +431,130 @@ class _STMIngestHandler:
         if iso_dates:
             await self._store.write_temporal(chunk_id, iso_dates)
         return len(filtered)
+
+    def _precompute_embeddings(self, texts: list[str]) -> tuple[bool, list[list[float]]]:
+        """Embed every chunk up front when possible. Returns ``(precomputed, embeddings)``.
+
+        Two reasons to do this before the per-chunk loop: the default embedder
+        batches into one HTTP round-trip, and ontology label hints are derived
+        from a chunk's embedding and must exist *before* extraction runs. An
+        overridden ``embed_fn`` (tests) still gets per-chunk calls unless an
+        ontology forces the precompute, preserving the injection contract.
+        """
+        if not texts:
+            return False, []
+        from graphknows.storage.embedder import embed as embed_batch
+        from graphknows.storage.embedder import embed_one
+
+        if self._embed_fn is embed_one:
+            import numpy as np  # embed_batch returns np.ndarray
+
+            arr: np.ndarray = embed_batch(texts)
+            return True, [arr[i].tolist() for i in range(len(texts))]
+        if self._ontology is not None:
+            return True, [self._embed_fn(t) for t in texts]
+        return False, []
+
+    # ------------------------------------------------------------------
+    # Ontology injection (mode-independent; inert when no ontology is set)
+    # ------------------------------------------------------------------
+
+    def _match_classes(self, embedding: list[float]) -> list[tuple[str, float]]:
+        """Ontology classes this chunk evokes, as ``[(uri, sim)]`` for tagging.
+
+        Uses the stricter TAG floor: these become persisted MATCHES_CLASS edges,
+        unlike the label hints which are gated by top-k alone.
+        """
+        if self._ontology is None or not embedding:
+            return []
+        from graphknows.ontology.catalog import TAG_MIN_SIM
+
+        matches = self._ontology.match_classes(
+            embedding, top_k=_ONT_TAG_TOP_K, min_sim=TAG_MIN_SIM
+        )
+        return [(term.uri, sim) for term, sim in matches]
+
+    def _label_hints(
+        self, embeddings: list[list[float]]
+    ) -> tuple[list[list[str]] | None, list[dict[str, str]] | None]:
+        """Per-chunk ontology class labels and property label->definition maps.
+
+        ``(None, None)`` when no ontology is configured, which keeps the
+        extractor call byte-identical to the pre-ontology path.
+        """
+        if self._ontology is None or not embeddings:
+            return None, None
+        entity_hints = [
+            [t.label for t, _ in self._ontology.match_classes(e)] for e in embeddings
+        ]
+        relation_hints = [
+            {t.label: t.definition or t.label for t, _ in self._ontology.match_properties(e)}
+            for e in embeddings
+        ]
+        return entity_hints, relation_hints
+
+    def _map_to_class(self, entity_type: str) -> tuple[str, str, float]:
+        """Map a free-text entity type onto an ontology class: ``(uri, label, score)``.
+
+        An exact label hit scores 1.0 — the common case, because the ontology's
+        own labels were injected into the extractor's vocabulary. Otherwise the
+        type is embedded and matched against the class definitions. Results are
+        memoised per type string: types repeat across every chunk, so this costs
+        one embedding per DISTINCT type in the corpus, not one per entity.
+
+        ``("", "", 0.0)`` means unmapped, and an unmapped entity is still
+        written with its extracted type: this is enrichment, not a filter.
+        """
+        if self._ontology is None or not entity_type:
+            return "", "", 0.0
+        if (hit := self._type_cache.get(entity_type)) is not None:
+            return hit
+        uri = self._uri_by_label.get(entity_type.casefold())
+        if uri:
+            # Canonical ontology casing, not the extractor's ("PERSON" -> "Person").
+            label = next(
+                (t.label for t in self._ontology.classes if t.uri == uri), entity_type
+            )
+            result = (uri, label, 1.0)
+        else:
+            from graphknows.storage.embedder import embed_one
+
+            matches = self._ontology.match_classes(
+                embed_one(entity_type), top_k=1, min_sim=_ONT_CLASS_MIN_SIM
+            )
+            result = (
+                (matches[0][0].uri, matches[0][0].label, matches[0][1]) if matches else ("", "", 0.0)
+            )
+        self._type_cache[entity_type] = result
+        return result
+
+    async def _link_ontology(
+        self,
+        chunk_id: str,
+        entities: list[dict[str, Any]],
+        ontology_classes: list[tuple[str, float]],
+    ) -> None:
+        """Write the chunk's MATCHES_CLASS tags and its entities' INSTANCE_OF edges."""
+        if self._ontology is None:
+            return
+        if ontology_classes:
+            await self._store.write_class_matches(chunk_id, ontology_classes)
+        mappings = []
+        for ent in entities:
+            uri, label, score = self._map_to_class(str(ent.get("type", "")))
+            if uri:
+                mappings.append(
+                    {"name": ent["name"], "uri": uri, "label": label, "score": score}
+                )
+        if mappings:
+            await self._store.write_instance_of(mappings)
+
+    def _map_predicate(self, predicate: str) -> tuple[str, float]:
+        """Map a relation predicate onto an ontology property label."""
+        if self._property_mapper is None or not predicate:
+            return "", 0.0
+        label, score = self._property_mapper.map_predicate(predicate)
+        return (label or ""), score
 
     def _frame_instances(
         self, text: str, chunk_id: str, speaker: str, embedding: list[float] | None = None
@@ -459,9 +630,17 @@ class _STMIngestHandler:
     def _clean_text(self, text: str) -> str:
         return strip_content_heading(text)
 
-    def _extract(self, clean_text: str) -> ExtractionResult:
+    def _extract(
+        self,
+        clean_text: str,
+        extra_entity_labels: list[str] | None = None,
+        extra_relation_labels: dict[str, str] | None = None,
+    ) -> ExtractionResult:
         if self._extractor is not None:
             from typing import cast
 
-            return cast(ExtractionResult, self._extractor.extract(clean_text))
+            return cast(
+                ExtractionResult,
+                self._extractor.extract(clean_text, extra_entity_labels, extra_relation_labels),
+            )
         return ExtractionResult()

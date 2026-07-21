@@ -21,6 +21,7 @@ top-k and treat ``min_sim`` as a permissive floor, not a decision threshold.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -88,13 +89,25 @@ def _embed_norm(texts: list[str]) -> np.ndarray:
     return normalized
 
 
-def _load_from_disk(key: str, expected: int) -> np.ndarray | None:
-    npy = _cache_dir() / f"{key}.npy"
-    if not npy.exists():
+def _load_from_disk(key: str, uris: list[str]) -> np.ndarray | None:
+    """Load a cached matrix, but only if its rows describe exactly ``uris``.
+
+    The sidecar URI list is not optional bookkeeping: row *i* of the matrix is
+    meaningful only against the term list it was built from, so validating the
+    row count alone will happily pair a cached matrix with a differently-ordered
+    term list and return confident matches for the wrong term.
+    """
+    d = _cache_dir()
+    npy, js = d / f"{key}.npy", d / f"{key}.json"
+    if not (npy.exists() and js.exists()):
         return None
     try:
+        cached_uris = json.loads(js.read_text(encoding="utf-8"))
+        if cached_uris != uris:
+            log.info("Ontology index cache term order changed; rebuilding %s", key)
+            return None
         mat: np.ndarray = np.load(npy).astype(np.float32)
-        if mat.shape[0] == expected:
+        if mat.shape[0] == len(uris):
             log.info("Loaded ontology index from cache: %s", npy)
             return mat
     except Exception as exc:
@@ -102,14 +115,17 @@ def _load_from_disk(key: str, expected: int) -> np.ndarray | None:
     return None
 
 
-def _save_to_disk(key: str, mat: np.ndarray) -> None:
+def _save_to_disk(key: str, uris: list[str], mat: np.ndarray) -> None:
     d = _cache_dir()
     try:
         d.mkdir(parents=True, exist_ok=True)
-        npy, tmp = d / f"{key}.npy", d / f"{key}.npy.tmp"
-        with open(tmp, "wb") as fh:  # file handle: np.save won't append ".npy"
+        npy, js = d / f"{key}.npy", d / f"{key}.json"
+        tmp_npy, tmp_js = d / f"{key}.npy.tmp", d / f"{key}.json.tmp"
+        with open(tmp_npy, "wb") as fh:  # file handle: np.save won't append ".npy"
             np.save(fh, mat)
-        os.replace(tmp, npy)  # atomic: readers never see a partial matrix
+        tmp_js.write_text(json.dumps(uris), encoding="utf-8")
+        os.replace(tmp_npy, npy)  # atomic: readers never see a partial matrix
+        os.replace(tmp_js, js)
         log.info("Cached ontology index to %s", npy)
     except OSError as exc:
         log.warning("Ontology index cache write failed (%s); in-process only", exc)
@@ -157,12 +173,13 @@ class OntologyIndex:
         if not terms:
             return np.zeros((0, 0), dtype=np.float32)
         key = f"{_cache_key(self.digest)}_{kind}"
-        cached = _load_from_disk(key, len(terms))
+        uris = [t.uri for t in terms]
+        cached = _load_from_disk(key, uris)
         if cached is not None:
             return cached
         log.info("Building ontology index: embedding %d %s from %s", len(terms), kind, self.source)
         mat = _embed_norm([t.index_text for t in terms])
-        _save_to_disk(key, mat)
+        _save_to_disk(key, uris, mat)
         return mat
 
     def match_classes(

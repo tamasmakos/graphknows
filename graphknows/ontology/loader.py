@@ -184,9 +184,13 @@ def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
         | set(graph.subjects(RDF.type, RDF.Property))
     )
     source = str(path)
+    # Sorted, not set-ordered: term order determines the embedding matrix's row
+    # order, and rdflib subject sets iterate differently between processes
+    # (randomized string hashing). An unstable order silently pairs a cached
+    # matrix with a different term list.
     return [
-        *_collect_terms(graph, class_nodes, "class", source),
-        *_collect_terms(graph, property_nodes, "property", source),
+        *_collect_terms(graph, sorted(class_nodes, key=str), "class", source),
+        *_collect_terms(graph, sorted(property_nodes, key=str), "property", source),
     ]
 
 

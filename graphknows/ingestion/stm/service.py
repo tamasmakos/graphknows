@@ -34,6 +34,7 @@ class STMService:
         _rel_extractor: Optional relation extractor.
         _embed_dims: Embedding dimension for ensure_schema on connect.
         _config: STMConfig with tuning parameters.
+        _ontology_index: Optional OntologyIndex steering extraction labels.
     """
 
     def __init__(
@@ -45,6 +46,7 @@ class STMService:
         embed_dims: int = 0,
         config: STMConfig | None = None,
         enable_frames: bool = False,
+        ontology_index: Any | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
@@ -52,6 +54,7 @@ class STMService:
         self._embed_dims = embed_dims
         self._config = config or STMConfig()
         self._enable_frames = enable_frames
+        self._ontology_index = ontology_index
 
         if embed_fn is not None:
             self._embed_fn = embed_fn
@@ -68,7 +71,7 @@ class STMService:
     # ------------------------------------------------------------------
 
     async def connect(self) -> None:
-        """Connect the store client and ensure the golden-layer schema."""
+        """Connect the store client, ensure the schema, and persist the ontology."""
         await self._store.connect()
         dims = self._embed_dims
         if not dims:
@@ -76,6 +79,10 @@ class STMService:
 
             dims = embed_dim()
         await self._store.ensure_schema(dims)
+        # Reference data, written once per namespace rather than per chunk. The
+        # store call is count-guarded, so a restart is a no-op.
+        if self._ontology_index is not None:
+            await self._store.write_ontology(self._ontology_index)
 
     async def close(self) -> None:
         """Close the store client. Idempotent."""
@@ -91,6 +98,7 @@ class STMService:
                 embed_fn=self._embed_fn,
                 rel_extractor=self._rel_extractor,
                 enable_frames=self._enable_frames,
+                ontology_index=self._ontology_index,
             )
         return self._ingest_handler
 

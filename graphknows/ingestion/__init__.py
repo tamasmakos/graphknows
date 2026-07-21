@@ -26,6 +26,7 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     from graphknows.ingestion.extraction.relations import build_relation_extractor
     from graphknows.ingestion.stm.config import STMConfig
     from graphknows.ingestion.stm.service import STMService
+    from graphknows.ontology import load_ontology_index
     from graphknows.storage import build_graph_store
     from graphknows.storage.embedder import embed_one
 
@@ -36,6 +37,9 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
         rel_extractor=build_relation_extractor(settings),
         embed_dims=settings.embed_dimensions,
         enable_frames=settings.enable_frames,
+        # Mode-independent: ontology injection steers extraction identically in
+        # llm_free and llm_assisted. None when GRAPHKNOWS_ONTOLOGY is unset.
+        ontology_index=load_ontology_index(settings.ontology_source),
         config=STMConfig(chunk_size=settings.chunk_size, overlap=settings.chunk_overlap),
     )
 
