@@ -9,7 +9,6 @@ from ever returning a usable retriever and making every memory_query return empt
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 import pytest
@@ -64,47 +63,38 @@ async def test_ltm_ensure_schema_does_not_raise() -> None:
 async def test_det_retriever_returns_results_after_ingest() -> None:
     """DETRetriever.retrieve() returns at least one passage for an ingested session.
 
-    Writes a single chunk directly to the STM vector store so the semantic ANN
-    branch can return it, then runs retrieve() and asserts non-empty fused_results.
-    Cleans up after itself so the test is idempotent.
+    Writes a single chunk with its embedding to the graph store so the semantic
+    ANN branch can return it, then runs retrieve() and asserts non-empty
+    fused_results. Cleans up after itself so the test is idempotent.
     """
     if not _arcadedb_reachable():
         pytest.skip("ArcadeDB not reachable")
 
     from graphknows.settings import GraphKnowsSettings
-    from graphknows.storage import (
-        build_arcadedb_ltm_store,
-        build_arcadedb_stm_store,
-        build_arcadedb_vector_store,
-    )
+    from graphknows.storage import build_graph_store
     from graphknows.retrieval.retriever import DETRetriever
-    from graphknows.storage.embedder import embed_one
+    from graphknows.storage.embedder import embed_dim, embed_one
 
     s = GraphKnowsSettings()
-    vec = build_arcadedb_vector_store(s)
-    ltm = build_arcadedb_ltm_store(s)
-    stm = build_arcadedb_stm_store(s)
-    await asyncio.gather(vec.connect(), ltm.connect(), stm.connect())
-    await ltm.ensure_schema()
+    store = build_graph_store(s)
+    await store.connect()
+    await store.ensure_schema(s.embed_dimensions or embed_dim())
 
     test_session = f"test-det-retriever-integration-{uuid.uuid4().hex[:8]}"
     chunk_id = f"{test_session}-chunk-0"
     test_text = "Caroline went on vacation to Japan in May."
 
     # Write one chunk with embedding so the semantic ANN branch can find it
-    emb = embed_one(test_text, s.embed_model)
-    await vec.write_stm_chunk({
-        "id": chunk_id,
+    await store.write_chunk({
+        "chunk_id": chunk_id,
         "session_id": test_session,
         "file_id": f"{test_session}-file",
         "text": test_text,
-        "heading_path": "",
-        "metadata": {},
-        "embedding": emb,
+        "embedding": embed_one(test_text, s.embed_model),
     })
 
     try:
-        retriever = DETRetriever(vec=vec, ltm=ltm, stm=stm, embed_model=s.embed_model)
+        retriever = DETRetriever(store=store, embed_model=s.embed_model)
         ctx = await retriever.retrieve(
             "Where did Caroline go on vacation?",
             session_id=test_session,
@@ -120,8 +110,8 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
         assert all("chunk_id" in r and "text" in r and "rrf_score" in r for r in ctx.fused_results)
     finally:
         # Clean up the test session
-        await vec.clear_stm(test_session)
-        await vec.close()
+        await store.delete_session(test_session)
+        await store.close()
 
 
 @pytest.mark.integration

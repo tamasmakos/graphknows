@@ -15,14 +15,11 @@ WS-2 additions
   over chunk texts, feeding one RRF source.
 * Cross-encoder rerank — the top ~50 RRF candidates are re-scored by a local
   CPU cross-encoder (``rerank.py``); no-op when the model is unavailable.
-* PageRank boost — NOT ACTIVE. ``pagerank_boost`` is applied, but it reads
-  ``pagerank`` from CHUNK metadata while the value is persisted on ENTITY nodes
-  and ``get_chunks_by_ids`` never returns it, so the multiplier is always 1.0.
-  Wiring it would need a chunk-level rollup (cf. ``chunk_community_weights``)
-  and should be measured before being believed.
-* IDF discriminativeness — NOT ACTIVE. ``ranking.idf_weight`` exists but nothing
-  calls it, and ``_ENTITY_SATURATION_RATIO`` is read from the environment and
-  never used. Entities are neither down-weighted nor dropped by frequency.
+* PageRank boost and IDF discriminativeness were never wired: the former read
+  ``pagerank`` from CHUNK metadata while the value lives on ENTITY nodes (so the
+  multiplier was always 1.0), and nothing ever called the latter. Both have been
+  removed. Reintroducing PageRank shaping needs a chunk-level rollup
+  (cf. ``chunk_community_weights``) and should be measured before being believed.
 * Temporal recency boost — relation-edge ``_temporal_score`` from
   ``filter_by_validity_window`` is folded into temporal-traversal candidates.
 """
@@ -40,7 +37,6 @@ from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
     community_boost,
-    pagerank_boost,
     rrf_score,
 )
 from graphknows.ranking.rrf import shape_score as _shape_score
@@ -169,14 +165,6 @@ def _declarative_variant(question: str) -> str | None:
     return None
 
 
-# Entities mentioned in more than this fraction of the corpus carry no
-# discriminative signal (the conversation participants appear in nearly every
-# chunk), so seeding entity traversal on them floods recall with the whole
-# conversation. Such entities are dropped from traversal — the semantic and
-# full-text channels still cover their chunks.
-_ENTITY_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_ENTITY_SATURATION_RATIO", "0.5"))
-
-
 def _fact_context_enabled() -> bool:
     """Whether the D8 structured fact-sheet is fed to the generator (default on).
 
@@ -224,30 +212,12 @@ class DETRetriever(BaseGraphRetriever):
             top_k,
         )
 
-        # Embed original query + optional declarative variant in one batch call.
-        var_text = _declarative_variant(query)
-        queries = [query, var_text] if var_text else [query]
-        emb_array = await asyncio.to_thread(embed, queries, self.embed_model)
-        emb = emb_array[0].tolist()
-        emb2: list[float] | None = emb_array[1].tolist() if var_text else None
-        if emb2:
-            log.debug("Query variant: %r", var_text)
-
-        # words_graph: include 3-char tokens (month names, short proper nouns) for
-        # entity/graph matching where substring-of-name is the lookup key.
-        # words: >3-char only for full-text search to reduce noise.
-        words_graph = [w for w in re.findall(r"[a-z0-9][a-z0-9']*", query.lower()) if len(w) >= 3]
-        words = [w for w in words_graph if len(w) > 3]
+        ctx = await self._build_channel_context(query, session_id, scope)
 
         # Channels run concurrently; a failure in ANY of them raises loudly
         # (no return_exceptions swallow) so a broken channel surfaces immediately
         # rather than silently degrading recall. Each returns chunk_id -> (score,
         # info); the spine below is channel-blind (fuses + reranks only).
-        ctx = ChannelContext(
-            query=query, session_id=session_id, scope=scope,
-            emb=emb, emb2=emb2, words=words, words_graph=words_graph,
-            state=_scope_to_state(scope),
-        )
         sources = await asyncio.gather(
             *(c.collect(ctx, self, top_k) for c in self._channels)
         )
@@ -258,59 +228,9 @@ class DETRetriever(BaseGraphRetriever):
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
         for src in sources:
             for cid, (score, info) in src.items():
-                if cid in combined:
-                    old_score, old_info = combined[cid]
-                    combined[cid] = (
-                        old_score + score,
-                        {**old_info, "sources": old_info["sources"] | info["sources"]},
-                    )
-                else:
-                    combined[cid] = (score, info)
+                _add_result(combined, cid, score, info)
 
-        # Fetch metadata for all candidates that lack it so shaping can run
-        # before we cut to top_k — shaping affects ordering, not just display.
-        needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
-        text_map = await self.store.get_chunks_by_ids(needs_meta) if needs_meta else {}
-        # Community boost (WS4): derived from each chunk's MENTIONS-linked
-        # entities' native-Louvain community_id, not stored per-chunk metadata.
-        community_weights = await self.store.chunk_community_weights(list(combined.keys()))
-
-        # Apply _community_boost, PageRank boost, and _shape_score to every
-        # candidate BEFORE sorting so the final order reflects the shaped score.
-        shaped_combined: list[tuple[str, float, dict[str, Any], dict[str, Any]]] = []
-        for cid, (base_score, info) in combined.items():
-            fc = text_map.get(cid, {})
-            meta = fc.get("metadata") or info.get("metadata") or {}
-            if cid in community_weights:
-                meta = {**meta, "community_weight": community_weights[cid]}
-            # PageRank centrality boost: e.pagerank from WS-6 ENTITY projection.
-            # Absent/zero → pagerank_boost returns 1.0 (no effect).
-            pr = float(meta.get("pagerank", 0.0) or 0.0)
-            pr_mult = pagerank_boost(pr)
-            shaped = _shape_score(
-                base_score * _community_boost(meta) * pr_mult,
-                meta.get("memory_class"),
-            )
-            shaped_combined.append((cid, shaped, info, fc))
-
-        shaped_combined.sort(key=lambda x: -x[1])
-
-        pre_rerank: list[dict[str, Any]] = []
-        for rank_i, (cid, shaped, info, fc) in enumerate(shaped_combined):
-            meta = fc.get("metadata") or info.get("metadata") or {}
-            ents = info.get("entities", [])
-            pre_rerank.append(
-                {
-                    "chunk_id": cid,
-                    "doc_id": fc.get("doc_id") or info.get("doc_id", ""),
-                    "text": fc.get("text") or info.get("text", ""),
-                    "metadata": meta,
-                    "rrf_score": round(shaped, 6),
-                    "sources": ",".join(sorted(info["sources"])),
-                    "rank": rank_i + 1,
-                    "entities": ents if isinstance(ents, list) else list(ents),
-                }
-            )
+        pre_rerank = await self._shape_and_rank(combined)
 
         # Cross-encoder rerank the whole pool (no-op when the model is
         # unavailable), then cut to top_k and renumber.
@@ -319,45 +239,99 @@ class DETRetriever(BaseGraphRetriever):
         for i, item in enumerate(fused):
             item["rank"] = i + 1
 
-        # Structured fact-sheet (D8): resolve the QUERY's candidate entities from
-        # the graph tokens, then surface their typed relations + frame-instance
-        # role fills. Soft-fail — a fact-context error never degrades recall.
-        facts: list[str] = []
-        if _fact_context_enabled():
-            try:
-                resolved = await self.store.resolve_query_entities(words_graph)
-                if resolved:
-                    facts = await self.store.entity_fact_context(resolved)
-            except Exception as exc:  # pragma: no cover - defensive soft-fail
-                log.debug("fact context failed (soft): %s", exc)
-                facts = []
-
-        # Transparency trace: how each surviving candidate scored.
-        trace = {
-            "query": query,
-            "session_id": session_id,
-            "collectors_fired": collectors_fired,
-            "candidates": [
-                {
-                    "rank": fc["rank"],
-                    "chunk_id": fc["chunk_id"],
-                    "doc_id": fc.get("doc_id", ""),
-                    "sources": fc.get("sources", ""),
-                    "score": fc.get("rrf_score", 0.0),
-                    "text": (fc.get("text", "") or "")[:200],
-                }
-                for fc in fused
-            ],
-        }
-
         return RetrievalContext(
             query=query,
             session_id=session_id,
             fused_results=fused,
             search_type="DET",
-            trace=trace,
-            facts=facts,
+            trace=_build_trace(query, session_id, collectors_fired, fused),
+            facts=await self._fact_sheet(ctx.words_graph),
         )
+
+    async def _build_channel_context(
+        self, query: str, session_id: str, scope: str
+    ) -> ChannelContext:
+        """Embed the query (plus its declarative variant) and tokenise it."""
+        # Embed original query + optional declarative variant in one batch call.
+        var_text = _declarative_variant(query)
+        queries = [query, var_text] if var_text else [query]
+        emb_array = await asyncio.to_thread(embed, queries, self.embed_model)
+        emb2: list[float] | None = emb_array[1].tolist() if var_text else None
+        if emb2:
+            log.debug("Query variant: %r", var_text)
+
+        # words_graph: include 3-char tokens (month names, short proper nouns) for
+        # entity/graph matching where substring-of-name is the lookup key.
+        # words: >3-char only for full-text search to reduce noise.
+        words_graph = [w for w in re.findall(r"[a-z0-9][a-z0-9']*", query.lower()) if len(w) >= 3]
+        return ChannelContext(
+            query=query, session_id=session_id, scope=scope,
+            emb=emb_array[0].tolist(), emb2=emb2,
+            words=[w for w in words_graph if len(w) > 3], words_graph=words_graph,
+            state=_scope_to_state(scope),
+        )
+
+    async def _shape_and_rank(
+        self, combined: dict[str, tuple[float, dict[str, Any]]]
+    ) -> list[dict[str, Any]]:
+        """Score-shape every candidate, sort, and render the pre-rerank rows.
+
+        Shaping runs over the whole pool before any cut, because it affects
+        ordering and not just display.
+        """
+        # Fetch metadata for all candidates that lack it so shaping can run
+        # before we cut to top_k.
+        needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
+        text_map = await self.store.get_chunks_by_ids(needs_meta) if needs_meta else {}
+        # Community boost (WS4): derived from each chunk's MENTIONS-linked
+        # entities' native-Louvain community_id, not stored per-chunk metadata.
+        community_weights = await self.store.chunk_community_weights(list(combined.keys()))
+
+        shaped_combined: list[tuple[str, float, dict[str, Any], dict[str, Any]]] = []
+        for cid, (base_score, info) in combined.items():
+            fc = text_map.get(cid, {})
+            meta = fc.get("metadata") or info.get("metadata") or {}
+            if cid in community_weights:
+                meta = {**meta, "community_weight": community_weights[cid]}
+            shaped = _shape_score(
+                base_score * _community_boost(meta),
+                meta.get("memory_class"),
+            )
+            shaped_combined.append((cid, shaped, info, fc))
+
+        shaped_combined.sort(key=lambda x: -x[1])
+
+        rows: list[dict[str, Any]] = []
+        for rank_i, (cid, shaped, info, fc) in enumerate(shaped_combined):
+            ents = info.get("entities", [])
+            rows.append(
+                {
+                    "chunk_id": cid,
+                    "doc_id": fc.get("doc_id") or info.get("doc_id", ""),
+                    "text": fc.get("text") or info.get("text", ""),
+                    "metadata": fc.get("metadata") or info.get("metadata") or {},
+                    "rrf_score": round(shaped, 6),
+                    "sources": ",".join(sorted(info["sources"])),
+                    "rank": rank_i + 1,
+                    "entities": ents if isinstance(ents, list) else list(ents),
+                }
+            )
+        return rows
+
+    async def _fact_sheet(self, words_graph: list[str]) -> list[str]:
+        """Structured fact-sheet (D8) for the query's resolved entities.
+
+        Surfaces their typed relations + frame-instance role fills. Soft-fails —
+        a fact-context error never degrades recall.
+        """
+        if not _fact_context_enabled():
+            return []
+        try:
+            resolved = await self.store.resolve_query_entities(words_graph)
+            return await self.store.entity_fact_context(resolved) if resolved else []
+        except Exception as exc:  # pragma: no cover - defensive soft-fail
+            log.debug("fact context failed (soft): %s", exc)
+            return []
 
     async def execute_cypher(
         self,
@@ -373,7 +347,7 @@ class DETRetriever(BaseGraphRetriever):
         forbidden = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.IGNORECASE)
         if forbidden.search(cypher_template):
             raise ValueError("Only read-only Cypher is permitted")
-        rows = await self.store._qry(cypher_template, **(params or {}))
+        rows = await self.store.query(cypher_template, **(params or {}))
         return [dict(r) for r in rows]
 
     async def entity_boost(
@@ -598,12 +572,38 @@ class DETRetriever(BaseGraphRetriever):
         return result
 
 
+def _build_trace(
+    query: str,
+    session_id: str,
+    collectors_fired: dict[str, int],
+    fused: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Transparency trace: which collectors fired and how each survivor scored."""
+    return {
+        "query": query,
+        "session_id": session_id,
+        "collectors_fired": collectors_fired,
+        "candidates": [
+            {
+                "rank": fc["rank"],
+                "chunk_id": fc["chunk_id"],
+                "doc_id": fc.get("doc_id", ""),
+                "sources": fc.get("sources", ""),
+                "score": fc.get("rrf_score", 0.0),
+                "text": (fc.get("text", "") or "")[:200],
+            }
+            for fc in fused
+        ],
+    }
+
+
 def _add_result(
     result: dict[str, tuple[float, dict[str, Any]]],
     chunk_id: str,
     score: float,
     info: dict[str, Any],
 ) -> None:
+    """Merge a candidate into *result*: sum scores, union source labels."""
     if chunk_id in result:
         old_score, old_info = result[chunk_id]
         result[chunk_id] = (
