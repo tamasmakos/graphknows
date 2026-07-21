@@ -11,7 +11,6 @@ log = logging.getLogger("graphknows.ingestion.extraction.relations.llm_assisted.
 
 # Root of the bundled ontology asset bundle owned by the agent service.
 _ONTOLOGY_ROOT = Path(__file__).with_name("assets")
-_REGISTRY_PATH = _ONTOLOGY_ROOT / "registry.json"
 _SUMMARY_MAX_CLASSES: int = 100
 _SUMMARY_MAX_PROPERTIES: int = 50
 

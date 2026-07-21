@@ -1,10 +1,9 @@
 """LLM configuration helpers for graphknows.
 
 Provides:
+- :func:`build_lm` — construct a provider-neutral ``dspy.LM``.
 - :func:`_extract_secret` — safely extract a secret from a config container.
 - :func:`get_openrouter_api_key` — resolve OpenRouter API key.
-- :func:`get_model_name` — look up model name by purpose.
-- :func:`get_temperature` — look up LLM temperature setting.
 - :func:`normalize_openrouter_model` — normalise a model string for DSPy.
 """
 
@@ -55,6 +54,17 @@ def build_lm(
     return dspy.LM(**kwargs)
 
 
+def _as_mapping(cfg: Any) -> dict[str, Any]:
+    """Return *cfg* as a plain mapping, unwrapping a pydantic model if needed.
+
+    Callers hand these helpers a dict, a pydantic settings object, or nothing;
+    each accessor used to re-implement the same unwrap.
+    """
+    if hasattr(cfg, "model_dump"):
+        return cfg.model_dump()  # type: ignore[no-any-return]
+    return cfg if isinstance(cfg, dict) else {}
+
+
 def _extract_secret(container: Any, key: str) -> str | None:
     """Safely extract a secret from dicts, pydantic models, or env-backed config."""
     if container is None:
@@ -80,9 +90,7 @@ def get_openrouter_api_key(config: dict[str, Any] | None = None) -> str:
     """Resolve OpenRouter API key from config or environment."""
     if config:
         infra = config.get("infra", {})
-        llm = config.get("llm", {})
-        if hasattr(llm, "model_dump"):
-            llm = llm.model_dump()
+        llm = _as_mapping(config.get("llm", {}))
         key = (
             _extract_secret(config, "openrouter_api_key")
             or _extract_secret(infra, "openrouter_api_key")
@@ -99,39 +107,6 @@ def get_openrouter_api_key(config: dict[str, Any] | None = None) -> str:
         or _resolve(os.environ.get("OPEN_ROUTER_API"))
         or ""
     )
-
-
-# Deprecated private alias — prefer get_openrouter_api_key.
-_get_openrouter_api_key = get_openrouter_api_key
-
-
-def get_model_name(config: dict[str, Any], purpose: str | None = None) -> str:
-    """Return the configured model name for *purpose* (``extraction`` / ``summarization``)."""
-    if not config or "llm" not in config:
-        raise ValueError("Configuration missing 'llm' section")
-
-    llm_cfg = config["llm"]
-    if hasattr(llm_cfg, "model_dump"):
-        llm_cfg = llm_cfg.model_dump()
-
-    if purpose == "extraction":
-        return llm_cfg.get("extraction_model") or llm_cfg.get("base_model") or _DEFAULT_MODEL
-    if purpose == "summarization":
-        return llm_cfg.get("summarization_model") or llm_cfg.get("base_model") or _DEFAULT_MODEL
-    if purpose == "synthetic":
-        return llm_cfg.get("base_model") or _DEFAULT_MODEL
-
-    return llm_cfg.get("base_model") or _DEFAULT_MODEL
-
-
-def get_temperature(config: dict[str, Any]) -> float:
-    """Return the LLM temperature from *config* (defaults to 0.0)."""
-    if not config or "llm" not in config:
-        return 0.0
-    llm_cfg = config["llm"]
-    if hasattr(llm_cfg, "model_dump"):
-        llm_cfg = llm_cfg.model_dump()
-    return float(llm_cfg.get("temperature", 0.0))
 
 
 def normalize_openrouter_model(model: str | None) -> str:

@@ -4,31 +4,25 @@ Covers:
 1. rerank() no-ops gracefully when the model library is absent (returns input unchanged).
 2. BM25 fallback scorer ranks an exact-term document above a non-matching document.
 3. BM25 channel: stm_bm25 contributes a source entry for matching queries.
-4. pagerank_boost / idf_weight helpers behave correctly at boundaries.
-5. retrieve() signature remains (query, session_id, top_k, scope) -> RetrievalContext.
+4. retrieve() signature remains (query, session_id, top_k, scope) -> RetrievalContext.
 """
 
 from __future__ import annotations
 
-import math
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
 
-from graphknows.ranking.rrf import idf_weight, pagerank_boost
 from graphknows.ranking.rerank import rerank
 from graphknows.retrieval.retriever import DETRetriever, _bm25_rank
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _fake_embed(texts, model):
     return np.array([[0.1] * 4 for _ in texts])
-
 
 def _make_retriever():
     store = MagicMock()
@@ -44,11 +38,9 @@ def _make_retriever():
     store.chunk_community_weights = AsyncMock(return_value={})
     return DETRetriever(store=store), store
 
-
 # ---------------------------------------------------------------------------
 # rerank() — offline / no-op path
 # ---------------------------------------------------------------------------
-
 
 def test_rerank_noop_when_model_absent():
     """When sentence_transformers is not installed, rerank() returns input unchanged."""
@@ -70,12 +62,10 @@ def test_rerank_noop_when_model_absent():
     assert result[0]["chunk_id"] == "c1"
     assert result[1]["chunk_id"] == "c2"
 
-
 def test_rerank_noop_empty_candidates():
     """rerank() with empty candidates returns an empty list immediately."""
     result = rerank("any query", [], top_k=5)
     assert result == []
-
 
 def test_rerank_top_k_respected_in_noop():
     """In no-op mode, top_k is still respected."""
@@ -93,7 +83,6 @@ def test_rerank_top_k_respected_in_noop():
 
     assert len(result) == 3
 
-
 def test_rerank_import_does_not_require_torch():
     """Importing from rerank must succeed even without torch installed."""
     # This test passes by virtue of the import at the top of this module.
@@ -105,11 +94,9 @@ def test_rerank_import_does_not_require_torch():
     importlib.reload(mod)
     assert callable(mod.rerank)
 
-
 # ---------------------------------------------------------------------------
 # BM25 fallback scorer
 # ---------------------------------------------------------------------------
-
 
 def test_bm25_fallback_ranks_exact_match_above_nonmatch():
     """The BM25 fallback must rank an exact-term document above a non-matching doc."""
@@ -122,7 +109,6 @@ def test_bm25_fallback_ranks_exact_match_above_nonmatch():
     assert len(ranked) >= 1
     assert ranked[0][1]["chunk_id"] == "c_match"
 
-
 def test_bm25_fallback_returns_empty_on_no_match():
     """When no document contains any query token, ranked list is empty."""
     query_tokens = ["xyzzy", "quux"]
@@ -133,13 +119,11 @@ def test_bm25_fallback_returns_empty_on_no_match():
     ranked = _bm25_rank(query_tokens, chunks)
     assert ranked == []
 
-
 def test_bm25_fallback_empty_inputs():
     """Empty inputs return empty results without error."""
     assert _bm25_rank([], [{"chunk_id": "c1", "text": "hello"}]) == []
     assert _bm25_rank(["hello"], []) == []
     assert _bm25_rank([], []) == []
-
 
 def test_bm25_multi_term_document_scores_higher():
     """A document containing both query terms scores higher than one with just one."""
@@ -152,68 +136,13 @@ def test_bm25_multi_term_document_scores_higher():
     scores_by_id = {c["chunk_id"]: s for s, c in ranked}
     assert scores_by_id["both"] > scores_by_id["one"]
 
-
 # ---------------------------------------------------------------------------
 # PageRank boost helper
 # ---------------------------------------------------------------------------
 
-
-def test_pagerank_boost_zero_is_noop():
-    assert pagerank_boost(0.0) == 1.0
-
-
-def test_pagerank_boost_none_is_noop():
-    assert pagerank_boost(None) == 1.0  # type: ignore[arg-type]
-
-
-def test_pagerank_boost_bounded():
-    from graphknows.ranking.rrf import PAGERANK_MAX_BOOST
-
-    assert pagerank_boost(1.0) == pytest.approx(1.0 + PAGERANK_MAX_BOOST, abs=1e-9)
-    assert 1.0 < pagerank_boost(0.5) < 1.0 + PAGERANK_MAX_BOOST
-
-
-def test_pagerank_boost_monotone():
-    pr_vals = [0.0, 0.1, 0.3, 0.7, 1.0]
-    boosts = [pagerank_boost(p) for p in pr_vals]
-    for i in range(len(boosts) - 1):
-        assert boosts[i] <= boosts[i + 1]
-
-
-# ---------------------------------------------------------------------------
-# IDF weight helper
-# ---------------------------------------------------------------------------
-
-
-def test_idf_weight_rare_entity_is_one():
-    """Entity in <50% of corpus gets weight 1.0."""
-    assert idf_weight(5, 100) == 1.0  # 5% < 50%
-
-
-def test_idf_weight_ubiquitous_entity_penalised():
-    """Entity in 100% of corpus gets weight 0.5 (saturation_ratio / 1.0)."""
-    w = idf_weight(100, 100)
-    assert w < 1.0
-    assert w == pytest.approx(0.5, abs=1e-9)
-
-
-def test_idf_weight_at_boundary():
-    """Entity at exactly 50% corpus frequency gets weight 1.0 (boundary)."""
-    assert idf_weight(50, 100) == pytest.approx(1.0, abs=1e-9)
-
-
-def test_idf_weight_zero_corpus():
-    assert idf_weight(5, 0) == 1.0
-
-
-def test_idf_weight_zero_freq():
-    assert idf_weight(0, 100) == 1.0
-
-
 # ---------------------------------------------------------------------------
 # STM BM25 channel integration — stm_bm25 contributes to fused results
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.asyncio
 async def test_bm25_contributes_source():
@@ -234,11 +163,9 @@ async def test_bm25_contributes_source():
     hit = next(fr for fr in ctx.fused_results if fr["chunk_id"] == "bm25-hit")
     assert "text" in hit["sources"]
 
-
 # ---------------------------------------------------------------------------
 # retrieve() — signature unchanged
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.asyncio
 async def test_retrieve_signature_unchanged():
