@@ -50,6 +50,7 @@ async def memory_recall(
     top_k: int = 5,
     scope: str = "stm",
     namespace: str = "",
+    strategy: str = "",
 ) -> dict[str, Any]:
     """Deprecated alias of ``memory_query`` — recall ranked memory hits.
 
@@ -63,6 +64,7 @@ async def memory_recall(
         top_k=top_k,
         scope=scope,
         namespace=namespace,
+        strategy=strategy,
     )
 
 

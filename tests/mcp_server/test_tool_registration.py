@@ -45,5 +45,5 @@ async def test_memory_recall_delegates_to_memory_query() -> None:
         assert await stm.memory_recall("q", session_id="s1", top_k=3, namespace="acme") is result
 
     memory_query.assert_awaited_once_with(
-        "q", session_id="s1", top_k=3, scope="stm", namespace="acme"
+        "q", session_id="s1", top_k=3, scope="stm", namespace="acme", strategy=""
     )

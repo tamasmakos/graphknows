@@ -52,7 +52,10 @@ class Memory:
         # The namespace selects one physical ArcadeDB database (mem_<ns>, "" -> mem,
         # the golden layer). Explicit arg wins over the settings default.
         self.namespace = self.settings.namespace if namespace is None else namespace
-        self._retriever: Any = None
+        # One retriever per strategy, all sharing the single connected store, so
+        # a caller can ask for deterministic or agentic retrieval per call
+        # without a second connection or a server restart.
+        self._retrievers: dict[str, Any] = {}
         self._retriever_stores: list[Any] = []
         self._connect_lock = asyncio.Lock()
 
@@ -69,7 +72,7 @@ class Memory:
         for store in self._retriever_stores:
             with contextlib.suppress(Exception):
                 await store.close()
-        self._retriever = None
+        self._retrievers = {}
         self._retriever_stores = []
 
     async def connect(self) -> None:
@@ -80,39 +83,50 @@ class Memory:
         """
         await self._get_retriever()
 
-    async def _get_retriever(self) -> Any:
-        """Return a cached retriever, connecting stores lazily on first call.
+    def _resolve_strategy(self, strategy: str = "") -> str:
+        """Strategy name for the cache key: explicit arg, else the configured default."""
+        from graphknows.settings import RetrievalStrategy
+
+        return (RetrievalStrategy(strategy) if strategy else self.settings.retrieval_strategy).value
+
+    async def _get_retriever(self, strategy: str = "") -> Any:
+        """Return a cached retriever, connecting the store lazily on first call.
 
         Guarded by an ``asyncio.Lock`` so concurrent first-use callers connect
-        the stores exactly once.
+        the store exactly once. A second strategy reuses that same store.
         """
-        if self._retriever is not None:
-            return self._retriever
+        key = self._resolve_strategy(strategy)
+        if (cached := self._retrievers.get(key)) is not None:
+            return cached
         async with self._connect_lock:
-            if self._retriever is not None:  # another coroutine won the race
-                return self._retriever
-            return await self._build_retriever()
+            if (cached := self._retrievers.get(key)) is not None:  # another coroutine won
+                return cached
+            return await self._build_retriever(key)
 
-    async def _build_retriever(self) -> Any:
+    async def _build_retriever(self, strategy: str) -> Any:
         from graphknows.retrieval import build_retriever
         from graphknows.storage import build_graph_store
         from graphknows.storage.embedder import embed_dim
 
         s = self.settings
-        store = build_graph_store(s, self.namespace)
-        # Record the store before connecting so a failure during connect or
-        # ensure_schema is cleaned up by close() instead of orphaning open pools.
-        self._retriever_stores = [store]
-        try:
-            await store.connect()
-            dims = s.embed_dimensions or embed_dim()
-            await store.ensure_schema(dims)
-        except Exception:
-            await self.close()
-            raise
-        # The mode fork (deterministic vs agentic) lives in build_retriever.
-        self._retriever = build_retriever(s, store=store)
-        return self._retriever
+        if self._retriever_stores:
+            store = self._retriever_stores[0]  # already connected for another strategy
+        else:
+            store = build_graph_store(s, self.namespace)
+            # Record the store before connecting so a failure during connect or
+            # ensure_schema is cleaned up by close() instead of orphaning pools.
+            self._retriever_stores = [store]
+            try:
+                await store.connect()
+                dims = s.embed_dimensions or embed_dim()
+                await store.ensure_schema(dims)
+            except Exception:
+                await self.close()
+                raise
+        # The strategy fork (deterministic vs agentic) lives in build_retriever.
+        retriever = build_retriever(s, store=store, strategy=strategy)
+        self._retrievers[strategy] = retriever
+        return retriever
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity for this runtime's namespace."""
@@ -280,12 +294,17 @@ class Memory:
         session_id: str = "",
         top_k: int = 5,
         scope: str = "stm",
+        strategy: str = "",
     ) -> dict[str, Any]:
-        """Recall ranked STM/LTM hits using the compatibility result shape."""
+        """Recall ranked STM/LTM hits using the compatibility result shape.
+
+        ``strategy`` selects ``det`` or ``agentic`` for this call; empty uses the
+        configured default. It is independent of how the graph was ingested.
+        """
         top_k = max(1, min(top_k, 25))
         if scope not in {"stm", "ltm", "both"}:
             scope = "both"
-        retriever = await self._get_retriever()
+        retriever = await self._get_retriever(strategy)
         ctx = await retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
         return {
             "hits": _format_fused_hits(ctx.fused_results, session_id),
@@ -474,10 +493,13 @@ class Memory:
         session_id: str = "",
         top_k: int = 5,
         scope: str = "both",
+        strategy: str = "",
     ) -> dict[str, Any]:
         """Search memory scoped to a user/agent/run (or an explicit session)."""
         sid = self._scoped_session_id(user_id, agent_id, run_id, session_id)
-        return await self.recall_memory(query, session_id=sid, top_k=top_k, scope=scope)
+        return await self.recall_memory(
+            query, session_id=sid, top_k=top_k, scope=scope, strategy=strategy
+        )
 
     async def flush(
         self,

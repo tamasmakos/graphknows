@@ -424,6 +424,9 @@ async def recall(request: Request) -> JSONResponse:
     session_id = request.query_params.get("session_id", "")
     scope = request.query_params.get("scope", "both")
     namespace = _namespace(request)
+    strategy = request.query_params.get("strategy", "")
+    if strategy not in {"", "det", "agentic"}:
+        strategy = ""
     top_k = max(1, min(int(request.query_params.get("top_k", "5")), 25))
     if not query:
         return JSONResponse({"hits": []})
@@ -433,7 +436,7 @@ async def recall(request: Request) -> JSONResponse:
             status_code=400,
         )
     result = await get_runtime(namespace).recall_memory(
-        query, session_id=session_id, top_k=top_k, scope=scope
+        query, session_id=session_id, top_k=top_k, scope=scope, strategy=strategy
     )
     return JSONResponse(result)
 

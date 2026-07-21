@@ -15,6 +15,7 @@ async def memory_query(
     top_k: int = 10,
     scope: str = "both",
     namespace: str = "",
+    strategy: str = "",
 ) -> dict[str, Any]:
     """Retrieve the most relevant memory chunks for a query.
 
@@ -31,6 +32,10 @@ async def memory_query(
             ``"ltm"`` (promoted long-term chunks), or ``"both"`` (default).
         namespace: Tenant isolation boundary (default: the server's
             ``GRAPHKNOWS_NAMESPACE``).
+        strategy: Retrieval strategy — ``"det"`` (deterministic channels +
+            RRF) or ``"agentic"`` (ReAct loop over those channels). Empty
+            uses ``GRAPHKNOWS_RETRIEVAL``. Independent of how the graph was
+            ingested, so either strategy works over any namespace.
 
     Returns:
         Dict with a ``hits`` list, each hit containing ``text``, ``score``,
@@ -40,8 +45,10 @@ async def memory_query(
     top_k = max(1, min(top_k, 100))
     if scope not in ("stm", "ltm", "both"):
         scope = "both"
+    if strategy not in ("", "det", "agentic"):
+        strategy = ""
 
-    retriever = await get_or_init_retriever(namespace)
+    retriever = await get_or_init_retriever(namespace, strategy)
     ctx = await retriever.retrieve(query, session_id, top_k=top_k, scope=scope)
 
     hits = [
@@ -57,4 +64,11 @@ async def memory_query(
         for fc in ctx.fused_results
     ]
     facts = list(getattr(ctx, "facts", []) or [])
-    return {"hits": hits, "total": len(hits), "query": query, "scope": scope, "facts": facts}
+    return {
+        "hits": hits,
+        "total": len(hits),
+        "query": query,
+        "scope": scope,
+        "facts": facts,
+        "search_type": getattr(ctx, "search_type", ""),
+    }

@@ -79,9 +79,14 @@ async def _evict_if_needed() -> None:
             await evicted.close()
 
 
-async def get_or_init_retriever(namespace: str = "") -> Any:
-    """Return the retriever for *namespace* via its shared runtime."""
-    return await (await get_runtime(namespace))._get_retriever()
+async def get_or_init_retriever(namespace: str = "", strategy: str = "") -> Any:
+    """Return the retriever for *namespace* via its shared runtime.
+
+    ``strategy`` (``det``/``agentic``, empty for the configured default) keys a
+    retriever *inside* the runtime; the runtime cache stays keyed by namespace
+    alone, so the open-namespace cap is unaffected.
+    """
+    return await (await get_runtime(namespace))._get_retriever(strategy)
 
 
 async def close() -> None:

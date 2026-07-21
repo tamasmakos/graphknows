@@ -42,16 +42,16 @@ class Retriever:
         the query entities' typed relations + frame role fills — threaded to the
         answerer alongside the passages. Empty when GRAPHKNOWS_FACT_CONTEXT is off.
         """
-        result = await self._client.call_tool(
-            "memory_query",
-            {
-                "query": question,
-                "session_id": session_id,
-                "top_k": k,
-                "scope": self._config.recall_scope,
-                "namespace": namespace,
-            },
-        )
+        args: dict[str, object] = {
+            "query": question,
+            "session_id": session_id,
+            "top_k": k,
+            "scope": self._config.recall_scope,
+            "namespace": namespace,
+        }
+        if getattr(self._config, "retrieval_strategy", ""):
+            args["strategy"] = self._config.retrieval_strategy
+        result = await self._client.call_tool("memory_query", args)
         facts_raw = result.get("facts", []) if isinstance(result, dict) else []
         facts = [str(f) for f in facts_raw if f]
         return _parse_hits(result), facts
