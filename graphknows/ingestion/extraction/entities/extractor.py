@@ -175,6 +175,20 @@ def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
     return named or noun_supersense(arg)
 
 
+def _canonical_type(raw_label: str, label_to_type: dict[str, str]) -> str:
+    """relex label -> the canonical type the graph stores.
+
+    An OBSERVED label maps back to its spaCy tag (person -> PERSON); a
+    base-inventory label spaCy has no tag for (occupation, activity) has
+    no mapping and stands on its own, upper-cased. Returning "" here would
+    silently demote relex's own typing to the WordNet-supersense fallback.
+    """
+    raw_label = raw_label.strip()
+    if not raw_label:
+        return ""
+    return label_to_type.get(_schema_label(raw_label), raw_label.upper())
+
+
 def _svo_relation_description(verb: str, prep: str) -> str:
     """GLiNER2 validator description for a mined SVO predicate label."""
     phrase = f"{verb} {prep}".strip()
@@ -183,6 +197,126 @@ def _svo_relation_description(verb: str, prep: str) -> str:
         "is a concise entity or noun phrase (a person, place, organization, role, "
         "or thing) — never a clause, question, or date."
     )
+
+
+def _dedupe_entities(
+    raw_entities: list[dict[str, Any]],
+    label_to_type: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Score-ranked, merge-key-deduped entity dicts from one relex span list.
+
+    Dedupe by the graph's OWN merge key. ENTITY.name_norm is UNIQUE-indexed
+    and written with a batched UNWIND+MERGE, so the same name twice in one
+    chunk's list is not a harmless repeat — ArcadeDB raises
+    DuplicatedKeyException and the whole DOCUMENT's ingest dies, silently
+    removing every chunk in it from the graph. relex runs with
+    flat_ner=False and therefore returns OVERLAPPING spans: one surface can
+    come back several times under different labels ("Becoming Nicole" as
+    both work_of_art and person). Highest score wins the type.
+    """
+    best: dict[str, dict[str, Any]] = {}
+    for span in raw_entities or []:
+        conf = float(span.get("score", 0.0) or 0.0)
+        if conf < _BASE_THRESHOLD:
+            continue
+        name = _clean_surface(str(span.get("text") or ""))
+        label = str(span.get("label") or "").strip()
+        if not name or not label or name.casefold() in _PRONOUNS:
+            continue
+        # relex echoes the schema key it was given (lowercased spaCy label);
+        # map back to the canonical NER type the graph stores.
+        canonical = _canonical_type(label, label_to_type)
+        key = " ".join(name.split()).casefold()  # mirrors graph_store._name_norm
+        prev = best.get(key)
+        if prev is None or conf > prev["score"]:
+            best[key] = {"name": name, "type": canonical, "score": conf}
+    return list(best.values())
+
+
+def _build_relation(
+    head: str,
+    label: str,
+    tail: str,
+    score: float,
+    source: str,
+    entities: list[dict[str, Any]],
+    head_type: str = "",
+    tail_type: str = "",
+) -> dict[str, Any] | None:
+    """One relation dict, or None when the argument pair is unusable."""
+    # Same cleaning as the entity pass: these strings become ENTITY merge
+    # keys via write_relation, so a quoted surface here corrupts the graph
+    # exactly as it does there.
+    head, tail = _clean_surface(head), _clean_surface(tail)
+    if not head or not label or not tail or head.casefold() == tail.casefold():
+        return None
+    if head.casefold() in _PRONOUNS or tail.casefold() in _PRONOUNS:
+        return None
+    return {
+        "head": head,
+        "head_type": head_type or _arg_type(head, entities),
+        "relation": label,
+        "tail": tail,
+        "tail_type": tail_type or _arg_type(tail, entities),
+        "score": score,
+        "source": source,
+    }
+
+
+def _relex_relations(
+    raw_relations: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    label_to_type: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Relation dicts for the (head, predicate, tail) triples relex emitted."""
+    out: list[dict[str, Any]] = []
+    for rel in raw_relations or []:
+        score = float(rel.get("score", 0.0) or 0.0)
+        if score < _RELATION_THRESHOLD:
+            continue
+        head_d, tail_d = rel.get("head") or {}, rel.get("tail") or {}
+        # relex types its own arguments — richer than the NER label / WordNet
+        # supersense fallback, so prefer it and only fall back when absent.
+        built = _build_relation(
+            str(head_d.get("text") or ""),
+            str(rel.get("relation") or "").strip(),
+            str(tail_d.get("text") or ""),
+            score,
+            "relex",
+            entities,
+            head_type=_canonical_type(str(head_d.get("type") or ""), label_to_type),
+            tail_type=_canonical_type(str(tail_d.get("type") or ""), label_to_type),
+        )
+        if built is not None:
+            out.append(built)
+    return out
+
+
+def _svo_structural_relations(
+    svo_triples: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Relation dicts for mined triples kept at the fixed structural prior.
+
+    Gate: BOTH arguments named, or a copular/appositive/possessive pattern
+    with a named head.
+    """
+    _NAMED_HEAD_PATTERNS = ("copular", "appositive", "possessive")
+    out: list[dict[str, Any]] = []
+    for triple in svo_triples:
+        pattern = triple.get("pattern", "svo")
+        if triple["head_named"] and triple["tail_named"]:
+            pass
+        elif pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]:
+            pass
+        else:
+            continue
+        built = _build_relation(
+            triple["head"], triple["relation"], triple["tail"], 0.6, "svo", entities
+        )
+        if built is not None:
+            out.append(built)
+    return out
 
 
 def _line_speakers(text: str) -> list[tuple[int, str]]:
@@ -207,6 +341,67 @@ def _speaker_at(line_speakers: list[tuple[int, str]], char: int) -> str:
             break
         speaker = sp
     return speaker
+
+
+def _mine_entity_schema(doc: Any) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    """(entity_spec, label_to_type) mined from a doc's spaCy NER labels."""
+    hints = [
+        _EntityHint(
+            text=ent.text.strip(),
+            label=ent.label_.strip(),
+            root=ent.root,
+            sent=ent.sent,
+        )
+        for ent in doc.ents
+        if ent.text.strip() and ent.label_.strip()
+    ]
+
+    entity_counts = Counter(hint.label for hint in hints)
+    label_to_type: dict[str, str] = {}
+    entity_spec: dict[str, dict[str, Any]] = {}
+    for label, count in entity_counts.most_common(_MAX_ENTITY_LABELS):
+        if count < _MIN_ENTITY_LABEL_COUNT:
+            continue
+        schema_name = _schema_label(label)
+        label_to_type[schema_name] = label
+        entity_spec[schema_name] = {
+            "description": (f"Named entity with the label {label}, observed in this chunk."),
+            "threshold": _BASE_THRESHOLD,
+        }
+    return entity_spec, label_to_type
+
+
+def _mine_svo_schema(doc: Any) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """(svo_triples, relation_spec) mined from a doc's clause structure."""
+    # Resolve each sentence's speaker from the turn-line it starts in, so a
+    # first/second-person clause subject ("I work as a nurse") anchors to the
+    # utterance speaker. The chunk's distinct speakers drive 2nd-person
+    # resolution ("you" -> the other of a two-party dialogue).
+    line_speakers = _line_speakers(doc.text)
+    speakers = sorted({s for _, s in line_speakers if s})
+    svo_triples: list[dict[str, Any]] = []
+    label_verb: dict[str, tuple[str, str]] = {}
+    label_counts: Counter[str] = Counter()
+    for sent in doc.sents:
+        speaker = _speaker_at(line_speakers, sent.start_char)
+        for triple in extract_relations(sent, speaker, speakers):
+            svo_triples.append(triple)
+            # Only verb-SVO predicates join the GLiNER2 validation schema;
+            # rich structural triples (IS_A/HAS/prep) ride the structural
+            # keep in _map_raw and carry no verb/prep to describe.
+            if triple.get("pattern", "svo") != "svo":
+                continue
+            label = triple["relation"]
+            label_counts[label] += 1
+            label_verb.setdefault(label, (triple["verb"], triple["prep"]))
+
+    # The GLiNER2 RELATION schema IS the mined SVO predicate vocabulary —
+    # GLiNER2 looks only for the predicates the text actually stated.
+    relation_spec: dict[str, str] = {}
+    for label, _count in label_counts.most_common(_MAX_RELATION_LABELS):
+        verb, prep = label_verb[label]
+        relation_spec[label] = _svo_relation_description(verb, prep)
+    return svo_triples, relation_spec
 
 
 class _SpacySchemaMiner:
@@ -255,61 +450,8 @@ class _SpacySchemaMiner:
         return [self._build_from_doc(doc) for doc in self._nlp.pipe(texts)]
 
     def _build_from_doc(self, doc: Any) -> _DynamicSchema:
-        # --- ENTITY schema (spaCy NER labels) ---
-        hints = [
-            _EntityHint(
-                text=ent.text.strip(),
-                label=ent.label_.strip(),
-                root=ent.root,
-                sent=ent.sent,
-            )
-            for ent in doc.ents
-            if ent.text.strip() and ent.label_.strip()
-        ]
-
-        entity_counts = Counter(hint.label for hint in hints)
-        label_to_type: dict[str, str] = {}
-        entity_spec: dict[str, dict[str, Any]] = {}
-        for label, count in entity_counts.most_common(_MAX_ENTITY_LABELS):
-            if count < _MIN_ENTITY_LABEL_COUNT:
-                continue
-            schema_name = _schema_label(label)
-            label_to_type[schema_name] = label
-            entity_spec[schema_name] = {
-                "description": (f"Named entity with the label {label}, observed in this chunk."),
-                "threshold": _BASE_THRESHOLD,
-            }
-
-        # --- SVO relations (primary) ---
-        # Resolve each sentence's speaker from the turn-line it starts in, so a
-        # first/second-person clause subject ("I work as a nurse") anchors to the
-        # utterance speaker. The chunk's distinct speakers drive 2nd-person
-        # resolution ("you" -> the other of a two-party dialogue).
-        line_speakers = _line_speakers(doc.text)
-        speakers = sorted({s for _, s in line_speakers if s})
-        svo_triples: list[dict[str, Any]] = []
-        label_verb: dict[str, tuple[str, str]] = {}
-        label_counts: Counter[str] = Counter()
-        for sent in doc.sents:
-            speaker = _speaker_at(line_speakers, sent.start_char)
-            for triple in extract_relations(sent, speaker, speakers):
-                svo_triples.append(triple)
-                # Only verb-SVO predicates join the GLiNER2 validation schema;
-                # rich structural triples (IS_A/HAS/prep) ride the structural
-                # keep in _map_raw and carry no verb/prep to describe.
-                if triple.get("pattern", "svo") != "svo":
-                    continue
-                label = triple["relation"]
-                label_counts[label] += 1
-                label_verb.setdefault(label, (triple["verb"], triple["prep"]))
-
-        # The GLiNER2 RELATION schema IS the mined SVO predicate vocabulary —
-        # GLiNER2 looks only for the predicates the text actually stated.
-        relation_spec: dict[str, str] = {}
-        for label, _count in label_counts.most_common(_MAX_RELATION_LABELS):
-            verb, prep = label_verb[label]
-            relation_spec[label] = _svo_relation_description(verb, prep)
-
+        entity_spec, label_to_type = _mine_entity_schema(doc)
+        svo_triples, relation_spec = _mine_svo_schema(doc)
         return _DynamicSchema(
             entity_spec=entity_spec,
             relation_spec=relation_spec,
@@ -494,100 +636,21 @@ class GLiNER2EntityExtractor:
             ("I'm a nurse", "Caroline's dog") that a verb-relation model has no
             predicate label for.
         """
-        # Dedupe by the graph's OWN merge key. ENTITY.name_norm is UNIQUE-indexed
-        # and written with a batched UNWIND+MERGE, so the same name twice in one
-        # chunk's list is not a harmless repeat — ArcadeDB raises
-        # DuplicatedKeyException and the whole DOCUMENT's ingest dies, silently
-        # removing every chunk in it from the graph. relex runs with
-        # flat_ner=False and therefore returns OVERLAPPING spans: one surface can
-        # come back several times under different labels ("Becoming Nicole" as
-        # both work_of_art and person). Highest score wins the type.
-        best: dict[str, dict[str, Any]] = {}
-        for span in raw_entities or []:
-            conf = float(span.get("score", 0.0) or 0.0)
-            if conf < _BASE_THRESHOLD:
-                continue
-            name = _clean_surface(str(span.get("text") or ""))
-            label = str(span.get("label") or "").strip()
-            if not name or not label or name.casefold() in _PRONOUNS:
-                continue
-            # relex echoes the schema key it was given (lowercased spaCy label);
-            # map back to the canonical NER type the graph stores.
-            canonical = dynamic_schema.label_to_type.get(_schema_label(label), label.upper())
-            key = " ".join(name.split()).casefold()  # mirrors graph_store._name_norm
-            prev = best.get(key)
-            if prev is None or conf > prev["score"]:
-                best[key] = {"name": name, "type": canonical, "score": conf}
-        entities: list[dict[str, Any]] = list(best.values())
+        entities = _dedupe_entities(raw_entities, dynamic_schema.label_to_type)
 
+        # relex first, then SVO: a mined triple relex already emitted is dropped
+        # here, so the model's own score wins over the structural prior.
         relations: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
-
-        def _add(head: str, label: str, tail: str, score: float, source: str,
-                 head_type: str = "", tail_type: str = "") -> None:
-            # Same cleaning as the entity pass: these strings become ENTITY merge
-            # keys via write_relation, so a quoted surface here corrupts the graph
-            # exactly as it does there.
-            head, tail = _clean_surface(head), _clean_surface(tail)
-            if not head or not label or not tail or head.casefold() == tail.casefold():
-                return
-            if head.casefold() in _PRONOUNS or tail.casefold() in _PRONOUNS:
-                return
-            key = (head.casefold(), label, tail.casefold())
+        candidates = [
+            *_relex_relations(raw_relations, entities, dynamic_schema.label_to_type),
+            *_svo_structural_relations(dynamic_schema.svo_triples, entities),
+        ]
+        for rel in candidates:
+            key = (rel["head"].casefold(), rel["relation"], rel["tail"].casefold())
             if key in seen:
-                return
+                continue
             seen.add(key)
-            relations.append(
-                {
-                    "head": head,
-                    "head_type": head_type or _arg_type(head, entities),
-                    "relation": label,
-                    "tail": tail,
-                    "tail_type": tail_type or _arg_type(tail, entities),
-                    "score": score,
-                    "source": source,
-                }
-            )
-
-        def _canon(raw_label: str) -> str:
-            """relex label -> the canonical type the graph stores.
-
-            An OBSERVED label maps back to its spaCy tag (person -> PERSON); a
-            base-inventory label spaCy has no tag for (occupation, activity) has
-            no mapping and stands on its own, upper-cased. Returning "" here would
-            silently demote relex's own typing to the WordNet-supersense fallback.
-            """
-            raw_label = raw_label.strip()
-            if not raw_label:
-                return ""
-            return dynamic_schema.label_to_type.get(_schema_label(raw_label), raw_label.upper())
-
-        for rel in raw_relations or []:
-            score = float(rel.get("score", 0.0) or 0.0)
-            if score < _RELATION_THRESHOLD:
-                continue
-            head_d, tail_d = rel.get("head") or {}, rel.get("tail") or {}
-            # relex types its own arguments — richer than the NER label / WordNet
-            # supersense fallback, so prefer it and only fall back when absent.
-            _add(
-                str(head_d.get("text") or ""),
-                str(rel.get("relation") or "").strip(),
-                str(tail_d.get("text") or ""),
-                score,
-                "relex",
-                head_type=_canon(str(head_d.get("type") or "")),
-                tail_type=_canon(str(tail_d.get("type") or "")),
-            )
-
-        _NAMED_HEAD_PATTERNS = ("copular", "appositive", "possessive")
-        for triple in dynamic_schema.svo_triples:
-            pattern = triple.get("pattern", "svo")
-            if triple["head_named"] and triple["tail_named"]:
-                pass
-            elif pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]:
-                pass
-            else:
-                continue
-            _add(triple["head"], triple["relation"], triple["tail"], 0.6, "svo")
+            relations.append(rel)
 
         return ExtractionResult(entities=entities, relations=relations)
