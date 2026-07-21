@@ -24,6 +24,7 @@ def _store() -> MagicMock:
     store.compute_community_quality = AsyncMock(
         return_value={"modularity": 0.5, "communities": 2, "communities_scored": 2}
     )
+    store.compute_and_persist_topics = AsyncMock(return_value=6)
     store.consolidate_session = AsyncMock(return_value=7)
     return store
 
@@ -32,6 +33,10 @@ def _memory(store: MagicMock) -> Memory:
     mem = Memory(settings=MagicMock(namespace=""), namespace="")
     mem._get_retriever = AsyncMock(return_value=MagicMock())
     mem._retriever_stores = [store]
+    # The topic step asks settings for its mode and (for llm) a summarizer; a
+    # MagicMock settings would hand back a Mock, so pin the deterministic path.
+    mem._topic_summarizer = lambda: None  # type: ignore[method-assign]
+    mem.settings.topic_mode = MagicMock(value="extractive")
     return mem
 
 
@@ -48,6 +53,7 @@ async def test_happy_path_reports_every_step() -> None:
     assert out["nodes"] == 3
     assert out["graph_embeddings_computed"] == 4
     assert out["communities_computed"] == 5
+    assert out["topics_created"] == 6
     assert out["chunks"] == 7
     assert out["merged_entities"] == 2
 

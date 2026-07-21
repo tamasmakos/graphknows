@@ -61,7 +61,13 @@ class TemporalChannel(Channel):
 
 
 class TopicChannel(Channel):
-    """Topic-summary match (llm_assisted topics; empty in llm_free)."""
+    """Topic-summary match.
+
+    Data-gated, not mode-gated: TOPIC nodes are built at flush whenever
+    ``GRAPHKNOWS_TOPICS`` is not ``none``, which includes the deterministic
+    ``extractive`` mode under ``llm_free``. Returns nothing when the topic layer
+    was not built.
+    """
 
     name = "topic"
 

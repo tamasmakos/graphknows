@@ -292,6 +292,25 @@ class Memory:
             "facts": list(getattr(ctx, "facts", []) or []),
         }
 
+    def _topic_summarizer(self) -> Any:
+        """The LLM summarizer for ``topics=llm``; ``None`` for every other mode.
+
+        Returning ``None`` is what keeps the extractive topic layer free of any
+        network dependency, so it is valid under ``llm_free``.
+        """
+        from graphknows.settings import TopicMode
+
+        if self.settings.topic_mode is not TopicMode.llm:
+            return None
+        from graphknows.ingestion.summarize import TopicSummarizer
+
+        s = self.settings
+        return TopicSummarizer(
+            model=s.summarization_model or s.llm_model,
+            api_key=s.llm_api_key,
+            api_base=s.llm_api_base,
+        )
+
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Consolidate a session in place.
 
@@ -300,9 +319,10 @@ class Memory:
         filter, name-standardization merge, person-nickname merge), then
         recomputes PageRank/node2vec embeddings/communities over the *merged*
         entity graph (native ArcadeDB algos, each with its own soft-fail —
-        see ``GraphStore.compute_and_persist_pagerank`` et al.) and flips the
-        session's lifecycle ``state`` raw -> consolidated in place. Nothing
-        else is deleted; relation canonicalize / topics land later.
+        see ``GraphStore.compute_and_persist_pagerank`` et al.), builds the
+        TOPIC layer over those communities when ``GRAPHKNOWS_TOPICS`` asks for
+        it, and flips the session's lifecycle ``state`` raw -> consolidated in
+        place. Nothing else is deleted; relation canonicalize lands later.
         """
         import time
 
@@ -315,6 +335,7 @@ class Memory:
         communities_computed = 0
         community_quality = {"modularity": 0.0, "communities": 0, "communities_scored": 0}
         chunks_flipped = 0
+        topics_created = 0
         resolution = {"dropped": 0, "merged": 0}
         async def step(name: str, coro: Any, default: Any) -> Any:
             """Await one pipeline step, recording a named error instead of aborting.
@@ -367,6 +388,16 @@ class Memory:
                 store.compute_community_quality(skip_view_ensure=True),
                 community_quality,
             )
+            # Topics run after communities: they are a view over community_id +
+            # pagerank, not a separate clustering pass.
+            topics_created = await step(
+                "topics",
+                store.compute_and_persist_topics(
+                    mode=self.settings.topic_mode.value,
+                    summarizer=self._topic_summarizer(),
+                ),
+                0,
+            )
             chunks_flipped = await step(
                 "consolidate_session", store.consolidate_session(session_id), 0
             )
@@ -376,7 +407,7 @@ class Memory:
             "edges": 0,
             "chunks": chunks_flipped,
             "turns": 0,
-            "topics_created": 0,
+            "topics_created": topics_created,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],
             "graph_embeddings_computed": graph_embeddings_computed,

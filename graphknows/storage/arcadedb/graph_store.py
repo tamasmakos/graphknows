@@ -834,6 +834,130 @@ class GraphStore(ArcadeStoreBase):
             written += 1
         return written
 
+    async def compute_and_persist_topics(
+        self, mode: str = "extractive", summarizer: Any = None
+    ) -> int:
+        """Build the TOPIC layer over the Louvain communities. Returns topics written.
+
+        Runs after ``compute_communities`` and reuses its ``ENTITY.community_id``
+        plus the ``ENTITY.pagerank`` already persisted, so it adds no graph
+        algorithm of its own.
+
+        - ``extractive``: title = the community's highest-PageRank entities;
+          summary = the member chunk nearest the community centroid. Wholly
+          deterministic, so it is valid in ``llm_free``.
+        - ``llm``: same structure, prose summary from ``summarizer``.
+        - ``none``: no-op.
+
+        Soft-fails to 0 like the other flush steps: a missing community layer
+        (Louvain unavailable) must not fail the flush.
+        """
+        if mode == "none":
+            return 0
+        try:
+            rows = await self.query(
+                "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
+                "WHERE e.community_id IS NOT NULL "
+                "RETURN e.community_id AS cid, e.name AS name, "
+                "e.pagerank AS pr, c.chunk_id AS chunk_id, c.text AS text"
+            )
+        except Exception as exc:
+            logger.info("compute_and_persist_topics: community join failed (%s); skipping", exc)
+            return 0
+        if not rows:
+            return 0
+
+        members: dict[int, dict[str, Any]] = {}
+        for r in rows:
+            cid = r.get("cid")
+            if cid is None:
+                continue
+            m = members.setdefault(int(cid), {"entities": {}, "chunks": {}})
+            name = r.get("name")
+            if name:
+                m["entities"][name] = max(m["entities"].get(name, 0.0), float(r.get("pr") or 0.0))
+            if r.get("chunk_id"):
+                m["chunks"][r["chunk_id"]] = r.get("text") or ""
+
+        topics: list[dict[str, Any]] = []
+        for cid, m in members.items():
+            # Communities of one entity are not topics, they are stragglers.
+            if len(m["entities"]) < 2 or not m["chunks"]:
+                continue
+            top_entities = sorted(m["entities"], key=lambda n: -m["entities"][n])[:3]
+            chunk_ids = list(m["chunks"])
+            # One embedding pass per community yields both the topic vector and
+            # the most representative passage.
+            centroid, lead = self._centroid_and_lead(list(m["chunks"].values()))
+            summary = await self._topic_summary(mode, summarizer, m, top_entities, lead)
+            topics.append(
+                {
+                    "topic_id": f"community:{cid}",
+                    "summary": summary,
+                    "modularity": None,
+                    "embedding": centroid,
+                    "chunk_ids": chunk_ids,
+                }
+            )
+        if not topics:
+            return 0
+        written = await self.write_topics(topics)
+        logger.info("Topic layer: %d topics written (mode=%s)", written, mode)
+        return written
+
+    @staticmethod
+    def _centroid_and_lead(texts: list[str]) -> tuple[list[float], str]:
+        """Topic vector and most representative passage, from one embedding pass.
+
+        The centroid is the L2-normalized mean of the member chunks; the lead is
+        the member chunk closest to it, i.e. the thing actually said that best
+        stands for the whole community. Returns ``([], "")`` if embedding fails —
+        a topic without a vector is still a usable topic.
+        """
+        usable = [t for t in texts if t and t.strip()][:64]
+        if not usable:
+            return [], ""
+        try:
+            import numpy as np
+
+            from graphknows.storage.embedder import embed
+
+            mat = np.asarray(embed(usable), dtype=np.float32)
+            centroid = mat.mean(axis=0)
+            norm = float(np.linalg.norm(centroid))
+            if not norm:
+                return [], usable[0]
+            centroid = centroid / norm
+            row_norms = np.linalg.norm(mat, axis=1, keepdims=True)
+            row_norms[row_norms == 0.0] = 1.0
+            sims = (mat / row_norms) @ centroid
+            return centroid.tolist(), usable[int(np.argmax(sims))]
+        except Exception as exc:  # noqa: BLE001 — degrade to no vector, keep the topic
+            logger.warning("topic centroid failed: %s", exc)
+            return [], usable[0]
+
+    async def _topic_summary(
+        self,
+        mode: str,
+        summarizer: Any,
+        member: dict[str, Any],
+        top_entities: list[str],
+        lead: str,
+    ) -> str:
+        """Title + summary text for one community, per the topic mode."""
+        title = " · ".join(top_entities)
+        if mode == "llm" and summarizer is not None:
+            passages = [t for t in member["chunks"].values() if t and t.strip()][:12]
+            try:
+                text = await summarizer.summarize(
+                    members=top_entities, passages=passages, fallback_title=title
+                )
+                if text:
+                    return str(text)
+            except Exception as exc:  # noqa: BLE001 — fall through to extractive
+                logger.warning("topic summarizer failed (%s); using extractive", exc)
+        return f"{title}. {lead[:400]}".strip()
+
     # ------------------------------------------------------------------
     # Read API — chunks
     # ------------------------------------------------------------------
