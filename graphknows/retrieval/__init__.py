@@ -1,10 +1,13 @@
 """retrieval — the read path: collect (channels) -> rank (RRF/rerank) -> context.
 
-``build_retriever(settings, store)`` is the one place the memory mode selects a
-retrieval strategy: ``llm_assisted`` returns the agentic retriever (which wraps
-the deterministic engine with a ReAct loop); ``llm_free`` returns the
-deterministic engine driven by the configured channels. Both read from the one
-per-namespace :class:`~graphknows.storage.arcadedb.graph_store.GraphStore`.
+``build_retriever(settings, store)`` is the one place a retrieval strategy is
+selected: ``agentic`` returns the ReAct retriever (which wraps the deterministic
+engine), ``det`` returns the deterministic engine driven by the configured
+channels. Both read from the one per-namespace
+:class:`~graphknows.storage.arcadedb.graph_store.GraphStore`.
+
+The strategy is independent of how the graph was ingested — nothing writes a
+mode marker to the store — so it can be chosen per call.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from graphknows.retrieval.base import BaseGraphRetriever
 from graphknows.retrieval.models.context import ChunkMatch, EntityMatch, RetrievalContext
-from graphknows.settings import MemoryMode
+from graphknows.settings import RetrievalStrategy
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
@@ -23,9 +26,23 @@ def build_retriever(
     settings: GraphKnowsSettings,
     *,
     store: Any,
+    strategy: str = "",
 ) -> Any:
-    """Return the retriever for the active memory mode (connected store injected)."""
-    if settings.mode is MemoryMode.llm_assisted:
+    """Return a retriever (connected store injected).
+
+    Args:
+        settings: Runtime configuration.
+        store: A connected per-namespace GraphStore, shared across strategies.
+        strategy: ``det`` or ``agentic``; empty selects
+            :attr:`~graphknows.settings.GraphKnowsSettings.retrieval_strategy`.
+
+    Raises:
+        ValueError: When ``strategy`` is not a known strategy name.
+    """
+    resolved = (
+        RetrievalStrategy(strategy) if strategy else settings.retrieval_strategy
+    )
+    if resolved is RetrievalStrategy.agentic:
         from graphknows.retrieval.agentic import AgenticRetriever
 
         return AgenticRetriever(settings=settings, store=store)

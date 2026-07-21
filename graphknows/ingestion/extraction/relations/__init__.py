@@ -1,9 +1,12 @@
-"""Relation extraction — mode-forked behind one factory.
+"""Relation extraction — capability-forked behind one factory.
 
-``build_relation_extractor(settings)`` is the single place the memory mode
-selects a relation strategy: ``llm_assisted`` returns the DSPy/ontology adapter
-(lazily imported so ``dspy``/``rdflib`` load only in that mode); ``llm_free``
-returns :class:`NullRelationExtractor`.
+``build_relation_extractor(settings)`` is the single place the LLM relation
+strategy is selected: with ``settings.dspy_relations`` it returns the
+DSPy/ontology adapter (lazily imported so ``dspy``/``rdflib`` load only then),
+otherwise :class:`NullRelationExtractor`.
+
+This is *additive* — the deterministic relex/SVO relation pass runs in both
+modes regardless, so what this factory gates is the LLM layer on top.
 """
 
 from __future__ import annotations
@@ -15,22 +18,21 @@ from graphknows.ingestion.extraction.relations.base import (
     IRelationExtractor,
     NullRelationExtractor,
 )
-from graphknows.settings import MemoryMode
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
 
 
 def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor:
-    """Return the relation extractor for the active memory mode."""
-    if settings.mode is not MemoryMode.llm_assisted:
+    """Return the LLM relation extractor when enabled, else the null object."""
+    if not settings.dspy_relations:
         return NullRelationExtractor()
 
     from graphknows.ingestion.extraction.relations.llm_assisted.adapter import (
         DspyRelationExtractorAdapter,
     )
 
-    ontology_file = settings.ontology_file or os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE", "")
+    ontology_file = settings.ontology_source or os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE", "")
     return DspyRelationExtractorAdapter(
         config={
             "llm": {

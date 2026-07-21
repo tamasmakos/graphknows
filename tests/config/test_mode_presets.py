@@ -1,0 +1,137 @@
+"""MemoryMode is a preset over orthogonal knobs, not a global fork.
+
+Pins the expansion table and the override precedence, so the "resolved
+capability" contract every consumer relies on cannot drift silently.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from graphknows.exceptions import ConfigurationError
+from graphknows.settings import (
+    GraphKnowsSettings,
+    MemoryMode,
+    RetrievalStrategy,
+    TopicMode,
+)
+
+
+class TestPresetExpansion:
+    def test_llm_free_preset(self) -> None:
+        s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_free)
+        assert s.topic_mode is TopicMode.none
+        assert s.dspy_relations is False
+        assert s.retrieval_strategy is RetrievalStrategy.det
+        assert s.uses_llm is False
+
+    def test_llm_assisted_preset(self) -> None:
+        s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_assisted)
+        assert s.topic_mode is TopicMode.llm
+        assert s.dspy_relations is True
+        assert s.retrieval_strategy is RetrievalStrategy.agentic
+        assert s.uses_llm is True
+
+    def test_default_matches_llm_free(self) -> None:
+        """A bare construction must behave exactly like today's default."""
+        s = GraphKnowsSettings()
+        assert s.mode is MemoryMode.llm_free
+        assert s.topic_mode is TopicMode.none
+        assert s.dspy_relations is False
+        assert s.retrieval_strategy is RetrievalStrategy.det
+
+
+class TestKnobOverrides:
+    def test_topics_opt_in_under_llm_free(self) -> None:
+        """The headline case: deterministic topics without leaving llm_free."""
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_MODE=MemoryMode.llm_free,
+            GRAPHKNOWS_TOPICS=TopicMode.extractive,
+        )
+        assert s.topic_mode is TopicMode.extractive
+        assert s.dspy_relations is False  # untouched by the override
+        assert s.retrieval_strategy is RetrievalStrategy.det
+        assert s.uses_llm is False  # extractive topics make no network call
+
+    def test_agentic_retrieval_under_llm_free(self) -> None:
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_MODE=MemoryMode.llm_free,
+            GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.agentic,
+        )
+        assert s.retrieval_strategy is RetrievalStrategy.agentic
+        assert s.dspy_relations is False
+        assert s.uses_llm is True
+
+    def test_dspy_disabled_under_llm_assisted(self) -> None:
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
+            GRAPHKNOWS_DSPY_RELATIONS=False,
+        )
+        assert s.dspy_relations is False
+        assert s.topic_mode is TopicMode.llm  # other knobs keep the preset
+
+    def test_every_knob_overridden_ignores_the_preset(self) -> None:
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
+            GRAPHKNOWS_TOPICS=TopicMode.none,
+            GRAPHKNOWS_DSPY_RELATIONS=False,
+            GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.det,
+        )
+        assert s.uses_llm is False
+
+
+class TestOntologySource:
+    def test_unset_is_empty(self) -> None:
+        assert GraphKnowsSettings().ontology_source == ""
+
+    def test_deprecated_alias_still_honoured(self) -> None:
+        s = GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY_FILE="/tmp/legacy.ttl")
+        assert s.ontology_source == "/tmp/legacy.ttl"
+
+    def test_new_field_wins_over_alias(self) -> None:
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_ONTOLOGY="/tmp/new/",
+            GRAPHKNOWS_ONTOLOGY_FILE="/tmp/legacy.ttl",
+        )
+        assert s.ontology_source == "/tmp/new/"
+
+    def test_ontology_is_mode_independent(self) -> None:
+        for mode in (MemoryMode.llm_free, MemoryMode.llm_assisted):
+            s = GraphKnowsSettings(GRAPHKNOWS_MODE=mode, GRAPHKNOWS_ONTOLOGY="/tmp/o.ttl")
+            assert s.ontology_source == "/tmp/o.ttl"
+
+
+class TestProductionGuard:
+    """The key requirement follows the resolved capability, not the mode label.
+
+    Every case pins ``GRAPHKNOWS_LLM_API_KEY`` explicitly: constructor args beat
+    the ambient ``.env``, which otherwise supplies a key and hides the guard.
+    """
+
+    def test_llm_free_needs_no_key(self) -> None:
+        GraphKnowsSettings(
+            GRAPHKNOWS_ENV="production",
+            GRAPHKNOWS_ARCADEDB_PASSWORD="secret",
+            GRAPHKNOWS_LLM_API_KEY="",
+        )  # must not raise
+
+    def test_agentic_retrieval_needs_a_key_even_in_llm_free(self) -> None:
+        with pytest.raises(ConfigurationError, match="GRAPHKNOWS_LLM_API_KEY"):
+            GraphKnowsSettings(
+                GRAPHKNOWS_ENV="production",
+                GRAPHKNOWS_ARCADEDB_PASSWORD="secret",
+                GRAPHKNOWS_LLM_API_KEY="",
+                GRAPHKNOWS_MODE=MemoryMode.llm_free,
+                GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.agentic,
+            )
+
+    def test_llm_assisted_with_capabilities_off_needs_no_key(self) -> None:
+        GraphKnowsSettings(
+            GRAPHKNOWS_ENV="production",
+            GRAPHKNOWS_ARCADEDB_PASSWORD="secret",
+            GRAPHKNOWS_LLM_API_KEY="",
+            GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
+            GRAPHKNOWS_TOPICS=TopicMode.none,
+            GRAPHKNOWS_DSPY_RELATIONS=False,
+            GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.det,
+        )  # must not raise

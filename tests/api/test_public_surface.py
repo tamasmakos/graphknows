@@ -27,7 +27,9 @@ EXPECTED_PUBLIC_API = {
     "Message",
     "MissingExtraError",
     "RetrievalError",
+    "RetrievalStrategy",
     "StoreError",
+    "TopicMode",
     "__version__",
     "normalize_messages",
 }

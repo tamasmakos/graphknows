@@ -15,6 +15,7 @@ Example:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import Field, model_validator
@@ -24,16 +25,71 @@ from graphknows.exceptions import ConfigurationError
 
 
 class MemoryMode(StrEnum):
-    """Single switch that governs both extraction and retrieval.
+    """Named preset over the orthogonal capability knobs.
 
-    - ``llm_free``: GLiNER entities + spaCy relations + deterministic retrieval.
-      No network LLM calls on the ingestion/retrieval hot paths.
-    - ``llm_assisted``: additionally runs DSPy relation extraction, topic
-      summarisation, and the agentic retriever.
+    The mode is *only* a preset: every capability it implies (topics, DSPy
+    relations, retrieval strategy) is independently overridable, and ontology
+    injection plus the FrameNet layer are mode-independent. See
+    :data:`_PRESETS` for the expansion and ``docs/modes.md`` for the rationale.
+
+    - ``llm_free``: no network LLM call on the ingestion or retrieval hot path.
+    - ``llm_assisted``: adds DSPy relation extraction, LLM topic summaries, and
+      the agentic retriever.
     """
 
     llm_free = "llm_free"
     llm_assisted = "llm_assisted"
+
+
+class TopicMode(StrEnum):
+    """How TOPIC nodes are titled and summarised at flush time.
+
+    - ``none``: the topic layer is not built.
+    - ``extractive``: deterministic — PageRank-titled, centroid-nearest
+      summary sentences. No LLM, so it is valid in ``llm_free``.
+    - ``llm``: prose summaries generated over the community's passages.
+    """
+
+    none = "none"
+    extractive = "extractive"
+    llm = "llm"
+
+
+class RetrievalStrategy(StrEnum):
+    """Which retriever answers a query.
+
+    - ``det``: deterministic hybrid channels + RRF fusion.
+    - ``agentic``: ReAct loop over the deterministic retriever's collectors.
+
+    Independent of how the graph was ingested: nothing writes a mode marker to
+    the store, so either strategy runs over any namespace.
+    """
+
+    det = "det"
+    agentic = "agentic"
+
+
+@dataclass(frozen=True)
+class _Preset:
+    """The capability knobs a :class:`MemoryMode` expands into."""
+
+    topics: TopicMode
+    dspy_relations: bool
+    retrieval: RetrievalStrategy
+
+
+_PRESETS: dict[MemoryMode, _Preset] = {
+    MemoryMode.llm_free: _Preset(
+        topics=TopicMode.none,
+        dspy_relations=False,
+        retrieval=RetrievalStrategy.det,
+    ),
+    MemoryMode.llm_assisted: _Preset(
+        topics=TopicMode.llm,
+        dspy_relations=True,
+        retrieval=RetrievalStrategy.agentic,
+    ),
+}
 
 
 class GraphKnowsSettings(BaseSettings):
@@ -60,8 +116,14 @@ class GraphKnowsSettings(BaseSettings):
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
     graphknows_port: int = Field(default=8025, alias="GRAPHKNOWS_PORT")
 
-    # Single mode switch driving both extraction and retrieval.
+    # Named preset over the capability knobs below. Every knob it implies can be
+    # overridden independently; read the resolved values through the
+    # ``topic_mode`` / ``dspy_relations`` / ``retrieval_strategy`` properties,
+    # never off these raw fields (``None`` means "take the preset's value").
     mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="GRAPHKNOWS_MODE")
+    topics: TopicMode | None = Field(default=None, alias="GRAPHKNOWS_TOPICS")
+    enable_dspy_relations: bool | None = Field(default=None, alias="GRAPHKNOWS_DSPY_RELATIONS")
+    retrieval: RetrievalStrategy | None = Field(default=None, alias="GRAPHKNOWS_RETRIEVAL")
 
     # ArcadeDB
     arcadedb_url: str = Field(default="http://localhost:2480", alias="GRAPHKNOWS_ARCADEDB_URL")
@@ -101,10 +163,17 @@ class GraphKnowsSettings(BaseSettings):
     chunk_size: int = Field(default=512, alias="GRAPHKNOWS_CHUNK_SIZE")
     chunk_overlap: int = Field(default=64, alias="GRAPHKNOWS_CHUNK_OVERLAP")
 
-    # Entity extraction
-    gliner_model: str = Field(default="fastino/gliner2-multi-v1", alias="GRAPHKNOWS_GLINER_MODEL")
-    gliner_threshold: float = Field(default=0.5, alias="GRAPHKNOWS_GLINER_THRESHOLD")
+    # Entity extraction. The relex model itself is set with GRAPHKNOWS_RELEX_MODEL
+    # (see ingestion/extraction/entities/gliner_model.py).
     spacy_model: str = Field(default="en_core_web_lg", alias="GRAPHKNOWS_SPACY_MODEL")
+
+    # Ontology injection — an RDF/OWL file OR a folder of them. Mode-independent:
+    # when set, ontology class labels steer entity extraction and property labels
+    # steer relation extraction in BOTH modes, and the terms are persisted as
+    # ONTOLOGY_CLASS/ONTOLOGY_PROPERTY nodes. Read via ``ontology_source``.
+    ontology: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY")
+    # Deprecated alias kept so existing GRAPHKNOWS_ONTOLOGY_FILE setups (and the
+    # eval CLIs) keep working; ``ontology`` wins when both are set.
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
     # Retrieval channels — modular ingest+retrieve signals (see memory/channels/).
@@ -121,6 +190,41 @@ class GraphKnowsSettings(BaseSettings):
     # Session lifecycle
     session_ttl_minutes: int = Field(default=60, alias="GRAPHKNOWS_SESSION_TTL_MINUTES")
 
+    @property
+    def topic_mode(self) -> TopicMode:
+        """Resolved topic mode — the explicit setting, else the mode's preset."""
+        return self.topics if self.topics is not None else _PRESETS[self.mode].topics
+
+    @property
+    def dspy_relations(self) -> bool:
+        """Whether DSPy relation extraction runs — explicit setting, else preset."""
+        if self.enable_dspy_relations is not None:
+            return self.enable_dspy_relations
+        return _PRESETS[self.mode].dspy_relations
+
+    @property
+    def retrieval_strategy(self) -> RetrievalStrategy:
+        """Default retrieval strategy — explicit setting, else the mode's preset.
+
+        A per-call ``strategy`` argument overrides this; see
+        :func:`graphknows.retrieval.build_retriever`.
+        """
+        return self.retrieval if self.retrieval is not None else _PRESETS[self.mode].retrieval
+
+    @property
+    def ontology_source(self) -> str:
+        """The ontology file or folder to load, honouring the deprecated alias."""
+        return self.ontology or self.ontology_file
+
+    @property
+    def uses_llm(self) -> bool:
+        """Whether any resolved capability makes network LLM calls."""
+        return (
+            self.dspy_relations
+            or self.topic_mode is TopicMode.llm
+            or self.retrieval_strategy is RetrievalStrategy.agentic
+        )
+
     def check_production_secrets(self) -> None:
         """Raise if running in production with unsafe defaults.
 
@@ -129,7 +233,7 @@ class GraphKnowsSettings(BaseSettings):
 
         Raises:
             ConfigurationError: When production env is detected with the default
-                password, or with llm_assisted mode selected but no LLM API key.
+                password, or with an LLM-using capability enabled but no API key.
         """
         if self.graphknows_env != "production":
             return
@@ -137,9 +241,13 @@ class GraphKnowsSettings(BaseSettings):
             raise ConfigurationError(
                 "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
             )
-        if self.mode is MemoryMode.llm_assisted and not self.llm_api_key:
+        # Keyed off the resolved capabilities, not the mode: llm_free with
+        # GRAPHKNOWS_RETRIEVAL=agentic needs a key, and llm_assisted with every
+        # LLM capability disabled does not.
+        if self.uses_llm and not self.llm_api_key:
             raise ConfigurationError(
-                "llm_assisted mode in production requires GRAPHKNOWS_LLM_API_KEY."
+                "LLM-backed capabilities (DSPy relations, LLM topics, agentic "
+                "retrieval) in production require GRAPHKNOWS_LLM_API_KEY."
             )
 
     @model_validator(mode="after")

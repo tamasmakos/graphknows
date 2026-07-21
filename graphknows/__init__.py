@@ -34,11 +34,16 @@ from graphknows.exceptions import (
 from graphknows.memory import Memory
 from graphknows.models import (
     IngestResult,
-    Message,
     MemoryScope,
+    Message,
     normalize_messages,
 )
-from graphknows.settings import GraphKnowsSettings, MemoryMode
+from graphknows.settings import (
+    GraphKnowsSettings,
+    MemoryMode,
+    RetrievalStrategy,
+    TopicMode,
+)
 
 # A library must not configure logging handlers; attach a NullHandler so records
 # are dropped unless the embedding application configures the root logger.
@@ -57,7 +62,9 @@ __all__ = [
     "Message",
     "MissingExtraError",
     "RetrievalError",
+    "RetrievalStrategy",
     "StoreError",
+    "TopicMode",
     "__version__",
     "normalize_messages",
 ]
