@@ -121,12 +121,20 @@ def _checkpoint(
         log.warning("Checkpoint write failed (non-fatal): %s", exc)
 
 
+# Settings the MCP subprocess needs but does not inherit reliably. The capability
+# knobs are here so an A/B can vary one of them per run without touching .env.
+_FORWARDED_ENV = (
+    "GRAPHKNOWS_ONTOLOGY",
+    "GRAPHKNOWS_ONTOLOGY_FILE",  # deprecated alias
+    "GRAPHKNOWS_TOPICS",
+    "GRAPHKNOWS_DSPY_RELATIONS",
+    "GRAPHKNOWS_RETRIEVAL",
+)
+
+
 def _evaluation_env() -> dict[str, str]:
     """Environment overrides handed to the MCP subprocess."""
-    env: dict[str, str] = {}
-    if os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE"):
-        env["GRAPHKNOWS_ONTOLOGY_FILE"] = os.environ["GRAPHKNOWS_ONTOLOGY_FILE"]
-    return env
+    return {k: os.environ[k] for k in _FORWARDED_ENV if os.environ.get(k)}
 
 
 def build_case_result(
