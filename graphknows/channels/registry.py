@@ -42,13 +42,21 @@ def default_channels(
         settings: Runtime settings (drives mode filtering + opt-in flags).
         enabled: Optional explicit channel-name allow-list. When ``None`` the
             default set is used (all registered collectors, plus frames when
-            ``settings.enable_frames``). Unknown names raise ``KeyError``.
+            ``settings.enable_frames`` and ontology when an ontology is
+            configured). Unknown names raise ``KeyError``.
     """
     registry = dict(CHANNEL_REGISTRY)
     if settings.enable_frames:
         from graphknows.channels.frames import FrameChannel
 
         registry[FrameChannel.name] = FrameChannel
+    # Data-gated: without an ontology there are no ONTOLOGY_CLASS nodes to
+    # search, so the channel would cost a vector query per call to return
+    # nothing.
+    if settings.ontology_source:
+        from graphknows.channels.ontology import OntologyChannel
+
+        registry[OntologyChannel.name] = OntologyChannel
 
     selected = list(registry.values()) if enabled is None else [registry[n] for n in enabled]
     mode = settings.mode.value
