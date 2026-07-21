@@ -31,9 +31,9 @@ class CodeParser(BaseParser):
             title = os.path.basename(source_hint) if source_hint else "Untitled"
 
         if ext == ".py":
-            segments = self._parse_python(text, source_id, title, lang, source_hint)
+            segments = self._parse_python(text, title, lang)
         else:
-            segments = self._parse_generic(text, source_id, title, lang, source_hint)
+            segments = self._parse_generic(text, title, lang)
 
         return ParsedFile(
             source_id=source_id,
@@ -42,15 +42,13 @@ class CodeParser(BaseParser):
             segments=segments,
         )
 
-    def _parse_python(
-        self, text: str, source_id: str, title: str, lang: str, source_hint: str = ""
-    ) -> list[TextSegment]:
+    def _parse_python(self, text: str, title: str, lang: str) -> list[TextSegment]:
         segments: list[TextSegment] = []
         try:
             tree = ast.parse(text)
         except SyntaxError:
             # Fallback to generic parsing if AST fails
-            return self._parse_generic(text, source_id, title, lang)
+            return self._parse_generic(text, title, lang)
 
         module_docstring = ast.get_docstring(tree)
         if module_docstring:
@@ -99,12 +97,10 @@ class CodeParser(BaseParser):
                 )
 
         if not segments:
-            return self._parse_generic(text, source_id, title, lang, source_hint)
+            return self._parse_generic(text, title, lang)
         return segments
 
-    def _parse_generic(
-        self, text: str, source_id: str, title: str, lang: str, source_hint: str = ""
-    ) -> list[TextSegment]:
+    def _parse_generic(self, text: str, title: str, lang: str) -> list[TextSegment]:
         heading = f"## {title}"
         body = f"```{lang}\n{text}\n```"
         return [

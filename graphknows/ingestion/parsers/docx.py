@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import os
 
-from .base import BaseParser, ParsedFile, TextSegment
+from .base import BaseParser, ParsedFile
 
 
 class DocxParser(BaseParser):
@@ -35,49 +35,38 @@ class DocxParser(BaseParser):
 
             raise MissingExtraError("DOCX parsing", "parsers") from exc
 
-        doc = Document(io.BytesIO(data))
-        text_parts: list[str] = []
-        for para in doc.paragraphs:
+        text_parts = self._markdown_lines(Document(io.BytesIO(data)))
+        full_text = "\n\n".join(text_parts)
+        source_id = self._make_source_id(source_hint, full_text)
+        if not title:
+            title = os.path.basename(source_hint) if source_hint else "Untitled"
+
+        sections = self._build_docx_sections(text_parts) or [("## Content", full_text)]
+        chunks = self._chunk_by_headings(sections)
+
+        return ParsedFile(
+            source_id=source_id,
+            title=title,
+            parser_name="DocxParser",
+            segments=self._segments_from_chunks(chunks, full_text),
+        )
+
+    @staticmethod
+    def _markdown_lines(doc: object) -> list[str]:
+        """Flatten paragraphs to text, rendering Word heading styles as ``#`` prefixes."""
+        lines: list[str] = []
+        for para in doc.paragraphs:  # type: ignore[attr-defined]
+            body = para.text.strip()
             style_name = para.style.name if para.style else ""
             if style_name.startswith("Heading "):
                 try:
                     level = int(style_name.split()[-1])
                 except (ValueError, IndexError):
                     level = 1
-                prefix = "#" * level
-                text_parts.append(f"{prefix} {para.text.strip()}")
-            elif para.text.strip():
-                text_parts.append(para.text.strip())
-
-        full_text = "\n\n".join(text_parts)
-        source_id = self._make_source_id(source_hint, full_text)
-        if not title:
-            title = os.path.basename(source_hint) if source_hint else "Untitled"
-
-        sections = self._build_docx_sections(text_parts)
-        if not sections:
-            sections = [("## Content", full_text)]
-
-        chunks = self._chunk_by_headings(sections)
-        segments = []
-        for path, chunk_text in chunks:
-            offset = full_text.find(chunk_text.split("\n")[0])
-            if offset == -1:
-                offset = 0
-            segments.append(
-                TextSegment(
-                    text=chunk_text,
-                    heading_path=path,
-                    char_offset=offset,
-                )
-            )
-
-        return ParsedFile(
-            source_id=source_id,
-            title=title,
-            parser_name="DocxParser",
-            segments=segments,
-        )
+                lines.append(f"{'#' * level} {body}")
+            elif body:
+                lines.append(body)
+        return lines
 
     def _build_docx_sections(self, text_parts: list[str]) -> list[tuple[str, str]]:
         """Convert extracted DOCX text parts into (heading_path, body) sections."""

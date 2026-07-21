@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,6 +12,56 @@ MAX_CHUNK_TOKENS: int = 384
 MIN_CHUNK_TOKENS: int = 48
 MAX_CHUNK_OVERLAP: int = 64  # trailing tokens carried into the next chunk
 APPROX_CHARS_PER_TOKEN: int = 4  # rough estimate, no tokenizer dep
+
+
+_CONTENT_HEADING_RE = re.compile(r"^##\s*Content\s*\n+", re.IGNORECASE)
+
+
+def strip_content_heading(text: str) -> str:
+    """Remove the synthetic ``## Content`` heading PlainTextParser adds.
+
+    Plain text has no headings, so the parser invents one to give the chunk a
+    heading path. It is an artifact of chunking, not of the source, so both the
+    ingest path (before embedding) and the recall path (before display) strip
+    it — they each had their own copy of this regex.
+    """
+    return _CONTENT_HEADING_RE.sub("", text).strip()
+
+
+def _tokens(s: str) -> int:
+    return len(s) // APPROX_CHARS_PER_TOKEN
+
+
+class _PendingMerge:
+    """Accumulator for sections too small to stand alone as a chunk.
+
+    Small sections merge together until one more would blow the budget. Holding
+    the buffer here instead of in closure state is what keeps
+    ``_chunk_by_headings`` a flat three-way dispatch.
+    """
+
+    def __init__(self, max_tokens: int) -> None:
+        self._max = max_tokens
+        self._path = ""
+        self._body = ""
+
+    def flush(self) -> list[tuple[str, str]]:
+        """Emit whatever has accumulated (possibly nothing) and reset."""
+        out = [(self._path, self._body.strip())] if self._body.strip() else []
+        self._path = ""
+        self._body = ""
+        return out
+
+    def absorb(self, path: str, combined: str) -> list[tuple[str, str]]:
+        """Merge a small section in, flushing first if it would overflow."""
+        if _tokens(self._body) + _tokens(combined) > self._max:
+            out = self.flush()
+            self._path, self._body = path, combined
+            return out
+        if not self._path:
+            self._path = path
+        self._body = (self._body + "\n\n" + combined).strip()
+        return []
 
 
 @dataclass
@@ -74,45 +125,50 @@ class BaseParser(ABC):
     ) -> list[tuple[str, str]]:
         """Merge small sections, split large ones at paragraphs. Returns (heading_path, text) pairs."""
         result: list[tuple[str, str]] = []
-        pending_path = ""
-        pending_body = ""
-
-        def _tokens(s: str) -> int:
-            return len(s) // APPROX_CHARS_PER_TOKEN
-
-        def _flush() -> None:
-            nonlocal pending_path, pending_body
-            if pending_body.strip():
-                result.append((pending_path, pending_body.strip()))
-            pending_path = ""
-            pending_body = ""
+        pending = _PendingMerge(max_tokens)
 
         for path, body in sections:
             combined = f"{''.join(path.split(' / ')[-1:])}\n\n{body}".strip()
-            t_combined = _tokens(combined)
-            if t_combined > max_tokens:
-                _flush()
+            size = _tokens(combined)
+            if size > max_tokens:
+                result.extend(pending.flush())
                 result.extend(self._split_large_section(path, body, max_tokens))
-            elif t_combined < min_tokens:
-                # Small section — merge with pending
-                if _tokens(pending_body) + t_combined > max_tokens:
-                    _flush()
-                    pending_path = path
-                    pending_body = combined
-                else:
-                    if not pending_path:
-                        pending_path = path
-                    pending_body = (pending_body + "\n\n" + combined).strip()
+            elif size < min_tokens:
+                result.extend(pending.absorb(path, combined))
             else:
-                # Normal size — flush any pending and emit alone
-                if pending_body.strip():
-                    result.append((pending_path, pending_body.strip()))
-                    pending_path = ""
-                    pending_body = ""
+                result.extend(pending.flush())
                 result.append((path, combined))
 
-        _flush()
+        result.extend(pending.flush())
         return result
+
+    def _segments_from_chunks(
+        self, chunks: list[tuple[str, str]], text: str
+    ) -> list[TextSegment]:
+        """Turn ``(heading_path, chunk_text)`` pairs into offset-anchored segments.
+
+        Shared by every text-shaped parser — this loop was written out three
+        times (twice inside one method) and drifted between copies.
+        """
+        return [
+            TextSegment(
+                text=chunk_text,
+                heading_path=path,
+                char_offset=self._find_offset(text, chunk_text),
+            )
+            for path, chunk_text in chunks
+        ]
+
+    def _find_offset(self, text: str, chunk_text: str) -> int:
+        """Offset of the first identifiable line of *chunk_text* within *text*."""
+        for raw in chunk_text.split("\n"):
+            line = raw.strip()
+            if not line:
+                continue
+            idx = text.find(line)
+            if idx != -1:
+                return idx
+        return 0
 
     def _split_large_section(
         self,
@@ -161,6 +217,21 @@ class BaseParser(ABC):
                 toks += ut
             return carried, toks
 
+        def _pack_sentences(unit: str) -> list[str]:
+            """Sentence-split one over-long unit so no piece exceeds the budget."""
+            out: list[str] = []
+            sub: list[str] = []
+            sub_tokens = 0
+            for sent in split_sentences(unit):
+                if sub and sub_tokens + _toks(sent) > max_tokens:
+                    out.append(" ".join(sub))
+                    sub, sub_tokens = _tail(sub)
+                sub.append(sent)
+                sub_tokens += _toks(sent)
+            if sub:
+                out.append(" ".join(sub))
+            return out
+
         bodies: list[str] = []
         buf: list[str] = []
         buf_tokens = 0
@@ -171,16 +242,7 @@ class BaseParser(ABC):
                 if buf:
                     bodies.append(joiner.join(buf))
                     buf, buf_tokens = [], 0
-                sub: list[str] = []
-                sub_tokens = 0
-                for sent in split_sentences(unit):
-                    if sub and sub_tokens + _toks(sent) > max_tokens:
-                        bodies.append(" ".join(sub))
-                        sub, sub_tokens = _tail(sub)
-                    sub.append(sent)
-                    sub_tokens += _toks(sent)
-                if sub:
-                    bodies.append(" ".join(sub))
+                bodies.extend(_pack_sentences(unit))
                 continue
             if buf and buf_tokens + _toks(unit) > max_tokens:
                 bodies.append(joiner.join(buf))

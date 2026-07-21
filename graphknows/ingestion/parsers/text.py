@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 
-from .base import BaseParser, ParsedFile, TextSegment
+from .base import BaseParser, ParsedFile
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+([^\n]+)$", re.MULTILINE)
 
@@ -40,69 +40,34 @@ class PlainTextParser(BaseParser):
                 title = "Untitled"
 
         matches = list(HEADING_RE.finditer(text))
-        if not matches:
-            # Plain text - treat as one section and paragraph-chunk if needed
-            sections = [("## Content", text)]
-            chunks = self._chunk_by_headings(sections)
-            segments = []
-            for path, chunk_text in chunks:
-                offset = self._find_offset(text, chunk_text)
-                segments.append(
-                    TextSegment(
-                        text=chunk_text,
-                        heading_path=path,
-                        char_offset=offset,
-                    )
-                )
-        else:
-            # Markdown with headings - build heading hierarchy
-            sections = []
-            stack: list[tuple[int, str]] = []
-            for i, match in enumerate(matches):
-                level = len(match.group(1))
-                heading_line = match.group(0)
-                while stack and stack[-1][0] >= level:
-                    stack.pop()
-                stack.append((level, heading_line))
-                path = " / ".join(item[1] for item in stack)
-
-                body_start = match.end()
-                if i + 1 < len(matches):
-                    body_end = matches[i + 1].start()
-                else:
-                    body_end = len(text)
-                body = text[body_start:body_end].strip()
-                sections.append((path, body))
-
-            chunks = self._chunk_by_headings(sections)
-            segments = []
-            for path, chunk_text in chunks:
-                offset = self._find_offset(text, chunk_text)
-                segments.append(
-                    TextSegment(
-                        text=chunk_text,
-                        heading_path=path,
-                        char_offset=offset,
-                    )
-                )
+        # Plain text is one implicit section; Markdown gets a heading hierarchy.
+        sections = (
+            self._sections_from_headings(text, matches) if matches else [("## Content", text)]
+        )
+        chunks = self._chunk_by_headings(sections)
 
         return ParsedFile(
             source_id=source_id,
             title=title,
             parser_name="PlainTextParser",
-            segments=segments,
+            segments=self._segments_from_chunks(chunks, text),
         )
 
-    def _find_offset(self, text: str, chunk_text: str) -> int:
-        """Find the byte offset of the first identifiable line in chunk_text."""
-        for line in chunk_text.split("\n"):
-            line = line.strip()
-            if line and not line.startswith("#"):
-                idx = text.find(line)
-                if idx != -1:
-                    return idx
-            if line.startswith("#"):
-                idx = text.find(line)
-                if idx != -1:
-                    return idx
-        return 0
+    @staticmethod
+    def _sections_from_headings(
+        text: str, matches: list[re.Match[str]]
+    ) -> list[tuple[str, str]]:
+        """Pair each heading's breadcrumb path with the body that follows it."""
+        sections: list[tuple[str, str]] = []
+        stack: list[tuple[int, str]] = []
+        for i, match in enumerate(matches):
+            level = len(match.group(1))
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, match.group(0)))
+
+            body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            sections.append(
+                (" / ".join(item[1] for item in stack), text[match.end() : body_end].strip())
+            )
+        return sections
