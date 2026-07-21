@@ -12,6 +12,7 @@ API-free — suitable for the llm_free profile.
 Used at flush time to write a FRAME layer to LTM, and at query time to parse a
 question into the same representation so retrieval can match structurally.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,12 +26,31 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 # Disambiguation gates (tuned on LoCoMo conv-26; see .scratch/FRAME_GRAPH_NOTES.md).
-SIM_FLOOR = 0.35            # min cosine(sentence, frame definition) for a multi-candidate LU
-SIM_FLOOR_SINGLE = 0.42     # stricter floor when the LU maps to exactly one frame
-SIM_MARGIN = 0.04           # min top1-top2 gap when ambiguous
-LIGHT_VERBS = frozenset({"have", "get", "make", "take", "do", "go", "be", "let", "say", "come", "want"})
-JUNK_FILLERS = frozenset({"what", "it", "that", "this", "there", "which", "who", "thing", "stuff",
-                          "anything", "something", "one", "some", "lot", "kind"})
+SIM_FLOOR = 0.35  # min cosine(sentence, frame definition) for a multi-candidate LU
+SIM_FLOOR_SINGLE = 0.42  # stricter floor when the LU maps to exactly one frame
+SIM_MARGIN = 0.04  # min top1-top2 gap when ambiguous
+LIGHT_VERBS = frozenset(
+    {"have", "get", "make", "take", "do", "go", "be", "let", "say", "come", "want"}
+)
+JUNK_FILLERS = frozenset(
+    {
+        "what",
+        "it",
+        "that",
+        "this",
+        "there",
+        "which",
+        "who",
+        "thing",
+        "stuff",
+        "anything",
+        "something",
+        "one",
+        "some",
+        "lot",
+        "kind",
+    }
+)
 _POS = {"VERB": "v", "NOUN": "n", "ADJ": "a"}
 
 _nlp: Any = None
@@ -42,16 +62,19 @@ def _spacy() -> Any:
     global _nlp
     if _nlp is None:
         import spacy
+
         _nlp = spacy.load("en_core_web_lg", disable=["ner"])
     return _nlp
 
 
 def _framenet() -> Any:
     from nltk.corpus import framenet as fn
+
     try:
         fn.frames()  # probe: raises LookupError if the corpus isn't downloaded
     except LookupError:
         import nltk
+
         nltk.download("framenet_v17", quiet=True)
     return fn
 
@@ -166,12 +189,15 @@ def _clause_pps(tok: Any) -> list[tuple[str, Any]]:
 
 def _embed_norm(texts: list[str]) -> np.ndarray:
     from graphknows.storage.embedder import embed
+
     arr = np.asarray(embed(texts), dtype=np.float32)
     arr /= np.linalg.norm(arr, axis=1, keepdims=True) + 1e-9
     return arr
 
 
-def _sentence_targets(sent: Any, lui: dict[tuple[str, str], set[str]]) -> list[tuple[Any, str, list[str]]]:
+def _sentence_targets(
+    sent: Any, lui: dict[tuple[str, str], set[str]]
+) -> list[tuple[Any, str, list[str]]]:
     """Frame-evoking ``(token, pos, sorted_candidate_frames)`` targets in a sentence."""
     targets: list[tuple[Any, str, list[str]]] = []
     for tok in sent:
@@ -181,8 +207,11 @@ def _sentence_targets(sent: Any, lui: dict[tuple[str, str], set[str]]) -> list[t
         # Compound guard drops lexicalised compound HEADS ("meteor shower" ->
         # Precipitation) but must not drop gerund activities with a modifier
         # ("family camping"), which are exactly the answer-bearing instances.
-        if (pos == "n" and not _degerund(tok.lemma_.lower())
-                and any(c.dep_ == "compound" for c in tok.children)):
+        if (
+            pos == "n"
+            and not _degerund(tok.lemma_.lower())
+            and any(c.dep_ == "compound" for c in tok.children)
+        ):
             continue
         frames = lui.get((tok.lemma_.lower(), pos), set())
         if not frames and pos == "n":
@@ -232,7 +261,12 @@ def _assign_fes(
         if ft:
             fes.append((cores[0], ft))
     seen: set[tuple[str, str]] = set()
-    return [(r, f) for r, f in fes if (r, f) not in seen and not seen.add((r, f))]
+    unique: list[tuple[str, str]] = []
+    for r, f in fes:
+        if (r, f) not in seen:
+            seen.add((r, f))
+            unique.append((r, f))
+    return unique
 
 
 def extract_frames(text: str, speaker: str, speakers: list[str]) -> list[dict[str, Any]]:
@@ -252,8 +286,15 @@ def extract_frames(text: str, speaker: str, speakers: list[str]) -> list[dict[st
             if frame is None:
                 continue
             fes = _assign_fes(tok, _core_fes(frame), speaker, speakers)
-            out.append({"frame": frame, "lu": f"{tok.lemma_.lower()}.{pos}",
-                        "sim": round(top1, 3), "speaker": speaker, "fes": fes})
+            out.append(
+                {
+                    "frame": frame,
+                    "lu": f"{tok.lemma_.lower()}.{pos}",
+                    "sim": round(top1, 3),
+                    "speaker": speaker,
+                    "fes": fes,
+                }
+            )
     return out
 
 

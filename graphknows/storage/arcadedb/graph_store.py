@@ -76,8 +76,16 @@ _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
 
 # Vertex labels wiped by clear_all() / walked by delete_session().
 _VERTEX_LABELS = (
-    "FRAME_INSTANCE", "FRAME", "CHUNK", "FILE", "TOPIC", "TEMPORAL", "ENTITY", "SESSION"
+    "FRAME_INSTANCE",
+    "FRAME",
+    "CHUNK",
+    "FILE",
+    "TOPIC",
+    "TEMPORAL",
+    "ENTITY",
+    "SESSION",
 )
+
 
 def _emb_sql(emb: list[float]) -> str:
     """Format an embedding as an ArcadeDB SQL array literal (inline, not a param)."""
@@ -139,9 +147,7 @@ class GraphStore(ArcadeStoreBase):
         """
         if not emb:
             return
-        stmt = (
-            f"MATCH (n:{vertex_type} {{{key_prop}: $key}}) SET n.embedding = {_emb_sql(emb)}"
-        )  # nosec B608
+        stmt = f"MATCH (n:{vertex_type} {{{key_prop}: $key}}) SET n.embedding = {_emb_sql(emb)}"  # nosec B608
         await self._c.command(self._db, stmt, params={"key": key})
 
     @staticmethod
@@ -287,11 +293,12 @@ class GraphStore(ArcadeStoreBase):
                 "nn": _name_norm(name),
                 "name": name,
                 "etype": e.get("type") or "ENTITY",
-                "conf": float(conf) if isinstance(conf, (int, float)) else 1.0,
+                "conf": float(conf) if isinstance(conf, int | float) else 1.0,
             }
-            prev = by_key.get(row["nn"])
+            key = str(row["nn"])
+            prev = by_key.get(key)
             if prev is None or row["conf"] > prev["conf"]:
-                by_key[row["nn"]] = row
+                by_key[key] = row
         rows: list[dict[str, Any]] = list(by_key.values())
         if not rows:
             return
@@ -543,12 +550,18 @@ class GraphStore(ArcadeStoreBase):
             )
             if not sig:
                 continue
-            fid = f"{frame}:{hashlib.sha1('|'.join(sig).encode()).hexdigest()[:16]}"  # noqa: S324
+            # Content hash for a stable frame-instance id — not a security digest.
+            digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
+            fid = f"{frame}:{digest[:16]}"
             role_conf = float(inst.get("role_confidence") or 0.0)
             inst_rows.append(
                 {
-                    "fid": fid, "frame": frame, "cid": chunk_id, "sid": session_id,
-                    "ms": float(inst.get("match_sim") or 0.0), "rc": role_conf,
+                    "fid": fid,
+                    "frame": frame,
+                    "cid": chunk_id,
+                    "sid": session_id,
+                    "ms": float(inst.get("match_sim") or 0.0),
+                    "rc": role_conf,
                 }
             )
             for role, fillers in roles.items():
@@ -613,8 +626,7 @@ class GraphStore(ArcadeStoreBase):
             if not tid:
                 continue
             await self.command(
-                "MERGE (tp:TOPIC {topic_id: $tid}) "
-                "SET tp.summary = $summary, tp.modularity = $mod",
+                "MERGE (tp:TOPIC {topic_id: $tid}) SET tp.summary = $summary, tp.modularity = $mod",
                 tid=tid,
                 summary=t.get("summary", ""),
                 mod=t.get("modularity"),
@@ -735,10 +747,10 @@ class GraphStore(ArcadeStoreBase):
         require_all: bool = False,
         state: str | None = None,
     ) -> list[dict[str, Any]]:
-        """CHUNKs whose text contains the given terms (CONTAINS scan for now;
-        a FULL_TEXT index replaces this in Phase 4).
+        """Return CHUNKs whose text contains the given terms.
 
-        require_all=True uses AND (all terms must appear); False uses OR.
+        A CONTAINS scan for now; a FULL_TEXT index replaces this in Phase 4.
+        ``require_all=True`` uses AND (all terms must appear); False uses OR.
         """
         if not terms:
             return []
@@ -931,9 +943,7 @@ class GraphStore(ArcadeStoreBase):
             if r.get("chunk_id")
         ]
 
-    async def entity_relation_graph(
-        self, session_id: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def entity_relation_graph(self, session_id: str | None = None) -> list[dict[str, Any]]:
         """Semantic ENTITY->ENTITY relation rows (the REL layer).
 
         Structural edges are distinct types, so scoping the match to ``REL``
@@ -1001,17 +1011,14 @@ class GraphStore(ArcadeStoreBase):
         conds = " OR ".join(_word_boundary(t) for t in toks)
         try:
             rows = await self.query(
-                f"MATCH (e:ENTITY) WHERE {conds} "
-                f"RETURN DISTINCT e.name AS name LIMIT {int(cap)}"
+                f"MATCH (e:ENTITY) WHERE {conds} RETURN DISTINCT e.name AS name LIMIT {int(cap)}"
             )
         except Exception as exc:
             logger.debug("resolve_query_entities failed (soft): %s", exc)
             return []
         return [r["name"] for r in rows if r.get("name")]
 
-    async def entity_fact_context(
-        self, entity_names: list[str], max_facts: int = 40
-    ) -> list[str]:
+    async def entity_fact_context(self, entity_names: list[str], max_facts: int = 40) -> list[str]:
         """Compact structured fact-sheet for the given entities (for the generator).
 
         Two graph reads keyed on ``name_norm`` (interpolated list literal — the
@@ -1148,12 +1155,10 @@ class GraphStore(ArcadeStoreBase):
         undirected Cypher pattern support.
         """
         out_rows = await self.query(
-            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
-            "RETURN a.name_norm AS nn, count(r) AS deg"
+            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) RETURN a.name_norm AS nn, count(r) AS deg"
         )
         in_rows = await self.query(
-            "MATCH (a:ENTITY)<-[r:REL]-(b:ENTITY) "
-            "RETURN a.name_norm AS nn, count(r) AS deg"
+            "MATCH (a:ENTITY)<-[r:REL]-(b:ENTITY) RETURN a.name_norm AS nn, count(r) AS deg"
         )
         degree: dict[str, int] = {}
         for r in out_rows + in_rows:
@@ -1454,7 +1459,9 @@ class GraphStore(ArcadeStoreBase):
         self._invalidate_community_maps()
         logger.info(
             "compute_community_quality: modularity=%.4f, scored %d/%d communities",
-            modularity, scored, communities,
+            modularity,
+            scored,
+            communities,
         )
         return {"modularity": modularity, "communities": communities, "communities_scored": scored}
 
@@ -1522,7 +1529,9 @@ class GraphStore(ArcadeStoreBase):
             "MATCH (k:COMMUNITY) WHERE k.community_id IS NOT NULL "
             "RETURN k.community_id AS cid, k.conductance AS conductance"
         )
-        sizes = {r["cid"]: int(r.get("size") or 1) for r in size_rows if r.get("cid") is not None}
+        sizes: dict[Any, float] = {
+            r["cid"]: float(r.get("size") or 1) for r in size_rows if r.get("cid") is not None
+        }
         conductance = {
             r["cid"]: float(r["conductance"])
             for r in quality_rows
@@ -1692,17 +1701,14 @@ class GraphStore(ArcadeStoreBase):
         if not norms:
             return 0
         rows = await self.query(
-            f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(norms)} "
-            "RETURN count(e) AS n"
+            f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(norms)} RETURN count(e) AS n"
         )
         await self.command(
             f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(norms)} DETACH DELETE e"
         )
         return int(rows[0].get("n") or 0) if rows else 0
 
-    async def _repoint_relation(
-        self, src_name: str, dst_name: str, row: dict[str, Any]
-    ) -> None:
+    async def _repoint_relation(self, src_name: str, dst_name: str, row: dict[str, Any]) -> None:
         """Re-create one loser relation edge on the winner via write_relation.
 
         Reuses the audited write_relation (evidence-append dedup, max confidence,
@@ -1719,14 +1725,25 @@ class GraphStore(ArcadeStoreBase):
         evidence = [e for e in (row.get("evidence") or []) if e]
         if not evidence:
             await self.write_relation(
-                src_name, predicate, dst_name, fact=fact, confidence=conf,
-                valid_at=valid_at, source=source,
+                src_name,
+                predicate,
+                dst_name,
+                fact=fact,
+                confidence=conf,
+                valid_at=valid_at,
+                source=source,
             )
             return
         for cid in evidence:
             await self.write_relation(
-                src_name, predicate, dst_name, fact=fact, chunk_id=cid,
-                confidence=conf, valid_at=valid_at, source=source,
+                src_name,
+                predicate,
+                dst_name,
+                fact=fact,
+                chunk_id=cid,
+                confidence=conf,
+                valid_at=valid_at,
+                source=source,
             )
 
     async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
@@ -1834,8 +1851,7 @@ class GraphStore(ArcadeStoreBase):
             sid=session_id,
         )
         await self.command(
-            "MATCH (c:CHUNK {session_id: $sid}) WHERE c.state = 'raw' "
-            "SET c.state = 'consolidated'",
+            "MATCH (c:CHUNK {session_id: $sid}) WHERE c.state = 'raw' SET c.state = 'consolidated'",
             sid=session_id,
         )
         await self.command(
@@ -1881,9 +1897,7 @@ class GraphStore(ArcadeStoreBase):
                 logger.warning("delete_session: %s delete failed: %s", label, exc)
                 failures.append(f"{label}: {exc}")
         if failures:
-            raise StoreError(
-                f"delete_session({session_id!r}) failed for: {'; '.join(failures)}"
-            )
+            raise StoreError(f"delete_session({session_id!r}) failed for: {'; '.join(failures)}")
 
     async def clear_all(self) -> None:
         """Delete every vertex (and, via DETACH, every edge) in this database."""

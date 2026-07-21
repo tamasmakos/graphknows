@@ -8,11 +8,12 @@ boundaries keeps words and sentences intact when chunking long text.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 _nlp = None
 
 
-def _get_sentencizer():
+def _get_sentencizer() -> Any:
     """Return a cached blank spaCy pipeline with a sentencizer component."""
     global _nlp
     if _nlp is None:

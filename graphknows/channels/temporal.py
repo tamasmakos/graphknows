@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def _anchor_to_datetime(anchor: Any) -> datetime | None:
         return None
     if isinstance(anchor, datetime):
         return anchor
-    if isinstance(anchor, (int, float)):
+    if isinstance(anchor, int | float):
         try:
             return datetime.fromtimestamp(float(anchor))
         except (OverflowError, OSError, ValueError):
@@ -76,7 +76,7 @@ def query_date_candidates(query: str) -> list[str]:
     mention.  Word-only matches (dateparser parses "do"/"did" as dates) are
     filtered out to avoid spurious matches.
     """
-    from dateparser.search import search_dates
+    from dateparser.search import search_dates  # type: ignore[import-untyped]
 
     try:
         found = search_dates(query, settings={"PREFER_DATES_FROM": "past"})
@@ -114,11 +114,12 @@ def _iso_to_datetime(iso: str | None) -> datetime | None:
         return None
     raw = str(iso).strip()
     try:
-        dt = datetime.fromisoformat(raw)
         # Normalise to UTC-aware if tzinfo present, else treat as naive.
-        return dt
+        dt = datetime.fromisoformat(raw)
     except ValueError:
         return None
+    else:
+        return dt
 
 
 # ---------------------------------------------------------------------------
@@ -159,14 +160,14 @@ def filter_by_validity_window(
 
     Returns:
         A filtered and sorted list of edge dicts, each augmented with:
-        - ``_temporal_score`` (float 0–1): recency signal; higher = more recent.
+        - ``_temporal_score`` (float 0-1): recency signal; higher = more recent.
           Edges with no valid_at receive 0.5 (neutral).  Can be used as a
           multiplicative boost in RRF scoring.
         - ``_is_current`` (bool): True when ``invalid_at`` is absent/None (fact is
           still asserted as of the as_of point or right now).
     """
     anchor_dt: datetime | None = _anchor_to_datetime(as_of)
-    now_dt: datetime = datetime.now(timezone.utc)
+    now_dt: datetime = datetime.now(UTC)
     # Use now if no anchor specified (matches "current state" queries).
     ref_dt: datetime = anchor_dt if anchor_dt is not None else now_dt
 
@@ -185,7 +186,7 @@ def filter_by_validity_window(
             if dt is None:
                 return None
             if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
+                return dt.replace(tzinfo=UTC)
             return dt
 
         valid_at_dt = _norm(valid_at_dt)
@@ -219,12 +220,12 @@ def filter_by_validity_window(
 
         # Recency score: normalise valid_at relative to a 5-year window.
         # Edges with no valid_at get 0.5 (neutral); edges at or after ref get 1.0.
-        _WINDOW_SECS = 5 * 365.25 * 86_400  # 5 years in seconds
+        window_secs = 5 * 365.25 * 86_400  # 5 years in seconds
         if valid_at_dt is None:
             score = 0.5
         else:
             age_secs = (ref_norm - valid_at_dt).total_seconds() if ref_norm else 0.0
-            score = max(0.0, min(1.0, 1.0 - age_secs / _WINDOW_SECS))
+            score = max(0.0, min(1.0, 1.0 - age_secs / window_secs))
 
         enriched = dict(edge)
         enriched["_temporal_score"] = round(score, 4)
@@ -257,7 +258,7 @@ def resolve_temporal(
     if not spans:
         return []
 
-    from dateparser.date import DateDataParser
+    from dateparser.date import DateDataParser  # type: ignore[import-untyped]
 
     base = _anchor_to_datetime(anchor)
     settings: dict[str, Any] = {"PREFER_DATES_FROM": "past"}

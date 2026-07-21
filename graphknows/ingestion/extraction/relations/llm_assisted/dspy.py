@@ -34,10 +34,13 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without 
     raise MissingExtraError("llm_assisted extraction", "assisted") from exc
 from pydantic import BaseModel, Field
 
-from graphknows.llm import build_lm, get_openrouter_api_key
-from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import RdfOntologyManifest, load_rdf_ontology_file
-from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
 from graphknows.ingestion.extraction.entities.graph_ops import standardize_label
+from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
+from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import (
+    RdfOntologyManifest,
+    load_rdf_ontology_file,
+)
+from graphknows.llm import build_lm, get_openrouter_api_key
 
 log = logging.getLogger(__name__)
 
@@ -123,6 +126,8 @@ def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
 
 
 class Triplet(BaseModel):
+    """One extracted relation triplet, typed against the injected ontology."""
+
     source: str = Field(description="The source entity")
     source_type: str = Field(description="The ontology class of the source entity")
     relation: str = Field(description="The relationship between source and target")
@@ -136,7 +141,7 @@ class Triplet(BaseModel):
     )
 
 
-class EntityRelation(dspy.Signature):
+class EntityRelation(dspy.Signature):  # type: ignore[misc]
     """Extract RDF-constrained relation triplets from text using the provided ontology.
 
     Rules:
@@ -180,7 +185,9 @@ class EntityRelation(dspy.Signature):
     )
 
 
-class GraphExtractorModule(dspy.Module):
+class GraphExtractorModule(dspy.Module):  # type: ignore[misc]
+    """DSPy module wrapping the ontology-constrained triplet extractor."""
+
     def __init__(self) -> None:
         super().__init__()
         self.extract = dspy.Predict(EntityRelation)
@@ -191,7 +198,8 @@ class GraphExtractorModule(dspy.Module):
         ontology_context: str,
         ontology_classes: list[str],
         ontology_relation_types: list[str],
-    ):
+    ) -> Any:
+        """Run the extractor over *text* under the ontology constraints."""
         return self.extract(
             text=text,
             ontology_context=ontology_context,
@@ -241,8 +249,8 @@ class BaseExtractor(ABC):
     ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
         """Extract (source, relation, target, props) triplets from *text*."""
 
-    async def close(self) -> None:
-        """Clean up resources."""
+    async def close(self) -> None:  # noqa: B027 - optional hook, not every extractor holds resources
+        """Clean up resources. Concrete by design: subclasses override only if needed."""
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +541,11 @@ class DSPyExtractor(BaseExtractor):
                 mapped_raw, map_drop_reason = self._apply_extract_then_map(raw)
                 if mapped_raw is None:
                     triplet_decisions.append(
-                        {**raw, "kept": False, "drop_reason": map_drop_reason or "extract_then_map_failed"}
+                        {
+                            **raw,
+                            "kept": False,
+                            "drop_reason": map_drop_reason or "extract_then_map_failed",
+                        }
                     )
                     continue
 
@@ -565,7 +577,7 @@ class DSPyExtractor(BaseExtractor):
                     nodes_data.append({"id": target, "type": target_type, "properties": {}})
                     seen_nodes.add(target)
 
-            return (
+            return (  # noqa: TRY300 - the whole extraction is the guarded body
                 relations,
                 nodes_data,
                 {

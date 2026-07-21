@@ -16,9 +16,10 @@ materialized wholesale — only the frames a chunk actually evokes are used.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Callable
+from typing import Any
 
 from graphknows.ingestion.extraction.relations.svo import _resolve  # speaker resolution
 
@@ -46,13 +47,14 @@ def frame_ontology(name: str) -> dict[str, Any]:
 
     try:
         f = _framenet().frame(name)
-    except Exception:  # noqa: BLE001 — unknown/removed frame
+    except Exception:
         return {}
 
     def _clean(text: str) -> str:
         return _MARKUP.sub("", text or "").strip()
 
-    core, peripheral = [], []
+    core: list[tuple[str, str]] = []
+    peripheral: list[tuple[str, str]] = []
     for fe, o in f.FE.items():
         entry = (fe, _clean(o.definition)[:200])
         (core if o.coreType == "Core" else peripheral).append(entry)
@@ -144,6 +146,7 @@ class FrameInstance:
 
     @property
     def filled_core(self) -> int:
+        """Number of core roles that have at least one filler."""
         return sum(1 for v in self.roles.values() if v)
 
 
@@ -196,8 +199,10 @@ def _resolve_surface(surface: str, speaker: str, speakers: list[str]) -> str:
     """Speaker-resolve a role filler when it's a bare 1st/2nd-person pronoun."""
     low = surface.lower().strip(" .,!?")
     if low in _PRON:
+
         class _T:  # minimal shim for svo._resolve (expects .text)
             text = low
+
         return _resolve(_T(), speaker, speakers)
     return surface
 
@@ -214,7 +219,8 @@ def extract_frame_instances(
 
     Args:
         text: the chunk text.
-        speaker, speakers: for speaker resolution of pronoun fillers.
+        speaker: the current utterance's speaker, for pronoun resolution.
+        speakers: all speakers in the session, for pronoun resolution.
         gliner: the shared extraction model (``inference``); see _fill_roles.
         candidate_frames: fn(text) -> [(frame_name, cosine)], the embedding matcher
             (top frames the text evokes). Trying the top-k lets the best-filling

@@ -42,6 +42,8 @@ ignore = [
 "**/rdf_parser.py" = ["C901"]
 "**/storage/arcadedb/*.py" = ["D102", "C901"]  # data-access layer — docstrings deferred
 "**/retrieval/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
+"**/channels/_framenet.py" = ["C901"]  # FE assignment is one dependency-parse pass
+"**/llm_assisted/dspy.py" = ["C901"]  # ontology context build is one linear pass
 
 [lint.pydocstyle]
 convention = "google"
