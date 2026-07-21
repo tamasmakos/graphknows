@@ -6,7 +6,53 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Ontology injection in both memory modes.** `GRAPHKNOWS_ONTOLOGY` takes an
+  RDF/OWL file *or a folder* and steers entity and relation extraction toward
+  its vocabulary in `llm_free` as well as `llm_assisted`. The chunk's ingest
+  embedding selects candidate classes/properties from the terms' definitions,
+  which are unioned into the mined label space. Extraction is enriched, never
+  constrained: entities and relations that map to nothing are still written
+  under their extracted labels. See `docs/ontology.md`.
+- Ontologies are persisted per namespace as `ONTOLOGY` / `ONTOLOGY_CLASS` /
+  `ONTOLOGY_PROPERTY` vertices with their definitions and definition
+  embeddings, linked to the data by `INSTANCE_OF` (entity → class) and
+  `MATCHES_CLASS` (chunk → class), plus `REL.ontology_property`.
+- `OntologyChannel` — retrieval signal that vector-searches those class
+  definitions and traverses to the chunks tagged with them, contributing to the
+  RRF fusion. Registered only when an ontology is configured.
+- **Topic layer, deterministically.** `GRAPHKNOWS_TOPICS=extractive` builds
+  TOPIC nodes over the Louvain communities with no LLM — titles from PageRank,
+  summaries led by the member chunk nearest the community centroid — so the
+  layer is available under `llm_free`. `topics=llm` keeps prose summaries.
+  Previously topic summarisation was dead in *both* modes.
+- **Per-call retrieval strategy.** `memory_query` / `recall_memory` / `search`
+  take `strategy` (`det` | `agentic`), so one server can answer either way
+  without a restart, and agentic retrieval can run over an `llm_free`-ingested
+  graph. `memory_query` also returns `search_type`.
+
+### Changed
+- **`GRAPHKNOWS_MODE` is now a preset, not a switch.** It expands into
+  independent knobs — `GRAPHKNOWS_TOPICS`, `GRAPHKNOWS_DSPY_RELATIONS`,
+  `GRAPHKNOWS_RETRIEVAL` — each overridable on its own, so combinations like
+  `llm_free` + agentic retrieval are expressible. Read the resolved values via
+  `settings.topic_mode` / `dspy_relations` / `retrieval_strategy`. Existing
+  `GRAPHKNOWS_MODE` values keep their previous behaviour.
+- The production API-key guard follows the resolved capability rather than the
+  mode label: agentic retrieval requires a key even under `llm_free`, and
+  `llm_assisted` with every LLM capability off does not.
+- Ontology code moved from `graphknows/ingestion/extraction/relations/llm_assisted/ontology/`
+  to **`graphknows/ontology/`**, a shared leaf now used by both ingestion and
+  retrieval.
+- `GRAPHKNOWS_ONTOLOGY_FILE` → `GRAPHKNOWS_ONTOLOGY` (old name still honoured as
+  a deprecated alias, single file only).
+
 ### Fixed
+- Ontology term embeddings could be paired with the wrong term. Term order came
+  from an rdflib subject *set* (process-randomised) while the disk cache
+  validated only the row *count*, so a cached matrix loaded against a
+  differently-ordered term list returned cosine 1.0 for the wrong label. Terms
+  are now sorted and the cache carries its URI list.
 - `corpus_ingest` was broken for every caller: it constructed `STMService` with
   keyword arguments removed in 2.0.0, so the MCP tool returned an error and
   processed zero documents. It now runs the golden-layer path (per-document

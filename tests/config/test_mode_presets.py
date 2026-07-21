@@ -80,6 +80,30 @@ class TestKnobOverrides:
         assert s.uses_llm is False
 
 
+class TestEmptyEnvVars:
+    """An empty env var means "unset", not "invalid".
+
+    docker-compose and shell wrappers spell an absent value as ``VAR=``; without
+    this the empty string reaches pydantic and fails enum validation, taking the
+    process down at construction.
+    """
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"GRAPHKNOWS_TOPICS": ""},
+            {"GRAPHKNOWS_RETRIEVAL": ""},
+            {"GRAPHKNOWS_DSPY_RELATIONS": ""},
+            {"GRAPHKNOWS_TOPICS": "   "},
+        ],
+    )
+    def test_empty_falls_back_to_the_preset(self, kwargs: dict[str, str]) -> None:
+        s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_free, **kwargs)
+        assert s.topic_mode is TopicMode.none
+        assert s.retrieval_strategy is RetrievalStrategy.det
+        assert s.dspy_relations is False
+
+
 class TestOntologySource:
     def test_unset_is_empty(self) -> None:
         assert GraphKnowsSettings().ontology_source == ""

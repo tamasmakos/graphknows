@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graphknows.exceptions import ConfigurationError
@@ -189,6 +190,17 @@ class GraphKnowsSettings(BaseSettings):
 
     # Session lifecycle
     session_ttl_minutes: int = Field(default=60, alias="GRAPHKNOWS_SESSION_TTL_MINUTES")
+
+    @field_validator("topics", "enable_dspy_relations", "retrieval", mode="before")
+    @classmethod
+    def _empty_means_unset(cls, value: Any) -> Any:
+        """Treat an empty env var as "not set", so it falls back to the preset.
+
+        ``GRAPHKNOWS_TOPICS=`` is how docker-compose and shell wrappers spell an
+        absent value; without this it reaches pydantic as ``""`` and fails enum
+        validation, taking the whole process down at construction.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
 
     @property
     def topic_mode(self) -> TopicMode:
