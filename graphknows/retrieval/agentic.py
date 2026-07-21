@@ -28,6 +28,7 @@ try:
 except ImportError:  # pragma: no cover - optional deployment dependency
     dspy = None  # type: ignore[assignment]
 
+from graphknows.exceptions import MissingExtraError
 from graphknows.ranking.rrf import community_boost
 from graphknows.retrieval.base import BaseGraphRetriever
 
@@ -44,8 +45,38 @@ MAX_REACT_HOPS: int = 4
 def _require_dspy() -> Any:
     """Return the DSPy module or raise a clear optional dependency error."""
     if dspy is None:
-        raise ImportError("dspy is required for agentic retrieval")
+        raise MissingExtraError("Agentic retrieval", "assisted")
     return dspy
+
+
+def _relevance(r: dict) -> float:
+    """A chunk's own deterministic relevance, cosine as the tiebreak."""
+    return r.get("rrf_score", r.get("cosine_score", 0.0))
+
+
+def _fuse_hops(collected: list[dict]) -> list[tuple[float, dict]]:
+    """Deduplicate chunks across ReAct hops and score them for the final rank.
+
+    Fusion PRESERVES the deterministic relevance magnitude. Collapsing every
+    chunk to pure positional ``rrf_score(rank)`` made the agentic hit-scores
+    identical for every query (avg_hit stdev≈0), so the generator got no
+    relevance cue and abstained even when the gold chunk was in context. Each
+    chunk's own cosine-fused DET score stays the primary signal; positional RRF
+    is added only as a small tiebreak that respects cross-hop rank.
+    """
+    from graphknows.ranking.rrf import FUSION_ALPHA, rrf_score
+
+    hop_chunks: dict[str, dict] = {}
+    for r in collected:
+        cid = r.get("chunk_id", "")
+        if not cid:
+            continue
+        existing = hop_chunks.get(cid)
+        if existing is None or _relevance(r) > _relevance(existing):
+            hop_chunks[cid] = r
+
+    ranked = sorted(hop_chunks.values(), key=lambda r: -_relevance(r))
+    return [(_relevance(r) + FUSION_ALPHA * rrf_score(rank), r) for rank, r in enumerate(ranked)]
 
 
 class AgenticRetriever(BaseGraphRetriever):
@@ -66,11 +97,8 @@ class AgenticRetriever(BaseGraphRetriever):
     ) -> None:
         self._settings = settings
         self._store = store
-        self._react: Any = None
         self._lm: Any = None
         self._vec_bridge: Any = None
-        self._last_session_id: str | None = None
-        self._collected_chunks: list[dict] = []
         # DETRetriever instance — built once, shared across all retrieve() calls.
         self._det: Any = None
 
@@ -114,27 +142,27 @@ class AgenticRetriever(BaseGraphRetriever):
         )
         return self._det
 
-    def _get_react(self, *, session_id: str = "") -> Any:
-        """Build and cache the DSPy ReAct retriever for one session.
+    def _build_react(self, session_id: str, collected: list[dict]) -> Any:
+        """Build a DSPy ReAct module whose tools append their hits to *collected*.
 
-        The LM is built once and reused.  The ReAct module (which closes over
-        session_id via tool closures) is rebuilt only when the session changes.
+        The module is built per ``retrieve()`` call rather than cached, because
+        its tool closures capture per-call state (``session_id`` and the
+        ``collected`` buffer). Caching it on the instance would let concurrent
+        retrievals rebind each other's tools and share one hit buffer, so a call
+        would see another session's chunks — ``Memory`` promises concurrency
+        safety. The LM and the DETRetriever stay cached; they hold no per-call
+        state and are the expensive parts to build.
 
         Tools call ``DETRetriever.retrieve()`` as the single retrieval primitive
         so the agent amplifies — not competes with — the deterministic path.
         """
         dspy_mod = _require_dspy()
-        if self._react is not None and session_id == self._last_session_id:
-            return self._react
 
         from graphknows._async_bridge import _run as bg_run
         from graphknows.channels.temporal import filter_by_validity_window
 
         det = self._get_det_retriever()
         store = self._store
-        # Reuse or initialize the chunks buffer; closures below capture this reference.
-        self._collected_chunks.clear()
-        collected = self._collected_chunks
 
         # ---- Tool 1: DET-backed per-hop retrieval ----------------------
         def retrieve(subquery: str, scope: str = "both", k: int = 10) -> list[dict]:
@@ -236,13 +264,11 @@ class AgenticRetriever(BaseGraphRetriever):
 
         lm = self._get_lm()
         with dspy_mod.settings.context(lm=lm):
-            self._react = dspy_mod.ReAct(
+            return dspy_mod.ReAct(
                 RetrievalSignature,
                 tools=[retrieve, lookup_entity, temporal_filter],
                 max_iters=MAX_REACT_HOPS,
             )
-        self._last_session_id = session_id
-        return self._react
 
     async def _apply_community_weights(
         self, scored: list[tuple[float, dict]]
@@ -273,6 +299,76 @@ class AgenticRetriever(BaseGraphRetriever):
             boosted.append((score * community_boost(weights.get(r["chunk_id"])), r))
         return boosted
 
+    async def _degrade(
+        self, det: Any, query: str, session_id: str, top_k: int, scope: str
+    ) -> "RetrievalContext":
+        """Graceful degradation chain once the ReAct loop yields nothing.
+
+        Tries the deterministic retriever, then a direct ANN over the store, then
+        an empty context. Each rung is strictly simpler and more available than
+        the one before, so a failure never propagates to the caller — recall
+        degrades instead of erroring.
+        """
+        from graphknows.retrieval.models.context import RetrievalContext
+
+        def _empty() -> RetrievalContext:
+            return RetrievalContext(
+                query=query, session_id=session_id, fused_results=[], search_type="AGENTIC"
+            )
+
+        try:
+            ctx = await det.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
+        except Exception as exc:
+            log.warning("DETRetriever fallback failed (%s); using store.search_chunks_ann.", exc)
+        else:
+            # Tag fallback results so the caller can distinguish them.
+            for r in ctx.fused_results:
+                r["sources"] = "agentic-fallback"
+            return RetrievalContext(
+                query=query,
+                session_id=session_id,
+                semantic_matches=ctx.semantic_matches,
+                fused_results=ctx.fused_results,
+                search_type="AGENTIC",
+            )
+
+        try:
+            return RetrievalContext(
+                query=query,
+                session_id=session_id,
+                fused_results=await self._ann_results(query, session_id, top_k, scope),
+                search_type="AGENTIC",
+            )
+        except Exception as exc:
+            log.error("All fallbacks failed: %s", exc)
+            return _empty()
+
+    async def _ann_results(
+        self, query: str, session_id: str, top_k: int, scope: str
+    ) -> list[dict]:
+        """Last-resort recall: direct ANN over the graph store."""
+        from graphknows.ranking.rrf import rrf_score
+        from graphknows.retrieval.retriever import _scope_to_state
+        from graphknows.storage.embedder import embed
+
+        emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
+        vector_chunks = await self._store.search_chunks_ann(
+            emb_array[0].tolist(), top_k, session_id or None, _scope_to_state(scope)
+        )
+        return [
+            {
+                "chunk_id": r["chunk_id"],
+                "doc_id": r.get("doc_id", ""),
+                "text": r.get("text", ""),
+                "metadata": {"cosine_score": r.get("cosine_score", 0.0), **r.get("metadata", {})},
+                "rrf_score": round(rrf_score(i), 6),
+                "sources": "agentic-fallback",
+                "rank": i + 1,
+                "entities": [],
+            }
+            for i, r in enumerate(vector_chunks)
+        ]
+
     # ------------------------------------------------------------------
     # BaseGraphRetriever implementation
     # ------------------------------------------------------------------
@@ -294,7 +390,6 @@ class AgenticRetriever(BaseGraphRetriever):
         3. Aggregate evidence across hops with RRF fusion.
         4. If the agent errors, fall back to a plain DETRetriever.retrieve() call.
         """
-        from graphknows.ranking.rrf import FUSION_ALPHA, rrf_score
         from graphknows.retrieval.models.context import ChunkMatch, RetrievalContext
         from graphknows.retrieval.query.decompose import decompose
 
@@ -310,10 +405,11 @@ class AgenticRetriever(BaseGraphRetriever):
         if not sub_questions:
             sub_questions = [query]
 
-        # Step 2 — Run the ReAct loop; tools populate self._collected_chunks.
-        # _get_react() clears _collected_chunks before each new session build.
-        react = self._get_react(session_id=session_id)
-        self._collected_chunks.clear()
+        # Step 2 — Run the ReAct loop; its tools append hits to `collected`.
+        # Both the buffer and the module are per-call so concurrent retrievals
+        # cannot clear or read each other's evidence.
+        collected: list[dict] = []
+        react = self._build_react(session_id, collected)
 
         react_failed = False
         try:
@@ -322,7 +418,7 @@ class AgenticRetriever(BaseGraphRetriever):
                 with dspy.settings.context(lm=lm):
                     # Run one ReAct call per sub-question so each hop is
                     # bounded by MAX_REACT_HOPS.  Tools push hits to
-                    # _collected_chunks for later aggregation.
+                    # the per-call buffer for later aggregation.
                     for sq in sub_questions:
                         try:
                             react(query=sq, session_id=session_id)
@@ -336,68 +432,10 @@ class AgenticRetriever(BaseGraphRetriever):
 
         # Step 3 — If agent failed completely, fall back to DETRetriever directly.
         # Graceful degradation chain: ReAct → DETRetriever → vec.search_chunks.
-        if react_failed or not self._collected_chunks:
+        if react_failed or not collected:
             if react_failed:
                 log.info("Falling back to DETRetriever.retrieve() after agent failure.")
-            try:
-                fallback_ctx = await det.retrieve(
-                    query, session_id=session_id, top_k=top_k, scope=scope
-                )
-                # Tag fallback results so the caller can distinguish them.
-                for r in fallback_ctx.fused_results:
-                    r["sources"] = "agentic-fallback"
-                return RetrievalContext(
-                    query=query,
-                    session_id=session_id,
-                    semantic_matches=fallback_ctx.semantic_matches,
-                    fused_results=fallback_ctx.fused_results,
-                    search_type="AGENTIC",
-                )
-            except Exception as fb_exc:
-                # Last-resort fallback: direct ANN over the graph store (simpler
-                # but always available).
-                log.warning(
-                    "DETRetriever fallback failed (%s); using store.search_chunks_ann.", fb_exc
-                )
-                try:
-                    from graphknows.retrieval.retriever import _scope_to_state
-                    from graphknows.storage.embedder import embed
-
-                    emb_array = await asyncio.to_thread(embed, [query], self._settings.embed_model)
-                    emb = emb_array[0].tolist()
-                    vector_chunks = await self._store.search_chunks_ann(
-                        emb, top_k, session_id or None, _scope_to_state(scope)
-                    )
-
-                    fused_fb: list[dict] = []
-                    for i, r in enumerate(vector_chunks):
-                        meta = {"cosine_score": r.get("cosine_score", 0.0), **r.get("metadata", {})}
-                        fused_fb.append(
-                            {
-                                "chunk_id": r["chunk_id"],
-                                "doc_id": r.get("doc_id", ""),
-                                "text": r.get("text", ""),
-                                "metadata": meta,
-                                "rrf_score": round(rrf_score(i), 6),
-                                "sources": "agentic-fallback",
-                                "rank": i + 1,
-                                "entities": [],
-                            }
-                        )
-                    return RetrievalContext(
-                        query=query,
-                        session_id=session_id,
-                        fused_results=fused_fb,
-                        search_type="AGENTIC",
-                    )
-                except Exception as last_exc:
-                    log.error("All fallbacks failed: %s", last_exc)
-                    return RetrievalContext(
-                        query=query,
-                        session_id=session_id,
-                        fused_results=[],
-                        search_type="AGENTIC",
-                    )
+            return await self._degrade(det, query, session_id, top_k, scope)
 
         # Always add a direct DET pass on the VERBATIM query so the agentic
         # context is a superset of the llm_free context — the ReAct loop can
@@ -406,45 +444,13 @@ class AgenticRetriever(BaseGraphRetriever):
         # chunk that the deterministic path on the literal question finds.
         try:
             base_ctx = await det.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
-            self._collected_chunks.extend(base_ctx.fused_results)
+            collected.extend(base_ctx.fused_results)
         except Exception as exc:
             log.debug("base DET pass skipped: %s", exc)
 
         # Step 4 — Aggregate evidence across all ReAct hops with RRF.
-        # Deduplicate chunks from self._collected_chunks, keeping highest rrf_score.
-        hop_chunks: dict[str, dict] = {}
-        for r in self._collected_chunks:
-            cid = r.get("chunk_id", "")
-            if not cid:
-                continue
-            existing = hop_chunks.get(cid)
-            if existing is None:
-                hop_chunks[cid] = r
-            else:
-                # Keep the entry with the highest rrf_score (or cosine_score as tiebreak).
-                new_score = r.get("rrf_score", r.get("cosine_score", 0.0))
-                old_score = existing.get("rrf_score", existing.get("cosine_score", 0.0))
-                if new_score > old_score:
-                    hop_chunks[cid] = r
-
-        # Fuse hops, PRESERVING the deterministic relevance magnitude. Collapsing
-        # every chunk to pure positional rrf_score(rank) made the agentic
-        # hit-scores identical for every query (avg_hit stdev≈0), so the generator
-        # got no relevance cue and abstained even when the gold was in context.
-        # Keep each chunk's own cosine-fused DET score as the primary signal and
-        # add positional RRF only as a small tiebreak that respects cross-hop rank.
-        fused_scores: dict[str, tuple[float, dict]] = {}
-        sorted_hops = sorted(
-            hop_chunks.values(),
-            key=lambda r: -(r.get("rrf_score", r.get("cosine_score", 0.0))),
-        )
-        for rank, r in enumerate(sorted_hops):
-            cid = r["chunk_id"]
-            base_rel = r.get("rrf_score", r.get("cosine_score", 0.0))
-            fused_scores[cid] = (base_rel + FUSION_ALPHA * rrf_score(rank), r)
-
         # Community-weighted re-rank (llm_assisted only).
-        candidates = await self._apply_community_weights(list(fused_scores.values()))
+        candidates = await self._apply_community_weights(_fuse_hops(collected))
         ranked = sorted(candidates, key=lambda x: -x[0])[:top_k]
 
         sources = "agentic"

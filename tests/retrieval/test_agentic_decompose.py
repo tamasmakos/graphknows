@@ -199,7 +199,7 @@ class TestAgenticRetrieverWithDET:
 
         settings = _make_settings()
         store = MagicMock()
-        store._qry = AsyncMock(return_value=[])
+        store.query = AsyncMock(return_value=[])
         store.query_entity_chunks = AsyncMock(return_value=[])
 
         retriever = AgenticRetriever(settings=settings, store=store)
@@ -222,10 +222,8 @@ class TestAgenticRetrieverWithDET:
         stub_det.retrieve = AsyncMock(return_value=ctx)
 
         # Stub the ReAct module so it calls the tools directly.
-        fake_react = _make_fake_react_that_calls_retrieve(retriever, stub_det)
         retriever._lm = MagicMock()
-        retriever._react = fake_react
-        retriever._last_session_id = "s1"
+        retriever._build_react = _make_fake_react_that_calls_retrieve(stub_det)
 
         with (
             patch("graphknows.retrieval.query.decompose.decompose", return_value=["test query"]),
@@ -251,16 +249,17 @@ class TestAgenticRetrieverWithDET:
         # Alternate return values for successive DET calls.
         stub_det.retrieve = AsyncMock(side_effect=[ctx1, ctx2])
 
-        # Simulate the React loop pushing chunks into _collected_chunks.
-        def fake_react_run(*args, **kwargs):
-            # Simulate two hops: each hop's tool calls DET and appends to collected.
-            retriever._collected_chunks.append(chunk_hop1)
-            retriever._collected_chunks.append(chunk_hop2)
+        # Simulate the React loop pushing chunks into the per-call buffer.
+        def _build(session_id, collected):
+            def fake_react_run(*args, **kwargs):
+                # Simulate two hops: each hop's tool calls DET and appends.
+                collected.append(chunk_hop1)
+                collected.append(chunk_hop2)
 
-        fake_react = MagicMock(side_effect=fake_react_run)
+            return MagicMock(side_effect=fake_react_run)
+
         retriever._lm = MagicMock()
-        retriever._react = fake_react
-        retriever._last_session_id = "s1"
+        retriever._build_react = _build
 
         with (
             patch(
@@ -291,8 +290,7 @@ class TestAgenticRetrieverWithDET:
             raise RuntimeError("ReAct exploded")
 
         retriever._lm = MagicMock()
-        retriever._react = MagicMock(side_effect=_raise)
-        retriever._last_session_id = "s1"
+        retriever._build_react = lambda session_id, collected: MagicMock(side_effect=_raise)
 
         async def _fake_to_thread_raises_first(fn, *args, **kwargs):
             """First call (ReAct) raises; second call (decompose) succeeds."""
@@ -320,7 +318,7 @@ class TestAgenticRetrieverWithDET:
 
         settings = _make_settings()
         store = MagicMock()
-        store._qry = AsyncMock(return_value=[])
+        store.query = AsyncMock(return_value=[])
 
         retriever = AgenticRetriever(settings=settings, store=store)
         det = retriever._get_det_retriever()
@@ -355,11 +353,11 @@ class TestAgenticRetrieverWithDET:
         fallback_ctx = _make_retrieval_context([fallback_chunk])
         stub_det.retrieve = AsyncMock(return_value=fallback_ctx)
 
-        # ReAct runs but pushes nothing to collected_chunks.
+        # ReAct runs but pushes nothing into the per-call buffer.
         retriever._lm = MagicMock()
-        retriever._react = MagicMock(return_value=MagicMock())
-        retriever._last_session_id = "s1"
-        retriever._collected_chunks = []  # stays empty after react call
+        retriever._build_react = lambda session_id, collected: MagicMock(
+            return_value=MagicMock()
+        )
 
         with (
             patch("graphknows.retrieval.query.decompose.decompose", return_value=["q"]),
@@ -386,19 +384,21 @@ class _noop_context:
         pass
 
 
-def _make_fake_react_that_calls_retrieve(retriever, stub_det):
-    """Return a callable that simulates what ReAct does: call the retrieve tool."""
+def _make_fake_react_that_calls_retrieve(stub_det):
+    """Return a _build_react stub simulating what ReAct does: call the retrieve tool."""
 
-    def _fake_react(query: str, session_id: str) -> MagicMock:
-        # Simulate the retrieve tool call inside ReAct by pushing a chunk.
-        from graphknows._async_bridge import _run as bg_run
+    def _build(session_id: str, collected: list) -> MagicMock:
+        def _fake_react(query: str, session_id: str) -> MagicMock:
+            # Simulate the retrieve tool call inside ReAct by pushing a chunk.
+            from graphknows._async_bridge import _run as bg_run
 
-        ctx = bg_run(stub_det.retrieve(query, session_id=session_id, top_k=10, scope="both"))
-        for c in ctx.fused_results:
-            retriever._collected_chunks.append(c)
-        return MagicMock(answer="Found relevant info.")
+            ctx = bg_run(stub_det.retrieve(query, session_id=session_id, top_k=10, scope="both"))
+            collected.extend(ctx.fused_results)
+            return MagicMock(answer="Found relevant info.")
 
-    return _fake_react
+        return MagicMock(side_effect=_fake_react)
+
+    return _build
 
 
 def _make_failing_then_succeeding_to_thread():

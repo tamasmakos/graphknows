@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -29,7 +30,7 @@ def _make_retriever():
     settings = _make_settings()
     store = MagicMock()
     store.search_chunks_ann = AsyncMock(return_value=[])
-    store._qry = AsyncMock(return_value=[])
+    store.query = AsyncMock(return_value=[])
     return AgenticRetriever(settings=settings, store=store)
 
 
@@ -37,14 +38,26 @@ async def _fake_to_thread(fn, *args, **kwargs):
     return fn(*args, **kwargs)
 
 
-def _stub_retriever_internals(retriever, fake_react=None):
-    """Patch _get_react and _get_lm so tests skip all dspy network setup."""
-    react = fake_react or MagicMock(return_value=MagicMock())
-    lm = MagicMock()
-    retriever._react = react
-    retriever._lm = lm
-    retriever._last_session_id = None  # allow session-based rebuild tests to work
-    return react, lm
+def _bind_react(fake_react):
+    """Return a _build_react stub that ignores the per-call buffer."""
+
+    def _build(session_id, collected):
+        return fake_react
+
+    return _build
+
+
+def _bind_react_collecting(chunks):
+    """Return a _build_react stub whose ReAct run appends *chunks* to the call buffer."""
+
+    def _build(session_id, collected):
+        def _fake_react(**kwargs):
+            collected.extend(chunks)
+            return MagicMock()
+
+        return MagicMock(side_effect=_fake_react)
+
+    return _build
 
 
 @pytest.mark.asyncio
@@ -52,11 +65,11 @@ async def test_retrieve_returns_retrieval_context():
     from graphknows.retrieval.models.context import RetrievalContext
 
     retriever = _make_retriever()
-    # Stub _get_react and _get_lm to avoid dspy network/auth
+    # Stub _build_react and _get_lm to avoid dspy network/auth
     fake_react = MagicMock(return_value=MagicMock())
 
     with (
-        patch.object(retriever, "_get_react", return_value=fake_react),
+        patch.object(retriever, "_build_react", side_effect=_bind_react(fake_react)),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
         patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
@@ -84,7 +97,9 @@ async def test_lm_not_rebuilt_on_same_session_call():
 
     with (
         patch.object(retriever, "_get_lm", side_effect=_get_lm_counted),
-        patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())),
+        patch.object(
+            retriever, "_build_react", side_effect=_bind_react(MagicMock(return_value=MagicMock()))
+        ),
         patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
     ):
@@ -96,17 +111,24 @@ async def test_lm_not_rebuilt_on_same_session_call():
 
 
 @pytest.mark.asyncio
-async def test_react_not_rebuilt_within_same_session():
-    """_get_react should return same ReAct module for same session."""
-    retriever = _make_retriever()
-    get_react_calls = []
+async def test_react_module_is_built_per_call_with_its_own_buffer():
+    """Each retrieve() gets a fresh ReAct module bound to a fresh hit buffer.
 
-    def _get_react_counting(*, session_id=""):
-        get_react_calls.append(session_id)
+    The tool closures capture both the session_id and the collection buffer, so
+    reusing either across calls is what allowed concurrent retrievals to share
+    evidence. Assert the buffers handed out are distinct objects.
+    """
+    retriever = _make_retriever()
+    calls: list[str] = []
+    buffers: list[list] = []
+
+    def _build(session_id, collected):
+        calls.append(session_id)
+        buffers.append(collected)
         return MagicMock(return_value=MagicMock())
 
     with (
-        patch.object(retriever, "_get_react", side_effect=_get_react_counting),
+        patch.object(retriever, "_build_react", side_effect=_build),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
         patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
@@ -115,8 +137,59 @@ async def test_react_not_rebuilt_within_same_session():
         await retriever.retrieve("q2", session_id="s1", top_k=3)
         await retriever.retrieve("q3", session_id="s2", top_k=3)
 
-    # Called once per retrieve() — sessions s1, s1, s2
-    assert get_react_calls == ["s1", "s1", "s2"]
+    assert calls == ["s1", "s1", "s2"]
+    # No two calls may share a buffer, even within one session.
+    assert len({id(b) for b in buffers}) == 3
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retrievals_do_not_share_evidence():
+    """Regression guard: concurrent calls must not see each other's chunks.
+
+    Previously the ReAct module and its hit buffer lived on the instance, so two
+    interleaved retrievals cleared and appended to the same list — a call could
+    return another session's chunks, or lose its own.
+    """
+    retriever = _make_retriever()
+
+    chunks_a = [{"chunk_id": "a1", "doc_id": "d", "text": "A", "metadata": {}, "rrf_score": 0.9}]
+    chunks_b = [{"chunk_id": "b1", "doc_id": "d", "text": "B", "metadata": {}, "rrf_score": 0.9}]
+
+    def _build(session_id, collected):
+        """Interleave: yield to the event loop mid-run so both calls overlap."""
+        payload = chunks_a if session_id == "sA" else chunks_b
+
+        def _fake_react(**kwargs):
+            collected.extend(payload)
+            return MagicMock()
+
+        return MagicMock(side_effect=_fake_react)
+
+    # DET base pass contributes nothing so results come only from the buffer.
+    from graphknows.retrieval.models.context import RetrievalContext
+
+    det = MagicMock()
+    det.retrieve = AsyncMock(
+        return_value=RetrievalContext(
+            query="q", session_id="s", fused_results=[], search_type="DET"
+        )
+    )
+    retriever._det = det
+    retriever._store.chunk_community_weights = AsyncMock(return_value={})
+
+    with (
+        patch.object(retriever, "_build_react", side_effect=_build),
+        patch.object(retriever, "_get_lm", return_value=MagicMock()),
+        patch("graphknows.retrieval.query.decompose.decompose", return_value=["q"]),
+        patch("asyncio.to_thread", side_effect=_fake_to_thread),
+    ):
+        ctx_a, ctx_b = await asyncio.gather(
+            retriever.retrieve("qa", session_id="sA", top_k=5),
+            retriever.retrieve("qb", session_id="sB", top_k=5),
+        )
+
+    assert [r["chunk_id"] for r in ctx_a.fused_results] == ["a1"]
+    assert [r["chunk_id"] for r in ctx_b.fused_results] == ["b1"]
 
 
 @pytest.mark.asyncio
@@ -142,7 +215,9 @@ async def test_react_failure_falls_back_to_vector_search():
         return fn(*args, **kwargs)
 
     with (
-        patch.object(retriever, "_get_react", return_value=MagicMock(return_value=MagicMock())),
+        patch.object(
+            retriever, "_build_react", side_effect=_bind_react(MagicMock(return_value=MagicMock()))
+        ),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
         patch("graphknows.storage.embedder.embed", return_value=np.zeros((1, 10))),
         patch("asyncio.to_thread", side_effect=_raise_first_then_pass),
@@ -169,10 +244,6 @@ async def test_agentic_hit_scores_are_discriminative_not_flat():
         for i, s in enumerate([0.85, 0.42, 0.13, 0.04])
     ]
 
-    def _fake_react(**kwargs):
-        retriever._collected_chunks.extend(hop_chunks)
-        return MagicMock()
-
     # base DET pass adds nothing extra; community-weight lookup is a no-op.
     det = MagicMock()
     det.retrieve = AsyncMock(
@@ -181,10 +252,10 @@ async def test_agentic_hit_scores_are_discriminative_not_flat():
         )
     )
     retriever._det = det
-    retriever._store._qry = AsyncMock(return_value=[])
+    retriever._store.query = AsyncMock(return_value=[])
 
     with (
-        patch.object(retriever, "_get_react", return_value=MagicMock(side_effect=_fake_react)),
+        patch.object(retriever, "_build_react", side_effect=_bind_react_collecting(hop_chunks)),
         patch.object(retriever, "_get_lm", return_value=MagicMock()),
         patch("graphknows.retrieval.query.decompose.decompose", return_value=["q"]),
         patch("asyncio.to_thread", side_effect=_fake_to_thread),
