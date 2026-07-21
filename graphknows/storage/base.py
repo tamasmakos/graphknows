@@ -3,12 +3,17 @@
 Dependency-free by design: domain code depends on these abstractions, and the
 concrete adapters in :mod:`graphknows.storage.arcadedb` implement them.
 
-**Implementing a backend.** graphknows ships one storage backend (ArcadeDB),
-but the store contract is three focused protocols — :class:`ISTMStore`
-(session-scoped evidence graph), :class:`IVectorStore` (embeddings + STM/LTM
-vector search), and :class:`ILTMStore` (consolidated corpus graph). Implement
-all three for your datastore to plug in an alternative. Embedding is swappable
-via :class:`IEmbedder`.
+**Implementing a backend.** graphknows ships one storage backend (ArcadeDB).
+The contract that matters is :class:`IGraphStore`: the golden layer keeps ONE
+graph database per namespace, and ingestion, retrieval, and :class:`~graphknows.memory.Memory`
+talk to nothing else. Implement it for your datastore to plug in an alternative.
+Embedding is swappable via :class:`IEmbedder`.
+
+:class:`ISTMStore` and :class:`ILTMStore` describe the older two-database split.
+That path is retired for the golden layer — implementing them does NOT make a
+backend usable by ``Memory``; they are documented here only because
+``ArcadeDBSTMStore``/``ArcadeDBLTMStore`` still ship to back the read-only
+browsing views in the web server and the ``ltm_*`` helpers on ``Memory``.
 """
 
 from __future__ import annotations
@@ -30,8 +35,243 @@ class IEmbedder(Protocol):
 
 
 @runtime_checkable
+class IGraphStore(Protocol):
+    """The single per-namespace graph store the live system runs on.
+
+    One database holds sessions, files, chunks, entities, relations, temporal
+    nodes, frames, and topics; lifecycle ``state`` (raw -> consolidated) replaces
+    the old STM/LTM database split. Method set mirrors
+    :class:`~graphknows.storage.arcadedb.graph_store.GraphStore`.
+    """
+
+    # --- lifecycle ---
+    async def connect(self) -> None:
+        """Open the store connection."""
+        ...
+
+    async def close(self) -> None:
+        """Close the store connection."""
+        ...
+
+    async def ensure_schema(self, dims: int) -> None:
+        """Create the database and graph schema idempotently."""
+        ...
+
+    async def drop_database(self) -> None:
+        """Drop this store's entire database (destructive)."""
+        ...
+
+    async def query(self, cypher: str, **params: Any) -> list[dict]:
+        """Run a read-only statement against this store's database."""
+        ...
+
+    async def command(self, cypher: str, **params: Any) -> list[dict]:
+        """Run a writing statement against this store's database."""
+        ...
+
+    # --- writes ---
+    async def ensure_session(self, session_id: str, started_at: str = ...) -> None:
+        """Upsert a SESSION vertex; state starts ``raw``."""
+        ...
+
+    async def ensure_file(
+        self, file_id: str, session_id: str, name: str = ..., media_type: str = ...
+    ) -> None:
+        """Upsert a FILE vertex linked to its session."""
+        ...
+
+    async def write_chunk(self, chunk: dict[str, Any]) -> None:
+        """Upsert one CHUNK vertex with its embedding."""
+        ...
+
+    async def write_chunks_bulk(self, chunks: list[dict[str, Any]]) -> None:
+        """Upsert CHUNK vertices in batches."""
+        ...
+
+    async def write_entities_bulk(
+        self, session_id: str, chunk_id: str, entities: list[dict[str, Any]]
+    ) -> None:
+        """Upsert ENTITY vertices + MENTIONS edges for one chunk."""
+        ...
+
+    async def write_relation(
+        self,
+        src_name: str,
+        predicate: str,
+        dst_name: str,
+        fact: str = ...,
+        chunk_id: str = ...,
+        confidence: float = ...,
+        valid_at: str | None = ...,
+        source: str = ...,
+        src_type: str = ...,
+        dst_type: str = ...,
+    ) -> None:
+        """Merge a typed entity->entity relation edge."""
+        ...
+
+    async def write_temporal(self, chunk_id: str, iso_dates: list[str]) -> None:
+        """Merge TEMPORAL nodes + MENTIONS_DATE edges for a chunk."""
+        ...
+
+    async def write_frames(self, session_id: str, frames: list[dict[str, Any]]) -> int:
+        """Bulk-write FRAME vertices + EVOKED_BY evidence edges. Returns count."""
+        ...
+
+    async def write_frame_instances(
+        self, session_id: str, chunk_id: str, instances: list[dict[str, Any]]
+    ) -> int:
+        """Merge role-filled FRAME_INSTANCE vertices + PLAYS_ROLE edges."""
+        ...
+
+    async def write_topics(self, topics: list[dict[str, Any]]) -> int:
+        """Upsert TOPIC vertices + HAS_TOPIC edges. Returns count."""
+        ...
+
+    # --- reads / retrieval collectors ---
+    async def search_chunks_ann(
+        self,
+        embedding: list[float],
+        top_k: int,
+        session_id: str | None = ...,
+        state: str | None = ...,
+    ) -> list[dict[str, Any]]:
+        """ANN search over CHUNK embeddings."""
+        ...
+
+    async def query_entity_chunks(
+        self,
+        entity_names: list[str],
+        session_id: str | None = ...,
+        top_k: int = ...,
+        state: str | None = ...,
+    ) -> list[dict[str, Any]]:
+        """Chunks linked (via MENTIONS) to any of the given entity names."""
+        ...
+
+    async def full_text_search_chunks(
+        self,
+        terms: list[str],
+        session_id: str | None = ...,
+        top_k: int = ...,
+        require_all: bool = ...,
+        state: str | None = ...,
+    ) -> list[dict[str, Any]]:
+        """Chunks whose text contains the given terms."""
+        ...
+
+    async def query_temporal_chunks(
+        self,
+        iso_dates: list[str],
+        session_id: str | None = ...,
+        top_k: int = ...,
+        state: str | None = ...,
+    ) -> list[dict[str, Any]]:
+        """Chunks linked to TEMPORAL nodes matching the given ISO dates."""
+        ...
+
+    async def query_frame_chunks(
+        self, frame_types: list[str], session_id: str | None = ..., state: str | None = ...
+    ) -> list[dict[str, Any]]:
+        """FRAME rows (with evidence chunk) matching the given frame types."""
+        ...
+
+    async def query_frames_by_embedding(
+        self,
+        embedding: list[float],
+        top_k: int,
+        session_id: str | None = ...,
+        state: str | None = ...,
+    ) -> list[dict[str, Any]]:
+        """ANN over FRAME embeddings, joined to their evidence chunks."""
+        ...
+
+    async def search_topics(self, embedding: list[float], top_k: int = ...) -> list[dict[str, Any]]:
+        """ANN search over TOPIC embeddings."""
+        ...
+
+    async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch full chunk records keyed by ID."""
+        ...
+
+    async def chunk_community_weights(self, chunk_ids: list[str]) -> dict[str, float]:
+        """Quality-adjusted community boost weight per chunk."""
+        ...
+
+    async def resolve_query_entities(self, words: list[str], cap: int = ...) -> list[str]:
+        """Resolve query tokens to ENTITY surface names."""
+        ...
+
+    async def entity_fact_context(
+        self, entity_names: list[str], max_facts: int = ...
+    ) -> list[str]:
+        """Compact structured fact-sheet for the given entities."""
+        ...
+
+    async def entity_relation_graph(
+        self, session_id: str | None = ...
+    ) -> list[dict[str, Any]]:
+        """Semantic entity->entity relation rows."""
+        ...
+
+    async def list_entities(self) -> list[dict[str, Any]]:
+        """List every ENTITY with its incoming-MENTIONS count."""
+        ...
+
+    async def distinct_speakers(self) -> list[str]:
+        """Casefolded distinct chunk speakers."""
+        ...
+
+    async def similar_entities_by_embedding(
+        self, name: str, top_k: int = ...
+    ) -> list[dict[str, Any]]:
+        """Entities most similar to *name* by graph-embedding cosine."""
+        ...
+
+    # --- consolidation / analytics ---
+    async def consolidate_session(self, session_id: str) -> int:
+        """Flip a session's lifecycle state raw -> consolidated."""
+        ...
+
+    async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
+        """Merge the loser ENTITY into the winner. Idempotent."""
+        ...
+
+    async def drop_entities(self, name_norms: list[str]) -> int:
+        """Delete the given ENTITY nodes and their edges. Returns count."""
+        ...
+
+    async def compute_and_persist_pagerank(self, skip_view_ensure: bool = ...) -> int:
+        """Compute PageRank over the entity graph and persist it."""
+        ...
+
+    async def compute_graph_embeddings(
+        self, dimensions: int = ..., skip_view_ensure: bool = ...
+    ) -> int:
+        """Compute node2vec embeddings over the entity graph and persist them."""
+        ...
+
+    async def compute_communities(self, skip_view_ensure: bool = ...) -> int:
+        """Detect entity communities and persist ``community_id``."""
+        ...
+
+    async def compute_community_quality(self, skip_view_ensure: bool = ...) -> dict[str, Any]:
+        """Score community structure (modularity + conductance)."""
+        ...
+
+    # --- deletion ---
+    async def delete_session(self, session_id: str) -> None:
+        """Delete a session's frames, chunks, files, and SESSION node."""
+        ...
+
+    async def clear_all(self) -> None:
+        """Delete every vertex and edge in this database."""
+        ...
+
+
+@runtime_checkable
 class ISTMStore(Protocol):
-    """Session-scoped graph store (short-term memory)."""
+    """Session-scoped graph store of the retired three-database split."""
 
     # --- lifecycle ---
     async def connect(self) -> None:
@@ -150,99 +390,8 @@ class ISTMStore(Protocol):
 
 
 @runtime_checkable
-class IVectorStore(Protocol):
-    """Protocol for vector database operations."""
-
-    async def connect(self) -> None:
-        """Open the database connection."""
-        ...
-
-    async def close(self) -> None:
-        """Drain and close the connection pool."""
-        ...
-
-    async def ensure_schema(self) -> None:
-        """Create tables and indexes idempotently."""
-        ...
-
-    async def upsert_entities(self, entities: list[dict[str, Any]]) -> None:
-        """Upsert corpus-level entity embeddings."""
-        ...
-
-    async def search_chunks(
-        self, query_emb: list[float], session_id: str, k: int = 20
-    ) -> list[dict[str, Any]]:
-        """ANN search on chunks filtered to session_id."""
-        ...
-
-    async def search_entities(
-        self, query_emb: list[float], k: int = 10, entity_types: list[str] | None = None
-    ) -> list[dict[str, Any]]:
-        """ANN search on entity embeddings (corpus-level)."""
-        ...
-
-    async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
-        """Fetch full chunk records keyed by ID."""
-        ...
-
-    async def delete_session(self, session_id: str) -> int:
-        """Delete all chunks for session_id. Returns deleted row count."""
-        ...
-
-    async def write_stm_chunk(self, chunk: dict[str, Any]) -> None:
-        """INSERT a chunk into stm_chunks."""
-        ...
-
-    async def write_stm_turn(self, turn: dict[str, Any]) -> None:
-        """INSERT a turn into stm_turns."""
-        ...
-
-    async def search_stm_chunks(
-        self, session_id: str, embedding: list[float], top_k: int
-    ) -> list[dict[str, Any]]:
-        """ANN search on stm_chunks filtered to session_id."""
-        ...
-
-    async def search_stm_turns(
-        self, session_id: str, embedding: list[float], top_k: int
-    ) -> list[dict[str, Any]]:
-        """ANN search on stm_turns filtered to session_id."""
-        ...
-
-    async def promote_to_ltm(self, session_id: str) -> tuple[int, int]:
-        """Copy stm_chunks and stm_turns to their ltm_* counterparts."""
-        ...
-
-    async def clear_stm(self, session_id: str) -> None:
-        """DELETE all stm_chunks and stm_turns for session_id."""
-        ...
-
-    async def search_ltm_chunks(
-        self, embedding: list[float], top_k: int, session_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        """ANN search on ltm_chunks (corpus-wide, optionally filtered by session)."""
-        ...
-
-    async def search_ltm_turns(
-        self, embedding: list[float], top_k: int, session_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        """ANN search on ltm_turns (interaction/dialog recall)."""
-        ...
-
-    async def write_ltm_topic(self, topic: dict[str, Any]) -> None:
-        """UPSERT a topic into ltm_topics."""
-        ...
-
-    async def write_community_assignments(
-        self, session_id: str, assignments: list[dict[str, Any]]
-    ) -> None:
-        """Write community metadata onto semantic memory rows."""
-        ...
-
-
-@runtime_checkable
 class ILTMStore(Protocol):
-    """Consolidated corpus graph store (long-term memory)."""
+    """Consolidated corpus graph store of the retired three-database split."""
 
     # --- lifecycle ---
     async def connect(self) -> None:
@@ -291,10 +440,6 @@ class ILTMStore(Protocol):
         """Persist precomputed centrality scores onto ENTITY nodes."""
         ...
 
-    async def detect_communities(self) -> Any:
-        """Detect entity communities and persist community_id."""
-        ...
-
     async def write_topic_summaries(
         self,
         session_id: str,
@@ -332,4 +477,4 @@ class ILTMStore(Protocol):
         ...
 
 
-__all__ = ["IEmbedder", "ILTMStore", "ISTMStore", "IVectorStore"]
+__all__ = ["IEmbedder", "IGraphStore", "ILTMStore", "ISTMStore"]

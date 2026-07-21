@@ -45,13 +45,13 @@ _FRAME_SATURATION_RATIO: float = float(
 async def _session_chunk_count(rt: Any, session_id: str, state: str | None) -> int:
     """Total CHUNK count for a session (optionally filtered by lifecycle state)."""
     if state:
-        rows = await rt.store._qry(
+        rows = await rt.store.query(
             "MATCH (c:CHUNK) WHERE c.session_id = $sid AND c.state = $st "
             "RETURN count(c) AS c",
             sid=session_id, st=state,
         )
     else:
-        rows = await rt.store._qry(
+        rows = await rt.store.query(
             "MATCH (c:CHUNK) WHERE c.session_id = $sid RETURN count(c) AS c",
             sid=session_id,
         )
@@ -73,44 +73,6 @@ class FrameChannel(Channel):
 
     name = "frame"
     profiles = frozenset({"llm_free", "llm_assisted"})
-
-    async def promote(self, rt: Any, session_id: str, record: Any) -> None:
-        """Extract frames from the session's LTM chunks and write the FRAME layer."""
-        from graphknows.channels._framenet import extract_frames_from_chunk
-
-        rows = await rt.store._qry(
-            "MATCH (c:CHUNK {session_id: $sid}) RETURN c.chunk_id AS id, c.text AS text",
-            sid=session_id,
-        )
-        chunks = [(r["id"], r.get("text") or "") for r in rows if r.get("id")]
-        if not chunks:
-            return
-        speakers = _session_speakers([t for _, t in chunks])
-
-        frame_rows: list[dict[str, Any]] = []
-        for cid, text in chunks:
-            for inst in extract_frames_from_chunk(text, speakers):
-                fes = inst["fes"]
-                fillers = [f for _, f in fes]
-                if inst["speaker"]:
-                    fillers.append(inst["speaker"])
-                frame_rows.append({
-                    "frame_type": inst["frame"],
-                    "chunk_id": cid,
-                    "lu": inst["lu"],
-                    "speaker": inst["speaker"],
-                    "fes": [[r, f] for r, f in fes],
-                    "fillers": fillers,
-                })
-
-        written = await rt.store.write_frames(session_id, frame_rows)
-        log.info("FrameChannel.promote session=%s chunks=%d frames=%d",
-                 session_id, len(chunks), written)
-        if record is not None and hasattr(record, "audit"):
-            # non-fatal diagnostic; mirrors how other phases annotate the record
-            with_frames = getattr(record.audit, "frames_written", None)
-            if with_frames is not None:
-                record.audit.frames_written = written
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Vector-search the namespace-local FRAME summaries and rank the chunks they evoke."""

@@ -350,15 +350,27 @@ async def test_full_text_search_threads_state_filter_into_cypher() -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_entity_chunks_threads_state_and_strips_quotes() -> None:
+async def test_query_entity_chunks_threads_state_and_escapes_quotes() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
     await store.query_entity_chunks(["O'Melanie", "war"], state="consolidated")
     cypher = client.query.await_args_list[0].args[1]
-    # sanitize() strips quotes; long names use CONTAINS on name_norm, short exact.
-    assert "e.name_norm CONTAINS 'omelanie'" in cypher
+    # sanitize() escapes rather than strips: ENTITY.name_norm only casefolds, so
+    # the stored key keeps its apostrophe ("o'melanie"). Stripping produced
+    # 'omelanie', which could never match what was written.
+    assert r"e.name_norm CONTAINS 'o\'melanie'" in cypher
     assert "e.name_norm = 'war'" in cypher
     assert "c.state = 'consolidated'" in cypher
+
+
+@pytest.mark.asyncio
+async def test_query_entity_chunks_neutralises_backslash() -> None:
+    """A trailing backslash must not escape the closing quote of the literal."""
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.query_entity_chunks(["back\\slash"], state=None)
+    cypher = client.query.await_args_list[0].args[1]
+    assert r"'back\\slash'" in cypher
 
 
 @pytest.mark.asyncio
@@ -1161,7 +1173,7 @@ async def test_graph_store_round_trip_on_scratch_database() -> None:
 
         # Evidence provenance accumulated across both writes; confidence keeps max.
         # One REL type for every predicate; LIKES is the `predicate` property.
-        rows = await store._qry(
+        rows = await store.query(
             "MATCH (a:ENTITY {name_norm: 'melanie'})-[r:REL {predicate: 'LIKES'}]->(b) "
             "RETURN r.evidence AS evidence, r.confidence AS confidence, r.fact AS fact"
         )

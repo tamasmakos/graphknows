@@ -61,7 +61,6 @@ class TestChannelBaseDefaults:
         ch = Channel()
         assert await ch.collect(_ctx(), MagicMock(), 5) == {}
         assert await ch.ingest(MagicMock(), "s", "c", "t", None) is None
-        assert await ch.promote(MagicMock(), "s", None) is None
 
 
 class TestFrameChannelCollect:
@@ -76,7 +75,7 @@ class TestFrameChannelCollect:
 
     async def test_stronger_query_frame_outranks(self):
         rt = MagicMock()
-        rt.store._qry = AsyncMock(return_value=[{"c": 10}])  # 10 session chunks
+        rt.store.query = AsyncMock(return_value=[{"c": 10}])  # 10 session chunks
         rt.store.query_frames_by_embedding = AsyncMock(
             return_value=[
                 {"chunk_id": "c_strong", "frame_type": "Process_start", "score": 0.42},
@@ -95,7 +94,7 @@ class TestFrameChannelCollect:
     async def test_saturated_frame_dropped(self):
         """A frame evoked in >50% of session chunks is dropped as non-discriminative."""
         rt = MagicMock()
-        rt.store._qry = AsyncMock(return_value=[{"c": 4}])  # 4 session chunks
+        rt.store.query = AsyncMock(return_value=[{"c": 4}])  # 4 session chunks
         rt.store.query_frames_by_embedding = AsyncMock(
             return_value=[
                 # Activity_ongoing floods 3/4 chunks -> saturated, dropped.
@@ -113,41 +112,6 @@ class TestFrameChannelCollect:
         rt.store.query_frames_by_embedding = AsyncMock(return_value=[])
         out = await FrameChannel().collect(_ctx(), rt, 5)
         assert out == {}
-
-
-class TestFrameChannelPromote:
-    async def test_promote_extracts_and_writes(self, monkeypatch):
-        rt = MagicMock()
-        rt.store._qry = AsyncMock(
-            return_value=[{"id": "c1", "text": "2pm | Mel: I went camping in the mountains."}]
-        )
-        rt.store.write_frames = AsyncMock(return_value=1)
-        # stub extraction so the test stays offline (no spaCy/FrameNet load)
-        monkeypatch.setattr(
-            "graphknows.channels._framenet.extract_frames_from_chunk",
-            lambda text, speakers: [
-                {
-                    "frame": "Residence",
-                    "lu": "camp.v",
-                    "speaker": "Mel",
-                    "fes": [("in", "mountains")],
-                }
-            ],
-        )
-        await FrameChannel().promote(rt, "sess", record=None)
-        rt.store.write_frames.assert_awaited_once()
-        session_id, rows = rt.store.write_frames.await_args.args
-        assert session_id == "sess"
-        assert rows[0]["frame_type"] == "Residence"
-        assert rows[0]["chunk_id"] == "c1"
-        assert "mountains" in rows[0]["fillers"] and "Mel" in rows[0]["fillers"]
-
-    async def test_promote_no_chunks_is_noop(self):
-        rt = MagicMock()
-        rt.store._qry = AsyncMock(return_value=[])
-        rt.store.write_frames = AsyncMock()
-        await FrameChannel().promote(rt, "sess", record=None)
-        rt.store.write_frames.assert_not_awaited()
 
 
 pytestmark = pytest.mark.asyncio

@@ -13,8 +13,15 @@ from collections.abc import Iterable
 
 
 def sanitize(value: str) -> str:
-    """Strip single quotes from *value* so it is safe to embed in a quoted literal."""
-    return value.replace("'", "")
+    """Escape *value* for embedding inside a single-quoted literal.
+
+    Backslash must be escaped first, otherwise a value ending in one would
+    escape the closing quote and let the rest of the value be parsed as query
+    text. Quotes are escaped rather than stripped: entity names are *written*
+    verbatim through bound parameters, so stripping made every name containing
+    an apostrophe ("O'Brien") impossible to look up again.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def quote(value: str) -> str:
@@ -25,3 +32,13 @@ def quote(value: str) -> str:
 def quoted_list(values: Iterable[str]) -> str:
     """Return values as a Cypher/SQL list literal: ``['a','b']``."""
     return "[" + ",".join(quote(v) for v in values) + "]"
+
+
+def is_missing_type(exc: Exception) -> bool:
+    """True when an error only means the vertex type does not exist yet.
+
+    A database that never ingested a given label has no such type, so deleting
+    from it is a no-op rather than a failure. Every other error is real and must
+    not be swallowed — a partial delete leaves orphaned nodes behind.
+    """
+    return "was not found" in str(exc).lower()

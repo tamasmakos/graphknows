@@ -50,7 +50,7 @@ def test_memory_is_the_facade() -> None:
 
 def test_store_protocols_are_public() -> None:
     base = importlib.import_module("graphknows.storage.base")
-    for name in ("IEmbedder", "IVectorStore", "ISTMStore", "ILTMStore"):
+    for name in ("IEmbedder", "IGraphStore", "ISTMStore", "ILTMStore"):
         assert hasattr(base, name)
     relations = importlib.import_module("graphknows.ingestion.extraction.relations.base")
     assert hasattr(relations, "IRelationExtractor")

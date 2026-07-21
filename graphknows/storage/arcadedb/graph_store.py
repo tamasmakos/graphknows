@@ -30,7 +30,10 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from graphknows.storage.arcadedb._sql import quote, quoted_list, sanitize
+from graphknows.exceptions import StoreError
+from graphknows.storage.arcadedb._base import ArcadeStoreBase
+from graphknows.storage.arcadedb._schema import _CORE_DDL
+from graphknows.storage.arcadedb._sql import is_missing_type, quote, quoted_list, sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
@@ -43,7 +46,6 @@ _CHUNK_BATCH = 20
 
 # Vector-index dimension token, replaced with the real dimension in
 # ensure_schema(dims) so the index matches the configured embedder.
-_VEC_DIM = "__VEC_DIM__"
 
 # Graph OLAP analytical view backing `CALL algo.*` (pageRank/node2vec/louvain).
 # Ported from the retired ltm_store._ensure_analytical_view — see that method's
@@ -77,152 +79,6 @@ _VERTEX_LABELS = (
     "FRAME_INSTANCE", "FRAME", "CHUNK", "FILE", "TOPIC", "TEMPORAL", "ENTITY", "SESSION"
 )
 
-# ---------------------------------------------------------------------------
-# DDL — golden-layer schema (plan §1). Order matters: types before properties,
-# properties before indexes. Executed idempotently in ensure_schema().
-# ---------------------------------------------------------------------------
-
-_CORE_DDL: list[tuple[str, str]] = [
-    # ---- Vertex types -----------------------------------------------------
-    ("sql", "CREATE VERTEX TYPE SESSION IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY SESSION.session_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SESSION.started_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SESSION.state IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SESSION.consolidated_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY SESSION.label IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON SESSION(session_id) UNIQUE"),
-    ("sql", "CREATE VERTEX TYPE FILE IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY FILE.file_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FILE.name IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FILE.media_type IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FILE.session_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON FILE(file_id) UNIQUE"),
-    ("sql", "CREATE VERTEX TYPE CHUNK IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY CHUNK.chunk_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.text IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.seq IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY CHUNK.session_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.kind IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.speaker IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.ts IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.state IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.created_at IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.memory_class IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.atom_type IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY CHUNK.entity_names IF NOT EXISTS LIST"),
-    ("sql", "CREATE PROPERTY CHUNK.embedding IF NOT EXISTS LIST"),
-    ("sql", "CREATE INDEX ON CHUNK(chunk_id) UNIQUE"),
-    ("sql", "CREATE INDEX ON CHUNK(session_id) NOTUNIQUE"),
-    ("sql", "CREATE INDEX ON CHUNK(state) NOTUNIQUE"),
-    (
-        "sql",
-        f"CREATE INDEX IF NOT EXISTS ON CHUNK(embedding) LSM_VECTOR "
-        f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
-    ),
-    ("sql", "CREATE VERTEX TYPE ENTITY IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY ENTITY.name_norm IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY ENTITY.name IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY ENTITY.type IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY ENTITY.confidence IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY ENTITY.aliases IF NOT EXISTS LIST"),
-    ("sql", "CREATE PROPERTY ENTITY.state IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY ENTITY.pagerank IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY ENTITY.community_id IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY ENTITY.graph_embedding IF NOT EXISTS LIST"),
-    ("sql", "CREATE PROPERTY ENTITY.embedding IF NOT EXISTS LIST"),
-    ("sql", "CREATE INDEX ON ENTITY(name_norm) UNIQUE"),
-    ("sql", "CREATE INDEX ON ENTITY(state) NOTUNIQUE"),
-    (
-        "sql",
-        f"CREATE INDEX IF NOT EXISTS ON ENTITY(embedding) LSM_VECTOR "
-        f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
-    ),
-    # Canonical temporal nodes — one global node per resolved ISO date string.
-    ("sql", "CREATE VERTEX TYPE TEMPORAL IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY TEMPORAL.date IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX ON TEMPORAL(date) UNIQUE"),
-    ("sql", "CREATE VERTEX TYPE TOPIC IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY TOPIC.topic_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY TOPIC.summary IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY TOPIC.modularity IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY TOPIC.embedding IF NOT EXISTS LIST"),
-    ("sql", "CREATE INDEX ON TOPIC(topic_id) UNIQUE"),
-    (
-        "sql",
-        f"CREATE INDEX IF NOT EXISTS ON TOPIC(embedding) LSM_VECTOR "
-        f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
-    ),
-    # Semantic-frame instances (deterministic FrameNet layer). Evidence is the
-    # EVOKED_BY edge to the CHUNK — no chunk_id string property.
-    ("sql", "CREATE VERTEX TYPE FRAME IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY FRAME.id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.session_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.frame_type IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.lu IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.speaker IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.fes IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.fillers IF NOT EXISTS LIST"),
-    # The frame's definition text + its embedding, so a chunk's evoked frames are
-    # vector-matchable by meaning against a query (see query_frames_by_embedding).
-    ("sql", "CREATE PROPERTY FRAME.summary IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.embedding IF NOT EXISTS LIST"),
-    ("sql", "CREATE INDEX ON FRAME(id) UNIQUE"),
-    ("sql", "CREATE INDEX ON FRAME(session_id) NOTUNIQUE"),
-    ("sql", "CREATE INDEX ON FRAME(frame_type) NOTUNIQUE"),
-    (
-        "sql",
-        f"CREATE INDEX IF NOT EXISTS ON FRAME(embedding) LSM_VECTOR "
-        f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
-    ),
-    # Role-filled frame instances (WS/D3 layer). Distinct from the FRAME
-    # chunk-tag layer above: one FRAME_INSTANCE = one evoked frame whose CORE
-    # frame elements were GLiNER2-filled with entity fillers, linked to those
-    # entities by PLAYS_ROLE {role} edges and to its evidence CHUNK by
-    # FRAME_EVOKED_IN.
-    ("sql", "CREATE VERTEX TYPE FRAME_INSTANCE IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY FRAME_INSTANCE.id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME_INSTANCE.frame IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME_INSTANCE.chunk_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME_INSTANCE.session_id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME_INSTANCE.match_sim IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY FRAME_INSTANCE.role_confidence IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE INDEX ON FRAME_INSTANCE(id) UNIQUE"),
-    ("sql", "CREATE INDEX ON FRAME_INSTANCE(frame) NOTUNIQUE"),
-    # Community-quality vertex — one per Louvain community_id, holding the
-    # native modularityScore/conductance metrics (see compute_community_quality).
-    ("sql", "CREATE VERTEX TYPE COMMUNITY IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY COMMUNITY.community_id IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.conductance IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY COMMUNITY.internal_edges IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.boundary_edges IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.node_count IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.modularity IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY COMMUNITY.size IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE INDEX ON COMMUNITY(community_id) UNIQUE"),
-    # ---- Edge types -------------------------------------------------------
-    ("sql", "CREATE EDGE TYPE PART_OF IF NOT EXISTS"),  # CHUNK -> FILE
-    ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE -> SESSION
-    ("sql", "CREATE EDGE TYPE MENTIONS IF NOT EXISTS"),  # CHUNK -> ENTITY
-    ("sql", "CREATE PROPERTY MENTIONS.confidence IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE EDGE TYPE MENTIONS_DATE IF NOT EXISTS"),  # CHUNK -> TEMPORAL
-    ("sql", "CREATE EDGE TYPE HAS_TOPIC IF NOT EXISTS"),  # CHUNK -> TOPIC
-    ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK
-    ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE EDGE TYPE IN_COMMUNITY IF NOT EXISTS"),  # ENTITY -> COMMUNITY
-    ("sql", "CREATE EDGE TYPE PLAYS_ROLE IF NOT EXISTS"),  # FRAME_INSTANCE -> ENTITY
-    # Every semantic ENTITY->ENTITY fact, regardless of predicate. The predicate is
-    # the `predicate` PROPERTY, not the type name: the vocabulary is open and mostly
-    # single-use, so a type-per-predicate minted hundreds of near-empty types (and a
-    # CREATE EDGE TYPE DDL round-trip on the ingest hot path) while readers already
-    # keyed off r.predicate — the type name was never authoritative, because
-    # reserved-word predicates had to be escaped (find -> REL_FIND).
-    ("sql", "CREATE EDGE TYPE REL IF NOT EXISTS"),  # ENTITY -> ENTITY
-    ("sql", "CREATE PROPERTY REL.predicate IF NOT EXISTS STRING"),
-    ("sql", "CREATE INDEX IF NOT EXISTS ON REL (predicate) NOTUNIQUE"),
-    ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
-    ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK
-]
-
 def _emb_sql(emb: list[float]) -> str:
     """Format an embedding as an ArcadeDB SQL array literal (inline, not a param)."""
     return "[" + ",".join(str(x) for x in emb) + "]"
@@ -243,7 +99,7 @@ def _name_norm(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-class GraphStore:
+class GraphStore(ArcadeStoreBase):
     """Single-database ArcadeDB store for one namespace (golden layer).
 
     Args:
@@ -252,42 +108,11 @@ class GraphStore:
     """
 
     def __init__(self, client: ArcadeDBClient, db: str = _DB) -> None:
-        self._c = client
-        self._db = db
+        super().__init__(client, db)
         # Namespace-global community size/conductance maps for chunk_community_weights.
         # These change only at consolidation; cached so every retrieve() doesn't
         # re-scan the whole graph. Invalidated when communities recompute.
         self._community_maps: tuple[dict[Any, float], dict[Any, float]] | None = None
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    @property
-    def client(self) -> ArcadeDBClient:
-        """The underlying ArcadeDB client (may be shared)."""
-        return self._c
-
-    @property
-    def database(self) -> str:
-        """Name of the ArcadeDB database this store reads/writes."""
-        return self._db
-
-    async def connect(self) -> None:
-        """Open the shared client connection. Idempotent.
-
-        Schema creation is deliberately not run here — call ensure_schema()
-        explicitly on write paths so read paths avoid idempotent DDL round-trips.
-        """
-        await self._c.connect()
-
-    async def close(self) -> None:
-        """Close the shared client connection. Idempotent."""
-        await self._c.close()
-
-    async def drop_database(self) -> None:
-        """Drop this store's entire ArcadeDB database (destructive)."""
-        await self._c.drop_database(self._db)
 
     # ------------------------------------------------------------------
     # Schema
@@ -300,29 +125,8 @@ class GraphStore:
             dims: Embedding dimension for the LSM_VECTOR indexes (must match
                 the configured embedder).
         """
-        await self._c.create_database(self._db)
-        for lang, stmt in _CORE_DDL:
-            stmt = stmt.replace(_VEC_DIM, str(dims))
-            try:
-                await self._c.command(self._db, stmt, language=lang)
-            except Exception as exc:
-                exc_s = str(exc).lower()
-                if "already exists" in exc_s or "duplicate" in exc_s:
-                    logger.debug("GraphStore DDL already exists (idempotent): %s", stmt[:60])
-                else:
-                    logger.warning("GraphStore DDL failed: %s | %s", stmt[:60], exc)
-                    raise
+        await self._apply_ddl(_CORE_DDL, dims=dims)
         logger.info("GraphStore schema ensured (db=%s, dims=%d)", self._db, dims)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _cmd(self, cypher: str, **params: Any) -> list[dict]:
-        return await self._c.command(self._db, cypher, params=params or None)
-
-    async def _qry(self, cypher: str, **params: Any) -> list[dict]:
-        return await self._c.query(self._db, cypher, params=params or None)
 
     async def _set_embedding(
         self, vertex_type: str, key_prop: str, key: str, emb: list[float]
@@ -358,7 +162,7 @@ class GraphStore:
 
     async def ensure_session(self, session_id: str, started_at: str = "") -> None:
         """Upsert a SESSION vertex; state starts ``raw``."""
-        await self._cmd(
+        await self.command(
             "MERGE (s:SESSION {session_id: $sid}) "
             "SET s.started_at = coalesce(s.started_at, $sa), "
             "    s.state = coalesce(s.state, 'raw')",
@@ -370,7 +174,7 @@ class GraphStore:
         self, file_id: str, session_id: str, name: str = "", media_type: str = ""
     ) -> None:
         """Upsert a FILE vertex linked to its SESSION via FILE-[:IN_SESSION]->SESSION."""
-        await self._cmd(
+        await self.command(
             "MERGE (f:FILE {file_id: $fid}) "
             "SET f.name = $name, f.media_type = $mt, f.session_id = $sid "
             "WITH f MATCH (s:SESSION {session_id: $sid}) "
@@ -417,7 +221,7 @@ class GraphStore:
                 }
                 for c in batch
             ]
-            await self._cmd(
+            await self.command(
                 "UNWIND $rows AS row "
                 "MERGE (c:CHUNK {chunk_id: row.cid}) "
                 "SET c.session_id = row.sid, c.text = row.text, c.seq = row.seq, "
@@ -431,7 +235,7 @@ class GraphStore:
             )
             edge_rows = [r for r in rows if r["fid"]]
             if edge_rows:
-                await self._cmd(
+                await self.command(
                     "UNWIND $rows AS row "
                     "MATCH (c:CHUNK {chunk_id: row.cid}), (f:FILE {file_id: row.fid}) "
                     "MERGE (c)-[:PART_OF]->(f)",
@@ -493,7 +297,7 @@ class GraphStore:
             return
 
         # Pass 1: upsert ENTITY nodes on name_norm.
-        await self._cmd(
+        await self.command(
             "UNWIND $rows AS row "
             "MERGE (e:ENTITY {name_norm: row.nn}) "
             "SET e.name = coalesce(e.name, row.name), "
@@ -512,7 +316,7 @@ class GraphStore:
         )
 
         # Pass 2: MENTIONS edges with confidence.
-        await self._cmd(
+        await self.command(
             "MATCH (c:CHUNK {chunk_id: $cid}) "
             "UNWIND $rows AS row "
             "MATCH (e:ENTITY {name_norm: row.nn}) "
@@ -532,7 +336,7 @@ class GraphStore:
         ``is_current=false`` instead of deleting, preserving history.
         """
         try:
-            await self._cmd(
+            await self.command(
                 "MATCH (a:ENTITY {name_norm: $src})"
                 "-[r:REL {predicate: $predicate, is_current: true}]"
                 "->(b:ENTITY) "
@@ -593,7 +397,7 @@ class GraphStore:
             if chunk_id
             else "r.evidence = coalesce(r.evidence, []), "
         )
-        await self._cmd(
+        await self.command(
             f"MERGE (a:ENTITY {{name_norm: $src_nn}}) "
             f"SET a.name = coalesce(a.name, $src), a.state = coalesce(a.state, 'raw'), "
             f"    a.type = coalesce(a.type, $src_type) "
@@ -637,7 +441,7 @@ class GraphStore:
         dates = [str(d).strip() for d in iso_dates if str(d).strip()]
         if not dates:
             return
-        await self._cmd(
+        await self.command(
             "MATCH (c:CHUNK {chunk_id: $cid}) "
             "UNWIND $dates AS iso "
             "MERGE (d:TEMPORAL {date: iso}) "
@@ -673,7 +477,7 @@ class GraphStore:
             }
             for i, f in enumerate(frames)
         ]
-        await self._cmd(
+        await self.command(
             "UNWIND $rows AS r "
             "MERGE (n:FRAME {id: r.id}) "
             "SET n.session_id = r.sid, n.frame_type = r.ft, "
@@ -681,7 +485,7 @@ class GraphStore:
             "n.summary = r.summary",
             rows=rows,
         )
-        await self._cmd(
+        await self.command(
             "UNWIND $rows AS r "
             "MATCH (n:FRAME {id: r.id}), (c:CHUNK {chunk_id: r.cid}) "
             "MERGE (n)-[ev:EVOKED_BY]->(c) "
@@ -757,7 +561,7 @@ class GraphStore:
         if not inst_rows:
             return 0
         # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
-        await self._cmd(
+        await self.command(
             "UNWIND $rows AS row "
             "MATCH (c:CHUNK {chunk_id: row.cid}) "
             "MERGE (fi:FRAME_INSTANCE {id: row.fid}) "
@@ -781,14 +585,14 @@ class GraphStore:
             ent_rows = list(
                 {r["nn"]: {"nn": r["nn"], "name": r["name"]} for r in role_rows}.values()
             )
-            await self._cmd(
+            await self.command(
                 "UNWIND $rows AS row "
                 "MERGE (e:ENTITY {name_norm: row.nn}) "
                 "SET e.name = coalesce(e.name, row.name), e.state = coalesce(e.state, 'raw')",
                 rows=ent_rows,
             )
             # Batch 2b: now every filler exists — the edge pass only MATCHes.
-            await self._cmd(
+            await self.command(
                 "UNWIND $rows AS row "
                 "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
                 "MATCH (e:ENTITY {name_norm: row.nn}) "
@@ -808,7 +612,7 @@ class GraphStore:
             tid = str(t.get("topic_id") or "").strip()
             if not tid:
                 continue
-            await self._cmd(
+            await self.command(
                 "MERGE (tp:TOPIC {topic_id: $tid}) "
                 "SET tp.summary = $summary, tp.modularity = $mod",
                 tid=tid,
@@ -819,7 +623,7 @@ class GraphStore:
                 await self._set_embedding("TOPIC", "topic_id", tid, t["embedding"])
             chunk_ids = [c for c in (t.get("chunk_ids") or []) if c]
             if chunk_ids:
-                await self._cmd(
+                await self.command(
                     "MATCH (tp:TOPIC {topic_id: $tid}) "
                     "UNWIND $cids AS cid "
                     "MATCH (c:CHUNK {chunk_id: cid}) "
@@ -915,7 +719,7 @@ class GraphStore:
             for n in safe
         )
         filters = self._chunk_filters(session_id, state)
-        rows = await self._qry(
+        rows = await self.query(
             f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
             f"WHERE ({where_entity}){filters} "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text LIMIT $k",
@@ -944,7 +748,7 @@ class GraphStore:
         op = " AND " if require_all else " OR "
         text_where = op.join(f"toLower(c.text) CONTAINS '{t.lower()}'" for t in safe)
         filters = self._chunk_filters(session_id, state)
-        rows = await self._qry(
+        rows = await self.query(
             f"MATCH (c:CHUNK) WHERE ({text_where}){filters} "
             f"RETURN c.chunk_id AS chunk_id, c.text AS text LIMIT $k",
             k=top_k,
@@ -972,7 +776,7 @@ class GraphStore:
                 conds.append(f"d.date STARTS WITH '{d}-'")
         where_iso = " OR ".join(conds)
         filters = self._chunk_filters(session_id, state)
-        rows = await self._qry(
+        rows = await self.query(
             f"MATCH (c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
             f"WHERE ({where_iso}){filters} "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text, d.date AS date "
@@ -989,7 +793,7 @@ class GraphStore:
         ids = [c for c in chunk_ids if c]
         if not ids:
             return {}
-        rows = await self._qry(
+        rows = await self.query(
             f"MATCH (c:CHUNK) WHERE c.chunk_id IN {quoted_list(ids)} "
             f"RETURN c.chunk_id AS chunk_id, c.session_id AS session_id, c.text AS text, "
             f"c.seq AS seq, c.kind AS kind, c.speaker AS speaker, c.ts AS ts, "
@@ -1082,7 +886,7 @@ class GraphStore:
         where = f"n.id IN {quoted_list(list(score))}"
         if state:
             where += f" AND c.state = {quote(state)}"
-        joined = await self._qry(
+        joined = await self.query(
             f"MATCH (n:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE {where} "
             f"RETURN n.id AS id, n.frame_type AS frame_type, c.chunk_id AS chunk_id"
         )
@@ -1111,7 +915,7 @@ class GraphStore:
             where += f" AND n.session_id = {quote(session_id)}"
         if state:
             where += f" AND c.state = {quote(state)}"
-        rows = await self._qry(
+        rows = await self.query(
             f"MATCH (n:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE {where} "
             f"RETURN c.chunk_id AS chunk_id, n.frame_type AS frame_type, "
             f"n.speaker AS speaker, n.fillers AS fillers"
@@ -1140,7 +944,7 @@ class GraphStore:
         With ``session_id`` set, rows are restricted to entities mentioned by
         that session's chunks.
         """
-        rows = await self._qry(
+        rows = await self.query(
             "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
             "WHERE a.name IS NOT NULL AND b.name IS NOT NULL AND a.name <> b.name "
             "AND (r.is_current = true OR r.is_current IS NULL) "
@@ -1161,7 +965,7 @@ class GraphStore:
         if not session_id:
             return result
         # Restrict both endpoints to entities mentioned by this session's chunks.
-        ent_rows = await self._qry(
+        ent_rows = await self.query(
             "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) WHERE c.session_id = $sid "
             "RETURN DISTINCT e.name AS name",
             sid=session_id,
@@ -1196,7 +1000,7 @@ class GraphStore:
 
         conds = " OR ".join(_word_boundary(t) for t in toks)
         try:
-            rows = await self._qry(
+            rows = await self.query(
                 f"MATCH (e:ENTITY) WHERE {conds} "
                 f"RETURN DISTINCT e.name AS name LIMIT {int(cap)}"
             )
@@ -1240,7 +1044,7 @@ class GraphStore:
             return []
         name_lit = quoted_list(norms)
         try:
-            rel_rows = await self._qry(
+            rel_rows = await self.query(
                 # Both directions so object-side facts surface ("Caroline HAS Luna"
                 # when the query resolves Luna). Only current (non-tombstoned) edges.
                 # REL is the single semantic ENTITY->ENTITY type; the predicate is
@@ -1251,7 +1055,7 @@ class GraphStore:
                 f"RETURN a.name AS s, r.predicate AS p, "
                 f"b.name AS o, r.evidence AS ev"
             )
-            frame_rows = await self._qry(
+            frame_rows = await self.query(
                 f"MATCH (fi:FRAME_INSTANCE)-[:PLAYS_ROLE]->(seed:ENTITY) "
                 f"WHERE seed.name_norm IN {name_lit} "
                 f"WITH DISTINCT fi "
@@ -1343,11 +1147,11 @@ class GraphStore:
         / the numpy pagerank). Two directed queries avoid relying on ArcadeDB's
         undirected Cypher pattern support.
         """
-        out_rows = await self._qry(
+        out_rows = await self.query(
             "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
             "RETURN a.name_norm AS nn, count(r) AS deg"
         )
-        in_rows = await self._qry(
+        in_rows = await self.query(
             "MATCH (a:ENTITY)<-[r:REL]-(b:ENTITY) "
             "RETURN a.name_norm AS nn, count(r) AS deg"
         )
@@ -1368,7 +1172,7 @@ class GraphStore:
         rows = [r for r in rows if r.get("nn") is not None]
         if not rows:
             return 0
-        await self._cmd(
+        await self.command(
             f"UNWIND $rows AS r MATCH (e:ENTITY {{name_norm: r.nn}}) SET e.{prop} = r.v",
             rows=rows,
         )
@@ -1402,7 +1206,7 @@ class GraphStore:
             # null for every row, which the null-filter below then discards,
             # silently forcing the numpy fallback. Alias `score AS rank` so the
             # rest of this method keeps reading `rank`.
-            rows = await self._qry(
+            rows = await self.query(
                 "CALL algo.pageRank() YIELD node, score "
                 "WHERE node.name_norm IS NOT NULL "
                 "RETURN node.name_norm AS nn, score AS rank"
@@ -1453,7 +1257,7 @@ class GraphStore:
             # Scoped via node.name_norm IS NOT NULL, not node:ENTITY — see
             # compute_and_persist_pagerank's docstring for why the label
             # predicate doesn't work in ArcadeDB's Cypher.
-            rows = await self._qry(
+            rows = await self.query(
                 f"CALL algo.node2vec({{walkLength:20,walks:20,dimensions:{int(dimensions)}}}) "
                 "YIELD node, embedding "
                 "WHERE node.name_norm IS NOT NULL "
@@ -1493,7 +1297,7 @@ class GraphStore:
                 # [[...]] instead of [...]), same reason _set_embedding uses
                 # an inline literal for CHUNK/ENTITY/TOPIC.embedding.
                 emb_literal = _emb_sql([float(x) for x in r["embedding"]])
-                await self._cmd(
+                await self.command(
                     f"MATCH (e:ENTITY {{name_norm: $nn}}) SET e.graph_embedding = {emb_literal}",
                     nn=nn,
                 )
@@ -1521,7 +1325,7 @@ class GraphStore:
         try:
             if not skip_view_ensure:
                 await self._ensure_analytical_view()
-            rows = await self._qry(
+            rows = await self.query(
                 "CALL algo.louvain() YIELD node, communityId "
                 "WHERE node.name_norm IS NOT NULL "
                 "RETURN node.name_norm AS nn, communityId AS cid"
@@ -1552,7 +1356,7 @@ class GraphStore:
         Existence is still probed rather than hardcoded because the caller must
         skip the algos entirely on a graph with no semantic edges.
         """
-        rows = await self._qry("MATCH (:ENTITY)-[r:REL]->(:ENTITY) RETURN count(r) AS n")
+        rows = await self.query("MATCH (:ENTITY)-[r:REL]->(:ENTITY) RETURN count(r) AS n")
         return "['REL']" if (rows and (rows[0].get("n") or 0)) else "[]"
 
     async def compute_community_quality(self, skip_view_ensure: bool = False) -> dict[str, Any]:
@@ -1584,12 +1388,12 @@ class GraphStore:
             if rel_types == "[]":
                 logger.info("compute_community_quality: no semantic edges; skipping")
                 return empty
-            mod_rows = await self._qry(
+            mod_rows = await self.query(
                 f"CALL algo.modularityScore('community_id', {rel_types}) "
                 "YIELD modularity, communities, edgeCount "
                 "RETURN modularity, communities, edgeCount"
             )
-            cond_rows = await self._qry(
+            cond_rows = await self.query(
                 f"CALL algo.conductance('community_id', {rel_types}) "
                 "YIELD community, conductance, internalEdges, boundaryEdges, nodeCount "
                 "RETURN community, conductance, internalEdges, boundaryEdges, nodeCount"
@@ -1606,7 +1410,7 @@ class GraphStore:
 
         # Per-community entity counts (the persisted ``size``; conductance's
         # nodeCount can differ by the isolated COMMUNITY vertex, so we keep both).
-        size_rows = await self._qry(
+        size_rows = await self.query(
             "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
             "RETURN e.community_id AS cid, count(e) AS size"
         )
@@ -1618,7 +1422,7 @@ class GraphStore:
             if cid is None:
                 continue
             try:
-                await self._cmd(
+                await self.command(
                     "MERGE (k:COMMUNITY {community_id: $cid}) "
                     "SET k.conductance = $cond, k.internal_edges = $ie, "
                     "    k.boundary_edges = $be, k.node_count = $nc, "
@@ -1639,7 +1443,7 @@ class GraphStore:
         # COMMUNITY vertex will MERGE — arbitrary Louvain ids are reused, so this
         # is self-healing across flushes).
         try:
-            await self._cmd(
+            await self.command(
                 "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
                 "MATCH (k:COMMUNITY {community_id: e.community_id}) "
                 "MERGE (e)-[:IN_COMMUNITY]->(k)"
@@ -1675,7 +1479,7 @@ class GraphStore:
         if not ids:
             return {}
         try:
-            rows = await self._qry(
+            rows = await self.query(
                 f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
                 f"WHERE c.chunk_id IN {quoted_list(ids)} AND e.community_id IS NOT NULL "
                 f"RETURN c.chunk_id AS chunk_id, e.community_id AS cid, count(e) AS cnt "
@@ -1710,11 +1514,11 @@ class GraphStore:
         """
         if self._community_maps is not None:
             return self._community_maps
-        size_rows = await self._qry(
+        size_rows = await self.query(
             "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
             "RETURN e.community_id AS cid, count(e) AS size"
         )
-        quality_rows = await self._qry(
+        quality_rows = await self.query(
             "MATCH (k:COMMUNITY) WHERE k.community_id IS NOT NULL "
             "RETURN k.community_id AS cid, k.conductance AS conductance"
         )
@@ -1746,7 +1550,7 @@ class GraphStore:
         except ImportError:
             return []
         seed_nn = _name_norm(name)
-        rows = await self._qry(
+        rows = await self.query(
             "MATCH (e:ENTITY) WHERE e.graph_embedding IS NOT NULL "
             "RETURN e.name_norm AS nn, e.name AS name, e.graph_embedding AS emb"
         )
@@ -1791,10 +1595,10 @@ class GraphStore:
             return 0
 
         try:
-            entity_rows = await self._qry(
+            entity_rows = await self.query(
                 "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL RETURN e.name_norm AS nn"
             )
-            edge_rows = await self._qry(
+            edge_rows = await self.query(
                 "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
                 "WHERE (r.is_current = true OR r.is_current IS NULL) "
                 "RETURN DISTINCT a.name_norm AS src, b.name_norm AS dst, "
@@ -1854,7 +1658,7 @@ class GraphStore:
         namespace-global, so this is not session-scoped — it feeds the layered
         entity resolver, which decides drops/merges over the whole graph.
         """
-        rows = await self._qry(
+        rows = await self.query(
             "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL "
             "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e) "
             "RETURN e.name_norm AS name_norm, e.name AS name, e.type AS type, "
@@ -1873,7 +1677,7 @@ class GraphStore:
 
     async def distinct_speakers(self) -> list[str]:
         """Casefolded distinct CHUNK.speaker values (the known session speakers)."""
-        rows = await self._qry(
+        rows = await self.query(
             "MATCH (c:CHUNK) WHERE c.speaker IS NOT NULL AND c.speaker <> '' "
             "RETURN DISTINCT c.speaker AS speaker"
         )
@@ -1887,11 +1691,11 @@ class GraphStore:
         norms = [n for n in name_norms if n]
         if not norms:
             return 0
-        rows = await self._qry(
+        rows = await self.query(
             f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(norms)} "
             "RETURN count(e) AS n"
         )
-        await self._cmd(
+        await self.command(
             f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(norms)} DETACH DELETE e"
         )
         return int(rows[0].get("n") or 0) if rows else 0
@@ -1941,13 +1745,13 @@ class GraphStore:
         """
         if not winner_norm or not loser_norm or winner_norm == loser_norm:
             return False
-        loser = await self._qry(
+        loser = await self.query(
             "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS name, e.aliases AS aliases LIMIT 1",
             nn=loser_norm,
         )
         if not loser:
             return False  # already gone — idempotent
-        winner = await self._qry(
+        winner = await self.query(
             "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS name, e.aliases AS aliases LIMIT 1",
             nn=winner_norm,
         )
@@ -1959,7 +1763,7 @@ class GraphStore:
         aliases = list(winner[0].get("aliases") or [])
 
         # 1. Re-point MENTIONS onto the winner (old loser edges vanish on delete).
-        await self._cmd(
+        await self.command(
             "MATCH (c:CHUNK)-[m:MENTIONS]->(:ENTITY {name_norm: $loser}) "
             "MATCH (w:ENTITY {name_norm: $winner}) "
             "MERGE (c)-[nm:MENTIONS]->(w) "
@@ -1971,14 +1775,14 @@ class GraphStore:
         )
 
         # 2. Re-point semantic RELATION edges (both directions), skip self-loops.
-        out_rows = await self._qry(
+        out_rows = await self.query(
             "MATCH (:ENTITY {name_norm: $loser})-[r:REL]->(b:ENTITY) "
             "RETURN b.name AS dst, b.name_norm AS dst_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
             "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source",
             loser=loser_norm,
         )
-        in_rows = await self._qry(
+        in_rows = await self.query(
             "MATCH (a:ENTITY)-[r:REL]->(:ENTITY {name_norm: $loser}) "
             "RETURN a.name AS src, a.name_norm AS src_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
@@ -1998,14 +1802,14 @@ class GraphStore:
         for a in [loser_name, *loser_aliases]:
             if a and a != winner_name and a not in aliases:
                 aliases.append(a)
-        await self._cmd(
+        await self.command(
             "MATCH (w:ENTITY {name_norm: $winner}) SET w.aliases = $aliases",
             winner=winner_norm,
             aliases=aliases,
         )
 
         # 4. Remove the loser (and its now-orphaned original edges).
-        await self._cmd(
+        await self.command(
             "MATCH (lo:ENTITY {name_norm: $loser}) DETACH DELETE lo", loser=loser_norm
         )
         logger.info("merge_entities: %s -> %s", loser_norm, winner_norm)
@@ -2025,23 +1829,23 @@ class GraphStore:
         now = datetime.now(UTC).isoformat()
         # Count first (query endpoint rejects a mutating SET...RETURN as
         # non-idempotent), then flip via the command endpoint.
-        chunk_rows = await self._qry(
+        chunk_rows = await self.query(
             "MATCH (c:CHUNK {session_id: $sid}) WHERE c.state = 'raw' RETURN count(c) AS n",
             sid=session_id,
         )
-        await self._cmd(
+        await self.command(
             "MATCH (c:CHUNK {session_id: $sid}) WHERE c.state = 'raw' "
             "SET c.state = 'consolidated'",
             sid=session_id,
         )
-        await self._cmd(
+        await self.command(
             "MATCH (s:SESSION {session_id: $sid}) "
             "SET s.state = 'consolidated', s.consolidated_at = $now",
             sid=session_id,
             now=now,
         )
-        await self._cmd("MATCH (e:ENTITY) WHERE e.state = 'raw' SET e.state = 'consolidated'")
-        await self._cmd(
+        await self.command("MATCH (e:ENTITY) WHERE e.state = 'raw' SET e.state = 'consolidated'")
+        await self.command(
             "MATCH (:ENTITY)-[r]->(:ENTITY) WHERE r.state = 'raw' SET r.state = 'consolidated'"
         )
         flipped = int(chunk_rows[0].get("n") or 0) if chunk_rows else 0
@@ -2057,28 +1861,35 @@ class GraphStore:
 
         Namespace-global vertices (ENTITY, TOPIC, TEMPORAL) are untouched —
         they may be evidenced by other sessions.
+
+        Raises:
+            StoreError: If any label failed to delete for a reason other than the
+                type not existing yet. ``purge_memory`` reports this to the
+                caller instead of claiming a clean purge over orphaned nodes.
         """
-        for label in ("FRAME_INSTANCE", "FRAME", "CHUNK", "FILE"):
+        failures: list[str] = []
+        for label in ("FRAME_INSTANCE", "FRAME", "CHUNK", "FILE", "SESSION"):
             try:
-                await self._cmd(
+                await self.command(
                     f"MATCH (n:{label} {{session_id: $sid}}) DETACH DELETE n",
                     sid=session_id,
                 )
-            except Exception:
-                logger.debug("delete_session: %s delete ignored", label, exc_info=True)
-        try:
-            await self._cmd(
-                "MATCH (n:SESSION {session_id: $sid}) DETACH DELETE n",
-                sid=session_id,
+            except Exception as exc:
+                if is_missing_type(exc):
+                    logger.debug("delete_session: %s type absent, nothing to delete", label)
+                    continue
+                logger.warning("delete_session: %s delete failed: %s", label, exc)
+                failures.append(f"{label}: {exc}")
+        if failures:
+            raise StoreError(
+                f"delete_session({session_id!r}) failed for: {'; '.join(failures)}"
             )
-        except Exception:
-            logger.debug("delete_session: SESSION delete ignored", exc_info=True)
 
     async def clear_all(self) -> None:
         """Delete every vertex (and, via DETACH, every edge) in this database."""
         for label in _VERTEX_LABELS:
             try:
-                await self._cmd(f"MATCH (n:{label}) DETACH DELETE n")
+                await self.command(f"MATCH (n:{label}) DETACH DELETE n")
             except Exception:
                 logger.debug("clear_all: %s delete ignored", label, exc_info=True)
 

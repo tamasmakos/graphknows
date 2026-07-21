@@ -12,7 +12,9 @@ import datetime
 import logging
 from typing import Any
 
-from graphknows.storage.arcadedb._sql import sanitize
+from graphknows.exceptions import StoreError
+from graphknows.storage.arcadedb._base import ArcadeStoreBase
+from graphknows.storage.arcadedb._sql import is_missing_type, sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,26 @@ def _parse_chunk_metadata(raw: Any) -> dict[str, Any]:
     except (ValueError, SyntaxError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _union_by_key(
+    primary: list[dict[str, Any]],
+    fallback: list[dict[str, Any]],
+    key_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """First-wins union of two row lists, keyed by *key_fields*.
+
+    Primary rows keep their order and win over a fallback row with the same key.
+    """
+    seen: set[tuple[Any, ...]] = set()
+    rows: list[dict[str, Any]] = []
+    for row in primary + fallback:
+        key = tuple(row[f] for f in key_fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row)
+    return rows
 
 
 # Known single-valued relation types — a new fact tombstones the old one.
@@ -114,7 +136,7 @@ _SCHEMA_DDL = [
 ]
 
 
-class ArcadeDBSTMStore:
+class ArcadeDBSTMStore(ArcadeStoreBase):
     """Session-scoped graph store backed by ArcadeDB.
 
     Connects via the ArcadeDB HTTP REST API using openCypher for graph
@@ -125,39 +147,7 @@ class ArcadeDBSTMStore:
     """
 
     def __init__(self, client: ArcadeDBClient, db: str = _DB) -> None:
-        self._db = db
-        self._c = client
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    @property
-    def client(self) -> ArcadeDBClient:
-        """The underlying ArcadeDB client (shared across stores)."""
-        return self._c
-
-    @property
-    def database(self) -> str:
-        """Name of the ArcadeDB database this store reads/writes."""
-        return self._db
-
-    async def connect(self) -> None:
-        """Open the shared client connection. Idempotent.
-
-        Schema creation is deliberately not run here — call ensure_schema()
-        explicitly on write paths. Read paths (recall, session listing) connect
-        without paying for idempotent DDL round-trips.
-        """
-        await self._c.connect()
-
-    async def close(self) -> None:
-        """Close the shared client connection. Idempotent."""
-        await self._c.close()
-
-    async def drop_database(self) -> None:
-        """Drop this store's entire ArcadeDB database (destructive; used by purge)."""
-        await self._c.drop_database(self._db)
+        super().__init__(client, db)
 
     # ------------------------------------------------------------------
     # Schema
@@ -165,17 +155,7 @@ class ArcadeDBSTMStore:
 
     async def ensure_schema(self) -> None:
         """Create vertex types, edge types, and indexes idempotently."""
-        await self._c.create_database(self._db)
-        for stmt in _SCHEMA_DDL:
-            try:
-                await self._c.command(self._db, stmt, language="sql")
-            except Exception as exc:
-                exc_s = str(exc).lower()
-                if "already exists" in exc_s or "duplicate" in exc_s:
-                    logger.debug("STM schema DDL already exists (idempotent): %s", stmt[:60])
-                else:
-                    logger.warning("STM schema DDL failed: %s | %s", stmt[:60], exc)
-                    raise
+        await self._apply_ddl(_SCHEMA_DDL)
 
     # ------------------------------------------------------------------
     # Session metadata
@@ -677,8 +657,23 @@ class ArcadeDBSTMStore:
             relation_edges, _merge_count
         }
         """
-        # Each query is run independently — ArcadeDB Cypher does not support
-        # UNION across multiple MATCH patterns in a single query reliably.
+        return {
+            "entities": await self._read_entities(session_id),
+            "files": await self._read_files(session_id),
+            "chunks": await self._read_chunks(session_id),
+            "dialogs": await self._read_dialogs(session_id),
+            "turns": await self._read_turns(session_id),
+            "chunk_entity_edges": await self._read_chunk_entity_edges(session_id),
+            "turn_entity_edges": await self._read_turn_entity_edges(session_id),
+            "next_edges": await self._read_next_edges(session_id),
+            "relation_edges": await self._read_relation_edges(session_id),
+            "_merge_count": 0,
+        }
+
+    # Each query below is run independently — ArcadeDB Cypher does not support
+    # UNION across multiple MATCH patterns in a single query reliably.
+
+    async def _read_entities(self, session_id: str) -> list[dict[str, Any]]:
         entities_primary = await self._c.query(
             self._db,
             """
@@ -698,19 +693,19 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        primary_names = {r["name"] for r in entities_primary}
-        fallback_only = [r for r in entities_fallback if r["name"] not in primary_names]
-        if fallback_only and not entities_primary:
+        rows = _union_by_key(entities_primary, entities_fallback, ("name",))
+        if rows and not entities_primary:
             logger.warning(
                 "Session %s: CHUNK→ENTITY chain broken — %d entities via fallback only.",
                 session_id,
-                len(fallback_only),
+                len(rows),
             )
-        entities = [
+        return [
             {"name": r["name"], "type": r["type"], "confidence": r["confidence"] or 1.0}
-            for r in entities_primary + fallback_only
+            for r in rows
         ]
 
+    async def _read_files(self, session_id: str) -> list[dict[str, Any]]:
         files_rows = await self._c.query(
             self._db,
             """
@@ -721,7 +716,7 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        files = [
+        return [
             {
                 "id": r["id"],
                 "title": r["title"],
@@ -731,6 +726,7 @@ class ArcadeDBSTMStore:
             for r in files_rows
         ]
 
+    async def _read_chunks(self, session_id: str) -> list[dict[str, Any]]:
         chunks_rows = await self._c.query(
             self._db,
             """
@@ -742,7 +738,7 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        chunks = [
+        return [
             {
                 "id": r["id"],
                 "file_id": r["file_id"],
@@ -754,6 +750,7 @@ class ArcadeDBSTMStore:
             for r in chunks_rows
         ]
 
+    async def _read_dialogs(self, session_id: str) -> list[dict[str, Any]]:
         dialogs_rows = await self._c.query(
             self._db,
             """
@@ -763,11 +760,12 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        dialogs = [
+        return [
             {"id": r["id"], "session_id": r["session_id"], "started_at": r["started_at"]}
             for r in dialogs_rows
         ]
 
+    async def _read_turns(self, session_id: str) -> list[dict[str, Any]]:
         turns_rows = await self._c.query(
             self._db,
             """
@@ -778,7 +776,7 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        turns = [
+        return [
             {
                 "id": r["id"],
                 "dialog_id": r["dialog_id"],
@@ -790,7 +788,8 @@ class ArcadeDBSTMStore:
             for r in turns_rows
         ]
 
-        # Chunk-entity edges — union of chain path and fallback.
+    async def _read_chunk_entity_edges(self, session_id: str) -> list[dict[str, Any]]:
+        """Chunk-entity edges — union of chain path and fallback."""
         ce_primary = await self._c.query(
             self._db,
             """
@@ -810,16 +809,12 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        seen_ce: set[tuple[str, str]] = set()
-        chunk_entity_edges = []
-        for row in ce_primary + ce_fallback:
-            key = (row["chunk_id"], row["entity_name"])
-            if key not in seen_ce:
-                seen_ce.add(key)
-                chunk_entity_edges.append(
-                    {"chunk_id": row["chunk_id"], "entity_name": row["entity_name"]}
-                )
+        return [
+            {"chunk_id": r["chunk_id"], "entity_name": r["entity_name"]}
+            for r in _union_by_key(ce_primary, ce_fallback, ("chunk_id", "entity_name"))
+        ]
 
+    async def _read_turn_entity_edges(self, session_id: str) -> list[dict[str, Any]]:
         turn_entity_rows = await self._c.query(
             self._db,
             """
@@ -830,10 +825,11 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        turn_entity_edges = [
+        return [
             {"turn_id": r["turn_id"], "entity_name": r["entity_name"]} for r in turn_entity_rows
         ]
 
+    async def _read_next_edges(self, session_id: str) -> list[dict[str, Any]]:
         next_rows = await self._c.query(
             self._db,
             """
@@ -844,10 +840,11 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        next_edges = [
+        return [
             {"from_turn_id": r["from_turn_id"], "to_turn_id": r["to_turn_id"]} for r in next_rows
         ]
 
+    async def _read_relation_edges(self, session_id: str) -> list[dict[str, Any]]:
         relation_rows = await self._c.query(
             self._db,
             """
@@ -859,7 +856,7 @@ class ArcadeDBSTMStore:
             """,
             params={"sid": session_id},
         )
-        relation_edges = [
+        return [
             {
                 "source": r["source"],
                 "relation": r["relation"],
@@ -872,40 +869,36 @@ class ArcadeDBSTMStore:
             for r in relation_rows
         ]
 
-        return {
-            "entities": entities,
-            "files": files,
-            "chunks": chunks,
-            "dialogs": dialogs,
-            "turns": turns,
-            "chunk_entity_edges": chunk_entity_edges,
-            "turn_entity_edges": turn_entity_edges,
-            "next_edges": next_edges,
-            "relation_edges": relation_edges,
-            "_merge_count": 0,
-        }
-
     # ------------------------------------------------------------------
     # Session deletion
     # ------------------------------------------------------------------
 
     async def delete_session(self, session_id: str) -> None:
-        """Delete all nodes for *session_id* from the STM database."""
+        """Delete all nodes for *session_id* from the STM database.
+
+        Raises:
+            StoreError: If any label failed to delete for a reason other than the
+                type not existing yet. A partial delete leaves orphaned nodes
+                behind, so it must not be reported to the caller as a clean purge.
+        """
         # Use Cypher DETACH DELETE per label — handles cascading edge removal.
-        for label in ("TURN", "DIALOG", "CHUNK", "ENTITY", "FILE"):
+        # SESSION is keyed by `id`; every other label by `session_id`.
+        failures: list[str] = []
+        for label in ("TURN", "DIALOG", "CHUNK", "ENTITY", "FILE", "SESSION"):
+            key = "id" if label == "SESSION" else "session_id"
             try:
                 await self._c.command(
                     self._db,
-                    f"MATCH (n:{label} {{session_id: $sid}}) DETACH DELETE n",
+                    f"MATCH (n:{label} {{{key}: $sid}}) DETACH DELETE n",
                     params={"sid": session_id},
                 )
-            except Exception:
-                logger.debug("delete_session: %s delete ignored", label, exc_info=True)
-        try:
-            await self._c.command(
-                self._db,
-                "MATCH (n:SESSION {id: $sid}) DETACH DELETE n",
-                params={"sid": session_id},
+            except Exception as exc:
+                if is_missing_type(exc):
+                    logger.debug("delete_session: %s type absent, nothing to delete", label)
+                    continue
+                logger.warning("delete_session: %s delete failed: %s", label, exc)
+                failures.append(f"{label}: {exc}")
+        if failures:
+            raise StoreError(
+                f"delete_session({session_id!r}) failed for: {'; '.join(failures)}"
             )
-        except Exception:
-            logger.debug("delete_session: SESSION delete ignored", exc_info=True)

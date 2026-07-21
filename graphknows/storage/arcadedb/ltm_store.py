@@ -18,9 +18,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from graphknows.storage.arcadedb._base import ArcadeStoreBase
 from graphknows.storage.arcadedb._sql import sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
-from graphknows.storage.models.gds import CommunityResult
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ _TOMBSTONE_RETENTION_DAYS: int = 90
 # ---------------------------------------------------------------------------
 
 
-class ArcadeDBLTMStore:
+class ArcadeDBLTMStore(ArcadeStoreBase):
     """ArcadeDB-backed LTM graph store.
 
     Attributes:
@@ -182,63 +182,20 @@ class ArcadeDBLTMStore:
         relation_extractor: Any | None = None,
         db: str = _LTM_DB,
     ) -> None:
-        self._c = client
-        self._db = db
+        super().__init__(client, db)
         self._relation_extractor = relation_extractor
 
     # ------------------------------------------------------------------
-    # Lifecycle
+    # Schema
     # ------------------------------------------------------------------
-
-    @property
-    def client(self) -> ArcadeDBClient:
-        """The underlying ArcadeDB client (shared across stores)."""
-        return self._c
-
-    @property
-    def database(self) -> str:
-        """Name of the ArcadeDB database this store reads/writes."""
-        return self._db
-
-    async def connect(self) -> None:
-        """Open the shared client connection. Idempotent.
-
-        Schema creation is deliberately not run here — call ensure_schema()
-        explicitly on write paths so read paths avoid idempotent DDL round-trips.
-        """
-        await self._c.connect()
-
-    async def close(self) -> None:
-        """Close the shared client connection. Idempotent."""
-        await self._c.close()
 
     async def ensure_indexes(self) -> None:
         """Create LTM database and schema. Idempotent."""
-        await self._c.create_database(self._db)
-        for lang, stmt in _SCHEMA_DDL:
-            try:
-                await self._c.command(self._db, stmt, language=lang)
-            except Exception as exc:
-                exc_s = str(exc).lower()
-                if "already exists" in exc_s or "duplicate" in exc_s:
-                    pass  # idempotent re-creation — expected
-                else:
-                    logger.warning("LTM DDL failed (non-idempotent): %s | %s", stmt[:60], exc)
-                    raise
+        await self._apply_ddl(_SCHEMA_DDL)
         logger.info("ArcadeDBLTMStore schema ensured")
 
     # keep legacy name used by container/builder
     ensure_schema = ensure_indexes
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _cmd(self, cypher: str, **params: Any) -> list[dict]:
-        return await self._c.command(self._db, cypher, params=params or None)
-
-    async def _qry(self, cypher: str, **params: Any) -> list[dict]:
-        return await self._c.query(self._db, cypher, params=params or None)
 
 
     async def _supersede_ltm_edge(self, predicate: str, src: str, tgt: str, now: str) -> None:
@@ -250,7 +207,7 @@ class ArcadeDBLTMStore:
         instead of deleting it, preserving the historical record.
         """
         try:
-            await self._cmd(
+            await self.command(
                 "MATCH (a:ENTITY {name: $src})"
                 "-[r:REL {predicate: $predicate, is_current: true}]"
                 "->(b:ENTITY) "
@@ -288,14 +245,14 @@ class ArcadeDBLTMStore:
         }
 
         # SESSION node
-        await self._cmd(
+        await self.command(
             "MERGE (s:SESSION {id: $sid}) SET s.flushed_at = $now", sid=session_id, now=now
         )
         nodes += 1
 
         # FILE nodes
         for f in stm_data.get("files", []):
-            await self._cmd(
+            await self.command(
                 "MERGE (f:FILE {id: $fid}) SET f.title = $title, f.parser_name = $pn, f.source_hint = $sh "
                 "WITH f MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(f)",
                 fid=f["id"],
@@ -309,7 +266,7 @@ class ArcadeDBLTMStore:
 
         # CHUNK nodes — session_id stored directly so text search can filter by session
         for c in stm_data.get("chunks", []):
-            await self._cmd(
+            await self.command(
                 "MERGE (c:CHUNK {id: $cid}) SET c.text = $text, c.heading_path = $hp, "
                 "c.chunk_index = $ci, c.session_id = $sid, c.file_id = $fid "
                 "WITH c MATCH (f:FILE {id: $fid}) MERGE (f)-[:HAS_CHUNK]->(c)",
@@ -328,7 +285,7 @@ class ArcadeDBLTMStore:
                 iso = str(tref.get("iso", "")).strip()
                 if not iso:
                     continue
-                await self._cmd(
+                await self.command(
                     "MERGE (d:TEMPORAL {iso: $iso}) SET d.granularity = $g "
                     "WITH d MATCH (c:CHUNK {id: $cid}) MERGE (c)-[:MENTIONS_DATE]->(d)",
                     iso=iso,
@@ -344,7 +301,7 @@ class ArcadeDBLTMStore:
             ename = ce["entity_name"]
             em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
             if ename not in written:
-                await self._cmd(
+                await self.command(
                     "MERGE (e:ENTITY {name: $n}) SET e.type = $t, e.confidence = $c",
                     n=ename,
                     t=em.get("type", "UNKNOWN"),
@@ -352,7 +309,7 @@ class ArcadeDBLTMStore:
                 )
                 nodes += 1
                 written.add(ename)
-            await self._cmd(
+            await self.command(
                 "MATCH (c:CHUNK {id: $cid}), (e:ENTITY {name: $n}) MERGE (c)-[:MENTIONS]->(e)",
                 cid=ce["chunk_id"],
                 n=ename,
@@ -361,7 +318,7 @@ class ArcadeDBLTMStore:
 
         # DIALOG nodes
         for d in stm_data.get("dialogs", []):
-            await self._cmd(
+            await self.command(
                 "MERGE (d:DIALOG {id: $did}) SET d.session_id = $sid, d.started_at = $sa "
                 "WITH d MATCH (sess:SESSION {id: $sid}) MERGE (sess)-[:IN_SESSION]->(d)",
                 did=d["id"],
@@ -373,7 +330,7 @@ class ArcadeDBLTMStore:
 
         # TURN nodes + HAS_TURN edges
         for t in stm_data.get("turns", []):
-            await self._cmd(
+            await self.command(
                 "MERGE (t:TURN {id: $tid}) SET t.session_id = $sid, t.turn_index = $ti, "
                 "t.role = $r, t.text = $txt "
                 "WITH t MATCH (d:DIALOG {id: $did}) MERGE (d)-[:HAS_TURN]->(t)",
@@ -389,7 +346,7 @@ class ArcadeDBLTMStore:
 
         # NEXT edges (turn sequence)
         for ne in stm_data.get("next_edges", []):
-            await self._cmd(
+            await self.command(
                 "MATCH (t1:TURN {id: $a}), (t2:TURN {id: $b}) MERGE (t1)-[:NEXT]->(t2)",
                 a=ne["from_turn_id"],
                 b=ne["to_turn_id"],
@@ -401,7 +358,7 @@ class ArcadeDBLTMStore:
             ename = te["entity_name"]
             em = entity_by_name.get(ename, {"type": "UNKNOWN", "confidence": 1.0})
             if ename not in written:
-                await self._cmd(
+                await self.command(
                     "MERGE (e:ENTITY {name: $n}) SET e.type = $t, e.confidence = $c",
                     n=ename,
                     t=em.get("type", "UNKNOWN"),
@@ -409,7 +366,7 @@ class ArcadeDBLTMStore:
                 )
                 nodes += 1
                 written.add(ename)
-            await self._cmd(
+            await self.command(
                 "MATCH (t:TURN {id: $tid}), (e:ENTITY {name: $n}) MERGE (t)-[:HAS_ENTITY]->(e)",
                 tid=te["turn_id"],
                 n=ename,
@@ -438,7 +395,7 @@ class ArcadeDBLTMStore:
             if rel.upper() in _LTM_SINGLE_VALUED_RELATIONS:
                 await self._supersede_ltm_edge(rel, src, tgt, now)
 
-            await self._cmd(
+            await self.command(
                 "MERGE (a:ENTITY {name: $src}) "
                 "MERGE (b:ENTITY {name: $tgt}) "
                 "MERGE (a)-[r:REL {predicate: $predicate}]->(b) "
@@ -506,7 +463,7 @@ class ArcadeDBLTMStore:
                 continue
             set_clause = ", ".join(parts)
             try:
-                await self._cmd(
+                await self.command(
                     f"MATCH (e:ENTITY {{name: $name}}) SET {set_clause}",
                     **params,
                 )
@@ -536,10 +493,10 @@ class ArcadeDBLTMStore:
 
         # Fetch all entity names and directed relation edges.
         try:
-            entity_rows = await self._qry(
+            entity_rows = await self.query(
                 "MATCH (e:ENTITY) WHERE e.name IS NOT NULL RETURN e.name AS name"
             )
-            edge_rows = await self._qry(
+            edge_rows = await self.query(
                 "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
                 "WHERE r.is_current = true OR r.is_current IS NULL "
                 "RETURN DISTINCT a.name AS src, b.name AS tgt, "
@@ -621,7 +578,7 @@ class ArcadeDBLTMStore:
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
         deleted = 0
         try:
-            rows = await self._cmd(
+            rows = await self.command(
                 "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
                 "WHERE r.is_current = false "
                 "AND r.invalid_at IS NOT NULL "
@@ -657,7 +614,7 @@ class ArcadeDBLTMStore:
         """
         deleted = 0
         try:
-            rows = await self._cmd(
+            rows = await self.command(
                 "MATCH (a:ENTITY)-[r]->(b:ENTITY) "
                 "WHERE r.is_current = false "
                 "AND (r.weight IS NOT NULL AND r.weight < 0.5 "
@@ -726,7 +683,7 @@ class ArcadeDBLTMStore:
             # Supersede single-valued predicates before upserting.
             if rel.upper() in _LTM_SINGLE_VALUED_RELATIONS:
                 await self._supersede_ltm_edge(rel, src_canon, tgt_canon, now_ts)
-            await self._cmd(
+            await self.command(
                 "MERGE (a:ENTITY {name: $src}) "
                 "SET a.type = coalesce(a.type, $src_t) "
                 "MERGE (b:ENTITY {name: $tgt}) "
@@ -753,23 +710,6 @@ class ArcadeDBLTMStore:
     # Topic communities + summarization
     # ------------------------------------------------------------------
 
-    async def detect_communities(self) -> CommunityResult:
-        """Detect communities and write ``community_id`` back to ENTITY nodes.
-
-        Runs in ALL relation-extraction modes (llm-free and llm-assisted). Its
-        sole job is to cluster the entity-relation graph and persist the cluster
-        id on each entity, so retrieval can weight chunks by community
-        (``_community_boost``). Topic summarization (LLM) is a separate,
-        llm-assisted-only step layered on top of these communities.
-        """
-        communities, modularity, silhouette, algorithm = await self._topic_communities()
-        return CommunityResult(
-            community_count=sum(1 for members in communities.values() if len(members) >= 2),
-            modularity=modularity or 0.0,
-            algorithm_used=algorithm,
-            silhouette_cosine=silhouette,
-        )
-
     async def _topic_communities(
         self,
     ) -> tuple[dict[int, list[str]], float | None, float | None, str]:
@@ -780,7 +720,7 @@ class ArcadeDBLTMStore:
         gives high, meaningful modularity. Falls back to chunk co-occurrence Leiden
         when node2vec is unavailable.
         """
-        gds_rows = await self._qry(
+        gds_rows = await self.query(
             "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
             "RETURN e.community_id AS cid, collect(DISTINCT e.name) AS members"
         )
@@ -821,7 +761,7 @@ class ArcadeDBLTMStore:
         for cid, members in communities.items():
             for name in members:
                 try:
-                    await self._cmd(
+                    await self.command(
                         "MATCH (e:ENTITY {name: $name}) SET e.community_id = $cid",
                         name=name,
                         cid=cid,
@@ -874,7 +814,7 @@ class ArcadeDBLTMStore:
             return await self._cooccurrence_graph()
         try:
             await self._ensure_analytical_view()
-            rows = await self._qry(
+            rows = await self.query(
                 f"CALL algo.node2vec({{walkLength:20,walks:20,dimensions:{_N2V_DIM}}}) "
                 "YIELD node, embedding WHERE node.name IS NOT NULL "
                 "RETURN node.name AS name, embedding"
@@ -921,7 +861,7 @@ class ArcadeDBLTMStore:
                     break
 
         # Explicit semantic relation edges (structural signal).
-        rel_rows = await self._qry(
+        rel_rows = await self.query(
             "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE a.name < b.name "
             "RETURN DISTINCT a.name AS a, b.name AS b"
         )
@@ -936,7 +876,7 @@ class ArcadeDBLTMStore:
         self,
     ) -> tuple[list[str], list[tuple[int, int]], list[float], str] | None:
         """Fallback community graph from entity co-occurrence in chunks."""
-        rel_rows = await self._qry(
+        rel_rows = await self.query(
             "MATCH (c:CHUNK)-[:MENTIONS]->(a:ENTITY), (c)-[:MENTIONS]->(b:ENTITY) "
             "WHERE a.name < b.name "
             "RETURN a.name AS a, b.name AS b, count(DISTINCT c) AS weight"
@@ -1009,7 +949,7 @@ class ArcadeDBLTMStore:
         # Load existing community hashes to skip unchanged communities
         existing_hashes: dict[int, str] = {}
         try:
-            rows = await self._qry(
+            rows = await self.query(
                 "MATCH (t:TOPIC) WHERE t.community_id IS NOT NULL AND t.community_hash IS NOT NULL "
                 "RETURN t.community_id AS cid, t.community_hash AS h"
             )
@@ -1026,7 +966,7 @@ class ArcadeDBLTMStore:
             ).hexdigest()
             if existing_hashes.get(comm_id) == comm_hash:
                 # Refresh metadata only
-                await self._cmd(
+                await self.command(
                     "MATCH (t:TOPIC {community_id: $cid}) "
                     "SET t.modularity = $mod, t.gds_modularity = $gmod, t.community_algorithm = $alg",
                     cid=comm_id,
@@ -1037,7 +977,7 @@ class ArcadeDBLTMStore:
                 continue
 
             # Evidence passages
-            evidence_rows = await self._qry(
+            evidence_rows = await self.query(
                 "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) WHERE e.name IN $members "
                 "WITH DISTINCT c RETURN c.text AS text, c.heading_path AS hp ORDER BY rand() LIMIT 100",
                 members=members,
@@ -1092,7 +1032,7 @@ class ArcadeDBLTMStore:
             # IN_TOPIC edges
             for name in members:
                 try:
-                    await self._cmd(
+                    await self.command(
                         "MATCH (tp:TOPIC {id: $tid}), (e:ENTITY {name: $name}) MERGE (e)-[:IN_TOPIC]->(tp)",
                         tid=topic_id,
                         name=name,
@@ -1138,7 +1078,7 @@ class ArcadeDBLTMStore:
             }
             for i, f in enumerate(frames)
         ]
-        await self._cmd(
+        await self.command(
             "UNWIND $rows AS r "
             "MERGE (n:FRAME {id: r.id}) "
             "SET n.session_id = r.sid, n.frame_type = r.ft, n.chunk_id = r.cid, "
@@ -1153,7 +1093,7 @@ class ArcadeDBLTMStore:
         """Return FRAME rows for *session_id* whose frame_type is in *frame_types*."""
         if not frame_types:
             return []
-        rows = await self._qry(
+        rows = await self.query(
             "MATCH (n:FRAME) WHERE n.session_id = $sid AND n.frame_type IN $fts "
             "RETURN n.chunk_id AS chunk_id, n.frame_type AS frame_type, "
             "n.speaker AS speaker, n.fillers AS fillers",
@@ -1176,7 +1116,7 @@ class ArcadeDBLTMStore:
             tid = t.get("id") or t.get("topic_id", "")
             if not tid:
                 continue
-            await self._cmd(
+            await self.command(
                 "MERGE (tp:TOPIC {id: $id}) "
                 "SET tp.topic_id = $tid, tp.label = $label, tp.summary = $summary, "
                 "tp.community_id = $cid, tp.community_hash = $ch, "
@@ -1225,7 +1165,7 @@ class ArcadeDBLTMStore:
             full_where = f"({text_where}) AND c.session_id = '{safe_sid}'"
         else:
             full_where = text_where
-        rows = await self._qry(
+        rows = await self.query(
             f"MATCH (c:CHUNK) WHERE {full_where} RETURN c.id AS chunk_id, c.text AS text LIMIT $k",
             k=top_k,
         )
@@ -1247,7 +1187,7 @@ class ArcadeDBLTMStore:
             return future.result()
 
     async def _get_entity_by_name_async(self, name: str) -> dict[str, Any] | None:
-        rows = await self._qry(
+        rows = await self.query(
             "MATCH (e:ENTITY) WHERE toLower(e.name) = toLower($name) "
             "RETURN e.id AS id, e.name AS name, e.label AS label, e.type AS type, "
             "e.confidence AS confidence, e.community_id AS community_id, "
@@ -1275,7 +1215,7 @@ class ArcadeDBLTMStore:
             return future.result()
 
     async def _list_topic_nodes_async(self, min_entities: int) -> list[dict[str, Any]]:
-        rows = await self._qry(
+        rows = await self.query(
             "MATCH (t:TOPIC) "
             "OPTIONAL MATCH (e)-[:IN_TOPIC]->(t) "
             "WITH t, count(DISTINCT e) AS computed_entity_count "

@@ -84,7 +84,7 @@ async def _chunk_exists_in_db(
     for tok in sorted(gold_toks, key=len, reverse=True)[:3]:
         safe = tok.replace("'", "")
         try:
-            rows = await neo._qry(
+            rows = await neo.query(
                 f"MATCH (sess:SESSION {{id: $sid}})-[:IN_SESSION]->(f:FILE)"
                 f"-[:HAS_CHUNK]->(c:CHUNK) "
                 f"WHERE toLower(c.text) CONTAINS '{safe}' "
