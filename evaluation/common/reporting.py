@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,6 +70,97 @@ def summarize(cases: list[CaseResult]) -> dict[str, Any]:
         "category_counts": {cat: len(vals) for cat, vals in sorted(by_cat.items())},
         "metric_summary": {
             key: round(_mean(vals), 4) for key, vals in sorted(metric_buckets.items()) if vals
+        },
+        "operational": _operational(cases, metric_buckets),
+    }
+
+
+def _pct(values: list[float], p: float) -> float:
+    """Nearest-rank percentile (no interpolation, no numpy dependency)."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, math.ceil(p / 100 * len(ordered)) - 1))
+    return ordered[idx]
+
+
+def _operational(cases: list[CaseResult], buckets: dict[str, list[float]]) -> dict[str, Any]:
+    """Cost / latency / behaviour, in the shape a README can quote.
+
+    Kept apart from ``metric_summary`` (which is means over every numeric field)
+    because the questions here have different shapes:
+
+    * Latency covers RETRIEVAL ONLY, in percentiles (a mean hides the tail users
+      feel). Retrieval is the only stage this system owns — local graph+vector
+      work, no LLM. Generation/judge time is the configured provider's and would
+      change under our name every time you swap models, so it is not reported;
+      their COST is, because that is what a user actually spends.
+    * Cost needs TOTALS, not means. ``ingest_cost_usd`` is the load-bearing one:
+      in llm_free it is 0 by construction — the whole graph is built with no LLM
+      call — so the only spend is at query time, against a corpus you ingest once.
+    * Abstention is a rate, not a score: refusing to answer is a different defect
+      from answering wrongly, and accuracy alone cannot tell them apart.
+    """
+
+    def _stat(key: str) -> dict[str, float] | None:
+        vals = buckets.get(key)
+        if not vals:
+            return None
+        return {
+            "p50": round(_pct(vals, 50), 1),
+            "p95": round(_pct(vals, 95), 1),
+            "mean": round(_mean(vals), 1),
+            "max": round(max(vals), 1),
+        }
+
+    latency = {name: stat for name in ("retrieve_ms",) if (stat := _stat(name)) is not None}
+
+    def _total(key: str) -> float:
+        return round(sum(buckets.get(key) or []), 4)
+
+    n = len(cases) or 1
+    # ingest_* is repeated onto every case of a unit, so summing it would multiply
+    # by the question count. Take the distinct per-unit values instead.
+    per_unit: dict[str, dict[str, float]] = {}
+    for case in cases:
+        unit = case.group_id or "?"
+        m = case.metrics
+        if unit not in per_unit:
+            per_unit[unit] = {
+                "ingest_cost_usd": float(m.get("ingest_cost_usd") or 0.0),
+                "ingest_elapsed_s": float(m.get("ingest_elapsed_s") or 0.0),
+                "ingested_chunks": float(m.get("ingested_chunks") or 0.0),
+                "flush_nodes": float(m.get("flush_nodes") or 0.0),
+            }
+    gen_cost = _total("gen_cost_usd")
+    ingest_cost = round(sum(u["ingest_cost_usd"] for u in per_unit.values()), 4)
+
+    return {
+        "latency_ms": latency,
+        "cost_usd": {
+            # 0.0 in llm_free: the graph is built with no LLM call at all.
+            "ingest_total": ingest_cost,
+            "query_total": gen_cost,
+            "query_per_question": round(gen_cost / n, 6),
+            "total": round(ingest_cost + gen_cost, 4),
+        },
+        "ingest": {
+            "units": len(per_unit),
+            "elapsed_s_total": round(sum(u["ingest_elapsed_s"] for u in per_unit.values()), 1),
+            "chunks_total": int(sum(u["ingested_chunks"] for u in per_unit.values())),
+            "graph_nodes_total": int(sum(u["flush_nodes"] for u in per_unit.values())),
+        },
+        "behaviour": {
+            "abstention_rate": round(_mean(buckets.get("abstained") or [0.0]), 4),
+            "avg_facts_supplied": round(_mean(buckets.get("fact_count") or [0.0]), 2),
+            "avg_context_passages": round(_mean(buckets.get("context_passage_count") or [0.0]), 2),
+        },
+        "context": {
+            "prompt_tokens_p50": round(_pct(buckets.get("gen_prompt_tokens") or [0.0], 50), 0),
+            "prompt_tokens_p95": round(_pct(buckets.get("gen_prompt_tokens") or [0.0], 95), 0),
+            "completion_tokens_p50": round(
+                _pct(buckets.get("gen_completion_tokens") or [0.0], 50), 0
+            ),
         },
     }
 

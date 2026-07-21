@@ -13,6 +13,8 @@ import abc
 import asyncio
 import logging
 import os
+import re
+import time
 from typing import Any
 
 from evaluation.common.config import BaseEvalConfig
@@ -33,6 +35,16 @@ from evaluation.common.retrieval import Retriever
 from graphknows.integrations.client import GraphKnowsMCPClient
 
 log = logging.getLogger(__name__)
+
+# A refusal to answer. Tracked as its OWN rate rather than folded into accuracy:
+# "the memories do not mention X" when the evidence WAS retrieved is a
+# grounding/prompt defect, and it is invisible if you only look at the score.
+_ABSTAIN_RE = re.compile(
+    r"do(es)? not (contain|mention|include|specify|provide)|no (specific |exact )?"
+    r"(date|information|mention)|not (mentioned|specified|provided|available|enough)|"
+    r"cannot (be )?(answer|determin)|^\s*unknown\s*$|insufficient",
+    re.I,
+)
 
 
 class BenchmarkAdapter(abc.ABC):
@@ -269,14 +281,35 @@ async def _answer_unit(
     async def _answer_one(idx: int, case: EvalCase) -> tuple[int, CaseResult]:
         async with answer_sem:
             try:
+                # ONLY retrieval is timed. It is the sole stage this system owns:
+                # local graph+vector work with no LLM in it. Generation and
+                # judging are whatever model happens to be configured, so timing
+                # them would report the provider's speed under our name — a number
+                # that changes when you swap models and says nothing about the
+                # memory layer. Their COST is still recorded (see _operational),
+                # because that is what a user actually spends.
+                t0 = time.perf_counter()
                 probe, facts = await retriever.query(
                     session_id, case.question, k=config.probe_k, namespace=namespace
                 )
+                retrieve_ms = (time.perf_counter() - t0) * 1000.0
+
                 passages = probe[: config.top_k]
                 context_passages = probe[: config.gen_context_k]
                 answer, gen_usage = await adapter.answer(case, unit, context_passages, facts)
                 score, judge_metrics = await adapter.judge_case(case, answer)
+
                 lexical = adapter.lexical_metrics(case, answer)
+                lexical = {
+                    **lexical,
+                    "retrieve_ms": round(retrieve_ms, 1),
+                    "fact_count": len(facts),
+                    "context_passage_count": len(context_passages),
+                    # Refusing to answer is a distinct failure from answering
+                    # wrongly — it needs a prompt/grounding fix, not a retrieval
+                    # one — so it is counted rather than hidden inside accuracy.
+                    "abstained": bool(_ABSTAIN_RE.search(answer or "")),
+                }
             except Exception as exc:
                 # Credit exhaustion is the ONLY hard stop — re-raise it. Any other
                 # per-question failure (a transient empty completion, a provider
@@ -286,7 +319,9 @@ async def _answer_unit(
                     raise
                 log.warning("Question %s failed (scored 0.0): %s", case.case_id, exc)
                 done = await counter.bump()
-                print(f"  [{done:4d}/{counter.total}] {case.case_id}  judge=0.00  ERROR", flush=True)
+                print(
+                    f"  [{done:4d}/{counter.total}] {case.case_id}  judge=0.00  ERROR", flush=True
+                )
                 return idx, build_case_result(
                     case,
                     config=config,
@@ -318,8 +353,7 @@ async def _answer_unit(
         done = await counter.bump()
         preview = answer[:50].replace("\n", " ")
         print(
-            f"  [{done:4d}/{counter.total}] {case.case_id}  "
-            f"judge={score:.2f}  gen={preview!r}",
+            f"  [{done:4d}/{counter.total}] {case.case_id}  judge={score:.2f}  gen={preview!r}",
             flush=True,
         )
         return idx, result
@@ -426,7 +460,8 @@ async def run_units(
                 _checkpoint(run_id, adapter, config, _ordered())
                 log.info(
                     "Checkpoint: %d units done, %d cases (last %s)",
-                    len(results_by_unit), sum(len(r) for r in results_by_unit.values()),
+                    len(results_by_unit),
+                    sum(len(r) for r in results_by_unit.values()),
                     unit.group_id,
                 )
 

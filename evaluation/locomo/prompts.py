@@ -62,10 +62,30 @@ aspect; answer the exact subject asked, not the broader family or household.
 
 ## Stage 5 — GROUND EVERY DATE
 These conversations took place around {reference_date}; all events fall in 2022-2024.
+
+**THE MESSAGE DATE IS NOT THE EVENT DATE.** Every memory is prefixed with the date it was \
+SPOKEN. A past-tense report describes something that already happened, so the event is \
+EARLIER than the message date. Answering with the message date is the single most common \
+error on these questions — do not do it unless the text says the event happened that same \
+day ("today", "this morning", "just now").
+
+Work each date question in three explicit steps:
+1. Find the message date D that carries the report (its "(Month DD, YYYY)" prefix).
+2. Read the time expression in the sentence itself — "yesterday", "last weekend", "last \
+week", "a couple of weeks ago", "last month", "last year", "on Tuesday".
+3. SUBTRACT it from D and answer with the result, not with D.
+
+   "(July 17, 2023) … I joined a mentorship program last weekend" → the weekend BEFORE \
+July 17 → answer 15 July 2023. NOT 17 July.
+   "(May 25, 2023) … I went camping yesterday" → 24 May 2023. NOT 25 May.
+   "(June 9, 2023) … I met up with them last week" → the week before 9 June 2023.
+
+- If the sentence carries NO time expression and is past tense, the event is shortly \
+before D — say so relative to D rather than asserting D itself.
+- Future tense ("I'm going camping next month") → compute FORWARD from D: from (May 25, \
+2023), "next month" is June 2023, not May.
 - Compute relative time against the conversation dates, never against today.
 - Use dates stated in the memories; never invent one.
-- "Shared/mentioned X on date D" means they TALKED about it on D — the event is usually \
-shortly before D.
 - If several similar events exist at different dates, enumerate them with dates before \
 choosing: past tense + "the" → the instance closest before the reference date; future \
 tense ("plans to") → the earliest planned date.
@@ -73,6 +93,8 @@ tense ("plans to") → the earliest planned date.
 When the memories pin down the DAY (stated outright, or derivable from a message date \
 plus "yesterday"/"last weekend"), answer with the full day-month-year; "July 2023" when \
 "10 July 2023" is derivable loses credit for imprecision.
+- Only say a date is absent after checking EVERY memory for a message-date + time \
+expression pair. A report with a date prefix always grounds SOME date.
 
 ## Stage 6 — INCLUSION CHECK (lists and counts)
 If you found an item during reasoning, include it unless you have strong evidence it is \
