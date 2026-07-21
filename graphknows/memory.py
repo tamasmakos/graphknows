@@ -11,31 +11,13 @@ import asyncio
 import logging
 import os
 import re
+import uuid
 from typing import Any
 
+from graphknows.ingestion.parsers.base import strip_content_heading
 from graphknows.settings import GraphKnowsSettings
 
 logger = logging.getLogger(__name__)
-
-_STM_RECALL_WEIGHT: float = 0.6
-_LTM_RECALL_WEIGHT: float = 0.4
-assert _STM_RECALL_WEIGHT + _LTM_RECALL_WEIGHT == 1.0
-
-
-def normalise_and_weight(hits: list[Any], weight: float) -> None:
-    """Min-max normalise scores in-place, then apply a scope weight."""
-    if not hits:
-        return
-    scores = [h.score for h in hits]
-    mn, mx = min(scores), max(scores)
-    rng = mx - mn
-    for hit in hits:
-        hit.score = weight * ((hit.score - mn) / rng if rng else 1.0)
-
-
-def _clean_recall_text(text: str) -> str:
-    return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
-
 
 def _format_fused_hits(
     fused_results: list[dict[str, Any]], session_id: str
@@ -46,7 +28,7 @@ def _format_fused_hits(
             "cosine_score": r.get("rrf_score", 0.0),
             "type": r.get("sources", ""),
             "sources": r.get("sources", ""),
-            "text": _clean_recall_text(r.get("text", "")),
+            "text": strip_content_heading(r.get("text", "")),
             "session_id": session_id,
             "entities": r.get("entities", []),
             "metadata": r.get("metadata", {}),
@@ -334,28 +316,60 @@ class Memory:
         community_quality = {"modularity": 0.0, "communities": 0, "communities_scored": 0}
         chunks_flipped = 0
         resolution = {"dropped": 0, "merged": 0}
+        async def step(name: str, coro: Any, default: Any) -> Any:
+            """Await one pipeline step, recording a named error instead of aborting.
+
+            Each step is independently recoverable: an analytics failure must not
+            skip ``consolidate_session``, which is the state flip that makes the
+            flush meaningful. The step name is kept in the error so a caller can
+            tell which stage degraded.
+            """
+            try:
+                return await coro
+            except Exception as exc:
+                logger.warning("flush_memory: %s failed: %s", name, exc)
+                errors.append(f"{name}: {exc}")
+                return default
+
         try:
             await self._get_retriever()  # ensures the store is connected + schema'd
             store = self._retriever_stores[0]
-            resolution = await resolve_entities(store, session_id)
+        except Exception as exc:
+            # Without a connected store no step below can run.
+            errors.append(f"connect: {exc}")
+            store = None
+
+        if store is not None:
+            resolution = await step(
+                "resolve_entities", resolve_entities(store, session_id), resolution
+            )
             # Rebuild the analytical view once and share it across all three
             # algos below (each is skip_view_ensure=True) — rebuilding is not
-            # free. A failure here is non-fatal: each algo call still runs and
-            # handles its own failure (pagerank falls back to numpy; the other
-            # two soft-fail to 0), it just retries the (already-failed) view.
+            # free. A failure here is non-fatal and deliberately not recorded in
+            # errors: each algo call still runs and handles its own failure
+            # (pagerank falls back to numpy; the other two soft-fail to 0), it
+            # just retries the (already-failed) view.
             try:
                 await store._ensure_analytical_view()
             except Exception as exc:
                 logger.warning("flush_memory: analytical view ensure failed: %s", exc)
-            pagerank_updated = await store.compute_and_persist_pagerank(skip_view_ensure=True)
-            graph_embeddings_computed = await store.compute_graph_embeddings(
-                skip_view_ensure=True
+            pagerank_updated = await step(
+                "pagerank", store.compute_and_persist_pagerank(skip_view_ensure=True), 0
             )
-            communities_computed = await store.compute_communities(skip_view_ensure=True)
-            community_quality = await store.compute_community_quality(skip_view_ensure=True)
-            chunks_flipped = await store.consolidate_session(session_id)
-        except Exception as exc:
-            errors.append(str(exc))
+            graph_embeddings_computed = await step(
+                "graph_embeddings", store.compute_graph_embeddings(skip_view_ensure=True), 0
+            )
+            communities_computed = await step(
+                "communities", store.compute_communities(skip_view_ensure=True), 0
+            )
+            community_quality = await step(
+                "community_quality",
+                store.compute_community_quality(skip_view_ensure=True),
+                community_quality,
+            )
+            chunks_flipped = await step(
+                "consolidate_session", store.consolidate_session(session_id), 0
+            )
 
         return {
             "nodes": pagerank_updated,
@@ -512,32 +526,58 @@ class Memory:
         documents: list[dict[str, Any]],
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Ingest a document batch through the corpus workflow."""
+        """Ingest a batch of documents into one session, then consolidate it.
+
+        Runs the same golden-layer path as ``ingest_memory`` + ``flush_memory``.
+        It previously delegated to ``CorpusIngestWorkflow``, which was still
+        wired for the retired three-store (stm/ltm/vector) split: it called
+        ``STMService`` with removed keyword arguments, so every invocation
+        returned ``{"error": ...}`` with zero documents processed — and even
+        past that, it wrote to databases the golden retrieval path never reads.
+
+        A document is ``{"text": ..., "id": ..., "title": ...}``; a document
+        without text is recorded in ``errors`` and skipped.
+        """
+        import time
+
         if not documents:
             return {"documents_processed": 0, "error": "no documents provided"}
-        try:
-            from graphknows.ingestion import build_corpus_workflow
-            from graphknows.ingestion.workflows.corpus_ingest import CorpusIngestRequest
 
-            workflow = build_corpus_workflow(self.settings, self.namespace)
-            result = await workflow.run(
-                CorpusIngestRequest(
-                    documents=documents,
-                    session_id=session_id,
-                    run_gds=True,
+        t0 = time.monotonic()
+        sid = session_id or f"corpus-{uuid.uuid4().hex}"
+        errors: list[str] = []
+        processed = chunks = entities = 0
+
+        for doc in documents:
+            text = str(doc.get("text", "") or "")
+            doc_id = doc.get("id", "<unknown>")
+            if not text.strip():
+                errors.append(f"Skipped document missing 'text': id={doc_id}")
+                continue
+            try:
+                res = await self.ingest_memory(
+                    text, session_id=sid, title=str(doc.get("title", "") or "")
                 )
-            )
-        except Exception as exc:
-            return {"error": str(exc), "documents_processed": 0}
+            except Exception as exc:
+                errors.append(f"ingest failed for doc id={doc_id}: {exc}")
+                continue
+            processed += 1
+            chunks += int(res.get("chunks", 0) or 0)
+            entities += int(res.get("entities", 0) or 0)
+            errors.extend(res.get("errors", []) or [])
+
+        flushed = await self.flush_memory(sid)
+        errors.extend(flushed.get("errors", []) or [])
+
         return {
-            "session_id": result.session_id,
-            "documents_processed": result.documents_processed,
-            "entities_extracted": result.entities_extracted,
-            "chunks_written": result.chunks_written,
-            "nodes_written": result.nodes_written,
-            "edges_written": result.edges_written,
-            "elapsed_s": result.elapsed_s,
-            "errors": result.errors,
+            "session_id": sid,
+            "documents_processed": processed,
+            "entities_extracted": entities,
+            "chunks_written": chunks,
+            "merged_entities": flushed.get("merged_entities", 0),
+            "chunks_consolidated": flushed.get("chunks", 0),
+            "elapsed_s": round(time.monotonic() - t0, 3),
+            "errors": errors,
         }
 
     async def ltm_topics(self, min_entities: int = 3) -> dict[str, Any]:
@@ -547,7 +587,7 @@ class Memory:
         ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
         await ltm.connect()
         try:
-            rows = await ltm._qry(
+            rows = await ltm.query(
                 "MATCH (t:TOPIC) WHERE t.entity_count >= $min "
                 "RETURN t.topic_id AS topic_id, t.label AS label, t.summary AS summary, "
                 "t.community_id AS community_id, t.entity_names AS entity_names, "
@@ -566,7 +606,7 @@ class Memory:
         ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
         await ltm.connect()
         try:
-            rows = await ltm._qry(
+            rows = await ltm.query(
                 "MATCH (e:ENTITY) WHERE toLower(e.name) = toLower($name) "
                 "RETURN e.name AS name, e.type AS type, e.confidence AS confidence, "
                 "e.pagerank AS pagerank, e.community_id AS community_id LIMIT 1",
@@ -606,7 +646,7 @@ class Memory:
             if session_id:
                 # Split into two MATCH clauses — ArcadeDB's openCypher rejects
                 # 5-hop chains in a single MATCH pattern.
-                rows = await ltm._qry(
+                rows = await ltm.query(
                     "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
                     "MATCH (c)-[:MENTIONS]->(e:ENTITY) "
                     "RETURN DISTINCT e.name AS name, coalesce(e.type,'ENTITY') AS type, "
@@ -618,7 +658,7 @@ class Memory:
                     limit=limit,
                 )
             else:
-                rows = await ltm._qry(
+                rows = await ltm.query(
                     "MATCH (e:ENTITY) "
                     "RETURN e.name AS name, coalesce(e.type,'ENTITY') AS type, "
                     "coalesce(e.confidence, 1.0) AS confidence, "
