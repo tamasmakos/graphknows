@@ -22,25 +22,6 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-# Edge types carrying no semantic ENTITY->ENTITY meaning (graph structure /
-# provenance plumbing). Single source of truth for every reader that walks the
-# entity relation graph and must skip structural edges.
-STRUCTURAL_REL_TYPES: frozenset[str] = frozenset(
-    {
-        "MENTIONS",
-        "MENTIONS_DATE",
-        "HAS_CHUNK",
-        "HAS_ENTITY",
-        "HAS_TURN",
-        "IN_SESSION",
-        "IN_TOPIC",
-        "IN_DIALOG",
-        "PART_OF",
-        "NEXT",
-        "HAPPENED_ON",
-    }
-)
-
 
 class EntityGroupConfig(BaseModel):
     """Configuration for a single top-level entity group (e.g. PERSON, ORGANIZATION)."""

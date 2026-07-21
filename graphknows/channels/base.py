@@ -2,35 +2,22 @@
 
 A channel is owned end-to-end across the write and read paths:
 
-- ``ingest(rt, ...)`` — derive + write this channel's STM structure for one chunk.
-- ``promote(rt, ...)`` — derive + write this channel's LTM structure once per flush.
+- ``ingest(rt, ...)`` — derive + write this channel's structure for one chunk.
 - ``collect(ctx, rt, top_k)`` — return ranked query candidates at retrieval time.
 
-Every hook has a no-op / empty default, so a read-only channel implements just
-``collect`` and a write-only channel just ``ingest``/``promote``. Adding a new
-signal — e.g. metadata extraction — is one new subclass plus one
-``register()`` call, and it is active on both paths at once.
+Both hooks have a no-op / empty default, so a read-only channel implements just
+``collect`` and a write-only channel just ``ingest``. Adding a new signal — e.g.
+metadata extraction — is one new subclass plus one ``register()`` call, and it
+is active on both paths at once.
+
+There is no separate promote hook: the golden layer consolidates a session in
+place rather than copying it into a second database, so everything a channel
+writes is written on the ingest path.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, ClassVar
-
-
-@dataclass
-class ChannelStores:
-    """Shared store handle passed to the write-side hooks (``rt``).
-
-    The retriever satisfies the same duck-typed contract on the query side, so
-    ``collect`` receives the retriever and ``ingest``/``promote`` receive this
-    handle — both expose ``stm``/``vec``/``ltm``/``embed_model``.
-    """
-
-    stm: Any = None
-    vec: Any = None
-    ltm: Any = None
-    embed_model: str = ""
 
 
 class ChannelContext:
@@ -109,13 +96,9 @@ class Channel:
         """Derive + write this channel's STM structure for one chunk. No-op by default."""
         return None
 
-    async def promote(self, rt: Any, session_id: str, record: Any) -> None:
-        """Promote/derive this channel's LTM structure once per flush. No-op by default."""
-        return None
-
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Return ranked candidates ``{chunk_id: (score, info)}``. Empty by default."""
         return {}
 
 
-__all__ = ["Channel", "ChannelContext", "ChannelStores", "CollectResult"]
+__all__ = ["Channel", "ChannelContext", "CollectResult"]

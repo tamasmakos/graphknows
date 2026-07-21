@@ -1,17 +1,5 @@
-"""Ingestion-owned models: graph schema + labels, taxonomy, normalization, and
-the STM→LTM promotion contracts.
-"""
+"""Ingestion-owned models: graph schema + labels, taxonomy, and normalization."""
 
-from graphknows.ingestion.models.contracts import (
-    CommunityAssignment,
-    PromotionAudit,
-    SessionSnapshot,
-)
-from graphknows.ingestion.models.promotion import (
-    PromotionPolicy,
-    PromotionRecord,
-    PromotionRequest,
-)
 from graphknows.ingestion.models.taxonomy import (
     EntityGroupConfig,
     TaxonomyConfig,
@@ -24,13 +12,7 @@ from graphknows.ingestion.models.taxonomy import (
 from graphknows.ingestion.normalization import standardize_label
 
 __all__ = [
-    "CommunityAssignment",
     "EntityGroupConfig",
-    "PromotionAudit",
-    "PromotionPolicy",
-    "PromotionRecord",
-    "PromotionRequest",
-    "SessionSnapshot",
     "TaxonomyConfig",
     "build_relation_schema",
     "get_default_taxonomy",

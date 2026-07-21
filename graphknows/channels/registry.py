@@ -1,7 +1,7 @@
 """Channel registry — the single extension point for memory signals.
 
 Register a channel once (``register("metadata", MetadataChannel)``) and it is
-available to both the ingestion promotion pass and the retrieval collector fan-out.
+available to both the ingest pass and the retrieval collector fan-out.
 ``default_channels(settings)`` returns the active set for a configuration,
 filtered by each channel's declared ``profiles`` against the memory mode.
 """
