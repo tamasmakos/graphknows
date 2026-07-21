@@ -36,20 +36,12 @@ ignore = [
 "tests/*" = ["D", "S101", "B017", "E402", "N806", "SIM102", "UP038"]
 "scripts/*" = ["D103"]
 "evaluation/**" = ["D", "C901", "UP038", "RUF034"]
-"**/graphgen/**" = ["ALL"]  # absorbed research pipeline — linting deferred progressively
+# Vendored third-party checkout, not first-party code.
+"graphknows/utils/**" = ["ALL"]
 # TODO(tech-debt): add docstrings and refactor complexity in the files below
-"**/document_ingestor.py" = ["D101"]
-"**/feature_engineering.py" = ["D101", "C901", "N806", "E741"]
-"**/forget.py" = ["D101"]
-"**/migrations/001_ltm8_schema.py" = ["D103"]
-"**/recall.py" = ["D101"]
-"**/topic_summarizer.py" = ["D101"]
 "**/rdf_parser.py" = ["C901"]
-"**/_cypher_utils.py" = ["C901"]
-"**/stores/arcadedb/*.py" = ["D102", "C901"]  # data-access layer — docstrings deferred
-"**/memory/flush.py" = ["C901"]  # promotion pipeline is intentionally a single flow
-"**/memory/query/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
-"**/ingestion/domain/schema.py" = ["RUF022"]  # __all__ is grouped by category intentionally
+"**/storage/arcadedb/*.py" = ["D102", "C901"]  # data-access layer — docstrings deferred
+"**/retrieval/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
 
 [lint.pydocstyle]
 convention = "google"
