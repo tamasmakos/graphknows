@@ -96,6 +96,14 @@ Written once per namespace at schema-ensure time, count-guarded so a restart is
 a no-op. The DDL is unconditional and additive, so an existing namespace gains
 the types (empty) on its next `ensure_schema`.
 
+**Changing `GRAPHKNOWS_ONTOLOGY` on an existing namespace accumulates rather
+than replaces.** Each ontology is keyed by a content digest, so pointing a
+namespace at a second one adds its terms alongside the first (one `ONTOLOGY`
+node each). This is deliberate: chunks already tagged under the old ontology
+keep valid `MATCHES_CLASS` edges, and distinct ontologies have distinct URIs.
+But it does mean `OntologyChannel` will vector-search *both* vocabularies. Drop
+and re-ingest the namespace if you want a clean switch.
+
 ## Folders and multiple ontologies
 
 A folder loads every `.ttl` / `.owl` / `.rdf` / `.jsonld` beneath it, and all
