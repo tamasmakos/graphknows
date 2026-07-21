@@ -19,6 +19,7 @@ from collections import OrderedDict
 from typing import Any
 
 from graphknows.settings import GraphKnowsSettings
+from graphknows.storage.namespace import resolve
 
 _settings: GraphKnowsSettings | None = None
 # LRU cache: namespace → Memory. Ordered so the front is least-recently-used.
@@ -40,7 +41,7 @@ def get_settings() -> GraphKnowsSettings:
 
 def _resolve(namespace: str) -> str:
     """Effective namespace: explicit arg wins, else the settings default."""
-    return namespace or get_settings().namespace
+    return resolve(namespace, get_settings())
 
 
 async def get_runtime(namespace: str = "") -> Any:

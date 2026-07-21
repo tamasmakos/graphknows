@@ -78,6 +78,16 @@ class TestRemoteMemory:
         assert client.call_tool.await_args_list[1].args[0] == "memory_purge"
 
     @pytest.mark.asyncio
+    async def test_drop_namespace_calls_memory_drop_namespace(self) -> None:
+        client = GraphKnowsMCPClient()
+        client.call_tool = AsyncMock(return_value={"dropped": True})
+        mem = RemoteMemory(client=client)
+        assert await mem.drop_namespace("acme") == {"dropped": True}
+        client.call_tool.assert_awaited_once_with(
+            "memory_drop_namespace", {"namespace": "acme"}
+        )
+
+    @pytest.mark.asyncio
     async def test_non_dict_result_wrapped(self) -> None:
         client = GraphKnowsMCPClient()
         client.call_tool = AsyncMock(return_value="oops")

@@ -88,6 +88,15 @@ class RemoteMemory:
         """Purge STM and/or LTM (MCP ``memory_purge``)."""
         return await self._call("memory_purge", {"scope": scope, "session_id": session_id})
 
+    async def drop_namespace(self, namespace: str) -> dict[str, Any]:
+        """DESTRUCTIVE: drop a tenant namespace (MCP ``memory_drop_namespace``).
+
+        Removes the ``stm_<ns>``/``ltm_<ns>`` databases outright — there is no
+        undo. Refuses the default ("") namespace; use :meth:`purge_memory` to
+        clear the shared ``stm``/``ltm``.
+        """
+        return await self._call("memory_drop_namespace", {"namespace": namespace})
+
     async def _call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         result = await self._client.call_tool(tool, arguments)
         return result if isinstance(result, dict) else {"result": result}

@@ -7,20 +7,30 @@ without requiring the full agent service.
 Tools
 -----
 STM tools:
-  memory_doctor   — connectivity check: ArcadeDB STM, LTM, vector
-  memory_stats    — STM and LTM node/chunk counts
-  memory_ingest   — ingest text into STM (ArcadeDB)
-  memory_flush    — promote STM session → ArcadeDB LTM
-  memory_mirror   — return the local Memory Mirror browser URL
+  memory_ingest         — ingest text into STM (ArcadeDB)
+  memory_flush          — promote STM session → ArcadeDB LTM
+  memory_recall         — deprecated alias of memory_query
 
 LTM tools:
-  ltm_topics      — list topics by entity threshold
+  ltm_topics            — list topics by entity threshold
+  ltm_entity            — one entity with its neighbourhood
+  ltm_entities          — list entities
+  ltm_query             — entity-scoped LTM lookup
 
 Retrieval:
-  memory_query    — unified retrieval (deterministic or agentic, driven by MODE)
+  memory_query          — unified retrieval (deterministic or agentic, driven by MODE)
+
+Admin:
+  memory_doctor         — connectivity check: ArcadeDB STM, LTM, vector
+  memory_stats          — STM and LTM node/chunk counts
+  memory_purge          — purge STM and/or LTM within one namespace
+  memory_drop_namespace — DESTRUCTIVE: drop a tenant's whole database pair
 
 Corpus:
-  corpus_ingest   — batch document ingestion into LTM knowledge graph
+  corpus_ingest         — batch document ingestion into LTM knowledge graph
+
+Web:
+  memory_mirror         — return the local Memory Mirror browser URL
 
 Usage (stdio probe)::
 
@@ -37,26 +47,12 @@ import logging
 
 logging.basicConfig(level=logging.WARNING, stream=__import__("sys").stderr)
 
-# --- Import tool modules (registers @app.tool() decorators) ---
-import graphknows.server.mcp.tools.stm  # noqa: E402
-import graphknows.server.mcp.tools.web  # noqa: F401, E402
 from graphknows.server.mcp._app import app  # noqa: E402
 
-# Re-export tool functions so existing code/tests can reference them on this module
-from graphknows.server.mcp.tools.admin import memory_doctor, memory_purge, memory_stats  # noqa: F401, E402
-from graphknows.server.mcp.tools.corpus import corpus_ingest  # noqa: F401, E402
-from graphknows.server.mcp.tools.ltm import (  # noqa: F401, E402
-    ltm_entities,
-    ltm_entity,
-    ltm_query,
-    ltm_topics,
-)
-from graphknows.server.mcp.tools.query import memory_query  # noqa: F401, E402
-from graphknows.server.mcp.tools.stm import memory_flush, memory_ingest, memory_recall  # noqa: F401, E402
-from graphknows.server.mcp.tools.web import memory_mirror  # noqa: F401, E402
-
-# Re-export private helper so tests can import it from this module.
-from graphknows.memory import normalise_and_weight as _normalise_and_weight  # noqa: F401, E402
+# Importing the tools package registers every tool (single registration point);
+# the star-import re-exports them here so existing code/tests can reference them
+# on this module. The package's __all__ is the authoritative inventory.
+from graphknows.server.mcp.tools import *  # noqa: F403, E402
 
 
 async def _startup_warmup() -> None:

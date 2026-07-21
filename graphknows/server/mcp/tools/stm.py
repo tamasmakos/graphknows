@@ -6,6 +6,7 @@ from typing import Any
 
 from graphknows.server.mcp._app import app
 from graphknows.server.mcp._state import get_runtime
+from graphknows.server.mcp.tools.query import memory_query
 
 
 @app.tool()
@@ -50,13 +51,18 @@ async def memory_recall(
     scope: str = "stm",
     namespace: str = "",
 ) -> dict[str, Any]:
-    """Recall ranked memory hits from STM, LTM, or both."""
-    runtime = await get_runtime(namespace)
-    return await runtime.recall_memory(
+    """Deprecated alias of ``memory_query`` — recall ranked memory hits.
+
+    Kept so existing MCP clients calling ``memory_recall`` keep working; it
+    delegates to ``memory_query`` so there is exactly one recall behaviour
+    (and one result shape). Prefer ``memory_query``.
+    """
+    return await memory_query(
         query,
         session_id=session_id,
         top_k=top_k,
         scope=scope,
+        namespace=namespace,
     )
 
 

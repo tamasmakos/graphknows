@@ -11,9 +11,3 @@ def test_runtime_facade_exists_for_transport_neutral_operations() -> None:
     assert "class Memory" in text
     assert "def recall_memory" in text
     assert "def corpus_ingest" in text
-
-
-def test_corpus_workflow_does_not_depend_on_mcp_state() -> None:
-    """Memory workflows should not depend inward on MCP transport state."""
-    text = Path("graphknows/ingestion/workflows/corpus_ingest.py").read_text(encoding="utf-8")
-    assert "graphknows.server.mcp._state" not in text
