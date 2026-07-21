@@ -46,8 +46,8 @@ rt = GraphKnowsRuntime(settings)
 | `GRAPHKNOWS_GLINER_MODEL` | `fastino/gliner2-multi-v1` | GLiNER2 entity model (HuggingFace id). |
 | `GRAPHKNOWS_GLINER_THRESHOLD` | `0.5` | Entity confidence threshold. |
 | `GRAPHKNOWS_SPACY_MODEL` | `en_core_web_lg` | spaCy model for relation mining. |
-| `GRAPHKNOWS_CHUNK_SIZE` | `1200` | Chunk size (characters). |
-| `GRAPHKNOWS_CHUNK_OVERLAP` | `100` | Chunk overlap (characters). |
+| `GRAPHKNOWS_CHUNK_SIZE` | `512` | Chunk size (characters). |
+| `GRAPHKNOWS_CHUNK_OVERLAP` | `64` | Chunk overlap (characters). |
 | `GRAPHKNOWS_SESSION_TTL_MINUTES` | `60` | Session inactivity before auto-merge. |
 
 ## Model downloads

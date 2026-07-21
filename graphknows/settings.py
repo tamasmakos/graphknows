@@ -95,9 +95,11 @@ class GraphKnowsSettings(BaseSettings):
     # you deliberately re-size the store.
     embed_dimensions: int = Field(default=0, alias="GRAPHKNOWS_EMBED_DIMENSIONS")
 
-    # Chunking
-    chunk_size: int = Field(default=1200, alias="GRAPHKNOWS_CHUNK_SIZE")
-    chunk_overlap: int = Field(default=100, alias="GRAPHKNOWS_CHUNK_OVERLAP")
+    # Chunking. Defaults mirror STMConfig, which is what the chunker actually
+    # applies — these were 1200/100 while the chunker used 512/64 and nothing
+    # read these fields, so setting the env vars silently did nothing.
+    chunk_size: int = Field(default=512, alias="GRAPHKNOWS_CHUNK_SIZE")
+    chunk_overlap: int = Field(default=64, alias="GRAPHKNOWS_CHUNK_OVERLAP")
 
     # Entity extraction
     gliner_model: str = Field(default="fastino/gliner2-multi-v1", alias="GRAPHKNOWS_GLINER_MODEL")
