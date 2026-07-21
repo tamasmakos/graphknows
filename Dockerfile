@@ -57,3 +57,28 @@ RUN useradd -m -u 1000 graphknows
 USER graphknows
 
 CMD ["graphknows-mcp"]
+
+# ---------------------------------------------------------------------------
+# dev — the workspace image. Everything below is developer tooling and MUST NOT
+# leak into the shipped `runtime` stage that backs the mcp and web services.
+# Build with `--target dev` (docker-compose does this for the workspace service).
+# ---------------------------------------------------------------------------
+FROM runtime AS dev
+
+USER root
+
+# curl is only needed to fetch the SonarQube CLI installer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# SonarQube CLI — code-quality/secret scanning for local development and the
+# git pre-commit hook. Installed to a system path so it is on PATH for every
+# shell (login or not). Authenticate with SONARQUBE_CLI_TOKEN + SONARQUBE_CLI_ORG;
+# `sonar auth login` is browser-based and cannot run headless.
+RUN curl -fsSL https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.sh \
+      | HOME=/opt bash \
+    && ln -sf /opt/.local/share/sonarqube-cli/bin/sonar /usr/local/bin/sonar \
+    && sonar --version
+
+USER graphknows

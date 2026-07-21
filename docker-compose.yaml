@@ -57,6 +57,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Pin the shipped stage explicitly: the Dockerfile's LAST stage is `dev`
+      # (developer tooling), and an untargeted build would silently pick it up.
+      target: runtime
     command: graphknows-mcp
     # Bind-mount the repo so code edits take effect on `restart` without a
     # rebuild. PYTHONPATH=/app makes the live source shadow the copy installed
@@ -111,12 +114,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Developer tooling (SonarQube CLI) lives in the `dev` stage only, so the
+      # shipped mcp/web images stay free of it.
+      target: dev
     working_dir: /app
     volumes:
       - .:/app
     environment:
       <<: *graphknows-env
       PYTHONPATH: /app
+      # SonarQube CLI headless auth — dev-only, browser `sonar auth login`
+      # cannot run in a container. Must be a USER token.
+      SONARQUBE_CLI_TOKEN: "${SONARQUBE_CLI_TOKEN:-}"
+      SONARQUBE_CLI_ORG: "${SONARQUBE_CLI_ORG:-}"
     tty: true
     stdin_open: true
     command: /bin/bash
@@ -145,7 +155,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: "${LANGFUSE_DATABASE_URL:-postgresql://langfuse:langfuse@langfuse-db:5432/langfuse}"
+      # Intentionally no inline default: a connection string with embedded
+      # credentials must not be committed. Set LANGFUSE_DATABASE_URL in .env
+      # (see .env.example) when using the observability profile.
+      DATABASE_URL: "${LANGFUSE_DATABASE_URL:-}"
       NEXTAUTH_SECRET: "${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-production}"
       SALT: "${LANGFUSE_SALT:-change-me-in-production}"
       NEXTAUTH_URL: "http://localhost:3000"
@@ -157,11 +170,11 @@ services:
     profiles: ["observability"]
     restart: unless-stopped
     environment:
-      POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: langfuse
-      POSTGRES_DB: langfuse
+      POSTGRES_USER: "${LANGFUSE_DB_USER:-langfuse}"
+      POSTGRES_PASSWORD: "${LANGFUSE_DB_PASSWORD:-langfuse}"
+      POSTGRES_DB: "${LANGFUSE_DB_NAME:-langfuse}"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
