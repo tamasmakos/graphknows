@@ -12,11 +12,10 @@ import asyncio
 import hashlib
 import logging
 import os
-import re
 import time
 from typing import Any
 
-from graphknows.ingestion.parsers.base import ParsedFile
+from graphknows.ingestion.parsers.base import ParsedFile, strip_content_heading
 from graphknows.ingestion.parsers.registry import get_parser
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.models.ingest import IngestResult
@@ -155,16 +154,35 @@ class _STMIngestHandler:
                 atom_type=seg.metadata.get("atom_type") or "text",
             )
 
-        async def _run_all() -> list[int]:
+        async def _run_all() -> tuple[list[int], list[str]]:
+            """Ingest every chunk, surviving individual failures.
+
+            One bad chunk must not abandon the rest of the file: the message
+            path (``STMService.ingest_messages``) already records a per-turn
+            error and continues, and both paths return the same
+            ``IngestResult.errors`` contract.
+            """
             sem = asyncio.Semaphore(cap)
 
             async def _with_sem(idx: int) -> int:
                 async with sem:
                     return await _process_chunk(idx)
 
-            return list(await asyncio.gather(*[_with_sem(i) for i in range(len(parsed.segments))]))
+            results = await asyncio.gather(
+                *[_with_sem(i) for i in range(len(parsed.segments))],
+                return_exceptions=True,
+            )
+            counts: list[int] = []
+            failures: list[str] = []
+            for idx, res in enumerate(results):
+                if isinstance(res, BaseException):
+                    log.warning("ingest chunk %d failed: %s", idx, res)
+                    failures.append(f"chunk {idx}: {res}")
+                else:
+                    counts.append(res)
+            return counts, failures
 
-        counts: list[int] = await _run_all()
+        counts, errors = await _run_all()
         entity_count = sum(counts)
 
         elapsed = time.monotonic() - t0
@@ -183,7 +201,7 @@ class _STMIngestHandler:
             chunk_count=len(parsed.segments),
             entity_count=entity_count,
             elapsed_s=elapsed,
-            errors=[],
+            errors=errors,
         )
 
     async def ingest_turn(
@@ -439,8 +457,7 @@ class _STMIngestHandler:
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     def _clean_text(self, text: str) -> str:
-        # Strip the '## Content\n\n' heading artifact inserted by PlainTextParser.
-        return re.sub(r"^##\s*Content\s*\n+", "", text, flags=re.IGNORECASE).strip()
+        return strip_content_heading(text)
 
     def _extract(self, clean_text: str) -> ExtractionResult:
         if self._extractor is not None:

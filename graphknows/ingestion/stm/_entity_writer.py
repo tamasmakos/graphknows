@@ -84,41 +84,6 @@ async def write_entity_nodes_and_edges(
     return entity_count
 
 
-async def write_chunk_entities_and_edges_bulk(
-    stm: Any,
-    session_id: str,
-    chunk_id: str,
-    entities: list[dict[str, Any]],
-) -> int:
-    """Write all entity nodes + CHUNK→ENTITY edges for one chunk via bulk store method.
-
-    This is the async (await-native) counterpart to write_entity_nodes_and_edges,
-    designed for the concurrent chunk path in _ingest_parsed where coroutines
-    await store methods directly (no _run nesting).  It applies the same
-    graph_entities filter and returns the same entity count.
-
-    The existing write_entity_nodes_and_edges function is left intact for the
-    DialogCapture (turn) path which uses the _run sync bridge.
-
-    Args:
-        stm: ArcadeDBSTMStore instance.
-        session_id: Session namespace.
-        chunk_id: The CHUNK node id to link entities to.
-        entities: Raw extraction entities (will be filtered by graph_entities).
-
-    Returns:
-        Number of graph entities written.
-    """
-    filtered = graph_entities(entities)
-    if filtered:
-        await stm.write_chunk_entities_bulk(
-            session_id=session_id,
-            chunk_id=chunk_id,
-            entities=filtered,
-        )
-    return len(filtered)
-
-
 async def write_relation_edges(
     stm: Any,
     session_id: str,
