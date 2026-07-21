@@ -6,237 +6,330 @@ retrieval to an agent. This document traces the moving parts and where each live
 
 ## Public entry point
 
-Everything is reached through `GraphKnowsRuntime` (`graphknows/runtime.py`), a
-transport-neutral, async runtime. It is wrapped by the MCP stdio server
-(`graphknows/mcp/`) and the web server (`graphknows/web/server.py`), but the class
-is usable directly:
+Everything is reached through `Memory` (`graphknows/memory.py`), a
+transport-neutral, async facade. It is wrapped by the MCP stdio server
+(`graphknows/server/mcp/`) and the web server (`graphknows/server/web/server.py`),
+but the class is usable directly:
 
 ```python
-from graphknows import GraphKnowsRuntime
+from graphknows import Memory
 
-async with GraphKnowsRuntime() as rt:
-    await rt.ingest_memory(messages, session_id="s1")
-    await rt.flush_memory("s1")
-    hits = await rt.recall_memory("who did Caroline meet?", session_id="s1")
+async with Memory() as mem:
+    await mem.ingest_memory(messages, session_id="s1")
+    await mem.flush_memory("s1")
+    hits = await mem.recall_memory("who did Caroline meet?", session_id="s1")
 ```
 
-Async methods on the runtime:
+Async methods on the facade:
 
 | Method | Purpose |
 | --- | --- |
-| `ingest_memory` | Ingest text or a message list into short-term memory (STM). |
-| `recall_memory` | Ranked hybrid recall over STM/LTM; returns fused hits. |
-| `flush_memory` | Promote one session's STM subgraph into long-term memory (LTM). |
-| `purge_memory` | Delete STM and/or LTM (all, or one session). |
-| `stats` | Node counts per database. |
-| `doctor` | Backend connectivity check (`stm` / `ltm` databases). |
-| `corpus_ingest` | Batch-ingest documents through the corpus workflow (`graphknows/memory/workflows/corpus_ingest.py`). |
+| `ingest_memory` | Ingest text or a message list into the graph (lifecycle state `raw`). |
+| `recall_memory` | Ranked hybrid recall; returns fused hits plus a fact sheet. |
+| `flush_memory` | Consolidate one session in place: entity resolution, analytics, `raw` → `consolidated`. |
+| `purge_memory` | Delete the namespace's data (all, or one session). |
+| `drop_namespace` | Drop the whole namespace database (refused for the default namespace). |
+| `stats` | Node counts for the namespace, chunks split by lifecycle state. |
+| `doctor` | Backend connectivity check for the namespace database. |
+| `corpus_ingest` | Batch-ingest documents into one session, then consolidate it. |
+| `ltm_topics` / `ltm_entity` / `ltm_entities` / `ltm_query` | Read-only graph browsing helpers. |
+
+A namespace-first SDK surface (`add`, `search`, `flush`) wraps the same verbs with
+mem0-style `user_id` / `agent_id` / `run_id` scoping (`Memory._scoped_session_id`).
 
 ## Configuration and modes
 
-Config is `GraphKnowsSettings` (`graphknows/config/__init__.py`), a
-`pydantic-settings` model. Every field maps to a `GRAPHKNOWS_`-prefixed
-environment variable (also read from a `.env` file). Key ones:
-`GRAPHKNOWS_MODE`, `GRAPHKNOWS_ARCADEDB_URL`, `GRAPHKNOWS_LLM_MODEL`,
-`GRAPHKNOWS_LLM_API_KEY`, `GRAPHKNOWS_EMBED_MODEL`, `GRAPHKNOWS_EMBED_API_BASE`,
-`GRAPHKNOWS_ONTOLOGY_FILE`.
+Config is `GraphKnowsSettings` (`graphknows/settings.py`), a `pydantic-settings`
+model. Every field maps to a `GRAPHKNOWS_`-prefixed environment variable (also
+read from a `.env` file). Key ones: `GRAPHKNOWS_MODE`, `GRAPHKNOWS_NAMESPACE`,
+`GRAPHKNOWS_ARCADEDB_URL`, `GRAPHKNOWS_LLM_MODEL`, `GRAPHKNOWS_LLM_API_KEY`,
+`GRAPHKNOWS_EMBED_MODEL`, `GRAPHKNOWS_EMBED_API_BASE`, `GRAPHKNOWS_ONTOLOGY_FILE`,
+`GRAPHKNOWS_ENABLE_FRAMES`, `GRAPHKNOWS_FACT_CONTEXT`.
 
 `GRAPHKNOWS_MODE` (enum `MemoryMode`) is the single switch that governs both
-extraction and retrieval. `get_profile(settings)` in `graphknows/config/profiles.py`
-is the **single source of truth** for mapping mode to capabilities; all branching
-derives from the returned `MemoryProfile`, never from `settings.mode` directly.
+extraction and retrieval. There is no separate profile object: the mode fork lives
+in exactly two factories — `build_relation_extractor`
+(`graphknows/ingestion/extraction/relations/__init__.py`) on the write path and
+`build_retriever` (`graphknows/retrieval/__init__.py`) on the read path. Channels
+additionally declare a `profiles` set and are filtered against the mode by
+`default_channels` (`graphknows/channels/registry.py`).
 
-| Mode | Extraction | Retrieval | Schema | API keys |
-| --- | --- | --- | --- | --- |
-| `llm_free` (default) | GLiNER2 entities + spaCy relations | `DETRetriever` (deterministic, RRF fusion) | flat taxonomy | none |
-| `llm_assisted` | DSPy LLM relation extraction, RDF/OWL ontology | `AgenticRetriever` (DSPy ReAct) | injectable RDF ontology | LLM + optional embed |
+| Mode | Extra extraction | Retrieval | API keys |
+| --- | --- | --- | --- |
+| `llm_free` (default) | GLiNER2 entities + its precision-gated relations; `NullRelationExtractor` | `DETRetriever` (deterministic, channel fan-out + RRF) | none |
+| `llm_assisted` | additionally DSPy ontology-guided relation extraction (`DspyRelationExtractorAdapter`) | `AgenticRetriever` (DSPy ReAct over `DETRetriever`) | LLM + optional embed |
 
 Embeddings default to a local `sentence-transformers` model, so `llm_free` runs
 with zero API keys.
 
-## Memory model: STM to LTM
+## Memory model: one golden-layer database
 
-The system has two ArcadeDB databases, `stm` and `ltm`, and a promotion pipeline
-between them.
+There is **one physical ArcadeDB database per namespace** — `mem` for the default
+namespace, `mem_<ns>` otherwise (`graphknows/storage/namespace.py`, `db_name`).
+The old three-store split (separate `stm` / `ltm` databases plus a vector store)
+is gone: `GraphStore` (`graphknows/storage/arcadedb/graph_store.py`) absorbs all
+of it, including embeddings, which live directly on `CHUNK` / `ENTITY` / `TOPIC` /
+`FRAME` vertices behind `LSM_VECTOR` indexes.
 
-### Short-term memory (STM)
+Short-term versus long-term is a **lifecycle property, not a database**. A `state`
+in `{raw, consolidated}` sits on `SESSION` / `CHUNK` / `ENTITY` and on relation
+edges; every write lands `raw`, and flush flips a session to `consolidated` in
+place. Retrieval scope maps onto that filter (`_scope_to_state` in
+`graphknows/retrieval/retriever.py`): `stm` → `raw`, `ltm` → `consolidated`,
+`both` → no filter.
 
-STM is a per-session evidence graph built at ingest time. `ingest_memory` routes
-to `STMService` (`graphknows/memory/stm/service.py`):
+### Schema
 
-- A structured message list goes through `ingest_messages` → `DialogCapture`,
-  creating `DIALOG` / `TURN` nodes with `HAS_TURN` and `NEXT` (turn sequence) edges.
+The DDL is a pure ordered statement list, `_CORE_DDL`
+(`graphknows/storage/arcadedb/_schema.py`), applied idempotently by
+`GraphStore.ensure_schema(dims)` — `dims` is substituted into the vector indexes so
+they match the configured embedder.
+
+- Vertices: `SESSION`, `FILE`, `CHUNK`, `ENTITY` (keyed on `name_norm`),
+  `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME`, `FRAME_INSTANCE`,
+  `COMMUNITY`.
+- Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
+  (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL), `HAS_TOPIC`, `EVOKED_BY`
+  (FRAME→CHUNK), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK), `PLAYS_ROLE`
+  (FRAME_INSTANCE→ENTITY, with a `role` property), `IN_COMMUNITY`, and `REL`.
+- `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
+  property, not the edge type name. The vocabulary is open and mostly single-use,
+  so a type-per-predicate minted hundreds of near-empty types plus a DDL
+  round-trip on the ingest hot path.
+
+Schema conventions are `type` not `label`, `confidence` not `score`, and
+`valid_at` / `invalid_at` / `is_current` for bi-temporal relation edges.
+
+**Bi-temporal supersedence.** For a known single-valued predicate
+(`_SINGLE_VALUED_RELATIONS` — `WORKS_AT`, `LIVES_IN`, `MARRIED_TO`, …) a new fact
+tombstones the existing current edge via `GraphStore._supersede_edge`: it sets
+`invalid_at` and `is_current = false` rather than deleting, preserving history.
+
+### Ingest
+
+`ingest_memory` builds an `STMService` through `build_stm_service`
+(`graphknows/ingestion/__init__.py`) and routes on input shape
+(`graphknows/ingestion/stm/service.py`):
+
+- A structured message list goes through `ingest_messages`, writing one `CHUNK`
+  per message with `kind='turn'`.
 - Plain text goes through `ingest` → `_STMIngestHandler`
-  (`graphknows/memory/stm/ingest.py`): the text is parsed and chunked, producing
-  `FILE` and `CHUNK` nodes with `HAS_CHUNK` edges.
+  (`graphknows/ingestion/stm/ingest.py`): the text is parsed
+  (`graphknows/ingestion/parsers/`) and chunked into `FILE` + `CHUNK` nodes.
 
-Either way, an entity extractor runs on each unit of text and writes `ENTITY`
-nodes plus `MENTIONS` edges (chunk→entity) or `HAS_ENTITY` edges (turn→entity).
-In `llm_free` mode the extractor is GLiNER2 for entities and a spaCy
-dependency-pattern relation extractor; extracted relations are passed through a
-`RelationOntologyFilter` seeded with the default taxonomy's relation types
-(`graphknows/ingestion/domain/taxonomy.py`), dropping any label outside the
-controlled vocabulary. Chunk text and embeddings are written to the vector store
-in parallel.
+Both paths converge on the same write helper, which per chunk:
 
-STM node/edge types: `SESSION`, `FILE`, `CHUNK`, `DIALOG`, `TURN`, `ENTITY`;
-edges `IN_SESSION`, `HAS_CHUNK`, `MENTIONS`, `HAS_TURN`, `NEXT`, `HAS_ENTITY`.
+1. embeds the text and writes it onto the `CHUNK` vertex;
+2. runs `GLiNER2EntityExtractor`
+   (`graphknows/ingestion/extraction/entities/extractor.py`) and writes `ENTITY`
+   nodes plus `MENTIONS` edges;
+3. writes the extractor's open-vocabulary relations as `REL` edges with
+   chunk-level evidence provenance (no ontology filter — it would reject every
+   open-vocab label);
+4. in `llm_assisted`, additionally runs the injected DSPy relation extractor and
+   writes its triplets as `REL` edges with `source='dspy'`;
+5. when `enable_frames` is on, matches FrameNet frames by embedding
+   (`graphknows/channels/_frame_index.py`) into `FRAME` / `EVOKED_BY`, and
+   role-fills `FRAME_INSTANCE` / `PLAYS_ROLE` via
+   `graphknows/ingestion/extraction/relations/frame_srl.py`;
+6. resolves dates (`resolve_temporal` in `graphknows/channels/temporal.py`) into
+   `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 
-### Promotion / flush (STM → LTM)
+`RelationOntologyFilter` (`graphknows/ingestion/extraction/relations/filter.py`)
+and the taxonomy (`graphknows/ingestion/models/taxonomy.py`) remain available for
+ontology-constrained predicate mapping, but the hot ingest path does not filter
+GLiNER2 labels through them.
 
-`flush_memory(session_id)` runs `LTMPromotionPipeline.promote`
-(`graphknows/memory/flush.py`). The pipeline reads the session subgraph out of
-STM and MERGEs it into LTM. In order:
+### Flush / consolidation
 
-1. **Read STM subgraph** and snapshot it (`SessionSnapshot`).
-2. **Entity resolution** (`graphknows/memory/ltm/entity_resolution.py`,
-   `EntityResolution.resolve`): group entities case-insensitively, keep the
-   highest-confidence spelling as canonical, and remap alias names in chunk/turn
-   edges so ArcadeDB does not split one entity into two nodes. Returns a
-   `PromotionAudit`.
-3. **Write LTM graph** (`ltm_store.write_session_subgraph`): MERGE `SESSION`,
-   `FILE`, `CHUNK` (with `session_id` stored on the node), canonical `TEMPORAL`
-   nodes (`MENTIONS_DATE`), `ENTITY`, `DIALOG`, `TURN`, and the `NEXT` sequence.
-   In `llm_assisted` mode, `extract_and_write_relations` additionally runs the
-   DSPy relation extractor over the largest chunks (capped at 10 to bound LLM
-   latency) and writes typed relation edges.
-4. **Copy vector rows** STM→LTM (`promote_to_ltm`).
-5. **Index entities**: embed entity names and upsert into the vector store so the
-   entity-graph retrieval path has live data.
-6. **PageRank / centrality** (`compute_and_persist_pagerank`): a lightweight
-   in-process power-iteration PageRank over the entity-relation graph, persisted
-   onto `ENTITY` nodes (both modes).
-7. **Graph pruning**: `prune_tombstoned_edges` / `prune_duplicate_edges`.
-8. **Community detection** (`_run_gds`) — gated to `llm_assisted` by policy —
-   optional Leiden communities, writing `community_id` onto entities.
-9. **Topic summarization** (`_run_topics`): `TopicSummarizer`
-   (`graphknows/memory/ltm/topic_summarizer.py`), a DSPy module, writes `TOPIC`
-   nodes with an LLM-generated title + grounded summary. Requires an LLM key.
-10. **Community metadata** write-back, then optional **STM clear**.
+`Memory.flush_memory(session_id)` consolidates a session **in place** — there is
+no promotion pipeline and nothing is copied between databases. Each step is
+awaited through a local `step()` helper that records a named error instead of
+aborting, so an analytics failure never skips the state flip:
 
-**Bi-temporal relation edges.** Relation edges carry `valid_at` (world time),
-`invalid_at` (tombstone), `created_at` (ingestion time), and `is_current`. For
-single-valued predicates a supersedence pass (`_supersede_ltm_edge`) tombstones
-any existing current edge that points at a different target — setting
-`invalid_at` and `is_current = false` rather than deleting it — preserving history.
+1. **Entity resolution** — `resolve_entities`
+   (`graphknows/ingestion/consolidation/entity_resolution.py`), a layered
+   most-confident-first resolver: junk/hub filter, name-standardization merge for
+   non-person entities, then person-nickname merge. Embedding similarity is
+   deliberately not the primary mechanism (a true nickname pair scores below two
+   distinct co-occurring people).
+2. **Analytical view** — `GraphStore._ensure_analytical_view` is rebuilt once and
+   shared by the three algorithms below (`skip_view_ensure=True`), since rebuilding
+   is not free.
+3. **PageRank** — `compute_and_persist_pagerank`, native ArcadeDB `algo.*` with a
+   numpy power-iteration fallback; persisted onto `ENTITY.pagerank`.
+4. **Graph embeddings** — `compute_graph_embeddings` → `ENTITY.graph_embedding`.
+5. **Communities** — `compute_communities` → `ENTITY.community_id`.
+6. **Community quality** — `compute_community_quality`, writing modularity /
+   conductance metrics onto `COMMUNITY` vertices.
+7. **State flip** — `consolidate_session(session_id)` moves the session's chunks
+   from `raw` to `consolidated`. Nothing is deleted; relation canonicalization and
+   topic summarization are not part of this path.
 
-LTM adds these types over STM: `TOPIC`, `TEMPORAL`; edges `MENTIONS_DATE`, plus
-the extracted typed relation edges between `ENTITY` nodes.
+`corpus_ingest` is a thin loop: `ingest_memory` per document into one session,
+then a single `flush_memory`. Documents without text are recorded in `errors` and
+skipped.
 
 ## Storage: ArcadeDB
 
 ArcadeDB is reached through a thin async httpx client, `ArcadeDBClient`
-(`graphknows/memory/stores/arcadedb/client.py`), which wraps the ArcadeDB REST
-API (query, command, transactions) with HTTP Basic Auth. Three stores sit on top,
-all in `graphknows/memory/stores/arcadedb/`:
+(`graphknows/storage/arcadedb/client.py`), wrapping the REST API (query, command,
+transactions) with HTTP Basic Auth. `graphknows/storage/__init__.py` holds the
+namespace-aware factories — `build_arcadedb_client`, `build_graph_store` — which
+return **unconnected** stores so the client binds to the caller's event loop when
+`connect()` is awaited.
 
-- `stm_store.py` — the STM session evidence graph (database `stm`).
-- `ltm_store.py` — the LTM knowledge graph (database `ltm`); owns the flush
-  write-path, PageRank, pruning, and relation extraction.
-- `vector_store.py` — chunk/entity embeddings and ANN search.
+ArcadeDB constraints the store works around, documented in its module docstring:
+Cypher has no DDL surface (schema is SQL); embedding values must be inline SQL
+literals because LIST params conflict with the `LSM_VECTOR` index; openCypher has
+no `IN $list`, so every interpolated string goes through
+`graphknows/storage/arcadedb/_sql.py`.
 
-Note: LTM flush writes are auto-committed per element rather than wrapped in one
-transaction — the flush runs in a worker-thread event loop while the client is
-bound to the server's main loop, so a begin/commit pair would land on different
-connections and ArcadeDB would silently discard the writes.
+`ArcadeDBSTMStore` and `ArcadeDBLTMStore` still exist in
+`graphknows/storage/arcadedb/` and back the read-only browsing helpers and the
+web server's graph views; the ingest and retrieval paths use `GraphStore` only.
 
 ## Embeddings
 
-`graphknows/memory/stores/embedder.py` provides `embed` / `embed_one` (LRU-cached)
-and a `get_embedder` shim. By default a local `sentence-transformers` model
-(`BAAI/bge-small-en-v1.5`, 384-dim) runs in-process on CPU — no API key. Setting
-`GRAPHKNOWS_EMBED_API_BASE` routes embeddings through a remote OpenAI-compatible
-`/embeddings` endpoint instead (model and key from `GRAPHKNOWS_EMBED_MODEL` /
-`GRAPHKNOWS_EMBED_API_KEY`). There are no silent embedding fallbacks — errors
-propagate.
+`graphknows/storage/embedder.py` provides `embed` / `embed_one` (LRU-cached),
+`embed_dim`, and a `get_embedder` shim. By default a local
+`sentence-transformers` model (`BAAI/bge-small-en-v1.5`, 384-dim) runs in-process
+on CPU — no API key. Setting `GRAPHKNOWS_EMBED_API_BASE` routes embeddings through
+a remote OpenAI-compatible `/embeddings` endpoint instead (model and key from
+`GRAPHKNOWS_EMBED_MODEL` / `GRAPHKNOWS_EMBED_API_KEY`). There are no silent
+embedding fallbacks — errors propagate.
 
 ## Retrieval
 
-`recall_memory` builds a retriever lazily (`_get_retriever`), choosing by profile.
+`recall_memory` builds a retriever lazily (`Memory._get_retriever`, guarded by an
+`asyncio.Lock`), choosing by mode in `build_retriever`.
+
+### Channels
+
+A **channel** (`graphknows/channels/base.py`) is one memory signal owned
+end-to-end: `ingest` (write one chunk's structure), `promote` (per flush), and
+`collect(ctx, rt, top_k)` (ranked query candidates as
+`{chunk_id: (score, info)}`). Every hook has a no-op default, so a read-only
+channel implements just `collect`. `CHANNEL_REGISTRY` /
+`register` / `default_channels` (`graphknows/channels/registry.py`) are the single
+extension point; insertion order defines fusion order.
+
+The default collector set (`graphknows/channels/collectors.py`,
+`DEFAULT_COLLECTOR_CHANNELS`) is one channel per signal — the old STM/LTM channel
+split collapsed with the databases, so each queries the one `GraphStore` under a
+lifecycle `state` filter instead of routing to a physical store:
+
+- `entity` — entity-graph traversal from query-token entity nodes
+- `vector` — dense ANN over chunk embeddings (plus a declarative query variant)
+- `bm25` — lexical search (`rank_bm25` when importable, tokenised fallback otherwise)
+- `temporal` — date-anchored traversal
+- `topic` — topic-node match (populated only under `llm_assisted`)
+
+`GraphPPRChannel` (`graphknows/channels/graph_ppr.py`, name `ppr`) is registered
+alongside them; `FrameChannel` (`graphknows/channels/frames.py`, name `frame`) is
+added when `settings.enable_frames`.
 
 ### DETRetriever (llm_free)
 
-`DETRetriever` (`graphknows/memory/query/retriever.py`) is a deterministic hybrid
-retriever. It runs seven collectors concurrently, each returning candidate chunks
-scored by reciprocal-rank:
+`DETRetriever` (`graphknows/retrieval/retriever.py`) is the channel-blind spine:
+it builds a `ChannelContext` (query embedding + declarative variant, two token
+sets), fans the channels out concurrently with `asyncio.gather`, then fuses and
+ranks. A failure in any channel raises loudly rather than silently degrading
+recall.
 
-- `_stm_entity_boost` — STM entity-graph traversal
-- `_ltm_entity_traversal` — LTM entity-graph traversal
-- `_semantic_ann` — vector ANN over embeddings (with an optional declarative
-  query variant)
-- `_stm_bm25` / `_ltm_bm25` — full-text (BM25) search in each database
-- `_ltm_temporal_traversal` — temporal / date-anchored traversal
-- `_ltm_topic_match` — topic-node match
+Candidates are fused by **RRF** (`graphknows/ranking/rrf.py`, `rrf_score`,
+`RRF_K = 60`), then shaped by community boost (`community_boost` over
+`GraphStore.chunk_community_weights`, derived from Louvain `community_id` on
+`MENTIONS`-linked entities) and memory-class weighting (`shape_score`) before
+sorting. A local cross-encoder **reranker** (`graphknows/ranking/rerank.py`,
+`BAAI/bge-reranker-base`, capped candidate pool) re-scores the pool off-thread; it
+is a no-op pass-through when the model or `sentence-transformers` is unavailable.
 
-Candidates are fused by **RRF** (reciprocal-rank fusion), then shaped by
-community boost, PageRank boost, and memory-class weighting before sorting. A
-local cross-encoder **reranker** (`graphknows/memory/query/rerank.py`,
-`BAAI/bge-reranker-base`) refines the pool; it is a no-op pass-through when the
-model or `sentence-transformers` is unavailable. Finally a unified **fact-support**
-term is blended into the normalised rerank score: a canonical fact whose subject
-the query names and which points at a chunk via provenance lifts that chunk. The
-term self-attenuates to 0 when no fact matches, so vector relevance dominates
-inference queries with no router needed. A per-query `trace` records how each
-surviving candidate scored per signal.
+PageRank shaping and IDF discriminativeness were removed: the former read
+`pagerank` from CHUNK metadata while the value lives on `ENTITY`, so the
+multiplier was always 1.0, and nothing ever called the latter.
+
+Separately from the ranked passages, `_fact_sheet` resolves the query's entities
+(`GraphStore.resolve_query_entities`) and returns their typed relations and
+frame-instance role fills (`GraphStore.entity_fact_context`) as a compact fact
+sheet on `RetrievalContext.facts`. It soft-fails and is disabled by
+`GRAPHKNOWS_FACT_CONTEXT=false`. A per-query `trace` records which collectors
+fired and how each surviving candidate scored.
 
 ### AgenticRetriever (llm_assisted)
 
-`AgenticRetriever` (`graphknows/memory/query/agentic.py`) wraps a DSPy **ReAct**
-loop. The query is decomposed into atomic sub-questions, then a ReAct agent
-(bounded by `MAX_REACT_HOPS`) answers each using three tools — `retrieve`
-(delegates to `DETRetriever.retrieve` as the single retrieval primitive),
-`lookup_entity` (STM graph), and `temporal_filter` (bi-temporal validity window).
-Evidence collected across hops is fused with RRF and scaled by community weights.
-There is a graceful degradation chain: ReAct → `DETRetriever.retrieve` →
-`pg.search_chunks`.
+`AgenticRetriever` (`graphknows/retrieval/agentic.py`) wraps a DSPy **ReAct** loop
+around the deterministic engine. The query is optionally decomposed into atomic
+sub-questions (`graphknows/retrieval/query/decompose.py`), then a ReAct agent
+bounded by `MAX_REACT_HOPS = 4` answers each, using a `DETRetriever` built over
+the same store as its single per-hop retrieval primitive — the weaker competing
+vector channel that once ran in parallel is gone. Evidence is deduplicated and
+fused across hops by `_fuse_hops`, which preserves each chunk's own deterministic
+relevance magnitude and adds positional RRF only as a tiebreak (collapsing to pure
+positional RRF made every query's hit-scores identical). Any agent error falls
+back to a plain `DETRetriever.retrieve()`.
+
+## Transports
+
+Both transports are thin wrappers over one `Memory` instance, so they see
+identical behaviour.
+
+- **MCP stdio** — `graphknows/server/mcp/stdio_server.py` (console script
+  `graphknows-mcp`) over the shared FastMCP app in `graphknows/server/mcp/_app.py`.
+  `graphknows/server/mcp/tools/__init__.py` is the authoritative inventory:
+  `memory_ingest`, `memory_flush`, `memory_recall`, `memory_query`, `memory_stats`,
+  `memory_doctor`, `memory_purge`, `memory_drop_namespace`, `memory_mirror`,
+  `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`, `ltm_query`.
+- **Web (Memory Mirror)** — `graphknows/server/web/server.py` (console script
+  `graphknows-web`), a Starlette app holding one `Memory` per namespace so a single
+  process can browse many tenants.
 
 ## Ingest path
 
 ```mermaid
 flowchart TD
     A[ingest_memory: text or messages] --> B{structured messages?}
-    B -- yes --> C[DialogCapture: DIALOG + TURN + NEXT]
+    B -- yes --> C[ingest_messages: one CHUNK per turn]
     B -- no --> D[_STMIngestHandler: parse + chunk -> FILE + CHUNK]
-    C --> E[Entity extractor: GLiNER2 entities + spaCy relations]
+    C --> E[GLiNER2 entities + relations, embed chunk]
     D --> E
-    E --> F[RelationOntologyFilter: keep taxonomy predicates]
-    E --> G[Embed chunk/turn text -> vector store]
-    F --> H[(STM graph: ArcadeDB 'stm')]
-    G --> I[(Vector store)]
+    E --> F[ENTITY + MENTIONS, REL with chunk evidence]
+    E --> G[frames: FRAME / FRAME_INSTANCE / PLAYS_ROLE]
+    E --> H[TEMPORAL + MENTIONS_DATE]
+    E --> I[llm_assisted: DSPy triplets -> REL]
+    F & G & H & I --> DB[(GraphStore: one ArcadeDB db 'mem_ns', state=raw)]
 
-    H --> J[flush_memory: LTMPromotionPipeline.promote]
-    J --> K[Entity resolution -> canonical ENTITY]
-    K --> L[write_session_subgraph -> LTM graph]
-    L --> M[llm_assisted: DSPy relations -> bi-temporal edges]
-    L --> N[PageRank + pruning]
-    N --> O[llm_assisted: Leiden communities + TOPIC summaries]
-    L --> P[(LTM graph: ArcadeDB 'ltm')]
+    DB --> J[flush_memory]
+    J --> K[resolve_entities: junk filter, standardize, nickname merge]
+    K --> L[analytical view -> pagerank / graph embeddings / communities / quality]
+    L --> M[consolidate_session: state raw -> consolidated]
+    M --> DB
 ```
 
 ## Retrieval path
 
 ```mermaid
 flowchart TD
-    Q[recall_memory: query] --> R{profile.retrieval}
-    R -- deterministic --> DET[DETRetriever]
-    R -- agentic --> AG[AgenticRetriever: DSPy ReAct]
+    Q[recall_memory: query] --> R{mode}
+    R -- llm_free --> DET[DETRetriever]
+    R -- llm_assisted --> AG[AgenticRetriever: DSPy ReAct]
 
     subgraph DETRetriever
-        C1[STM entity boost]
-        C2[LTM entity traversal]
-        C3[Vector ANN]
-        C4[STM BM25]
-        C5[LTM BM25]
-        C6[Temporal traversal]
-        C7[Topic match]
+        CTX[ChannelContext: embed + tokenise, scope -> state]
+        CTX --> C1[entity]
+        CTX --> C2[vector]
+        CTX --> C3[bm25]
+        CTX --> C4[temporal]
+        CTX --> C5[topic]
+        CTX --> C6[ppr]
+        CTX --> C7[frame - optional]
         C1 & C2 & C3 & C4 & C5 & C6 & C7 --> RRF[RRF fusion]
-        RRF --> SHAPE[community + PageRank + class shaping]
+        RRF --> SHAPE[community boost + memory-class shaping]
         SHAPE --> CE[cross-encoder rerank]
-        CE --> FS[blend fact-support]
+        CE --> FS[+ fact sheet]
     end
 
     AG -->|per hop delegates to| DET
-    DET --> FS
-    FS --> OUT[fused hits]
+    DET --> OUT[fused hits + facts]
     AG --> OUT
 ```
