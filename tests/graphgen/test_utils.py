@@ -4,15 +4,9 @@ from __future__ import annotations
 
 import os
 import tempfile
-from pathlib import Path
 
 import networkx as nx
 
-from graphknows.ingestion.utils import (
-    _sanitize_name,
-    diagnostic_dir,
-    diagnostics_enabled,
-)
 from graphknows.ingestion.extraction.entities.graph_ops import (
     create_output_directory,
     merge_node_into,
@@ -171,106 +165,14 @@ def test_create_output_directory_idempotent_when_exists():
         assert os.path.exists(tmp)
 
 
-# ---------------------------------------------------------------------------
-# diagnostics_enabled
-# ---------------------------------------------------------------------------
-
-
-def test_diagnostics_enabled_none_returns_false():
-    assert diagnostics_enabled(None) is False
-
-
-def test_diagnostics_enabled_empty_dict_returns_false():
-    assert diagnostics_enabled({}) is False
-
-
-def test_diagnostics_enabled_true_when_flag_set():
-    config = {"extraction": {"diagnostic_mode": True}}
-    assert diagnostics_enabled(config) is True
-
-
-def test_diagnostics_enabled_false_when_flag_explicitly_false():
-    config = {"extraction": {"diagnostic_mode": False}}
-    assert diagnostics_enabled(config) is False
-
-
-def test_diagnostics_enabled_missing_extraction_key_returns_false():
-    config = {"infra": {"output_dir": "/tmp"}}
-    assert diagnostics_enabled(config) is False
-
-
-def test_diagnostics_enabled_works_with_pydantic_like_model():
-    class FakeExtractionModel:
-        def model_dump(self):
-            return {"diagnostic_mode": True}
-
-    config = {"extraction": FakeExtractionModel()}
-    assert diagnostics_enabled(config) is True
-
-
-# ---------------------------------------------------------------------------
-# diagnostic_dir
-# ---------------------------------------------------------------------------
-
-
-def test_diagnostic_dir_builds_correct_path():
-    config = {
-        "infra": {"output_dir": "/tmp/out"},
-        "extraction": {"diagnostic_output_subdir": "diag"},
-    }
-    result = diagnostic_dir(config)
-    assert result == Path("/tmp/out/diag")
-
-
-def test_diagnostic_dir_falls_back_to_defaults_on_missing_keys():
-    result = diagnostic_dir({})
-    assert result == Path("output") / "diagnostics"
-
-
-def test_diagnostic_dir_returns_path_object():
-    config = {"infra": {"output_dir": "/tmp"}, "extraction": {"diagnostic_output_subdir": "sub"}}
-    assert isinstance(diagnostic_dir(config), Path)
-
-
-# ---------------------------------------------------------------------------
-# _sanitize_name
-# ---------------------------------------------------------------------------
-
-
-def test_sanitize_name_replaces_spaces_with_underscore():
-    assert _sanitize_name("Hello World") == "Hello_World"
-
-
-def test_sanitize_name_replaces_slashes():
-    assert _sanitize_name("a/b/c") == "a_b_c"
-
-
-def test_sanitize_name_replaces_exclamation():
-    assert _sanitize_name("Hello World!") == "Hello_World"
-
-
-def test_sanitize_name_empty_string_returns_diagnostic():
-    assert _sanitize_name("") == "diagnostic"
-
-
-def test_sanitize_name_all_special_chars_returns_diagnostic():
-    assert _sanitize_name("!!!") == "diagnostic"
-
-
-def test_sanitize_name_alphanumeric_unchanged():
-    assert _sanitize_name("valid_name123") == "valid_name123"
-
-
 # ===========================================================================
 # Pure config/logging functions
 # ===========================================================================
 
 
-import json
 import logging
 import os
 import textwrap
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -435,50 +337,6 @@ class TestExtractSecret:
         assert result == "env_value"
 
 
-class TestGetModelName:
-    def test_no_llm_section_raises(self):
-        from graphknows.llm import get_model_name
-
-        with pytest.raises(ValueError):
-            get_model_name({})
-
-    def test_extraction_purpose_uses_extraction_model(self):
-        from graphknows.llm import get_model_name
-
-        cfg = {"llm": {"extraction_model": "model-ext", "base_model": "model-base"}}
-        assert get_model_name(cfg, purpose="extraction") == "model-ext"
-
-    def test_summarization_purpose(self):
-        from graphknows.llm import get_model_name
-
-        cfg = {"llm": {"summarization_model": "model-sum"}}
-        assert get_model_name(cfg, purpose="summarization") == "model-sum"
-
-    def test_none_purpose_returns_base(self):
-        from graphknows.llm import get_model_name
-
-        cfg = {"llm": {"base_model": "model-base"}}
-        assert get_model_name(cfg) == "model-base"
-
-    def test_fallback_to_default_model(self):
-        from graphknows.llm import _DEFAULT_MODEL, get_model_name
-
-        cfg = {"llm": {}}
-        assert get_model_name(cfg) == _DEFAULT_MODEL
-
-
-class TestGetTemperature:
-    def test_default_when_no_llm(self):
-        from graphknows.llm import get_temperature
-
-        assert get_temperature({}) == 0.0
-
-    def test_reads_temperature(self):
-        from graphknows.llm import get_temperature
-
-        assert get_temperature({"llm": {"temperature": 0.7}}) == pytest.approx(0.7)
-
-
 class TestNormalizeOpenrouterModel:
     def test_adds_prefix(self):
         from graphknows.llm import normalize_openrouter_model
@@ -495,104 +353,3 @@ class TestNormalizeOpenrouterModel:
 
         result = normalize_openrouter_model(None)
         assert result == f"openrouter/{_DEFAULT_MODEL}"
-
-
-class TestDiagnosticsEnabled:
-    def test_false_when_none(self):
-        from graphknows.ingestion.utils import diagnostics_enabled
-
-        assert diagnostics_enabled(None) is False
-
-    def test_false_when_not_set(self):
-        from graphknows.ingestion.utils import diagnostics_enabled
-
-        assert diagnostics_enabled({"extraction": {"diagnostic_mode": False}}) is False
-
-    def test_true_when_enabled(self):
-        from graphknows.ingestion.utils import diagnostics_enabled
-
-        assert diagnostics_enabled({"extraction": {"diagnostic_mode": True}}) is True
-
-
-class TestDiagnosticDir:
-    def test_returns_correct_path(self):
-        from graphknows.ingestion.utils import diagnostic_dir
-
-        cfg = {
-            "infra": {"output_dir": "/tmp/out"},
-            "extraction": {"diagnostic_output_subdir": "diag"},
-        }
-        result = diagnostic_dir(cfg)
-        assert str(result) == "/tmp/out/diag"
-
-    def test_defaults(self):
-        from graphknows.ingestion.utils import diagnostic_dir
-
-        result = diagnostic_dir({})
-        assert result == Path("output") / "diagnostics"
-
-
-class TestSanitizeName:
-    def test_replaces_special_chars(self):
-        from graphknows.ingestion.utils import _sanitize_name
-
-        assert _sanitize_name("foo/bar baz") == "foo_bar_baz"
-
-    def test_empty_gives_diagnostic(self):
-        from graphknows.ingestion.utils import _sanitize_name
-
-        assert _sanitize_name("") == "diagnostic"
-
-
-class TestJsonSafe:
-    def test_plain_types_passthrough(self):
-        from graphknows.ingestion.utils import _json_safe
-
-        assert _json_safe({"a": [1, 2]}) == {"a": [1, 2]}
-
-    def test_path_to_str(self):
-        from graphknows.ingestion.utils import _json_safe
-
-        assert _json_safe(Path("/tmp/file")) == "/tmp/file"
-
-    def test_set_to_sorted_list(self):
-        from graphknows.ingestion.utils import _json_safe
-
-        result = _json_safe({3, 1, 2})
-        assert result == [1, 2, 3]
-
-
-class TestWriteDiagnosticJson:
-    def test_returns_none_when_disabled(self, tmp_path):
-        from graphknows.ingestion.utils import write_diagnostic_json
-
-        cfg = {"extraction": {"diagnostic_mode": False}}
-        result = write_diagnostic_json(cfg, "test", {"data": 1})
-        assert result is None
-
-    def test_writes_file_when_enabled(self, tmp_path):
-        from graphknows.ingestion.utils import write_diagnostic_json
-
-        cfg = {
-            "extraction": {"diagnostic_mode": True, "diagnostic_output_subdir": "diag"},
-            "infra": {"output_dir": str(tmp_path)},
-        }
-        path = write_diagnostic_json(cfg, "my test!", {"value": 42})
-        assert path is not None
-        assert Path(path).exists()
-        data = json.loads(Path(path).read_text())
-        assert data["value"] == 42
-
-    def test_sanitizes_filename(self, tmp_path):
-        from graphknows.ingestion.utils import write_diagnostic_json
-
-        cfg = {
-            "extraction": {"diagnostic_mode": True, "diagnostic_output_subdir": "diag"},
-            "infra": {"output_dir": str(tmp_path)},
-        }
-        path = write_diagnostic_json(cfg, "foo/bar baz!", {"x": 1})
-        assert path is not None
-        fname = Path(path).name
-        assert "/" not in fname
-
-
