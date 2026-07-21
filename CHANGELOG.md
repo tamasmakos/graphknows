@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `corpus_ingest` was broken for every caller: it constructed `STMService` with
+  keyword arguments removed in 2.0.0, so the MCP tool returned an error and
+  processed zero documents. It now runs the golden-layer path (per-document
+  ingest, then one consolidation).
+- Entity names containing an apostrophe were unfindable. `sanitize()` stripped
+  quotes while `ENTITY.name_norm` only casefolds, so `O'Brien` was stored as
+  `o'brien` and looked up as `'obrien'`. Quotes and backslashes are now escaped.
+- `Memory.flush_memory` ran its pipeline under one `try`, so an analytics failure
+  skipped `consolidate_session` — the raw → consolidated flip that makes a flush
+  meaningful. Each step now fails independently and names itself in `errors`.
+- `AgenticRetriever` kept its ReAct module and hit buffer on the instance, so
+  concurrent recalls with different sessions overwrote each other's evidence.
+- A partially failed `delete_session` reported success, leaving orphaned nodes;
+  it now raises `StoreError` (a missing vertex type is still a no-op).
+- Documented import paths that did not exist: `graphknows.adapters.langgraph`
+  (→ `graphknows.integrations.langgraph`), `graphknows.client`
+  (→ `graphknows.integrations.client`), `graphknows.ports`
+  (→ `graphknows.storage.base`), and install extras that were folded into the
+  base package in 2.0.0.
+- `GRAPHKNOWS_CHUNK_SIZE` / `GRAPHKNOWS_CHUNK_OVERLAP` were documented and
+  settable but never read; they now reach the chunker (defaults realigned to the
+  values it was already using, so behaviour is unchanged).
+
+### Removed
+- The STM→LTM promotion pipeline (`graphknows.ingestion.promotion`,
+  `PromotionStep`, `default_promotion_steps`) and the corpus-ingest workflow —
+  both were superseded by in-place consolidation in 2.0.0 and had no remaining
+  caller.
+- `ArcadeDBVectorStore` — embeddings live on the graph vertices; the separate
+  vector store was unreachable.
+- Unwired ranking levers `pagerank_boost` / `idf_weight`, and the unused
+  `graphknows.llm` helpers `get_model_name` / `get_temperature`.
+
 ## [2.0.0] — 2026-07-13
 
 Capability-first architectural refactor. The package is recut along the memory
