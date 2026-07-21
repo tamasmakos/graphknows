@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +29,7 @@ from graphknows.storage import (
     build_arcadedb_stm_store,
 )
 from graphknows.links import DEFAULT_PORT
-from graphknows.storage.namespace import db_names, namespaces_from_databases
+from graphknows.storage.namespace import db_names, namespaces_from_databases, resolve
 from graphknows.memory import Memory
 
 _settings: GraphKnowsSettings | None = None
@@ -44,9 +47,40 @@ def get_settings() -> GraphKnowsSettings:
 
 def get_runtime(namespace: str = "") -> Memory:
     """Return the Memory for *namespace*, creating and caching it lazily."""
-    if namespace not in _runtimes:
-        _runtimes[namespace] = Memory(get_settings(), namespace=namespace)
-    return _runtimes[namespace]
+    ns = resolve(namespace, get_settings())
+    if ns not in _runtimes:
+        _runtimes[ns] = Memory(get_settings(), namespace=ns)
+    return _runtimes[ns]
+
+
+def _namespace(request: Request) -> str:
+    """Effective namespace for a request — same rule the MCP transport applies."""
+    return resolve(request.query_params.get("namespace", ""), get_settings())
+
+
+@asynccontextmanager
+async def connected(store: Any) -> AsyncIterator[Any]:
+    """Yield a connected store, always closing it again."""
+    await store.connect()
+    try:
+        yield store
+    finally:
+        await store.close()
+
+
+def backend_errors(
+    handler: Callable[[Request], Awaitable[JSONResponse]],
+) -> Callable[[Request], Awaitable[JSONResponse]]:
+    """Map any uncaught handler exception to the 503 backend-error payload."""
+
+    @wraps(handler)
+    async def wrapper(request: Request) -> JSONResponse:
+        try:
+            return await handler(request)
+        except Exception as exc:
+            return JSONResponse(_error_payload(exc), status_code=503)
+
+    return wrapper
 
 
 def _frontend_dir() -> Path:
@@ -181,16 +215,12 @@ def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]
 
 
 async def _ltm_graph(session_id: str, limit: int, namespace: str = "") -> dict[str, Any]:
-    ltm = build_arcadedb_ltm_store(get_settings(), namespace)
-    await ltm.connect()
-    try:
+    async with connected(build_arcadedb_ltm_store(get_settings(), namespace)) as ltm:
         node_cypher, edge_cypher, params = _ltm_queries(session_id, limit)
         node_rows, edge_rows = await asyncio.gather(
-            ltm._qry(node_cypher, **params),
-            ltm._qry(edge_cypher, **params),
+            ltm.query(node_cypher, **params),
+            ltm.query(edge_cypher, **params),
         )
-    finally:
-        await ltm.close()
 
     nodes = []
     known_ids: set[str] = set()
@@ -293,22 +323,14 @@ async def _namespace_stats(client: Any, namespace: str, session_id: str = "") ->
     }
 
 
+@backend_errors
 async def namespaces(_: Request) -> JSONResponse:
     """List available namespaces with per-namespace STM + LTM metadata."""
-    try:
-        client = build_arcadedb_client(get_settings())
-        await client.connect()
-        try:
-            dbs = await client.list_databases()
-            names = namespaces_from_databases(dbs)
-            metadata = await asyncio.gather(*(_namespace_stats(client, ns) for ns in names))
-        finally:
-            await client.close()
-        return JSONResponse(
-            {"namespaces": metadata, "default_namespace": get_settings().namespace}
-        )
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+    async with connected(build_arcadedb_client(get_settings())) as client:
+        dbs = await client.list_databases()
+        names = namespaces_from_databases(dbs)
+        metadata = await asyncio.gather(*(_namespace_stats(client, ns) for ns in names))
+    return JSONResponse({"namespaces": metadata, "default_namespace": get_settings().namespace})
 
 
 async def healthz(_: Request) -> JSONResponse:
@@ -316,115 +338,92 @@ async def healthz(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+@backend_errors
 async def readyz(_: Request) -> JSONResponse:
     """Readiness probe — backend reachable (503 if not)."""
-    try:
-        report = await get_runtime().doctor()
-        ok = report.get("arcadedb_stm") is True and report.get("arcadedb_ltm") is True
-        return JSONResponse(report, status_code=200 if ok else 503)
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+    report = await get_runtime().doctor()
+    ok = report.get("arcadedb_stm") is True and report.get("arcadedb_ltm") is True
+    return JSONResponse(report, status_code=200 if ok else 503)
 
 
+@backend_errors
 async def health(_: Request) -> JSONResponse:
     """Return backend connectivity status."""
-    try:
-        return JSONResponse(await get_runtime().doctor())
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+    return JSONResponse(await get_runtime().doctor())
 
 
+@backend_errors
 async def stats(request: Request) -> JSONResponse:
     """Return STM and LTM memory statistics for the requested namespace."""
-    try:
-        session_id = request.query_params.get("session_id", "")
-        namespace = request.query_params.get("namespace", "")
-        client = build_arcadedb_client(get_settings())
-        await client.connect()
-        try:
-            return JSONResponse(await _namespace_stats(client, namespace, session_id))
-        finally:
-            await client.close()
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+    session_id = request.query_params.get("session_id", "")
+    namespace = _namespace(request)
+    async with connected(build_arcadedb_client(get_settings())) as client:
+        return JSONResponse(await _namespace_stats(client, namespace, session_id))
 
 
 async def sessions(request: Request) -> JSONResponse:
     """Return known session ids from STM and LTM stores for the requested namespace."""
-    namespace = request.query_params.get("namespace", "")
+    namespace = _namespace(request)
     values: set[str] = set()
     errors: list[str] = []
 
     try:
-        stm = build_arcadedb_stm_store(get_settings(), namespace)
-        await stm.connect()
-        try:
+        async with connected(build_arcadedb_stm_store(get_settings(), namespace)) as stm:
             rows = await stm.client.query(
                 stm.database,
                 "MATCH (n:ENTITY) WHERE n.session_id IS NOT NULL "
                 "RETURN DISTINCT n.session_id AS id ORDER BY id",
             )
             values.update(_string(row["id"]) for row in rows if row.get("id"))
-        finally:
-            await stm.close()
     except Exception as exc:
         errors.append(f"stm: {exc}")
 
     try:
-        ltm = build_arcadedb_ltm_store(get_settings(), namespace)
-        await ltm.connect()
-        try:
-            rows = await ltm._qry("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
+        async with connected(build_arcadedb_ltm_store(get_settings(), namespace)) as ltm:
+            rows = await ltm.query("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
             values.update(_string(row["id"]) for row in rows if row.get("id"))
-        finally:
-            await ltm.close()
     except Exception as exc:
         errors.append(f"ltm: {exc}")
 
     return JSONResponse({"sessions": sorted(v for v in values if v), "errors": errors})
 
 
+@backend_errors
 async def graph(request: Request) -> JSONResponse:
     """Return normalized nodes and links for the requested graph scope."""
     scope = request.query_params.get("scope", "ltm").lower()
     session_id = request.query_params.get("session_id", "")
-    namespace = request.query_params.get("namespace", "")
+    namespace = _namespace(request)
     limit = max(10, min(int(request.query_params.get("limit", "200")), 1000))
 
-    try:
-        if scope == "stm":
-            if not session_id:
-                return JSONResponse(
-                    {
-                        "error": "session_id_required",
-                        "message": "STM graph views require a session_id.",
-                    },
-                    status_code=400,
-                )
-            stm = build_arcadedb_stm_store(get_settings(), namespace)
-            await stm.connect()
-            try:
-                raw = await stm.get_session_graph(session_id)
-            finally:
-                await stm.close()
-            return JSONResponse(_normalise_stm_graph(raw, limit))
-
-        if scope != "ltm":
+    if scope == "stm":
+        if not session_id:
             return JSONResponse(
-                {"error": "invalid_scope", "message": "scope must be 'stm' or 'ltm'."},
+                {
+                    "error": "session_id_required",
+                    "message": "STM graph views require a session_id.",
+                },
                 status_code=400,
             )
-        return JSONResponse(await _ltm_graph(session_id, limit, namespace))
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+        async with connected(build_arcadedb_stm_store(get_settings(), namespace)) as stm:
+            raw = await stm.get_session_graph(session_id)
+        return JSONResponse(_normalise_stm_graph(raw, limit))
+
+    if scope != "ltm":
+        return JSONResponse(
+            {"error": "invalid_scope", "message": "scope must be 'stm' or 'ltm'."},
+            status_code=400,
+        )
+    return JSONResponse(await _ltm_graph(session_id, limit, namespace))
 
 
+@backend_errors
 async def recall(request: Request) -> JSONResponse:
     """Return ranked recall hits for a query."""
     query = request.query_params.get("q", "").strip()
     session_id = request.query_params.get("session_id", "")
     scope = request.query_params.get("scope", "both")
-    namespace = request.query_params.get("namespace", "")
+    namespace = _namespace(request)
     top_k = max(1, min(int(request.query_params.get("top_k", "5")), 25))
     if not query:
         return JSONResponse({"hits": []})
@@ -433,15 +432,13 @@ async def recall(request: Request) -> JSONResponse:
             {"error": "session_id_required", "message": "STM recall requires a session_id."},
             status_code=400,
         )
-    try:
-        result = await get_runtime(namespace).recall_memory(
-            query, session_id=session_id, top_k=top_k, scope=scope
-        )
-        return JSONResponse(result)
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+    result = await get_runtime(namespace).recall_memory(
+        query, session_id=session_id, top_k=top_k, scope=scope
+    )
+    return JSONResponse(result)
 
 
+@backend_errors
 async def ingest(request: Request) -> JSONResponse:
     """Ingest a markdown/text file into STM via multipart form upload."""
     try:
@@ -473,23 +470,19 @@ async def ingest(request: Request) -> JSONResponse:
             {"error": "read_error", "message": f"Could not read file: {exc}"}, status_code=400
         )
 
-    try:
-        result = await get_runtime(namespace).ingest_memory(
-            text, session_id=session_id, title=title
-        )
-        return JSONResponse(
-            {
-                "file_id": result["file_id"],
-                "chunk_count": result["chunks"],
-                "entity_count": result["entities"],
-                "elapsed_s": result["elapsed_s"],
-                "errors": result["errors"],
-            }
-        )
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+    result = await get_runtime(namespace).ingest_memory(text, session_id=session_id, title=title)
+    return JSONResponse(
+        {
+            "file_id": result["file_id"],
+            "chunk_count": result["chunks"],
+            "entity_count": result["entities"],
+            "elapsed_s": result["elapsed_s"],
+            "errors": result["errors"],
+        }
+    )
 
 
+@backend_errors
 async def flush_session(request: Request) -> JSONResponse:
     """Promote a session's STM to LTM and return flush statistics."""
     try:
@@ -505,26 +498,27 @@ async def flush_session(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    try:
-        result = await get_runtime(namespace).flush_memory(session_id)
-        return JSONResponse(
-            {
-                "session_id": session_id,
-                "nodes_written": result.get("nodes", 0),
-                "edges_written": result.get("edges", 0),
-                "chunks_promoted": result.get("chunks", 0),
-                "turns_promoted": result.get("turns", 0),
-                "merged_entities": result.get("merged_entities", 0),
-                "community_count": 0,
-                "modularity": 0.0,
-                "ran_iterations": 0,
-                "topics_created": result.get("topics_created", 0),
-                "elapsed_s": result.get("elapsed_s", 0.0),
-                "errors": result.get("errors", []),
-            }
-        )
-    except Exception as exc:
-        return JSONResponse(_error_payload(exc), status_code=503)
+    result = await get_runtime(namespace).flush_memory(session_id)
+    # Mirrors what the golden-layer flush actually does: resolve entities,
+    # recompute graph analytics, flip the session raw -> consolidated. The
+    # retired STM->LTM promotion counters (nodes/edges/turns/topics written)
+    # were reported as hardcoded zeros and are gone; the analytics values
+    # below were being computed and then discarded here.
+    return JSONResponse(
+        {
+            "session_id": session_id,
+            "entities_dropped": result.get("entities_dropped", 0),
+            "merged_entities": result.get("merged_entities", 0),
+            "pagerank_updated": result.get("nodes", 0),
+            "graph_embeddings_computed": result.get("graph_embeddings_computed", 0),
+            "communities_computed": result.get("communities_computed", 0),
+            "communities_scored": result.get("communities_scored", 0),
+            "modularity": result.get("modularity", 0.0),
+            "chunks_consolidated": result.get("chunks", 0),
+            "elapsed_s": result.get("elapsed_s", 0.0),
+            "errors": result.get("errors", []),
+        }
+    )
 
 
 def _routes() -> list[Any]:

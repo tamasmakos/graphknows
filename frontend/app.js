@@ -604,15 +604,13 @@ function renderFlushStats(data) {
   flushStatsSection.hidden = false;
 
   const rows = [
+    ["Entities dropped", data.entities_dropped],
     ["Entities merged", data.merged_entities],
-    ["Nodes â†’ LTM", data.nodes_written],
-    ["Edges â†’ LTM", data.edges_written],
-    ["Chunks promoted", data.chunks_promoted],
-    ["Turns promoted", data.turns_promoted],
-    ["Louvain communities", data.community_count],
+    ["PageRank updated", data.pagerank_updated],
+    ["Graph embeddings", data.graph_embeddings_computed],
+    ["Communities", data.communities_computed],
     ["Modularity", typeof data.modularity === "number" ? data.modularity.toFixed(4) : "â€”"],
-    ["Louvain iterations", data.ran_iterations],
-    ["New topics", data.topics_created],
+    ["Chunks consolidated", data.chunks_consolidated],
     ["Time", `${data.elapsed_s}s`],
   ];
 
@@ -648,7 +646,7 @@ async function flushSession() {
     });
 
     renderFlushStats(data);
-    pushOpLog("flush", `${data.topics_created} topics Â· ${data.community_count} communities Â· ${data.merged_entities} merged`);
+    pushOpLog("flush", `${data.communities_computed} communities Â· ${data.merged_entities} merged Â· ${data.chunks_consolidated} consolidated`);
 
     // Switch to LTM and reload to show result
     const ltmRadio = document.querySelector("input[name='scope'][value='ltm']");
