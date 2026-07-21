@@ -8,9 +8,9 @@ version is single-sourced from `graphknows/__init__.py` (`__version__`).
 Semver applies to the **documented public surface** only:
 
 - the names in `graphknows.__all__` (the package root);
-- `graphknows.ports` (the store/embedder/extractor protocols);
-- `graphknows.client` (the out-of-process SDK);
-- `graphknows.adapters.*` (framework adapters);
+- `graphknows.storage.base` (the store/embedder protocols);
+- `graphknows.integrations.client` (the out-of-process SDK);
+- `graphknows.integrations.*` (framework adapters);
 - the `graphknows-mcp` and `graphknows-web` CLI entry points and the MCP tool
   contract.
 
@@ -28,8 +28,8 @@ next major. Current deprecations (removed in 2.0):
 | Deprecated | Use instead |
 | --- | --- |
 | `graphknows.GraphKnowsRuntime` | `graphknows.Memory` |
-| `graphknows.ports.IVectorDb` | `graphknows.ports.IVectorStore` |
-| `graphknows.config.llm._get_openrouter_api_key` | `get_openrouter_api_key` |
+| `graphknows.ports.*` | `graphknows.storage.base` (`IGraphStore`) |
+| `graphknows.config.llm._get_openrouter_api_key` | `graphknows.llm.get_openrouter_api_key` |
 
 ## Releasing
 

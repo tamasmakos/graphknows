@@ -18,27 +18,20 @@ Use it three ways from the same core: as a **Python library**, as an **MCP stdio
 
 ## Install
 
-The core install is small (no ML dependencies) — add extras for the features you use:
-
 ```bash
-pip install "graphknows[local-embeddings,extraction,server]"   # full llm_free stack + MCP server
-pip install "graphknows[assisted]"                             # + LLM extraction & ontology
-pip install graphknows                                         # core only (e.g. just the client SDK)
+pip install graphknows              # full llm_free stack, MCP server and web UI
+pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
 ```
 
 | Extra | Adds |
 | --- | --- |
-| `local-embeddings` | local sentence-transformers embeddings (the default embedder) |
-| `extraction` | GLiNER2 + spaCy entity/relation extraction (llm_free ingest) |
-| `analytics` | igraph + leidenalg community detection (flush) |
-| `parsers` | non-plaintext document parsers |
-| `server` | the `graphknows-mcp` stdio server |
-| `web` | the Memory Mirror web UI |
-| `assisted` | DSPy LLM extraction + injectable RDF/OWL ontology |
-| `langgraph` | the LangGraph adapter |
-| `all` | everything (used by the Docker images) |
+| `assisted` | DSPy LLM extraction + injectable RDF/OWL ontology (`llm_assisted` mode) |
 
-The stdlib-only `graphknows.client` SDK (drive the server out-of-process) needs no extras.
+`pip install graphknows` is batteries-included: GLiNER2 extraction, local
+embeddings, community detection, document parsers, the MCP server and the
+Memory Mirror web UI are all base dependencies. `assisted` is the only extra.
+
+The `graphknows.integrations.client` SDK (drive the server out-of-process) needs no extras.
 
 GraphKnows needs a running ArcadeDB. The quickest path:
 
@@ -69,7 +62,7 @@ asyncio.run(main())
 Out-of-process (no ML deps in your process), drive the MCP server with the same verbs:
 
 ```python
-from graphknows.client import RemoteMemory
+from graphknows.integrations.client import RemoteMemory
 
 async with RemoteMemory(command="graphknows-mcp") as mem:
     await mem.ingest_memory("Alex joined Acme as CTO in March.", session_id="s1")
@@ -114,8 +107,9 @@ episode → `flush_memory`) covers any framework — see
 [docs/integrations.md](docs/integrations.md) and
 [examples/langgraph_agent.py](examples/langgraph_agent.py).
 
-To plug a different storage backend, implement the three store protocols in
-[graphknows/ports](graphknows/ports) (`ISTMStore`, `IVectorStore`, `ILTMStore`).
+To plug a different storage backend, implement `IGraphStore` from
+[graphknows/storage/base.py](graphknows/storage/base.py) — the single-database
+contract `Memory` actually uses.
 
 ## Documentation
 

@@ -2,7 +2,7 @@
 
 graphknows exposes one small verb set. Integrating it into any framework is a
 matter of wiring that framework's memory hooks to these verbs — in-process via
-`graphknows.Memory`, or out-of-process via `graphknows.client.RemoteMemory`
+`graphknows.Memory`, or out-of-process via `graphknows.integrations.client.RemoteMemory`
 (same method names, MCP transport).
 
 ## The generic recipe
@@ -21,17 +21,17 @@ integration.
 
 ## LangGraph (shipped reference adapter)
 
-Install: `pip install 'graphknows[langgraph]'`.
+Install LangGraph alongside graphknows: `pip install graphknows langgraph`. The adapter ships in the base package; it imports LangGraph lazily.
 
 Two ready-made, framework-agnostic nodes live in
-`graphknows.adapters.langgraph` — they take a `state` dict and a memory, and
+`graphknows.integrations.langgraph` — they take a `state` dict and a memory, and
 return a partial state update, so they drop into any `state -> partial_state`
 graph:
 
 ```python
 from functools import partial
 from graphknows import Memory
-from graphknows.adapters.langgraph import recall, remember
+from graphknows.integrations.langgraph import recall, remember
 
 memory = Memory()
 graph.add_node("recall", partial(recall, memory=memory, session_id=thread_id))
@@ -45,7 +45,7 @@ graph.add_node("remember", partial(remember, memory=memory, session_id=thread_id
 For LangGraph's `BaseStore` extension point, use `GraphKnowsStore`:
 
 ```python
-from graphknows.adapters.langgraph import GraphKnowsStore
+from graphknows.integrations.langgraph import GraphKnowsStore
 
 store = GraphKnowsStore(memory)          # namespace tuple → session_id
 app = graph.compile(store=store)         # store.search → recall_memory
@@ -58,7 +58,7 @@ out-of-process: point them at the `graphknows-mcp` server, or drive it yourself
 with `RemoteMemory`, which mirrors the `Memory` verbs over MCP:
 
 ```python
-from graphknows.client import RemoteMemory
+from graphknows.integrations.client import RemoteMemory
 
 async with RemoteMemory(command="graphknows-mcp") as mem:
     await mem.ingest_memory(user_turn, session_id=thread_id)
