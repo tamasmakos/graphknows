@@ -38,10 +38,22 @@ depends_on = ["graphknows.settings"]
 path = "graphknows.ranking"
 depends_on = ["graphknows.settings"]
 
+# --- ontology: RDF/OWL term loading + the description-embedding catalog. A
+#     top-level shared leaf like ranking: ingestion steers extraction with it and
+#     channels retrieve against it, so it cannot live under either. ---
+[[modules]]
+path = "graphknows.ontology"
+depends_on = ["graphknows.settings", "graphknows.storage"]
+
 # --- channels: symmetric write/read signals ---
 [[modules]]
 path = "graphknows.channels"
-depends_on = ["graphknows.settings", "graphknows.storage", "graphknows.ranking"]
+depends_on = [
+  "graphknows.settings",
+  "graphknows.storage",
+  "graphknows.ranking",
+  "graphknows.ontology",
+]
 
 # --- ingestion (write path) ---
 [[modules]]
@@ -52,6 +64,7 @@ depends_on = [
   "graphknows.models",
   "graphknows.storage",
   "graphknows.channels",
+  "graphknows.ontology",
   "graphknows.llm",
 ]
 

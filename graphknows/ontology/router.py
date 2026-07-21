@@ -129,7 +129,7 @@ class OntologyRouter:
 
         This is a convenience wrapper that combines :meth:`select` with a
         registry lookup so callers can directly feed the result into
-        :func:`~graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader.load_rdf_ontology_file`.
+        :func:`~graphknows.ontology.loader.load_rdf_ontology_file`.
 
         Returns:
             Absolute path string to the RDF/OWL/Turtle file, or ``None`` if the

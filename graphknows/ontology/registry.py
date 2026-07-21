@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import OntologyManifest
-from graphknows.ingestion.extraction.relations.llm_assisted.ontology.ports import OntologyProvider
+from graphknows.ontology.loader import OntologyManifest
+from graphknows.ontology.ports import OntologyProvider
 
 
 @dataclass(frozen=True)

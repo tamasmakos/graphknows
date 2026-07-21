@@ -505,6 +505,184 @@ class GraphStore(ArcadeStoreBase):
                 await self._set_embedding("FRAME", "id", f"{session_id}:{f['chunk_id']}:{i}", emb)
         return len(rows)
 
+    async def write_ontology(self, index: Any) -> int:
+        """Persist an OntologyIndex as ONTOLOGY + CLASS/PROPERTY vertices (idempotent).
+
+        Reference data, written once per namespace at schema-ensure time rather
+        than on the ingest hot path. Term definition embeddings are copied from
+        the already-built index matrix, never recomputed. Guarded by a count
+        check so a restart does not re-MERGE hundreds of rows.
+
+        Returns the number of terms present after the write.
+        """
+        terms = getattr(index, "terms", None)
+        if not terms:
+            return 0
+        ont_id = getattr(index, "digest", "") or "default"
+        source = getattr(index, "source", "")
+
+        existing = await self.query(
+            "MATCH (o:ONTOLOGY {id: $id}) RETURN o.term_count AS c", id=ont_id
+        )
+        if existing and int(existing[0].get("c") or 0) >= len(terms):
+            return len(terms)
+
+        await self.command(
+            "MERGE (o:ONTOLOGY {id: $id}) SET o.source = $src, o.term_count = $n",
+            id=ont_id,
+            src=source,
+            n=len(terms),
+        )
+        for kind, vtype in (("class", "ONTOLOGY_CLASS"), ("property", "ONTOLOGY_PROPERTY")):
+            rows = [
+                {
+                    "uri": t.uri,
+                    "label": t.label,
+                    "definition": t.definition,
+                    "domain": t.domain,
+                    "range": t.range,
+                }
+                for t in terms
+                if t.kind == kind
+            ]
+            if not rows:
+                continue
+            extra = (
+                ", n.domain = r.domain, n.range = r.range" if vtype == "ONTOLOGY_PROPERTY" else ""
+            )
+            await self.command(
+                f"UNWIND $rows AS r MERGE (n:{vtype} {{uri: r.uri}}) "
+                f"SET n.label = r.label, n.definition = r.definition{extra}",
+                rows=rows,
+            )
+            await self.command(
+                f"UNWIND $rows AS r MATCH (o:ONTOLOGY {{id: $id}}), (n:{vtype} {{uri: r.uri}}) "
+                "MERGE (o)-[:DECLARES]->(n)",
+                rows=rows,
+                id=ont_id,
+            )
+        # Embeddings are per-row inline literals: LIST params conflict with the
+        # LSM_VECTOR index, the same constraint CHUNK/ENTITY/FRAME honour.
+        for term in terms:
+            emb = index.term_embedding(term.uri)
+            if emb:
+                vtype = "ONTOLOGY_CLASS" if term.kind == "class" else "ONTOLOGY_PROPERTY"
+                await self._set_embedding(vtype, "uri", term.uri, emb)
+        # Class hierarchy, resolved by label since parents are local names.
+        subclass_rows = [
+            {"child": t.uri, "parent": p} for t in terms if t.kind == "class" for p in t.parents
+        ]
+        if subclass_rows:
+            await self.command(
+                "UNWIND $rows AS r "
+                "MATCH (c:ONTOLOGY_CLASS {uri: r.child}), (p:ONTOLOGY_CLASS) "
+                "WHERE p.label = r.parent "
+                "MERGE (c)-[:SUBCLASS_OF]->(p)",
+                rows=subclass_rows,
+            )
+        logger.info("Ontology persisted: %d terms from %s", len(terms), source)
+        return len(terms)
+
+    async def write_class_matches(self, chunk_id: str, matches: list[tuple[str, float]]) -> int:
+        """MERGE CHUNK-[:MATCHES_CLASS {sim}]->ONTOLOGY_CLASS edges for one chunk."""
+        if not matches:
+            return 0
+        rows = [{"uri": uri, "sim": float(sim)} for uri, sim in matches]
+        await self.command(
+            "UNWIND $rows AS r "
+            "MATCH (c:CHUNK {chunk_id: $cid}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
+            "MERGE (c)-[m:MATCHES_CLASS]->(o) SET m.sim = r.sim",
+            rows=rows,
+            cid=chunk_id,
+        )
+        return len(rows)
+
+    async def write_instance_of(self, mappings: list[dict[str, Any]]) -> int:
+        """MERGE ENTITY-[:INSTANCE_OF {score}]->ONTOLOGY_CLASS edges.
+
+        Each mapping: ``{name, uri, score}``. Also denormalises the class label
+        onto ``ENTITY.ontology_class`` so readers skip the traversal.
+        """
+        if not mappings:
+            return 0
+        rows = [
+            {
+                "nn": _name_norm(str(m["name"])),
+                "uri": m["uri"],
+                "label": m.get("label", ""),
+                "score": float(m.get("score", 0.0)),
+            }
+            for m in mappings
+            if m.get("name") and m.get("uri")
+        ]
+        if not rows:
+            return 0
+        await self.command(
+            "UNWIND $rows AS r "
+            "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
+            "MERGE (e)-[i:INSTANCE_OF]->(o) SET i.score = r.score, e.ontology_class = r.label",
+            rows=rows,
+        )
+        return len(rows)
+
+    async def search_ontology_classes(
+        self,
+        embedding: list[float],
+        top_k: int,
+        session_id: str | None = None,
+        state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """ANN over ONTOLOGY_CLASS.embedding, joined to the chunks that evoke it.
+
+        Mirrors :meth:`query_frames_by_embedding`: vector-search the class
+        DEFINITIONS persisted in this namespace, then traverse MATCHES_CLASS to
+        the chunks tagged with them, scoring each chunk by its class's
+        query-match. Returns ``[{chunk_id, label, uri, score}]``.
+        """
+        if not embedding:
+            return []
+        sql = _vec_search_sql("ONTOLOGY_CLASS[embedding]", embedding, top_k)
+        try:
+            rows = await self._c.query(self._db, sql, language="sql")
+        except Exception as exc:
+            logger.warning("search_ontology_classes failed: %s", exc)
+            return []
+        score: dict[str, float] = {}
+        label: dict[str, str] = {}
+        for r in rows:
+            uri = r.get("uri")
+            if not uri or uri in score:
+                continue
+            score[uri] = max(0.0, 1.0 - float(r.get("distance") or 1.0))
+            label[uri] = r.get("label", "")
+        if not score:
+            return []
+        where = f"o.uri IN {quoted_list(list(score))}"
+        if session_id:
+            where += f" AND c.session_id = {quote(session_id)}"
+        if state:
+            where += f" AND c.state = {quote(state)}"
+        try:
+            joined = await self.query(
+                f"MATCH (c:CHUNK)-[m:MATCHES_CLASS]->(o:ONTOLOGY_CLASS) WHERE {where} "
+                "RETURN c.chunk_id AS chunk_id, o.uri AS uri, m.sim AS sim"
+            )
+        except Exception as exc:
+            logger.warning("search_ontology_classes join failed: %s", exc)
+            return []
+        return [
+            {
+                "chunk_id": r["chunk_id"],
+                "uri": r["uri"],
+                "label": label.get(r["uri"], ""),
+                # Query-to-class match, weighted by how strongly the chunk
+                # evoked that class in the first place.
+                "score": score.get(r["uri"], 0.0) * float(r.get("sim") or 0.0),
+            }
+            for r in joined
+            if r.get("chunk_id")
+        ]
+
     async def write_frame_instances(
         self, session_id: str, chunk_id: str, instances: list[dict[str, Any]]
     ) -> int:

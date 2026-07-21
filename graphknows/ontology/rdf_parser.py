@@ -12,6 +12,7 @@ Usage:
 import logging
 import re
 from pathlib import Path
+from typing import cast
 
 try:
     from rdflib import BNode, Graph, Literal, URIRef
@@ -172,7 +173,7 @@ class OntologyLabelExtractor:
                     continue
 
             # Try to get rdfs:label
-            label = self._get_label(cls)
+            label = self._get_label(cast("URIRef", cls))
 
             if label:
                 label = label.strip()

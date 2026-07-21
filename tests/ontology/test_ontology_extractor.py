@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import OntologyLoader
-from graphknows.ingestion.extraction.relations.llm_assisted.ontology.router import OntologyRouter
+from graphknows.ontology.loader import OntologyLoader
+from graphknows.ontology.router import OntologyRouter
 
 REGISTRY_ROOT = (
-    Path(__file__).parent.parent.parent / "graphknows" / "ingestion" / "extraction" / "relations" / "llm_assisted" / "ontology" / "assets"
+    Path(__file__).parent.parent.parent / "graphknows" / "ontology" / "assets"
 )
 
 

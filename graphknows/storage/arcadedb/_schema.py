@@ -133,6 +133,40 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY COMMUNITY.modularity IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY COMMUNITY.size IF NOT EXISTS INTEGER"),
     ("sql", "CREATE INDEX ON COMMUNITY(community_id) UNIQUE"),
+    # Ontology layer — the loaded ontology's classes and properties, persisted
+    # per namespace so they are joinable to the data they describe (an ENTITY
+    # links to its class by INSTANCE_OF, a CHUNK to the classes it evokes by
+    # MATCHES_CLASS). Each carries its natural-language definition and that
+    # definition's embedding, so a query can vector-search the ontology and
+    # traverse into matching chunks/entities. Present but empty when no
+    # ontology is configured — the DDL is unconditional so an existing
+    # namespace upgrades on its next ensure_schema.
+    ("sql", "CREATE VERTEX TYPE ONTOLOGY IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY ONTOLOGY.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY.source IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY.term_count IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE INDEX ON ONTOLOGY(id) UNIQUE"),
+    ("sql", "CREATE VERTEX TYPE ONTOLOGY_CLASS IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_CLASS.uri IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_CLASS.label IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_CLASS.definition IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_CLASS.embedding IF NOT EXISTS LIST"),
+    ("sql", "CREATE INDEX ON ONTOLOGY_CLASS(uri) UNIQUE"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON ONTOLOGY_CLASS(label) NOTUNIQUE"),
+    (
+        "sql",
+        "CREATE INDEX IF NOT EXISTS ON ONTOLOGY_CLASS(embedding) LSM_VECTOR "
+        f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
+    ),
+    ("sql", "CREATE VERTEX TYPE ONTOLOGY_PROPERTY IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.uri IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.label IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.definition IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.domain IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.range IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.embedding IF NOT EXISTS LIST"),
+    ("sql", "CREATE INDEX ON ONTOLOGY_PROPERTY(uri) UNIQUE"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON ONTOLOGY_PROPERTY(label) NOTUNIQUE"),
     # ---- Edge types -------------------------------------------------------
     ("sql", "CREATE EDGE TYPE PART_OF IF NOT EXISTS"),  # CHUNK -> FILE
     ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE -> SESSION
@@ -155,4 +189,17 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE INDEX IF NOT EXISTS ON REL (predicate) NOTUNIQUE"),
     ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
     ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK
+    # Ontology edges. INSTANCE_OF/MATCHES_CLASS carry the mapping score so a
+    # weak match stays distinguishable from a confident one downstream.
+    ("sql", "CREATE EDGE TYPE DECLARES IF NOT EXISTS"),  # ONTOLOGY -> CLASS|PROPERTY
+    ("sql", "CREATE EDGE TYPE SUBCLASS_OF IF NOT EXISTS"),  # ONTOLOGY_CLASS -> ONTOLOGY_CLASS
+    ("sql", "CREATE EDGE TYPE INSTANCE_OF IF NOT EXISTS"),  # ENTITY -> ONTOLOGY_CLASS
+    ("sql", "CREATE PROPERTY INSTANCE_OF.score IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE EDGE TYPE MATCHES_CLASS IF NOT EXISTS"),  # CHUNK -> ONTOLOGY_CLASS
+    ("sql", "CREATE PROPERTY MATCHES_CLASS.sim IF NOT EXISTS DOUBLE"),
+    # Denormalised ontology mapping on the data itself, so the fact-sheet and
+    # fusion paths read it without an extra traversal.
+    ("sql", "CREATE PROPERTY ENTITY.ontology_class IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.ontology_property IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.map_score IF NOT EXISTS DOUBLE"),
 ]

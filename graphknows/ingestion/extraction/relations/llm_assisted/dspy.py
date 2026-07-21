@@ -22,8 +22,10 @@ enforcing ontology discipline.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 try:
@@ -36,8 +38,9 @@ from pydantic import BaseModel, Field
 
 from graphknows.ingestion.extraction.entities.graph_ops import standardize_label
 from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
-from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import (
+from graphknows.ontology.loader import (
     RdfOntologyManifest,
+    load_ontology_terms,
     load_rdf_ontology_file,
 )
 from graphknows.llm import build_lm, get_openrouter_api_key
@@ -49,11 +52,35 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _manifest_for(source: str) -> RdfOntologyManifest:
+    """Build a manifest from an ontology file *or* folder.
+
+    ``GRAPHKNOWS_ONTOLOGY`` accepts a directory, which the strict single-file
+    loader rejects; for that case the permissive term loader supplies the same
+    label lists. A single file still takes the strict path, so its stricter
+    error reporting is preserved.
+    """
+    if not Path(source).is_dir():
+        return load_rdf_ontology_file(source)
+    terms = load_ontology_terms(source)
+    classes = sorted({t.label for t in terms if t.kind == "class"})
+    properties = sorted({t.label for t in terms if t.kind == "property"})
+    return RdfOntologyManifest(
+        file_path=source,
+        class_labels=classes,
+        property_labels=properties,
+        context=json.dumps(
+            {"source": source, "classes": classes, "properties": properties},
+            ensure_ascii=False,
+        ),
+    )
+
+
 def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
     """Build a SKOS-enriched context string from an RDF/OWL ontology manifest.
 
     Extends the basic ``{"classes": [...], "properties": [...]}`` context from
-    :func:`~graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader.load_rdf_ontology_file` with
+    :func:`~graphknows.ontology.loader.load_rdf_ontology_file` with
     per-property domain/range and SKOS ``prefLabel``/``definition`` where
     available.  This gives the DSPy LLM structured signal about *what each
     relation means* and *which entity types it connects*.
@@ -61,8 +88,6 @@ def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
     Falls back to the manifest's raw context string when rdflib is unavailable
     or the ontology file cannot be parsed.
     """
-    import json
-
     try:
         import rdflib
         from rdflib import OWL, RDF, RDFS
@@ -358,7 +383,7 @@ class DSPyExtractor(BaseExtractor):
         """
         ontology_file = str(ontology_config.get("file") or "").strip()
         if ontology_file:
-            self._ontology: RdfOntologyManifest | None = load_rdf_ontology_file(ontology_file)
+            self._ontology: RdfOntologyManifest | None = _manifest_for(ontology_file)
             self._ontology_classes = [
                 standardize_label(label) for label in self._ontology.class_labels
             ]
@@ -366,7 +391,7 @@ class DSPyExtractor(BaseExtractor):
                 standardize_label(label) for label in self._ontology.property_labels
             ]
             if not self._ontology_classes or not self._ontology_relation_types:
-                raise ValueError(f"RDF ontology file produced no DSPy labels: {ontology_file}")
+                raise ValueError(f"RDF ontology source produced no DSPy labels: {ontology_file}")
             # Build the extract-then-map predicate mapper from the ontology labels.
             # The raw (non-standardized) property labels are used so the mapper
             # can match surface forms like "is friends with" → "friend_of".

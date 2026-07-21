@@ -25,11 +25,11 @@ import pytest
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-ASSETS_ROOT = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations" / "llm_assisted" / "ontology" / "assets"
+ASSETS_ROOT = REPO_ROOT / "graphknows" / "ontology" / "assets"
 PERSONAL_TTL = ASSETS_ROOT / "personal" / "personal.ttl"
 PERSONAL_SUMMARY = ASSETS_ROOT / "personal" / "personal-summary.jsonld"
 
-_ONTOLOGY_PKG = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations" / "llm_assisted" / "ontology"
+_ONTOLOGY_PKG = REPO_ROOT / "graphknows" / "ontology"
 _RELATIONS_PKG = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations"
 
 
@@ -54,7 +54,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 def _loader_mod():
     return _load_module(
-        "graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader",
+        "graphknows.ontology.loader",
         _ONTOLOGY_PKG / "loader.py",
     )
 
@@ -63,7 +63,7 @@ def _router_mod():
     # Router imports loader; ensure loader is pre-loaded in sys.modules first.
     _loader_mod()
     return _load_module(
-        "graphknows.ingestion.extraction.relations.llm_assisted.ontology.router",
+        "graphknows.ontology.router",
         _ONTOLOGY_PKG / "router.py",
     )
 

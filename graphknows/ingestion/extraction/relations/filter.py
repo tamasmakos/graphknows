@@ -321,7 +321,7 @@ def build_predicate_mapper(
     Falls back to an empty mapper (no constraints) when the ontology cannot be
     loaded, so the pipeline never fails due to a missing ontology asset.
     """
-    from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import OntologyLoader
+    from graphknows.ontology.loader import OntologyLoader
 
     try:
         manifest = OntologyLoader().load(ontology_id)
@@ -339,7 +339,7 @@ def build_relation_filter(ontology_id: str = "schema-org") -> RelationOntologyFi
     Falls back to an inactive (pass-through) filter when the ontology cannot be
     loaded, so ingestion never fails because of a missing ontology asset.
     """
-    from graphknows.ingestion.extraction.relations.llm_assisted.ontology.loader import OntologyLoader
+    from graphknows.ontology.loader import OntologyLoader
 
     try:
         manifest = OntologyLoader().load(ontology_id)
