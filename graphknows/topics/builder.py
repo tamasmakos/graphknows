@@ -51,9 +51,9 @@ async def build_topics(
         return TopicSet(namespace=namespace, config=cfg.to_dict())
 
     labels = _cluster(entities, cfg)
-    chunks = await _load_entity_chunks(store, [e["name"] for e in entities])
-    topics, topic_texts, part = _assemble(entities, labels, chunks, cfg)
-    await _describe(topics, topic_texts, cfg, summarizer)
+    entity_chunks, chunk_meta = await _load_entity_chunks(store, [e["name"] for e in entities])
+    topics, part = _assemble(entities, labels, entity_chunks, cfg)
+    await _describe(topics, chunk_meta, cfg, summarizer)
 
     newman_q = metrics.newman_modularity(await _load_edges(store), part)
     totals = await _totals(store)
@@ -109,19 +109,33 @@ async def _load_entities(store: Any, cfg: TopicConfig) -> list[dict[str, Any]]:
     return out
 
 
-async def _load_entity_chunks(store: Any, names: list[str]) -> dict[str, list[tuple[str, str]]]:
-    """Entity name -> [(chunk_id, text)] via MENTIONS."""
+async def _load_entity_chunks(
+    store: Any, names: list[str]
+) -> tuple[dict[str, list[str]], dict[str, tuple[str, list[float]]]]:
+    """``(entity name -> [chunk_id], chunk_id -> (text, embedding))`` via MENTIONS.
+
+    Fetches ``c.embedding`` alongside the text so the stage never re-embeds:
+    the chunk vectors were computed at ingest and persisted, and a chunk belongs
+    to many topics (measured on conv-26: 769 memberships over 63 distinct
+    chunks, a 12x redundancy). Re-embedding per topic made description 337s of a
+    337.4s stage; reading the stored vectors makes it free.
+    """
     rows = await store.query(
         "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-        "RETURN e.name AS name, c.chunk_id AS chunk_id, c.text AS text"
+        "RETURN e.name AS name, c.chunk_id AS chunk_id, c.text AS text, "
+        "c.embedding AS embedding"
     )
-    wanted = {n for n in names}
-    out: dict[str, list[tuple[str, str]]] = {}
+    wanted = set(names)
+    by_entity: dict[str, list[str]] = {}
+    chunk_meta: dict[str, tuple[str, list[float]]] = {}
     for r in rows:
-        name = r.get("name")
-        if name in wanted and r.get("chunk_id"):
-            out.setdefault(name, []).append((r["chunk_id"], r.get("text") or ""))
-    return out
+        name, cid = r.get("name"), r.get("chunk_id")
+        if name not in wanted or not cid:
+            continue
+        by_entity.setdefault(name, []).append(cid)
+        if cid not in chunk_meta:
+            chunk_meta[cid] = (r.get("text") or "", list(r.get("embedding") or []))
+    return by_entity, chunk_meta
 
 
 async def _load_edges(store: Any) -> list[tuple[str, str]]:
@@ -199,15 +213,14 @@ def _matrix(entities: list[dict[str, Any]]) -> np.ndarray:
 def _assemble(
     entities: list[dict[str, Any]],
     labels: list[int],
-    chunks: dict[str, list[tuple[str, str]]],
+    entity_chunks: dict[str, list[str]],
     cfg: TopicConfig,
-) -> tuple[list[Topic], list[list[str]], dict[str, int]]:
+) -> tuple[list[Topic], dict[str, int]]:
     """Group clustered entities into Topics, dropping clusters below min_size.
 
-    Returns ``(topics, member_texts_per_topic, entity_norm -> topic_index)``.
-    The texts ride alongside rather than on the Topic because they are working
-    state for description, not part of the record; the partition map is built
-    here so modularity does not need an O(N*M) reverse lookup afterwards.
+    Returns ``(topics, entity_norm -> topic_index)``. The partition map is built
+    here so modularity does not need an O(N*M) reverse lookup afterwards; member
+    texts are not carried, because ``chunk_ids`` plus the chunk map is enough.
     """
     grouped: dict[int, list[int]] = {}
     for idx, label in enumerate(labels):
@@ -217,7 +230,6 @@ def _assemble(
     vectors = _matrix(entities) if has_vectors else np.zeros((0, 0), dtype=np.float32)
 
     topics: list[Topic] = []
-    topic_texts: list[list[str]] = []
     partition: dict[str, int] = {}
     for label, members in sorted(grouped.items()):
         if len(members) < cfg.min_size:
@@ -226,10 +238,19 @@ def _assemble(
             ((str(entities[i]["name"]), float(entities[i].get("pr") or 0.0)) for i in members),
             key=lambda kv: -kv[1],
         )
-        chunk_map: dict[str, str] = {}
+        chunk_ids: dict[str, None] = {}  # ordered set
         for name, _ in ranked:
-            for cid, text in chunks.get(name, []):
-                chunk_map.setdefault(cid, text)
+            for cid in entity_chunks.get(name, ()):
+                chunk_ids.setdefault(cid, None)
+        if not chunk_ids:
+            # A cluster with no evidence chunks is not a topic: it can carry no
+            # summary, no keywords and no centroid, so it would be written and
+            # then be unreachable. These are typically date/time entities minted
+            # as relation endpoints, which never get a MENTIONS edge.
+            log.debug(
+                "topic stage: dropping chunkless cluster %s (%d entities)", label, len(members)
+            )
+            continue
         coh, centroid = metrics.coherence(vectors[members]) if has_vectors else (0.0, [])
 
         index = len(topics)
@@ -240,62 +261,75 @@ def _assemble(
                 topic_id=f"topic:{cfg.fingerprint()}:{label}",
                 title=" · ".join(n for n, _ in ranked[: cfg.max_title_entities]),
                 entities=ranked,
-                chunk_ids=list(chunk_map),
+                chunk_ids=list(chunk_ids),
                 coherence=round(coh, 4),
                 embedding=centroid,
             )
         )
-        topic_texts.append(list(chunk_map.values()))
-    return topics, topic_texts, partition
+    return topics, partition
 
 
 async def _describe(
-    topics: list[Topic], topic_texts: list[list[str]], cfg: TopicConfig, summarizer: Any
+    topics: list[Topic],
+    chunk_meta: dict[str, tuple[str, list[float]]],
+    cfg: TopicConfig,
+    summarizer: Any,
 ) -> None:
     """Attach the text-derived fields to each topic, in place.
 
-    One embedding pass per topic yields three things: the TOPIC vector, the
-    coherence, and the lead passage. The vector is not optional — ``TopicChannel``
-    vector-searches ``TOPIC.embedding``, so a topic without one is written but
-    unreachable, which is how a topic layer ends up looking built and inert.
+    Uses the chunk embeddings persisted at ingest — no embedding call. The topic
+    vector is not optional: ``TopicChannel`` vector-searches ``TOPIC.embedding``,
+    so a topic written without one is stored but unreachable, which is how a
+    topic layer ends up looking built and inert.
     """
-    background = metrics.token_sets(topic_texts)
+    texts_per_topic = [
+        [chunk_meta.get(cid, ("", []))[0] for cid in t.chunk_ids] for t in topics
+    ]
+    background = metrics.token_sets(texts_per_topic)
     for i, topic in enumerate(topics):
-        texts = topic_texts[i]
+        texts = texts_per_topic[i]
         others = background[:i] + background[i + 1 :]
         topic.keywords = metrics.keywords(texts, others, top_k=cfg.keywords_per_topic)
 
-        centroid, coh, lead = _text_profile(texts)
+        centroid, coh, lead_idx = _profile(topic.chunk_ids, chunk_meta)
         # Entity-vector coherence (graph_embedding source) is kept when present;
         # otherwise the text-derived one applies, so the metric is comparable.
         if centroid:
             topic.embedding = centroid
             if not topic.coherence:
                 topic.coherence = round(coh, 4)
-        if lead and lead in texts:
-            topic.lead_chunk_id = topic.chunk_ids[texts.index(lead)]
+        lead = ""
+        if lead_idx is not None:
+            topic.lead_chunk_id = topic.chunk_ids[lead_idx]
+            lead = texts[lead_idx]
         topic.summary = await _summary(topic, texts, lead, cfg, summarizer)
 
 
-def _text_profile(texts: list[str]) -> tuple[list[float], float, str]:
-    """``(centroid, coherence, lead_passage)`` from the member chunk texts."""
-    usable = [t for t in texts if t and t.strip()][:64]
-    if not usable:
-        return [], 0.0, ""
-    from graphknows.storage.embedder import embed
+def _profile(
+    chunk_ids: list[str], chunk_meta: dict[str, tuple[str, list[float]]]
+) -> tuple[list[float], float, int | None]:
+    """``(centroid, coherence, index of the centroid-nearest member)``.
 
-    try:
-        mat = np.asarray(embed(usable), dtype=np.float32)
-    except Exception as exc:
-        log.warning("topic text profile failed (%s)", exc)
-        return [], 0.0, usable[0]
+    Built entirely from the stored chunk vectors, so a topic costs no embedding
+    call regardless of how many members it has.
+    """
+    rows: list[list[float]] = []
+    positions: list[int] = []
+    for i, cid in enumerate(chunk_ids):
+        vec = chunk_meta.get(cid, ("", []))[1]
+        if vec:
+            rows.append(vec)
+            positions.append(i)
+    if not rows:
+        return [], 0.0, None
+    mat = np.asarray(rows, dtype=np.float32)
     coh, centroid = metrics.coherence(mat)
     if not centroid:
-        return [], 0.0, usable[0]
-    rows = np.linalg.norm(mat, axis=1, keepdims=True)
-    rows[rows == 0.0] = 1.0
-    sims = (mat / rows) @ np.asarray(centroid, dtype=np.float32)
-    return centroid, coh, usable[int(np.argmax(sims))]
+        return [], 0.0, positions[0]
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0.0] = 1.0
+    sims = (mat / norms) @ np.asarray(centroid, dtype=np.float32)
+    return centroid, coh, positions[int(np.argmax(sims))]
 
 
 async def _summary(

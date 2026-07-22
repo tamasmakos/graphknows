@@ -94,6 +94,11 @@ def keywords(
     if not tokens:
         return []
     tf = Counter(tokens)
+    if not background:
+        # Nothing to contrast against (a single-topic build): every IDF would be
+        # log(1) = 0 and the topic would get no keywords at all. Plain term
+        # frequency is the honest fallback.
+        return [t for t, _ in tf.most_common(top_k)]
     n_docs = len(background) + 1
     scores: dict[str, float] = {}
     for term, count in tf.items():

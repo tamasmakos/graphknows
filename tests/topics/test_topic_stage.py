@@ -168,6 +168,87 @@ class TestExport:
         assert export_json(self._topic_set(), tmp_path / "a" / "b" / "t.json").exists()
 
 
+class TestAssembleAndDescribe:
+    """The stage must never re-embed, and must not emit unreachable topics."""
+
+    @staticmethod
+    def _entities(n: int) -> list[dict]:
+        return [{"name": f"e{i}", "pr": 1.0 / (i + 1)} for i in range(n)]
+
+    def test_chunkless_cluster_is_dropped(self) -> None:
+        """No evidence chunks means no centroid, keywords or summary.
+
+        These are typically date/time entities minted as relation endpoints,
+        which never receive a MENTIONS edge. Writing them produces topics that
+        are stored but unreachable.
+        """
+        from graphknows.topics.builder import _assemble
+
+        entities = self._entities(4)
+        # Cluster 0 has chunks; cluster 1 has none.
+        entity_chunks = {"e0": ["c1"], "e1": ["c1", "c2"]}
+        topics, partition = _assemble(
+            entities, [0, 0, 1, 1], entity_chunks, TopicConfig(min_size=2)
+        )
+        assert len(topics) == 1
+        assert topics[0].chunk_ids == ["c1", "c2"]
+        # The dropped cluster's entities are not in the partition either.
+        assert set(partition) == {"e0", "e1"}
+
+    def test_min_size_still_applies(self) -> None:
+        from graphknows.topics.builder import _assemble
+
+        topics, _ = _assemble(
+            self._entities(3), [0, 1, 1], {"e0": ["c1"], "e1": ["c2"], "e2": ["c3"]},
+            TopicConfig(min_size=2),
+        )
+        assert len(topics) == 1
+
+    @pytest.mark.asyncio
+    async def test_describe_uses_stored_vectors_and_never_embeds(self) -> None:
+        """Regression: re-embedding per topic was 337s of a 337.4s stage.
+
+        Chunks belong to many topics (12x redundancy measured on conv-26) and
+        their vectors are already persisted, so the stage reads them instead.
+        """
+        import graphknows.storage.embedder as embedder
+        from graphknows.topics.builder import _describe
+
+        topic = Topic(topic_id="t1", title="x", chunk_ids=["c1", "c2"])
+        chunk_meta = {
+            "c1": ("we went kayaking on the river", [1.0, 0.0, 0.0]),
+            "c2": ("kayaking again next week", [0.9, 0.1, 0.0]),
+        }
+        called = False
+
+        def _boom(*_a: object, **_k: object) -> None:
+            nonlocal called
+            called = True
+            raise AssertionError("the topic stage must not embed")
+
+        original = embedder.embed
+        embedder.embed = _boom  # type: ignore[assignment]
+        try:
+            await _describe([topic], chunk_meta, TopicConfig(), None)
+        finally:
+            embedder.embed = original  # type: ignore[assignment]
+
+        assert not called
+        assert len(topic.embedding) == 3
+        assert topic.coherence > 0
+        assert topic.lead_chunk_id in ("c1", "c2")
+        assert "kayaking" in topic.keywords
+
+    @pytest.mark.asyncio
+    async def test_topic_whose_chunks_lack_vectors_still_gets_keywords(self) -> None:
+        from graphknows.topics.builder import _describe
+
+        topic = Topic(topic_id="t1", title="x", chunk_ids=["c1"])
+        await _describe([topic], {"c1": ("kayaking trip", [])}, TopicConfig(), None)
+        assert topic.embedding == []  # honest: unreachable, not fabricated
+        assert "kayaking" in topic.keywords
+
+
 class TestPersist:
     @pytest.mark.asyncio
     async def test_replaces_the_previous_layer_by_default(self) -> None:
