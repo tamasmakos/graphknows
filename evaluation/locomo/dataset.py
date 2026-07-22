@@ -8,6 +8,7 @@ groups questions by dialogue, and normalizes each dialogue's sessions into
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,39 @@ def _session_anchor(session: dict[str, Any]) -> str:
     return ""
 
 
+_EVIDENCE_ID = re.compile(r"D(\d+):(\d+)")
+
+
+def _evidence_turns(row: dict[str, Any]) -> list[str]:
+    """Gold evidence turn CONTENTS for a LoCoMo row (``['D1:3']`` -> the utterance).
+
+    LoCoMo ships the turn-ids that answer each question (1536/1540 rows, 27% of
+    them multi-hop) and nothing used them. ``D<doc>:<turn>`` is 1-indexed on
+    both axes. Contents — not the "ts | Speaker:" prefix — because the content
+    is what survives chunking verbatim (verified: 97/97 evidence turns are an
+    exact substring of some CHUNK).
+
+    Scoring only: these never reach the retriever or the answerer.
+    """
+    # str(list) works for both the list and the stringified-list dumps.
+    ids = [
+        (int(m.group(1)), int(m.group(2)))
+        for m in _EVIDENCE_ID.finditer(str(row.get("evidence") or ""))
+    ]
+    sessions = row.get("sessions")
+    if not isinstance(sessions, list):
+        return []
+    out: list[str] = []
+    for doc_no, turn_no in ids:
+        try:
+            content = sessions[doc_no - 1]["messages"][turn_no - 1].get("content")
+        except (IndexError, KeyError, TypeError, AttributeError):
+            continue
+        if text := " ".join(str(content or "").split()):
+            out.append(text)
+    return out
+
+
 def build_documents(
     row: dict[str, Any], *, max_documents: int, max_chars: int
 ) -> list[EvalDocument]:
@@ -157,6 +191,7 @@ def load_units(config: LocomoConfig, *, limit: int, offset: int) -> list[IngestU
                 question=first_string(r, _QUESTION_KEYS),
                 gold=str(r.get("answer") or r.get("gold") or r.get("target") or ""),
                 category=first_string(r, _CATEGORY_KEYS),
+                extras={"evidence": _evidence_turns(r)},
             )
             for r in dlg_rows
         ]

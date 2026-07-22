@@ -28,7 +28,12 @@ from evaluation.common.datamodels import (
 )
 from evaluation.common.dspy_judge import DSPyJudge
 from evaluation.common.ingestion import Ingestor
-from evaluation.common.lexical import gold_context_coverage, gold_max_overlap, gold_reachable
+from evaluation.common.lexical import (
+    evidence_recall,
+    gold_context_coverage,
+    gold_max_overlap,
+    gold_reachable,
+)
 from evaluation.common.llm import ChatLLM, CreditExhaustedError, resolve_model
 from evaluation.common.reporting import summarize, write_report
 from evaluation.common.retrieval import Retriever
@@ -137,6 +142,25 @@ def _evaluation_env() -> dict[str, str]:
     return {k: os.environ[k] for k in _FORWARDED_ENV if os.environ.get(k)}
 
 
+def _evidence_metrics(
+    case: EvalCase, probe: list[RetrievedPassage], context: list[RetrievedPassage]
+) -> dict[str, float]:
+    """Evidence-recall at probe depth and in the generator's context.
+
+    Emits NOTHING when the benchmark ships no evidence for the case, so the
+    run summary averages only over cases that have it — no sentinel to strip,
+    and benchmarks without evidence simply never show the metric.
+    """
+    evidence = [str(t) for t in (case.extras.get("evidence") or [])]
+    if not evidence:
+        return {}
+    return {
+        "evidence_count": float(len(evidence)),
+        "evidence_recall_at_probe": round(evidence_recall(evidence, probe), 3),
+        "evidence_recall_in_context": round(evidence_recall(evidence, context), 3),
+    }
+
+
 def build_case_result(
     case: EvalCase,
     *,
@@ -167,6 +191,10 @@ def build_case_result(
             **lexical,
             "gold_max_token_overlap": round(gold_max_overlap(case.gold, probe), 3),
             "gold_reachable_at_probe": gold_reachable(case.gold, probe),
+            # The retrieval metric to tune on: did we actually retrieve the gold
+            # evidence turns? Per-hop and un-inflatable, unlike the lexical
+            # answer-token proxy above. Absent when the benchmark has no evidence.
+            **_evidence_metrics(case, probe, context_passages),
             # Fraction of gold tokens present in the passages the GENERATOR saw:
             # high + wrong answer = generation failure, low = retrieval miss.
             "gold_context_coverage": round(gold_context_coverage(case.gold, context_passages), 3),
