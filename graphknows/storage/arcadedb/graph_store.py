@@ -1050,6 +1050,25 @@ class GraphStore(ArcadeStoreBase):
             for r in rows
         ]
 
+    async def chunk_embeddings(self, chunk_ids: list[str]) -> dict[str, list[float]]:
+        """``{chunk_id: embedding}`` for the given chunks (missing ids omitted).
+
+        One round trip for a whole candidate pool, so the retriever can order it
+        by true query-chunk cosine instead of rank arithmetic.
+        """
+        ids = [c for c in chunk_ids if c]
+        if not ids:
+            return {}
+        rows = await self.query(
+            f"MATCH (c:CHUNK) WHERE c.chunk_id IN {quoted_list(ids)} "
+            f"RETURN c.chunk_id AS chunk_id, c.embedding AS embedding"
+        )
+        return {
+            r["chunk_id"]: list(r["embedding"])
+            for r in rows
+            if r.get("chunk_id") and r.get("embedding")
+        }
+
     async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch chunks by id. Returns {chunk_id: {text, session_id, ...}}."""
         ids = [c for c in chunk_ids if c]

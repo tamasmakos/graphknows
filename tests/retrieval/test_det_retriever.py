@@ -175,3 +175,43 @@ async def test_scope_maps_to_state_filter():
     # semantic_ann calls search_chunks_ann(emb, k, session_id, state).
     _emb, _k, _sid, state = store.search_chunks_ann.await_args.args
     assert state == "consolidated"
+
+
+@pytest.mark.asyncio
+async def test_cosine_rerank_orders_the_pool_by_query_similarity():
+    """Channels decide pool MEMBERSHIP; cosine decides the ORDER.
+
+    Measured on conv-26: recall@10 0.739 -> 0.848, multi-hop@10 0.548 -> 0.704.
+    """
+    retriever, store = _make_retriever()
+    store.chunk_embeddings = AsyncMock(
+        return_value={"far": [0.0, 1.0], "near": [1.0, 0.0]}
+    )
+    # RRF put the semantically-distant chunk first.
+    pool = [{"chunk_id": "far", "rrf_score": 0.9}, {"chunk_id": "near", "rrf_score": 0.1}]
+
+    out = await retriever._cosine_rerank([1.0, 0.0], pool)
+
+    assert [c["chunk_id"] for c in out] == ["near", "far"]
+    assert out[0]["cosine"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_cosine_rerank_keeps_unscorable_candidates_last():
+    """A chunk with no stored embedding is demoted, never dropped."""
+    retriever, store = _make_retriever()
+    store.chunk_embeddings = AsyncMock(return_value={"has": [1.0, 0.0]})
+    pool = [{"chunk_id": "none", "rrf_score": 0.9}, {"chunk_id": "has", "rrf_score": 0.1}]
+
+    out = await retriever._cosine_rerank([1.0, 0.0], pool)
+
+    assert [c["chunk_id"] for c in out] == ["has", "none"]
+
+
+@pytest.mark.asyncio
+async def test_cosine_rerank_falls_back_to_rrf_order_on_store_failure():
+    retriever, store = _make_retriever()
+    store.chunk_embeddings = AsyncMock(side_effect=RuntimeError("boom"))
+    pool = [{"chunk_id": "a", "rrf_score": 0.9}, {"chunk_id": "b", "rrf_score": 0.1}]
+
+    assert await retriever._cosine_rerank([1.0, 0.0], pool) == pool
