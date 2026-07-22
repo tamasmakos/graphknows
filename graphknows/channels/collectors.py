@@ -60,21 +60,9 @@ class TemporalChannel(Channel):
         return await rt.temporal_traversal(ctx.query, ctx.session_id, ctx.state, top_k)
 
 
-class TopicChannel(Channel):
-    """Topic-summary match.
-
-    Data-gated, not mode-gated: TOPIC nodes are built at flush whenever
-    ``GRAPHKNOWS_TOPICS`` is not ``none``, which includes the deterministic
-    ``extractive`` mode under ``llm_free``. Returns nothing when the topic layer
-    was not built.
-    """
-
-    name = "topic"
-
-    async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
-        """Delegate to the retriever's topic-match collector."""
-        return await rt.topic_match(ctx.emb, ctx.session_id, ctx.state, top_k)
-
+# TopicChannel lives in channels/topics.py — it routes to member chunks and
+# needs its own saturation guard, which outgrew a delegating one-liner.
+from graphknows.channels.topics import TopicChannel  # noqa: E402
 
 # The default retrieval channel set, in fusion order. The registry appends
 # optional channels (e.g. ppr, frames).

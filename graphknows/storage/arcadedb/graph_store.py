@@ -1043,12 +1043,84 @@ class GraphStore(ArcadeStoreBase):
                     "topic_id": r.get("topic_id", ""),
                     "summary": r.get("summary", ""),
                     "modularity": r.get("modularity"),
+                    "title": r.get("title", "") or "",
+                    "keywords": list(r.get("keywords") or []),
+                    "coherence": float(r.get("coherence") or 0.0),
                     "confidence": max(0.0, 1.0 - dist),
                 }
             )
             if len(results) >= top_k:
                 break
         return results
+
+    async def search_topics_with_chunks(
+        self,
+        embedding: list[float],
+        top_k: int,
+        session_id: str | None = None,
+        state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """ANN over TOPIC.embedding, then join TOPIC<-[:HAS_TOPIC]-CHUNK.
+
+        Mirrors :meth:`query_frames_by_embedding` and
+        :meth:`search_ontology_classes`: match the topic centroids, then return
+        the member chunks so a topic routes to real evidence rather than only
+        contributing its summary. Returns
+        ``[{chunk_id, topic_id, title, keywords, coherence, score}]``.
+        """
+        if not embedding:
+            return []
+        sql = _vec_search_sql("TOPIC[embedding]", embedding, top_k)
+        try:
+            rows = await self._c.query(self._db, sql, language="sql")
+        except Exception as exc:
+            logger.debug("search_topics_with_chunks failed (non-fatal): %s", exc)
+            return []
+        meta: dict[str, dict[str, Any]] = {}
+        for r in self._dedup_rows(rows):
+            tid = r.get("topic_id")
+            if not tid or tid in meta:
+                continue
+            meta[tid] = {
+                "score": max(0.0, 1.0 - float(r.get("distance") or 1.0)),
+                "title": r.get("title", "") or "",
+                "keywords": list(r.get("keywords") or []),
+                "coherence": float(r.get("coherence") or 0.0),
+            }
+        if not meta:
+            return []
+        where = f"t.topic_id IN {quoted_list(list(meta))}"
+        if session_id:
+            where += f" AND c.session_id = {quote(session_id)}"
+        if state:
+            where += f" AND c.state = {quote(state)}"
+        try:
+            joined = await self.query(
+                f"MATCH (c:CHUNK)-[:HAS_TOPIC]->(t:TOPIC) WHERE {where} "
+                "RETURN c.chunk_id AS chunk_id, t.topic_id AS topic_id"
+            )
+        except Exception as exc:
+            logger.debug("search_topics_with_chunks join failed: %s", exc)
+            return []
+        out: list[dict[str, Any]] = []
+        for r in joined:
+            tid, cid = r.get("topic_id"), r.get("chunk_id")
+            if not tid or not cid:
+                continue
+            info = meta[tid]
+            out.append(
+                {
+                    "chunk_id": cid,
+                    "topic_id": tid,
+                    "title": info["title"],
+                    "keywords": info["keywords"],
+                    "coherence": info["coherence"],
+                    # A loose topic is weaker evidence that its members are on
+                    # topic, so the match is discounted by cluster tightness.
+                    "score": info["score"] * max(info["coherence"], 0.1),
+                }
+            )
+        return out
 
     async def query_frames_by_embedding(
         self,
