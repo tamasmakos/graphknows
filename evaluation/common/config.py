@@ -28,12 +28,16 @@ class BaseEvalConfig(BaseModel):
     # via EVAL_GEN_CONTEXT_K so a caller can sweep 25/50/100 without code edits.
     # NOTE: the MCP memory_query tool clamps top_k at 100, so 100 is the ceiling
     # a single retrieval can feed the generator.
-    # Default 50, raised from 25: evidence-rank attribution on conv-26 found 29 of
-    # 81 failures had their gold evidence retrieved at ranks 26-36 — reachable,
-    # fetched, then cut by the 25 window. The adapter re-sorts passages
-    # chronologically for the prompt, so inclusion is what matters, not rank.
+    #
+    # Back to 25. It was raised to 50 because gold evidence was landing at ranks
+    # 26-36 and getting cut — but that was RRF rank arithmetic burying it, not a
+    # window that was too small. With the fused pool ordered by cosine
+    # (DETRetriever._cosine_rerank) evidence_recall@25 is 0.953 against @50's
+    # 0.993, so the extra 25 passages now buy 4pp of recall and cost accuracy:
+    # measured on conv-26, ctx=50 -> 0.842, ctx=25 -> 0.882, ctx=10 -> 0.829.
+    # Context rot, bracketed. 25 is also 43% fewer prompt tokens than 50.
     gen_context_k: int = Field(
-        default_factory=lambda: int(os.environ.get("EVAL_GEN_CONTEXT_K", "50"))
+        default_factory=lambda: int(os.environ.get("EVAL_GEN_CONTEXT_K", "25"))
     )
     probe_k: int = 50  # gold-reachability probe depth (diagnostic only; not fed to LLM)
     recall_scope: str = "both"  # stm | ltm | both

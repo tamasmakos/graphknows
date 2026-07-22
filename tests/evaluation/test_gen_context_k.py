@@ -10,14 +10,16 @@ from evaluation.locomo.config import LocomoConfig
 
 
 def test_default_unchanged() -> None:
-    """Defaults are the shipped baseline: gen_context_k=50, probe_k=50.
+    """Defaults are the shipped baseline: gen_context_k=25, probe_k=50.
 
-    gen_context_k was raised 25 -> 50 after evidence-rank attribution on conv-26
-    showed 29 of 81 failures had their gold evidence retrieved at ranks 26-36 —
-    fetched by the probe, then cut by the 25-passage window.
+    gen_context_k went 25 -> 50 when gold evidence was landing at ranks 26-36
+    and getting cut, then back to 25 once cosine ordering of the fused pool
+    stopped burying it: evidence_recall@25 is 0.953 vs @50's 0.993, while
+    accuracy on conv-26 goes 0.842 (ctx=50) -> 0.882 (ctx=25) -> 0.829 (ctx=10).
+    The window was never the problem; the ranking was.
     """
     cfg = BaseEvalConfig()
-    assert cfg.gen_context_k == 50
+    assert cfg.gen_context_k == 25
     assert cfg.probe_k == 50
 
 
