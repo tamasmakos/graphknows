@@ -806,7 +806,7 @@ class GraphStore(ArcadeStoreBase):
         """Upsert TOPIC vertices + HAS_TOPIC edges from their evidence chunks.
 
         Each ``topics`` item: ``{topic_id, summary, modularity, embedding?,
-        chunk_ids?: [str, ...]}``.
+        chunk_ids?: [str, ...], title?, keywords?: [str, ...], coherence?}``.
         """
         written = 0
         for t in topics:
@@ -814,10 +814,15 @@ class GraphStore(ArcadeStoreBase):
             if not tid:
                 continue
             await self.command(
-                "MERGE (tp:TOPIC {topic_id: $tid}) SET tp.summary = $summary, tp.modularity = $mod",
+                "MERGE (tp:TOPIC {topic_id: $tid}) "
+                "SET tp.summary = $summary, tp.modularity = $mod, "
+                "    tp.title = $title, tp.keywords = $keywords, tp.coherence = $coherence",
                 tid=tid,
                 summary=t.get("summary", ""),
                 mod=t.get("modularity"),
+                title=t.get("title", ""),
+                keywords=[str(k) for k in (t.get("keywords") or [])],
+                coherence=float(t.get("coherence") or 0.0),
             )
             if t.get("embedding"):
                 await self._set_embedding("TOPIC", "topic_id", tid, t["embedding"])
@@ -833,130 +838,6 @@ class GraphStore(ArcadeStoreBase):
                 )
             written += 1
         return written
-
-    async def compute_and_persist_topics(
-        self, mode: str = "extractive", summarizer: Any = None
-    ) -> int:
-        """Build the TOPIC layer over the Louvain communities. Returns topics written.
-
-        Runs after ``compute_communities`` and reuses its ``ENTITY.community_id``
-        plus the ``ENTITY.pagerank`` already persisted, so it adds no graph
-        algorithm of its own.
-
-        - ``extractive``: title = the community's highest-PageRank entities;
-          summary = the member chunk nearest the community centroid. Wholly
-          deterministic, so it is valid in ``llm_free``.
-        - ``llm``: same structure, prose summary from ``summarizer``.
-        - ``none``: no-op.
-
-        Soft-fails to 0 like the other flush steps: a missing community layer
-        (Louvain unavailable) must not fail the flush.
-        """
-        if mode == "none":
-            return 0
-        try:
-            rows = await self.query(
-                "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-                "WHERE e.community_id IS NOT NULL "
-                "RETURN e.community_id AS cid, e.name AS name, "
-                "e.pagerank AS pr, c.chunk_id AS chunk_id, c.text AS text"
-            )
-        except Exception as exc:
-            logger.info("compute_and_persist_topics: community join failed (%s); skipping", exc)
-            return 0
-        if not rows:
-            return 0
-
-        members: dict[int, dict[str, Any]] = {}
-        for r in rows:
-            cid = r.get("cid")
-            if cid is None:
-                continue
-            m = members.setdefault(int(cid), {"entities": {}, "chunks": {}})
-            name = r.get("name")
-            if name:
-                m["entities"][name] = max(m["entities"].get(name, 0.0), float(r.get("pr") or 0.0))
-            if r.get("chunk_id"):
-                m["chunks"][r["chunk_id"]] = r.get("text") or ""
-
-        topics: list[dict[str, Any]] = []
-        for cid, m in members.items():
-            # Communities of one entity are not topics, they are stragglers.
-            if len(m["entities"]) < 2 or not m["chunks"]:
-                continue
-            top_entities = sorted(m["entities"], key=lambda n: -m["entities"][n])[:3]
-            chunk_ids = list(m["chunks"])
-            # One embedding pass per community yields both the topic vector and
-            # the most representative passage.
-            centroid, lead = self._centroid_and_lead(list(m["chunks"].values()))
-            summary = await self._topic_summary(mode, summarizer, m, top_entities, lead)
-            topics.append(
-                {
-                    "topic_id": f"community:{cid}",
-                    "summary": summary,
-                    "modularity": None,
-                    "embedding": centroid,
-                    "chunk_ids": chunk_ids,
-                }
-            )
-        if not topics:
-            return 0
-        written = await self.write_topics(topics)
-        logger.info("Topic layer: %d topics written (mode=%s)", written, mode)
-        return written
-
-    @staticmethod
-    def _centroid_and_lead(texts: list[str]) -> tuple[list[float], str]:
-        """Topic vector and most representative passage, from one embedding pass.
-
-        The centroid is the L2-normalized mean of the member chunks; the lead is
-        the member chunk closest to it, i.e. the thing actually said that best
-        stands for the whole community. Returns ``([], "")`` if embedding fails —
-        a topic without a vector is still a usable topic.
-        """
-        usable = [t for t in texts if t and t.strip()][:64]
-        if not usable:
-            return [], ""
-        try:
-            import numpy as np
-
-            from graphknows.storage.embedder import embed
-
-            mat = np.asarray(embed(usable), dtype=np.float32)
-            centroid = mat.mean(axis=0)
-            norm = float(np.linalg.norm(centroid))
-            if not norm:
-                return [], usable[0]
-            centroid = centroid / norm
-            row_norms = np.linalg.norm(mat, axis=1, keepdims=True)
-            row_norms[row_norms == 0.0] = 1.0
-            sims = (mat / row_norms) @ centroid
-            return centroid.tolist(), usable[int(np.argmax(sims))]
-        except Exception as exc:  # noqa: BLE001 — degrade to no vector, keep the topic
-            logger.warning("topic centroid failed: %s", exc)
-            return [], usable[0]
-
-    async def _topic_summary(
-        self,
-        mode: str,
-        summarizer: Any,
-        member: dict[str, Any],
-        top_entities: list[str],
-        lead: str,
-    ) -> str:
-        """Title + summary text for one community, per the topic mode."""
-        title = " · ".join(top_entities)
-        if mode == "llm" and summarizer is not None:
-            passages = [t for t in member["chunks"].values() if t and t.strip()][:12]
-            try:
-                text = await summarizer.summarize(
-                    members=top_entities, passages=passages, fallback_title=title
-                )
-                if text:
-                    return str(text)
-            except Exception as exc:  # noqa: BLE001 — fall through to extractive
-                logger.warning("topic summarizer failed (%s); using extractive", exc)
-        return f"{title}. {lead[:400]}".strip()
 
     # ------------------------------------------------------------------
     # Read API — chunks
@@ -1551,7 +1432,11 @@ class GraphStore(ArcadeStoreBase):
         return updated
 
     async def compute_graph_embeddings(
-        self, dimensions: int = 32, skip_view_ensure: bool = False
+        self,
+        dimensions: int = 32,
+        skip_view_ensure: bool = False,
+        walk_length: int = 20,
+        walks: int = 20,
     ) -> int:
         """Compute node2vec embeddings over the entity-relation graph -> ``ENTITY.graph_embedding``.
 
@@ -1564,9 +1449,17 @@ class GraphStore(ArcadeStoreBase):
             dimensions: node2vec embedding dimension.
             skip_view_ensure: Skip rebuilding the analytical view (see
                 ``_ensure_analytical_view``).
+            walk_length: Steps per random walk.
+            walks: Walks started per node.
 
         Returns:
             Number of ENTITY nodes updated with a ``graph_embedding``.
+
+        Note:
+            These parameters shape the embedding space, which drives PPR seed
+            expansion, entity similarity, and — when the topic stage clusters on
+            ``graph_embedding`` — topic granularity. They do NOT affect the
+            Louvain community layer, which never sees node2vec output.
         """
         try:
             if not skip_view_ensure:
@@ -1575,7 +1468,8 @@ class GraphStore(ArcadeStoreBase):
             # compute_and_persist_pagerank's docstring for why the label
             # predicate doesn't work in ArcadeDB's Cypher.
             rows = await self.query(
-                f"CALL algo.node2vec({{walkLength:20,walks:20,dimensions:{int(dimensions)}}}) "
+                f"CALL algo.node2vec({{walkLength:{int(walk_length)},"
+                f"walks:{int(walks)},dimensions:{int(dimensions)}}}) "
                 "YIELD node, embedding "
                 "WHERE node.name_norm IS NOT NULL "
                 "RETURN node.name_norm AS nn, embedding"

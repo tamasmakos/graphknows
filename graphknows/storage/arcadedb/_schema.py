@@ -80,6 +80,11 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TOPIC.summary IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TOPIC.modularity IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY TOPIC.embedding IF NOT EXISTS LIST"),
+    # Topic-stage outputs: a human-readable title, the distinctive terms that
+    # separate this topic from the others, and how tight the cluster is.
+    ("sql", "CREATE PROPERTY TOPIC.title IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY TOPIC.keywords IF NOT EXISTS LIST"),
+    ("sql", "CREATE PROPERTY TOPIC.coherence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE INDEX ON TOPIC(topic_id) UNIQUE"),
     (
         "sql",

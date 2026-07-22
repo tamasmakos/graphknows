@@ -18,7 +18,10 @@ LTM tools:
   ltm_query             — entity-scoped LTM lookup
 
 Retrieval:
-  memory_query          — unified retrieval (deterministic or agentic, driven by MODE)
+  memory_query          — unified retrieval; strategy=det|agentic per call
+
+Analysis:
+  memory_topics         — rebuild the topic layer at new settings (no re-ingest)
 
 Admin:
   memory_doctor         — connectivity check: ArcadeDB STM, LTM, vector

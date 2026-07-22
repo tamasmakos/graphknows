@@ -26,6 +26,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   summaries led by the member chunk nearest the community centroid — so the
   layer is available under `llm_free`. `topics=llm` keeps prose summaries.
   Previously topic summarisation was dead in *both* modes.
+- **Topics as a re-runnable stage** (`graphknows/topics/`). `Memory.build_topics()`,
+  the `memory_topics` MCP tool and `python -m graphknows.topics` rebuild the
+  topic layer at new settings over an unchanged graph — no re-ingest, and none
+  of the flush's entity resolution / PageRank / consolidation. `--sweep` compares
+  settings and prints the metric table. `flush_memory` calls the same stage, so a
+  rebuild is never a different code path. See `docs/topics.md`.
+- Topic outputs now include TF-IDF `keywords` (the terms distinguishing a topic
+  from its neighbours), member entities ranked by PageRank, per-topic
+  `coherence`, `lead_chunk_id`, and a real Python-computed `newman_modularity`.
+  node2vec's `walk_length` / `walks` / `dimensions` are exposed, having been
+  hardcoded.
 - **Per-call retrieval strategy.** `memory_query` / `recall_memory` / `search`
   take `strategy` (`det` | `agentic`), so one server can answer either way
   without a restart, and agentic retrieval can run over an `llm_free`-ingested
@@ -48,6 +59,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a deprecated alias, single file only).
 
 ### Fixed
+- A topic written without an embedding is stored but unreachable, because
+  `TopicChannel` vector-searches `TOPIC.embedding`. The stage now always derives
+  a centroid from the member chunks, so the community-clustered path (which has
+  no entity vectors) no longer produces an inert layer.
 - Ontology term embeddings could be paired with the wrong term. Term order came
   from an rdflib subject *set* (process-randomised) while the disk cache
   validated only the row *count*, so a cached matrix loaded against a

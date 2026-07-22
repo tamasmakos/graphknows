@@ -312,14 +312,18 @@ class Memory:
         }
 
     def _topic_summarizer(self) -> Any:
-        """The LLM summarizer for ``topics=llm``; ``None`` for every other mode.
+        """The LLM summarizer for the configured topic mode."""
+        return self._topic_summarizer_for(self.settings.topic_mode)
+
+    def _topic_summarizer_for(self, mode: Any) -> Any:
+        """The LLM summarizer for ``mode``; ``None`` for every non-llm mode.
 
         Returning ``None`` is what keeps the extractive topic layer free of any
         network dependency, so it is valid under ``llm_free``.
         """
         from graphknows.settings import TopicMode
 
-        if self.settings.topic_mode is not TopicMode.llm:
+        if mode is not TopicMode.llm:
             return None
         from graphknows.ingestion.summarize import TopicSummarizer
 
@@ -329,6 +333,69 @@ class Memory:
             api_key=s.llm_api_key,
             api_base=s.llm_api_base,
         )
+
+    async def _flush_topics(self, store: Any) -> int:
+        """The topic stage as invoked by a flush, using the configured defaults."""
+        from graphknows.settings import TopicMode
+        from graphknows.topics import TopicConfig, build_topics, persist_topics
+
+        mode = self.settings.topic_mode
+        if mode is TopicMode.none:
+            return 0
+        cfg = TopicConfig(mode=mode)
+        topic_set = await build_topics(
+            store, cfg, self._topic_summarizer_for(mode), namespace=self.namespace
+        )
+        return await persist_topics(store, topic_set)
+
+    async def build_topics(
+        self,
+        *,
+        config: Any = None,
+        persist: bool = True,
+        export_path: str = "",
+        **overrides: Any,
+    ) -> dict[str, Any]:
+        """Rebuild the topic layer over the existing graph. Returns the metrics.
+
+        Standalone by design: this re-runs clustering, description and grading
+        **without** touching ingestion, entity resolution, PageRank or
+        consolidation, so topics can be swept at different settings over an
+        unchanged graph.
+
+        Args:
+            config: A :class:`~graphknows.topics.TopicConfig`; built from the
+                runtime defaults when omitted.
+            persist: Write the resulting TOPIC layer (replacing the previous one).
+            export_path: Optional path for a read-only JSON artifact.
+            **overrides: Field overrides applied to ``config`` (e.g.
+                ``distance=0.25``, ``min_size=3``, ``n2v_walk_length=40``).
+
+        Returns:
+            The build's metrics, plus ``persisted`` and ``export_path``.
+        """
+        from dataclasses import replace
+
+        from graphknows.topics import TopicConfig, build_topics, export_json, persist_topics
+
+        cfg = config or TopicConfig(mode=self.settings.topic_mode)
+        if overrides:
+            cfg = replace(cfg, **overrides)
+
+        await self._get_retriever()  # connects the store + ensures schema
+        store = self._retriever_stores[0]
+        summarizer = self._topic_summarizer_for(cfg.mode)
+        topic_set = await build_topics(store, cfg, summarizer, namespace=self.namespace)
+
+        persisted = await persist_topics(store, topic_set) if persist else 0
+        out: dict[str, Any] = {
+            **topic_set.metrics,
+            "persisted": persisted,
+            "config_fingerprint": cfg.fingerprint(),
+        }
+        if export_path:
+            out["export_path"] = str(export_json(topic_set, export_path))
+        return out
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Consolidate a session in place.
@@ -407,15 +474,12 @@ class Memory:
                 store.compute_community_quality(skip_view_ensure=True),
                 community_quality,
             )
-            # Topics run after communities: they are a view over community_id +
-            # pagerank, not a separate clustering pass.
+            # Topics run last of the analytics: the stage clusters over the
+            # node2vec embeddings and pagerank computed above. It is the SAME
+            # stage as Memory.build_topics — one implementation, so a rebuild at
+            # new settings is never a different code path from the flush.
             topics_created = await step(
-                "topics",
-                store.compute_and_persist_topics(
-                    mode=self.settings.topic_mode.value,
-                    summarizer=self._topic_summarizer(),
-                ),
-                0,
+                "topics", self._flush_topics(store), 0
             )
             chunks_flipped = await step(
                 "consolidate_session", store.consolidate_session(session_id), 0

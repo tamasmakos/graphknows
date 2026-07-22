@@ -24,7 +24,6 @@ def _store() -> MagicMock:
     store.compute_community_quality = AsyncMock(
         return_value={"modularity": 0.5, "communities": 2, "communities_scored": 2}
     )
-    store.compute_and_persist_topics = AsyncMock(return_value=6)
     store.consolidate_session = AsyncMock(return_value=7)
     return store
 
@@ -33,10 +32,10 @@ def _memory(store: MagicMock) -> Memory:
     mem = Memory(settings=MagicMock(namespace=""), namespace="")
     mem._get_retriever = AsyncMock(return_value=MagicMock())
     mem._retriever_stores = [store]
-    # The topic step asks settings for its mode and (for llm) a summarizer; a
-    # MagicMock settings would hand back a Mock, so pin the deterministic path.
-    mem._topic_summarizer = lambda: None  # type: ignore[method-assign]
-    mem.settings.topic_mode = MagicMock(value="extractive")
+    # Topics are their own stage now (Memory._flush_topics -> graphknows.topics),
+    # so stub the stage rather than a store method. This test is about step
+    # isolation in flush_memory, not about clustering.
+    mem._flush_topics = AsyncMock(return_value=6)  # type: ignore[method-assign]
     return mem
 
 

@@ -45,6 +45,13 @@ depends_on = ["graphknows.settings"]
 path = "graphknows.ontology"
 depends_on = ["graphknows.settings", "graphknows.storage"]
 
+# --- topics: re-runnable clustering stage over an ingested graph. Depends on
+#     storage (reads the entity graph) and settings only; the memory facade
+#     composes it, so it never reaches back into ingestion or retrieval. ---
+[[modules]]
+path = "graphknows.topics"
+depends_on = ["graphknows.settings", "graphknows.storage"]
+
 # --- channels: symmetric write/read signals ---
 [[modules]]
 path = "graphknows.channels"
@@ -93,6 +100,7 @@ depends_on = [
   "graphknows.channels",
   "graphknows.ingestion",
   "graphknows.retrieval",
+  "graphknows.topics",
 ]
 
 # --- integrations + server (endpoints) ---
@@ -111,4 +119,5 @@ depends_on = [
   "graphknows.memory",
   "graphknows.retrieval",
   "graphknows.ingestion",
+  "graphknows.topics",
 ]
