@@ -6,10 +6,19 @@ ONTOLOGY_CLASS node carries that definition's embedding, so this channel matches
 the query with a namespace-local graph vector search over them, exactly as
 :class:`~graphknows.channels.frames.FrameChannel` does over FRAME nodes.
 
+A matched class reaches chunks by two paths, both used:
+
+- ``CHUNK-[:MATCHES_CLASS]->ONTOLOGY_CLASS`` — the chunk itself evoked the
+  class. Direct, and the stronger signal.
+- ``CHUNK-[:MENTIONS]->ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS`` — the chunk
+  mentions something that *is* an instance of the class. Much denser (on
+  conv-26: 767 INSTANCE_OF edges against 189 MATCHES_CLASS), and discounted as
+  indirect evidence since the entity may be incidental to the chunk.
+
 Where frames give abstract questions a route by the situation a chunk evokes,
 classes give them a route by the KIND of thing a chunk is about — "where did
-they go" reaches chunks tagged Place without the word "place" appearing
-anywhere. Fully embedding-based, so the channel is valid in both profiles.
+they go" reaches chunks through their Place-typed entities without the word
+"place" appearing anywhere. Fully embedding-based, so valid in both profiles.
 
 Additive to the RRF fusion rather than a re-rank: re-ranking the fused list on a
 graph signal has regressed retrieval here before (see the community-detection

@@ -102,6 +102,13 @@ def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
     return f'SELECT expand(vectorNeighbors("{index}", {_emb_sql(emb)}, {k}))'
 
 
+# A chunk reached through an entity that instantiates the matched class is
+# weaker evidence than a chunk that evoked the class directly: the entity may be
+# incidental to what the chunk is about. Discounted rather than excluded, since
+# it is the far denser of the two paths.
+_INSTANCE_OF_WEIGHT: float = 0.5
+
+
 def _name_norm(name: str) -> str:
     """Canonical ENTITY merge key: casefolded, whitespace-collapsed name."""
     return " ".join(name.split()).casefold()
@@ -672,26 +679,60 @@ class GraphStore(ArcadeStoreBase):
             where += f" AND c.session_id = {quote(session_id)}"
         if state:
             where += f" AND c.state = {quote(state)}"
+
+        out: list[dict[str, Any]] = []
+        # Path 1 — the chunk itself evoked the class (direct, strongest).
         try:
-            joined = await self.query(
+            direct = await self.query(
                 f"MATCH (c:CHUNK)-[m:MATCHES_CLASS]->(o:ONTOLOGY_CLASS) WHERE {where} "
                 "RETURN c.chunk_id AS chunk_id, o.uri AS uri, m.sim AS sim"
             )
         except Exception as exc:
-            logger.warning("search_ontology_classes join failed: %s", exc)
-            return []
-        return [
-            {
-                "chunk_id": r["chunk_id"],
-                "uri": r["uri"],
-                "label": label.get(r["uri"], ""),
-                # Query-to-class match, weighted by how strongly the chunk
-                # evoked that class in the first place.
-                "score": score.get(r["uri"], 0.0) * float(r.get("sim") or 0.0),
-            }
-            for r in joined
-            if r.get("chunk_id")
-        ]
+            logger.warning("search_ontology_classes chunk join failed: %s", exc)
+            direct = []
+        for r in direct:
+            if r.get("chunk_id"):
+                out.append(
+                    {
+                        "chunk_id": r["chunk_id"],
+                        "uri": r["uri"],
+                        "label": label.get(r["uri"], ""),
+                        # Query-to-class match, weighted by how strongly the
+                        # chunk evoked that class in the first place.
+                        "score": score.get(r["uri"], 0.0) * float(r.get("sim") or 0.0),
+                        "via": "chunk",
+                    }
+                )
+        # Path 2 — the chunk mentions an ENTITY that instantiates the class.
+        # This is the denser signal by far (on conv-26: 767 INSTANCE_OF edges
+        # against 189 MATCHES_CLASS), and it is what lets "where did they go"
+        # reach chunks through the Place-typed entities they mention rather than
+        # through the chunk's own class tags. Discounted as indirect evidence.
+        try:
+            via_entity = await self.query(
+                f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY)-[i:INSTANCE_OF]->(o:ONTOLOGY_CLASS) "
+                f"WHERE {where} "
+                "RETURN c.chunk_id AS chunk_id, o.uri AS uri, i.score AS sim"
+            )
+        except Exception as exc:
+            logger.warning("search_ontology_classes entity join failed: %s", exc)
+            via_entity = []
+        for r in via_entity:
+            if r.get("chunk_id"):
+                out.append(
+                    {
+                        "chunk_id": r["chunk_id"],
+                        "uri": r["uri"],
+                        "label": label.get(r["uri"], ""),
+                        "score": (
+                            score.get(r["uri"], 0.0)
+                            * float(r.get("sim") or 0.0)
+                            * _INSTANCE_OF_WEIGHT
+                        ),
+                        "via": "entity",
+                    }
+                )
+        return out
 
     async def write_frame_instances(
         self, session_id: str, chunk_id: str, instances: list[dict[str, Any]]
@@ -1325,7 +1366,7 @@ class GraphStore(ArcadeStoreBase):
                 f"WHERE (a.name_norm IN {name_lit} OR b.name_norm IN {name_lit}) "
                 f"AND (r.is_current = true OR r.is_current IS NULL) "
                 f"RETURN a.name AS s, r.predicate AS p, "
-                f"b.name AS o, r.evidence AS ev"
+                f"b.name AS o, r.evidence AS ev, r.ontology_property AS op"
             )
             frame_rows = await self.query(
                 f"MATCH (fi:FRAME_INSTANCE)-[:PLAYS_ROLE]->(seed:ENTITY) "
@@ -1360,6 +1401,13 @@ class GraphStore(ArcadeStoreBase):
             if not s or not p or not o:
                 continue
             fact = f"{s} {p.replace('_', ' ').lower()} {o}"
+            # An ontology-mapped predicate names the relation in the domain's own
+            # vocabulary ("went camping with" -> friend_of). Appending it rather
+            # than substituting keeps the surface form the text actually used,
+            # while telling the generator what KIND of relation it is.
+            op = str(r.get("op") or "").strip()
+            if op and op.replace("_", " ").lower() != p.replace("_", " ").lower():
+                fact = f"{fact} [{op.replace('_', ' ').lower()}]"
             (evidenced if r.get("ev") else plain).append(fact)
 
         # Interleave: give frames at most half the cap, THEN evidenced relations,
