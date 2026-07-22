@@ -101,6 +101,36 @@ A real sweep on conv-26 shows the tension these expose:
 Modularity prefers `min_size=2`; coherence prefers `5`. Pick against the metric
 that matches your use, rather than by eye.
 
+## How topics reach retrieval
+
+`TopicChannel` (`graphknows/channels/topics.py`) is what makes the layer more
+than bookkeeping. It does two things per query:
+
+1. **Routes to evidence.** ANN-matches the query against the topic centroids,
+   then traverses `CHUNK-[:HAS_TOPIC]->TOPIC` to the chunks each matched topic
+   was built from. Chunk scores accumulate across matched topics and are
+   discounted by each topic's `coherence` — a loose cluster is weaker evidence
+   that its members are on-topic. Where the vector channel matches a query to
+   individual chunks, this matches it to a *theme* and pulls in members a
+   single-chunk match misses.
+2. **Injects one summary** as a synthetic passage carrying the topic's keywords
+   — the only abstractive context the deterministic pipeline produces. It
+   survives independently of the routed chunks.
+
+Both are additive to the RRF fusion, never a re-rank: re-ranking a fused list on
+a graph signal has regressed retrieval in this codebase before, whereas
+contributing candidates cannot displace a strong hit.
+
+**The saturation guard is not optional here.** Topics are coarse — on conv-26
+the mean topic spans 17 of 63 chunks — so a broad topic that matches the query
+would return most of the conversation. Any topic covering more than
+`GRAPHKNOWS_TOPIC_SATURATION_RATIO` (default 0.5) of the session's chunks is
+dropped, the same remedy applied to saturated speaker entities, generic frames
+and the ubiquitous `Person` ontology class.
+
+The channel is data-gated: with no topic layer built it returns nothing, so
+`GRAPHKNOWS_TOPICS=none` leaves retrieval exactly as it was.
+
 ## Modes
 
 `GRAPHKNOWS_TOPICS` (or `--mode`) selects how summaries are written:

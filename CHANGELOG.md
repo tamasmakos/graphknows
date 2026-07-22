@@ -32,6 +32,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of the flush's entity resolution / PageRank / consolidation. `--sweep` compares
   settings and prints the metric table. `flush_memory` calls the same stage, so a
   rebuild is never a different code path. See `docs/topics.md`.
+- `TopicChannel` now routes a matched topic to its member chunks via
+  `HAS_TOPIC` instead of only injecting the topic summary, so the topic layer
+  contributes real evidence to retrieval. Scores accumulate across matched
+  topics, are discounted by topic coherence, and carry the same saturation
+  guard as the frame/entity/ontology channels.
 - Topic outputs now include TF-IDF `keywords` (the terms distinguishing a topic
   from its neighbours), member entities ranked by PageRank, per-topic
   `coherence`, `lead_chunk_id`, and a real Python-computed `newman_modularity`.
@@ -59,6 +64,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a deprecated alias, single file only).
 
 ### Fixed
+- `search_topics` had no session filter, so in a multi-session namespace the
+  topic channel could match topics belonging to other sessions.
 - A topic written without an embedding is stored but unreachable, because
   `TopicChannel` vector-searches `TOPIC.embedding`. The stage now always derives
   a centroid from the member chunks, so the community-clustered path (which has
