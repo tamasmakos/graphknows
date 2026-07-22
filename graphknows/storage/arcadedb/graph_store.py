@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -106,7 +107,12 @@ def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
 # weaker evidence than a chunk that evoked the class directly: the entity may be
 # incidental to what the chunk is about. Discounted rather than excluded, since
 # it is the far denser of the two paths.
-_INSTANCE_OF_WEIGHT: float = 0.5
+#
+# Env-tunable so an A/B can isolate this path without a code change: 0.0 turns
+# the INSTANCE_OF route off entirely and leaves only the direct chunk tags.
+_INSTANCE_OF_WEIGHT: float = float(
+    os.environ.get("GRAPHKNOWS_ONTOLOGY_INSTANCE_WEIGHT", "0.5")
+)
 
 
 def _name_norm(name: str) -> str:
