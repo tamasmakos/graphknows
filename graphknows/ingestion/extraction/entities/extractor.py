@@ -126,6 +126,11 @@ class _DynamicSchema:
     # each dict as returned by ``extract_relations``; consumed by the _map_raw
     # corroboration/structural gate (rich triples ride the structural keep).
     svo_triples: list[dict[str, Any]] = field(default_factory=list)
+    # Casefolded speaker names of the chunk's turn-lines. Model spans sometimes
+    # run ACROSS the "Speaker:" colon ("Caroline: Thanks, Melanie" as one
+    # PERSON), fragmenting the real speaker node — the mint points reduce such
+    # surfaces to the speaker. Empty for non-dialogue text, making that a no-op.
+    speakers: frozenset[str] = frozenset()
 
 
 def _schema_label(value: str) -> str:
@@ -199,9 +204,32 @@ def _svo_relation_description(verb: str, prep: str) -> str:
     )
 
 
+def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
+    """``"Caroline: Thanks, Melanie"`` -> ``"Caroline"`` when Caroline spoke.
+
+    Chunk text embeds literal ``"[ts |] Speaker: utterance"`` turn-lines, and
+    model spans sometimes run across that colon, minting the span verbatim as an
+    entity — measured on conv-26, 27 such names carried 42.5% of all REL edges,
+    fragmenting the real person node. The semantic referent of such a span is
+    the speaker (its facts are things the SPEAKER did), and any real entity in
+    the utterance remainder is emitted by the model as its own span anyway.
+
+    Keys strictly on *known speakers of this chunk*: a colon alone never fires,
+    so titles like "Charlotte's Web: A Review" pass through, and non-dialogue
+    text (empty ``speakers``) makes this the identity function.
+    """
+    if not speakers or ":" not in name:
+        return name
+    head = name.split(":", 1)[0]
+    if " ".join(head.split()).casefold() in speakers:
+        return head.strip()
+    return name
+
+
 def _dedupe_entities(
     raw_entities: list[dict[str, Any]],
     label_to_type: dict[str, str],
+    speakers: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Score-ranked, merge-key-deduped entity dicts from one relex span list.
 
@@ -219,7 +247,7 @@ def _dedupe_entities(
         conf = float(span.get("score", 0.0) or 0.0)
         if conf < _BASE_THRESHOLD:
             continue
-        name = _clean_surface(str(span.get("text") or ""))
+        name = _reduce_speaker_span(_clean_surface(str(span.get("text") or "")), speakers)
         label = str(span.get("label") or "").strip()
         if not name or not label or name.casefold() in _PRONOUNS:
             continue
@@ -242,12 +270,15 @@ def _build_relation(
     entities: list[dict[str, Any]],
     head_type: str = "",
     tail_type: str = "",
+    speakers: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
     """One relation dict, or None when the argument pair is unusable."""
     # Same cleaning as the entity pass: these strings become ENTITY merge
     # keys via write_relation, so a quoted surface here corrupts the graph
-    # exactly as it does there.
-    head, tail = _clean_surface(head), _clean_surface(tail)
+    # exactly as it does there — and a speaker-glued surface here is what
+    # attached 42.5% of REL edges to malformed hub names.
+    head = _reduce_speaker_span(_clean_surface(head), speakers)
+    tail = _reduce_speaker_span(_clean_surface(tail), speakers)
     if not head or not label or not tail or head.casefold() == tail.casefold():
         return None
     if head.casefold() in _PRONOUNS or tail.casefold() in _PRONOUNS:
@@ -267,6 +298,7 @@ def _relex_relations(
     raw_relations: list[dict[str, Any]],
     entities: list[dict[str, Any]],
     label_to_type: dict[str, str],
+    speakers: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Relation dicts for the (head, predicate, tail) triples relex emitted."""
     out: list[dict[str, Any]] = []
@@ -286,6 +318,7 @@ def _relex_relations(
             entities,
             head_type=_canonical_type(str(head_d.get("type") or ""), label_to_type),
             tail_type=_canonical_type(str(tail_d.get("type") or ""), label_to_type),
+            speakers=speakers,
         )
         if built is not None:
             out.append(built)
@@ -295,6 +328,7 @@ def _relex_relations(
 def _svo_structural_relations(
     svo_triples: list[dict[str, Any]],
     entities: list[dict[str, Any]],
+    speakers: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Relation dicts for mined triples kept at the fixed structural prior.
 
@@ -312,7 +346,8 @@ def _svo_structural_relations(
         else:
             continue
         built = _build_relation(
-            triple["head"], triple["relation"], triple["tail"], 0.6, "svo", entities
+            triple["head"], triple["relation"], triple["tail"], 0.6, "svo", entities,
+            speakers=speakers,
         )
         if built is not None:
             out.append(built)
@@ -457,6 +492,9 @@ class _SpacySchemaMiner:
             relation_spec=relation_spec,
             label_to_type=label_to_type,
             svo_triples=svo_triples,
+            speakers=frozenset(
+                s.casefold() for _, s in _line_speakers(doc.text) if s
+            ),
         )
 
 
@@ -685,15 +723,17 @@ class GLiNER2EntityExtractor:
             ("I'm a nurse", "Caroline's dog") that a verb-relation model has no
             predicate label for.
         """
-        entities = _dedupe_entities(raw_entities, dynamic_schema.label_to_type)
+        # getattr: tests stub the schema with SimpleNamespace and predate the field.
+        speakers: frozenset[str] = getattr(dynamic_schema, "speakers", frozenset())
+        entities = _dedupe_entities(raw_entities, dynamic_schema.label_to_type, speakers)
 
         # relex first, then SVO: a mined triple relex already emitted is dropped
         # here, so the model's own score wins over the structural prior.
         relations: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
         candidates = [
-            *_relex_relations(raw_relations, entities, dynamic_schema.label_to_type),
-            *_svo_structural_relations(dynamic_schema.svo_triples, entities),
+            *_relex_relations(raw_relations, entities, dynamic_schema.label_to_type, speakers),
+            *_svo_structural_relations(dynamic_schema.svo_triples, entities, speakers),
         ]
         for rel in candidates:
             key = (rel["head"].casefold(), rel["relation"], rel["tail"].casefold())

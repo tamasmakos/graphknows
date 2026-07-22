@@ -203,8 +203,11 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE MATCHES_CLASS IF NOT EXISTS"),  # CHUNK -> ONTOLOGY_CLASS
     ("sql", "CREATE PROPERTY MATCHES_CLASS.sim IF NOT EXISTS DOUBLE"),
     # Denormalised ontology mapping on the data itself, so the fact-sheet and
-    # fusion paths read it without an extra traversal.
+    # fusion paths read it without an extra traversal. The score makes the
+    # denormalisation deterministic (highest-score class wins), instead of
+    # last-write-wins disagreeing with the INSTANCE_OF edges.
     ("sql", "CREATE PROPERTY ENTITY.ontology_class IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ENTITY.ontology_class_score IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY REL.ontology_property IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY REL.map_score IF NOT EXISTS DOUBLE"),
 ]

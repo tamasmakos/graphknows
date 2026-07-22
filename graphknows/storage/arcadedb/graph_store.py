@@ -625,6 +625,12 @@ class GraphStore(ArcadeStoreBase):
 
         Each mapping: ``{name, uri, score}``. Also denormalises the class label
         onto ``ENTITY.ontology_class`` so readers skip the traversal.
+
+        An entity may accumulate several INSTANCE_OF edges (different chunks
+        extract different types — legitimate multi-classing), but the
+        denormalised property is deterministic: the HIGHEST mapping score wins,
+        ties keep the incumbent, so re-running an ingest cannot flip it. Without
+        the guard it was last-write-wins and could disagree with its own edges.
         """
         if not mappings:
             return 0
@@ -643,7 +649,11 @@ class GraphStore(ArcadeStoreBase):
         await self.command(
             "UNWIND $rows AS r "
             "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
-            "MERGE (e)-[i:INSTANCE_OF]->(o) SET i.score = r.score, e.ontology_class = r.label",
+            "MERGE (e)-[i:INSTANCE_OF]->(o) SET i.score = r.score, "
+            "e.ontology_class = CASE WHEN r.score > coalesce(e.ontology_class_score, -1.0) "
+            "  THEN r.label ELSE e.ontology_class END, "
+            "e.ontology_class_score = CASE WHEN r.score > coalesce(e.ontology_class_score, -1.0) "
+            "  THEN r.score ELSE e.ontology_class_score END",
             rows=rows,
         )
         return len(rows)
@@ -2023,6 +2033,42 @@ class GraphStore(ArcadeStoreBase):
             "RETURN DISTINCT c.speaker AS speaker"
         )
         return [str(r["speaker"]).casefold() for r in rows if r.get("speaker")]
+
+    async def rename_entity(self, old_norm: str, new_name: str) -> bool:
+        """Rename an ENTITY in place, keeping its edges. Returns True on success.
+
+        Refuses when an entity already holds the target ``name_norm`` — the
+        caller should ``merge_entities`` into it instead, since two nodes cannot
+        share the UNIQUE key. The old surface is kept as an alias.
+        """
+        new_norm = _name_norm(new_name)
+        if not old_norm or not new_norm or old_norm == new_norm:
+            return False
+        clash = await self.query(
+            "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS n LIMIT 1", nn=new_norm
+        )
+        if clash:
+            return False
+        rows = await self.query(
+            "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS name, e.aliases AS aliases LIMIT 1",
+            nn=old_norm,
+        )
+        if not rows:
+            return False
+        old_name = rows[0].get("name") or old_norm
+        aliases = list(rows[0].get("aliases") or [])
+        if old_name and old_name != new_name and old_name not in aliases:
+            aliases.append(old_name)
+        await self.command(
+            "MATCH (e:ENTITY {name_norm: $old}) "
+            "SET e.name = $name, e.name_norm = $new, e.aliases = $aliases",
+            old=old_norm,
+            name=new_name,
+            new=new_norm,
+            aliases=aliases,
+        )
+        logger.info("rename_entity: %s -> %s", old_norm, new_norm)
+        return True
 
     async def drop_entities(self, name_norms: list[str]) -> int:
         """DETACH DELETE the given ENTITY nodes (removes MENTIONS/RELATION edges).

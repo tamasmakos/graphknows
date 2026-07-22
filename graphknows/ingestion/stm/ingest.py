@@ -19,7 +19,7 @@ from graphknows.ingestion.parsers.base import ParsedFile, strip_content_heading
 from graphknows.ingestion.parsers.registry import get_parser
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.models.ingest import IngestResult
-from graphknows.ingestion.stm._entity_writer import graph_entities
+from graphknows.ingestion.stm._entity_writer import graph_entities, is_graph_entity_name
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
@@ -386,13 +386,34 @@ class _STMIngestHandler:
             if instances:
                 await self._store.write_frame_instances(session_id, chunk_id, instances)
 
-        # GLiNER2 relations — open-vocabulary labels, already precision-gated in
-        # the extractor (dep-path/frame corroboration), evidenced to this chunk.
-        # The ontology ANNOTATES rather than filters: a predicate that maps to an
-        # ontology property records that mapping, and one that maps to nothing is
-        # still written under its extracted label. A filter here would reject
-        # every open-vocab label, which is why one was refused before.
+        await self._write_relations(extraction, chunk_id, text)
+
+        iso_dates = [t["iso"] for t in temporal if t.get("iso")]
+        if iso_dates:
+            await self._store.write_temporal(chunk_id, iso_dates)
+        return len(filtered)
+
+    async def _write_relations(
+        self, extraction: ExtractionResult, chunk_id: str, text: str
+    ) -> None:
+        """Write the chunk's relation edges — deterministic pass, then DSPy.
+
+        The ontology ANNOTATES rather than filters: a predicate that maps to an
+        ontology property records that mapping, and one that maps to nothing is
+        still written under its extracted label. A filter here would reject
+        every open-vocab label, which is why one was refused before.
+
+        Temporal/numeric ENDPOINTS are a different matter: write_relation MERGEs
+        its endpoints as ENTITY nodes with no filtering, which is how dates
+        became ENTITY vertices with community_ids and fragmented the topic
+        layer. Both loops share the same endpoint gate; the date signal is not
+        lost — it lives on the chunk's MENTIONS_DATE/TEMPORAL link.
+        """
         for rel in extraction.relations:
+            if not is_graph_entity_name(rel["head"], rel.get("head_type", "")) or (
+                not is_graph_entity_name(rel["tail"], rel.get("tail_type", ""))
+            ):
+                continue
             ont_property, map_score = self._map_predicate(rel["relation"])
             await self._store.write_relation(
                 rel["head"],
@@ -414,6 +435,8 @@ class _STMIngestHandler:
             dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
             for triplet in dspy_triplets:
                 subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
+                if not is_graph_entity_name(str(subj)) or not is_graph_entity_name(str(obj)):
+                    continue
                 props = triplet[3] if len(triplet) > 3 else {}
                 confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
                 evidence = props.get("evidence", "") if isinstance(props, dict) else ""
@@ -426,11 +449,6 @@ class _STMIngestHandler:
                     confidence=confidence,
                     source="dspy",
                 )
-
-        iso_dates = [t["iso"] for t in temporal if t.get("iso")]
-        if iso_dates:
-            await self._store.write_temporal(chunk_id, iso_dates)
-        return len(filtered)
 
     def _precompute_embeddings(self, texts: list[str]) -> tuple[bool, list[list[float]]]:
         """Embed every chunk up front when possible. Returns ``(precomputed, embeddings)``.
