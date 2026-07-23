@@ -40,7 +40,6 @@ async def test_ingestor_aggregates_and_flushes() -> None:
         {
             "memory_ingest": {"chunks": 3, "entities": 2, "elapsed_s": 0.5},
             "memory_flush": {"nodes": 10, "edges": 4, "chunks": 3, "elapsed_s": 1.0},
-            "ltm_entities": {"entities": [{"name": "Caroline"}]},
         }
     )
     ingestor = Ingestor(client, BaseEvalConfig())  # type: ignore[arg-type]
@@ -50,9 +49,9 @@ async def test_ingestor_aggregates_and_flushes() -> None:
         namespace="eval_locomo_llm_free_conv_26",
     )
     assert result.chunks == 6 and result.entities == 4
-    assert result.flush_nodes == 10 and result.ltm_entity_count == 1
+    assert result.flush_nodes == 10
     assert [name for name, _ in client.calls] == [
-        "memory_ingest", "memory_ingest", "memory_flush", "ltm_entities",
+        "memory_ingest", "memory_ingest", "memory_flush",
     ]
     # Every call is routed to the unit's own namespace.
     assert all(
@@ -69,13 +68,13 @@ def test_unit_namespace_is_per_conversation() -> None:
 @pytest.mark.asyncio
 async def test_retriever_parses_hits() -> None:
     client = FakeClient(
-        {"memory_query": {"hits": [{"text": "t", "score": 0.9, "sources": "ltm_graph"}]}}
+        {"memory_query": {"hits": [{"text": "t", "score": 0.9, "sources": "entity"}]}}
     )
     retriever = Retriever(client, BaseEvalConfig())  # type: ignore[arg-type]
     passages, facts = await retriever.query(
         "s1", "q", k=5, namespace="eval_locomo_llm_free_conv_26"
     )
-    assert passages[0].text == "t" and passages[0].is_ltm_graph
+    assert passages[0].text == "t" and passages[0].is_graph_hit
     assert facts == []
     assert client.calls[0][1]["top_k"] == 5
     assert client.calls[0][1]["namespace"] == "eval_locomo_llm_free_conv_26"

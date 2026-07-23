@@ -106,13 +106,3 @@ class Ingestor:
         ingest.flush_topics = int(flush.get("topics_created", 0))
         ingest.flush_elapsed_s = round(float(flush.get("elapsed_s", 0)), 3)
         ingest.flush_error_count = len(flush.get("errors", []))
-
-        try:
-            entity_result = await self._client.call_tool(
-                "ltm_entities",
-                {"session_id": session_id, "limit": 500, "namespace": namespace},
-            )
-            if isinstance(entity_result, dict):
-                ingest.ltm_entity_count = len(entity_result.get("entities", []))
-        except Exception:
-            pass

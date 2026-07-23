@@ -108,11 +108,11 @@ class TestDatamodels:
             case_id="c1",
             question="q",
             gold="g",
-            passages=[RetrievedPassage(text="hit", sources="ltm_graph")],
+            passages=[RetrievedPassage(text="hit", sources="entity")],
         )
         record = result.to_record()
         assert record["memory_context"][0]["text"] == "hit"
-        assert result.passages[0].is_ltm_graph
+        assert result.passages[0].is_graph_hit
 
     def test_eval_case_defaults(self) -> None:
         case = EvalCase(case_id="x", group_id="g", question="q", gold="a")

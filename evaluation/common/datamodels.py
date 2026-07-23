@@ -48,10 +48,15 @@ class RetrievedPassage(BaseModel):
     score: float | None = None
     sources: str = ""
 
+    # Channels that reach a chunk through graph structure (entity/relation
+    # traversal, PPR, ontology classes, topics, frames) rather than dense-vector
+    # or lexical match. "graph contributed this hit" = any of these in sources.
+    _GRAPH_SOURCES = frozenset({"entity", "ppr", "ontology", "topic", "frame"})
+
     @property
-    def is_ltm_graph(self) -> bool:
-        """Whether this hit came from the LTM relation graph collector."""
-        return "ltm_graph" in self.sources
+    def is_graph_hit(self) -> bool:
+        """Whether a graph-structure channel contributed this hit."""
+        return bool(self._GRAPH_SOURCES & set(self.sources.split(",")))
 
 
 class IngestResult(BaseModel):
@@ -69,7 +74,6 @@ class IngestResult(BaseModel):
     flush_topics: int = 0
     flush_elapsed_s: float = 0.0
     flush_error_count: int = 0
-    ltm_entity_count: int = 0
     # LLM usage during ingestion (llm_assisted mode only)
     ingest_prompt_tokens: int = 0
     ingest_completion_tokens: int = 0

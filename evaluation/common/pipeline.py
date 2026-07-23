@@ -199,12 +199,10 @@ def build_case_result(
             # high + wrong answer = generation failure, low = retrieval miss.
             "gold_context_coverage": round(gold_context_coverage(case.gold, context_passages), 3),
             "avg_hit_score": _avg_score(passages),
-            "recall_hit_count": len(passages),
-            "ltm_graph_hit_count": sum(1 for p in passages if p.is_ltm_graph),
+            "graph_hit_count": sum(1 for p in passages if p.is_graph_hit),
             "ingested_chunks": ingest.chunks,
             "ingested_entities": ingest.entities,
             "ingest_elapsed_s": ingest.ingest_elapsed_s,
-            "ltm_entity_count": ingest.ltm_entity_count,
             "flush_nodes": ingest.flush_nodes,
             "flush_edges": ingest.flush_edges,
             "flush_elapsed_s": ingest.flush_elapsed_s,
