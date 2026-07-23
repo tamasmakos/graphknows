@@ -142,8 +142,61 @@ def _reference_date(documents: list[EvalDocument]) -> str:
     return max(parsed).strftime("%d %B %Y") if parsed else ""
 
 
+def _message_id_map(record: dict[str, Any]) -> dict[int, str]:
+    """Global message-id -> content, across every chat session (ids are global)."""
+    out: dict[int, str] = {}
+    for session in record.get("chat") or []:
+        if not isinstance(session, list):
+            continue
+        for msg in session:
+            if isinstance(msg, dict) and isinstance(msg.get("id"), int):
+                out[msg["id"]] = " ".join(str(msg.get("content") or "").split())
+    return out
+
+
+def _flatten_source_ids(value: Any) -> list[int]:
+    """``source_chat_ids`` is a flat list, or a dict of labelled lists (contradiction/
+    temporal/update questions carry ``{first_statement: [...], second_statement: [...]}``)."""
+    if isinstance(value, list):
+        return [i for i in value if isinstance(i, int)]
+    if isinstance(value, dict):
+        out: list[int] = []
+        for v in value.values():
+            if isinstance(v, list):
+                out.extend(i for i in v if isinstance(i, int))
+            elif isinstance(v, int):
+                out.append(v)
+        return out
+    return []
+
+
+def _evidence_windows(source_ids: Any, id_map: dict[int, str]) -> list[str]:
+    """Gold evidence for a BEAM question, as substring-matchable windows.
+
+    BEAM ships ``source_chat_ids`` — the message ids that answer each question —
+    but its messages are long (median ~1150 chars) and the ingest chunker splits
+    them, so a whole message rarely sits in one CHUNK verbatim (unlike LoCoMo's
+    short turns). Each source message is therefore emitted as overlapping
+    50-char windows: ``evidence_recall`` (exact substring per item) then scores
+    the fraction of a message's windows that were retrieved, which degrades
+    gracefully when a message is split across several retrieved/unretrieved
+    chunks. A short message yields a single window (itself).
+    """
+    windows: list[str] = []
+    for mid in dict.fromkeys(_flatten_source_ids(source_ids)):
+        content = id_map.get(mid, "")
+        if len(content) < 20:
+            continue
+        if len(content) <= 80:
+            windows.append(content)
+            continue
+        windows.extend(content[i : i + 50] for i in range(0, len(content) - 49, 40))
+    return windows
+
+
 def _build_cases(record: dict[str, Any], conv_id: str) -> list[EvalCase]:
     cases: list[EvalCase] = []
+    id_map = _message_id_map(record)
     probing = record.get("probing_questions") or {}
     for category, questions in probing.items():
         if not isinstance(questions, list):
@@ -160,6 +213,9 @@ def _build_cases(record: dict[str, Any], conv_id: str) -> list[EvalCase]:
                 "rubric": q.get("rubric"),
                 "source_chat_ids": q.get("source_chat_ids"),
                 "difficulty": q.get("difficulty"),
+                # Resolved gold evidence -> the shared evidence_recall metric,
+                # so BEAM retrieval quality is measurable (was proxy-only).
+                "evidence": _evidence_windows(q.get("source_chat_ids"), id_map),
             }
             if is_rubric:
                 extras.update(
