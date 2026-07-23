@@ -111,17 +111,40 @@ To plug a different storage backend, implement `IGraphStore` from
 [graphknows/storage/base.py](graphknows/storage/base.py) — the single-database
 contract `Memory` actually uses.
 
+## Benchmarks
+
+Full [LoCoMo](https://arxiv.org/abs/2402.17753) run — 1540 questions across all 10
+conversations, `llm_free` mode (deterministic, zero API keys), ontology injection +
+extractive topics on, deterministic retrieval:
+
+| metric | value |
+|---|---|
+| accuracy (LLM judge) | **0.814** |
+| — single_hop (n=841) | 0.860 |
+| — knowledge_synthesis (n=282) | 0.798 |
+| — temporal (n=321) | 0.741 |
+| — open_ended (n=96) | 0.698 |
+| evidence recall @ probe | 0.983 |
+| evidence recall in generator context | 0.921 |
+| gold context coverage | 0.843 |
+| cost per question | $0.0026 |
+
+Retrieval delivers the evidence on ~98% of questions; the residual gap is
+generation, not retrieval. Full per-case report:
+[evaluation/results/locomo](evaluation/results/locomo).
+
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — STM/LTM, promotion, RRF retrieval
 - [docs/modes.md](docs/modes.md) — llm_free vs llm_assisted
 - [docs/ontology.md](docs/ontology.md) — injecting a domain ontology
+- [docs/topics.md](docs/topics.md) — the re-runnable topic stage
 - [docs/configuration.md](docs/configuration.md) — full settings reference
 - [docs/integrations.md](docs/integrations.md) — framework integration recipe
 - [docs/versioning.md](docs/versioning.md) — semver & deprecation policy
 
-The `evaluation/` directory is internal LoCoMo benchmarking — not part of the installed
-package.
+The `evaluation/` directory is internal LoCoMo/BEAM/LongMemEval benchmarking — not part
+of the installed package.
 
 ## License
 
