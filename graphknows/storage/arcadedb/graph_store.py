@@ -105,13 +105,15 @@ def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
 
 # A chunk reached through an entity that instantiates the matched class is
 # weaker evidence than a chunk that evoked the class directly: the entity may be
-# incidental to what the chunk is about. Discounted rather than excluded, since
-# it is the far denser of the two paths.
+# incidental to what the chunk is about.
 #
-# Env-tunable so an A/B can isolate this path without a code change: 0.0 turns
-# the INSTANCE_OF route off entirely and leaves only the direct chunk tags.
+# Default 0.0 (off): once the fused pool is ordered by cosine
+# (DETRetriever._cosine_rerank) the INSTANCE_OF route's contribution to the
+# ordering washes out entirely — evidence_recall on conv-26 is byte-identical at
+# 0.5 and 0.0 — so the extra graph join earns nothing. Re-enable via the env var
+# for experiments. 0.0 skips the join outright.
 _INSTANCE_OF_WEIGHT: float = float(
-    os.environ.get("GRAPHKNOWS_ONTOLOGY_INSTANCE_WEIGHT", "0.5")
+    os.environ.get("GRAPHKNOWS_ONTOLOGY_INSTANCE_WEIGHT", "0.0")
 )
 
 
@@ -720,10 +722,11 @@ class GraphStore(ArcadeStoreBase):
                     }
                 )
         # Path 2 — the chunk mentions an ENTITY that instantiates the class.
-        # This is the denser signal by far (on conv-26: 767 INSTANCE_OF edges
-        # against 189 MATCHES_CLASS), and it is what lets "where did they go"
-        # reach chunks through the Place-typed entities they mention rather than
-        # through the chunk's own class tags. Discounted as indirect evidence.
+        # Denser than the chunk path (conv-26: 767 INSTANCE_OF vs 189
+        # MATCHES_CLASS) but inert once the pool is cosine-reranked, so it is off
+        # by default; the query is skipped entirely at weight 0.
+        if _INSTANCE_OF_WEIGHT <= 0.0:
+            return out
         try:
             via_entity = await self.query(
                 f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY)-[i:INSTANCE_OF]->(o:ONTOLOGY_CLASS) "
