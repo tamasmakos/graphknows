@@ -168,12 +168,15 @@ def _declarative_variant(question: str) -> str | None:
     return None
 
 
-# Coverage weights for the pool rerank: the marginal bonus for a candidate that
-# brings NEW entities / a NEW source document into the selection, on top of its
-# query cosine. 0.10/0.10 won an offline sweep on both benchmarks (see
-# _rerank_pool); 0/0 restores pure cosine ordering.
-_RERANK_W_ENT: float = float(os.environ.get("GRAPHKNOWS_RERANK_ENT_WEIGHT", "0.10"))
-_RERANK_W_DOC: float = float(os.environ.get("GRAPHKNOWS_RERANK_DOC_WEIGHT", "0.10"))
+# Weight of the query-entity affinity term in the pool rerank: how much to boost
+# a candidate for each of the query's entities it mentions (via the MENTIONS
+# graph), on top of its query cosine. 0.20 won an offline grid on both
+# benchmarks; 0 restores pure cosine ordering.
+_RERANK_QENT_WEIGHT: float = float(os.environ.get("GRAPHKNOWS_RERANK_QENT_WEIGHT", "0.20"))
+# Entities matched to the query are capped here before normalising, so a chunk
+# that mentions many query entities does not swamp the cosine signal.
+_QENT_CAP: int = 5
+_QENT_TOKEN = re.compile(r"[a-z0-9']+")
 
 
 def _fact_context_enabled() -> bool:
@@ -243,10 +246,10 @@ class DETRetriever(BaseGraphRetriever):
 
         pre_rerank = await self._shape_and_rank(combined)
 
-        # Order the pool by query-chunk cosine + structural coverage, then
+        # Order the pool by query-chunk cosine + query-entity affinity, then
         # cross-encoder rerank (a no-op unless sentence-transformers is
         # installed), then cut.
-        ranked = await self._rerank_pool(ctx.emb, pre_rerank)
+        ranked = await self._rerank_pool(ctx.emb, query, pre_rerank)
         ranked = await asyncio.to_thread(_ce_rerank, query, ranked, len(ranked))
         fused = ranked[:top_k]
         for i, item in enumerate(fused):
@@ -262,29 +265,28 @@ class DETRetriever(BaseGraphRetriever):
         )
 
     async def _rerank_pool(
-        self, query_emb: list[float], candidates: list[dict[str, Any]]
+        self, query_emb: list[float], query: str, candidates: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Order the fused pool by query-chunk cosine + marginal structural coverage.
+        """Order the fused pool by query-chunk cosine + query-entity affinity.
 
-        The channels' job is pool MEMBERSHIP; ordering is greedy selection where
-        each pick scores ``cosine + w_ent·(new entities) + w_doc·(new source
-        document)``. Pure cosine collapses diversity — for a multi-evidence
-        question it fills the context with near-duplicates about one sub-topic —
-        while the coverage bonuses spend the graph's own structure (MENTIONS,
-        PART_OF) to keep the selection spread across the corpus.
+        The channels' job is pool MEMBERSHIP; ordering is ``cosine + w · (query
+        entities this chunk mentions)``. Pure cosine is topic-similarity only —
+        for a multi-evidence question it ranks near-duplicates about one
+        sub-topic first. The affinity term spends the graph's own MENTIONS
+        structure: a chunk that actually names the query's subjects is more
+        likely to carry an answer than one that merely reads similar.
 
-        Measured offline over cached candidate pools:
-        - cosine vs old RRF (conv-26, 150 q): recall@10 0.739 -> 0.845,
-          multi-hop@10 0.548 -> 0.704.
-        - coverage(.10/.10) vs pure cosine: BEAM weak-category coverage@25
-          0.673 -> 0.715 (every category up), LoCoMo @25 0.941 -> 0.937 (noise)
-          with multi-hop@25 0.871 -> 0.884.
+        Measured offline over cached candidate pools (grid-searched):
+        - vs old RRF (conv-26): recall@10 0.739 -> 0.845.
+        - vs pure cosine at the operating point (k=25): LoCoMo evidence_recall
+          multi-hop 0.871 -> 0.906 (real labels), BEAM weak-category coverage
+          0.673 -> 0.697. Diversity-coverage variants (new-entity / new-doc
+          greedy) tied pure cosine and were dropped.
 
-        Chunk vectors/entities/files are already persisted, so this is two
-        round trips plus O(n·k) arithmetic — no model, no new dependency.
+        Chunk vectors + entity lists are already persisted, so this is two
+        round trips plus O(n) arithmetic — no model, no new dependency.
         Candidates with no stored embedding keep their RRF order behind the
-        scored ones rather than being dropped. Setting both weights to 0
-        restores pure cosine ordering.
+        scored ones rather than being dropped. Weight 0 restores pure cosine.
         """
         if len(candidates) < 2 or not query_emb:
             return candidates
@@ -297,44 +299,29 @@ class DETRetriever(BaseGraphRetriever):
         if not meta:
             return candidates
 
+        qtoks = {w for w in _QENT_TOKEN.findall(query.lower()) if len(w) > 2}
         q = np.asarray(query_emb, dtype=np.float32)
         qn = float(np.linalg.norm(q)) or 1.0
-        scorable: list[int] = []
-        unscorable: list[int] = []
-        cos: dict[int, float] = {}
+        scored: list[tuple[float, int, dict[str, Any]]] = []
+        unscorable: list[dict[str, Any]] = []
         for i, cand in enumerate(candidates):
             m = meta.get(str(cand.get("chunk_id") or ""))
             if not m or not m.get("emb"):
-                unscorable.append(i)
+                # No stored vector: keep behind everything scored, in RRF order.
+                unscorable.append(cand)
                 continue
             v = np.asarray(m["emb"], dtype=np.float32)
-            cos[i] = float(v @ q / ((float(np.linalg.norm(v)) or 1.0) * qn))
-            cand["cosine"] = round(cos[i], 4)
-            scorable.append(i)
-
-        w_ent, w_doc = _RERANK_W_ENT, _RERANK_W_DOC
-        if w_ent <= 0.0 and w_doc <= 0.0:
-            ordered = sorted(scorable, key=lambda i: (-cos[i], i))
-        else:
-            seen_ents: set[str] = set()
-            seen_docs: set[str] = set()
-            ordered = []
-            rest = list(scorable)
-            while rest:
-                best, best_s = rest[0], -1e9
-                for i in rest:
-                    m = meta[str(candidates[i].get("chunk_id") or "")]
-                    new_e = sum(1 for e in m.get("ents") or () if e not in seen_ents)
-                    new_d = 0 if (m.get("file") or "") in seen_docs else 1
-                    s = cos[i] + w_ent * min(new_e, 10) / 10.0 + w_doc * new_d
-                    if s > best_s:
-                        best, best_s = i, s
-                m = meta[str(candidates[best].get("chunk_id") or "")]
-                seen_ents.update(m.get("ents") or ())
-                seen_docs.add(m.get("file") or "")
-                ordered.append(best)
-                rest.remove(best)
-        return [candidates[i] for i in ordered] + [candidates[i] for i in unscorable]
+            cos = float(v @ q / ((float(np.linalg.norm(v)) or 1.0) * qn))
+            # Query-entity affinity: an entity matches on a whole word, mirroring
+            # resolve_query_entities, so "there" never matches "theresa".
+            affinity = sum(
+                1 for e in m.get("ents") or () if qtoks & set(str(e).split())
+            )
+            cand["cosine"] = round(cos, 4)
+            score = cos + _RERANK_QENT_WEIGHT * min(affinity, _QENT_CAP) / _QENT_CAP
+            scored.append((score, i, cand))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        return [c for _, _, c in scored] + unscorable
 
     async def _build_channel_context(
         self, query: str, session_id: str, scope: str

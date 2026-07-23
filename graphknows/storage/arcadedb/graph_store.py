@@ -1054,13 +1054,13 @@ class GraphStore(ArcadeStoreBase):
         ]
 
     async def chunk_rerank_meta(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
-        """Per-chunk rerank signals: ``{chunk_id: {emb, ents, file}}``.
+        """Per-chunk rerank signals: ``{chunk_id: {emb, ents}}``.
 
-        Two round trips for a whole candidate pool, so the retriever can order
-        it by query-chunk cosine PLUS structural coverage (which entities a
-        chunk mentions, which source document it belongs to) instead of rank
-        arithmetic. Missing ids are omitted; a chunk with no PART_OF edge gets
-        ``file=""``.
+        One round trip for a whole candidate pool, so the retriever can order it
+        by query-chunk cosine PLUS query-entity affinity (which of the query's
+        entities a chunk mentions) instead of rank arithmetic. Both fields are
+        already persisted on CHUNK, so no traversal. Missing ids / chunks
+        without an embedding are omitted.
         """
         ids = [c for c in chunk_ids if c]
         if not ids:
@@ -1070,28 +1070,14 @@ class GraphStore(ArcadeStoreBase):
             f"RETURN c.chunk_id AS chunk_id, c.embedding AS embedding, "
             f"c.entity_names AS ents"
         )
-        out: dict[str, dict[str, Any]] = {}
-        for r in rows:
-            cid = r.get("chunk_id")
-            if not cid or not r.get("embedding"):
-                continue
-            out[cid] = {
+        return {
+            r["chunk_id"]: {
                 "emb": list(r["embedding"]),
                 "ents": [str(e).casefold() for e in (r.get("ents") or [])],
-                "file": "",
             }
-        try:
-            frows = await self.query(
-                f"MATCH (c:CHUNK)-[:PART_OF]->(f:FILE) "
-                f"WHERE c.chunk_id IN {quoted_list(ids)} "
-                f"RETURN c.chunk_id AS chunk_id, f.file_id AS fid"
-            )
-            for r in frows:
-                if r.get("chunk_id") in out:
-                    out[r["chunk_id"]]["file"] = r.get("fid") or ""
-        except Exception as exc:
-            logger.debug("chunk_rerank_meta file join failed (soft): %s", exc)
-        return out
+            for r in rows
+            if r.get("chunk_id") and r.get("embedding")
+        }
 
     async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch chunks by id. Returns {chunk_id: {text, session_id, ...}}."""
