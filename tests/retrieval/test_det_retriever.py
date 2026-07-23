@@ -30,6 +30,7 @@ def _make_retriever():
     store.search_topics_with_chunks = AsyncMock(return_value=[])
     store.search_chunks_ann = AsyncMock(return_value=[])
     store.get_chunks_by_ids = AsyncMock(return_value={})
+    store.neighbor_chunks = AsyncMock(return_value={})
     store.chunk_community_weights = AsyncMock(return_value={})
     store.resolve_query_entities = AsyncMock(return_value=[])
     store.entity_fact_context = AsyncMock(return_value=[])
@@ -279,3 +280,44 @@ async def test_rerank_zero_weight_is_pure_cosine(monkeypatch):
     out = await retriever._rerank_pool([1.0, 0.0], "caroline caroline caroline", pool)
 
     assert [c["chunk_id"] for c in out] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_neighbor_expansion_appends_split_message_siblings(monkeypatch):
+    """A long ingested message splits across consecutive chunks; the answer may
+    sit in a sibling of the matched chunk, so siblings are appended after it.
+    Off by default (conversational context-rot); enabled here.
+    """
+    monkeypatch.setattr("graphknows.retrieval.retriever._NEIGHBOR_RADIUS", 1)
+    retriever, store = _make_retriever()
+    store.search_chunks_ann = AsyncMock(
+        return_value=[{"chunk_id": "c2", "text": "middle of a long message", "cosine_score": 0.9}]
+    )
+    store.neighbor_chunks = AsyncMock(return_value={
+        "c2": [{"chunk_id": "c1", "text": "start"}, {"chunk_id": "c3", "text": "end (answer)"}],
+    })
+
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
+        ctx = await retriever.retrieve("q", session_id="s1", top_k=5, scope="both")
+
+    ids = [f["chunk_id"] for f in ctx.fused_results]
+    assert "c2" in ids and "c1" in ids and "c3" in ids
+    sibs = [f for f in ctx.fused_results if f["chunk_id"] in ("c1", "c3")]
+    assert all(f["sources"] == "neighbor" for f in sibs)
+    assert all(f["metadata"]["neighbor_of"] == "c2" for f in sibs)
+
+
+@pytest.mark.asyncio
+async def test_neighbor_expansion_dedupes_and_survives_store_failure(monkeypatch):
+    monkeypatch.setattr("graphknows.retrieval.retriever._NEIGHBOR_RADIUS", 1)
+    retriever, store = _make_retriever()
+    store.search_chunks_ann = AsyncMock(
+        return_value=[{"chunk_id": "a", "text": "x", "cosine_score": 0.9}]
+    )
+    store.neighbor_chunks = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
+        ctx = await retriever.retrieve("q", session_id="s1", top_k=5, scope="both")
+
+    # Failure is non-fatal — the base results are still returned.
+    assert [f["chunk_id"] for f in ctx.fused_results] == ["a"]

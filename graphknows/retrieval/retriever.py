@@ -178,6 +178,16 @@ _RERANK_QENT_WEIGHT: float = float(os.environ.get("GRAPHKNOWS_RERANK_QENT_WEIGHT
 _QENT_CAP: int = 5
 _QENT_TOKEN = re.compile(r"[a-z0-9']+")
 
+# After cutting to top_k, append each result's ±N seq-adjacent same-document
+# chunks. Long ingested messages split across consecutive chunks, so the answer
+# often sits in a sibling of the matched chunk — a LONG-DOCUMENT fix.
+#
+# Default 0 (off): it HELPS long-document corpora (BEAM: accuracy 0.371 -> 0.426
+# at radius 2) but HURTS conversational memory, where short turns don't split
+# and the siblings are just context-rot noise (LoCoMo: 0.895 -> 0.814 at radius
+# 1). Enable per-corpus via GRAPHKNOWS_NEIGHBOR_RADIUS.
+_NEIGHBOR_RADIUS: int = int(os.environ.get("GRAPHKNOWS_NEIGHBOR_RADIUS", "0"))
+
 
 def _fact_context_enabled() -> bool:
     """Whether the D8 structured fact-sheet is fed to the generator (default on).
@@ -252,6 +262,7 @@ class DETRetriever(BaseGraphRetriever):
         ranked = await self._rerank_pool(ctx.emb, query, pre_rerank)
         ranked = await asyncio.to_thread(_ce_rerank, query, ranked, len(ranked))
         fused = ranked[:top_k]
+        fused = await self._expand_neighbors(fused)
         for i, item in enumerate(fused):
             item["rank"] = i + 1
 
@@ -263,6 +274,49 @@ class DETRetriever(BaseGraphRetriever):
             trace=_build_trace(query, session_id, collectors_fired, fused),
             facts=await self._fact_sheet(ctx.words_graph),
         )
+
+    async def _expand_neighbors(
+        self, fused: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Append each result's seq-adjacent same-document chunks.
+
+        Ingested long messages split across consecutive same-file chunks, so an
+        answer often lives in a sibling of the chunk that matched the query.
+        Each selected chunk's ±_NEIGHBOR_RADIUS siblings are appended after it
+        (primary ranking preserved), deduped. Measured on BEAM's real evidence
+        labels, expanding 25 chunks by ±2 recovers more gold evidence than
+        retrieving 50 flat (0.648 vs 0.596) because it targets the split
+        exactly. Radius 0 disables it.
+        """
+        if _NEIGHBOR_RADIUS < 1 or not fused:
+            return fused
+        ids = [str(f.get("chunk_id") or "") for f in fused]
+        try:
+            neighbors = await self.store.neighbor_chunks(ids, _NEIGHBOR_RADIUS)
+        except Exception as exc:
+            log.warning("neighbor expansion unavailable (%s); skipping", exc)
+            return fused
+        if not neighbors:
+            return fused
+        seen = set(ids)
+        out: list[dict[str, Any]] = []
+        for item in fused:
+            out.append(item)
+            for sib in neighbors.get(str(item.get("chunk_id") or ""), []):
+                sid = str(sib.get("chunk_id") or "")
+                if sid and sid not in seen:
+                    seen.add(sid)
+                    out.append({
+                        "chunk_id": sid,
+                        "text": sib.get("text", ""),
+                        "rrf_score": item.get("rrf_score", 0.0),
+                        "cosine": item.get("cosine"),
+                        "sources": "neighbor",
+                        "doc_id": item.get("doc_id", ""),
+                        "entities": [],
+                        "metadata": {"neighbor_of": item.get("chunk_id", "")},
+                    })
+        return out
 
     async def _rerank_pool(
         self, query_emb: list[float], query: str, candidates: list[dict[str, Any]]

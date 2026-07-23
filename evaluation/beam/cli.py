@@ -73,6 +73,11 @@ async def _run_one(
     # database pairs so ingesting one never contaminates the other's graph.
     config = config.model_copy(update={"namespace": f"{config.namespace}_{mode}"})
     os.environ["GRAPHKNOWS_NAMESPACE"] = config.namespace
+    # BEAM's long messages split across consecutive chunks, so expand each
+    # retrieved chunk to its seq-neighbours — a long-document fix that lifts
+    # evidence recall (measured: accuracy 0.371 -> 0.426). Off by default in the
+    # library because it context-rots short conversational turns.
+    os.environ.setdefault("GRAPHKNOWS_NEIGHBOR_RADIUS", "2")
     answerer, judge = build_llms(config)
     adapter = BeamAdapter(config, answerer, judge)
     units = load_units(config, limit=limit, offset=offset)

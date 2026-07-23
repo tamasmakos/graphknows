@@ -1079,6 +1079,65 @@ class GraphStore(ArcadeStoreBase):
             if r.get("chunk_id") and r.get("embedding")
         }
 
+    async def neighbor_chunks(
+        self, chunk_ids: list[str], radius: int = 1
+    ) -> dict[str, list[dict[str, Any]]]:
+        """``{seed_chunk_id: [neighbor {chunk_id, text}, ...]}`` within ±radius seq.
+
+        A neighbor shares the seed's source FILE and sits within ``radius`` of its
+        ``seq``. Ingested long messages split into consecutive same-file chunks,
+        so an answer often lives in a sibling of the chunk retrieval actually
+        matched; pulling the siblings recovers it. One round trip: fetch each
+        seed's (file, seq), then all same-file chunks in the seq windows.
+        """
+        ids = [c for c in chunk_ids if c]
+        if not ids or radius < 1:
+            return {}
+        seeds = await self.query(
+            f"MATCH (c:CHUNK)-[:PART_OF]->(f:FILE) WHERE c.chunk_id IN {quoted_list(ids)} "
+            f"RETURN c.chunk_id AS chunk_id, f.file_id AS fid, c.seq AS seq"
+        )
+        want: dict[str, tuple[int, int]] = {}  # file -> (min_seq, max_seq) window
+        seed_key: dict[str, tuple[str, int]] = {}
+        for r in seeds:
+            fid, seq = r.get("fid") or "", r.get("seq")
+            if not fid or seq is None:
+                continue
+            seed_key[r["chunk_id"]] = (fid, int(seq))
+            lo, hi = int(seq) - radius, int(seq) + radius
+            if fid in want:
+                want[fid] = (min(want[fid][0], lo), max(want[fid][1], hi))
+            else:
+                want[fid] = (lo, hi)
+        if not want:
+            return {}
+        # Fetch every candidate neighbour once, keyed by (file, seq).
+        clauses = " OR ".join(
+            f"(f.file_id = {quote(fid)} AND c.seq >= {lo} AND c.seq <= {hi})"
+            for fid, (lo, hi) in want.items()
+        )
+        rows = await self.query(
+            f"MATCH (c:CHUNK)-[:PART_OF]->(f:FILE) WHERE {clauses} "
+            f"RETURN c.chunk_id AS chunk_id, f.file_id AS fid, c.seq AS seq, c.text AS text"
+        )
+        by_pos: dict[tuple[str, int], dict[str, Any]] = {}
+        for r in rows:
+            if r.get("seq") is not None and r.get("chunk_id"):
+                by_pos[(r.get("fid") or "", int(r["seq"]))] = {
+                    "chunk_id": r["chunk_id"],
+                    "text": r.get("text") or "",
+                }
+        out: dict[str, list[dict[str, Any]]] = {}
+        for cid, (fid, seq) in seed_key.items():
+            sibs = [
+                by_pos[(fid, s)]
+                for s in range(seq - radius, seq + radius + 1)
+                if s != seq and (fid, s) in by_pos
+            ]
+            if sibs:
+                out[cid] = sibs
+        return out
+
     async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch chunks by id. Returns {chunk_id: {text, session_id, ...}}."""
         ids = [c for c in chunk_ids if c]
