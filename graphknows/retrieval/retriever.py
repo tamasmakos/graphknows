@@ -168,6 +168,14 @@ def _declarative_variant(question: str) -> str | None:
     return None
 
 
+# Coverage weights for the pool rerank: the marginal bonus for a candidate that
+# brings NEW entities / a NEW source document into the selection, on top of its
+# query cosine. 0.10/0.10 won an offline sweep on both benchmarks (see
+# _rerank_pool); 0/0 restores pure cosine ordering.
+_RERANK_W_ENT: float = float(os.environ.get("GRAPHKNOWS_RERANK_ENT_WEIGHT", "0.10"))
+_RERANK_W_DOC: float = float(os.environ.get("GRAPHKNOWS_RERANK_DOC_WEIGHT", "0.10"))
+
+
 def _fact_context_enabled() -> bool:
     """Whether the D8 structured fact-sheet is fed to the generator (default on).
 
@@ -235,9 +243,10 @@ class DETRetriever(BaseGraphRetriever):
 
         pre_rerank = await self._shape_and_rank(combined)
 
-        # Order the pool by true query-chunk cosine, then cross-encoder rerank
-        # (a no-op unless sentence-transformers is installed), then cut.
-        ranked = await self._cosine_rerank(ctx.emb, pre_rerank)
+        # Order the pool by query-chunk cosine + structural coverage, then
+        # cross-encoder rerank (a no-op unless sentence-transformers is
+        # installed), then cut.
+        ranked = await self._rerank_pool(ctx.emb, pre_rerank)
         ranked = await asyncio.to_thread(_ce_rerank, query, ranked, len(ranked))
         fused = ranked[:top_k]
         for i, item in enumerate(fused):
@@ -252,49 +261,80 @@ class DETRetriever(BaseGraphRetriever):
             facts=await self._fact_sheet(ctx.words_graph),
         )
 
-    async def _cosine_rerank(
+    async def _rerank_pool(
         self, query_emb: list[float], candidates: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Re-order the fused pool by query-chunk cosine.
+        """Order the fused pool by query-chunk cosine + marginal structural coverage.
 
-        The channels' job is pool MEMBERSHIP; RRF's rank arithmetic turned out
-        to be the weak part of the ordering. Measured on conv-26 over the fused
-        pool (150 questions), cosine beats RRF at every depth that matters:
-        recall@10 0.739 -> 0.845, and multi-hop recall@10 0.548 -> 0.704 —
-        cosine@25 (0.941) matches the old RRF@50 (0.971), so the generator's
-        context can halve at equal recall. Blends of the two and
-        channel-agreement weighting all scored lower.
+        The channels' job is pool MEMBERSHIP; ordering is greedy selection where
+        each pick scores ``cosine + w_ent·(new entities) + w_doc·(new source
+        document)``. Pure cosine collapses diversity — for a multi-evidence
+        question it fills the context with near-duplicates about one sub-topic —
+        while the coverage bonuses spend the graph's own structure (MENTIONS,
+        PART_OF) to keep the selection spread across the corpus.
 
-        Chunk vectors are already persisted, so this is one round trip plus a
-        dot product — no model, no new dependency. Candidates whose embedding is
-        missing keep their RRF order behind the scored ones rather than being
-        dropped.
+        Measured offline over cached candidate pools:
+        - cosine vs old RRF (conv-26, 150 q): recall@10 0.739 -> 0.845,
+          multi-hop@10 0.548 -> 0.704.
+        - coverage(.10/.10) vs pure cosine: BEAM weak-category coverage@25
+          0.673 -> 0.715 (every category up), LoCoMo @25 0.941 -> 0.937 (noise)
+          with multi-hop@25 0.871 -> 0.884.
+
+        Chunk vectors/entities/files are already persisted, so this is two
+        round trips plus O(n·k) arithmetic — no model, no new dependency.
+        Candidates with no stored embedding keep their RRF order behind the
+        scored ones rather than being dropped. Setting both weights to 0
+        restores pure cosine ordering.
         """
         if len(candidates) < 2 or not query_emb:
             return candidates
         ids = [str(c.get("chunk_id") or "") for c in candidates]
         try:
-            vectors = await self.store.chunk_embeddings(ids)
+            meta = await self.store.chunk_rerank_meta(ids)
         except Exception as exc:
-            log.warning("cosine rerank unavailable (%s); keeping RRF order", exc)
+            log.warning("pool rerank unavailable (%s); keeping RRF order", exc)
             return candidates
-        if not vectors:
+        if not meta:
             return candidates
+
         q = np.asarray(query_emb, dtype=np.float32)
         qn = float(np.linalg.norm(q)) or 1.0
-        scored: list[tuple[float, int, dict[str, Any]]] = []
+        scorable: list[int] = []
+        unscorable: list[int] = []
+        cos: dict[int, float] = {}
         for i, cand in enumerate(candidates):
-            vec = vectors.get(str(cand.get("chunk_id") or ""))
-            if not vec:
-                # Unscorable: keep behind everything scored, in RRF order.
-                scored.append((-1.0, i, cand))
+            m = meta.get(str(cand.get("chunk_id") or ""))
+            if not m or not m.get("emb"):
+                unscorable.append(i)
                 continue
-            v = np.asarray(vec, dtype=np.float32)
-            cos = float(v @ q / ((float(np.linalg.norm(v)) or 1.0) * qn))
-            cand["cosine"] = round(cos, 4)
-            scored.append((cos, i, cand))
-        scored.sort(key=lambda t: (-t[0], t[1]))
-        return [c for _, _, c in scored]
+            v = np.asarray(m["emb"], dtype=np.float32)
+            cos[i] = float(v @ q / ((float(np.linalg.norm(v)) or 1.0) * qn))
+            cand["cosine"] = round(cos[i], 4)
+            scorable.append(i)
+
+        w_ent, w_doc = _RERANK_W_ENT, _RERANK_W_DOC
+        if w_ent <= 0.0 and w_doc <= 0.0:
+            ordered = sorted(scorable, key=lambda i: (-cos[i], i))
+        else:
+            seen_ents: set[str] = set()
+            seen_docs: set[str] = set()
+            ordered = []
+            rest = list(scorable)
+            while rest:
+                best, best_s = rest[0], -1e9
+                for i in rest:
+                    m = meta[str(candidates[i].get("chunk_id") or "")]
+                    new_e = sum(1 for e in m.get("ents") or () if e not in seen_ents)
+                    new_d = 0 if (m.get("file") or "") in seen_docs else 1
+                    s = cos[i] + w_ent * min(new_e, 10) / 10.0 + w_doc * new_d
+                    if s > best_s:
+                        best, best_s = i, s
+                m = meta[str(candidates[best].get("chunk_id") or "")]
+                seen_ents.update(m.get("ents") or ())
+                seen_docs.add(m.get("file") or "")
+                ordered.append(best)
+                rest.remove(best)
+        return [candidates[i] for i in ordered] + [candidates[i] for i in unscorable]
 
     async def _build_channel_context(
         self, query: str, session_id: str, scope: str

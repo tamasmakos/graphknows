@@ -177,41 +177,92 @@ async def test_scope_maps_to_state_filter():
     assert state == "consolidated"
 
 
+def _meta(**per_chunk):
+    """chunk_rerank_meta shape: {cid: {emb, ents, file}} with defaults."""
+    return {
+        cid: {"emb": spec.get("emb"), "ents": spec.get("ents", []), "file": spec.get("file", "")}
+        for cid, spec in per_chunk.items()
+    }
+
+
 @pytest.mark.asyncio
-async def test_cosine_rerank_orders_the_pool_by_query_similarity():
-    """Channels decide pool MEMBERSHIP; cosine decides the ORDER.
+async def test_rerank_orders_the_pool_by_query_similarity():
+    """Channels decide pool MEMBERSHIP; the rerank decides the ORDER.
 
     Measured on conv-26: recall@10 0.739 -> 0.848, multi-hop@10 0.548 -> 0.704.
     """
     retriever, store = _make_retriever()
-    store.chunk_embeddings = AsyncMock(
-        return_value={"far": [0.0, 1.0], "near": [1.0, 0.0]}
+    store.chunk_rerank_meta = AsyncMock(
+        return_value=_meta(far={"emb": [0.0, 1.0]}, near={"emb": [1.0, 0.0]})
     )
     # RRF put the semantically-distant chunk first.
     pool = [{"chunk_id": "far", "rrf_score": 0.9}, {"chunk_id": "near", "rrf_score": 0.1}]
 
-    out = await retriever._cosine_rerank([1.0, 0.0], pool)
+    out = await retriever._rerank_pool([1.0, 0.0], pool)
 
     assert [c["chunk_id"] for c in out] == ["near", "far"]
     assert out[0]["cosine"] == 1.0
 
 
 @pytest.mark.asyncio
-async def test_cosine_rerank_keeps_unscorable_candidates_last():
+async def test_rerank_keeps_unscorable_candidates_last():
     """A chunk with no stored embedding is demoted, never dropped."""
     retriever, store = _make_retriever()
-    store.chunk_embeddings = AsyncMock(return_value={"has": [1.0, 0.0]})
+    store.chunk_rerank_meta = AsyncMock(return_value=_meta(has={"emb": [1.0, 0.0]}))
     pool = [{"chunk_id": "none", "rrf_score": 0.9}, {"chunk_id": "has", "rrf_score": 0.1}]
 
-    out = await retriever._cosine_rerank([1.0, 0.0], pool)
+    out = await retriever._rerank_pool([1.0, 0.0], pool)
 
     assert [c["chunk_id"] for c in out] == ["has", "none"]
 
 
 @pytest.mark.asyncio
-async def test_cosine_rerank_falls_back_to_rrf_order_on_store_failure():
+async def test_rerank_falls_back_to_rrf_order_on_store_failure():
     retriever, store = _make_retriever()
-    store.chunk_embeddings = AsyncMock(side_effect=RuntimeError("boom"))
+    store.chunk_rerank_meta = AsyncMock(side_effect=RuntimeError("boom"))
     pool = [{"chunk_id": "a", "rrf_score": 0.9}, {"chunk_id": "b", "rrf_score": 0.1}]
 
-    assert await retriever._cosine_rerank([1.0, 0.0], pool) == pool
+    assert await retriever._rerank_pool([1.0, 0.0], pool) == pool
+
+
+@pytest.mark.asyncio
+async def test_rerank_coverage_prefers_new_entities_and_documents():
+    """Structure breaks cosine ties: a near-duplicate about the SAME entities
+    and document loses its slot to a slightly-less-similar chunk that brings
+    NEW coverage — the beam multi-session fix.
+    """
+    retriever, store = _make_retriever()
+    store.chunk_rerank_meta = AsyncMock(return_value=_meta(
+        top={"emb": [1.0, 0.0], "ents": ["caroline"], "file": "f1"},
+        dup={"emb": [0.99, 0.14], "ents": ["caroline"], "file": "f1"},
+        new={"emb": [0.95, 0.31], "ents": ["melanie", "seattle"], "file": "f2"},
+    ))
+    pool = [
+        {"chunk_id": "top", "rrf_score": 0.9},
+        {"chunk_id": "dup", "rrf_score": 0.8},
+        {"chunk_id": "new", "rrf_score": 0.1},
+    ]
+
+    out = await retriever._rerank_pool([1.0, 0.0], pool)
+
+    # Pure cosine would give top, dup, new; coverage promotes `new` past `dup`.
+    assert [c["chunk_id"] for c in out] == ["top", "new", "dup"]
+
+
+@pytest.mark.asyncio
+async def test_rerank_zero_weights_is_pure_cosine(monkeypatch):
+    """The kill switch: weights 0/0 must reproduce plain cosine ordering."""
+    from graphknows.retrieval import retriever as mod
+
+    monkeypatch.setattr(mod, "_RERANK_W_ENT", 0.0)
+    monkeypatch.setattr(mod, "_RERANK_W_DOC", 0.0)
+    retriever, store = _make_retriever()
+    store.chunk_rerank_meta = AsyncMock(return_value=_meta(
+        a={"emb": [1.0, 0.0], "ents": ["x"], "file": "f1"},
+        b={"emb": [0.9, 0.44], "ents": ["y", "z"], "file": "f2"},
+    ))
+    pool = [{"chunk_id": "b", "rrf_score": 0.9}, {"chunk_id": "a", "rrf_score": 0.1}]
+
+    out = await retriever._rerank_pool([1.0, 0.0], pool)
+
+    assert [c["chunk_id"] for c in out] == ["a", "b"]
