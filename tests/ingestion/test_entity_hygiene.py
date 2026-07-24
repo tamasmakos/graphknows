@@ -125,6 +125,42 @@ class TestTemporalShapes:
         assert [e["name"] for e in graph_entities(ents)] == ["Caroline"]
 
 
+class TestStructuralJunk:
+    """Census of two live graphs found stopwords, code, URLs, month-first dates,
+    and 1-2 char fragments minted as ENTITY nodes. All are structural junk."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "the", "and", "or", "to", "be", "These", "what", "of", "a",  # stopwords
+            "x", "id", "io", "db",  # single / 2-char lowercase fragments
+            "::", "...", "-",  # punctuation-only
+            "http://localhost:5000", "www.example.com",  # URLs
+            "Flask application: ```python from flask import Flask",  # code
+            "config = {a: 1}", "arr[]", "<div>",  # markup / code
+            "December 15, 2023",  # month-first date (previous gap)
+            "November 1 - November 15, 2023",  # date range (previous gap)
+            "January 16 - February 15, 2024",
+            "the quick brown fox jumped over the lazy dog today",  # >8-word clause
+        ],
+    )
+    def test_structural_junk_is_dropped(self, name: str) -> None:
+        assert not is_graph_entity_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Flask", "SQLAlchemy", "Werkzeug", "OpenWeatherMap",  # tech entities
+            "python", "iPhone",  # lowercase / mixed-case real entities
+            "AI", "US", "UK",  # uppercase acronyms survive the 2-char drop
+            "May", "June",  # month-name collisions with modal/function words
+            "San Francisco", "New York City", "county hospital",  # multi-word names
+        ],
+    )
+    def test_real_entities_survive(self, name: str) -> None:
+        assert is_graph_entity_name(name)
+
+
 class TestRelationGate:
     @pytest.mark.asyncio
     async def test_temporal_endpoint_skips_the_relation(self) -> None:

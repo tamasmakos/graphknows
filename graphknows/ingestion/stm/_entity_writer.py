@@ -31,7 +31,10 @@ _TEMPORAL_NAME_RE = re.compile(
     r"[\W\d]+"  # bare numbers / punctuation / "10:31" / "100" / "4"
     rf"|{_TIME}(?:\s+on\s+.{{0,40}})?"  # "10:31 am" / "1:56 pm on 8 May, 2023"
     rf"|\d{{1,4}}\s+{_MONTH}(?:,?\s+\d{{1,4}})?"  # "23 July 2023" / "8 May, 2023"
-    rf"|{_MONTH}\s+\d{{1,4}}"  # July 2023
+    # month-first, with optional day, an optional "- <month> <day>" range end,
+    # and an optional trailing year: "July 2023" / "December 15, 2023" /
+    # "November 1 - November 15, 2023" / "January 16 - February 15, 2024".
+    rf"|{_MONTH}\s+\d{{1,4}}(?:\s*[-–—]\s*(?:{_MONTH}\s+)?\d{{1,4}})?(?:,?\s+\d{{2,4}})?"
     r"|\d{4}"  # bare year
     r")$",
     re.IGNORECASE,
@@ -55,18 +58,85 @@ def _is_temporal_or_numeric_name(name: str) -> bool:
     return bool(_TEMPORAL_NAME_RE.match(stripped)) or bool(_RELATIVE_DATE_RE.match(stripped))
 
 
+# Closed-class function words (articles, prepositions, conjunctions, pronouns,
+# auxiliaries, determiners, wh-words). GLiNER over-generates these on any text —
+# a census of two live graphs found "the"/"and"/"of"/"be"/"these" minted as
+# ENTITY nodes. They are never entities by grammar. Content words that merely
+# happen to be generic ("project", "database") are deliberately NOT listed:
+# retrieval already de-weights high-frequency entities (_discriminative_entities),
+# so this set is only the closed class, where a drop can never lose a real entity.
+_STOPWORD_NAMES = frozenset(
+    """
+    a an the this that these those such
+    and or but nor so yet
+    of to in on at by for from with without into onto over under about
+    is are was were be been being am
+    have has had do does did done
+    would shall should can could might must ought
+    it its he she him her they them we us you i me my your his their our
+    as if then than there here not no yes
+    what which who whom whose when where why how
+    all any some each every both either neither few many much more most other
+    """.split()
+)
+
+# Code, markup, URLs: GLiNER on technical text mints spans like
+# "http://localhost:5000" or "Flask application: ```python from flask import".
+_CODE_MARKUP_RE = re.compile(r"```|https?://|www\.|://|[{}<>=|]|::|\(\)|\[\]")
+# A proper entity is a noun phrase, not a sentence or a heading — cap the words.
+_MAX_ENTITY_WORDS = 8
+
+
+def _is_stopword_name(name: str) -> bool:
+    stripped = name.strip()
+    # Acronym-shaped tokens (all-caps, 2-3 chars) collide with function words
+    # once casefolded — "US"/"IT"/"UK"/"OR" vs "us"/"it"/... — so keep them.
+    if stripped.isupper() and 2 <= len(stripped) <= 3:
+        return False
+    return stripped.casefold() in _STOPWORD_NAMES
+
+
+def _is_code_or_clause(name: str) -> bool:
+    stripped = name.strip()
+    return bool(_CODE_MARKUP_RE.search(stripped)) or len(stripped.split()) > _MAX_ENTITY_WORDS
+
+
+def _is_degenerate_name(name: str) -> bool:
+    """Single characters, punctuation-only, and 1-2 char lowercase fragments.
+
+    "db"/"id"/"io"/"to" are noise; an uppercase short form ("AI", "US") is a
+    real acronym and kept, so the length-2 drop requires the token be lowercase.
+    """
+    stripped = name.strip()
+    if len(stripped) <= 1:
+        return True
+    if not any(c.isalpha() for c in stripped):  # pure punctuation / digits / symbols
+        return True
+    return len(stripped) <= 2 and stripped == stripped.lower()
+
+
 def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
     """Whether ``name`` belongs in the ENTITY graph — the ONE junk predicate.
 
-    False for temporal/numeric names (by type or by shape). Exported so every
-    minting path applies the same rule: ``graph_entities`` for the entity/
-    MENTIONS path, and the relation gate in ``_write_extracted`` for relation
-    endpoints, which previously bypassed all filtering and minted date ENTITY
-    nodes (which then received a community_id and fragmented the topic layer).
+    False for empty, stopword, degenerate (single/short/punctuation), code/markup,
+    over-long clause, and temporal/numeric names (by type or by shape). Exported
+    so every minting path applies the same rule: ``graph_entities`` for the
+    entity/MENTIONS path, and the relation gate in ``_write_extracted`` for
+    relation endpoints, which previously bypassed all filtering and minted date
+    ENTITY nodes (which then received a community_id and fragmented the topics).
     """
+    stripped = (name or "").strip()
+    if not stripped:
+        return False
     if (ent_type or "").upper() in _NON_GRAPH_ENTITY_TYPES:
         return False
-    return not _is_temporal_or_numeric_name(name)
+    if _is_stopword_name(stripped):
+        return False
+    if _is_degenerate_name(stripped):
+        return False
+    if _is_code_or_clause(stripped):
+        return False
+    return not _is_temporal_or_numeric_name(stripped)
 
 
 def graph_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:

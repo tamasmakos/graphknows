@@ -267,12 +267,16 @@ async def _merge_speaker_prefixed(store: Any) -> int:
 
 
 async def _drop_temporal(store: Any) -> int:
-    """Layer 5 — delete temporal/numeric-shaped entities that predate the gate.
+    """Layer 5 — delete entities the graph-entity gate now rejects but an older
+    ingest let in: temporal/numeric shapes, stopwords, code/markup, over-long
+    clauses, and 1-2 char fragments.
 
     Relation endpoints used to bypass ``graph_entities`` entirely, minting
     "8 May, 2023" / "last Saturday" ENTITY nodes that then received a
-    community_id and fragmented the topic layer. New writes are gated (see
-    ``is_graph_entity_name``); this drops the survivors from older ingests.
+    community_id and fragmented the topic layer; the same path (and GLiNER's
+    over-generation on technical text) minted code fragments and stopwords. New
+    writes are gated (see ``is_graph_entity_name``); this drops the survivors
+    from older ingests so existing namespaces heal on their next flush.
     """
     from graphknows.ingestion.stm._entity_writer import is_graph_entity_name
 
