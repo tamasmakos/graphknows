@@ -107,7 +107,9 @@ class TestConversationalEntityGroups:
 
     def test_preference_group_has_aliases(self, taxonomy):
         pref = taxonomy.entity_groups["PREFERENCE"]
-        assert any(a in pref.aliases for a in ("like", "love", "hate", "prefer", "favourite", "favorite"))
+        assert any(
+            a in pref.aliases for a in ("like", "love", "hate", "prefer", "favourite", "favorite")
+        )
 
     def test_relationship_group_has_kinship_aliases(self, taxonomy):
         rel = taxonomy.entity_groups["RELATIONSHIP"]
@@ -219,14 +221,16 @@ class TestLabelSpaceFromTaxonomy:
     build_top_level_label_space function directly, bypassing the heavy ML deps
     that the graphknows.extraction package __init__.py eagerly loads.
 
-    Skipped automatically when the extraction package cannot be imported (e.g.
-    langchain_text_splitters not present in the test environment).
+    Skipped automatically when the extraction package cannot be imported.
     """
 
     @pytest.fixture(scope="class", autouse=True)
     def require_extraction(self):
         """Skip the whole class if extraction deps are unavailable."""
-        pytest.importorskip("langchain_text_splitters", reason="ML deps not installed")
+        pytest.importorskip(
+            "graphknows.ingestion.extraction.entities.label_space",
+            reason="ML deps not installed",
+        )
 
     def test_label_space_derived_from_taxonomy(self, monkeypatch):
         from graphknows.ingestion.extraction.entities.label_space import build_top_level_label_space

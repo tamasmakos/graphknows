@@ -40,9 +40,7 @@ dependencies = [
     # directly (a naive Python agglomerative is O(N^3) and unusable at ~1e3
     # entities).
     "scipy>=1.11.0",
-    "networkx>=3.3",
     "pyyaml>=6.0",
-    "langchain-text-splitters>=0.3.0",
     "dateparser>=1.2.0",
     # extraction (llm_free) + embeddings
     # `gliner` (not just gliner2) is required: entities/gliner_model.py loads
