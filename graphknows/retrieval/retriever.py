@@ -11,8 +11,8 @@ community metadata as score shaping rather than returning synthetic topic hits.
 WS-2 additions
 --------------
 * BM25 sparse channel — replaces the homegrown two-pass full-text with a proper
-  BM25 ranking (``rank_bm25`` when importable, clean tokenised fallback otherwise)
-  over chunk texts, feeding one RRF source.
+  BM25 ranking (``rank_bm25.BM25Okapi``) over chunk texts, feeding one RRF
+  source.
 * Cross-encoder rerank — the top ~50 RRF candidates are re-scored by a local
   CPU cross-encoder (``rerank.py``); raises if the model is unavailable.
 * PageRank boost and IDF discriminativeness were never wired: the former read
@@ -28,12 +28,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import os
 import re
 from typing import Any
 
 import numpy as np
+
+try:
+    from rank_bm25 import BM25Okapi
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broken installs
+    from graphknows.exceptions import BrokenInstallError
+
+    raise BrokenInstallError("The BM25 retrieval channel", "rank-bm25") from exc
 
 from graphknows.channels.base import ChannelContext
 from graphknows.channels.temporal import query_date_candidates
@@ -50,17 +56,6 @@ from graphknows.retrieval.models.context import RetrievalContext
 from graphknows.storage.arcadedb.graph_store import GraphStore
 from graphknows.storage.embedder import embed
 
-# ---------------------------------------------------------------------------
-# Optional BM25 import — lazy, graceful fallback to tf-style scoring
-# ---------------------------------------------------------------------------
-try:
-    from rank_bm25 import BM25Okapi as _BM25Okapi  # type: ignore[import-untyped]
-
-    _HAS_BM25 = True
-except ImportError:
-    _HAS_BM25 = False
-    _BM25Okapi = None  # type: ignore[assignment,misc]
-
 log = logging.getLogger(__name__)
 
 
@@ -75,8 +70,7 @@ def _bm25_rank(
 ) -> list[tuple[float, dict[str, Any]]]:
     """Rank *chunks* by BM25 relevance to *query_tokens*.
 
-    Uses ``rank_bm25.BM25Okapi`` when available; falls back to a simple
-    normalised term-frequency scorer so the channel is always live.
+    Uses ``rank_bm25.BM25Okapi``.
 
     Args:
         query_tokens: Pre-filtered, lower-cased query tokens.
@@ -92,40 +86,15 @@ def _bm25_rank(
 
     tokenised = [re.findall(r"[a-z0-9][a-z0-9']*", (c.get("text") or "").lower()) for c in chunks]
 
-    if _HAS_BM25:
-        bm25 = _BM25Okapi(tokenised)
-        scores = bm25.get_scores(query_tokens).tolist()
-    else:
-        # Fallback: normalised TF with IDF approximation.
-        # IDF: log((N+1) / (df+1)) — same formula BM25Okapi uses.
-        n = len(chunks)
-        df: dict[str, int] = {}
-        for toks in tokenised:
-            for t in set(toks):
-                df[t] = df.get(t, 0) + 1
-        idf_map = {t: math.log((n + 1) / (d + 1)) + 1.0 for t, d in df.items()}
-        scores = []
-        for toks in tokenised:
-            if not toks:
-                scores.append(0.0)
-                continue
-            tf: dict[str, float] = {}
-            for t in toks:
-                tf[t] = tf.get(t, 0.0) + 1.0
-            length = len(toks)
-            sc = sum(idf_map.get(qt, 0.0) * tf.get(qt, 0.0) / length for qt in query_tokens)
-            scores.append(sc)
+    bm25 = BM25Okapi(tokenised)
+    scores = bm25.get_scores(query_tokens).tolist()
 
     # Keep chunks that actually contain a query term, NOT chunks with a positive
-    # score. Those are the same thing only for the fallback, whose IDF
-    # (log((N+1)/(df+1)) + 1.0) is always positive. BM25Okapi's IDF is
-    # log((N - df + 0.5)/(df + 0.5)), which goes NEGATIVE once a term appears in
-    # more than about half the corpus — routine for the small candidate pools
-    # this is called with. A `score > 0` filter therefore discarded genuine
-    # matches, and could empty the channel entirely.
-    #
-    # This branch had never executed: rank-bm25 was an undeclared dependency and
-    # so was never installed, meaning `_HAS_BM25` was always False.
+    # score. BM25Okapi's IDF is log((N - df + 0.5)/(df + 0.5)), which goes
+    # NEGATIVE once a term appears in more than about half the corpus —
+    # routine for the small candidate pools this is called with. A
+    # `score > 0` filter therefore discards genuine matches, and could empty
+    # the channel entirely.
     matched = [bool(set(query_tokens) & set(toks)) for toks in tokenised]
     paired = sorted(
         ((s, c) for s, c, hit in zip(scores, chunks, matched, strict=False) if hit),
