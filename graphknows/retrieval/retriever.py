@@ -14,7 +14,7 @@ WS-2 additions
   BM25 ranking (``rank_bm25`` when importable, clean tokenised fallback otherwise)
   over chunk texts, feeding one RRF source.
 * Cross-encoder rerank — the top ~50 RRF candidates are re-scored by a local
-  CPU cross-encoder (``rerank.py``); no-op when the model is unavailable.
+  CPU cross-encoder (``rerank.py``); raises if the model is unavailable.
 * PageRank boost and IDF discriminativeness were never wired: the former read
   ``pagerank`` from CHUNK metadata while the value lives on ENTITY nodes (so the
   multiplier was always 1.0), and nothing ever called the latter. Both have been
@@ -31,11 +31,13 @@ import logging
 import math
 import os
 import re
-
 from typing import Any
 
 import numpy as np
 
+from graphknows.channels.base import ChannelContext
+from graphknows.channels.temporal import query_date_candidates
+from graphknows.ranking.rerank import rerank as _ce_rerank
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
@@ -44,12 +46,9 @@ from graphknows.ranking.rrf import (
 )
 from graphknows.ranking.rrf import shape_score as _shape_score
 from graphknows.retrieval.base import BaseGraphRetriever
-from graphknows.channels.base import ChannelContext
 from graphknows.retrieval.models.context import RetrievalContext
-from graphknows.ranking.rerank import rerank as _ce_rerank
 from graphknows.storage.arcadedb.graph_store import GraphStore
 from graphknows.storage.embedder import embed
-from graphknows.channels.temporal import query_date_candidates
 
 # ---------------------------------------------------------------------------
 # Optional BM25 import — lazy, graceful fallback to tf-style scoring
@@ -68,6 +67,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # BM25 in-memory scorer
 # ---------------------------------------------------------------------------
+
 
 def _bm25_rank(
     query_tokens: list[str],
@@ -90,10 +90,7 @@ def _bm25_rank(
     if not query_tokens or not chunks:
         return []
 
-    tokenised = [
-        re.findall(r"[a-z0-9][a-z0-9']*", (c.get("text") or "").lower())
-        for c in chunks
-    ]
+    tokenised = [re.findall(r"[a-z0-9][a-z0-9']*", (c.get("text") or "").lower()) for c in chunks]
 
     if _HAS_BM25:
         bm25 = _BM25(tokenised)
@@ -106,10 +103,7 @@ def _bm25_rank(
         for toks in tokenised:
             for t in set(toks):
                 df[t] = df.get(t, 0) + 1
-        idf_map = {
-            t: math.log((n + 1) / (d + 1)) + 1.0
-            for t, d in df.items()
-        }
+        idf_map = {t: math.log((n + 1) / (d + 1)) + 1.0 for t, d in df.items()}
         scores = []
         for toks in tokenised:
             if not toks:
@@ -119,13 +113,10 @@ def _bm25_rank(
             for t in toks:
                 tf[t] = tf.get(t, 0.0) + 1.0
             length = len(toks)
-            sc = sum(
-                idf_map.get(qt, 0.0) * tf.get(qt, 0.0) / length
-                for qt in query_tokens
-            )
+            sc = sum(idf_map.get(qt, 0.0) * tf.get(qt, 0.0) / length for qt in query_tokens)
             scores.append(sc)
 
-    paired = sorted(zip(scores, chunks), key=lambda x: -x[0])
+    paired = sorted(zip(scores, chunks, strict=False), key=lambda x: -x[0])
     return [(s, c) for s, c in paired if s > 0.0]
 
 
@@ -196,7 +187,9 @@ def _fact_context_enabled() -> bool:
     ``GRAPHKNOWS_FACT_CONTEXT`` per MCP-server subprocess.
     """
     return os.environ.get("GRAPHKNOWS_FACT_CONTEXT", "true").strip().lower() not in (
-        "0", "false", "no",
+        "0",
+        "false",
+        "no",
     )
 
 
@@ -207,7 +200,7 @@ class DETRetriever(BaseGraphRetriever):
         self,
         store: GraphStore,
         embed_model: str = "",
-        channels: "list[Any] | None" = None,
+        channels: list[Any] | None = None,
     ) -> None:
         self.store = store
         self.embed_model = embed_model
@@ -217,6 +210,7 @@ class DETRetriever(BaseGraphRetriever):
         # (e.g. + frames) built from settings via channels.registry.
         if channels is None:
             from graphknows.channels.collectors import DEFAULT_COLLECTOR_CHANNELS
+
             channels = [cls() for cls in DEFAULT_COLLECTOR_CHANNELS]
         self._channels = channels
 
@@ -242,12 +236,8 @@ class DETRetriever(BaseGraphRetriever):
         # (no return_exceptions swallow) so a broken channel surfaces immediately
         # rather than silently degrading recall. Each returns chunk_id -> (score,
         # info); the spine below is channel-blind (fuses + reranks only).
-        sources = await asyncio.gather(
-            *(c.collect(ctx, self, top_k) for c in self._channels)
-        )
-        collectors_fired = {
-            c.name: len(s) for c, s in zip(self._channels, sources, strict=False)
-        }
+        sources = await asyncio.gather(*(c.collect(ctx, self, top_k) for c in self._channels))
+        collectors_fired = {c.name: len(s) for c, s in zip(self._channels, sources, strict=False)}
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
         for src in sources:
@@ -257,8 +247,7 @@ class DETRetriever(BaseGraphRetriever):
         pre_rerank = await self._shape_and_rank(combined)
 
         # Order the pool by query-chunk cosine + query-entity affinity, then
-        # cross-encoder rerank (a no-op unless sentence-transformers is
-        # installed), then cut.
+        # cross-encoder rerank (raises if the reranker is unavailable), then cut.
         ranked = await self._rerank_pool(ctx.emb, query, pre_rerank)
         ranked = await asyncio.to_thread(_ce_rerank, query, ranked, len(ranked))
         fused = ranked[:top_k]
@@ -275,18 +264,21 @@ class DETRetriever(BaseGraphRetriever):
             facts=await self._fact_sheet(ctx.words_graph),
         )
 
-    async def _expand_neighbors(
-        self, fused: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Append each result's seq-adjacent same-document chunks.
+    async def _expand_neighbors(self, fused: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Merge each result's seq-adjacent same-file chunks INTO its own text.
 
-        Ingested long messages split across consecutive same-file chunks, so an
-        answer often lives in a sibling of the chunk that matched the query.
-        Each selected chunk's ±_NEIGHBOR_RADIUS siblings are appended after it
-        (primary ranking preserved), deduped. Measured on BEAM's real evidence
-        labels, expanding 25 chunks by ±2 recovers more gold evidence than
-        retrieving 50 flat (0.648 vs 0.596) because it targets the split
-        exactly. Radius 0 disables it.
+        Ingested long messages split across consecutive same-file chunks, so the
+        answer often lives in a sibling of the chunk that matched the query. Each
+        result's ±_NEIGHBOR_RADIUS siblings are stitched into that result's text
+        in seq order, rather than added as separate passages — the passage COUNT
+        is unchanged, so the downstream ``[:gen_context_k]`` cut still keeps the
+        same number of distinct seeds instead of spending its budget on the top
+        seeds' siblings. Measured on BEAM's real evidence labels, over the 25
+        passages the generator actually sees, merging lifts evidence recall
+        0.305 -> 0.547 where the old append-then-cut dropped it to 0.305 (below
+        the 0.353 no-expansion baseline). Each sibling is stitched into only the
+        first seed that claims it, so shared siblings are not duplicated. Radius
+        0 disables it.
         """
         if _NEIGHBOR_RADIUS < 1 or not fused:
             return fused
@@ -298,25 +290,22 @@ class DETRetriever(BaseGraphRetriever):
             return fused
         if not neighbors:
             return fused
-        seen = set(ids)
-        out: list[dict[str, Any]] = []
+        claimed = set(ids)
         for item in fused:
-            out.append(item)
-            for sib in neighbors.get(str(item.get("chunk_id") or ""), []):
-                sid = str(sib.get("chunk_id") or "")
-                if sid and sid not in seen:
-                    seen.add(sid)
-                    out.append({
-                        "chunk_id": sid,
-                        "text": sib.get("text", ""),
-                        "rrf_score": item.get("rrf_score", 0.0),
-                        "cosine": item.get("cosine"),
-                        "sources": "neighbor",
-                        "doc_id": item.get("doc_id", ""),
-                        "entities": [],
-                        "metadata": {"neighbor_of": item.get("chunk_id", "")},
-                    })
-        return out
+            cid = str(item.get("chunk_id") or "")
+            sibs = [
+                s for s in neighbors.get(cid, []) if str(s.get("chunk_id") or "") not in claimed
+            ]
+            if not sibs:
+                continue
+            claimed.update(str(s.get("chunk_id") or "") for s in sibs)
+            # Seed first (the query-relevant chunk), then its siblings in seq
+            # order — the matched text leads, its split-message context follows.
+            sibs.sort(key=lambda s: s.get("seq", 0))
+            parts = [str(item.get("text") or "")] + [s.get("text", "") for s in sibs]
+            item["text"] = " ".join(p for p in parts if p)
+            item.setdefault("metadata", {})["merged_neighbors"] = len(sibs)
+        return fused
 
     async def _rerank_pool(
         self, query_emb: list[float], query: str, candidates: list[dict[str, Any]]
@@ -368,9 +357,7 @@ class DETRetriever(BaseGraphRetriever):
             cos = float(v @ q / ((float(np.linalg.norm(v)) or 1.0) * qn))
             # Query-entity affinity: an entity matches on a whole word, mirroring
             # resolve_query_entities, so "there" never matches "theresa".
-            affinity = sum(
-                1 for e in m.get("ents") or () if qtoks & set(str(e).split())
-            )
+            affinity = sum(1 for e in m.get("ents") or () if qtoks & set(str(e).split()))
             cand["cosine"] = round(cos, 4)
             score = cos + _RERANK_QENT_WEIGHT * min(affinity, _QENT_CAP) / _QENT_CAP
             scored.append((score, i, cand))
@@ -394,9 +381,13 @@ class DETRetriever(BaseGraphRetriever):
         # words: >3-char only for full-text search to reduce noise.
         words_graph = [w for w in re.findall(r"[a-z0-9][a-z0-9']*", query.lower()) if len(w) >= 3]
         return ChannelContext(
-            query=query, session_id=session_id, scope=scope,
-            emb=emb_array[0].tolist(), emb2=emb2,
-            words=[w for w in words_graph if len(w) > 3], words_graph=words_graph,
+            query=query,
+            session_id=session_id,
+            scope=scope,
+            emb=emb_array[0].tolist(),
+            emb2=emb2,
+            words=[w for w in words_graph if len(w) > 3],
+            words_graph=words_graph,
             state=_scope_to_state(scope),
         )
 
@@ -598,9 +589,7 @@ class DETRetriever(BaseGraphRetriever):
         candidates = query_date_candidates(query)
         if not candidates:
             return result
-        rows = await self.store.query_temporal_chunks(
-            candidates, session_id or None, top_k, state
-        )
+        rows = await self.store.query_temporal_chunks(candidates, session_id or None, top_k, state)
         for rank, row in enumerate(rows):
             _add_result(
                 result,

@@ -1,7 +1,7 @@
 """Tests for WS-2 additions: BM25 sparse channel and cross-encoder rerank.
 
 Covers:
-1. rerank() no-ops gracefully when the model library is absent (returns input unchanged).
+1. rerank() raises when the cross-encoder model cannot be loaded (no fallback).
 2. BM25 fallback scorer ranks an exact-term document above a non-matching document.
 3. BM25 channel: stm_bm25 contributes a source entry for matching queries.
 4. retrieve() signature remains (query, session_id, top_k, scope) -> RetrievalContext.
@@ -21,8 +21,10 @@ from graphknows.retrieval.retriever import DETRetriever, _bm25_rank
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _fake_embed(texts, model):
     return np.array([[0.1] * 4 for _ in texts])
+
 
 def _make_retriever():
     store = MagicMock()
@@ -39,50 +41,58 @@ def _make_retriever():
     store.chunk_community_weights = AsyncMock(return_value={})
     return DETRetriever(store=store), store
 
+
 # ---------------------------------------------------------------------------
-# rerank() — offline / no-op path
+# rerank() — no fallback: raises when the model cannot be loaded
 # ---------------------------------------------------------------------------
 
-def test_rerank_noop_when_model_absent():
-    """When sentence_transformers is not installed, rerank() returns input unchanged."""
+
+def test_rerank_raises_when_model_absent():
+    """When the cross-encoder cannot be loaded, rerank() raises — no no-op fallback."""
     candidates = [
         {"chunk_id": "c1", "text": "hello world", "rrf_score": 0.9, "rank": 1},
         {"chunk_id": "c2", "text": "foo bar", "rrf_score": 0.5, "rank": 2},
     ]
-    # Force the model-unavailable path by patching the cached model state.
     from graphknows.ranking import rerank as rerank_mod
 
-    sentinel = rerank_mod._NO_MODEL
-    with patch.object(rerank_mod, "_model", sentinel), patch.object(
-        rerank_mod, "_model_loaded", True
+    # Force a load failure and clear any cached model.
+    with (
+        patch.object(rerank_mod, "_load_model", side_effect=RuntimeError("model unavailable")),
+        patch.object(rerank_mod, "_model", None),
+        patch.object(rerank_mod, "_model_loaded", False),
     ):
-        result = rerank("what is hello world", candidates, top_k=2)
+        with pytest.raises(RuntimeError):
+            rerank("what is hello world", candidates, top_k=2)
 
-    assert result == candidates[:2]
-    # Order preserved — no mutation.
-    assert result[0]["chunk_id"] == "c1"
-    assert result[1]["chunk_id"] == "c2"
 
-def test_rerank_noop_empty_candidates():
-    """rerank() with empty candidates returns an empty list immediately."""
+def test_rerank_empty_candidates_returns_empty():
+    """rerank() with empty candidates returns an empty list without loading a model."""
     result = rerank("any query", [], top_k=5)
     assert result == []
 
-def test_rerank_top_k_respected_in_noop():
-    """In no-op mode, top_k is still respected."""
+
+def test_rerank_scores_and_top_k(monkeypatch):
+    """rerank() applies the model, sorts by descending score, and honours top_k."""
     candidates = [
         {"chunk_id": f"c{i}", "text": f"text {i}", "rrf_score": float(i), "rank": i + 1}
         for i in range(10)
     ]
+
+    class _FakeCE:
+        def predict(self, pairs, show_progress_bar=False):
+            # Higher for later candidates so the last one ranks first.
+            return np.array([float(i) for i in range(len(pairs))])
+
     from graphknows.ranking import rerank as rerank_mod
 
-    sentinel = rerank_mod._NO_MODEL
-    with patch.object(rerank_mod, "_model", sentinel), patch.object(
-        rerank_mod, "_model_loaded", True
-    ):
-        result = rerank("query", candidates, top_k=3)
+    monkeypatch.setattr(rerank_mod, "_model", _FakeCE())
+    monkeypatch.setattr(rerank_mod, "_model_loaded", True)
 
+    result = rerank("query", candidates, top_k=3)
     assert len(result) == 3
+    assert result[0]["chunk_id"] == "c9"  # highest logit ranks first
+    assert result[0]["rrf_score"] == 9.0  # raw cross-encoder logit, used as-is
+
 
 def test_rerank_import_does_not_require_torch():
     """Importing from rerank must succeed even without torch installed."""
@@ -95,9 +105,11 @@ def test_rerank_import_does_not_require_torch():
     importlib.reload(mod)
     assert callable(mod.rerank)
 
+
 # ---------------------------------------------------------------------------
 # BM25 fallback scorer
 # ---------------------------------------------------------------------------
+
 
 def test_bm25_fallback_ranks_exact_match_above_nonmatch():
     """The BM25 fallback must rank an exact-term document above a non-matching doc."""
@@ -110,6 +122,7 @@ def test_bm25_fallback_ranks_exact_match_above_nonmatch():
     assert len(ranked) >= 1
     assert ranked[0][1]["chunk_id"] == "c_match"
 
+
 def test_bm25_fallback_returns_empty_on_no_match():
     """When no document contains any query token, ranked list is empty."""
     query_tokens = ["xyzzy", "quux"]
@@ -120,11 +133,13 @@ def test_bm25_fallback_returns_empty_on_no_match():
     ranked = _bm25_rank(query_tokens, chunks)
     assert ranked == []
 
+
 def test_bm25_fallback_empty_inputs():
     """Empty inputs return empty results without error."""
     assert _bm25_rank([], [{"chunk_id": "c1", "text": "hello"}]) == []
     assert _bm25_rank(["hello"], []) == []
     assert _bm25_rank([], []) == []
+
 
 def test_bm25_multi_term_document_scores_higher():
     """A document containing both query terms scores higher than one with just one."""
@@ -137,6 +152,7 @@ def test_bm25_multi_term_document_scores_higher():
     scores_by_id = {c["chunk_id"]: s for s, c in ranked}
     assert scores_by_id["both"] > scores_by_id["one"]
 
+
 # ---------------------------------------------------------------------------
 # PageRank boost helper
 # ---------------------------------------------------------------------------
@@ -144,6 +160,7 @@ def test_bm25_multi_term_document_scores_higher():
 # ---------------------------------------------------------------------------
 # STM BM25 channel integration — stm_bm25 contributes to fused results
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_bm25_contributes_source():
@@ -156,7 +173,10 @@ async def test_bm25_contributes_source():
         ]
     )
 
-    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
+    with (
+        patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed),
+        patch("graphknows.retrieval.retriever._ce_rerank", side_effect=lambda q, c, k: c[:k]),
+    ):
         ctx = await retriever.retrieve("violin concert", session_id="s1", scope="stm")
 
     chunk_ids = {fr["chunk_id"] for fr in ctx.fused_results}
@@ -164,9 +184,11 @@ async def test_bm25_contributes_source():
     hit = next(fr for fr in ctx.fused_results if fr["chunk_id"] == "bm25-hit")
     assert "text" in hit["sources"]
 
+
 # ---------------------------------------------------------------------------
 # retrieve() — signature unchanged
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_retrieve_signature_unchanged():

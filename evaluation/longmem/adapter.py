@@ -1,4 +1,4 @@
-"""LongMemEval adapter: staged-reasoning answerer + shared DSPy SemanticF1 judge."""
+"""LongMemEval adapter: staged-reasoning answerer + shared two-stage DSPy judge."""
 
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ from evaluation.longmem import prompts
 
 log = logging.getLogger(__name__)
 
-# Bump when a prompt change should invalidate cached verdicts.
-_PROMPT_VERSION = "longmem-judge-dspy-v1"
+# Bump when a prompt change should invalidate cached verdicts. v2: switched to
+# the two-stage judge (headline score is the STAGE-2 verdict, not raw stage-1
+# SemanticF1), matching LoCoMo — old single-stage cache entries must not replay.
+_PROMPT_VERSION = "longmem-judge-two-stage-v2"
 
 
 class LongMemAdapter(BenchmarkAdapter):
@@ -48,27 +50,47 @@ class LongMemAdapter(BenchmarkAdapter):
         }
 
     async def judge_case(self, case: EvalCase, answer: str) -> tuple[float, dict[str, Any]]:
+        # Headline `score` is the STAGE-2 verdict from the two-stage judge (same
+        # as LoCoMo), so LongMemEval accuracy is measured identically. Stage-1
+        # `semantic_f1` and lexical `token_f1` are recorded alongside it.
         gold = case.gold
         cached = self._cache.get(_PROMPT_VERSION, case.question, gold, answer)
         if cached is not None:
             return float(cached["score"]), {
                 "judge_label": cached.get("label", ""),
                 "judge_reasoning": cached.get("reasoning", ""),
+                "semantic_f1": cached.get("semantic_f1"),
+                "token_f1": cached.get("token_f1"),
                 "judge_cached": True,
             }
 
         try:
-            score, reasoning = await self.judge.judge(case.question, gold, answer)
+            score, jm = await self.judge.judge_two_stage(case.question, gold, answer)
         except Exception as exc:
             log.exception("Judge failed for %s (scored 0.0)", case.case_id)
             return 0.0, {"judge_label": "ERROR", "judge_reasoning": str(exc)[:200]}
 
         label = "CORRECT" if score >= 0.5 else "WRONG"
+        reasoning = jm.get("judge_reasoning", "")
         self._cache.put(
-            {"score": score, "label": label, "reasoning": reasoning},
-            _PROMPT_VERSION, case.question, gold, answer,
+            {
+                "score": score,
+                "label": label,
+                "reasoning": reasoning,
+                "semantic_f1": jm.get("semantic_f1"),
+                "token_f1": jm.get("token_f1"),
+            },
+            _PROMPT_VERSION,
+            case.question,
+            gold,
+            answer,
         )
-        return score, {"judge_label": label, "judge_reasoning": reasoning}
+        return score, {
+            "judge_label": label,
+            "judge_reasoning": reasoning,
+            "semantic_f1": jm.get("semantic_f1"),
+            "token_f1": jm.get("token_f1"),
+        }
 
     def lexical_metrics(self, case: EvalCase, answer: str) -> dict[str, Any]:
         return {"token_f1": token_f1(case.gold, answer)}

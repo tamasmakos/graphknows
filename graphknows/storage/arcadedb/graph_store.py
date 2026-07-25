@@ -112,9 +112,7 @@ def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
 # ordering washes out entirely — evidence_recall on conv-26 is byte-identical at
 # 0.5 and 0.0 — so the extra graph join earns nothing. Re-enable via the env var
 # for experiments. 0.0 skips the join outright.
-_INSTANCE_OF_WEIGHT: float = float(
-    os.environ.get("GRAPHKNOWS_ONTOLOGY_INSTANCE_WEIGHT", "0.0")
-)
+_INSTANCE_OF_WEIGHT: float = float(os.environ.get("GRAPHKNOWS_ONTOLOGY_INSTANCE_WEIGHT", "0.0"))
 
 
 def _name_norm(name: str) -> str:
@@ -1126,6 +1124,7 @@ class GraphStore(ArcadeStoreBase):
                 by_pos[(r.get("fid") or "", int(r["seq"]))] = {
                     "chunk_id": r["chunk_id"],
                     "text": r.get("text") or "",
+                    "seq": int(r["seq"]),
                 }
         out: dict[str, list[dict[str, Any]]] = {}
         for cid, (fid, seq) in seed_key.items():

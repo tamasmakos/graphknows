@@ -113,6 +113,7 @@ class STMService:
         title: str = "",
         source_hint: str = "",
         metadata: dict[str, Any] | None = None,
+        infer: bool = True,
     ) -> IngestResult:
         """Ingest raw text into the GraphStore."""
         return await self._handler().ingest_text(  # type: ignore[no-any-return]
@@ -121,6 +122,7 @@ class STMService:
             title=title,
             source_hint=source_hint,
             metadata=metadata or {},
+            infer=infer,
         )
 
     # ------------------------------------------------------------------

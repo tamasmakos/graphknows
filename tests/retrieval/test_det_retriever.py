@@ -232,10 +232,12 @@ async def test_rerank_query_entity_affinity_promotes_on_topic_chunk():
     that does not — the graph's MENTIONS structure breaking a similarity tie.
     """
     retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(return_value=_meta(
-        similar={"emb": [1.0, 0.0], "ents": ["someone else"]},
-        onmention={"emb": [0.9, 0.44], "ents": ["caroline", "seattle"]},
-    ))
+    store.chunk_rerank_meta = AsyncMock(
+        return_value=_meta(
+            similar={"emb": [1.0, 0.0], "ents": ["someone else"]},
+            onmention={"emb": [0.9, 0.44], "ents": ["caroline", "seattle"]},
+        )
+    )
     pool = [{"chunk_id": "similar", "rrf_score": 0.9}, {"chunk_id": "onmention", "rrf_score": 0.1}]
 
     # Query names Caroline; affinity (0.20*1/5=0.04) lifts onmention (0.90+0.04)
@@ -252,10 +254,12 @@ async def test_rerank_query_entity_affinity_promotes_on_topic_chunk():
 @pytest.mark.asyncio
 async def test_rerank_affinity_breaks_cosine_ties():
     retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(return_value=_meta(
-        plain={"emb": [1.0, 0.0], "ents": ["unrelated"]},
-        onmention={"emb": [1.0, 0.0], "ents": ["caroline"]},
-    ))
+    store.chunk_rerank_meta = AsyncMock(
+        return_value=_meta(
+            plain={"emb": [1.0, 0.0], "ents": ["unrelated"]},
+            onmention={"emb": [1.0, 0.0], "ents": ["caroline"]},
+        )
+    )
     pool = [{"chunk_id": "plain", "rrf_score": 0.9}, {"chunk_id": "onmention", "rrf_score": 0.1}]
 
     out = await retriever._rerank_pool([1.0, 0.0], "what did caroline do", pool)
@@ -271,10 +275,12 @@ async def test_rerank_zero_weight_is_pure_cosine(monkeypatch):
 
     monkeypatch.setattr(mod, "_RERANK_QENT_WEIGHT", 0.0)
     retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(return_value=_meta(
-        a={"emb": [1.0, 0.0], "ents": ["caroline"]},
-        b={"emb": [0.9, 0.44], "ents": ["caroline"]},
-    ))
+    store.chunk_rerank_meta = AsyncMock(
+        return_value=_meta(
+            a={"emb": [1.0, 0.0], "ents": ["caroline"]},
+            b={"emb": [0.9, 0.44], "ents": ["caroline"]},
+        )
+    )
     pool = [{"chunk_id": "b", "rrf_score": 0.9}, {"chunk_id": "a", "rrf_score": 0.1}]
 
     out = await retriever._rerank_pool([1.0, 0.0], "caroline caroline caroline", pool)
@@ -283,28 +289,36 @@ async def test_rerank_zero_weight_is_pure_cosine(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_neighbor_expansion_appends_split_message_siblings(monkeypatch):
+async def test_neighbor_expansion_merges_split_message_siblings(monkeypatch):
     """A long ingested message splits across consecutive chunks; the answer may
-    sit in a sibling of the matched chunk, so siblings are appended after it.
-    Off by default (conversational context-rot); enabled here.
+    sit in a sibling of the matched chunk, so siblings are stitched INTO the
+    matched passage's text (seq order) rather than added as separate passages —
+    the passage count is unchanged so the ``[:gen_context_k]`` cut keeps the same
+    number of distinct seeds. Off by default (conversational context-rot).
     """
     monkeypatch.setattr("graphknows.retrieval.retriever._NEIGHBOR_RADIUS", 1)
     retriever, store = _make_retriever()
     store.search_chunks_ann = AsyncMock(
         return_value=[{"chunk_id": "c2", "text": "middle of a long message", "cosine_score": 0.9}]
     )
-    store.neighbor_chunks = AsyncMock(return_value={
-        "c2": [{"chunk_id": "c1", "text": "start"}, {"chunk_id": "c3", "text": "end (answer)"}],
-    })
+    store.neighbor_chunks = AsyncMock(
+        return_value={
+            "c2": [
+                {"chunk_id": "c1", "text": "start", "seq": 1},
+                {"chunk_id": "c3", "text": "end (answer)", "seq": 3},
+            ],
+        }
+    )
 
     with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
         ctx = await retriever.retrieve("q", session_id="s1", top_k=5, scope="both")
 
-    ids = [f["chunk_id"] for f in ctx.fused_results]
-    assert "c2" in ids and "c1" in ids and "c3" in ids
-    sibs = [f for f in ctx.fused_results if f["chunk_id"] in ("c1", "c3")]
-    assert all(f["sources"] == "neighbor" for f in sibs)
-    assert all(f["metadata"]["neighbor_of"] == "c2" for f in sibs)
+    # Siblings are NOT separate passages — the passage count is unchanged.
+    assert [f["chunk_id"] for f in ctx.fused_results] == ["c2"]
+    merged = ctx.fused_results[0]
+    # Seed text leads, then siblings in seq order — all evidence is present.
+    assert merged["text"] == "middle of a long message start end (answer)"
+    assert merged["metadata"]["merged_neighbors"] == 2
 
 
 @pytest.mark.asyncio

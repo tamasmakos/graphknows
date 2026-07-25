@@ -6,13 +6,11 @@ rerank(query, candidates, top_k) -> list[dict]
     Re-score *candidates* (fused result dicts from DETRetriever) with a local
     CPU cross-encoder and return the top *top_k* sorted by descending score.
 
-Offline / unavailable model behaviour
---------------------------------------
-When ``sentence_transformers`` or ``torch`` are not installed, or when the
-cross-encoder model cannot be loaded (network unavailable, disk absent), the
-function logs a single WARNING and returns the input list unchanged (identity
-pass-through).  All callers must handle the no-op path — the function never
-raises.
+No fallbacks
+------------
+There is no identity/no-op path: if ``sentence_transformers`` is missing or the
+cross-encoder model cannot be loaded, ``rerank()`` raises. The configured model
+is the only one used.
 
 The reranker is lazy-initialised: the model is loaded at most once per process
 the first time ``rerank()`` is called with a non-empty candidate list.  No
@@ -22,54 +20,44 @@ import-time cost is incurred.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import Any
 
 log = logging.getLogger(__name__)
 
-# BGE-family cross-encoder — small and CPU-efficient.  Falls back to no-op if
-# the model file is absent or the library is not installed.
-_CROSS_ENCODER_MODEL: str = "BAAI/bge-reranker-base"
+# The reranker. No fallback — this exact model is loaded or rerank() raises.
+# A small (~22M) MiniLM cross-encoder: fast on CPU or GPU, negligible memory.
+_CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
 
 # Limit the number of candidates passed to the cross-encoder so latency stays
-# predictable even with large RRF pools.
-_RERANK_CANDIDATE_CAP: int = 50
+# predictable even with large RRF pools (tune with GRAPHKNOWS_RERANK_CANDIDATE_CAP).
+_RERANK_CANDIDATE_CAP: int = int(os.environ.get("GRAPHKNOWS_RERANK_CANDIDATE_CAP", "50"))
 
 # Singleton state ─ protected by a module-level lock so the first concurrent
 # call does not race on initialisation.
 _lock = threading.Lock()
-_model: Any = None          # CrossEncoder instance or sentinel _NO_MODEL
-_model_loaded: bool = False  # True once a load attempt has been made
-
-
-class _NoModel:
-    """Sentinel object returned when the cross-encoder cannot be loaded."""
-
-
-_NO_MODEL = _NoModel()
+_model: Any = None  # CrossEncoder instance
+_model_loaded: bool = False  # True once the model has been loaded
 
 
 def _load_model() -> Any:
-    """Attempt to load the cross-encoder.  Returns ``_NO_MODEL`` on any failure."""
-    try:
-        from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
+    """Load the cross-encoder. Raises on any failure — there is no fallback.
 
-        ce = CrossEncoder(_CROSS_ENCODER_MODEL, max_length=512, device="cpu")
-        log.info("Cross-encoder loaded: %s", _CROSS_ENCODER_MODEL)
-        return ce
-    except ImportError:
-        log.warning(
-            "sentence_transformers not installed — cross-encoder rerank is a no-op; "
-            "install sentence-transformers[cpu] to enable."
-        )
-        return _NO_MODEL
-    except Exception as exc:  # model file missing, network error, etc.
-        log.warning(
-            "Cross-encoder model %r could not be loaded (%s) — rerank is a no-op.",
-            _CROSS_ENCODER_MODEL,
-            exc,
-        )
-        return _NO_MODEL
+    Device comes from settings (``rerank_device``: "auto"/"cuda"/"cpu").
+    """
+    import torch
+    from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
+
+    from graphknows.settings import GraphKnowsSettings
+
+    s = GraphKnowsSettings()
+    want = (getattr(s, "rerank_device", "auto") or "auto").lower()
+    device = "cuda" if want in ("auto", "cuda") and torch.cuda.is_available() else "cpu"
+
+    ce = CrossEncoder(_CROSS_ENCODER_MODEL, max_length=512, device=device)
+    log.info("Cross-encoder loaded: %s (device=%s)", _CROSS_ENCODER_MODEL, device)
+    return ce
 
 
 def _get_model() -> Any:
@@ -98,32 +86,25 @@ def rerank(
 
     Returns:
         A new list of result dicts, sorted by cross-encoder score descending,
-        truncated to ``top_k``.  When the model is unavailable the input list
-        is returned as-is (already sorted, already truncated by the caller).
+        truncated to ``top_k``.
     """
     if not candidates:
         return candidates
 
     model = _get_model()
-    if isinstance(model, _NoModel):
-        # No-op path: return unchanged list (caller already applied top_k via
-        # shaped_combined[:top_k], so we just honour whatever arrived).
-        return candidates[:top_k]
 
     # Cap the candidates fed to the encoder to bound latency.
     pool = candidates[:_RERANK_CANDIDATE_CAP]
     texts = [c.get("text") or "" for c in pool]
 
-    try:
-        pairs = [(query, t) for t in texts]
-        scores: list[float] = model.predict(pairs, show_progress_bar=False).tolist()
-    except Exception as exc:
-        log.warning("Cross-encoder inference failed (%s) — returning pre-rerank order.", exc)
-        return candidates[:top_k]
+    pairs = [(query, t) for t in texts]
+    # MiniLM cross-encoder returns a single relevance logit per pair; higher = more
+    # relevant. Downstream only sorts on these, so raw scores are used as-is.
+    scores: list[float] = model.predict(pairs, show_progress_bar=False).tolist()
 
     # Attach cross-encoder score and sort.
     scored = sorted(
-        zip(scores, pool),
+        zip(scores, pool, strict=False),
         key=lambda x: x[0],
         reverse=True,
     )

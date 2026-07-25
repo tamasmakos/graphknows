@@ -39,6 +39,11 @@ class Ingestor:
         cap = int(os.environ.get("EVAL_INGEST_CONCURRENCY", "1"))
         sem = asyncio.Semaphore(cap)
 
+        # EVAL_INFER=0 ingests chunks + embeddings only, skipping GLiNER
+        # entity/relation extraction (and its per-relation graph writes) — the
+        # ingest cost that dominates but never touches the vector index.
+        infer = os.environ.get("EVAL_INFER", "1") != "0"
+
         async def _ingest_one(index: int, doc: EvalDocument) -> dict[str, Any]:
             title = doc.title or f"{session_id}-doc-{index}"
             async with sem:
@@ -49,14 +54,17 @@ class Ingestor:
                             "text": doc.text,
                             "session_id": session_id,
                             "title": title,
+                            "infer": infer,
                             "metadata": {"anchor_date": doc.anchor_date},
                             "namespace": namespace,
                         },
                     )
-                except Exception as exc:  # noqa: BLE001 — report, don't kill the run
+                except Exception as exc:
                     log.error("INGEST FAILED doc=%s (%s): %s", title, type(exc).__name__, exc)
-                    print(f"  !! ingest failed: doc={title} {type(exc).__name__}: "
-                          f"{str(exc)[:400]}", flush=True)
+                    print(
+                        f"  !! ingest failed: doc={title} {type(exc).__name__}: {str(exc)[:400]}",
+                        flush=True,
+                    )
                     return {"error": str(exc)[:400]}
             out = result if isinstance(result, dict) else {"result": result}
             # A failed tool call comes back as {"text": "<error>"} (see
@@ -86,9 +94,7 @@ class Ingestor:
             await self._flush(session_id, ingest, namespace=namespace)
         return ingest
 
-    async def _flush(
-        self, session_id: str, ingest: IngestResult, *, namespace: str = ""
-    ) -> None:
+    async def _flush(self, session_id: str, ingest: IngestResult, *, namespace: str = "") -> None:
         """Flush the session to LTM and capture graph + entity counts in-place."""
         try:
             result = await self._client.call_tool(

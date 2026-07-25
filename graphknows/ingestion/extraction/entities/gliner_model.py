@@ -12,9 +12,7 @@ from typing import Any
 # with the relation and a score, so the extraction itself IS the fact. Relation
 # labels are still supplied per chunk (the SVO-mined predicate vocabulary), which
 # is the part of the old design that carried its weight.
-_RELEX_MODEL = os.environ.get(
-    "GRAPHKNOWS_RELEX_MODEL", "knowledgator/gliner-relex-large-v1.0"
-)
+_RELEX_MODEL = os.environ.get("GRAPHKNOWS_RELEX_MODEL", "knowledgator/gliner-relex-large-v1.0")
 
 
 class _SerialInference:
@@ -49,8 +47,34 @@ class _SerialInference:
         return getattr(self._model, name)
 
 
+def _resolve_device() -> str:
+    """Device for the relex model: CUDA when available, else CPU.
+
+    ``GRAPHKNOWS_RELEX_DEVICE`` overrides (e.g. "cpu" to force CPU on a GPU box).
+    The relex model is a ~467M-param torch nn.Module, so a GPU roughly halves
+    its per-chunk inference latency — worthwhile since inference is serialised
+    and runs once per chunk.
+    """
+    override = os.environ.get("GRAPHKNOWS_RELEX_DEVICE", "").strip()
+    if override:
+        return override
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
 def load_gliner2_model() -> Any:
     """Load the graphgen relation-extraction model behind the adapter boundary."""
     from gliner import GLiNER
 
-    return _SerialInference(GLiNER.from_pretrained(_RELEX_MODEL))
+    model = GLiNER.from_pretrained(_RELEX_MODEL)
+    device = _resolve_device()
+    if device != "cpu":
+        try:
+            model = model.to(device)
+        except Exception:
+            pass  # fall back to CPU rather than fail ingest
+    return _SerialInference(model)

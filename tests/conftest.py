@@ -6,6 +6,7 @@ insert below is belt-and-suspenders for direct invocations.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,11 @@ import pytest
 _project_root = str(Path(__file__).parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+# Keep unit tests hermetic: the relation verifier is ON in production but would
+# pull a ~500MB DeBERTa model on first extract. setdefault so a test that wants
+# it can still opt in.
+os.environ.setdefault("GRAPHKNOWS_RELATION_VERIFIER", "false")
 
 
 @pytest.fixture(autouse=True)

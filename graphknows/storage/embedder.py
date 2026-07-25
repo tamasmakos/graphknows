@@ -19,9 +19,9 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-# Default output dimension (BAAI/bge-small-en-v1.5). Updated when a local model
-# loads; only used to shape the empty-input result.
-EMBED_DIM: int = 384
+# Default output dimension (zeroentropy/zembed-1-embedding). Updated when a
+# local model loads; only used to shape the empty-input result.
+EMBED_DIM: int = 2560
 
 _MAX_CHARS_PER_TEXT = 20_000  # ~5000 tokens; headroom below typical 8192-token limits
 
@@ -35,16 +35,52 @@ def _settings() -> Any:
 
 @functools.lru_cache(maxsize=2)
 def _local_model(model_name: str) -> Any:
-    """Load and cache a local sentence-transformers model on CPU."""
+    """Load and cache a local sentence-transformers model.
+
+    Device and quantization come from settings (``embed_device`` /
+    ``embed_quantization``). bitsandbytes 4-/8-bit quantization applies only on
+    CUDA; on CPU the model loads at full bf16 precision.
+    """
     try:
         from sentence_transformers import SentenceTransformer
     except ModuleNotFoundError as exc:
         from graphknows.exceptions import MissingExtraError
 
         raise MissingExtraError("Local embeddings", "local-embeddings") from exc
-    model = SentenceTransformer(model_name, device="cpu")
+
+    import torch
+
+    s = _settings()
+    want = (getattr(s, "embed_device", "auto") or "auto").lower()
+    device = "cuda" if want in ("auto", "cuda") and torch.cuda.is_available() else "cpu"
+
+    # zembed-1 ships custom modelling code and is trained in bf16.
+    model_kwargs: dict[str, Any] = {"torch_dtype": "bfloat16"}
+    quant = (getattr(s, "embed_quantization", "") or "").lower()
+    if quant in ("4bit", "8bit") and device == "cuda":
+        from transformers import BitsAndBytesConfig
+
+        if quant == "4bit":
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+            )
+        else:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        # A quantized model is placed on-device by accelerate; passing device= would
+        # make sentence-transformers call .to(cuda), which quantized models reject.
+        model = SentenceTransformer(model_name, trust_remote_code=True, model_kwargs=model_kwargs)
+    else:
+        model = SentenceTransformer(
+            model_name, device=device, trust_remote_code=True, model_kwargs=model_kwargs
+        )
+
     global EMBED_DIM
-    get_dim = getattr(model, "get_embedding_dimension", None) or model.get_sentence_embedding_dimension
+    get_dim = (
+        getattr(model, "get_embedding_dimension", None) or model.get_sentence_embedding_dimension
+    )
     EMBED_DIM = int(get_dim())
     return model
 
@@ -103,7 +139,10 @@ def embed(texts: list[str], model_name: str = "") -> np.ndarray:
     model = model_name or s.embed_model
     if s.embed_api_base:
         return _embed_remote(
-            texts, model, s.embed_api_base, s.embed_api_key,
+            texts,
+            model,
+            s.embed_api_base,
+            s.embed_api_key,
             dimensions=getattr(s, "embed_dimensions", 0),
         )
     return _embed_local(texts, model)

@@ -89,3 +89,9 @@ evaluation/results/.judge_cache/
 
 # Local reference clone (framenet-tools) — unused by code, kept for reference only
 graphknows/utils/
+CLAUDE.md
+.sonar
+sonar-project.properties
+pytest.ini
+.mcp.json
+docs\agents

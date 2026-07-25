@@ -148,15 +148,26 @@ class GraphKnowsSettings(BaseSettings):
     summarization_model: str = Field(default="", alias="GRAPHKNOWS_SUMMARIZATION_MODEL")
 
     # Embeddings (local sentence-transformers by default; no API key needed)
-    embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="GRAPHKNOWS_EMBED_MODEL")
+    embed_model: str = Field(
+        default="zeroentropy/zembed-1-embedding", alias="GRAPHKNOWS_EMBED_MODEL"
+    )
     embed_api_base: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_BASE")
     embed_api_key: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_KEY")
+    # Local-embedding device: "auto" (CUDA if present, else CPU), "cuda", or "cpu".
+    embed_device: str = Field(default="auto", alias="GRAPHKNOWS_EMBED_DEVICE")
+    # Local-embedding weight quantization (bitsandbytes, CUDA only): "", "8bit",
+    # or "4bit". Lets a large embedder (e.g. the 4B zembed-1) fit a small GPU;
+    # ignored on CPU, where the model loads at full bf16 precision.
+    embed_quantization: str = Field(default="", alias="GRAPHKNOWS_EMBED_QUANTIZATION")
     # Output dimensionality for remote embeddings (0 = model default). Matryoshka
     # models (e.g. text-embedding-3-*) truncate server-side with minimal quality
     # loss. Vector memory in the store scales linearly with this — the system is
     # sized around 384-dim vectors, so keep remote embeddings at parity unless
     # you deliberately re-size the store.
     embed_dimensions: int = Field(default=0, alias="GRAPHKNOWS_EMBED_DIMENSIONS")
+
+    # Cross-encoder reranker (ranking/rerank.py) device: "auto"/"cuda"/"cpu".
+    rerank_device: str = Field(default="auto", alias="GRAPHKNOWS_RERANK_DEVICE")
 
     # Chunking. Defaults mirror STMConfig, which is what the chunker actually
     # applies — these were 1200/100 while the chunker used 512/64 and nothing
@@ -167,6 +178,21 @@ class GraphKnowsSettings(BaseSettings):
     # Entity extraction. The relex model itself is set with GRAPHKNOWS_RELEX_MODEL
     # (see ingestion/extraction/entities/gliner_model.py).
     spacy_model: str = Field(default="en_core_web_lg", alias="GRAPHKNOWS_SPACY_MODEL")
+
+    # Relation verifier — semantic gate that drops relex false positives before
+    # they merge into the graph (co-occurring spans relex confidently pairs but
+    # that express no real relation). ON by default; disable with
+    # GRAPHKNOWS_RELATION_VERIFIER=false. Threshold trades precision for recall:
+    # the model card recommends 0.55; we default to 0.50 to protect recall given
+    # the KG's already-thin relation signal.
+    relation_verifier: bool = Field(default=True, alias="GRAPHKNOWS_RELATION_VERIFIER")
+    relation_verifier_threshold: float = Field(
+        default=0.5, alias="GRAPHKNOWS_RELATION_VERIFIER_THRESHOLD"
+    )
+    relation_verifier_model: str = Field(
+        default="oneryalcin/gliner2-relation-verifier",
+        alias="GRAPHKNOWS_RELATION_VERIFIER_MODEL",
+    )
 
     # Ontology injection — an RDF/OWL file OR a folder of them. Mode-independent:
     # when set, ontology class labels steer entity extraction and property labels

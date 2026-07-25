@@ -19,6 +19,7 @@ from graphknows.settings import GraphKnowsSettings
 
 logger = logging.getLogger(__name__)
 
+
 def _format_fused_hits(
     fused_results: list[dict[str, Any]], session_id: str
 ) -> list[dict[str, Any]]:
@@ -130,8 +131,8 @@ class Memory:
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity for this runtime's namespace."""
-        from graphknows.storage import build_arcadedb_client
         from graphknows._version import get_version
+        from graphknows.storage import build_arcadedb_client
         from graphknows.storage.namespace import db_name
 
         db = db_name(self.namespace)
@@ -163,8 +164,7 @@ class Memory:
                 sid = session_id
                 raw_chunks = await c.query(
                     db,
-                    "MATCH (n:CHUNK {session_id: $sid}) WHERE n.state = 'raw' "
-                    "RETURN count(n) AS c",
+                    "MATCH (n:CHUNK {session_id: $sid}) WHERE n.state = 'raw' RETURN count(n) AS c",
                     params={"sid": sid},
                 )
                 cons_chunks = await c.query(
@@ -275,6 +275,7 @@ class Memory:
                 session_id=scope.to_session_id(),
                 title=title,
                 metadata=metadata or {},
+                infer=infer,
             )
             return {
                 "file_id": result.file_id,
@@ -423,6 +424,7 @@ class Memory:
         chunks_flipped = 0
         topics_created = 0
         resolution = {"dropped": 0, "merged": 0}
+
         async def step(name: str, coro: Any, default: Any) -> Any:
             """Await one pipeline step, recording a named error instead of aborting.
 
@@ -478,9 +480,7 @@ class Memory:
             # node2vec embeddings and pagerank computed above. It is the SAME
             # stage as Memory.build_topics — one implementation, so a rebuild at
             # new settings is never a different code path from the flush.
-            topics_created = await step(
-                "topics", self._flush_topics(store), 0
-            )
+            topics_created = await step("topics", self._flush_topics(store), 0)
             chunks_flipped = await step(
                 "consolidate_session", store.consolidate_session(session_id), 0
             )
@@ -509,9 +509,7 @@ class Memory:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _scoped_session_id(
-        user_id: str, agent_id: str, run_id: str, session_id: str
-    ) -> str:
+    def _scoped_session_id(user_id: str, agent_id: str, run_id: str, session_id: str) -> str:
         """Resolve an explicit session_id, else derive one from the memory scope."""
         if session_id:
             return session_id

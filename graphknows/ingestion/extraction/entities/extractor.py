@@ -69,10 +69,26 @@ _ADJACENCY_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_ADJACENCY",
 # emotion) — the ones dialogue is actually made of. Not a domain taxonomy: no
 # entity is required to exist, and the miner still decides what it saw.
 _BASE_ENTITY_LABELS: tuple[str, ...] = (
-    "person", "organization", "location", "date", "time", "event",
-    "work_of_art", "product", "nationality_or_group", "facility", "language",
-    "law", "money", "quantity",
-    "occupation", "animal", "activity", "emotion", "food", "artifact",
+    "person",
+    "organization",
+    "location",
+    "date",
+    "time",
+    "event",
+    "work_of_art",
+    "product",
+    "nationality_or_group",
+    "facility",
+    "language",
+    "law",
+    "money",
+    "quantity",
+    "occupation",
+    "animal",
+    "activity",
+    "emotion",
+    "food",
+    "artifact",
 )
 
 # relex has no speaker resolution, so it happily returns "I"/"you"/"we" as PERSON
@@ -83,12 +99,36 @@ _BASE_ENTITY_LABELS: tuple[str, ...] = (
 # is the one that survives.
 _PRONOUNS: frozenset[str] = frozenset(
     {
-        "i", "me", "my", "mine", "myself",
-        "you", "your", "yours", "yourself",
-        "we", "us", "our", "ours", "ourselves",
-        "he", "him", "his", "she", "her", "hers",
-        "they", "them", "their", "theirs",
-        "it", "its", "this", "that", "these", "those",
+        "i",
+        "me",
+        "my",
+        "mine",
+        "myself",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "we",
+        "us",
+        "our",
+        "ours",
+        "ourselves",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "hers",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
     }
 )
 _SPACY_MODEL = "en_core_web_lg"
@@ -181,7 +221,7 @@ def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
 
 
 def _canonical_type(raw_label: str, label_to_type: dict[str, str]) -> str:
-    """relex label -> the canonical type the graph stores.
+    """Relex label -> the canonical type the graph stores.
 
     An OBSERVED label maps back to its spaCy tag (person -> PERSON); a
     base-inventory label spaCy has no tag for (occupation, activity) has
@@ -339,14 +379,19 @@ def _svo_structural_relations(
     out: list[dict[str, Any]] = []
     for triple in svo_triples:
         pattern = triple.get("pattern", "svo")
-        if triple["head_named"] and triple["tail_named"]:
-            pass
-        elif pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]:
+        if (triple["head_named"] and triple["tail_named"]) or (
+            pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]
+        ):
             pass
         else:
             continue
         built = _build_relation(
-            triple["head"], triple["relation"], triple["tail"], 0.6, "svo", entities,
+            triple["head"],
+            triple["relation"],
+            triple["tail"],
+            0.6,
+            "svo",
+            entities,
             speakers=speakers,
         )
         if built is not None:
@@ -492,9 +537,7 @@ class _SpacySchemaMiner:
             relation_spec=relation_spec,
             label_to_type=label_to_type,
             svo_triples=svo_triples,
-            speakers=frozenset(
-                s.casefold() for _, s in _line_speakers(doc.text) if s
-            ),
+            speakers=frozenset(s.casefold() for _, s in _line_speakers(doc.text) if s),
         )
 
 
@@ -512,14 +555,28 @@ class GLiNER2EntityExtractor:
         schema_miner: _SpacySchemaMiner | None = None,
         spacy_model: str = "",
         relation_schema: dict[str, str] | None = None,
+        relation_verifier: Any | None = None,
     ) -> None:
         self._gliner: Any | None = None
         self._model_loader = model_loader
+        settings = None
         if not spacy_model:
             from graphknows.settings import GraphKnowsSettings
 
-            spacy_model = GraphKnowsSettings().spacy_model
+            settings = GraphKnowsSettings()
+            spacy_model = settings.spacy_model
         self._schema_miner = schema_miner or _SpacySchemaMiner(model_name=spacy_model)
+        # Semantic gate that drops relex false positives before the graph merge.
+        # Built from settings by default (enabled, threshold 0.5); tests inject a
+        # null gate. See relations/verifier.py.
+        if relation_verifier is None:
+            from graphknows.ingestion.extraction.relations.verifier import (
+                build_relation_verifier,
+            )
+            from graphknows.settings import GraphKnowsSettings
+
+            relation_verifier = build_relation_verifier(settings or GraphKnowsSettings())
+        self._relation_verifier = relation_verifier
         # Open-vocabulary relations: the per-chunk mined SVO predicate labels ARE
         # the schema. An explicit *relation_schema* (escape hatch for
         # taxonomy-guided extraction) is honored when passed.
@@ -638,10 +695,8 @@ class GLiNER2EntityExtractor:
         dynamic_schema = self._schema_miner.build(text)
         if not dynamic_schema.entity_spec:
             return ExtractionResult()
-        ents, rels = self._relex(
-            text, dynamic_schema, extra_entity_labels, extra_relation_labels
-        )
-        return self._map_relex(ents, rels, dynamic_schema)
+        ents, rels = self._relex(text, dynamic_schema, extra_entity_labels, extra_relation_labels)
+        return self._map_relex(text, ents, rels, dynamic_schema)
 
     def extract_batch(
         self,
@@ -682,11 +737,11 @@ class GLiNER2EntityExtractor:
                     extra_entity_labels[i] if extra_entity_labels else None,
                     extra_relation_labels[i] if extra_relation_labels else None,
                 )
-            except Exception as exc:  # noqa: BLE001 — one bad chunk must not kill ingest
+            except Exception as exc:
                 log.warning("relex failed on chunk %d (%s); skipping", i, exc)
                 results[i] = ExtractionResult()
                 continue
-            results[i] = self._map_relex(ents, rels, dynamic_schema)
+            results[i] = self._map_relex(text, ents, rels, dynamic_schema)
 
         final = [r if r is not None else ExtractionResult() for r in results]
         # Guardrail: the label space is open — log its size per batch so a
@@ -703,6 +758,7 @@ class GLiNER2EntityExtractor:
 
     def _map_relex(
         self,
+        text: str,
         raw_entities: list[dict[str, Any]],
         raw_relations: list[dict[str, Any]],
         dynamic_schema: _DynamicSchema,
@@ -741,5 +797,12 @@ class GLiNER2EntityExtractor:
                 continue
             seen.add(key)
             relations.append(rel)
+
+        # Semantic gate: drop (head, relation, tail) triples the verifier judges
+        # false positives before they reach the graph merge. Null-object when
+        # disabled, so this is unconditional. getattr: tests predating the field.
+        verifier = getattr(self, "_relation_verifier", None)
+        if verifier is not None:
+            relations = verifier.filter(text, relations)
 
         return ExtractionResult(entities=entities, relations=relations)

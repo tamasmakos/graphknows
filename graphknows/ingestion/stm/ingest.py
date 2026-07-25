@@ -15,11 +15,11 @@ import os
 import time
 from typing import Any
 
+from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.parsers.base import ParsedFile, strip_content_heading
 from graphknows.ingestion.parsers.registry import get_parser
-from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
-from graphknows.models.ingest import IngestResult
 from graphknows.ingestion.stm._entity_writer import graph_entities, is_graph_entity_name
+from graphknows.models.ingest import IngestResult
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
@@ -95,23 +95,25 @@ class _STMIngestHandler:
         title: str = "",
         source_hint: str = "",
         metadata: dict[str, Any] | None = None,
+        infer: bool = True,
     ) -> IngestResult:
         """Ingest raw text into the GraphStore."""
         parser = get_parser(source_hint or ".txt")
         parsed = parser.parse(text, source_hint=source_hint, title=title)
-        return await self._ingest_parsed(parsed, session_id, metadata or {})
+        return await self._ingest_parsed(parsed, session_id, metadata or {}, infer=infer)
 
     async def ingest_parsed(
         self,
         parsed: ParsedFile,
         session_id: str,
         metadata: dict[str, Any] | None = None,
+        infer: bool = True,
     ) -> IngestResult:
         """Ingest an already-parsed ParsedFile into the GraphStore."""
-        return await self._ingest_parsed(parsed, session_id, metadata or {})
+        return await self._ingest_parsed(parsed, session_id, metadata or {}, infer=infer)
 
     async def _ingest_parsed(
-        self, parsed: ParsedFile, session_id: str, metadata: dict[str, Any]
+        self, parsed: ParsedFile, session_id: str, metadata: dict[str, Any], infer: bool = True
     ) -> IngestResult:
         t0 = time.monotonic()
 
@@ -135,9 +137,13 @@ class _STMIngestHandler:
         entity_hints, relation_hints = self._label_hints(batch_embeddings)
 
         # Batch NER for ALL chunks in one GLiNER2 forward pass when supported.
+        # ``infer=False`` skips extraction entirely (chunks + embeddings only) —
+        # the entity/relation extraction and its per-relation graph writes are the
+        # ingest cost that never touches the vector index.
         batch_extractions: list[ExtractionResult] | None = None
         if (
-            self._extractor is not None
+            infer
+            and self._extractor is not None
             and hasattr(type(self._extractor), "extract_batch")
             and cleaned_texts
         ):
@@ -152,7 +158,9 @@ class _STMIngestHandler:
             seg = parsed.segments[idx]
             clean = cleaned_texts[idx]
             embedding: list[float] = batch_embeddings[idx] if use_batch else self._embed_fn(clean)
-            if batch_extractions is not None:
+            if not infer:
+                extraction = ExtractionResult()
+            elif batch_extractions is not None:
                 extraction = batch_extractions[idx]
             else:
                 extraction = await asyncio.to_thread(self._extract, clean)
@@ -487,9 +495,7 @@ class _STMIngestHandler:
             return []
         from graphknows.ontology.catalog import TAG_MIN_SIM
 
-        matches = self._ontology.match_classes(
-            embedding, top_k=_ONT_TAG_TOP_K, min_sim=TAG_MIN_SIM
-        )
+        matches = self._ontology.match_classes(embedding, top_k=_ONT_TAG_TOP_K, min_sim=TAG_MIN_SIM)
         return [(term.uri, sim) for term, sim in matches]
 
     def _label_hints(
@@ -502,9 +508,7 @@ class _STMIngestHandler:
         """
         if self._ontology is None or not embeddings:
             return None, None
-        entity_hints = [
-            [t.label for t, _ in self._ontology.match_classes(e)] for e in embeddings
-        ]
+        entity_hints = [[t.label for t, _ in self._ontology.match_classes(e)] for e in embeddings]
         relation_hints = [
             {t.label: t.definition or t.label for t, _ in self._ontology.match_properties(e)}
             for e in embeddings
@@ -530,9 +534,7 @@ class _STMIngestHandler:
         uri = self._uri_by_label.get(entity_type.casefold())
         if uri:
             # Canonical ontology casing, not the extractor's ("PERSON" -> "Person").
-            label = next(
-                (t.label for t in self._ontology.classes if t.uri == uri), entity_type
-            )
+            label = next((t.label for t in self._ontology.classes if t.uri == uri), entity_type)
             result = (uri, label, 1.0)
         else:
             from graphknows.storage.embedder import embed_one
@@ -541,7 +543,9 @@ class _STMIngestHandler:
                 embed_one(entity_type), top_k=1, min_sim=_ONT_CLASS_MIN_SIM
             )
             result = (
-                (matches[0][0].uri, matches[0][0].label, matches[0][1]) if matches else ("", "", 0.0)
+                (matches[0][0].uri, matches[0][0].label, matches[0][1])
+                if matches
+                else ("", "", 0.0)
             )
         self._type_cache[entity_type] = result
         return result
@@ -561,9 +565,7 @@ class _STMIngestHandler:
         for ent in entities:
             uri, label, score = self._map_to_class(str(ent.get("type", "")))
             if uri:
-                mappings.append(
-                    {"name": ent["name"], "uri": uri, "label": label, "score": score}
-                )
+                mappings.append({"name": ent["name"], "uri": uri, "label": label, "score": score})
         if mappings:
             await self._store.write_instance_of(mappings)
 
@@ -605,7 +607,10 @@ class _STMIngestHandler:
         nlp = extractor.nlp
         gliner = extractor.gliner
         instances = extract_frame_instances(
-            text, primary, speakers, gliner,
+            text,
+            primary,
+            speakers,
+            gliner,
             lambda t: lu_candidate_frames(t, nlp, embedding=embedding),
         )
         return [

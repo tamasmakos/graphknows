@@ -62,6 +62,31 @@ def _session_text(session: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _evidence_turns(record: dict[str, Any]) -> list[str]:
+    """Gold evidence turn CONTENTS for a LongMemEval record.
+
+    LongMemEval flags the exact messages that answer each question with a
+    per-message ``has_answer`` boolean (479/500 records; the ~21 without are
+    mostly abstention questions, which correctly have no evidence). We collect
+    those contents — whitespace-normalized, matching LoCoMo's ``_evidence_turns``
+    — so the shared ``evidence_recall`` metric can score turn-level retrieval.
+    Contents (not the ``role: content`` prefix) because content is what survives
+    chunking verbatim.
+
+    Scoring only: these never reach the retriever or the answerer.
+    """
+    out: list[str] = []
+    for session in record.get("haystack_sessions") or []:
+        if not isinstance(session, list):
+            continue
+        for msg in session:
+            if not isinstance(msg, dict) or not msg.get("has_answer"):
+                continue
+            if text := " ".join(str(msg.get("content") or "").split()):
+                out.append(text)
+    return out
+
+
 def build_documents(
     record: dict[str, Any], *, max_documents: int, max_chars: int
 ) -> list[EvalDocument]:
@@ -84,9 +109,7 @@ def build_documents(
 
 def _reference_date(documents: list[EvalDocument]) -> str:
     """Human-readable date of the newest session (anchors relative time)."""
-    parsed = [
-        dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))
-    ]
+    parsed = [dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))]
     return max(parsed).strftime("%d %B %Y") if parsed else ""
 
 
@@ -115,6 +138,7 @@ def load_units(config: LongMemConfig, *, limit: int, offset: int) -> list[Ingest
             gold=str(record.get("answer") or ""),
             category=str(record.get("question_type") or ""),
             question_date=_parse_iso(str(record.get("question_date") or "")),
+            extras={"evidence": _evidence_turns(record)},
         )
         units.append(
             IngestUnit(
