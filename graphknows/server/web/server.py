@@ -27,8 +27,7 @@ from graphknows.memory import Memory
 from graphknows.settings import GraphKnowsSettings
 from graphknows.storage import (
     build_arcadedb_client,
-    build_arcadedb_ltm_store,
-    build_arcadedb_stm_store,
+    build_graph_store,
 )
 from graphknows.storage.namespace import db_names, namespaces_from_databases, resolve
 
@@ -118,129 +117,76 @@ def _row_value(row: Any, key: str) -> Any:
     return row[key]
 
 
-def _normalise_stm_graph(raw: dict[str, Any], limit: int) -> dict[str, Any]:
-    nodes = []
-    known_ids: set[str] = set()
-    for item in raw.get("nodes", [])[:limit]:
-        node_id = _string(item.get("id") or item.get("name") or item.get("label"))
-        if not node_id or node_id in known_ids:
-            continue
-        known_ids.add(node_id)
-        nodes.append(
-            {
-                "id": node_id,
-                "label": _string(item.get("name") or item.get("label") or node_id),
-                "type": _string(item.get("type") or item.get("label"), "Entity"),
-                "score": _number(item.get("confidence"), 1.0),
-                "scope": "stm",
-            }
-        )
+def _state_filter(scope: str) -> str:
+    """Golden-layer CHUNK.state clause for a graph scope. Empty for no filter."""
+    if scope == "stm":
+        return "c.state = 'raw'"
+    if scope == "ltm":
+        return "c.state = 'consolidated'"
+    return ""
 
-    links = []
-    for item in raw.get("edges", []):
-        source = _string(item.get("source") or item.get("from"))
-        target = _string(item.get("target") or item.get("to"))
-        if source in known_ids and target in known_ids:
-            links.append(
+
+async def _golden_graph(
+    scope: str, session_id: str, limit: int, namespace: str = ""
+) -> dict[str, Any]:
+    """Nodes/links for the golden GraphStore, scoped by lifecycle state and/or session.
+
+    Entities are reached through CHUNK-[:MENTIONS]->ENTITY (2-hop, no long chains —
+    ArcadeDB openCypher rejects deep multi-hop MATCH patterns and 500s on unknown
+    edge/vertex types). Links come from ENTITY-[:REL]->ENTITY, filtered to the
+    returned node set.
+    """
+    state_clause = _state_filter(scope)
+    where_clauses: list[str] = []
+    params: dict[str, Any] = {"limit": limit}
+    if session_id:
+        where_clauses.append("c.session_id = $session_id")
+        params["session_id"] = session_id
+    if state_clause:
+        where_clauses.append(state_clause)
+    where_sql = f"WHERE {' AND '.join(where_clauses)} " if where_clauses else ""
+
+    node_cypher = f"""
+    MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY)
+    {where_sql}WITH DISTINCT e
+    RETURN e.name AS id,
+           e.name AS label,
+           coalesce(e.type, 'Entity') AS type,
+           e.community_id AS topic,
+           e.pagerank AS pagerank
+    ORDER BY coalesce(pagerank, 0.0) DESC, label
+    LIMIT $limit
+    """
+
+    async with connected(build_graph_store(get_settings(), namespace)) as store:
+        node_rows = await store.query(node_cypher, **params)
+
+        nodes = []
+        known_ids: set[str] = set()
+        for row in node_rows:
+            node_id = _string(_row_value(row, "id"))
+            if not node_id or node_id in known_ids:
+                continue
+            known_ids.add(node_id)
+            nodes.append(
                 {
-                    "source": source,
-                    "target": target,
-                    "label": _string(item.get("label") or item.get("rel_type") or item.get("type")),
-                    "weight": _number(item.get("weight"), 1.0),
+                    "id": node_id,
+                    "label": _string(_row_value(row, "label") or node_id),
+                    "type": _string(_row_value(row, "type"), "Entity"),
+                    "topic": _row_value(row, "topic"),
+                    "topic_summary": None,
+                    "pagerank": _number(_row_value(row, "pagerank"), 1.0),
                 }
             )
 
-    return {
-        "scope": "stm",
-        "session_id": raw.get("session_id", ""),
-        "nodes": nodes,
-        "links": links,
-        "node_count": len(nodes),
-        "edge_count": len(links),
-    }
-
-
-def _ltm_queries(session_id: str, limit: int) -> tuple[str, str, dict[str, Any]]:
-    if session_id:
-        node_cypher = """
-        MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(x)-[:HAS_ENTITY|MENTIONS]-(e:ENTITY)
-        OPTIONAL MATCH (e)-[:IN_TOPIC]->(t:TOPIC)
-        WITH DISTINCT e, t
-        RETURN coalesce(e.id, e.name) AS id,
-               coalesce(e.name, e.id) AS label,
-               coalesce(e.label, e.type, 'Entity') AS type,
-               coalesce(t.community_id, e.community_id) AS topic,
-               t.summary AS topic_summary,
-               e.pagerank AS pagerank,
-               e.betweenness AS betweenness
-        ORDER BY coalesce(e.pagerank, 0.0) DESC, label
+        edge_cypher = """
+        MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)
+        WHERE a <> b
+        RETURN a.name AS source, b.name AS target, r.predicate AS label,
+               coalesce(r.confidence, 1.0) AS weight
         LIMIT $limit
         """
-        edge_cypher = """
-        MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(x)-[:HAS_ENTITY|MENTIONS]-(a:ENTITY)
-        MATCH (:SESSION {id: $session_id})-[:IN_SESSION*1..3]->(y)-[:HAS_ENTITY|MENTIONS]-(b:ENTITY)
-        MATCH (a)-[r:REL]->(b)
-        WHERE a <> b
-        WITH DISTINCT a, b, r LIMIT $limit
-        RETURN coalesce(a.id, a.name) AS source,
-               coalesce(b.id, b.name) AS target,
-               coalesce(r.label, r.predicate) AS label,
-               coalesce(r.weight, 1) AS weight
-        """
-        return node_cypher, edge_cypher, {"session_id": session_id, "limit": limit}
-
-    node_cypher = """
-    MATCH (e:ENTITY)
-    OPTIONAL MATCH (e)-[:IN_TOPIC]->(t:TOPIC)
-    RETURN coalesce(e.id, e.name) AS id,
-           coalesce(e.name, e.id) AS label,
-           coalesce(e.label, e.type, 'Entity') AS type,
-           coalesce(t.community_id, e.community_id) AS topic,
-           t.summary AS topic_summary,
-           e.pagerank AS pagerank,
-           e.betweenness AS betweenness
-    ORDER BY coalesce(e.pagerank, 0.0) DESC, label
-    LIMIT $limit
-    """
-    edge_cypher = """
-    MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)
-    WHERE a <> b
-    WITH a, b, r.predicate AS label, coalesce(r.weight, 1) AS weight LIMIT $limit
-    RETURN coalesce(a.id, a.name) AS source,
-           coalesce(b.id, b.name) AS target,
-           label,
-           weight
-    """
-    return node_cypher, edge_cypher, {"limit": limit}
-
-
-async def _ltm_graph(session_id: str, limit: int, namespace: str = "") -> dict[str, Any]:
-    async with connected(build_arcadedb_ltm_store(get_settings(), namespace)) as ltm:
-        node_cypher, edge_cypher, params = _ltm_queries(session_id, limit)
-        node_rows, edge_rows = await asyncio.gather(
-            ltm.query(node_cypher, **params),
-            ltm.query(edge_cypher, **params),
-        )
-
-    nodes = []
-    known_ids: set[str] = set()
-    for row in node_rows:
-        node_id = _string(_row_value(row, "id"))
-        if not node_id or node_id in known_ids:
-            continue
-        known_ids.add(node_id)
-        nodes.append(
-            {
-                "id": node_id,
-                "label": _string(_row_value(row, "label") or node_id),
-                "type": _string(_row_value(row, "type"), "Entity"),
-                "topic": _string(_row_value(row, "topic")),
-                "topic_summary": _string(_row_value(row, "topic_summary")),
-                "pagerank": _number(_row_value(row, "pagerank"), 1.0),
-                "betweenness": _number(_row_value(row, "betweenness"), 0.0),
-                "scope": "ltm",
-            }
-        )
+        edge_rows = await store.query(edge_cypher, limit=limit)
 
     links = []
     for row in edge_rows:
@@ -257,7 +203,7 @@ async def _ltm_graph(session_id: str, limit: int, namespace: str = "") -> dict[s
             )
 
     return {
-        "scope": "ltm",
+        "scope": scope,
         "session_id": session_id,
         "nodes": nodes,
         "links": links,
@@ -362,28 +308,24 @@ async def stats(request: Request) -> JSONResponse:
 
 
 async def sessions(request: Request) -> JSONResponse:
-    """Return known session ids from STM and LTM stores for the requested namespace."""
+    """Return known session ids from the golden-layer store for the requested namespace."""
     namespace = _namespace(request)
     values: set[str] = set()
     errors: list[str] = []
 
     try:
-        async with connected(build_arcadedb_stm_store(get_settings(), namespace)) as stm:
-            rows = await stm.client.query(
-                stm.database,
-                "MATCH (n:ENTITY) WHERE n.session_id IS NOT NULL "
-                "RETURN DISTINCT n.session_id AS id ORDER BY id",
+        async with connected(build_graph_store(get_settings(), namespace)) as store:
+            session_rows, chunk_rows = await asyncio.gather(
+                store.query("MATCH (s:SESSION) RETURN DISTINCT s.session_id AS id ORDER BY id"),
+                store.query(
+                    "MATCH (c:CHUNK) WHERE c.session_id IS NOT NULL "
+                    "RETURN DISTINCT c.session_id AS id ORDER BY id"
+                ),
             )
-            values.update(_string(row["id"]) for row in rows if row.get("id"))
+            values.update(_string(_row_value(row, "id")) for row in session_rows if row.get("id"))
+            values.update(_string(_row_value(row, "id")) for row in chunk_rows if row.get("id"))
     except Exception as exc:
-        errors.append(f"stm: {exc}")
-
-    try:
-        async with connected(build_arcadedb_ltm_store(get_settings(), namespace)) as ltm:
-            rows = await ltm.query("MATCH (s:SESSION) RETURN DISTINCT s.id AS id ORDER BY id")
-            values.update(_string(row["id"]) for row in rows if row.get("id"))
-    except Exception as exc:
-        errors.append(f"ltm: {exc}")
+        errors.append(f"graph: {exc}")
 
     return JSONResponse({"sessions": sorted(v for v in values if v), "errors": errors})
 
@@ -396,25 +338,12 @@ async def graph(request: Request) -> JSONResponse:
     namespace = _namespace(request)
     limit = max(10, min(int(request.query_params.get("limit", "200")), 1000))
 
-    if scope == "stm":
-        if not session_id:
-            return JSONResponse(
-                {
-                    "error": "session_id_required",
-                    "message": "STM graph views require a session_id.",
-                },
-                status_code=400,
-            )
-        async with connected(build_arcadedb_stm_store(get_settings(), namespace)) as stm:
-            raw = await stm.get_session_graph(session_id)
-        return JSONResponse(_normalise_stm_graph(raw, limit))
-
-    if scope != "ltm":
+    if scope not in {"stm", "ltm"}:
         return JSONResponse(
             {"error": "invalid_scope", "message": "scope must be 'stm' or 'ltm'."},
             status_code=400,
         )
-    return JSONResponse(await _ltm_graph(session_id, limit, namespace))
+    return JSONResponse(await _golden_graph(scope, session_id, limit, namespace))
 
 
 @backend_errors

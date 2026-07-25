@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import uuid
 from typing import Any
 
@@ -696,74 +695,96 @@ class Memory:
         }
 
     async def ltm_topics(self, min_entities: int = 3) -> dict[str, Any]:
-        """List LTM topic nodes."""
-        from graphknows.storage import build_arcadedb_ltm_store
+        """List golden-layer TOPIC nodes with their entity membership.
 
-        ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
-        await ltm.connect()
+        TOPIC has no direct entity-membership edge, so entity_count/entity_names
+        are derived via the 2-hop path CHUNK-[:HAS_TOPIC]->TOPIC and
+        CHUNK-[:MENTIONS]->ENTITY, counting distinct entities per topic.
+        """
+        from graphknows.storage import build_graph_store
+
+        store = build_graph_store(self.settings, self.namespace)
+        await store.connect()
         try:
-            rows = await ltm.query(
-                "MATCH (t:TOPIC) WHERE t.entity_count >= $min "
-                "RETURN t.topic_id AS topic_id, t.label AS label, t.summary AS summary, "
-                "t.community_id AS community_id, t.entity_names AS entity_names, "
-                "t.entity_count AS entity_count "
-                "ORDER BY t.entity_count DESC",
+            rows = await store.query(
+                "MATCH (c:CHUNK)-[:HAS_TOPIC]->(t:TOPIC) "
+                "MATCH (c)-[:MENTIONS]->(e:ENTITY) "
+                "WITH t, count(DISTINCT e) AS entity_count, "
+                "collect(DISTINCT e.name) AS entity_names "
+                "WHERE entity_count >= $min "
+                "RETURN t.topic_id AS topic_id, t.title AS title, t.summary AS summary, "
+                "t.keywords AS keywords, t.coherence AS coherence, "
+                "entity_count AS entity_count, entity_names AS entity_names "
+                "ORDER BY entity_count DESC",
                 min=min_entities,
             )
         finally:
-            await ltm.close()
-        return {"topics": [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]}
+            await store.close()
+        topics = []
+        for r in rows:
+            topic = {k: v for k, v in r.items() if not k.startswith("@")}
+            names = topic.get("entity_names") or []
+            topic["entity_names"] = list(names)[:20]
+            topics.append(topic)
+        return {"topics": topics}
 
     async def ltm_entity(self, name: str) -> dict[str, Any]:
-        """Return one LTM entity by name."""
-        from graphknows.storage import build_arcadedb_ltm_store
+        """Return one golden-layer ENTITY by case-insensitive name."""
+        from graphknows.storage import build_graph_store
 
-        ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
-        await ltm.connect()
+        store = build_graph_store(self.settings, self.namespace)
+        await store.connect()
         try:
-            rows = await ltm.query(
+            rows = await store.query(
                 "MATCH (e:ENTITY) WHERE toLower(e.name) = toLower($name) "
                 "RETURN e.name AS name, e.type AS type, e.confidence AS confidence, "
                 "e.pagerank AS pagerank, e.community_id AS community_id LIMIT 1",
                 name=name,
             )
         finally:
-            await ltm.close()
+            await store.close()
         if not rows:
             return {"error": f"Entity not found: {name}"}
         return {k: v for k, v in rows[0].items() if not k.startswith("@")}
 
     def ltm_query(self, query: str, top_k: int = 5) -> dict[str, Any]:
-        """Return topic-like LTM matches for research evaluation callers."""
+        """Return topic vector-search matches for research evaluation callers."""
         from graphknows._async_bridge import _run as bg_run
+        from graphknows.storage import build_graph_store
+        from graphknows.storage.embedder import embed_one
 
-        topics = bg_run(self.ltm_topics(min_entities=1))["topics"]
-        tokens = [token for token in re.findall(r"\b\w{3,}\b", query.lower())]
-        if tokens:
-            topics = [
-                topic
-                for topic in topics
-                if any(
-                    token in str(topic.get("summary") or topic.get("label") or "").lower()
-                    or any(token in str(name).lower() for name in topic.get("entity_names") or [])
-                    for token in tokens
-                )
-            ]
-        return {"results": topics[: max(1, min(top_k, 20))]}
+        k = max(1, min(top_k, 20))
+
+        async def _search() -> list[dict[str, Any]]:
+            try:
+                embedding = embed_one(query)
+            except Exception:
+                logger.debug("ltm_query: embedding failed for query=%r", query, exc_info=True)
+                return []
+            store = build_graph_store(self.settings, self.namespace)
+            await store.connect()
+            try:
+                return await store.search_topics(embedding, top_k=k)
+            finally:
+                await store.close()
+
+        try:
+            results = bg_run(_search())
+        except Exception:
+            logger.debug("ltm_query: search failed for query=%r", query, exc_info=True)
+            results = []
+        return {"results": results[:k]}
 
     async def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
-        """List ENTITY nodes from the LTM graph, optionally scoped to one session."""
-        from graphknows.storage import build_arcadedb_ltm_store
+        """List ENTITY nodes from the golden graph, optionally scoped to one session."""
+        from graphknows.storage import build_graph_store
 
-        ltm = build_arcadedb_ltm_store(self.settings, self.namespace)
-        await ltm.connect()
+        store = build_graph_store(self.settings, self.namespace)
+        await store.connect()
         try:
             if session_id:
-                # Split into two MATCH clauses — ArcadeDB's openCypher rejects
-                # 5-hop chains in a single MATCH pattern.
-                rows = await ltm.query(
-                    "MATCH (sess:SESSION {id: $sid})-[:IN_SESSION]->(f:FILE)-[:HAS_CHUNK]->(c:CHUNK) "
-                    "MATCH (c)-[:MENTIONS]->(e:ENTITY) "
+                rows = await store.query(
+                    "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) WHERE c.session_id = $sid "
                     "RETURN DISTINCT e.name AS name, coalesce(e.type,'ENTITY') AS type, "
                     "coalesce(e.confidence, 1.0) AS confidence, "
                     "coalesce(e.pagerank, 0.0) AS pagerank, "
@@ -773,7 +794,7 @@ class Memory:
                     limit=limit,
                 )
             else:
-                rows = await ltm.query(
+                rows = await store.query(
                     "MATCH (e:ENTITY) "
                     "RETURN e.name AS name, coalesce(e.type,'ENTITY') AS type, "
                     "coalesce(e.confidence, 1.0) AS confidence, "
@@ -783,6 +804,6 @@ class Memory:
                     limit=limit,
                 )
         finally:
-            await ltm.close()
+            await store.close()
         entities = [{k: v for k, v in r.items() if not k.startswith("@")} for r in rows]
         return {"entities": entities, "count": len(entities), "session_id": session_id}
