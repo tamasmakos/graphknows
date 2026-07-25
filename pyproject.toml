@@ -45,9 +45,32 @@ dependencies = [
     "langchain-text-splitters>=0.3.0",
     "dateparser>=1.2.0",
     # extraction (llm_free) + embeddings
+    # `gliner` (not just gliner2) is required: entities/gliner_model.py loads
+    # knowledgator/gliner-relex-large-v1.0 through `from gliner import GLiNER`.
+    # It is NOT a transitive dependency of gliner2 — omitting it breaks the
+    # default llm_free extraction path with ModuleNotFoundError on first ingest.
+    "gliner>=0.2.26",
     "gliner2>=0.1.0",
     "spacy>=3.7.0",
     "sentence-transformers>=3.0.0",
+    # Imported DIRECTLY by embedder.py, rerank.py, gliner_model.py and
+    # _gliner2_verifier.py — not merely pulled in by sentence-transformers.
+    # Relying on the transitive edge means a sentence-transformers release that
+    # drops or re-pins any of them silently breaks us. The Dockerfile also
+    # installs torch from an explicit index (CPU by default), which needs the
+    # constraint declared here to resolve consistently.
+    "torch>=2.4.0",
+    "transformers>=4.44.0",
+    "huggingface-hub>=0.24.0",
+    # BM25 sparse channel in retrieval/retriever.py. Was undeclared and
+    # therefore absent, so `except ImportError` silently degraded the channel to
+    # a tf-style scorer — a fused retrieval source that looked live and was not.
+    "rank-bm25>=0.2.2",
+    # WordNet/FrameNet lookups in the default (llm_free) relation path:
+    # ingestion/extraction/relations/svo.py and channels/_framenet.py. Core, not
+    # eval-only — those call sites guard LookupError (missing *corpus*), which
+    # does not catch the ModuleNotFoundError raised by a missing *package*.
+    "nltk>=3.8",
     # community detection during flush
     "igraph>=0.11.0",
     "leidenalg>=0.10.0",
@@ -65,6 +88,15 @@ dependencies = [
 # The one extra: `pip install 'graphknows[assisted]'`. Lazily imported and guarded
 # by MissingExtraError, so the base install never pulls dspy/rdflib.
 assisted = ["dspy>=2.5.0", "rdflib>=7.0.0"]
+# Framework adapters. Genuinely optional — nothing in the core paths imports
+# them, and both are lazily imported behind a MissingExtraError guard.
+langgraph = ["langgraph>=0.2.0"]
+langchain = ["langchain-core>=0.3.0"]
+
+# Every extra named by a MissingExtraError call site MUST appear above;
+# `MissingExtraError.KNOWN_EXTRAS` and tests/test_extras.py enforce it. For a
+# missing *core* dependency raise BrokenInstallError instead — there is no
+# extra to install, and suggesting one is a dead end.
 
 [project.urls]
 Homepage = "https://github.com/tamasmakos/graphknows"
@@ -108,7 +140,9 @@ eval = [
     "pandas>=2.2.0",
     "pytest>=8.0.0",
     "tabulate>=0.9.0",
-    "nltk>=3.8",  # PorterStemmer for the locomo_f1 lexical diagnostic
+    # nltk (PorterStemmer for the locomo_f1 lexical diagnostic) is now a core
+    # dependency — see [project.dependencies]. Declaring it here too was what
+    # let the Docker image satisfy a production import from a dev-only group.
 ]
 
 [tool.bandit]
