@@ -48,28 +48,22 @@ pipeline {
                 sh '''
                     uvx ruff check --no-fix --config ruff.toml graphknows/
                 '''
-                sh '''
-                    # Ban sentence-transformers imports in production code
-                    if grep -rn "from sentence_transformers\\|import sentence_transformers" \
-                        --include="*.py" \
-                        --exclude-dir=".venv" --exclude-dir="research" --exclude-dir="tests" \
-                        graphknows/; then
-                        echo "ERROR: sentence-transformers import found in production code"
-                        exit 1
-                    fi
-                    if grep -q "sentence-transformers" pyproject.toml 2>/dev/null; then
-                        echo "ERROR: sentence-transformers dep found in pyproject.toml"
-                        exit 1
-                    fi
-                    if grep -c "sentence.transform" uv.lock 2>/dev/null | grep -qv "^0$"; then
-                        echo "ERROR: sentence-transformers found in root uv.lock"
-                        exit 1
-                    fi
-                    echo "sentence-transformers: clean"
-                '''
-                sh '''
-                    python3 scripts/check_imports.py
-                '''
+                // The sentence-transformers ban that used to live here was
+                // removed: it banned the import in production code, the
+                // dependency in pyproject.toml and the entry in uv.lock, dating
+                // from when embeddings were remote-only. Local sentence-
+                // transformers embeddings are now the documented design (the
+                // llm_free path runs with zero API keys), so the gate
+                // contradicted the package it was gating and had been failing
+                // for a long time — which is part of why nothing here caught the
+                // dependency drift.
+                //
+                // The `python3 scripts/check_imports.py` step was also removed:
+                // that script was added in 66619ab and later deleted without
+                // updating this file, so the stage errored before reaching
+                // anything useful. `tests/test_packaging.py` now covers what it
+                // was for — asserting that imports match declared dependencies —
+                // and runs in the Test stages below.
             }
         }
 
@@ -201,7 +195,44 @@ pipeline {
             } // end parallel
         } // end Gates
 
-        // ── Stage 3: SonarQube — skipped when SONAR_TOKEN env var is blank ────
+        // ── Stage 3: Image — validate the ARTIFACT, not just the source ───────
+        // Every other gate installs dependencies fresh (`uv sync`), so all of
+        // them pass against a correct environment while the shipped image is
+        // months stale. That is exactly how six undeclared dependencies survived
+        // for seven weeks: nothing ever built the image and asked whether it
+        // works. This stage does.
+        //
+        // The build takes several minutes (it bakes ~4GB of models), so it runs
+        // on main and on any change that can invalidate the image, rather than on
+        // every commit. `tests/test_packaging.py` is the fast gate that catches
+        // declaration drift on every commit in the Test stages above.
+        stage('Image') {
+            when {
+                anyOf {
+                    branch 'main'
+                    changeset pattern: 'Dockerfile', comparator: 'GLOB'
+                    changeset pattern: 'pyproject.toml', comparator: 'GLOB'
+                    changeset pattern: 'uv.lock', comparator: 'GLOB'
+                    changeset pattern: 'scripts/*', comparator: 'GLOB'
+                }
+            }
+            steps {
+                sh '''
+                    docker build --target runtime -t graphknows-ci:${BUILD_NUMBER} .
+
+                    # Runs the image with the network cut and asserts every
+                    # dependency imports and every model loads from cache.
+                    IMAGE=graphknows-ci:${BUILD_NUMBER} scripts/docker-smoke.sh
+                '''
+            }
+            post {
+                always {
+                    sh 'docker rmi graphknows-ci:${BUILD_NUMBER} || true'
+                }
+            }
+        }
+
+        // ── Stage 4: SonarQube — skipped when SONAR_TOKEN env var is blank ────
         // SONAR_TOKEN is injected automatically via the .env file loaded by
         // jenkins/docker-compose.yml — no Jenkins credential needed.
         stage('SonarQube') {
