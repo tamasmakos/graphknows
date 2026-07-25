@@ -1,4 +1,4 @@
-"""WS-3 tests — personal ontology, extract-then-map, router selection.
+"""WS-3 tests — personal ontology and extract-then-map.
 
 All tests are offline: no live API calls, no embedding model.  The LLM is
 mocked wherever DSPyExtractor would normally require one.
@@ -59,28 +59,12 @@ def _loader_mod():
     )
 
 
-def _router_mod():
-    # Router imports loader; ensure loader is pre-loaded in sys.modules first.
-    _loader_mod()
-    return _load_module(
-        "graphknows.ontology.router",
-        _ONTOLOGY_PKG / "router.py",
-    )
-
-
 def _filter_mod():
     # Relation filter imports loader lazily (inside functions) so no pre-load needed.
     _loader_mod()
     return _load_module(
         "graphknows.ingestion.extraction.relations.filter",
         _RELATIONS_PKG / "filter.py",
-    )
-
-
-def _utils_mod():
-    return _load_module(
-        "graphknows.ingestion.normalization",
-        REPO_ROOT / "graphknows" / "ingestion" / "normalization.py",
     )
 
 
@@ -121,8 +105,17 @@ class TestPersonalOntologyFiles:
             str(graph.value(n, RDFS.label)) for n in class_nodes if graph.value(n, RDFS.label)
         }
         expected = {
-            "Person", "Event", "Activity", "Preference", "Place", "Organization",
-            "TimePoint", "Emotion", "Goal", "Possession", "Relationship",
+            "Person",
+            "Event",
+            "Activity",
+            "Preference",
+            "Place",
+            "Organization",
+            "TimePoint",
+            "Emotion",
+            "Goal",
+            "Possession",
+            "Relationship",
         }
         missing = expected - labels
         assert not missing, f"Missing classes in personal.ttl: {missing}"
@@ -134,13 +127,21 @@ class TestPersonalOntologyFiles:
         graph = rdflib.Graph()
         graph.parse(str(PERSONAL_TTL))
         prop_nodes = set(graph.subjects(RDF.type, OWL.ObjectProperty))
-        labels = {
-            str(graph.value(n, RDFS.label)) for n in prop_nodes if graph.value(n, RDFS.label)
-        }
+        labels = {str(graph.value(n, RDFS.label)) for n in prop_nodes if graph.value(n, RDFS.label)}
         expected = {
-            "lives_in", "works_as", "friend_of", "family_of", "partner_of",
-            "attended", "owns", "likes", "dislikes", "plans_to",
-            "happened_on", "located_in", "member_of",
+            "lives_in",
+            "works_as",
+            "friend_of",
+            "family_of",
+            "partner_of",
+            "attended",
+            "owns",
+            "likes",
+            "dislikes",
+            "plans_to",
+            "happened_on",
+            "located_in",
+            "member_of",
         }
         missing = expected - labels
         assert not missing, f"Missing properties in personal.ttl: {missing}"
@@ -154,122 +155,30 @@ class TestPersonalOntologyFiles:
         prop_nodes = set(graph.subjects(RDF.type, OWL.ObjectProperty))
         for prop in prop_nodes:
             label = graph.value(prop, RDFS.label)
-            assert graph.value(prop, RDFS.domain) is not None, \
+            assert graph.value(prop, RDFS.domain) is not None, (
                 f"Property {label} missing rdfs:domain"
-            assert graph.value(prop, RDFS.range) is not None, \
-                f"Property {label} missing rdfs:range"
+            )
+            assert graph.value(prop, RDFS.range) is not None, f"Property {label} missing rdfs:range"
 
 
 # ============================================================
-# 2. OntologyLoader — personal ontology registered and loadable
-# ============================================================
-
-
-class TestPersonalOntologyLoader:
-    """Uses the isolated OntologyLoader against the bundled asset root."""
-
-    def setup_method(self):
-        mod = _loader_mod()
-        self.OntologyLoader = mod.OntologyLoader
-        self.OntologyManifest = mod.OntologyManifest
-        self.load_rdf_ontology_file = mod.load_rdf_ontology_file
-        self.loader = self.OntologyLoader(ASSETS_ROOT)
-
-    def test_personal_in_registry(self):
-        assert "personal" in self.loader.list_ids()
-
-    def test_personal_loads(self):
-        m = self.loader.load("personal")
-        assert isinstance(m, self.OntologyManifest)
-        assert m.id == "personal"
-
-    def test_personal_has_classes(self):
-        m = self.loader.load("personal")
-        assert len(m.class_labels) >= 11, f"Got: {m.class_labels}"
-
-    def test_personal_has_properties(self):
-        m = self.loader.load("personal")
-        assert len(m.property_labels) >= 13, f"Got: {m.property_labels}"
-
-    def test_personal_has_keywords(self):
-        m = self.loader.load("personal")
-        assert len(m.keywords) >= 5, f"Got: {m.keywords}"
-
-    def test_personal_summary_jsonld_valid(self):
-        m = self.loader.load("personal")
-        data = json.loads(m.summary_jsonld)
-        assert isinstance(data, dict)
-
-    def test_load_rdf_ontology_file_works_on_personal(self):
-        manifest = self.load_rdf_ontology_file(PERSONAL_TTL)
-        assert manifest.class_labels
-        assert manifest.property_labels
-        assert "friend_of" in manifest.property_labels
-        assert "Person" in manifest.class_labels
-
-
-# ============================================================
-# 3. OntologyRouter — selects personal for conversational text
-# ============================================================
-
-
-class TestOntologyRouterPersonal:
-    """Keyword-only routing (alpha=1.0, no embedder) for conversational snippets."""
-
-    def setup_method(self):
-        loader_mod = _loader_mod()
-        router_mod = _router_mod()
-        loader = loader_mod.OntologyLoader(ASSETS_ROOT)
-        self.router = router_mod.OntologyRouter(loader=loader)
-        self.router._ensure_ready()
-        self.router._embedder = None
-        self.router._desc_embeddings = None
-
-    def test_conversational_text_selects_personal(self):
-        text = (
-            "Alice told me she's friends with Bob. She really likes hiking and dislikes crowded "
-            "places. Her family moved to Berlin last summer and she plans to visit her partner "
-            "in Madrid next year."
-        )
-        m = self.router.select(text, alpha=1.0)
-        assert m.id == "personal", f"Expected 'personal', got '{m.id}'"
-
-    def test_personal_in_select_multi(self):
-        text = (
-            "She met her friend at the birthday party last weekend "
-            "and they talked about their families."
-        )
-        results = self.router.select_multi(text, top_k=3, alpha=1.0)
-        ids = [r.id for r in results]
-        assert "personal" in ids, f"'personal' not in top-3: {ids}"
-
-    def test_select_rdf_file_returns_path_for_personal(self):
-        text = (
-            "He likes playing guitar, dislikes loud music. "
-            "His friend lives in London and his family is very close."
-        )
-        path = self.router.select_rdf_file(text, alpha=1.0)
-        assert path is not None
-        assert path.endswith(".ttl"), f"Expected .ttl path, got: {path}"
-        assert Path(path).exists(), f"Returned path does not exist: {path}"
-
-    def test_legal_text_still_selects_lkif(self):
-        text = (
-            "The plaintiff filed a lawsuit under the statute. "
-            "Jurisdiction was contested and the contract was deemed invalid."
-        )
-        m = self.router.select(text, alpha=1.0)
-        assert m.id == "lkif", f"Expected lkif, got {m.id}"
-
-
-# ============================================================
-# 4. Extract-then-map: OntologyPredicateMapper
+# 2. Extract-then-map: OntologyPredicateMapper
 # ============================================================
 
 PERSONAL_PROPS = [
-    "lives_in", "works_as", "friend_of", "family_of", "partner_of",
-    "attended", "owns", "likes", "dislikes", "plans_to",
-    "happened_on", "located_in", "member_of",
+    "lives_in",
+    "works_as",
+    "friend_of",
+    "family_of",
+    "partner_of",
+    "attended",
+    "owns",
+    "likes",
+    "dislikes",
+    "plans_to",
+    "happened_on",
+    "located_in",
+    "member_of",
 ]
 
 
@@ -358,35 +267,7 @@ class TestOntologyPredicateMapper:
 
 
 # ============================================================
-# 5. RelationOntologyFilter backward-compat
-# ============================================================
-
-
-class TestRelationOntologyFilterPersonal:
-    def setup_method(self):
-        mod = _filter_mod()
-        self.RelationOntologyFilter = mod.RelationOntologyFilter
-        self.build_predicate_mapper = mod.build_predicate_mapper
-
-    def test_personal_filter_allows_friend_of(self):
-        f = self.RelationOntologyFilter(["friend_of", "lives_in", "member_of"])
-        assert f.is_allowed("friend_of")
-        assert f.is_allowed("FRIEND_OF")
-        assert f.is_allowed("friend of")
-
-    def test_personal_filter_drops_unknown(self):
-        f = self.RelationOntologyFilter(["friend_of", "lives_in"])
-        assert not f.is_allowed("filed_complaint")
-
-    def test_build_predicate_mapper_personal(self):
-        """build_predicate_mapper should work for the registered personal ontology."""
-        mapper = self.build_predicate_mapper("personal")
-        assert mapper.ontology_labels, "Personal predicate mapper should have labels"
-        assert "friend_of" in mapper.ontology_labels
-
-
-# ============================================================
-# 6. DSPy extractor — extract-then-map (mocked LLM)
+# 3. DSPy extractor — extract-then-map (mocked LLM)
 # ============================================================
 
 
@@ -430,8 +311,9 @@ class TestDspyExtractorExtractThenMap:
     def test_extractor_loads_personal_ontology(self):
         extractor = self._make_extractor()
         all_types = [t.lower() for t in extractor._ontology_relation_types]
-        assert "friend_of" in all_types or "FRIEND_OF" in extractor._ontology_relation_types, \
+        assert "friend_of" in all_types or "FRIEND_OF" in extractor._ontology_relation_types, (
             f"friend_of not in relation types: {extractor._ontology_relation_types}"
+        )
 
     def test_extractor_has_predicate_mapper(self):
         filter_mod = _filter_mod()
@@ -466,8 +348,7 @@ class TestDspyExtractorExtractThenMap:
             "evidence": "Corp filed a derivative contract.",
         }
         mapped_raw, drop_reason = extractor._apply_extract_then_map(raw)
-        assert mapped_raw is None, \
-            f"Expected rejection but got mapped_raw={mapped_raw}"
+        assert mapped_raw is None, f"Expected rejection but got mapped_raw={mapped_raw}"
         assert drop_reason is not None
 
     def test_apply_extract_then_map_exact_match_passthrough(self):
@@ -480,7 +361,7 @@ class TestDspyExtractorExtractThenMap:
             "target_type": "Place",
             "evidence": "Alice lives in Berlin.",
         }
-        mapped_raw, drop_reason = extractor._apply_extract_then_map(raw)
+        mapped_raw, _drop_reason = extractor._apply_extract_then_map(raw)
         assert mapped_raw is not None
         assert mapped_raw["relation"] == "lives_in"
         # No remapping for exact match — no _mapped_from key
@@ -491,8 +372,9 @@ class TestDspyExtractorExtractThenMap:
         ctx = extractor._ontology_enriched_context
         assert ctx, "Enriched context should not be empty"
         data = json.loads(ctx)
-        assert "properties_detail" in data, \
+        assert "properties_detail" in data, (
             f"Missing 'properties_detail' key in context: {list(data.keys())}"
+        )
         # Each property detail should have label, domain, range
         for entry in data["properties_detail"]:
             assert "label" in entry

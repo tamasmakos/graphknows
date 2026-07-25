@@ -135,7 +135,7 @@ Both paths converge on the same write helper, which per chunk:
 6. resolves dates (`resolve_temporal` in `graphknows/channels/temporal.py`) into
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 
-`RelationOntologyFilter` (`graphknows/ingestion/extraction/relations/filter.py`)
+`OntologyPredicateMapper` (`graphknows/ingestion/extraction/relations/filter.py`)
 and the taxonomy (`graphknows/ingestion/models/taxonomy.py`) remain available for
 ontology-constrained predicate mapping, but the hot ingest path does not filter
 GLiNER2 labels through them.

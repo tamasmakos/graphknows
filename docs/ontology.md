@@ -118,10 +118,12 @@ fail an ingest.
 
 ## The bundled ontologies
 
-`graphknows/ontology/assets/` ships six, indexed by `registry.json`: `personal`,
-`schema-org`, `lkif` (legal), `prov-o`, `fibo-fnd` (finance), and `political`.
-`assets/personal/personal.ttl` is a good starting point for conversational data —
-11 classes and 13 properties, every one carrying a `skos:definition`.
+`graphknows/ontology/assets/` ships six: `personal`, `schema-org`, `lkif`
+(legal), `prov-o`, `fibo-fnd` (finance), and `political`. Point
+`GRAPHKNOWS_ONTOLOGY` at one by path, exactly as you would at your own file —
+there is no by-name registry. `assets/personal/personal.ttl` is a good starting
+point for conversational data — 11 classes and 13 properties, every one carrying
+a `skos:definition`.
 
 ```bash
 GRAPHKNOWS_ONTOLOGY=graphknows/ontology/assets/personal/personal.ttl
@@ -146,8 +148,7 @@ at a higher threshold (`min_similarity=0.35`).
 |---|---|
 | Term loading (file or folder, with definitions) | `graphknows/ontology/loader.py` |
 | Definition embedding index + disk cache | `graphknows/ontology/catalog.py` |
-| Bundled assets + registry | `graphknows/ontology/assets/` |
-| Per-document ontology routing (unwired) | `graphknows/ontology/router.py` |
+| Bundled assets | `graphknows/ontology/assets/` |
 | Predicate mapper | `graphknows/ingestion/extraction/relations/filter.py` |
 | Ingest injection + linking | `graphknows/ingestion/stm/ingest.py` |
 | Retrieval channel | `graphknows/channels/ontology.py` |

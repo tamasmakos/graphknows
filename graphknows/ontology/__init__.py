@@ -11,6 +11,10 @@ The load-bearing pair is :func:`~graphknows.ontology.loader.load_ontology_terms`
 :func:`~graphknows.ontology.catalog.load_ontology_index` (those definitions
 embedded once, disk-cached, cosine-matchable against a chunk or query embedding).
 
+An ontology is always addressed by **path** — ``GRAPHKNOWS_ONTOLOGY`` takes a
+file or a folder. Bundled ontologies live in ``assets/`` and are referenced the
+same way; there is no by-name registry.
+
 These imports stay LLM-free. DSPy-backed relation extraction lives in
 ``graphknows.ingestion.extraction.relations.llm_assisted.dspy``.
 """
@@ -24,31 +28,21 @@ from graphknows.ontology.catalog import (
     reset_ontology_indexes,
 )
 from graphknows.ontology.loader import (
-    OntologyLoader,
-    OntologyManifest,
     OntologyTerm,
+    RdfOntologyManifest,
     load_ontology_terms,
+    load_rdf_ontology_file,
 )
-from graphknows.ontology.ports import OntologyProvider
-from graphknows.ontology.rdf_parser import OntologyLabelExtractor, extract_ontology_labels
-from graphknows.ontology.registry import ManifestOntologyProvider, OntologyRegistry
-from graphknows.ontology.router import OntologyRouter
 
 __all__ = [
     "DEFAULT_MIN_SIM",
     "DEFAULT_TOP_K",
     "TAG_MIN_SIM",
-    "ManifestOntologyProvider",
     "OntologyIndex",
-    "OntologyLabelExtractor",
-    "OntologyLoader",
-    "OntologyManifest",
-    "OntologyProvider",
-    "OntologyRegistry",
-    "OntologyRouter",
     "OntologyTerm",
-    "extract_ontology_labels",
+    "RdfOntologyManifest",
     "load_ontology_index",
     "load_ontology_terms",
+    "load_rdf_ontology_file",
     "reset_ontology_indexes",
 ]

@@ -1,21 +1,16 @@
-"""Ontology-driven relation filter — post-extraction curation.
+"""Extract-then-map — free-form predicates onto a controlled vocabulary.
 
-Drops extracted relations whose label is not part of the configured ontology's
-property labels. Matching is case- and punctuation-insensitive so that surface
-forms like ``member_of``, ``MEMBEROF`` and ``member of`` all map to the ontology
-property ``memberOf``.
+:class:`OntologyPredicateMapper` takes the predicate an extractor produced and
+maps it onto the closest ontology property, in three stages: exact normalised
+match, then a surface-alias table ("belongs to" → ``member_of``), then cosine
+similarity of character-n-gram TF-IDF vectors. Matching is case- and
+punctuation-insensitive, so ``member_of``, ``MEMBEROF`` and ``member of`` all
+reach the same property.
 
-An empty allowlist disables the filter (pass-through), so extraction modes that
-do not constrain relations behave as before.
-
-Extract-then-map
-~~~~~~~~~~~~~~~~
-:class:`OntologyPredicateMapper` extends the basic filter with an embedding
-similarity step: when a free-form predicate does not match any controlled
-vocabulary entry by exact normalised comparison, it is mapped to the closest
-ontology property using cosine similarity of character-n-gram TF-IDF vectors
-(no external embedding service required).  Predicates that score below
-``min_similarity`` are dropped as unmappable.
+The whole path is local — no embedding service is involved. Predicates scoring
+below ``min_similarity`` are reported as unmappable, and an empty label list
+yields a mapper that maps nothing, so extraction modes that do not constrain
+relations are unaffected.
 """
 
 from __future__ import annotations
@@ -83,47 +78,18 @@ def _cosine(a: dict[str, float], b: dict[str, float]) -> float:
 
 def _build_idf(corpus: list[str], n: int = 3) -> dict[str, float]:
     """Compute IDF weights from a corpus of strings (character n-grams)."""
-    N = len(corpus)
-    if N == 0:
+    total = len(corpus)
+    if total == 0:
         return {}
     df: Counter[str] = Counter()
     for doc in corpus:
         df.update(set(_char_ngrams(doc, n)))
-    return {tok: math.log(N / (count + 1)) + 1.0 for tok, count in df.items()}
+    return {tok: math.log(total / (count + 1)) + 1.0 for tok, count in df.items()}
 
 
 # ---------------------------------------------------------------------------
 # Core filter
 # ---------------------------------------------------------------------------
-
-
-class RelationOntologyFilter:
-    """Keep only relations whose label matches an allowed ontology property.
-
-    Args:
-        allowed_labels: Ontology property labels. An empty list yields an
-            inactive (pass-through) filter.
-    """
-
-    def __init__(self, allowed_labels: list[str]) -> None:
-        self._allowed = {_normalize(label) for label in allowed_labels if _normalize(label)}
-
-    @property
-    def active(self) -> bool:
-        """Whether the filter constrains anything (False = pass-through)."""
-        return bool(self._allowed)
-
-    def is_allowed(self, label: str) -> bool:
-        """Return True if *label* maps to an allowed property (or filter inactive)."""
-        if not self.active:
-            return True
-        return _normalize(label) in self._allowed
-
-    def filter(self, relations: list[dict[str, Any]], label_key: str) -> list[dict[str, Any]]:
-        """Return only relations whose ``label_key`` value is allowed."""
-        if not self.active:
-            return relations
-        return [r for r in relations if self.is_allowed(r.get(label_key, ""))]
 
 
 # ---------------------------------------------------------------------------
@@ -253,9 +219,7 @@ class OntologyPredicateMapper:
         # Stage 2: surface alias lookup (score = 0.95 to distinguish from exact)
         if norm in self._alias_to_label:
             canonical = self._alias_to_label[norm]
-            log.debug(
-                "Predicate '%s' alias-mapped → '%s' (score=0.95)", predicate, canonical
-            )
+            log.debug("Predicate '%s' alias-mapped → '%s' (score=0.95)", predicate, canonical)
             return canonical, 0.95
 
         # Stage 3: character-n-gram TF-IDF cosine similarity
@@ -310,40 +274,3 @@ class OntologyPredicateMapper:
                 mapped["_map_score"] = round(score, 4)
             result.append(mapped)
         return result
-
-
-def build_predicate_mapper(
-    ontology_id: str = "personal",
-    min_similarity: float = _DEFAULT_MIN_SIMILARITY,
-) -> OntologyPredicateMapper:
-    """Build an :class:`OntologyPredicateMapper` from a bundled ontology.
-
-    Falls back to an empty mapper (no constraints) when the ontology cannot be
-    loaded, so the pipeline never fails due to a missing ontology asset.
-    """
-    from graphknows.ontology.loader import OntologyLoader
-
-    try:
-        manifest = OntologyLoader().load(ontology_id)
-        return OntologyPredicateMapper(manifest.property_labels, min_similarity=min_similarity)
-    except (KeyError, FileNotFoundError) as exc:
-        log.warning(
-            "Predicate mapper inactive — ontology '%s' unavailable: %s", ontology_id, exc
-        )
-        return OntologyPredicateMapper([], min_similarity=min_similarity)
-
-
-def build_relation_filter(ontology_id: str = "schema-org") -> RelationOntologyFilter:
-    """Build a relation filter from a bundled ontology's property labels.
-
-    Falls back to an inactive (pass-through) filter when the ontology cannot be
-    loaded, so ingestion never fails because of a missing ontology asset.
-    """
-    from graphknows.ontology.loader import OntologyLoader
-
-    try:
-        manifest = OntologyLoader().load(ontology_id)
-    except (KeyError, FileNotFoundError) as exc:
-        log.warning("Relation filter inactive — ontology '%s' unavailable: %s", ontology_id, exc)
-        return RelationOntologyFilter([])
-    return RelationOntologyFilter(manifest.property_labels)
