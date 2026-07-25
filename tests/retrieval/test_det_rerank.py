@@ -60,9 +60,9 @@ def test_rerank_raises_when_model_absent():
         patch.object(rerank_mod, "_load_model", side_effect=RuntimeError("model unavailable")),
         patch.object(rerank_mod, "_model", None),
         patch.object(rerank_mod, "_model_loaded", False),
+        pytest.raises(RuntimeError),
     ):
-        with pytest.raises(RuntimeError):
-            rerank("what is hello world", candidates, top_k=2)
+        rerank("what is hello world", candidates, top_k=2)
 
 
 def test_rerank_empty_candidates_returns_empty():
@@ -121,6 +121,37 @@ def test_bm25_fallback_ranks_exact_match_above_nonmatch():
     ranked = _bm25_rank(query_tokens, chunks)
     assert len(ranked) >= 1
     assert ranked[0][1]["chunk_id"] == "c_match"
+
+
+def test_bm25_keeps_matches_whose_okapi_score_is_negative():
+    """A common query term must not empty the channel.
+
+    Regression: `_bm25_rank` filtered on `score > 0.0`, which is equivalent to
+    "contains a query term" only for the fallback scorer, whose IDF
+    (log((N+1)/(df+1)) + 1.0) is always positive. BM25Okapi's IDF is
+    log((N - df + 0.5)/(df + 0.5)) and goes NEGATIVE once a term appears in more
+    than about half the corpus — so every genuine match was discarded and the
+    channel returned nothing.
+
+    The bug was unreachable until `rank-bm25` was declared as a dependency:
+    undeclared meant uninstalled, so `_HAS_BM25` was always False and only the
+    fallback ever ran. Here "session" appears in every document, driving its IDF
+    negative under Okapi.
+    """
+    query_tokens = ["session", "violin"]
+    chunks = [
+        {"chunk_id": "c_both", "text": "session about the violin recital"},
+        {"chunk_id": "c_common", "text": "session about the weather"},
+        {"chunk_id": "c_other", "text": "session about lunch plans"},
+    ]
+
+    ranked = _bm25_rank(query_tokens, chunks)
+
+    ids = [c["chunk_id"] for _, c in ranked]
+    assert ids, "every document contains a query term — the channel must not be empty"
+    assert set(ids) == {"c_both", "c_common", "c_other"}
+    # The doc matching the discriminative term ranks first.
+    assert ids[0] == "c_both"
 
 
 def test_bm25_fallback_returns_empty_on_no_match():

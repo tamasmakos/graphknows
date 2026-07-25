@@ -54,12 +54,12 @@ from graphknows.storage.embedder import embed
 # Optional BM25 import — lazy, graceful fallback to tf-style scoring
 # ---------------------------------------------------------------------------
 try:
-    from rank_bm25 import BM25Okapi as _BM25  # type: ignore[import-untyped]
+    from rank_bm25 import BM25Okapi as _BM25Okapi  # type: ignore[import-untyped]
 
     _HAS_BM25 = True
 except ImportError:
     _HAS_BM25 = False
-    _BM25 = None  # type: ignore[assignment,misc]
+    _BM25Okapi = None  # type: ignore[assignment,misc]
 
 log = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ def _bm25_rank(
     tokenised = [re.findall(r"[a-z0-9][a-z0-9']*", (c.get("text") or "").lower()) for c in chunks]
 
     if _HAS_BM25:
-        bm25 = _BM25(tokenised)
+        bm25 = _BM25Okapi(tokenised)
         scores = bm25.get_scores(query_tokens).tolist()
     else:
         # Fallback: normalised TF with IDF approximation.
@@ -116,8 +116,22 @@ def _bm25_rank(
             sc = sum(idf_map.get(qt, 0.0) * tf.get(qt, 0.0) / length for qt in query_tokens)
             scores.append(sc)
 
-    paired = sorted(zip(scores, chunks, strict=False), key=lambda x: -x[0])
-    return [(s, c) for s, c in paired if s > 0.0]
+    # Keep chunks that actually contain a query term, NOT chunks with a positive
+    # score. Those are the same thing only for the fallback, whose IDF
+    # (log((N+1)/(df+1)) + 1.0) is always positive. BM25Okapi's IDF is
+    # log((N - df + 0.5)/(df + 0.5)), which goes NEGATIVE once a term appears in
+    # more than about half the corpus — routine for the small candidate pools
+    # this is called with. A `score > 0` filter therefore discarded genuine
+    # matches, and could empty the channel entirely.
+    #
+    # This branch had never executed: rank-bm25 was an undeclared dependency and
+    # so was never installed, meaning `_HAS_BM25` was always False.
+    matched = [bool(set(query_tokens) & set(toks)) for toks in tokenised]
+    paired = sorted(
+        ((s, c) for s, c, hit in zip(scores, chunks, matched, strict=False) if hit),
+        key=lambda x: -x[0],
+    )
+    return paired
 
 
 def _scope_to_state(scope: str) -> str | None:
@@ -561,7 +575,13 @@ class DETRetriever(BaseGraphRetriever):
         for rank, (bm25_score, c) in enumerate(ranked[:top_k]):
             cid = c["chunk_id"]
             # BM25 score folds in as a tiebreaker on top of RRF rank weight.
-            rrf = rrf_score(rank, boost=3.0) + FUSION_ALPHA * bm25_score
+            # Clamped at 0: BM25Okapi's IDF goes negative for terms appearing in
+            # more than ~half the pool, and a negative addend would *demote* a
+            # chunk below worse-ranked ones — inverting the tiebreaker instead of
+            # breaking ties. Ties at 0 keep the RRF rank order intact. Could not
+            # arise before `rank-bm25` was declared, since the fallback scorer's
+            # IDF is always positive.
+            rrf = rrf_score(rank, boost=3.0) + FUSION_ALPHA * max(0.0, bm25_score)
             result[cid] = (
                 rrf,
                 {
