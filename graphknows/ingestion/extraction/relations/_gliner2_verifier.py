@@ -9,13 +9,15 @@ Apache-2.0, because the ``gliner2.verifiers`` module ships in no PyPI release
 weights. Local change: ``_bucket_distance`` clamps its return to
 ``len(buckets) - 1`` — upstream returns ``len(buckets)``, which overflows the
 ``nn.Embedding(len(buckets), 32)`` and crashes ``verify()`` for any head/tail
-pair more than ``max(buckets)`` tokens apart.
+pair more than ``max(buckets)`` tokens apart. Type annotations were also added to
+satisfy ``mypy --strict``; they change no behaviour.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -33,12 +35,12 @@ class VerifierConfig:
     encoder_name: str = "microsoft/deberta-v3-base"
     distance_buckets: list[int] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.distance_buckets is None:
             self.distance_buckets = [0, 5, 10, 20, 50]
 
 
-class RelationVerifierModel(nn.Module):
+class RelationVerifierModel(nn.Module):  # type: ignore[misc]
     """MLP model for relation verification."""
 
     def __init__(self, config: VerifierConfig):
@@ -89,11 +91,11 @@ class RelationVerifier:
     def __init__(
         self,
         model: RelationVerifierModel,
-        encoder,
-        tokenizer,
+        encoder: Any,
+        tokenizer: Any,
         config: VerifierConfig,
         device: str | None = None,
-    ):
+    ) -> None:
         self.model = model
         self.encoder = encoder
         self.tokenizer = tokenizer
@@ -111,7 +113,7 @@ class RelationVerifier:
         model_id: str = "oneryalcin/gliner2-relation-verifier",
         threshold: float = 0.55,
         device: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> RelationVerifier:
         """Load verifier from HuggingFace Hub.
 
@@ -244,7 +246,7 @@ class RelationVerifier:
         relation: str,
         embeddings: torch.Tensor,
         offset_mapping: torch.Tensor,
-        rel_emb: torch.Tensor = None,
+        rel_emb: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Build feature vector for verification."""
         # Get token indices (first token of span, matching training)
@@ -325,7 +327,7 @@ class RelationVerifier:
         # Cache relation embeddings
         rel_embeddings = {}
 
-        verified = {}
+        verified: dict[str, list] = {}
         for rel_type, instances in relations.items():
             verified[rel_type] = []
 
@@ -376,6 +378,6 @@ class RelationVerifier:
 
         return verified
 
-    def set_threshold(self, threshold: float):
+    def set_threshold(self, threshold: float) -> None:
         """Update verification threshold."""
         self.config.threshold = threshold
