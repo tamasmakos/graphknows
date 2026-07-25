@@ -10,7 +10,6 @@ export set so an accidental addition or removal is a deliberate, reviewed change
 from __future__ import annotations
 
 import importlib
-import warnings
 
 import graphknows
 
@@ -52,7 +51,7 @@ def test_memory_is_the_facade() -> None:
 
 def test_store_protocols_are_public() -> None:
     base = importlib.import_module("graphknows.storage.base")
-    for name in ("IEmbedder", "IGraphStore", "ISTMStore", "ILTMStore"):
+    for name in ("IEmbedder", "IGraphStore"):
         assert hasattr(base, name)
     relations = importlib.import_module("graphknows.ingestion.extraction.relations.base")
     assert hasattr(relations, "IRelationExtractor")

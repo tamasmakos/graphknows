@@ -3,8 +3,9 @@
 Tests cover:
 1. filter_by_validity_window — pure-logic unit tests (no DB required).
 2. Supersedence logic — verify that older single-valued edges are tombstoned
-   in the LTM write path (mocked ArcadeDB client).
-3. STM read_session_subgraph — bi-temporal fields forwarded to LTM flush.
+   in :class:`GraphStore.write_relation` (mocked ArcadeDB client). This used to
+   guard ``ArcadeDBLTMStore``; the retired two-database split is gone and the
+   same supersedence behaviour now lives on the single golden-layer store.
 
 All tests are fast and run without a live ArcadeDB instance.
 Integration tests that require a running database are marked
@@ -13,18 +14,17 @@ Integration tests that require a running database are marked
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from graphknows.channels.temporal import filter_by_validity_window
 
-
 # ---------------------------------------------------------------------------
 # filter_by_validity_window — window filter logic (pure Python)
 # ---------------------------------------------------------------------------
+
 
 def _edge(
     valid_at: str | None = None,
@@ -147,127 +147,73 @@ class TestFilterByValidityWindow:
 
 
 # ---------------------------------------------------------------------------
-# Supersedence logic — LTM store write path (mocked)
+# Supersedence logic — GraphStore.write_relation (mocked)
 # ---------------------------------------------------------------------------
 
-class TestLTMSupersedence:
-    """Verify supersedence logic in ArcadeDBLTMStore via mocked client."""
+
+class TestGraphStoreSupersedence:
+    """Verify supersedence logic in GraphStore.write_relation via mocked client.
+
+    Formerly ``TestLTMSupersedence`` against the retired ``ArcadeDBLTMStore``.
+    The behaviour under test — a new fact for a single-valued predicate
+    tombstones the previous current edge — now lives on
+    :meth:`GraphStore._supersede_edge` / :meth:`GraphStore.write_relation`.
+    """
 
     def _make_store(self) -> Any:
-        """Return an ArcadeDBLTMStore with a mocked ArcadeDBClient."""
-        from graphknows.storage.arcadedb.ltm_store import ArcadeDBLTMStore
+        """Return a GraphStore with a mocked ArcadeDBClient."""
+        from graphknows.storage.arcadedb.graph_store import GraphStore
 
         client = MagicMock()
         client.command = AsyncMock(return_value=[])
         client.query = AsyncMock(return_value=[])
         client.create_database = AsyncMock(return_value=None)
-        store = ArcadeDBLTMStore(client=client)
-        # Pre-populate declared edge types so DDL is skipped.
-        store._declared_edge_types = {"LIVES_IN", "WORKS_AS"}
+        store = GraphStore(client=client, db="mem")
         return store, client
 
     @pytest.mark.asyncio
     async def test_supersedence_called_for_single_valued_predicate(self) -> None:
-        """_supersede_ltm_edge is called for LIVES_IN before upserting the new edge."""
-        store, client = self._make_store()
+        """_supersede_edge is called for LIVES_IN before upserting the new edge."""
+        store, _client = self._make_store()
 
-        stm_data = {
-            "entities": [],
-            "relation_edges": [
-                {
-                    "source": "Alice",
-                    "relation": "LIVES_IN",
-                    "target": "Berlin",
-                    "valid_at": "2024-01-01",
-                }
-            ],
-            # Minimal keys so write_session_subgraph doesn't blow up.
-            "files": [],
-            "chunks": [],
-            "chunk_entity_edges": [],
-            "dialogs": [],
-            "turns": [],
-            "next_edges": [],
-            "turn_entity_edges": [],
-        }
-
-        with patch.object(store, "_supersede_ltm_edge", new=AsyncMock()) as mock_sup:
-            await store.write_session_subgraph("sess1", stm_data)
+        with patch.object(store, "_supersede_edge", new=AsyncMock()) as mock_sup:
+            await store.write_relation("Alice", "LIVES_IN", "Berlin", valid_at="2024-01-01")
             mock_sup.assert_called_once()
             args = mock_sup.call_args
-            # First positional arg: safe_rel label; second: src; third: tgt
+            # (predicate, src_norm, dst_norm, now)
             assert args[0][0] == "LIVES_IN"
-            assert args[0][1] == "Alice"
-            assert args[0][2] == "Berlin"
+            assert args[0][1] == "alice"
+            assert args[0][2] == "berlin"
 
     @pytest.mark.asyncio
     async def test_supersedence_not_called_for_multi_valued_predicate(self) -> None:
-        """_supersede_ltm_edge is NOT called for a multi-valued predicate like KNOWS."""
-        store, client = self._make_store()
-        store._declared_edge_types.add("KNOWS")
+        """_supersede_edge is NOT called for a multi-valued predicate like KNOWS."""
+        store, _client = self._make_store()
 
-        stm_data = {
-            "entities": [],
-            "relation_edges": [
-                {"source": "Alice", "relation": "KNOWS", "target": "Bob"}
-            ],
-            "files": [],
-            "chunks": [],
-            "chunk_entity_edges": [],
-            "dialogs": [],
-            "turns": [],
-            "next_edges": [],
-            "turn_entity_edges": [],
-        }
-
-        with patch.object(store, "_supersede_ltm_edge", new=AsyncMock()) as mock_sup:
-            await store.write_session_subgraph("sess1", stm_data)
+        with patch.object(store, "_supersede_edge", new=AsyncMock()) as mock_sup:
+            await store.write_relation("Alice", "KNOWS", "Bob")
             mock_sup.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_temporal_properties_written_on_relation_edge(self) -> None:
-        """valid_at and created_at are included in the SET clause for relation edges."""
+        """valid_at is included in the SET clause for relation edges."""
         store, client = self._make_store()
-        store._declared_edge_types.add("WORKS_AT")
 
-        stm_data = {
-            "entities": [],
-            "relation_edges": [
-                {
-                    "source": "Bob",
-                    "relation": "WORKS_AT",
-                    "target": "Acme",
-                    "valid_at": "2023-03-15",
-                }
-            ],
-            "files": [],
-            "chunks": [],
-            "chunk_entity_edges": [],
-            "dialogs": [],
-            "turns": [],
-            "next_edges": [],
-            "turn_entity_edges": [],
-        }
-
-        await store.write_session_subgraph("sess1", stm_data)
+        await store.write_relation("Bob", "WORKS_AT", "Acme", valid_at="2023-03-15")
 
         # Inspect all command calls and look for one that sets valid_at.
         all_calls = client.command.call_args_list
-        # The cypher string for relation edges contains 'valid_at'.
-        rel_edge_calls = [
-            c for c in all_calls
-            if "valid_at" in str(c)
-        ]
+        rel_edge_calls = [c for c in all_calls if "valid_at" in str(c)]
         assert rel_edge_calls, "Expected at least one command call setting valid_at"
 
     @pytest.mark.asyncio
-    async def test_supersede_ltm_edge_issues_correct_cypher(self) -> None:
-        """_supersede_ltm_edge runs a Cypher SET r.invalid_at on existing edges."""
+    async def test_supersede_edge_issues_correct_cypher(self) -> None:
+        """_supersede_edge runs a Cypher SET r.invalid_at on existing edges."""
         store, client = self._make_store()
         client.command = AsyncMock(return_value=[])
 
         now = "2024-06-01T00:00:00"
-        await store._supersede_ltm_edge("LIVES_IN", "Alice", "Paris", now)
+        await store._supersede_edge("LIVES_IN", "alice", "paris", now)
 
         assert client.command.called
         call_args = client.command.call_args
@@ -275,47 +221,3 @@ class TestLTMSupersedence:
         cypher = call_args[0][1]
         assert "invalid_at" in cypher
         assert "is_current" in cypher
-
-
-# ---------------------------------------------------------------------------
-# STM read_session_subgraph — bi-temporal field forwarding
-# ---------------------------------------------------------------------------
-
-class TestSTMBitemporalFieldForwarding:
-    """Verify that read_session_subgraph forwards valid_at / created_at."""
-
-    @pytest.mark.asyncio
-    async def test_relation_edges_include_valid_at(self) -> None:
-        """read_session_subgraph should include valid_at in relation_edges output."""
-        from graphknows.storage.arcadedb.stm_store import ArcadeDBSTMStore
-
-        client = MagicMock()
-        # Minimal stubs for all queries: return empty except relation_rows.
-        relation_rows = [
-            {
-                "source": "Alice",
-                "relation": "LIVES_IN",
-                "target": "London",
-                "confidence": 0.9,
-                "valid_at": "2023-01-01",
-                "created_at": "2023-01-02",
-            }
-        ]
-
-        async def _query(db: str, cypher: str, params: dict | None = None) -> list[dict]:
-            # Return relation rows for the relation query, empty for everything else.
-            if "is_current = true" in cypher:
-                return relation_rows
-            return []
-
-        client.query = _query
-        store = ArcadeDBSTMStore(client=client)
-
-        graph = await store.read_session_subgraph("sess1")
-        rel_edges = graph["relation_edges"]
-        assert len(rel_edges) == 1
-        edge = rel_edges[0]
-        assert edge["valid_at"] == "2023-01-01"
-        assert edge["created_at"] == "2023-01-02"
-        assert edge["source"] == "Alice"
-        assert edge["target"] == "London"

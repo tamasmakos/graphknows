@@ -159,7 +159,7 @@ async def write_entity_nodes_and_edges(
     """Write entity nodes and their source edge. Returns the entity count.
 
     Args:
-        stm: ArcadeDBSTMStore (or ISessionDb) for graph writes.
+        stm: GraphStore for graph writes.
         session_id: Session namespace.
         entities: List of entity dicts with "name", optional "type" and "score".
         edge_writer: Async callable(ent_dict) that writes the edge linking the
@@ -187,7 +187,7 @@ async def write_relation_edges(
     """Write relation edges from extraction results.
 
     Args:
-        stm: ArcadeDBSTMStore (or ISessionDb) for graph writes.
+        stm: GraphStore for graph writes.
         session_id: Session namespace.
         relations: List of relation dicts with "head", "relation", "tail", optional "score".
     """

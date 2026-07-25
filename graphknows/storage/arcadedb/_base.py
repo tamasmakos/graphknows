@@ -1,10 +1,10 @@
 """Shared lifecycle for ArcadeDB stores that own exactly one database.
 
-``GraphStore``, ``ArcadeDBLTMStore``, and ``ArcadeDBSTMStore`` each repeated the
-same block verbatim: the client/database accessors, connect/close/drop, the
-query/command pair, and a DDL loop that treats "already exists" as success. The
-vector store deliberately does not inherit from this — it spans two databases,
-so the single-``_db`` contract here would not fit it.
+``GraphStore`` (and the retired two-database-split stores before it) repeated
+the same block verbatim: the client/database accessors, connect/close/drop,
+the query/command pair, and a DDL loop that treats "already exists" as
+success. The vector store deliberately does not inherit from this — it spans
+two databases, so the single-``_db`` contract here would not fit it.
 """
 
 from __future__ import annotations
