@@ -68,14 +68,24 @@ def _source_digest(terms: list[OntologyTerm]) -> str:
 
 
 def _cache_key(digest: str) -> str:
-    """Invalidation key: embed model + output dimension + ontology content."""
+    """Invalidation key: embed model + dimension + encoding + ontology content.
+
+    The encoding component is not cosmetic. The key previously captured only
+    *which* model and *what* content, never *how* the text was encoded — so when
+    the declared model suffix started being applied (see
+    ``graphknows.storage.embedder._model_suffix``), the key was unchanged and a
+    matrix built by the old encoding was silently reused against vectors from the
+    new one. Every score was then meaningless while looking perfectly plausible.
+    """
     from graphknows.settings import GraphKnowsSettings
-    from graphknows.storage.embedder import embed_dim
+    from graphknows.storage.embedder import _model_suffix, embed_dim
 
     s = GraphKnowsSettings()
     model = re.sub(r"[^A-Za-z0-9._-]", "_", s.embed_model or "local")
     dim = s.embed_dimensions or embed_dim()
-    return f"ontology_{model}_{dim}_{digest}"
+    suffix = _model_suffix(s.embed_model or "")
+    enc = hashlib.sha256(suffix.encode("utf-8")).hexdigest()[:8] if suffix else "plain"
+    return f"ontology_{model}_{dim}_{enc}_{digest}"
 
 
 def _embed_norm(texts: list[str]) -> np.ndarray:

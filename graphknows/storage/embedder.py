@@ -19,9 +19,9 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-# Default output dimension (zeroentropy/zembed-1-embedding). Updated when a
-# local model loads; only used to shape the empty-input result.
-EMBED_DIM: int = 2560
+# Default output dimension, matching settings.embed_model (BAAI/bge-small-en-v1.5).
+# Updated when a local model loads; only used to shape the empty-input result.
+EMBED_DIM: int = 384
 
 _MAX_CHARS_PER_TEXT = 20_000  # ~5000 tokens; headroom below typical 8192-token limits
 
@@ -44,9 +44,18 @@ def _local_model(model_name: str) -> Any:
     try:
         from sentence_transformers import SentenceTransformer
     except ModuleNotFoundError as exc:
-        from graphknows.exceptions import MissingExtraError
+        # sentence-transformers is a BASE dependency, not an extra: the batteries
+        # -included install promises working local embeddings. Its absence means a
+        # broken environment, so point at that rather than at an extra to install
+        # (there is no 'local-embeddings' extra, and suggesting one sends people
+        # down a dead end).
+        from graphknows.exceptions import BrokenInstallError
 
-        raise MissingExtraError("Local embeddings", "local-embeddings") from exc
+        raise BrokenInstallError(
+            "Local embeddings",
+            "sentence-transformers",
+            hint="To use a remote embedding endpoint instead, set GRAPHKNOWS_EMBED_API_BASE.",
+        ) from exc
 
     import torch
 
@@ -85,8 +94,52 @@ def _local_model(model_name: str) -> Any:
     return model
 
 
+@functools.lru_cache(maxsize=8)
+def _model_suffix(model_name: str) -> str:
+    r"""The ``suffix`` a model declares in ``config_sentence_transformers.json``.
+
+    sentence-transformers applies ``prompts`` — which are **prefixes only** — and
+    has no suffix support (5.6.1: no ``suffix`` attribute, no mention in
+    ``encode``). A model that declares one therefore never gets it.
+
+    That is harmless for mean-pooled models and severe for last-token pooling:
+    the pooled vector is read at the final token, so without the declared
+    sentinel the model pools at whatever content token happens to end the text.
+    zembed-1 (``pooling_mode_lasttoken``, ``suffix: "<|im_end|>\n"``) inverted
+    ontology class matching outright — ``Possession`` ranked 11/11 for a sentence
+    about buying a motorcycle, behind ``Emotion``.
+
+    Returns "" for the common case (bge-small declares no suffix) and for any
+    lookup failure — embedding is on the ingest hot path and must not raise here.
+    """
+    import json
+    from pathlib import Path
+
+    config = Path(model_name) / "config_sentence_transformers.json"
+    if not config.is_file():
+        try:
+            from huggingface_hub import try_to_load_from_cache
+
+            cached = try_to_load_from_cache(model_name, "config_sentence_transformers.json")
+        except Exception:  # offline, bad repo id, hub API change
+            return ""
+        if not isinstance(cached, str):
+            return ""
+        config = Path(cached)
+    try:
+        declared = json.loads(config.read_text(encoding="utf-8")).get("suffix")
+    except (OSError, ValueError):
+        return ""
+    return str(declared) if declared else ""
+
+
 def _embed_local(texts: list[str], model_name: str) -> np.ndarray:
     model = _local_model(model_name)
+    # Applied here rather than at the call sites so every embedding — ingest,
+    # query, ontology gloss — is encoded the way the model expects.
+    suffix = _model_suffix(model_name)
+    if suffix:
+        texts = [t + suffix for t in texts]
     arr = model.encode(texts, normalize_embeddings=True, convert_to_numpy=True)
     return np.asarray(arr, dtype=np.float32)
 

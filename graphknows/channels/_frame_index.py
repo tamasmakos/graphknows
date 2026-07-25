@@ -11,6 +11,7 @@ query embedding) and returns the top-k frames by cosine. Absolute cosines are lo
 under the remote embedder (~0.30-0.39), so callers rank top-k rather than gate on
 an absolute threshold.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,14 +45,24 @@ def _cache_dir() -> Path:
 
 
 def _cache_key() -> str:
-    """Invalidation key: embed model + output dimension (a config change rebuilds)."""
+    """Invalidation key: embed model + dimension + encoding (a change rebuilds).
+
+    The encoding component mirrors the ontology catalog's: the key must change
+    when the *way* text is encoded changes, not only when the model does, or a
+    matrix built under the old encoding is reused against new vectors. See
+    ``graphknows.storage.embedder._model_suffix``.
+    """
+    import hashlib
+
     from graphknows.settings import GraphKnowsSettings
-    from graphknows.storage.embedder import embed_dim
+    from graphknows.storage.embedder import _model_suffix, embed_dim
 
     s = GraphKnowsSettings()
     model = re.sub(r"[^A-Za-z0-9._-]", "_", s.embed_model or "local")
     dim = s.embed_dimensions or embed_dim()
-    return f"frames_{model}_{dim}"
+    suffix = _model_suffix(s.embed_model or "")
+    enc = hashlib.sha256(suffix.encode("utf-8")).hexdigest()[:8] if suffix else "plain"
+    return f"frames_{model}_{dim}_{enc}"
 
 
 def _build_matrix() -> tuple[list[str], np.ndarray]:
@@ -189,7 +200,7 @@ async def ensure_frame_catalog(client: Any, db: str = _CATALOG_DB, dims: int | N
         rows = await client.query(db, "SELECT count(*) AS c FROM FRAME_DEF", language="sql")
         if rows and int(rows[0].get("c") or 0) >= len(names):
             return int(rows[0]["c"])
-    except Exception:  # noqa: BLE001 — FRAME_DEF type not created yet
+    except Exception:
         pass
 
     ddl = [
@@ -204,7 +215,7 @@ async def ensure_frame_catalog(client: Any, db: str = _CATALOG_DB, dims: int | N
     for stmt in ddl:
         try:
             await client.command(db, stmt, language="sql")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if "already exists" not in str(exc).lower():
                 raise
 
