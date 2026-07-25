@@ -31,9 +31,9 @@ class DocxParser(BaseParser):
         try:
             from docx import Document
         except ModuleNotFoundError as exc:
-            from graphknows.exceptions import MissingExtraError
+            from graphknows.exceptions import BrokenInstallError
 
-            raise MissingExtraError("DOCX parsing", "parsers") from exc
+            raise BrokenInstallError("DOCX parsing", "python-docx") from exc
 
         text_parts = self._markdown_lines(Document(io.BytesIO(data)))
         full_text = "\n\n".join(text_parts)

@@ -17,20 +17,20 @@ try:
     from starlette.responses import JSONResponse, Response
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
-except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on core-only installs
-    from graphknows.exceptions import MissingExtraError
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broken installs
+    from graphknows.exceptions import BrokenInstallError
 
-    raise MissingExtraError("The Memory Mirror web server", "web") from exc
+    raise BrokenInstallError("The Memory Mirror web server", "starlette") from exc
 
+from graphknows.links import DEFAULT_PORT
+from graphknows.memory import Memory
 from graphknows.settings import GraphKnowsSettings
 from graphknows.storage import (
     build_arcadedb_client,
     build_arcadedb_ltm_store,
     build_arcadedb_stm_store,
 )
-from graphknows.links import DEFAULT_PORT
 from graphknows.storage.namespace import db_names, namespaces_from_databases, resolve
-from graphknows.memory import Memory
 
 _settings: GraphKnowsSettings | None = None
 # One Memory per namespace — the web server browses many tenants in one process.
