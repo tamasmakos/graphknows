@@ -152,7 +152,7 @@ async def _golden_graph(
     RETURN e.name AS id,
            e.name AS label,
            coalesce(e.type, 'Entity') AS type,
-           e.community_id AS topic,
+           e.community_id AS community_id,
            e.pagerank AS pagerank
     ORDER BY coalesce(pagerank, 0.0) DESC, label
     LIMIT $limit
@@ -173,11 +173,32 @@ async def _golden_graph(
                     "id": node_id,
                     "label": _string(_row_value(row, "label") or node_id),
                     "type": _string(_row_value(row, "type"), "Entity"),
-                    "topic": _row_value(row, "topic"),
+                    "topic": _row_value(row, "community_id"),
                     "topic_summary": None,
                     "pagerank": _number(_row_value(row, "pagerank"), 1.0),
                 }
             )
+
+        # Prefer real TOPIC membership (ENTITY-[:IN_TOPIC]->TOPIC) over the
+        # community_id fallback above, when the topic layer has been built.
+        if nodes:
+            topic_rows = await store.query(
+                "MATCH (e:ENTITY)-[:IN_TOPIC]->(t:TOPIC) "
+                "WHERE e.name IN $names "
+                "RETURN e.name AS name, t.topic_id AS topic_id, "
+                "coalesce(t.summary, t.title) AS topic_summary",
+                names=list(known_ids),
+            )
+            by_name = {
+                _string(_row_value(r, "name")): r
+                for r in topic_rows
+                if _string(_row_value(r, "name"))
+            }
+            for node in nodes:
+                match = by_name.get(node["id"])
+                if match is not None:
+                    node["topic"] = _row_value(match, "topic_id")
+                    node["topic_summary"] = _row_value(match, "topic_summary")
 
         edge_cypher = """
         MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)

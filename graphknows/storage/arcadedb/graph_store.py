@@ -857,10 +857,16 @@ class GraphStore(ArcadeStoreBase):
         return len(inst_rows)
 
     async def write_topics(self, topics: list[dict[str, Any]]) -> int:
-        """Upsert TOPIC vertices + HAS_TOPIC edges from their evidence chunks.
+        """Upsert TOPIC vertices + HAS_TOPIC/IN_TOPIC edges.
 
         Each ``topics`` item: ``{topic_id, summary, modularity, embedding?,
-        chunk_ids?: [str, ...], title?, keywords?: [str, ...], coherence?}``.
+        chunk_ids?: [str, ...], title?, keywords?: [str, ...], coherence?,
+        entities?: [(name, pagerank), ...]}``.
+
+        ``chunk_ids`` -> ``CHUNK-[:HAS_TOPIC]->TOPIC`` (evidence, what the
+        retrieval channel traverses). ``entities`` -> ``ENTITY-[:IN_TOPIC]->TOPIC``
+        (membership, the actual output of the clustering) — matched on
+        ``name_norm`` since that is ENTITY's unique key, not ``name``.
         """
         written = 0
         for t in topics:
@@ -889,6 +895,23 @@ class GraphStore(ArcadeStoreBase):
                     "MERGE (c)-[:HAS_TOPIC]->(tp)",
                     tid=tid,
                     cids=chunk_ids,
+                )
+            entity_rows = [
+                {"nn": _name_norm(str(name)), "pr": float(pr or 0.0)}
+                for name, pr in (t.get("entities") or [])
+                if str(name or "").strip()
+            ]
+            if entity_rows:
+                # Entities that don't resolve to an ENTITY node are skipped
+                # (MATCH, not MERGE) rather than minting a stray vertex.
+                await self.command(
+                    "MATCH (tp:TOPIC {topic_id: $tid}) "
+                    "UNWIND $rows AS row "
+                    "MATCH (e:ENTITY {name_norm: row.nn}) "
+                    "MERGE (e)-[r:IN_TOPIC]->(tp) "
+                    "SET r.pagerank = row.pr",
+                    tid=tid,
+                    rows=entity_rows,
                 )
             written += 1
         return written

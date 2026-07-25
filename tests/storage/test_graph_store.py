@@ -88,11 +88,14 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
         "MENTIONS",
         "MENTIONS_DATE",
         "HAS_TOPIC",
+        "IN_TOPIC",
         "EVOKED_BY",
         "PLAYS_ROLE",
         "FRAME_EVOKED_IN",
     ):
         assert created("EDGE", edge), f"missing edge {edge}"
+    # IN_TOPIC (ENTITY -> TOPIC) carries the cluster-membership pagerank.
+    assert "CREATE PROPERTY IN_TOPIC.pagerank IF NOT EXISTS DOUBLE" in stmts
     # Dead schema must NOT be recreated
     for vertex in ("DIALOG", "TURN", "SEGMENT", "DOC", "SESSIONENTITY", "COMMUNITY"):
         assert not created("VERTEX", vertex), f"dead vertex {vertex} present"
@@ -101,7 +104,6 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
         "HAS_TURN",
         "HAS_ENTITY",
         "NEXT",
-        "IN_TOPIC",
         "CO_OCCURS",
         "APPEARED_IN",
         "CONTAINS_DOC",
@@ -181,6 +183,49 @@ async def test_write_entities_bulk_noop_on_empty() -> None:
     store = GraphStore(client=client)
     await store.write_entities_bulk(session_id="s1", chunk_id="c1", entities=[])
     client.command.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Topic writes — HAS_TOPIC (chunk evidence) + IN_TOPIC (entity membership)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_topics_emits_in_topic_edges_with_pagerank_on_name_norm() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    written = await store.write_topics(
+        [
+            {
+                "topic_id": "topic:abc:1",
+                "summary": "summary",
+                "modularity": 0.42,
+                "title": "Melanie · Camping",
+                "chunk_ids": ["c1"],
+                "entities": [("Melanie", 0.9), ("  STRASSE  Café ", 0.3)],
+            }
+        ]
+    )
+    assert written == 1
+    stmts = _command_strings(client)
+    in_topic_call = next(c for c in client.command.await_args_list if "IN_TOPIC" in c.args[1])
+    assert "MATCH (e:ENTITY {name_norm: row.nn})" in in_topic_call.args[1]
+    assert "MERGE (e)-[r:IN_TOPIC]->(tp)" in in_topic_call.args[1]
+    assert "SET r.pagerank = row.pr" in in_topic_call.args[1]
+    rows = in_topic_call.kwargs["params"]["rows"]
+    by_nn = {r["nn"]: r["pr"] for r in rows}
+    # casefold (not lower) + whitespace collapse — same key write_entities_bulk uses.
+    assert by_nn == {"melanie": 0.9, "strasse café": 0.3}
+    # HAS_TOPIC (chunk evidence) is untouched by this change.
+    assert any("MERGE (c)-[:HAS_TOPIC]->(tp)" in s for s in stmts)
+
+
+@pytest.mark.asyncio
+async def test_write_topics_skips_in_topic_when_no_entities() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_topics([{"topic_id": "topic:abc:1", "chunk_ids": ["c1"]}])
+    assert not any("IN_TOPIC" in c.args[1] for c in client.command.await_args_list)
 
 
 # ---------------------------------------------------------------------------

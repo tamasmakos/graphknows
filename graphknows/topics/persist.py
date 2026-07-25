@@ -28,17 +28,19 @@ async def persist_topics(store: Any, topic_set: TopicSet, *, replace: bool = Tru
         await _clear(store)
     if not topic_set.topics:
         return 0
+    modularity = topic_set.metrics.get("newman_modularity")
     written = await store.write_topics(
         [
             {
                 "topic_id": t.topic_id,
                 "summary": t.summary,
-                "modularity": None,
+                "modularity": modularity,
                 "embedding": t.embedding,
                 "chunk_ids": t.chunk_ids,
                 "title": t.title,
                 "keywords": t.keywords,
                 "coherence": t.coherence,
+                "entities": t.entities,
             }
             for t in topic_set.topics
         ]

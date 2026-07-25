@@ -78,6 +78,13 @@ centroid), `coherence`, and the centroid `embedding`.
 The embedding is not optional: `TopicChannel` vector-searches `TOPIC.embedding`,
 so a topic written without one is stored but unreachable.
 
+Persistence writes two distinct edges: `CHUNK-[:HAS_TOPIC]->TOPIC` for the
+evidence chunks (what `TopicChannel` traverses), and `ENTITY-[:IN_TOPIC]->TOPIC`
+carrying `pagerank` for the cluster membership itself — the `entities` field is
+the actual output of the clustering, not a byproduct. `modularity` on every
+`TOPIC` row is the build's real Newman modularity (`newman_modularity`), shared
+across all topics from the same build.
+
 Global metrics — the numbers a sweep compares:
 
 | metric | meaning |

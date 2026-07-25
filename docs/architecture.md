@@ -89,9 +89,11 @@ they match the configured embedder.
   `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME`, `FRAME_INSTANCE`,
   `COMMUNITY`.
 - Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
-  (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL), `HAS_TOPIC`, `EVOKED_BY`
+  (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL), `HAS_TOPIC` (CHUNK→TOPIC,
+  the evidence edge retrieval traverses), `IN_TOPIC` (ENTITY→TOPIC, with a
+  `pagerank` property — the cluster membership itself), `EVOKED_BY`
   (FRAME→CHUNK), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK), `PLAYS_ROLE`
-  (FRAME_INSTANCE→ENTITY, with a `role` property), `IN_COMMUNITY`, and `REL`.
+  (FRAME_INSTANCE→ENTITY, with a `role` property), and `REL`.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
   property, not the edge type name. The vocabulary is open and mostly single-use,
   so a type-per-predicate minted hundreds of near-empty types plus a DDL

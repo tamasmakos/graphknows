@@ -709,9 +709,8 @@ class Memory:
     async def ltm_topics(self, min_entities: int = 3) -> dict[str, Any]:
         """List golden-layer TOPIC nodes with their entity membership.
 
-        TOPIC has no direct entity-membership edge, so entity_count/entity_names
-        are derived via the 2-hop path CHUNK-[:HAS_TOPIC]->TOPIC and
-        CHUNK-[:MENTIONS]->ENTITY, counting distinct entities per topic.
+        Entity membership is the direct ``ENTITY-[:IN_TOPIC]->TOPIC`` edge — the
+        actual output of the topic clustering, written by ``write_topics``.
         """
         from graphknows.storage import build_graph_store
 
@@ -719,8 +718,7 @@ class Memory:
         await store.connect()
         try:
             rows = await store.query(
-                "MATCH (c:CHUNK)-[:HAS_TOPIC]->(t:TOPIC) "
-                "MATCH (c)-[:MENTIONS]->(e:ENTITY) "
+                "MATCH (e:ENTITY)-[:IN_TOPIC]->(t:TOPIC) "
                 "WITH t, count(DISTINCT e) AS entity_count, "
                 "collect(DISTINCT e.name) AS entity_names "
                 "WHERE entity_count >= $min "
