@@ -66,22 +66,35 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
     def created(kind: str, name: str) -> bool:
         return any(s.startswith(f"CREATE {kind} TYPE {name} ") for s in type_stmts)
 
-    # Golden vertices (COMMUNITY holds native community-quality metrics — WS D3;
-    # FRAME_INSTANCE is the role-filled frame layer — WS D3)
+    # Golden vertices (FRAME_INSTANCE is the role-filled frame layer — WS D3).
+    # COMMUNITY was retired with compute_community_quality: ArcadeDB's
+    # modularityScore is untrustworthy and the topic stage's Newman modularity
+    # (graphknows.topics.metrics.newman_modularity) is the real number now.
     for vertex in (
-        "SESSION", "FILE", "CHUNK", "ENTITY", "TEMPORAL", "TOPIC", "FRAME", "COMMUNITY",
+        "SESSION",
+        "FILE",
+        "CHUNK",
+        "ENTITY",
+        "TEMPORAL",
+        "TOPIC",
+        "FRAME",
         "FRAME_INSTANCE",
     ):
         assert created("VERTEX", vertex), f"missing vertex {vertex}"
-    # Golden edges (IN_COMMUNITY links ENTITY->COMMUNITY — WS D3, no longer dead;
-    # PLAYS_ROLE / FRAME_EVOKED_IN are the FRAME_INSTANCE layer edges)
+    # Golden edges (PLAYS_ROLE / FRAME_EVOKED_IN are the FRAME_INSTANCE layer edges).
     for edge in (
-        "PART_OF", "IN_SESSION", "MENTIONS", "MENTIONS_DATE", "HAS_TOPIC", "EVOKED_BY",
-        "IN_COMMUNITY", "PLAYS_ROLE", "FRAME_EVOKED_IN",
+        "PART_OF",
+        "IN_SESSION",
+        "MENTIONS",
+        "MENTIONS_DATE",
+        "HAS_TOPIC",
+        "EVOKED_BY",
+        "PLAYS_ROLE",
+        "FRAME_EVOKED_IN",
     ):
         assert created("EDGE", edge), f"missing edge {edge}"
     # Dead schema must NOT be recreated
-    for vertex in ("DIALOG", "TURN", "SEGMENT", "DOC", "SESSIONENTITY"):
+    for vertex in ("DIALOG", "TURN", "SEGMENT", "DOC", "SESSIONENTITY", "COMMUNITY"):
         assert not created("VERTEX", vertex), f"dead vertex {vertex} present"
     for edge in (
         "HAS_CHUNK",
@@ -93,6 +106,7 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
         "APPEARED_IN",
         "CONTAINS_DOC",
         "HAS_FILE",
+        "IN_COMMUNITY",
     ):
         assert not created("EDGE", edge), f"dead edge {edge} present"
 
@@ -199,9 +213,7 @@ async def test_write_relation_evidence_append_sql_shape() -> None:
     # Golden naming: confidence / valid_at / is_current / state / source
     for fragment in ("r.confidence", "r.valid_at", "r.is_current = true", "r.state", "r.source"):
         assert fragment in merge
-    merge_call = next(
-        c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1]
-    )
+    merge_call = next(c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1])
     assert merge_call.kwargs["params"]["src_nn"] == "melanie"
     assert merge_call.kwargs["params"]["dst_nn"] == "camping"
     assert merge_call.kwargs["params"]["predicate"] == "LIKES"
@@ -225,7 +237,9 @@ async def test_write_relation_single_valued_tombstones() -> None:
     assert "r.is_current = false" in tombstone
     # Scoped by the predicate PROPERTY, not a per-predicate edge type.
     assert "[r:REL {predicate: $predicate, is_current: true}]" in tombstone
-    tomb_call = next(c for c in client.command.await_args_list if "r.invalid_at = $now" in c.args[1])
+    tomb_call = next(
+        c for c in client.command.await_args_list if "r.invalid_at = $now" in c.args[1]
+    )
     assert tomb_call.kwargs["params"]["predicate"] == "LIVES_IN"
 
 
@@ -281,7 +295,9 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     stmts = _command_strings(client)
 
     # FRAME_INSTANCE vertex + FRAME_EVOKED_IN evidence edge, batched via UNWIND.
-    fi_call = next(c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1])
+    fi_call = next(
+        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
+    )
     assert "UNWIND $rows AS row" in fi_call.args[1]
     assert "MERGE (fi:FRAME_INSTANCE {id: row.fid})" in fi_call.args[1]
     assert "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)" in fi_call.args[1]
@@ -291,7 +307,9 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     assert inst_rows[0]["fid"].startswith("Being_employed:")
 
     # PLAYS_ROLE edges batched in one UNWIND — 3 roles, 1 filler each.
-    role_call = next(c for c in client.command.await_args_list if "PLAYS_ROLE {role: row.role}" in c.args[1])
+    role_call = next(
+        c for c in client.command.await_args_list if "PLAYS_ROLE {role: row.role}" in c.args[1]
+    )
     role_rows = role_call.kwargs["params"]["rows"]
     assert len(role_rows) == 3
     assert {r["role"] for r in role_rows} == {"Employee", "Position", "Employer"}
@@ -321,12 +339,30 @@ async def test_write_frame_instances_noop_on_empty() -> None:
 @pytest.mark.asyncio
 async def test_search_chunks_ann_filters_state_and_session() -> None:
     rows = [
-        {"@rid": "#1:0", "chunk_id": "c1", "session_id": "s1", "state": "raw",
-         "text": "a", "distance": 0.1},
-        {"@rid": "#1:1", "chunk_id": "c2", "session_id": "s1", "state": "consolidated",
-         "text": "b", "distance": 0.2},
-        {"@rid": "#1:2", "chunk_id": "c3", "session_id": "s2", "state": "raw",
-         "text": "c", "distance": 0.3},
+        {
+            "@rid": "#1:0",
+            "chunk_id": "c1",
+            "session_id": "s1",
+            "state": "raw",
+            "text": "a",
+            "distance": 0.1,
+        },
+        {
+            "@rid": "#1:1",
+            "chunk_id": "c2",
+            "session_id": "s1",
+            "state": "consolidated",
+            "text": "b",
+            "distance": 0.2,
+        },
+        {
+            "@rid": "#1:2",
+            "chunk_id": "c3",
+            "session_id": "s2",
+            "state": "raw",
+            "text": "c",
+            "distance": 0.3,
+        },
     ]
     client = _mock_client(query_rows=rows)
     store = GraphStore(client=client)
@@ -428,9 +464,7 @@ async def test_write_frames_persists_summary_and_embedding() -> None:
     # embedding written as an inline literal via _set_embedding on FRAME(id)
     emb_stmt = next(s for s in cmds if "SET n.embedding = [" in s and "FRAME" in s)
     assert "s1:c1:0" not in emb_stmt  # id is a bound $key param, not interpolated
-    emb_call = next(
-        c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]
-    )
+    emb_call = next(c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1])
     assert emb_call.kwargs["params"]["key"] == "s1:c1:0"
 
 
@@ -441,10 +475,18 @@ async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
     client.query = AsyncMock(
         side_effect=[
             [
-                {"id": "s1:c1:0", "session_id": "s1", "frame_type": "Process_start",
-                 "distance": 0.6},
-                {"id": "s1:c2:0", "session_id": "other", "frame_type": "Motion",
-                 "distance": 0.5},  # filtered out by session
+                {
+                    "id": "s1:c1:0",
+                    "session_id": "s1",
+                    "frame_type": "Process_start",
+                    "distance": 0.6,
+                },
+                {
+                    "id": "s1:c2:0",
+                    "session_id": "other",
+                    "frame_type": "Motion",
+                    "distance": 0.5,
+                },  # filtered out by session
             ],
             [{"id": "s1:c1:0", "frame_type": "Process_start", "chunk_id": "c1"}],
         ]
@@ -458,8 +500,7 @@ async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
     assert "s1:c1:0" in join_cypher  # only the session-matching frame id
     assert "s1:c2:0" not in join_cypher
     assert rows == [
-        {"chunk_id": "c1", "frame_type": "Process_start",
-         "score": pytest.approx(0.4)},
+        {"chunk_id": "c1", "frame_type": "Process_start", "score": pytest.approx(0.4)},
     ]
 
 
@@ -467,8 +508,13 @@ async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
 async def test_entity_relation_graph_matches_only_semantic_rel_edges() -> None:
     client = _mock_client(
         query_rows=[
-            {"src": "Melanie", "type": "LIKES", "dst": "Camping",
-             "weight": 0.8, "is_current": True},
+            {
+                "src": "Melanie",
+                "type": "LIKES",
+                "dst": "Camping",
+                "weight": 0.8,
+                "is_current": True,
+            },
         ]
     )
     store = GraphStore(client=client)
@@ -498,7 +544,12 @@ async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> Non
     # here restates a frame — which is what the old noise filter existed to undo.
     rel_rows = [
         {"s": "Gina", "p": "SUPPORT", "o": "Jon", "ev": ["c2"]},
-        {"s": "Gina", "p": "FIND", "o": "fashion pieces", "ev": ["c3"]},  # reserved-word verb → KEPT
+        {
+            "s": "Gina",
+            "p": "FIND",
+            "o": "fashion pieces",
+            "ev": ["c3"],
+        },  # reserved-word verb → KEPT
         {"s": "Jon", "p": "VISITING", "o": "Rome", "ev": []},  # plain (unevidenced)
     ]
     frame_rows = [
@@ -533,9 +584,7 @@ async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> Non
 
 @pytest.mark.asyncio
 async def test_entity_fact_context_caps_at_max_facts() -> None:
-    rel_rows = [
-        {"s": "Jon", "p": "SUPPORT", "o": f"person{i}", "ev": ["c"]} for i in range(10)
-    ]
+    rel_rows = [{"s": "Jon", "p": "SUPPORT", "o": f"person{i}", "ev": ["c"]} for i in range(10)]
     client = _mock_client()
     client.query = AsyncMock(side_effect=[rel_rows, []])
     store = GraphStore(client=client)
@@ -593,7 +642,9 @@ async def test_write_chunks_bulk_batches_at_cap() -> None:
     ]
     await store.write_chunks_bulk(chunks)
     merge_calls = [
-        c for c in client.command.await_args_list if "MERGE (c:CHUNK {chunk_id: row.cid})" in c.args[1]
+        c
+        for c in client.command.await_args_list
+        if "MERGE (c:CHUNK {chunk_id: row.cid})" in c.args[1]
     ]
     assert len(merge_calls) == 3
     assert [len(c.kwargs["params"]["rows"]) for c in merge_calls] == [
@@ -612,8 +663,13 @@ async def test_write_chunk_embedding_is_inline_literal() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
     await store.write_chunk(
-        {"chunk_id": "c1", "session_id": "s1", "file_id": "f1", "text": "t",
-         "embedding": [0.5, -0.25]}
+        {
+            "chunk_id": "c1",
+            "session_id": "s1",
+            "file_id": "f1",
+            "text": "t",
+            "embedding": [0.5, -0.25],
+        }
     )
     emb_stmt = next(s for s in _command_strings(client) if "n.embedding =" in s)
     # Inline SQL literal, never a parameter (LSM_VECTOR constraint).
@@ -670,9 +726,16 @@ async def test_merge_entities_repoints_mentions_relations_and_deletes_loser() ->
             [{"name": "Mel", "aliases": []}],  # loser lookup
             [{"name": "Melanie", "aliases": []}],  # winner lookup
             [  # outgoing loser relation edges
-                {"dst": "Camping", "dst_nn": "camping",
-                 "predicate": "LIKES", "fact": "", "evidence": ["c1"],
-                 "confidence": 0.8, "valid_at": None, "source": "gliner"},
+                {
+                    "dst": "Camping",
+                    "dst_nn": "camping",
+                    "predicate": "LIKES",
+                    "fact": "",
+                    "evidence": ["c1"],
+                    "confidence": 0.8,
+                    "valid_at": None,
+                    "source": "gliner",
+                },
             ],
             [],  # incoming loser relation edges
         ]
@@ -686,9 +749,7 @@ async def test_merge_entities_repoints_mentions_relations_and_deletes_loser() ->
     assert any("MERGE (c)-[nm:MENTIONS]->(w)" in s for s in stmts)
     # Relation re-created on the winner via write_relation (REL/LIKES edge).
     merge_rel = next(s for s in stmts if "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in s)
-    rel_call = next(
-        c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1]
-    )
+    rel_call = next(c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1])
     assert rel_call.kwargs["params"]["src_nn"] == "melanie"
     assert rel_call.kwargs["params"]["dst_nn"] == "camping"
     assert rel_call.kwargs["params"]["predicate"] == "LIKES"
@@ -749,9 +810,7 @@ async def test_ensure_analytical_view_swallows_already_exists() -> None:
     client.command = AsyncMock(side_effect=command_side_effect)
     store = GraphStore(client=client)
     await store._ensure_analytical_view()  # must not raise
-    assert any(
-        "REBUILD GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list
-    )
+    assert any("REBUILD GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -838,9 +897,7 @@ async def test_compute_and_persist_pagerank_skip_view_ensure_avoids_rebuild() ->
     client = _mock_client(query_rows=[{"nn": "melanie", "rank": 0.5}])
     store = GraphStore(client=client)
     await store.compute_and_persist_pagerank(skip_view_ensure=True)
-    assert not any(
-        "GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list
-    )
+    assert not any("GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -884,9 +941,7 @@ async def test_compute_graph_embeddings_skips_sparse_entities() -> None:
     updated = await store.compute_graph_embeddings()
     assert updated == 0
     # View-ensure DDL runs, but no ENTITY was actually written.
-    assert not any(
-        "e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list
-    )
+    assert not any("e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -896,9 +951,7 @@ async def test_compute_graph_embeddings_soft_fails_on_native_error() -> None:
     store = GraphStore(client=client)
     updated = await store.compute_graph_embeddings()
     assert updated == 0
-    assert not any(
-        "e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list
-    )
+    assert not any("e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -907,7 +960,9 @@ async def test_compute_communities_writes_community_id() -> None:
     store = GraphStore(client=client)
     updated = await store.compute_communities()
     assert updated == 2
-    set_calls = [c for c in client.command.await_args_list if "SET e.community_id = r.v" in c.args[1]]
+    set_calls = [
+        c for c in client.command.await_args_list if "SET e.community_id = r.v" in c.args[1]
+    ]
     assert len(set_calls) == 1  # one batched UNWIND
     assert all(r["v"] == 2 for r in set_calls[0].kwargs["params"]["rows"])
 
@@ -919,9 +974,7 @@ async def test_compute_communities_soft_fails_to_zero_on_error() -> None:
     store = GraphStore(client=client)
     updated = await store.compute_communities()
     assert updated == 0
-    assert not any(
-        "e.community_id = $cid" in c.args[1] for c in client.command.await_args_list
-    )
+    assert not any("e.community_id = $cid" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -929,141 +982,7 @@ async def test_compute_communities_soft_fails_on_empty_result() -> None:
     client = _mock_client(query_rows=[])
     store = GraphStore(client=client)
     assert await store.compute_communities() == 0
-    assert not any(
-        "e.community_id = $cid" in c.args[1] for c in client.command.await_args_list
-    )
-
-
-@pytest.mark.asyncio
-async def test_compute_community_quality_writes_community_vertices() -> None:
-    client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        # Semantic-edge existence probe: every predicate lives on the one REL type.
-        if "(:ENTITY)-[r:REL]->(:ENTITY) RETURN count(r) AS n" in cypher:
-            return [{"n": 7}]
-        if "algo.modularityScore" in cypher:
-            return [{"modularity": 0.42, "communities": 2, "edgeCount": 7}]
-        if "algo.conductance" in cypher:
-            return [
-                {"community": 1, "conductance": 0.1, "internalEdges": 5,
-                 "boundaryEdges": 1, "nodeCount": 4},
-                {"community": 2, "conductance": 0.8, "internalEdges": 1,
-                 "boundaryEdges": 4, "nodeCount": 3},
-            ]
-        if "count(e) AS size" in cypher:
-            return [{"cid": 1, "size": 4}, {"cid": 2, "size": 3}]
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
-    store = GraphStore(client=client)
-    result = await store.compute_community_quality()
-    assert result == {"modularity": 0.42, "communities": 2, "communities_scored": 2}
-    # modularityScore/conductance are scoped to the semantic rel-type allowlist.
-    assert any(
-        "algo.conductance('community_id', ['REL'])" in c.args[1]
-        for c in client.query.await_args_list
-    )
-    merge_calls = [c for c in client.command.await_args_list if "MERGE (k:COMMUNITY" in c.args[1]]
-    assert len(merge_calls) == 2
-    by_cid = {c.kwargs["params"]["cid"]: c.kwargs["params"] for c in merge_calls}
-    assert by_cid[1]["cond"] == 0.1 and by_cid[1]["size"] == 4 and by_cid[1]["mod"] == 0.42
-    assert by_cid[2]["cond"] == 0.8 and by_cid[2]["be"] == 4
-    # Entities linked to their COMMUNITY vertex graph-natively.
-    assert any(
-        "MERGE (e)-[:IN_COMMUNITY]->(k)" in c.args[1] for c in client.command.await_args_list
-    )
-
-
-@pytest.mark.asyncio
-async def test_compute_community_quality_soft_fails_to_zero_on_algo_error() -> None:
-    client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        if "RETURN DISTINCT type(r) AS t" in cypher:
-            return [{"t": "WORKS_AT"}]
-        if "algo.modularityScore" in cypher:
-            raise Exception("algo.modularityScore not supported")
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
-    store = GraphStore(client=client)
-    result = await store.compute_community_quality()
-    assert result == {"modularity": 0.0, "communities": 0, "communities_scored": 0}
-    assert not any("MERGE (k:COMMUNITY" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_compute_community_quality_skips_when_no_semantic_edges() -> None:
-    client = _mock_client(query_rows=[])  # no distinct rel types
-    store = GraphStore(client=client)
-    result = await store.compute_community_quality()
-    assert result == {"modularity": 0.0, "communities": 0, "communities_scored": 0}
-    assert not any("algo.modularityScore" in c.args[1] for c in client.query.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_chunk_community_weights_tight_community_outweighs_loose() -> None:
-    """Quality-adjusted weight: same-size communities, but the tight (low
-    conductance) one must produce a higher weight than the loose one."""
-    client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        if "MENTIONS]->(e:ENTITY)" in cypher:
-            return [
-                {"chunk_id": "tight", "cid": 1, "cnt": 3},
-                {"chunk_id": "loose", "cid": 2, "cnt": 3},
-            ]
-        if "count(e) AS size" in cypher:
-            return [{"cid": 1, "size": 10}, {"cid": 2, "size": 10}]
-        if "MATCH (k:COMMUNITY)" in cypher:
-            return [{"cid": 1, "conductance": 0.1}, {"cid": 2, "conductance": 0.9}]
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
-    store = GraphStore(client=client)
-    weights = await store.chunk_community_weights(["tight", "loose"])
-    assert weights["tight"] == pytest.approx(9.0)  # 10 * (1 - 0.1)
-    assert weights["loose"] == pytest.approx(1.0)  # 10 * (1 - 0.9)
-    assert weights["tight"] > weights["loose"]
-
-
-@pytest.mark.asyncio
-async def test_chunk_community_weights_majority_and_size() -> None:
-    client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        if "MENTIONS]->(e:ENTITY)" in cypher:
-            # Pre-sorted by cnt desc, as ArcadeDB's ORDER BY would return.
-            return [
-                {"chunk_id": "c1", "cid": 2, "cnt": 3},
-                {"chunk_id": "c2", "cid": 1, "cnt": 2},
-                {"chunk_id": "c1", "cid": 1, "cnt": 1},
-            ]
-        if "count(e) AS size" in cypher:
-            return [{"cid": 1, "size": 5}, {"cid": 2, "size": 8}]
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
-    store = GraphStore(client=client)
-    weights = await store.chunk_community_weights(["c1", "c2"])
-    assert weights == {"c1": 8.0, "c2": 5.0}
-
-
-@pytest.mark.asyncio
-async def test_chunk_community_weights_noop_on_empty() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    assert await store.chunk_community_weights([]) == {}
-    client.query.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_chunk_community_weights_soft_fails_on_error() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(side_effect=Exception("boom"))
-    store = GraphStore(client=client)
-    assert await store.chunk_community_weights(["c1"]) == {}
+    assert not any("e.community_id = $cid" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -1139,24 +1058,48 @@ async def test_graph_store_round_trip_on_scratch_database() -> None:
         emb_b = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         await store.write_chunks_bulk(
             [
-                {"chunk_id": "chunk-a", "session_id": "sess-1", "file_id": "file-1",
-                 "text": "Melanie went camping in Banff.", "seq": 0, "embedding": emb_a},
-                {"chunk_id": "chunk-b", "session_id": "sess-1", "file_id": "file-1",
-                 "text": "Caroline moved to Toronto.", "seq": 1, "embedding": emb_b},
+                {
+                    "chunk_id": "chunk-a",
+                    "session_id": "sess-1",
+                    "file_id": "file-1",
+                    "text": "Melanie went camping in Banff.",
+                    "seq": 0,
+                    "embedding": emb_a,
+                },
+                {
+                    "chunk_id": "chunk-b",
+                    "session_id": "sess-1",
+                    "file_id": "file-1",
+                    "text": "Caroline moved to Toronto.",
+                    "seq": 1,
+                    "embedding": emb_b,
+                },
             ]
         )
         await store.write_entities_bulk(
-            "sess-1", "chunk-a",
-            [{"name": "Melanie", "type": "PERSON", "confidence": 0.9},
-             {"name": "Banff", "type": "PLACE", "confidence": 0.8}],
+            "sess-1",
+            "chunk-a",
+            [
+                {"name": "Melanie", "type": "PERSON", "confidence": 0.9},
+                {"name": "Banff", "type": "PLACE", "confidence": 0.8},
+            ],
         )
         # Same relation from two chunks → evidence list must accumulate both.
         await store.write_relation(
-            "Melanie", "LIKES", "Camping", fact="Melanie likes camping",
-            chunk_id="chunk-a", confidence=0.7, source="gliner",
+            "Melanie",
+            "LIKES",
+            "Camping",
+            fact="Melanie likes camping",
+            chunk_id="chunk-a",
+            confidence=0.7,
+            source="gliner",
         )
         await store.write_relation(
-            "Melanie", "LIKES", "Camping", chunk_id="chunk-b", confidence=0.9,
+            "Melanie",
+            "LIKES",
+            "Camping",
+            chunk_id="chunk-b",
+            confidence=0.9,
         )
 
         # ANN read-back
@@ -1242,20 +1185,22 @@ async def test_write_frame_instances_merges_fillers_before_the_edge_pass() -> No
     await store.write_frame_instances(
         "s1",
         "c1",
-        [{
-            "frame": "Being_named",
-            "match_sim": 0.9,
-            "role_confidence": 0.9,
-            # SAME filler in two roles — the shape that broke ingest.
-            "roles": {"Entity": ["Becoming Nicole"], "Name": ["Becoming Nicole"]},
-        }],
+        [
+            {
+                "frame": "Being_named",
+                "match_sim": 0.9,
+                "role_confidence": 0.9,
+                # SAME filler in two roles — the shape that broke ingest.
+                "roles": {"Entity": ["Becoming Nicole"], "Name": ["Becoming Nicole"]},
+            }
+        ],
     )
 
     stmts = _command_strings(client)
     ent_call = next(
-        c for c in client.command.await_args_list
-        if "MERGE (e:ENTITY {name_norm: row.nn})" in c.args[1]
-        and "PLAYS_ROLE" not in c.args[1]
+        c
+        for c in client.command.await_args_list
+        if "MERGE (e:ENTITY {name_norm: row.nn})" in c.args[1] and "PLAYS_ROLE" not in c.args[1]
     )
     keys = [r["nn"] for r in ent_call.kwargs["params"]["rows"]]
     assert keys == ["becoming nicole"], "filler must be collapsed to ONE merge key"

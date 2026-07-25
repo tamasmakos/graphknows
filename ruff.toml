@@ -33,7 +33,9 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"tests/*" = ["D", "S101", "B017", "E402", "N806", "SIM102", "UP038"]
+# TRY002: test doubles legitimately raise bare Exception to simulate a backend
+# failure — inventing an exception class per mock side-effect adds noise, not safety.
+"tests/*" = ["D", "S101", "B017", "E402", "N806", "SIM102", "UP038", "TRY002"]
 "scripts/*" = ["D103"]
 "evaluation/**" = ["D", "C901", "UP038", "RUF034"]
 # Vendored third-party checkout, not first-party code.

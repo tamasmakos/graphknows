@@ -62,7 +62,7 @@ async def build_topics(
         total_chunks=totals["chunks"],
         total_entities=totals["entities"],
         newman_q=newman_q,
-        native_modularity=await _native_modularity(store),
+        native_modularity=None,
     )
     return TopicSet(topics=topics, metrics=grades, config=cfg.to_dict(), namespace=namespace)
 
@@ -142,8 +142,7 @@ async def _load_edges(store: Any) -> list[tuple[str, str]]:
     """The REL edge list, for Newman modularity."""
     try:
         rows = await store.query(
-            "MATCH (a:ENTITY)-[:REL]->(b:ENTITY) "
-            "RETURN a.name_norm AS src, b.name_norm AS dst"
+            "MATCH (a:ENTITY)-[:REL]->(b:ENTITY) RETURN a.name_norm AS src, b.name_norm AS dst"
         )
     except Exception as exc:
         log.warning("build_topics: edge load failed (%s); modularity unavailable", exc)
@@ -163,18 +162,6 @@ async def _totals(store: Any) -> dict[str, int]:
         except Exception:
             out[key] = 0
     return out
-
-
-async def _native_modularity(store: Any) -> float | None:
-    """ArcadeDB's score for the Louvain partition — reported, never optimised."""
-    try:
-        rows = await store.query(
-            "CALL algo.modularityScore('community_id', ['REL']) "
-            "YIELD modularity RETURN modularity AS m"
-        )
-        return float(rows[0]["m"]) if rows else None
-    except Exception:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +269,7 @@ async def _describe(
     so a topic written without one is stored but unreachable, which is how a
     topic layer ends up looking built and inert.
     """
-    texts_per_topic = [
-        [chunk_meta.get(cid, ("", []))[0] for cid in t.chunk_ids] for t in topics
-    ]
+    texts_per_topic = [[chunk_meta.get(cid, ("", []))[0] for cid in t.chunk_ids] for t in topics]
     background = metrics.token_sets(texts_per_topic)
     for i, topic in enumerate(topics):
         texts = texts_per_topic[i]

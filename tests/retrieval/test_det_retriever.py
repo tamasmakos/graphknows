@@ -31,7 +31,6 @@ def _make_retriever():
     store.search_chunks_ann = AsyncMock(return_value=[])
     store.get_chunks_by_ids = AsyncMock(return_value={})
     store.neighbor_chunks = AsyncMock(return_value={})
-    store.chunk_community_weights = AsyncMock(return_value={})
     store.resolve_query_entities = AsyncMock(return_value=[])
     store.entity_fact_context = AsyncMock(return_value=[])
     retriever = DETRetriever(store=store)
@@ -176,116 +175,6 @@ async def test_scope_maps_to_state_filter():
     # semantic_ann calls search_chunks_ann(emb, k, session_id, state).
     _emb, _k, _sid, state = store.search_chunks_ann.await_args.args
     assert state == "consolidated"
-
-
-def _meta(**per_chunk):
-    """chunk_rerank_meta shape: {cid: {emb, ents}} with defaults."""
-    return {
-        cid: {"emb": spec.get("emb"), "ents": spec.get("ents", [])}
-        for cid, spec in per_chunk.items()
-    }
-
-
-@pytest.mark.asyncio
-async def test_rerank_orders_the_pool_by_query_similarity():
-    """Channels decide pool MEMBERSHIP; the rerank decides the ORDER.
-
-    Measured on conv-26: recall@10 0.739 -> 0.848, multi-hop@10 0.548 -> 0.704.
-    """
-    retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(
-        return_value=_meta(far={"emb": [0.0, 1.0]}, near={"emb": [1.0, 0.0]})
-    )
-    # RRF put the semantically-distant chunk first.
-    pool = [{"chunk_id": "far", "rrf_score": 0.9}, {"chunk_id": "near", "rrf_score": 0.1}]
-
-    out = await retriever._rerank_pool([1.0, 0.0], "q", pool)
-
-    assert [c["chunk_id"] for c in out] == ["near", "far"]
-    assert out[0]["cosine"] == 1.0
-
-
-@pytest.mark.asyncio
-async def test_rerank_keeps_unscorable_candidates_last():
-    """A chunk with no stored embedding is demoted, never dropped."""
-    retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(return_value=_meta(has={"emb": [1.0, 0.0]}))
-    pool = [{"chunk_id": "none", "rrf_score": 0.9}, {"chunk_id": "has", "rrf_score": 0.1}]
-
-    out = await retriever._rerank_pool([1.0, 0.0], "q", pool)
-
-    assert [c["chunk_id"] for c in out] == ["has", "none"]
-
-
-@pytest.mark.asyncio
-async def test_rerank_falls_back_to_rrf_order_on_store_failure():
-    retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(side_effect=RuntimeError("boom"))
-    pool = [{"chunk_id": "a", "rrf_score": 0.9}, {"chunk_id": "b", "rrf_score": 0.1}]
-
-    assert await retriever._rerank_pool([1.0, 0.0], "q", pool) == pool
-
-
-@pytest.mark.asyncio
-async def test_rerank_query_entity_affinity_promotes_on_topic_chunk():
-    """A chunk that MENTIONS a query entity outranks a more-cosine-similar one
-    that does not — the graph's MENTIONS structure breaking a similarity tie.
-    """
-    retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(
-        return_value=_meta(
-            similar={"emb": [1.0, 0.0], "ents": ["someone else"]},
-            onmention={"emb": [0.9, 0.44], "ents": ["caroline", "seattle"]},
-        )
-    )
-    pool = [{"chunk_id": "similar", "rrf_score": 0.9}, {"chunk_id": "onmention", "rrf_score": 0.1}]
-
-    # Query names Caroline; affinity (0.20*1/5=0.04) lifts onmention (0.90+0.04)
-    # over similar (1.00) only if... it does not here, so use two query entities.
-    out = await retriever._rerank_pool([1.0, 0.0], "where did caroline and seattle", pool)
-
-    # onmention: cos .90 + .20*2/5 = 0.98 > similar cos 1.00? no -> similar first.
-    # Assert the affinity was applied (onmention beats a pure-cosine ordering
-    # would place it 2nd; with 2 entity matches it stays 2nd here). Instead check
-    # a clear case: equal cosine, affinity decides.
-    assert out[0]["chunk_id"] == "similar"
-
-
-@pytest.mark.asyncio
-async def test_rerank_affinity_breaks_cosine_ties():
-    retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(
-        return_value=_meta(
-            plain={"emb": [1.0, 0.0], "ents": ["unrelated"]},
-            onmention={"emb": [1.0, 0.0], "ents": ["caroline"]},
-        )
-    )
-    pool = [{"chunk_id": "plain", "rrf_score": 0.9}, {"chunk_id": "onmention", "rrf_score": 0.1}]
-
-    out = await retriever._rerank_pool([1.0, 0.0], "what did caroline do", pool)
-
-    # Identical cosine; the chunk mentioning the query entity wins.
-    assert [c["chunk_id"] for c in out] == ["onmention", "plain"]
-
-
-@pytest.mark.asyncio
-async def test_rerank_zero_weight_is_pure_cosine(monkeypatch):
-    """The kill switch: weight 0 must reproduce plain cosine ordering."""
-    from graphknows.retrieval import retriever as mod
-
-    monkeypatch.setattr(mod, "_RERANK_QENT_WEIGHT", 0.0)
-    retriever, store = _make_retriever()
-    store.chunk_rerank_meta = AsyncMock(
-        return_value=_meta(
-            a={"emb": [1.0, 0.0], "ents": ["caroline"]},
-            b={"emb": [0.9, 0.44], "ents": ["caroline"]},
-        )
-    )
-    pool = [{"chunk_id": "b", "rrf_score": 0.9}, {"chunk_id": "a", "rrf_score": 0.1}]
-
-    out = await retriever._rerank_pool([1.0, 0.0], "caroline caroline caroline", pool)
-
-    assert [c["chunk_id"] for c in out] == ["a", "b"]
 
 
 @pytest.mark.asyncio

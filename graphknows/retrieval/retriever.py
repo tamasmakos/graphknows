@@ -5,21 +5,26 @@ filtered by a lifecycle ``state`` derived from the query scope (raw /
 consolidated / both): entity traversal, dense vector ANN, BM25, temporal, and
 topic match. The spine is channel-blind — it fuses and reranks only.
 
-Topic nodes are LLM-assisted enrichment artifacts; deterministic retrieval uses
-community metadata as score shaping rather than returning synthetic topic hits.
+Topic nodes are LLM-assisted enrichment artifacts; deterministic retrieval
+returns them as synthetic topic-summary hits fused alongside chunk candidates
+like any other channel.
+
+The cross-encoder is the sole ranker: channels only decide pool MEMBERSHIP
+(via RRF fusion), ``_shape_and_rank`` sorts the fused pool by that base score
+purely for deterministic ordering, and the cross-encoder (``rerank.py``)
+re-scores the ENTIRE pool — nothing is cut before it sees every candidate.
 
 WS-2 additions
 --------------
 * BM25 sparse channel — replaces the homegrown two-pass full-text with a proper
   BM25 ranking (``rank_bm25.BM25Okapi``) over chunk texts, feeding one RRF
   source.
-* Cross-encoder rerank — the top ~50 RRF candidates are re-scored by a local
-  CPU cross-encoder (``rerank.py``); raises if the model is unavailable.
+* Cross-encoder rerank — every fused candidate is re-scored by a local CPU
+  cross-encoder (``rerank.py``); raises if the model is unavailable.
 * PageRank boost and IDF discriminativeness were never wired: the former read
   ``pagerank`` from CHUNK metadata while the value lives on ENTITY nodes (so the
   multiplier was always 1.0), and nothing ever called the latter. Both have been
-  removed. Reintroducing PageRank shaping needs a chunk-level rollup
-  (cf. ``chunk_community_weights``) and should be measured before being believed.
+  removed.
 * Temporal recency boost — relation-edge ``_temporal_score`` from
   ``filter_by_validity_window`` is folded into temporal-traversal candidates.
 """
@@ -31,8 +36,6 @@ import logging
 import os
 import re
 from typing import Any
-
-import numpy as np
 
 try:
     from rank_bm25 import BM25Okapi
@@ -47,10 +50,8 @@ from graphknows.ranking.rerank import rerank as _ce_rerank
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
-    community_boost,
     rrf_score,
 )
-from graphknows.ranking.rrf import shape_score as _shape_score
 from graphknows.retrieval.base import BaseGraphRetriever
 from graphknows.retrieval.models.context import RetrievalContext
 from graphknows.storage.arcadedb.graph_store import GraphStore
@@ -142,16 +143,6 @@ def _declarative_variant(question: str) -> str | None:
     return None
 
 
-# Weight of the query-entity affinity term in the pool rerank: how much to boost
-# a candidate for each of the query's entities it mentions (via the MENTIONS
-# graph), on top of its query cosine. 0.20 won an offline grid on both
-# benchmarks; 0 restores pure cosine ordering.
-_RERANK_QENT_WEIGHT: float = float(os.environ.get("GRAPHKNOWS_RERANK_QENT_WEIGHT", "0.20"))
-# Entities matched to the query are capped here before normalising, so a chunk
-# that mentions many query entities does not swamp the cosine signal.
-_QENT_CAP: int = 5
-_QENT_TOKEN = re.compile(r"[a-z0-9']+")
-
 # After cutting to top_k, append each result's ±N seq-adjacent same-document
 # chunks. Long ingested messages split across consecutive chunks, so the answer
 # often sits in a sibling of the matched chunk — a LONG-DOCUMENT fix.
@@ -229,10 +220,9 @@ class DETRetriever(BaseGraphRetriever):
 
         pre_rerank = await self._shape_and_rank(combined)
 
-        # Order the pool by query-chunk cosine + query-entity affinity, then
-        # cross-encoder rerank (raises if the reranker is unavailable), then cut.
-        ranked = await self._rerank_pool(ctx.emb, query, pre_rerank)
-        ranked = await asyncio.to_thread(_ce_rerank, query, ranked, len(ranked))
+        # Cross-encoder rerank scores the WHOLE fused pool (raises if the
+        # reranker is unavailable) — it is the only ranker in this pipeline.
+        ranked = await asyncio.to_thread(_ce_rerank, query, pre_rerank, len(pre_rerank))
         fused = ranked[:top_k]
         fused = await self._expand_neighbors(fused)
         for i, item in enumerate(fused):
@@ -290,63 +280,6 @@ class DETRetriever(BaseGraphRetriever):
             item.setdefault("metadata", {})["merged_neighbors"] = len(sibs)
         return fused
 
-    async def _rerank_pool(
-        self, query_emb: list[float], query: str, candidates: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Order the fused pool by query-chunk cosine + query-entity affinity.
-
-        The channels' job is pool MEMBERSHIP; ordering is ``cosine + w · (query
-        entities this chunk mentions)``. Pure cosine is topic-similarity only —
-        for a multi-evidence question it ranks near-duplicates about one
-        sub-topic first. The affinity term spends the graph's own MENTIONS
-        structure: a chunk that actually names the query's subjects is more
-        likely to carry an answer than one that merely reads similar.
-
-        Measured offline over cached candidate pools (grid-searched):
-        - vs old RRF (conv-26): recall@10 0.739 -> 0.845.
-        - vs pure cosine at the operating point (k=25): LoCoMo evidence_recall
-          multi-hop 0.871 -> 0.906 (real labels), BEAM weak-category coverage
-          0.673 -> 0.697. Diversity-coverage variants (new-entity / new-doc
-          greedy) tied pure cosine and were dropped.
-
-        Chunk vectors + entity lists are already persisted, so this is two
-        round trips plus O(n) arithmetic — no model, no new dependency.
-        Candidates with no stored embedding keep their RRF order behind the
-        scored ones rather than being dropped. Weight 0 restores pure cosine.
-        """
-        if len(candidates) < 2 or not query_emb:
-            return candidates
-        ids = [str(c.get("chunk_id") or "") for c in candidates]
-        try:
-            meta = await self.store.chunk_rerank_meta(ids)
-        except Exception as exc:
-            log.warning("pool rerank unavailable (%s); keeping RRF order", exc)
-            return candidates
-        if not meta:
-            return candidates
-
-        qtoks = {w for w in _QENT_TOKEN.findall(query.lower()) if len(w) > 2}
-        q = np.asarray(query_emb, dtype=np.float32)
-        qn = float(np.linalg.norm(q)) or 1.0
-        scored: list[tuple[float, int, dict[str, Any]]] = []
-        unscorable: list[dict[str, Any]] = []
-        for i, cand in enumerate(candidates):
-            m = meta.get(str(cand.get("chunk_id") or ""))
-            if not m or not m.get("emb"):
-                # No stored vector: keep behind everything scored, in RRF order.
-                unscorable.append(cand)
-                continue
-            v = np.asarray(m["emb"], dtype=np.float32)
-            cos = float(v @ q / ((float(np.linalg.norm(v)) or 1.0) * qn))
-            # Query-entity affinity: an entity matches on a whole word, mirroring
-            # resolve_query_entities, so "there" never matches "theresa".
-            affinity = sum(1 for e in m.get("ents") or () if qtoks & set(str(e).split()))
-            cand["cosine"] = round(cos, 4)
-            score = cos + _RERANK_QENT_WEIGHT * min(affinity, _QENT_CAP) / _QENT_CAP
-            scored.append((score, i, cand))
-        scored.sort(key=lambda t: (-t[0], t[1]))
-        return [c for _, _, c in scored] + unscorable
-
     async def _build_channel_context(
         self, query: str, session_id: str, scope: str
     ) -> ChannelContext:
@@ -377,35 +310,21 @@ class DETRetriever(BaseGraphRetriever):
     async def _shape_and_rank(
         self, combined: dict[str, tuple[float, dict[str, Any]]]
     ) -> list[dict[str, Any]]:
-        """Score-shape every candidate, sort, and render the pre-rerank rows.
+        """Fetch missing metadata, build the row dicts, and sort by fused score.
 
-        Shaping runs over the whole pool before any cut, because it affects
-        ordering and not just display.
+        The cross-encoder is the sole ranker downstream; this sort exists only
+        so the pool has a deterministic pre-rerank order (e.g. for tie-breaking
+        and tracing), not to shape which candidates survive.
         """
-        # Fetch metadata for all candidates that lack it so shaping can run
-        # before we cut to top_k.
+        # Fetch metadata for all candidates that lack it.
         needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
         text_map = await self.store.get_chunks_by_ids(needs_meta) if needs_meta else {}
-        # Community boost (WS4): derived from each chunk's MENTIONS-linked
-        # entities' native-Louvain community_id, not stored per-chunk metadata.
-        community_weights = await self.store.chunk_community_weights(list(combined.keys()))
 
-        shaped_combined: list[tuple[str, float, dict[str, Any], dict[str, Any]]] = []
-        for cid, (base_score, info) in combined.items():
-            fc = text_map.get(cid, {})
-            meta = fc.get("metadata") or info.get("metadata") or {}
-            if cid in community_weights:
-                meta = {**meta, "community_weight": community_weights[cid]}
-            shaped = _shape_score(
-                base_score * _community_boost(meta),
-                meta.get("memory_class"),
-            )
-            shaped_combined.append((cid, shaped, info, fc))
-
-        shaped_combined.sort(key=lambda x: -x[1])
+        ordered = sorted(combined.items(), key=lambda kv: -kv[1][0])
 
         rows: list[dict[str, Any]] = []
-        for rank_i, (cid, shaped, info, fc) in enumerate(shaped_combined):
+        for rank_i, (cid, (base_score, info)) in enumerate(ordered):
+            fc = text_map.get(cid, {})
             ents = info.get("entities", [])
             rows.append(
                 {
@@ -413,7 +332,7 @@ class DETRetriever(BaseGraphRetriever):
                     "doc_id": fc.get("doc_id") or info.get("doc_id", ""),
                     "text": fc.get("text") or info.get("text", ""),
                     "metadata": fc.get("metadata") or info.get("metadata") or {},
-                    "rrf_score": round(shaped, 6),
+                    "rrf_score": round(base_score, 6),
                     "sources": ",".join(sorted(info["sources"])),
                     "rank": rank_i + 1,
                     "entities": ents if isinstance(ents, list) else list(ents),
@@ -719,8 +638,3 @@ def _add_result(
         )
     else:
         result[chunk_id] = (score, info)
-
-
-def _community_boost(metadata: dict[str, Any]) -> float:
-    """Return a bounded score multiplier from community metadata."""
-    return community_boost(metadata.get("community_weight", 1.0))

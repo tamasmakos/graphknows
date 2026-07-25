@@ -21,9 +21,6 @@ def _store() -> MagicMock:
     store.compute_and_persist_pagerank = AsyncMock(return_value=3)
     store.compute_graph_embeddings = AsyncMock(return_value=4)
     store.compute_communities = AsyncMock(return_value=5)
-    store.compute_community_quality = AsyncMock(
-        return_value={"modularity": 0.5, "communities": 2, "communities_scored": 2}
-    )
     store.consolidate_session = AsyncMock(return_value=7)
     return store
 
@@ -34,8 +31,11 @@ def _memory(store: MagicMock) -> Memory:
     mem._retriever_stores = [store]
     # Topics are their own stage now (Memory._flush_topics -> graphknows.topics),
     # so stub the stage rather than a store method. This test is about step
-    # isolation in flush_memory, not about clustering.
-    mem._flush_topics = AsyncMock(return_value=6)  # type: ignore[method-assign]
+    # isolation in flush_memory, not about clustering. The stage also carries
+    # the real (Newman) modularity now that compute_community_quality is gone.
+    mem._flush_topics = AsyncMock(  # type: ignore[method-assign]
+        return_value={"topics_created": 6, "modularity": 0.5}
+    )
     return mem
 
 
@@ -55,6 +55,8 @@ async def test_happy_path_reports_every_step() -> None:
     assert out["topics_created"] == 6
     assert out["chunks"] == 7
     assert out["merged_entities"] == 2
+    assert out["modularity"] == 0.5
+    assert out["communities_scored"] == 6
 
 
 @pytest.mark.asyncio

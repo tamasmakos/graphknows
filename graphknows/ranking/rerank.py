@@ -1,10 +1,12 @@
-"""Local cross-encoder reranker for post-RRF refinement.
+"""Local cross-encoder reranker — the sole ranker of the fused pool.
 
 Public API
 ----------
 rerank(query, candidates, top_k) -> list[dict]
     Re-score *candidates* (fused result dicts from DETRetriever) with a local
     CPU cross-encoder and return the top *top_k* sorted by descending score.
+    By default the ENTIRE candidate pool is scored — there is no pre-ranking
+    upstream left to trust, so nothing may be silently dropped before scoring.
 
 No fallbacks
 ------------
@@ -30,9 +32,10 @@ log = logging.getLogger(__name__)
 # A small (~22M) MiniLM cross-encoder: fast on CPU or GPU, negligible memory.
 _CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
 
-# Limit the number of candidates passed to the cross-encoder so latency stays
-# predictable even with large RRF pools (tune with GRAPHKNOWS_RERANK_CANDIDATE_CAP).
-_RERANK_CANDIDATE_CAP: int = int(os.environ.get("GRAPHKNOWS_RERANK_CANDIDATE_CAP", "50"))
+# Optional escape hatch to bound latency on very large RRF pools. Default is
+# unbounded (0 = no cap): the cross-encoder is the only ranker, so it must see
+# every candidate unless an operator explicitly opts into truncation.
+_RERANK_CANDIDATE_CAP: int = int(os.environ.get("GRAPHKNOWS_RERANK_CANDIDATE_CAP", "0"))
 
 # Singleton state ─ protected by a module-level lock so the first concurrent
 # call does not race on initialisation.
@@ -93,8 +96,9 @@ def rerank(
 
     model = _get_model()
 
-    # Cap the candidates fed to the encoder to bound latency.
-    pool = candidates[:_RERANK_CANDIDATE_CAP]
+    # Score the whole pool by default. GRAPHKNOWS_RERANK_CANDIDATE_CAP (0 =
+    # unbounded) is an explicit opt-in escape hatch for latency-bound deployments.
+    pool = candidates[:_RERANK_CANDIDATE_CAP] if _RERANK_CANDIDATE_CAP > 0 else candidates
     texts = [c.get("text") or "" for c in pool]
 
     pairs = [(query, t) for t in texts]

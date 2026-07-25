@@ -192,10 +192,6 @@ class IGraphStore(Protocol):
         """Fetch full chunk records keyed by ID."""
         ...
 
-    async def chunk_community_weights(self, chunk_ids: list[str]) -> dict[str, float]:
-        """Quality-adjusted community boost weight per chunk."""
-        ...
-
     async def resolve_query_entities(self, words: list[str], cap: int = ...) -> list[str]:
         """Resolve query tokens to ENTITY surface names."""
         ...
@@ -247,10 +243,6 @@ class IGraphStore(Protocol):
 
     async def compute_communities(self, skip_view_ensure: bool = ...) -> int:
         """Detect entity communities and persist ``community_id``."""
-        ...
-
-    async def compute_community_quality(self, skip_view_ensure: bool = ...) -> dict[str, Any]:
-        """Score community structure (modularity + conductance)."""
         ...
 
     # --- deletion ---

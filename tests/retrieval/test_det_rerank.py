@@ -38,7 +38,6 @@ def _make_retriever():
     store.search_topics_with_chunks = AsyncMock(return_value=[])
     store.search_chunks_ann = AsyncMock(return_value=[])
     store.get_chunks_by_ids = AsyncMock(return_value={})
-    store.chunk_community_weights = AsyncMock(return_value={})
     return DETRetriever(store=store), store
 
 
@@ -92,6 +91,39 @@ def test_rerank_scores_and_top_k(monkeypatch):
     assert len(result) == 3
     assert result[0]["chunk_id"] == "c9"  # highest logit ranks first
     assert result[0]["rrf_score"] == 9.0  # raw cross-encoder logit, used as-is
+
+
+def test_rerank_scores_the_whole_pool_not_just_the_first_50(monkeypatch):
+    """The cross-encoder is the sole ranker: it must see EVERY candidate.
+
+    Regression guard for the old ``_RERANK_CANDIDATE_CAP = 50`` truncation,
+    which silently discarded anything beyond the first 50 handed to it before
+    scoring ever ran. A pool of 120 (a realistic 6-channels x top_k=25 fused
+    size) must be scored in full by default.
+    """
+    pool_size = 120
+    candidates = [
+        {"chunk_id": f"c{i}", "text": f"text {i}", "rrf_score": float(i), "rank": i + 1}
+        for i in range(pool_size)
+    ]
+    seen_pair_counts: list[int] = []
+
+    class _FakeCE:
+        def predict(self, pairs, show_progress_bar=False):
+            seen_pair_counts.append(len(pairs))
+            return np.array([float(i) for i in range(len(pairs))])
+
+    from graphknows.ranking import rerank as rerank_mod
+
+    monkeypatch.setattr(rerank_mod, "_model", _FakeCE())
+    monkeypatch.setattr(rerank_mod, "_model_loaded", True)
+    monkeypatch.setattr(rerank_mod, "_RERANK_CANDIDATE_CAP", 0)
+
+    result = rerank("query", candidates, top_k=pool_size)
+
+    assert seen_pair_counts == [pool_size]
+    assert len(result) == pool_size
+    assert result[0]["chunk_id"] == f"c{pool_size - 1}"  # highest logit ranks first
 
 
 def test_rerank_import_does_not_require_torch():
@@ -226,7 +258,7 @@ async def test_retrieve_signature_unchanged():
     """retrieve(query, session_id, top_k, scope) -> RetrievalContext must work."""
     from graphknows.retrieval.models.context import RetrievalContext
 
-    retriever, store = _make_retriever()
+    retriever, _store = _make_retriever()
 
     with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
         ctx = await retriever.retrieve(

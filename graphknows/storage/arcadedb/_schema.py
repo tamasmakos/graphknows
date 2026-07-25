@@ -127,17 +127,6 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY FRAME_INSTANCE.role_confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE INDEX ON FRAME_INSTANCE(id) UNIQUE"),
     ("sql", "CREATE INDEX ON FRAME_INSTANCE(frame) NOTUNIQUE"),
-    # Community-quality vertex — one per Louvain community_id, holding the
-    # native modularityScore/conductance metrics (see compute_community_quality).
-    ("sql", "CREATE VERTEX TYPE COMMUNITY IF NOT EXISTS"),
-    ("sql", "CREATE PROPERTY COMMUNITY.community_id IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.conductance IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY COMMUNITY.internal_edges IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.boundary_edges IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.node_count IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE PROPERTY COMMUNITY.modularity IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY COMMUNITY.size IF NOT EXISTS INTEGER"),
-    ("sql", "CREATE INDEX ON COMMUNITY(community_id) UNIQUE"),
     # Ontology layer — the loaded ontology's classes and properties, persisted
     # per namespace so they are joinable to the data they describe (an ENTITY
     # links to its class by INSTANCE_OF, a CHUNK to the classes it evokes by
@@ -181,7 +170,6 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE HAS_TOPIC IF NOT EXISTS"),  # CHUNK -> TOPIC
     ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK
     ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE EDGE TYPE IN_COMMUNITY IF NOT EXISTS"),  # ENTITY -> COMMUNITY
     ("sql", "CREATE EDGE TYPE PLAYS_ROLE IF NOT EXISTS"),  # FRAME_INSTANCE -> ENTITY
     # Every semantic ENTITY->ENTITY fact, regardless of predicate. The predicate is
     # the `predicate` PROPERTY, not the type name: the vocabulary is open and mostly

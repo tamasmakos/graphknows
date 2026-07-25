@@ -334,19 +334,30 @@ class Memory:
             api_base=s.llm_api_base,
         )
 
-    async def _flush_topics(self, store: Any) -> int:
-        """The topic stage as invoked by a flush, using the configured defaults."""
+    async def _flush_topics(self, store: Any) -> dict[str, Any]:
+        """The topic stage as invoked by a flush, using the configured defaults.
+
+        Returns ``{"topics_created": int, "modularity": float | None}``. The
+        modularity is the topic stage's own Newman modularity over the entity
+        graph (``TopicSet.metrics["newman_modularity"]``) — the real, trusted
+        number, now that ArcadeDB's ``modularityScore``-derived reporting
+        (``compute_community_quality``) has been retired.
+        """
         from graphknows.settings import TopicMode
         from graphknows.topics import TopicConfig, build_topics, persist_topics
 
         mode = self.settings.topic_mode
         if mode is TopicMode.none:
-            return 0
+            return {"topics_created": 0, "modularity": None}
         cfg = TopicConfig(mode=mode)
         topic_set = await build_topics(
             store, cfg, self._topic_summarizer_for(mode), namespace=self.namespace
         )
-        return await persist_topics(store, topic_set)
+        persisted = await persist_topics(store, topic_set)
+        return {
+            "topics_created": persisted,
+            "modularity": topic_set.metrics.get("newman_modularity"),
+        }
 
     async def build_topics(
         self,
@@ -419,9 +430,9 @@ class Memory:
         pagerank_updated = 0
         graph_embeddings_computed = 0
         communities_computed = 0
-        community_quality = {"modularity": 0.0, "communities": 0, "communities_scored": 0}
         chunks_flipped = 0
         topics_created = 0
+        modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0}
 
         async def step(name: str, coro: Any, default: Any) -> Any:
@@ -470,16 +481,17 @@ class Memory:
             communities_computed = await step(
                 "communities", store.compute_communities(skip_view_ensure=True), 0
             )
-            community_quality = await step(
-                "community_quality",
-                store.compute_community_quality(skip_view_ensure=True),
-                community_quality,
-            )
             # Topics run last of the analytics: the stage clusters over the
             # node2vec embeddings and pagerank computed above. It is the SAME
             # stage as Memory.build_topics — one implementation, so a rebuild at
-            # new settings is never a different code path from the flush.
-            topics_created = await step("topics", self._flush_topics(store), 0)
+            # new settings is never a different code path from the flush. The
+            # topic build's own Newman modularity is the flush's reported
+            # "modularity" — ArcadeDB's untrustworthy modularityScore is gone.
+            topic_result = await step(
+                "topics", self._flush_topics(store), {"topics_created": 0, "modularity": None}
+            )
+            topics_created = topic_result["topics_created"]
+            modularity = topic_result["modularity"]
             chunks_flipped = await step(
                 "consolidate_session", store.consolidate_session(session_id), 0
             )
@@ -494,8 +506,8 @@ class Memory:
             "merged_entities": resolution["merged"],
             "graph_embeddings_computed": graph_embeddings_computed,
             "communities_computed": communities_computed,
-            "modularity": community_quality["modularity"],
-            "communities_scored": community_quality["communities_scored"],
+            "modularity": modularity,
+            "communities_scored": topics_created,
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }

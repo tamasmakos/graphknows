@@ -29,12 +29,11 @@ except ImportError:  # pragma: no cover - optional deployment dependency
     dspy = None  # type: ignore[assignment]
 
 from graphknows.exceptions import MissingExtraError
-from graphknows.ranking.rrf import community_boost
 from graphknows.retrieval.base import BaseGraphRetriever
 
 if TYPE_CHECKING:
-    from graphknows.settings import GraphKnowsSettings
     from graphknows.retrieval.models.context import RetrievalContext
+    from graphknows.settings import GraphKnowsSettings
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +91,7 @@ class AgenticRetriever(BaseGraphRetriever):
 
     def __init__(
         self,
-        settings: "GraphKnowsSettings",
+        settings: GraphKnowsSettings,
         store: Any,
     ) -> None:
         self._settings = settings
@@ -186,10 +185,11 @@ class AgenticRetriever(BaseGraphRetriever):
                 chunks = ctx.fused_results or []
                 for c in chunks:
                     collected.append(c)
-                return chunks
             except Exception as exc:
                 log.warning("retrieve tool failed for %r: %s", subquery, exc)
                 return []
+            else:
+                return chunks
 
         # ---- Tool 2: entity lookup (graph store) ----------------------
         def lookup_entity(name: str) -> list[dict]:
@@ -202,9 +202,7 @@ class AgenticRetriever(BaseGraphRetriever):
                 List of chunk dicts (chunk_id, text) that mention the entity.
             """
             try:
-                return bg_run(
-                    store.query_entity_chunks([name], session_id or None, 10, None)
-                )
+                return bg_run(store.query_entity_chunks([name], session_id or None, 10, None))
             except Exception as exc:
                 log.warning("lookup_entity failed for %r: %s", name, exc)
                 return []
@@ -232,10 +230,11 @@ class AgenticRetriever(BaseGraphRetriever):
                 filtered = filter_by_validity_window(
                     list(collected), as_of=window.strip(), include_open=True
                 )
-                return filtered
             except Exception as exc:
                 log.warning("temporal_filter failed for window=%r: %s", window, exc)
                 return list(collected)
+            else:
+                return filtered
 
         # ---- DSPy signature and ReAct module --------------------------
         class RetrievalSignature(dspy_mod.Signature):  # type: ignore[misc, name-defined]
@@ -270,38 +269,9 @@ class AgenticRetriever(BaseGraphRetriever):
                 max_iters=MAX_REACT_HOPS,
             )
 
-    async def _apply_community_weights(
-        self, scored: list[tuple[float, dict]]
-    ) -> list[tuple[float, dict]]:
-        """Scale fused RRF scores by each chunk's community weight.
-
-        Weight comes from ``GraphStore.chunk_community_weights`` (WS4): the
-        size of the majority native-Louvain community among a chunk's
-        MENTIONS-linked entities, matching the DETRetriever ``_community_boost``
-        wiring so both profiles share one signal. A single batched lookup keeps
-        it cheap; chunks without a weight (or synthetic ``topic:`` entries) are
-        left at 1.0, so this never regresses when community detection did not run.
-        """
-        if not scored:
-            return scored
-        ids = [r["chunk_id"] for _, r in scored if not str(r["chunk_id"]).startswith("topic:")]
-        if not ids:
-            return scored
-        try:
-            weights = await self._store.chunk_community_weights(ids)
-        except Exception as exc:
-            log.debug("community-weight lookup skipped: %s", exc)
-            return scored
-        if not weights:
-            return scored
-        boosted: list[tuple[float, dict]] = []
-        for score, r in scored:
-            boosted.append((score * community_boost(weights.get(r["chunk_id"])), r))
-        return boosted
-
     async def _degrade(
         self, det: Any, query: str, session_id: str, top_k: int, scope: str
-    ) -> "RetrievalContext":
+    ) -> RetrievalContext:
         """Graceful degradation chain once the ReAct loop yields nothing.
 
         Tries the deterministic retriever, then a direct ANN over the store, then
@@ -339,13 +309,11 @@ class AgenticRetriever(BaseGraphRetriever):
                 fused_results=await self._ann_results(query, session_id, top_k, scope),
                 search_type="AGENTIC",
             )
-        except Exception as exc:
-            log.error("All fallbacks failed: %s", exc)
+        except Exception:
+            log.exception("All fallbacks failed")
             return _empty()
 
-    async def _ann_results(
-        self, query: str, session_id: str, top_k: int, scope: str
-    ) -> list[dict]:
+    async def _ann_results(self, query: str, session_id: str, top_k: int, scope: str) -> list[dict]:
         """Last-resort recall: direct ANN over the graph store."""
         from graphknows.ranking.rrf import rrf_score
         from graphknows.retrieval.retriever import _scope_to_state
@@ -379,7 +347,7 @@ class AgenticRetriever(BaseGraphRetriever):
         session_id: str,
         top_k: int = 10,
         scope: str = "both",
-    ) -> "RetrievalContext":
+    ) -> RetrievalContext:
         """Retrieve relevant context with DSPy ReAct backed by DETRetriever.
 
         Flow:
@@ -449,8 +417,7 @@ class AgenticRetriever(BaseGraphRetriever):
             log.debug("base DET pass skipped: %s", exc)
 
         # Step 4 — Aggregate evidence across all ReAct hops with RRF.
-        # Community-weighted re-rank (llm_assisted only).
-        candidates = await self._apply_community_weights(_fuse_hops(collected))
+        candidates = _fuse_hops(collected)
         ranked = sorted(candidates, key=lambda x: -x[0])[:top_k]
 
         sources = "agentic"

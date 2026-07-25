@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-from graphknows.settings import MemoryMode
 from graphknows.retrieval.agentic import AgenticRetriever
+from graphknows.settings import MemoryMode
 
 
 def _make_settings():
@@ -175,7 +175,6 @@ async def test_concurrent_retrievals_do_not_share_evidence():
         )
     )
     retriever._det = det
-    retriever._store.chunk_community_weights = AsyncMock(return_value={})
 
     with (
         patch.object(retriever, "_build_react", side_effect=_build),
