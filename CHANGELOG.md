@@ -6,6 +6,47 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **A model's declared `suffix` was never applied, inverting ontology class
+  matching.** sentence-transformers applies `prompts`, which are *prefixes
+  only* — 5.6.1 has no suffix support whatsoever. `zembed-1` declares
+  `suffix: "<|im_end|>\n"` in `config_sentence_transformers.json` **and** pools
+  the last token (`pooling_mode_lasttoken`), so every embedding was pooled at an
+  arbitrary content token instead of the sentinel the model was trained on. The
+  geometry was wrong, not merely noisy: for "He finally bought that vintage
+  motorcycle he had been saving up for", the ontology class `Possession` scored
+  0.105 and ranked **11th of 11**, behind `Emotion` at 0.425; `Place` ranked 7/11
+  for a residence sentence. Applying the declared suffix moves them to 2/11 and
+  1/11. `embedder._model_suffix` now reads it from the model config and
+  `_embed_local` appends it. A no-op for models that declare none — `bge-small`
+  output is bit-identical — so only opt-in models like zembed-1 are affected.
+  - **Requires re-embedding if you use a suffix-declaring model.** Vectors
+    already persisted in ArcadeDB, and any `~/.cache/graphknows` index, were
+    computed the old way. Same constraint as changing `GRAPHKNOWS_EMBED_MODEL`.
+- **Embedding cache keys ignored *how* text is encoded.** The ontology-catalog
+  and frame-index disk caches keyed on model + dimension + content, so the fix
+  above did not invalidate them: a matrix built under the old encoding was
+  silently reused against vectors from the new one, producing plausible-looking
+  scores that were meaningless (`Possession` 0.0999 against a stale matrix vs
+  0.6829 against a fresh one). Both keys now include an encoding component.
+
+### Removed
+- **The manifest/registry/router ontology stack.** `OntologyRouter`,
+  `OntologyRegistry`, `OntologyProvider`, `ManifestOntologyProvider`,
+  `OntologyLabelExtractor` / `extract_ontology_labels`, `OntologyManifest`,
+  `OntologyLoader`, and `graphknows/ontology/assets/registry.json`, plus
+  `RelationOntologyFilter`, `build_relation_filter` and
+  `build_predicate_mapper`. None had a production caller: an ontology is
+  addressed by path (`GRAPHKNOWS_ONTOLOGY`) and loaded via
+  `load_ontology_terms` / `load_rdf_ontology_file`, which the registry lookup
+  never served. The bundled ontologies under `assets/` are unchanged and are
+  still referenced by path. `OntologyPredicateMapper` and `RdfOntologyManifest`
+  are unaffected.
+- As a side effect, `graphknows.ontology` no longer requires `rdflib` to
+  *import*: the removed `rdf_parser` raised `ImportError` at module scope, which
+  the package's `__init__` triggered eagerly, defeating the lazy imports the
+  term loader uses everywhere else.
+
 ### Added
 - **Ontology injection in both memory modes.** `GRAPHKNOWS_ONTOLOGY` takes an
   RDF/OWL file *or a folder* and steers entity and relation extraction toward
