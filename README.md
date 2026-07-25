@@ -26,10 +26,13 @@ pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
 | Extra | Adds |
 | --- | --- |
 | `assisted` | DSPy LLM extraction + injectable RDF/OWL ontology (`llm_assisted` mode) |
+| `langgraph` | LangGraph `BaseStore` adapter |
+| `langchain` | LangChain retriever adapter |
 
-`pip install graphknows` is batteries-included: GLiNER2 extraction, local
-embeddings, community detection, document parsers, the MCP server and the
-Memory Mirror web UI are all base dependencies. `assisted` is the only extra.
+`pip install graphknows` is batteries-included: GLiNER/GLiNER2 extraction, local
+embeddings, BM25, community detection, document parsers, the MCP server and the
+Memory Mirror web UI are all base dependencies. The extras above are only
+framework adapters and the LLM-assisted mode.
 
 The `graphknows.integrations.client` SDK (drive the server out-of-process) needs no extras.
 
@@ -39,8 +42,36 @@ GraphKnows needs a running ArcadeDB. The quickest path:
 docker compose up -d arcadedb
 ```
 
-> First run downloads the GLiNER2 model and a spaCy model
-> (`python -m spacy download en_core_web_lg`). See [docs/configuration.md](docs/configuration.md).
+> A `pip` install downloads its models on first use (the relex extractor, the
+> embedder, the reranker, the spaCy pipeline and two NLTK corpora — a few GB).
+> To warm them ahead of time: `python scripts/bake_models.py`.
+> The **Docker images bake all of them at build time**, so a container serves
+> requests with no per-call download and works with the network cut.
+> See [docs/configuration.md](docs/configuration.md).
+
+## Deploy
+
+```bash
+cp .env.example .env          # then set GRAPHKNOWS_ARCADEDB_PASSWORD
+docker compose -f docker-compose.prod.yaml up -d
+```
+
+`docker-compose.prod.yaml` is the deployment stack: the image is the artifact,
+with no repo bind-mount. (`docker-compose.yaml` is the *development* stack — it
+mounts the working tree over the image and puts it first on `PYTHONPATH`, which
+is convenient while editing and means the container runs live source against
+image dependencies.)
+
+CPU by default. For a GPU host:
+
+```bash
+docker build --build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu124 \
+             -t graphknows:cuda .
+```
+
+To verify an image is complete — every dependency present, every model baked,
+nothing resolved over the network — run `scripts/docker-smoke.sh`. The same
+check runs as the container healthcheck (`scripts/bake_models.py --check`).
 
 ## Quickstart
 

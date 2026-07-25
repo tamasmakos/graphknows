@@ -29,6 +29,100 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   silently reused against vectors from the new one, producing plausible-looking
   scores that were meaningless (`Possession` 0.0999 against a stale matrix vs
   0.6829 against a fresh one). Both keys now include an encoding component.
+- **`gliner` was imported but never declared.** The default `llm_free`
+  extraction path loads `knowledgator/gliner-relex-large-v1.0` through
+  `from gliner import GLiNER` (`entities/gliner_model.py`), but `pyproject.toml`
+  declared only `gliner2`. A clean install — or a freshly built image — raised
+  `ModuleNotFoundError` on first ingest. It went unnoticed because
+  `docker-compose.yaml` bind-mounts the working tree over the image and puts it
+  first on `PYTHONPATH`, so containers ran live source against months-old
+  site-packages that happened to still carry `gliner` from an earlier layout.
+- **The BM25 channel was never running BM25, and was broken when switched on.**
+  `rank-bm25` was imported by `retrieval/retriever.py` and declared nowhere, so
+  it was never installed, `_HAS_BM25` was always False, and the channel silently
+  served a fallback tf-scorer. Declaring it exposed a latent bug in the branch
+  that had therefore never executed: `_bm25_rank` filtered results on
+  `score > 0.0`, which is equivalent to "contains a query term" only for the
+  fallback's always-positive IDF. BM25Okapi's IDF goes negative once a term
+  appears in more than ~half the corpus — routine at candidate-pool sizes — so
+  genuine matches were discarded and the channel could return nothing at all.
+  Now filtered on term presence. **Any past measurement attributed to the BM25
+  arm of the fused pool was measuring the fallback.**
+- **`nltk` was imported by default-mode code but declared only in the `eval`
+  dependency-group** (`relations/svo.py`, `channels/_framenet.py`). Those call
+  sites catch `LookupError` (a missing *corpus*), which does not catch the
+  `ModuleNotFoundError` from a missing *package*, so `pip install graphknows`
+  produced a hard crash. Only the Docker image worked, because it installed the
+  eval group. `nltk` is now a core dependency.
+- **`torch`, `transformers` and `huggingface-hub` are now declared.** All three
+  are imported directly by `embedder.py`, `rerank.py`, `gliner_model.py` and
+  `_gliner2_verifier.py`; relying on the transitive edge through
+  `sentence-transformers` meant any of its releases could break us silently.
+- **`.[all]` is not a declared extra.** Both Dockerfiles installed it; uv only
+  *warns* on an unknown extra, so the shipped image contained no extras at all
+  and `GRAPHKNOWS_MODE=llm_assisted` raised `ModuleNotFoundError` for `dspy`.
+  Now installs `.[assisted]`.
+- **The embed-model default disagreed with itself.** `settings.py` defaulted to
+  `zeroentropy/zembed-1-embedding` (2560-dim) while `docker-compose.yaml` and
+  `.env.example` defaulted to `BAAI/bge-small-en-v1.5` (384-dim). ArcadeDB
+  vector indexes are dimension-typed, so a library user and a container user
+  silently built incompatible indexes. `BAAI/bge-small-en-v1.5` is now the
+  single default everywhere, and `EMBED_DIM` was corrected from 2560 to 384.
+- **Six of seven `MissingExtraError` call sites named extras that do not
+  exist** (`parsers`, `server`, `web`, `local-embeddings`, and previously
+  `langgraph`/`langchain`), telling users to run a `pip install` that installs
+  nothing. Those guarding *core* dependencies now raise the new
+  `BrokenInstallError`; `langgraph` and `langchain` became real extras.
+
+### Added
+- **All models are baked into the Docker image at build time.**
+  `scripts/bake_models.py` downloads the relex extractor, embedder, reranker,
+  relation verifier and its DeBERTa encoder, the spaCy pipeline, and the NLTK
+  `wordnet`/`omw-1.4`/`framenet_v17` corpora into `/opt/models`. Model ids are
+  resolved from the code that owns them, so the list cannot drift from the app.
+  The image also sets `HF_HUB_OFFLINE=1`: without it the hub client makes a
+  revision check on every model load, which is per-call latency on a cold
+  worker, a hard runtime dependency on huggingface.co, and an outright failure
+  when air-gapped (it raises rather than falling back to cache). Set
+  `HF_HUB_OFFLINE=0` to run a model that is not baked.
+  - Previously nothing was prefetched, and `channels/_framenet.py` called
+    `nltk.download("framenet_v17")` from inside the request path. When a corpus
+    was absent the call sites caught `LookupError` and returned a degraded
+    result with no warning.
+  - `nltk.download()` needs an explicit `download_dir`: it does not honour
+    `NLTK_DATA`, and as root (as in a build) it writes to a system directory,
+    reports success, and leaves nothing where the runtime looks.
+- **`scripts/bake_models.py --check`** runs as the container healthcheck. It
+  asserts every model is present *offline*, so it cannot pass by downloading,
+  and verifies corpora through the same corpus-reader calls the runtime makes
+  rather than `nltk.data.find` (which fails on the still-zipped `wordnet` and
+  `omw-1.4` even though the readers load them fine).
+- **`docker-compose.prod.yaml`** — a deployment stack where the image is the
+  artifact: no repo bind-mount, no `PYTHONPATH=/app`, a required (not
+  defaulted-to-`changeme`) ArcadeDB password, and restart policies on every
+  service.
+- **`tests/test_packaging.py`** — asserts that every third-party module the
+  package imports resolves to a declared distribution, that default-path
+  dependencies are core rather than extras, and that every `MissingExtraError`
+  names a real extra. The cheap seam for the whole class of bug above; it is
+  what found `rank-bm25`, `torch`, `transformers` and `huggingface-hub`.
+- **`scripts/docker-smoke.sh`** — runs the shipped image with `--network none`
+  and asserts every dependency imports, every model loads from cache, and warm
+  embedding stays under 1s/call. It deliberately does not inject offline env
+  vars: the image must be self-sufficient by its own configuration.
+
+### Changed
+- **The Docker image ships CPU torch by default** (`--build-arg TORCH_INDEX`
+  selects a CUDA index for a GPU image). The PyPI wheel bundles ~2.5GB of CUDA
+  kernels a CPU deployment never executes.
+- **The runtime image no longer contains the developer toolchain.** It was
+  installing `--group dev --group eval` plus `jupyterlab`, shipping `pytest`,
+  `ruff`, `mypy`, `bandit`, `tach`, `pandas`, `datasets` and JupyterLab to
+  users, along with `uv` and `git`. Those now live only in the `dev` stage.
+- **`Dockerfile.web` was folded into a `web` stage in `Dockerfile`.** The two
+  files duplicated the install and had already drifted: the web image omitted
+  the dependency groups that were smuggling `nltk` in, so it lacked packages the
+  mcp image had from the same commit.
 
 ### Removed
 - **The manifest/registry/router ontology stack.** `OntologyRouter`,
@@ -48,6 +142,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   term loader uses everywhere else.
 
 ### Added
+- **The container refuses to start when its dependencies are stale.**
+  `scripts/preflight.py` runs from the image `ENTRYPOINT`, so it wraps every
+  command — `graphknows-mcp`, `graphknows-web` and the dev shell alike. It fails
+  the boot when a dependency declared in the mounted `pyproject.toml` is not
+  installed, or when the mounted `uv.lock` differs from the one the venv was
+  resolved from (its hash is baked to `/opt/venv/.lock-hash` at build time).
+  `GRAPHKNOWS_SKIP_PREFLIGHT=1` bypasses it, which is needed to get a shell in an
+  already-wedged container. In a deployment there is no bind-mount, so both
+  checks no-op: the image is the truth by definition.
+  - This is the guard for the root cause of everything below: `docker-compose.yaml`
+    mounts the working tree over `/app` and puts it first on `PYTHONPATH`, so a
+    container runs **live source against image dependencies**. Nothing detected
+    the gap, and the shipped `mcp` image was seven weeks stale.
+- **CI validates the artifact, not just the source.** A new `Image` stage builds
+  the image and runs `scripts/docker-smoke.sh` against it. Every other gate does
+  `uv sync` into a fresh environment, so all of them passed against a correct
+  dependency set while the image itself was months out of date — no stage had
+  ever built it. Gated on `main` and on changes to `Dockerfile`, `pyproject.toml`,
+  `uv.lock` or `scripts/*`.
 - **Ontology injection in both memory modes.** `GRAPHKNOWS_ONTOLOGY` takes an
   RDF/OWL file *or a folder* and steers entity and relation extraction toward
   its vocabulary in `llm_free` as well as `llm_assisted`. The chunk's ingest
@@ -140,6 +253,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   values it was already using, so behaviour is unchanged).
 
 ### Removed
+- **The CI ban on sentence-transformers.** The Lint stage rejected the import in
+  production code, the dependency in `pyproject.toml` and the entry in `uv.lock`
+  — a rule from when embeddings were remote-only. Local sentence-transformers
+  embeddings are the documented design (the `llm_free` path runs with zero API
+  keys) and `pyproject.toml` declares it as a core dependency, so the gate
+  contradicted the package it was gating and had been failing for a long time.
+  A permanently-red pipeline is part of why nothing caught the dependency drift.
+- **The dangling `scripts/check_imports.py` CI step.** The script was added in
+  `66619ab` and later deleted without updating the `Jenkinsfile`, so the Lint
+  stage errored before reaching anything useful. `tests/test_packaging.py` now
+  covers what it was for.
 - The STM→LTM promotion pipeline (`graphknows.ingestion.promotion`,
   `PromotionStep`, `default_promotion_steps`) and the corpus-ingest workflow —
   both were superseded by in-place consolidation in 2.0.0 and had no remaining
