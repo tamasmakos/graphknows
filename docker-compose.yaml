@@ -126,6 +126,16 @@ services:
       # Developer tooling (SonarQube CLI) lives in the `dev` stage only, so the
       # shipped mcp/web images stay free of it.
       target: dev
+      args:
+        # CUDA torch for the workspace ONLY. The Dockerfile defaults TORCH_INDEX
+        # to the CPU wheel because that is right for the shipped mcp/web images,
+        # but this container is the eval workstation and the compose `deploy`
+        # block below reserves the host GPU for it. With the CPU wheel,
+        # torch.cuda.is_available() is False and the 467M-parameter relex
+        # extractor runs on CPU — conv-30 (49 chunks, the shortest LoCoMo
+        # dialogue) took 18.6 minutes to ingest.
+        # cu128 matches the host driver (CUDA 12.8); lower it if the driver is older.
+        TORCH_INDEX: https://download.pytorch.org/whl/cu128
     working_dir: /app
     volumes:
       - .:/app
