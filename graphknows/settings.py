@@ -147,10 +147,17 @@ class GraphKnowsSettings(BaseSettings):
     extraction_model: str = Field(default="", alias="GRAPHKNOWS_EXTRACTION_MODEL")
     summarization_model: str = Field(default="", alias="GRAPHKNOWS_SUMMARIZATION_MODEL")
 
-    # Embeddings (local sentence-transformers by default; no API key needed)
-    embed_model: str = Field(
-        default="zeroentropy/zembed-1-embedding", alias="GRAPHKNOWS_EMBED_MODEL"
-    )
+    # Embeddings (local sentence-transformers by default; no API key needed).
+    #
+    # This default MUST match docker-compose.yaml and .env.example: ArcadeDB
+    # vector indexes are dimension-typed, so a library user on one default and a
+    # container user on another silently build incompatible indexes. bge-small is
+    # the shipped choice — 384-dim, ~130MB, baked into the image, no gated repo
+    # and no trust_remote_code. Larger embedders (e.g. the 2560-dim 4B
+    # zeroentropy/zembed-1-embedding) are opt-in via GRAPHKNOWS_EMBED_MODEL and
+    # download on first use; changing this on a populated namespace requires a
+    # re-index.
+    embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="GRAPHKNOWS_EMBED_MODEL")
     embed_api_base: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_BASE")
     embed_api_key: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_KEY")
     # Local-embedding device: "auto" (CUDA if present, else CPU), "cuda", or "cpu".
