@@ -36,14 +36,14 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without 
     raise MissingExtraError("llm_assisted extraction", "assisted") from exc
 from pydantic import BaseModel, Field
 
-from graphknows.ingestion.extraction.entities.graph_ops import standardize_label
 from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
+from graphknows.ingestion.normalization import standardize_label
+from graphknows.llm import build_lm, get_openrouter_api_key
 from graphknows.ontology.loader import (
     RdfOntologyManifest,
     load_ontology_terms,
     load_rdf_ontology_file,
 )
-from graphknows.llm import build_lm, get_openrouter_api_key
 
 log = logging.getLogger(__name__)
 

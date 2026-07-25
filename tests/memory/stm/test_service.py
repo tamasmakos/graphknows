@@ -54,25 +54,11 @@ def test_stm_service_accepts_custom_config():
 
 @pytest.mark.asyncio
 async def test_ingest_calls_handler(tmp_path):
-    svc, store, embed = _make_service()
+    svc, store, _embed = _make_service()
     result = await svc.ingest("Hello world", session_id="s1", title="Test")
     assert result.session_id == "s1"
     assert result.chunk_count >= 1
     store.write_chunk.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_record_turn_writes_turn_chunk():
-    from graphknows.ingestion.stm.dialog import Turn
-
-    svc, store, embed = _make_service()
-    turn = Turn(id="t1", index=0, role="user", text="hello")
-    result = await svc.record_turn("s1", "d1", turn)
-    assert result.turn_id == "t1"
-    store.write_chunk.assert_awaited()
-    # The turn is written as a CHUNK with kind='turn'.
-    written = store.write_chunk.await_args.args[0]
-    assert written["kind"] == "turn"
 
 
 @pytest.mark.asyncio

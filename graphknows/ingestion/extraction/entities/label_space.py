@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from graphknows.ingestion.extraction.entities.graph_ops import standardize_label
+from graphknows.ingestion.normalization import standardize_label
 
 # TYPE_CHECKING guard avoids circular import at runtime
 if TYPE_CHECKING:

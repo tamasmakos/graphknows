@@ -285,10 +285,6 @@ class TestDspyExtractorExtractThenMap:
             "graphknows.ingestion.normalization",
             REPO_ROOT / "graphknows" / "ingestion" / "normalization.py",
         )
-        _load_module(
-            "graphknows.ingestion.extraction.entities.graph_ops",
-            REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "entities" / "graph_ops.py",
-        )
 
         with (
             patch("dspy.LM", return_value=MagicMock()),

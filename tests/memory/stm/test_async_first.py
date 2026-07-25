@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import inspect
 
-from graphknows.ingestion.stm import dialog, ingest, service
+from graphknows.ingestion.stm import ingest, service
 from graphknows.ingestion.stm._entity_writer import (
     write_entity_nodes_and_edges,
     write_relation_edges,
@@ -17,7 +17,7 @@ from graphknows.ingestion.stm._entity_writer import (
 
 
 def test_ingest_modules_do_not_import_async_bridge() -> None:
-    for module in (service, ingest, dialog):
+    for module in (service, ingest):
         assert "_async_bridge" not in inspect.getsource(module), (
             f"{module.__name__} must not use the sync thread-bridge"
         )
@@ -26,9 +26,7 @@ def test_ingest_modules_do_not_import_async_bridge() -> None:
 def test_public_ingest_methods_are_coroutines() -> None:
     assert inspect.iscoroutinefunction(service.STMService.ingest)
     assert inspect.iscoroutinefunction(service.STMService.ingest_messages)
-    assert inspect.iscoroutinefunction(service.STMService.record_turn)
     assert inspect.iscoroutinefunction(service.STMService.connect)
-    assert inspect.iscoroutinefunction(dialog.DialogCapture.write_turn)
 
 
 def test_entity_writer_helpers_are_async() -> None:

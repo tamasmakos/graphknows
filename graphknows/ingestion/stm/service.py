@@ -129,24 +129,6 @@ class STMService:
     # Conversation ingestion (Phase-1 bridge: 1 turn = 1 CHUNK(kind='turn'))
     # ------------------------------------------------------------------
 
-    async def record_turn(
-        self,
-        session_id: str,
-        dialog_id: str,
-        turn: Any,
-    ) -> Any:
-        """Record a single conversation turn as a CHUNK(kind='turn')."""
-        from graphknows.ingestion.stm.dialog import DialogResult
-
-        entity_count = await self._handler().ingest_turn(
-            session_id=session_id,
-            file_id=dialog_id,
-            seq=turn.index,
-            role=turn.role,
-            text=turn.text,
-        )
-        return DialogResult(dialog_id=dialog_id, turn_id=turn.id, entity_count=entity_count)
-
     async def ingest_messages(
         self,
         messages: list[Message],

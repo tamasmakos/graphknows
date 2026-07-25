@@ -1,8 +1,8 @@
 """Shared helpers for writing entity nodes + edges + relation edges to the STM store.
 
-Both _STMIngestHandler and DialogCapture follow the same write pattern but use
-different edge types (chunk vs. turn).  The edge_writer callable is the only
-difference — callers supply a lambda that calls the appropriate edge method.
+_STMIngestHandler supplies the write pattern; the edge_writer callable is the
+seam — callers supply a lambda that calls the appropriate edge method for the
+edge type they need (chunk vs. turn).
 """
 
 from __future__ import annotations
@@ -34,7 +34,9 @@ _TEMPORAL_NAME_RE = re.compile(
     # month-first, with optional day, an optional "- <month> <day>" range end,
     # and an optional trailing year: "July 2023" / "December 15, 2023" /
     # "November 1 - November 15, 2023" / "January 16 - February 15, 2024".
-    rf"|{_MONTH}\s+\d{{1,4}}(?:\s*[-–—]\s*(?:{_MONTH}\s+)?\d{{1,4}})?(?:,?\s+\d{{2,4}})?"
+    # RUF001 suppressed: the en/em dashes are the literal characters real date
+    # ranges are written with — replacing them with a hyphen breaks the match.
+    rf"|{_MONTH}\s+\d{{1,4}}(?:\s*[-–—]\s*(?:{_MONTH}\s+)?\d{{1,4}})?(?:,?\s+\d{{2,4}})?"  # noqa: RUF001
     r"|\d{4}"  # bare year
     r")$",
     re.IGNORECASE,
