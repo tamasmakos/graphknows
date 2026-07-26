@@ -6,11 +6,13 @@
 # Shell:      make shell SVC=web
 # ──────────────────────────────────────────────────────────────────
 COMPOSE := docker compose
+CONTAINER ?= graphknows-workspace
 SVC     ?=   # optional: limit logs/restart/stop/shell/build to one service
 
 .PHONY: up down restart stop build rebuild ps logs shell \
         infra-up infra-down observability setup clean prune help \
-        test test-integration lint typecheck arch build-wheel smoke ci eval-smoke \n        gate hooks
+        test test-integration lint typecheck arch build-wheel smoke ci eval-smoke \
+        gate hooks sweep
 
 # ── Lifecycle ──────────────────────────────────────────────────────
 up: ## Start all services
@@ -104,6 +106,13 @@ gate: ## Run the pre-push gate exactly as the hook runs it
 
 hooks: ## Install both git hooks (once per clone)
 	bash scripts/install-hooks.sh
+
+# Report-only on purpose. vulture false-positives on pydantic fields, protocol
+# methods and lazy __getattr__, so it is a sweep a human reads, never a gate.
+# Its job is the one thing no gate catches: code that is wired to nothing.
+sweep: ## Dead-code sweep (report only, run every few weeks)
+	docker exec $(CONTAINER) sh -c "cd /app && uvx vulture graphknows \
+	  --exclude 'graphknows/utils' --min-confidence 60"
 
 eval-smoke: ## End-to-end acceptance: one LoCoMo conversation via the MCP client (needs services up)
 	python -m evaluation --limit 1

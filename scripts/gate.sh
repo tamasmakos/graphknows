@@ -19,7 +19,16 @@
 set -uo pipefail
 
 CONTAINER="${GRAPHKNOWS_CONTAINER:-graphknows-workspace}"
-COVERAGE_FLOOR="${GRAPHKNOWS_COVERAGE_FLOOR:-65}"
+# The floor is a ratchet, so the environment may only RAISE it. Reading it
+# straight from the env made `GRAPHKNOWS_COVERAGE_FLOOR=0 git push` a one-word
+# bypass, which is the env-var escape hatch this design deliberately omits.
+COVERAGE_FLOOR_MIN=65
+COVERAGE_FLOOR="${GRAPHKNOWS_COVERAGE_FLOOR:-$COVERAGE_FLOOR_MIN}"
+if [ "$COVERAGE_FLOOR" -lt "$COVERAGE_FLOOR_MIN" ] 2>/dev/null; then
+  echo "gate: ignoring GRAPHKNOWS_COVERAGE_FLOOR=$COVERAGE_FLOOR - the floor" >&2
+  echo "      may be raised but never lowered. Using $COVERAGE_FLOOR_MIN." >&2
+  COVERAGE_FLOOR=$COVERAGE_FLOOR_MIN
+fi
 # Phase 2 uploads the Sonar analysis without gating on the verdict, so the real
 # new_coverage reading is visible before it binds. Flip to 1 to arm it.
 SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-0}"
@@ -113,7 +122,10 @@ record $? "pytest/coverage"
 # baked models and times out at 30s, and an untracked file cannot leak anyway.
 step "secret scan (tracked files)"
 if command -v sonar >/dev/null 2>&1; then
-  git ls-files | xargs sonar analyze secrets
+  # `xargs` splits 300+ paths across several invocations, so a plain `$?` reports
+  # only the LAST batch and a secret found in the first one is masked by a clean
+  # second one. -P1 keeps ordering and `xargs` returns non-zero if ANY child did.
+  git ls-files -z | xargs -0 -P1 sonar analyze secrets
   record $? "secret scan"
 else
   echo "gate: sonar CLI not found - install it or the secret scan cannot run." >&2
@@ -133,7 +145,13 @@ record $? "dependency audit"
 
 # -- 7. SonarCloud -----------------------------------------------------------
 step "SonarCloud analysis (blocking=${SONAR_BLOCKING})"
-if [ -f scripts/sonar-publish.sh ]; then
+# No `if [ -f ... ]` guard: a missing publisher used to make this stage vanish
+# with no output and no failure, which is the same silent skip the header of this
+# file forbids. An absent script is a broken gate, so it is reported as one.
+if [ ! -f scripts/sonar-publish.sh ]; then
+  echo "gate: scripts/sonar-publish.sh is missing - the Sonar stage cannot run." >&2
+  FAILED+=("SonarCloud analysis (script missing)")
+else
   bash scripts/sonar-publish.sh
   rc=$?
   if [ "$SONAR_BLOCKING" = "1" ]; then

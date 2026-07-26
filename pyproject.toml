@@ -147,8 +147,9 @@ eval = [
 [tool.bandit]
 skips = ["B101"]
 
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
+# No [tool.pytest.ini_options] here: pytest.ini exists and takes precedence over
+# pyproject.toml, so anything declared here is inert. The asyncio_mode that used
+# to sit here was never applied — it now lives in pytest.ini, where it binds.
 
 [tool.mypy]
 

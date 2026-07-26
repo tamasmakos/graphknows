@@ -124,6 +124,11 @@ def _classify_path(file_path: str) -> tuple[str, str] | None:
         return ("deny", _locked_reason(name))
     if ".claude" in parts and "hooks" in parts:
         return ("deny", "Blocked: .claude/hooks/ is the enforcement layer itself.")
+    if ".claude" in parts and name == "settings.json":
+        # settings.json REGISTERS this guard. Protecting the implementation but
+        # not the registration protects nothing: delete the hook entry and every
+        # other rule here stops running.
+        return ("deny", "Blocked: .claude/settings.json registers the gate guard.")
     if name in PROMPTED_FILES:
         return (
             "ask",

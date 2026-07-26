@@ -117,7 +117,7 @@ FunctionTool.from_defaults(
 
 ## Code Style
 
-- **Python**: `ruff` + `black`. Run `uv run ruff check . && uv run black .`
+- **Python**: `ruff` + `ruff format`. Run `uv run ruff check . && uv run ruff format .`
 - **TypeScript**: `eslint` + `prettier`. Run `pnpm lint`
 - **Cypher**: Always use parameterised queries — never f-string interpolation in Cypher.
 - **Async**: Use `async with driver.session()` for all Neo4j queries.

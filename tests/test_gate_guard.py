@@ -53,6 +53,10 @@ def bash(command: str) -> str:
     return decide({"tool_name": "Bash", "tool_input": {"command": command}})
 
 
+def powershell(command: str) -> str:
+    return decide({"tool_name": "PowerShell", "tool_input": {"command": command}})
+
+
 def edit(file_path: str) -> str:
     return decide({"tool_name": "Edit", "tool_input": {"file_path": file_path}})
 
@@ -97,10 +101,27 @@ class TestBypassesAreDenied:
             "/app/.claude/hooks/gate_guard.py",
             "/app/scripts/gate.sh",
             "/app/pytest.ini",
+            # settings.json REGISTERS the guard. Locking the implementation but
+            # leaving the registration writable protects nothing — delete the
+            # hook entry and every other rule here stops running.
+            "/app/.claude/settings.json",
         ],
     )
     def test_edit_of_gate_config(self, path: str) -> None:
         assert edit(path) == "deny"
+
+    @pytest.mark.parametrize(
+        "command",
+        [f"git commit {NO_VERIFY} -m x", "cp /tmp/x scripts/gate.sh"],
+    )
+    def test_powershell_is_guarded_too(self, command: str) -> None:
+        """PowerShell is this environment's primary shell.
+
+        The guard handled the PowerShell tool from the start, but the hook
+        matcher named only `Bash`, so those calls never reached it — the whole
+        rule set was one tool name away from being bypassed.
+        """
+        assert powershell(command) == "deny"
 
 
 @pytest.mark.skipif(not GUARD.exists(), reason="gate guard not installed")
