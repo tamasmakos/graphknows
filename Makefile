@@ -10,7 +10,7 @@ SVC     ?=   # optional: limit logs/restart/stop/shell/build to one service
 
 .PHONY: up down restart stop build rebuild ps logs shell \
         infra-up infra-down observability setup clean prune help \
-        test test-integration lint typecheck arch build-wheel smoke ci eval-smoke
+        test test-integration lint typecheck arch build-wheel smoke ci eval-smoke \n        gate hooks
 
 # ── Lifecycle ──────────────────────────────────────────────────────
 up: ## Start all services
@@ -98,6 +98,12 @@ smoke: ## Core-only import smoke: import graphknows + client with no heavy deps
 
 ci: lint typecheck arch test build-wheel ## Run the full local CI gate
 	@echo "CI gate passed."
+
+gate: ## Run the pre-push gate exactly as the hook runs it
+	bash scripts/gate.sh
+
+hooks: ## Install both git hooks (once per clone)
+	bash scripts/install-hooks.sh
 
 eval-smoke: ## End-to-end acceptance: one LoCoMo conversation via the MCP client (needs services up)
 	python -m evaluation --limit 1

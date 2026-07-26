@@ -18,7 +18,7 @@ a string, and an agent can set a string.
 
 The second half guards the gate's own configuration. The realistic failure is
 not an agent skipping a check; it is an agent "fixing" a red build by loosening
-``ruff.toml``, lowering a coverage floor, or adding a ``disable_error_code``.
+``ruff.toml``, lowering the coverage floor, or adding a ``disable_error_code``.
 Pure-gate files are denied outright. ``pyproject.toml`` is escalated to a prompt
 instead: it holds the mypy knobs *and* the dependency list, so a hard deny would
 block ordinary work.
@@ -28,10 +28,16 @@ The file-write check runs on BOTH tool families. Guarding only Edit/Write leaves
 very configs this exists to protect — the lock has to cover the shell too, or it
 is decoration of exactly the kind this repo already had too much of.
 
-Known ceiling: shell coverage is pattern-based, so a determined rewrite (a
-here-doc into python, a renamed temp file) still gets through. It stops the
-realistic case — an agent reaching for the quickest way to turn a build green —
-not an adversary. The human-visible git history is the backstop.
+Two deliberate limits, stated rather than implied:
+
+* Only write *targets* are checked, not every token in a command that happens to
+  contain a redirect. The stricter version denied read-only commands that
+  mentioned a locked path next to a ``2>&1``. A gate with false positives is a
+  gate that gets switched off.
+* Shell coverage is pattern-based, so an indirect write (a here-doc into python,
+  a helper script) still gets through. This stops an agent reaching for the
+  quickest way to turn a build green; it is not an adversarial sandbox. Git
+  history is the backstop, which is why the gate configs are version controlled.
 """
 
 from __future__ import annotations
@@ -50,26 +56,38 @@ LOCKED_FILES = frozenset(
         ".importlinter",
         "pytest.ini",
         "sonar-project.properties",
+        # The pre-push gate itself: which checks run, the coverage floor, and
+        # whether the Sonar verdict blocks. Lives in scripts/, but it is gate
+        # policy, so it carries the same lock as the declarative configs.
+        "gate.sh",
+        "sonar-publish.sh",
+        "install-hooks.sh",
     }
 )
 
 # Mixed config: gate knobs live beside dependencies, so prompt rather than deny.
 PROMPTED_FILES = frozenset({"pyproject.toml"})
 
+# The git invocation itself: optional env-var prefixes, then `git`, then the
+# verb, then its arguments. Anchored, because an unanchored "a git verb appears
+# somewhere in this segment" test also matches prose ABOUT git — a heredoc
+# mentioning `git` and `pre-commit` next to an unrelated `grep -n` was denied by
+# the previous version. The flag must belong to the command, not the sentence.
+_GIT_INVOCATION = re.compile(
+    r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*git\s+(?:-\S+\s+)*(commit|push)\b(?P<args>.*)$"
+)
 _NO_VERIFY = re.compile(r"(?:^|\s)(--no-verify|-n)(?=\s|$|=)")
-_GIT_VERB = re.compile(r"\bgit\b[^|;&]*?\b(commit|push)\b")
 _HOOKS_PATH = re.compile(r"\bgit\s+config\b[^|;&]*\bcore\.hooksPath\b", re.IGNORECASE)
 # Anchored to the start of a command segment: these are env-var prefixes and
-# subcommands, not words. An unanchored match also fires on the word appearing
-# inside a commit message, which is a legitimate thing to write.
+# subcommands, not words. Unanchored, it also fires on the name appearing inside
+# a commit message, which is a legitimate thing to write.
 _HOOK_DISABLE = re.compile(
     r"^\s*(?:SKIP\s*=|PRE_COMMIT_ALLOW_NO_CONFIG\s*=)|\bpre-commit\s+uninstall\b",
     re.IGNORECASE,
 )
-# Shell writes that would edit a protected file without going through Edit/Write.
-_SHELL_WRITE = re.compile(
-    r"(?:\bsed\b[^|;&]*-i|\b(?:cp|mv|tee|dd|install)\b|>>?\s*[\"']?[\w./\\-]*)",
-)
+_REDIRECT_TARGET = re.compile(r">>?\s*[\"']?([\w./\\-]+)")
+_WRITE_CMD = re.compile(r"\b(?:cp|mv|tee|dd|install|truncate)\b([^|;&]*)")
+_SED_INPLACE = re.compile(r"\bsed\b[^|;&]*?-i[^|;&]*")
 
 
 def _decide(decision: str, reason: str) -> None:
@@ -115,11 +133,22 @@ def _classify_path(file_path: str) -> tuple[str, str] | None:
     return None
 
 
+def _write_targets(command: str) -> list[str]:
+    """Paths this command would write to. A read-only mention is not a target."""
+    targets: list[str] = [m.group(1) for m in _REDIRECT_TARGET.finditer(command)]
+    for match in _WRITE_CMD.finditer(command):
+        targets += [t for t in re.findall(r"[\w./\\-]+", match.group(1)) if t[:1] != "-"]
+    for match in _SED_INPLACE.finditer(command):
+        targets += [t for t in re.findall(r"[\w./\\-]+", match.group(0)) if t[:1] != "-"]
+    return targets
+
+
 def _check_bash(command: str) -> None:
     # `git commit -n` is --no-verify; the flag only matters on commit/push, so
     # an unrelated `-n` (grep -n, sort -n) never trips this.
     for segment in re.split(r"[|;&]{1,2}", command):
-        if _GIT_VERB.search(segment) and _NO_VERIFY.search(segment):
+        invocation = _GIT_INVOCATION.match(segment)
+        if invocation is not None and _NO_VERIFY.search(invocation.group("args")):
             _decide(
                 "deny",
                 "Blocked: --no-verify skips the repo's quality gate (pre-commit: "
@@ -133,9 +162,7 @@ def _check_bash(command: str) -> None:
         _decide("deny", "Blocked: re-pointing core.hooksPath disables the repo's git hooks.")
 
     # A shell write aimed at a protected path is the same act as an Edit.
-    if not _SHELL_WRITE.search(command):
-        return
-    for token in re.findall(r"[\w./\\-]+", command):
+    for token in _write_targets(command):
         verdict = _classify_path(token)
         if verdict is not None:
             decision, reason = verdict
