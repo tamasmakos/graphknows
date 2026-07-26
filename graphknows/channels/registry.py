@@ -19,9 +19,7 @@ if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
 
 # name -> channel class. Insertion order defines the default fusion order.
-CHANNEL_REGISTRY: dict[str, type[Channel]] = {
-    cls.name: cls for cls in DEFAULT_COLLECTOR_CHANNELS
-}
+CHANNEL_REGISTRY: dict[str, type[Channel]] = {cls.name: cls for cls in DEFAULT_COLLECTOR_CHANNELS}
 # Personalized-PageRank graph channel — seeds on query entities, propagates over
 # the relation graph. Fused alongside the deterministic collectors.
 CHANNEL_REGISTRY[GraphPPRChannel.name] = GraphPPRChannel

@@ -1324,14 +1324,16 @@ class GraphStore(ArcadeStoreBase):
             f"MATCH (n:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE {where} "
             f"RETURN n.id AS id, n.frame_type AS frame_type, c.chunk_id AS chunk_id"
         )
+        # A row with no id cannot be scored: `score.get(None, 0.0)` would hand
+        # back a silent 0.0 and rank a real frame chunk last. Drop it instead.
         return [
             {
                 "chunk_id": r["chunk_id"],
                 "frame_type": r.get("frame_type"),
-                "score": score.get(r.get("id"), 0.0),
+                "score": score.get(r["id"], 0.0),
             }
             for r in joined
-            if r.get("chunk_id")
+            if r.get("chunk_id") and r.get("id")
         ]
 
     async def query_frame_chunks(
@@ -1815,12 +1817,13 @@ class GraphStore(ArcadeStoreBase):
         candidates: list[tuple[str, str, list[float]]] = []
         for r in rows:
             emb = r.get("emb")
-            if not emb:
+            nn = r.get("nn")
+            if not emb or not nn:
                 continue
-            if r.get("nn") == seed_nn:
+            if nn == seed_nn:
                 seed_emb = emb
             else:
-                candidates.append((r.get("nn"), r.get("name") or r.get("nn"), emb))
+                candidates.append((nn, r.get("name") or nn, emb))
         if seed_emb is None or not candidates:
             return []
         seed = np.asarray(seed_emb, dtype=float)
@@ -2098,14 +2101,19 @@ class GraphStore(ArcadeStoreBase):
             "r.verifier_score AS verifier_score",
             loser=loser_norm,
         )
+        # An endpoint with neither a name nor a name_norm cannot be repointed:
+        # passing None through would recreate the edge against a null-named
+        # node, i.e. manufacture the junk entity the merge exists to remove.
         for row in out_rows:
-            if row.get("dst_nn") == winner_norm:
+            dst = row.get("dst") or row.get("dst_nn")
+            if not dst or row.get("dst_nn") == winner_norm:
                 continue
-            await self._repoint_relation(winner_name, row.get("dst") or row.get("dst_nn"), row)
+            await self._repoint_relation(winner_name, dst, row)
         for row in in_rows:
-            if row.get("src_nn") == winner_norm:
+            src = row.get("src") or row.get("src_nn")
+            if not src or row.get("src_nn") == winner_norm:
                 continue
-            await self._repoint_relation(row.get("src") or row.get("src_nn"), winner_name, row)
+            await self._repoint_relation(src, winner_name, row)
 
         # 3. Fold the loser's surface + aliases into the winner's aliases.
         for a in [loser_name, *loser_aliases]:

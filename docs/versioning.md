@@ -34,6 +34,6 @@ next major. Current deprecations (removed in 2.0):
 ## Releasing
 
 1. Update `CHANGELOG.md` (Keep a Changelog format) and bump `__version__`.
-2. `make ci` (lint, typecheck, tach, unit tests, wheel size + py.typed).
+2. `make ci` (lint, typecheck, import-linter, unit tests, wheel size + py.typed).
 3. `make eval-smoke` against a live ArcadeDB for end-to-end acceptance.
 4. Tag `vX.Y.Z`; optionally publish to TestPyPI before PyPI.

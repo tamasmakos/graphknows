@@ -39,9 +39,7 @@ def build_retriever(
     Raises:
         ValueError: When ``strategy`` is not a known strategy name.
     """
-    resolved = (
-        RetrievalStrategy(strategy) if strategy else settings.retrieval_strategy
-    )
+    resolved = RetrievalStrategy(strategy) if strategy else settings.retrieval_strategy
     if resolved is RetrievalStrategy.agentic:
         from graphknows.retrieval.agentic import AgenticRetriever
 
@@ -58,8 +56,10 @@ def build_retriever(
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily expose the retriever classes without importing the query stack at
-    ``import graphknows.retrieval`` time."""
+    """Lazily expose the retriever classes.
+
+    Keeps the query stack out of ``import graphknows.retrieval``.
+    """
     lazy = {
         "DETRetriever": ("graphknows.retrieval.retriever", "DETRetriever"),
         "AgenticRetriever": ("graphknows.retrieval.agentic", "AgenticRetriever"),

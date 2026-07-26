@@ -54,7 +54,9 @@ async def main() -> None:
 
     try:
         await app.ainvoke({"messages": [{"role": "user", "content": "My cat is named Mochi."}]})
-        out = await app.ainvoke({"messages": [{"role": "user", "content": "What is my cat's name?"}]})
+        out = await app.ainvoke(
+            {"messages": [{"role": "user", "content": "What is my cat's name?"}]}
+        )
         print(out["messages"][-1]["content"])
     finally:
         await memory.close()

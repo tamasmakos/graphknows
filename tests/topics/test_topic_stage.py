@@ -32,8 +32,12 @@ class TestNewmanModularity:
     def test_real_structure_beats_random(self) -> None:
         # Two tight triangles joined by a single bridge.
         edges = [
-            ("a", "b"), ("b", "c"), ("c", "a"),
-            ("x", "y"), ("y", "z"), ("z", "x"),
+            ("a", "b"),
+            ("b", "c"),
+            ("c", "a"),
+            ("x", "y"),
+            ("y", "z"),
+            ("z", "x"),
             ("a", "x"),
         ]
         good = {"a": 0, "b": 0, "c": 0, "x": 1, "y": 1, "z": 1}
@@ -87,8 +91,13 @@ class TestKeywords:
 class TestSummarizeMetrics:
     def test_grades_a_build(self) -> None:
         topics = [
-            Topic(topic_id="t1", title="a", entities=[("a", 1.0), ("b", 0.5)], chunk_ids=["c1"],
-                  coherence=0.9),
+            Topic(
+                topic_id="t1",
+                title="a",
+                entities=[("a", 1.0), ("b", 0.5)],
+                chunk_ids=["c1"],
+                coherence=0.9,
+            ),
             Topic(topic_id="t2", title="b", entities=[("c", 0.2)], chunk_ids=["c2"], coherence=0.5),
         ]
         m = summarize_metrics(
@@ -104,8 +113,9 @@ class TestSummarizeMetrics:
         assert m["arcadedb_modularity_untrustworthy"] == 0.75
 
     def test_zero_totals_do_not_divide_by_zero(self) -> None:
-        m = summarize_metrics([], total_chunks=0, total_entities=0, newman_q=0.0,
-                              native_modularity=None)
+        m = summarize_metrics(
+            [], total_chunks=0, total_entities=0, newman_q=0.0, native_modularity=None
+        )
         assert m["chunk_coverage"] == 0.0
         assert m["arcadedb_modularity_untrustworthy"] is None
 
@@ -199,7 +209,9 @@ class TestAssembleAndDescribe:
         from graphknows.topics.builder import _assemble
 
         topics, _ = _assemble(
-            self._entities(3), [0, 1, 1], {"e0": ["c1"], "e1": ["c2"], "e2": ["c3"]},
+            self._entities(3),
+            [0, 1, 1],
+            {"e0": ["c1"], "e1": ["c2"], "e2": ["c3"]},
             TopicConfig(min_size=2),
         )
         assert len(topics) == 1
@@ -268,8 +280,9 @@ class TestPersist:
         store = MagicMock()
         store.command = AsyncMock()
         store.write_topics = AsyncMock(return_value=1)
-        await persist_topics(store, TopicSet(topics=[Topic(topic_id="t1", title="x")]),
-                             replace=False)
+        await persist_topics(
+            store, TopicSet(topics=[Topic(topic_id="t1", title="x")]), replace=False
+        )
         store.command.assert_not_awaited()
 
     @pytest.mark.asyncio

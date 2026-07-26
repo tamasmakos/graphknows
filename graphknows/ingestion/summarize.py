@@ -63,7 +63,7 @@ class TopicSummarizer:
         try:
             lm = self._get_lm()
             out = await asyncio.to_thread(lm, prompt)
-        except Exception as exc:  # noqa: BLE001 — degrade, never fail the flush
+        except Exception as exc:
             log.warning("topic summarization failed (%s); using title", exc)
             return fallback_title
         text = out[0] if isinstance(out, list) and out else out

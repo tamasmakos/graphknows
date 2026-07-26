@@ -34,10 +34,7 @@ def _render_facts(facts: list[str] | None) -> str:
     if not facts:
         return ""
     lines = "\n".join(f"- {f}" for f in facts)
-    return (
-        "Known facts (structured, extracted from the conversations):\n"
-        f"{lines}\n\n"
-    )
+    return f"Known facts (structured, extracted from the conversations):\n{lines}\n\n"
 
 
 def _judge_gold(case: EvalCase) -> str:
@@ -109,7 +106,10 @@ class LocomoAdapter(BenchmarkAdapter):
                 "semantic_f1": jm.get("semantic_f1"),
                 "token_f1": jm.get("token_f1"),
             },
-            _PROMPT_VERSION, case.question, gold, answer,
+            _PROMPT_VERSION,
+            case.question,
+            gold,
+            answer,
         )
         return score, {
             "judge_label": label,

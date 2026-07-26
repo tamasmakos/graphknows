@@ -17,6 +17,7 @@ channels. Fully embedding-based, so the channel is valid in both profiles.
 
 Schema: the FRAME vertex/EVOKED_BY edge live in the GraphStore core DDL.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,18 +38,16 @@ _SPEAKER_LINE = re.compile(r"^.*?\|\s*(\w+):")
 # frame such as ``Activity_ongoing`` matches nearly every chunk, so returning its
 # chunks floods recall with the whole conversation and carries no discriminative
 # signal. Such query-frames are dropped from the join.
-_FRAME_SATURATION_RATIO: float = float(
-    os.environ.get("GRAPHKNOWS_FRAME_SATURATION_RATIO", "0.5")
-)
+_FRAME_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_FRAME_SATURATION_RATIO", "0.5"))
 
 
 async def _session_chunk_count(rt: Any, session_id: str, state: str | None) -> int:
     """Total CHUNK count for a session (optionally filtered by lifecycle state)."""
     if state:
         rows = await rt.store.query(
-            "MATCH (c:CHUNK) WHERE c.session_id = $sid AND c.state = $st "
-            "RETURN count(c) AS c",
-            sid=session_id, st=state,
+            "MATCH (c:CHUNK) WHERE c.session_id = $sid AND c.state = $st RETURN count(c) AS c",
+            sid=session_id,
+            st=state,
         )
     else:
         rows = await rt.store.query(
@@ -99,8 +98,7 @@ class FrameChannel(Channel):
         for rank, cid in enumerate(ranked):
             result[cid] = (
                 rrf_score(rank),
-                {"text": "", "entities": [], "sources": {"frame"},
-                 "doc_id": "", "metadata": {}},
+                {"text": "", "entities": [], "sources": {"frame"}, "doc_id": "", "metadata": {}},
             )
         return result
 
@@ -121,10 +119,7 @@ class FrameChannel(Channel):
         cover: dict[str, set[str]] = defaultdict(set)
         for r in rows:
             cover[r["frame_type"]].add(r["chunk_id"])
-        saturated = {
-            ft for ft, cs in cover.items()
-            if len(cs) / total > _FRAME_SATURATION_RATIO
-        }
+        saturated = {ft for ft, cs in cover.items() if len(cs) / total > _FRAME_SATURATION_RATIO}
         if not saturated:
             return rows
         log.debug("frame channel dropping saturated frames: %s", sorted(saturated))

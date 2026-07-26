@@ -44,9 +44,7 @@ log = logging.getLogger(__name__)
 # "about" a Person, so returning its chunks floods recall with the whole
 # conversation. Same failure mode (and same remedy) as saturated speaker
 # entities and saturated generic frames.
-_CLASS_SATURATION_RATIO: float = float(
-    os.environ.get("GRAPHKNOWS_CLASS_SATURATION_RATIO", "0.5")
-)
+_CLASS_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_CLASS_SATURATION_RATIO", "0.5"))
 
 # Ontology classes considered per query.
 _CLASS_TOP_K: int = 5

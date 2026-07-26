@@ -142,9 +142,7 @@ class BaseParser(ABC):
         result.extend(pending.flush())
         return result
 
-    def _segments_from_chunks(
-        self, chunks: list[tuple[str, str]], text: str
-    ) -> list[TextSegment]:
+    def _segments_from_chunks(self, chunks: list[tuple[str, str]], text: str) -> list[TextSegment]:
         """Turn ``(heading_path, chunk_text)`` pairs into offset-anchored segments.
 
         Shared by every text-shaped parser — this loop was written out three
@@ -253,7 +251,5 @@ class BaseParser(ABC):
             bodies.append(joiner.join(buf))
 
         return [
-            (path, f"{heading_text}\n\n{b}" if heading_text else b)
-            for b in bodies
-            if b.strip()
+            (path, f"{heading_text}\n\n{b}" if heading_text else b) for b in bodies if b.strip()
         ]

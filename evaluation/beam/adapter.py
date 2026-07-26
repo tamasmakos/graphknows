@@ -99,9 +99,7 @@ class BeamAdapter(BenchmarkAdapter):
 
         try:
             if is_rubric:
-                score, reasoning = await self.judge.judge_rubric(
-                    case.question, reference, answer
-                )
+                score, reasoning = await self.judge.judge_rubric(case.question, reference, answer)
             else:
                 score, reasoning = await self.judge.judge(case.question, reference, answer)
         except Exception as exc:
@@ -111,7 +109,10 @@ class BeamAdapter(BenchmarkAdapter):
         label = "CORRECT" if score >= 0.5 else "WRONG"
         self._cache.put(
             {"score": score, "label": label, "reasoning": reasoning},
-            _PROMPT_VERSION, case.question, reference, answer,
+            _PROMPT_VERSION,
+            case.question,
+            reference,
+            answer,
         )
         return score, {
             "judge_label": label,

@@ -8,9 +8,15 @@ this module does not require langgraph to be installed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from graphknows.integrations._langgraph_hooks import recall, remember
+
+if TYPE_CHECKING:
+    # Declares the name for ruff/mypy without importing langgraph at runtime —
+    # `__getattr__` below is what actually resolves it. Without this the entry
+    # in `__all__` is an undefined export (F822) to every static analyser.
+    from graphknows.integrations._langgraph_store import GraphKnowsStore
 
 __all__ = ["GraphKnowsStore", "recall", "remember"]
 

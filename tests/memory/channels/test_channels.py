@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.settings import GraphKnowsSettings, MemoryMode
-from graphknows.channels.registry import default_channels as build_channels
 from graphknows.channels.base import Channel, ChannelContext
 from graphknows.channels.frames import FrameChannel
+from graphknows.channels.registry import default_channels as build_channels
+from graphknows.settings import GraphKnowsSettings, MemoryMode
 
 
 def _ctx(**parse):

@@ -46,9 +46,7 @@ def extract_date(text: str) -> datetime | None:
     return None
 
 
-def format_memories(
-    passages: list[RetrievedPassage], *, max_chars: int = MAX_CONTEXT_CHARS
-) -> str:
+def format_memories(passages: list[RetrievedPassage], *, max_chars: int = MAX_CONTEXT_CHARS) -> str:
     """Render deduped passages as dated, chronologically ordered memory blocks.
 
     *passages* arrive in RELEVANCE order (the retriever's ranking). Selection

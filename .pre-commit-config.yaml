@@ -13,9 +13,12 @@ repos:
       - id: debug-statements
       - id: check-case-conflict
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.12
+    rev: v0.16.0
     hooks:
-      - id: ruff
+      # `ruff-check`, not the deprecated `ruff` alias. The rev is pinned to the
+      # same ruff the pre-push gate runs inside the container: two versions
+      # disagree on formatting, and a gate that disagrees with itself is noise.
+      - id: ruff-check
         args:
           - --config=ruff.toml
           - --fix

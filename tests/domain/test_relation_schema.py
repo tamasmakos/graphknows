@@ -14,8 +14,12 @@ from graphknows.ingestion.models.taxonomy import (
 )
 
 _EXCLUDED_FROM_EXTRACTION = {
-    "friend_of", "family_of", "partner_of",  # interpersonal: co-presence confusion
-    "lives_in", "works_as", "member_of",     # stative: wrong object-type over-fire
+    "friend_of",
+    "family_of",
+    "partner_of",  # interpersonal: co-presence confusion
+    "lives_in",
+    "works_as",
+    "member_of",  # stative: wrong object-type over-fire
 }
 
 

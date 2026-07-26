@@ -15,7 +15,11 @@ package. Drive ``graphknows-mcp`` from any framework::
 
 from __future__ import annotations
 
-from graphknows.integrations.client.mcp import GraphKnowsMCPClient, MCPClientError, normalize_tool_result
+from graphknows.integrations.client.mcp import (
+    GraphKnowsMCPClient,
+    MCPClientError,
+    normalize_tool_result,
+)
 from graphknows.integrations.client.memory import RemoteMemory
 
 __all__ = [

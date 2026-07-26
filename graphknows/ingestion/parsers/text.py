@@ -54,9 +54,7 @@ class PlainTextParser(BaseParser):
         )
 
     @staticmethod
-    def _sections_from_headings(
-        text: str, matches: list[re.Match[str]]
-    ) -> list[tuple[str, str]]:
+    def _sections_from_headings(text: str, matches: list[re.Match[str]]) -> list[tuple[str, str]]:
         """Pair each heading's breadcrumb path with the body that follows it."""
         sections: list[tuple[str, str]] = []
         stack: list[tuple[int, str]] = []

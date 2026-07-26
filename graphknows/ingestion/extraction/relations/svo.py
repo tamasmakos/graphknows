@@ -32,9 +32,16 @@ _PHATIC_LEXNAMES = {"verb.communication", "verb.cognition", "verb.perception"}
 # edge; abstractions (feeling/cognition/attribute/state/act/communication) are
 # dropped so "HAS passion / memory / pick / go-to" don't pollute the graph.
 _CONCRETE_NOUN = {
-    "noun.person", "noun.animal", "noun.artifact", "noun.group",
-    "noun.possession", "noun.location", "noun.body", "noun.food",
-    "noun.plant", "noun.object",
+    "noun.person",
+    "noun.animal",
+    "noun.artifact",
+    "noun.group",
+    "noun.possession",
+    "noun.location",
+    "noun.body",
+    "noun.food",
+    "noun.plant",
+    "noun.object",
 }
 _LIGHT = {"be", "have", "do", "get", "go", "come", "let", "seem", "become"}
 _SUBJ_DEPS = {"nsubj", "nsubjpass", "expl"}
@@ -69,8 +76,11 @@ def _resolve(tok: Any, speaker: str, speakers: list[str]) -> str:
 
 
 def _clean_np(tok: Any, speaker: str, speakers: list[str]) -> str:
-    """Head-noun phrase for an argument token: strip det/poss, prefer a named
-    apposition ('a cat named Luna' -> 'Luna'), keep compounds ('dance studio')."""
+    """Head-noun phrase for an argument token.
+
+    Strips det/poss, prefers a named apposition ('a cat named Luna' -> 'Luna'),
+    keeps compounds ('dance studio').
+    """
     if tok.text.lower() in _FIRST_PERSON | _SECOND_PERSON:
         return _resolve(tok, speaker, speakers)
     for c in tok.children:
@@ -158,7 +168,10 @@ def extract_svo(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, 
                     if p.dep_ == "pobj":
                         args.append((p, c.text.lower()))
         for obj_tok, prep in args:
-            if obj_tok.pos_ == "PRON" and obj_tok.text.lower() not in _FIRST_PERSON | _SECOND_PERSON:
+            if (
+                obj_tok.pos_ == "PRON"
+                and obj_tok.text.lower() not in _FIRST_PERSON | _SECOND_PERSON
+            ):
                 continue
             if _has_meta(obj_tok):
                 continue  # dates/numbers are temporal metadata, not relation tails
@@ -263,7 +276,8 @@ def _copular(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, Any
     Predicate adjectives (acomp: 'is excited/hectic') are dropped — transient
     states / opinions, not durable facts. Identity phrases survive as nominals
     ('transgender woman' is a NOUN head carrying an amod); abstract or named
-    predicates are dropped by ``_valid_is_a_tail``."""
+    predicates are dropped by ``_valid_is_a_tail``.
+    """
     out: list[dict[str, Any]] = []
     for verb in sent:
         if (verb.lemma_ or "").lower() != "be":
@@ -280,9 +294,16 @@ def _copular(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, Any
             tail = _clean_np(c, speaker, speakers)
             if not tail or tail.lower() == subj_name.lower() or len(tail) < 2:
                 continue
-            out.append({"head": subj_name, "relation": "IS_A", "tail": tail,
-                        "pattern": "copular", "head_named": subj_named,
-                        "tail_named": False})
+            out.append(
+                {
+                    "head": subj_name,
+                    "relation": "IS_A",
+                    "tail": tail,
+                    "pattern": "copular",
+                    "head_named": subj_named,
+                    "tail_named": False,
+                }
+            )
     return out
 
 
@@ -320,9 +341,16 @@ def _possessive(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, 
             # pass via _named(tok) — the exemption is preserved where it belongs.
             if not _named(tok) and not _known_concrete_noun((tok.lemma_ or tok.text).lower()):
                 continue
-            out.append({"head": possessor, "relation": "HAS", "tail": thing,
-                        "pattern": "possessive", "head_named": pnamed,
-                        "tail_named": _named(tok)})
+            out.append(
+                {
+                    "head": possessor,
+                    "relation": "HAS",
+                    "tail": thing,
+                    "pattern": "possessive",
+                    "head_named": pnamed,
+                    "tail_named": _named(tok),
+                }
+            )
     return out
 
 
@@ -347,14 +375,21 @@ def _appositive(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, 
             tail = _clean_np(b, speaker, speakers)
             if not head or not tail or head.lower() == tail.lower():
                 continue
-            out.append({"head": head, "relation": "IS_A", "tail": tail,
-                        "pattern": "appositive", "head_named": a_named,
-                        "tail_named": False})
+            out.append(
+                {
+                    "head": head,
+                    "relation": "IS_A",
+                    "tail": tail,
+                    "pattern": "appositive",
+                    "head_named": a_named,
+                    "tail_named": False,
+                }
+            )
     return out
 
 
 def _noun_prep(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, Any]]:
-    """necklace from grandmother / trip to Sweden -> (named noun, PREP, pobj).
+    """Necklace from grandmother / trip to Sweden -> (named noun, PREP, pobj).
 
     Conservative (low volume): the head noun must be a named entity, and the
     pobj must not be a date/number or a pronoun. The relation label is the
@@ -374,9 +409,16 @@ def _noun_prep(sent: Any, speaker: str, speakers: list[str]) -> list[dict[str, A
                 tail = _clean_np(p, speaker, speakers)
                 if not head or not tail or head.lower() == tail.lower():
                     continue
-                out.append({"head": head, "relation": c.text.upper(), "tail": tail,
-                            "pattern": "noun_prep", "head_named": True,
-                            "tail_named": _named(p)})
+                out.append(
+                    {
+                        "head": head,
+                        "relation": c.text.upper(),
+                        "tail": tail,
+                        "pattern": "noun_prep",
+                        "head_named": True,
+                        "tail_named": _named(p),
+                    }
+                )
     return out
 
 

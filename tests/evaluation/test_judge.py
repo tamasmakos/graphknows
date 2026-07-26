@@ -37,7 +37,7 @@ class _FakePredict:
 async def test_judge_two_stage_wires_stage1_into_stage2() -> None:
     # Bypass __init__ (no API key / no dspy.configure): inject fake predictors.
     judge = DSPyJudge.__new__(DSPyJudge)
-    judge._predict = _FakePredict(0.4)          # stage-1 SemanticF1
+    judge._predict = _FakePredict(0.4)  # stage-1 SemanticF1
     judge._verdict_predict = _FakePredict(0.9)  # stage-2 final verdict
 
     score, metrics = await judge.judge_two_stage(
@@ -47,8 +47,8 @@ async def test_judge_two_stage_wires_stage1_into_stage2() -> None:
     # Headline score is the STAGE-2 verdict, not the stage-1 SemanticF1.
     assert score == 0.9
     assert metrics["judge_score"] == 0.9
-    assert metrics["semantic_f1"] == 0.4          # stage-1 preserved for divergence
-    assert metrics["token_f1"] == 1.0             # exact lexical match on identical strings
+    assert metrics["semantic_f1"] == 0.4  # stage-1 preserved for divergence
+    assert metrics["token_f1"] == 1.0  # exact lexical match on identical strings
     assert "judge_reasoning" in metrics
 
     # Stage-2 actually received the stage-1 score + token_f1 as evidence inputs.

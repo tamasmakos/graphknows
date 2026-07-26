@@ -88,4 +88,4 @@ def namespaces_from_databases(databases: Iterable[str]) -> list[str]:
         for prefix in ("stm_", "ltm_", "mem_"):
             if db.startswith(prefix) and len(db) > len(prefix):
                 found.add(db[len(prefix) :])
-    return [""] + sorted(found)
+    return ["", *sorted(found)]

@@ -65,8 +65,13 @@ class TestSaturation:
     async def test_topic_covering_most_of_the_session_is_dropped(self) -> None:
         """A topic spanning the whole conversation is not a theme."""
         rows = [
-            {"chunk_id": f"c{i}", "topic_id": "broad", "score": 0.5, "keywords": [],
-             "coherence": 0.9}
+            {
+                "chunk_id": f"c{i}",
+                "topic_id": "broad",
+                "score": 0.5,
+                "keywords": [],
+                "coherence": 0.9,
+            }
             for i in range(9)
         ]
         assert await TopicChannel().collect(_ctx(), _rt(rows, chunk_total=10), 5) == {}
@@ -75,12 +80,16 @@ class TestSaturation:
     async def test_narrow_topic_survives_a_saturated_one(self) -> None:
         rows = [
             *[
-                {"chunk_id": f"c{i}", "topic_id": "broad", "score": 0.5, "keywords": [],
-                 "coherence": 0.9}
+                {
+                    "chunk_id": f"c{i}",
+                    "topic_id": "broad",
+                    "score": 0.5,
+                    "keywords": [],
+                    "coherence": 0.9,
+                }
                 for i in range(9)
             ],
-            {"chunk_id": "z", "topic_id": "narrow", "score": 0.8, "keywords": [],
-             "coherence": 0.9},
+            {"chunk_id": "z", "topic_id": "narrow", "score": 0.8, "keywords": [], "coherence": 0.9},
         ]
         out = await TopicChannel().collect(_ctx(), _rt(rows, chunk_total=10), 5)
         assert set(out) == {"z"}
@@ -88,8 +97,13 @@ class TestSaturation:
     @pytest.mark.asyncio
     async def test_without_a_session_nothing_is_dropped(self) -> None:
         rows = [
-            {"chunk_id": f"c{i}", "topic_id": "broad", "score": 0.5, "keywords": [],
-             "coherence": 0.9}
+            {
+                "chunk_id": f"c{i}",
+                "topic_id": "broad",
+                "score": 0.5,
+                "keywords": [],
+                "coherence": 0.9,
+            }
             for i in range(9)
         ]
         out = await TopicChannel().collect(_ctx(session_id=""), _rt(rows, chunk_total=10), 9)
@@ -99,8 +113,9 @@ class TestSaturation:
 class TestSummaryPassage:
     @pytest.mark.asyncio
     async def test_summary_is_injected_with_keywords(self) -> None:
-        summaries = [{"topic_id": "t1", "summary": "Trips and travel.",
-                      "keywords": ["kayaking", "river"]}]
+        summaries = [
+            {"topic_id": "t1", "summary": "Trips and travel.", "keywords": ["kayaking", "river"]}
+        ]
         out = await TopicChannel().collect(_ctx(), _rt([], summaries=summaries), 5)
         assert "topic:t1" in out
         text = out["topic:t1"][1]["text"]
@@ -117,12 +132,16 @@ class TestSummaryPassage:
     async def test_summary_survives_when_all_topics_are_saturated(self) -> None:
         """Saturation kills the routed chunks, not the abstractive passage."""
         rows = [
-            {"chunk_id": f"c{i}", "topic_id": "broad", "score": 0.5, "keywords": [],
-             "coherence": 0.9}
+            {
+                "chunk_id": f"c{i}",
+                "topic_id": "broad",
+                "score": 0.5,
+                "keywords": [],
+                "coherence": 0.9,
+            }
             for i in range(9)
         ]
-        summaries = [{"topic_id": "broad", "summary": "The whole conversation.",
-                      "keywords": []}]
+        summaries = [{"topic_id": "broad", "summary": "The whole conversation.", "keywords": []}]
         out = await TopicChannel().collect(
             _ctx(), _rt(rows, chunk_total=10, summaries=summaries), 5
         )

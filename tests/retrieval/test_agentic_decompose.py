@@ -5,7 +5,6 @@ All tests mock the LM — no live API calls are made.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -68,7 +67,7 @@ class TestDecompose:
 
     def test_imports_without_live_api(self):
         """decompose module must be importable without a live API connection."""
-        import graphknows.retrieval.query.decompose as mod  # noqa: F401
+        import graphknows.retrieval.query.decompose as mod
 
         assert callable(mod.decompose)
 
@@ -94,7 +93,7 @@ class TestDecompose:
             mock_predict_cls.return_value = mock_pred_inst
             mock_dspy.Predict = mock_predict_cls
             mock_dspy.settings = MagicMock()
-            mock_dspy.settings.context = MagicMock(return_value=_noop_context())
+            mock_dspy.settings.context = MagicMock(return_value=_NoopContext())
 
             result = decompose("Who founded the company and when did they leave?", lm=mock_lm)
 
@@ -127,7 +126,7 @@ class TestDecompose:
             mock_dspy.OutputField = MagicMock(return_value=None)
             mock_dspy.Predict = MagicMock(return_value=mock_pred_instance)
             mock_dspy.settings = MagicMock()
-            mock_dspy.settings.context = MagicMock(return_value=_noop_context())
+            mock_dspy.settings.context = MagicMock(return_value=_NoopContext())
 
             # Patch _build_signature directly to avoid class-building complexity.
             with patch("graphknows.retrieval.query.decompose._build_signature") as mock_build:
@@ -341,7 +340,7 @@ class TestAgenticRetrieverWithDET:
     @pytest.mark.asyncio
     async def test_import_clean(self):
         """Both agentic and decompose modules import cleanly."""
-        import graphknows.retrieval.agentic  # noqa: F401
+        import graphknows.retrieval.agentic
         import graphknows.retrieval.query.decompose  # noqa: F401
 
     @pytest.mark.asyncio
@@ -355,9 +354,7 @@ class TestAgenticRetrieverWithDET:
 
         # ReAct runs but pushes nothing into the per-call buffer.
         retriever._lm = MagicMock()
-        retriever._build_react = lambda session_id, collected: MagicMock(
-            return_value=MagicMock()
-        )
+        retriever._build_react = lambda session_id, collected: MagicMock(return_value=MagicMock())
 
         with (
             patch("graphknows.retrieval.query.decompose.decompose", return_value=["q"]),
@@ -374,7 +371,7 @@ class TestAgenticRetrieverWithDET:
 # ---------------------------------------------------------------------------
 
 
-class _noop_context:
+class _NoopContext:
     """Context manager that does nothing — used to stub dspy.settings.context."""
 
     def __enter__(self):

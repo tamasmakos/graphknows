@@ -16,10 +16,7 @@ _HEAVY = ["sentence_transformers", "gliner2", "spacy", "igraph", "leidenalg", "t
 
 def _heavy_modules_after(import_line: str) -> list[str]:
     """Import in a fresh interpreter and report which heavy modules loaded."""
-    code = (
-        f"import sys; {import_line}; "
-        f"print(','.join(m for m in {_HEAVY!r} if m in sys.modules))"
-    )
+    code = f"import sys; {import_line}; print(','.join(m for m in {_HEAVY!r} if m in sys.modules))"
     out = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,

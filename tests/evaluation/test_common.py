@@ -137,10 +137,16 @@ class TestEmptyCompletionHandling:
         # An empty content must stay empty so the caller RESAMPLES instead.
         from evaluation.common.llm import _first_content
 
-        payload = {"choices": [{"message": {
-            "content": "",
-            "reasoning": 'We need to answer: "When did Caroline...?" The memories say',
-        }}]}
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning": 'We need to answer: "When did Caroline...?" The memories say',
+                    }
+                }
+            ]
+        }
         assert _first_content(payload) is None
 
     def test_first_content_none_when_content_empty(self) -> None:

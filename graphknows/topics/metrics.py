@@ -21,8 +21,7 @@ from typing import Any
 import numpy as np
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z'-]{2,}")
-_STOPWORD_TEXT = (
-    """the a an and or but if then than that this these those there here
+_STOPWORD_TEXT = """the a an and or but if then than that this these those there here
     is are was were be been being am do does did done have has had having
     i you he she it we they me him her them my your his its our their
     of to in on at by for with from as into about over after before
@@ -30,7 +29,6 @@ _STOPWORD_TEXT = (
     which how why all any both each few more most other some such only
     own same s t don yeah yes okay ok oh hey hi like really got get
     know think going go went said say says one two really much many"""
-)
 _STOPWORDS = frozenset(_STOPWORD_TEXT.split())
 
 
@@ -81,9 +79,7 @@ def coherence(vectors: np.ndarray) -> tuple[float, list[float]]:
     return float(np.mean(sims)), centroid.tolist()
 
 
-def keywords(
-    member_texts: list[str], background: list[set[str]], top_k: int = 8
-) -> list[str]:
+def keywords(member_texts: list[str], background: list[set[str]], top_k: int = 8) -> list[str]:
     """Distinctive terms for one topic: TF-IDF against the other topics.
 
     A term scores highly when it is frequent *here* and rare *elsewhere*, which

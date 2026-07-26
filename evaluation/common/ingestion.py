@@ -60,7 +60,7 @@ class Ingestor:
                         },
                     )
                 except Exception as exc:
-                    log.error("INGEST FAILED doc=%s (%s): %s", title, type(exc).__name__, exc)
+                    log.exception("INGEST FAILED doc=%s (%s)", title, type(exc).__name__)
                     print(
                         f"  !! ingest failed: doc={title} {type(exc).__name__}: {str(exc)[:400]}",
                         flush=True,

@@ -37,7 +37,9 @@ def _session_id(namespace: tuple[str, ...]) -> str:
     return "/".join(namespace) if namespace else "default"
 
 
-class GraphKnowsStore(BaseStore):
+# `BaseStore` resolves to Any when langgraph is absent (the MissingExtraError
+# guard above), so mypy cannot see a real base class here.
+class GraphKnowsStore(BaseStore):  # type: ignore[misc]
     """A langgraph ``BaseStore`` whose long-term memory is a graphknows backend.
 
     Args:
@@ -57,7 +59,10 @@ class GraphKnowsStore(BaseStore):
         results: list[Result] = []
         for op in ops:
             if isinstance(op, PutOp):
-                results.append(await self._put(op))
+                # A langgraph PutOp result is None by contract; `_put` returns
+                # nothing, so append the None rather than the call expression.
+                await self._put(op)
+                results.append(None)
             elif isinstance(op, SearchOp):
                 results.append(await self._search(op))
             else:
@@ -68,7 +73,9 @@ class GraphKnowsStore(BaseStore):
 
     def batch(self, ops: list[Op]) -> list[Result]:
         """Sync batch is unsupported — GraphKnowsStore is async-only."""
-        raise NotImplementedError("GraphKnowsStore is async-only; use the async graph API (abatch).")
+        raise NotImplementedError(
+            "GraphKnowsStore is async-only; use the async graph API (abatch)."
+        )
 
     async def _put(self, op: PutOp) -> None:
         if op.value is None:

@@ -97,8 +97,8 @@ def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
         graph = rdflib.Graph()
         graph.parse(path)
 
-        def _label(node: object) -> str:
-            lbl = graph.value(node, RDFS.label)  # type: ignore[arg-type]
+        def _label(node: rdflib.term.Node) -> str:
+            lbl = graph.value(node, RDFS.label)
             if lbl:
                 return str(lbl)
             s = str(node)

@@ -1,5 +1,7 @@
-"""Cross-cutting domain models — the vocabulary shared by ingestion, retrieval,
-and every endpoint. Layer-neutral: these depend on nothing else in the package.
+"""Cross-cutting domain models — the vocabulary shared by every layer.
+
+Used by ingestion, retrieval and every endpoint. Layer-neutral: these depend on
+nothing else in the package.
 """
 
 from graphknows.models.evidence import EvidenceItem

@@ -97,7 +97,10 @@ class GraphPPRChannel(Channel):
                 similar = await rt.store.similar_entities_by_embedding(
                     names[i], top_k=_EMBED_SEED_EXPAND_TOP_K
                 )
-            except Exception:
+            except Exception as exc:
+                # Documented soft-fail, but an unlogged one makes "no embeddings
+                # yet" and "the lookup is broken" look identical from outside.
+                log.debug("embedding seed expansion failed for %s: %s", names[i], exc)
                 continue
             for row in similar:
                 if float(row.get("similarity") or 0.0) < _EMBED_SEED_MIN_SIM:

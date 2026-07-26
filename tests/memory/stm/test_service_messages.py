@@ -28,8 +28,8 @@ def _make_svc():
 
 
 def _make_options(user_id="u1", agent_id="a1", run_id="r1", infer=True):
-    from graphknows.models.memory_class import MemoryClass
     from graphknows.models.ingest_options import IngestOptions, MemoryScope
+    from graphknows.models.memory_class import MemoryClass
 
     return IngestOptions(
         scope=MemoryScope(user_id=user_id, agent_id=agent_id, run_id=run_id),

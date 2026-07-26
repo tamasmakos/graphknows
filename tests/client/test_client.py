@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from graphknows.exceptions import GraphKnowsError
 from graphknows.integrations.client import (
     GraphKnowsMCPClient,
     MCPClientError,
     RemoteMemory,
     normalize_tool_result,
 )
-from graphknows.exceptions import GraphKnowsError
 
 
 def test_mcp_client_error_is_graphknows_error() -> None:
@@ -83,9 +83,7 @@ class TestRemoteMemory:
         client.call_tool = AsyncMock(return_value={"dropped": True})
         mem = RemoteMemory(client=client)
         assert await mem.drop_namespace("acme") == {"dropped": True}
-        client.call_tool.assert_awaited_once_with(
-            "memory_drop_namespace", {"namespace": "acme"}
-        )
+        client.call_tool.assert_awaited_once_with("memory_drop_namespace", {"namespace": "acme"})
 
     @pytest.mark.asyncio
     async def test_non_dict_result_wrapped(self) -> None:

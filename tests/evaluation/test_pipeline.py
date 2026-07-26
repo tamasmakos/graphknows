@@ -51,12 +51,12 @@ async def test_ingestor_aggregates_and_flushes() -> None:
     assert result.chunks == 6 and result.entities == 4
     assert result.flush_nodes == 10
     assert [name for name, _ in client.calls] == [
-        "memory_ingest", "memory_ingest", "memory_flush",
+        "memory_ingest",
+        "memory_ingest",
+        "memory_flush",
     ]
     # Every call is routed to the unit's own namespace.
-    assert all(
-        args.get("namespace") == "eval_locomo_llm_free_conv_26" for _, args in client.calls
-    )
+    assert all(args.get("namespace") == "eval_locomo_llm_free_conv_26" for _, args in client.calls)
 
 
 def test_unit_namespace_is_per_conversation() -> None:

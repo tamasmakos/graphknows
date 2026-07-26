@@ -154,7 +154,10 @@ class ChatLLM:
                 log.warning(
                     "Retryable LLM error (%s) attempt %d/%d, waiting %ds: %s",
                     "empty body" if exc.status == _EMPTY_BODY else f"HTTP {exc.status}",
-                    attempt + 1, _MAX_ATTEMPTS, wait, exc.detail[:200],
+                    attempt + 1,
+                    _MAX_ATTEMPTS,
+                    wait,
+                    exc.detail[:200],
                 )
                 if wait:
                     await asyncio.sleep(wait)
@@ -166,7 +169,10 @@ class ChatLLM:
                 wait = 5 * (attempt + 1)
                 log.warning(
                     "Transient transport error attempt %d/%d, waiting %ds: %s",
-                    attempt + 1, _MAX_ATTEMPTS, wait, exc,
+                    attempt + 1,
+                    _MAX_ATTEMPTS,
+                    wait,
+                    exc,
                 )
                 await asyncio.sleep(wait)
         raise RuntimeError("unreachable")  # pragma: no cover
@@ -221,7 +227,9 @@ def _usage(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-_THINKING_RE = re.compile(r"[<\[]/?(?:mem_)?thinking[>\]].*?[<\[]/(?:mem_)?thinking[>\]]", re.DOTALL)
+_THINKING_RE = re.compile(
+    r"[<\[]/?(?:mem_)?thinking[>\]].*?[<\[]/(?:mem_)?thinking[>\]]", re.DOTALL
+)
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 

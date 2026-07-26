@@ -67,17 +67,19 @@ def _local_model(model_name: str) -> Any:
     model_kwargs: dict[str, Any] = {"torch_dtype": "bfloat16"}
     quant = (getattr(s, "embed_quantization", "") or "").lower()
     if quant in ("4bit", "8bit") and device == "cuda":
+        # transformers ships no stubs for BitsAndBytesConfig, so every call is
+        # `no-untyped-call` — a third-party typing gap, not a defect here.
         from transformers import BitsAndBytesConfig
 
         if quant == "4bit":
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(  # type: ignore[no-untyped-call]
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16,
                 bnb_4bit_use_double_quant=True,
             )
         else:
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)  # type: ignore[no-untyped-call]
         # A quantized model is placed on-device by accelerate; passing device= would
         # make sentence-transformers call .to(cuda), which quantized models reject.
         model = SentenceTransformer(model_name, trust_remote_code=True, model_kwargs=model_kwargs)

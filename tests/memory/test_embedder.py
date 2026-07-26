@@ -52,7 +52,9 @@ class TestEmbedRemote:
             patch.object(
                 embedder,
                 "_settings",
-                return_value=_settings(embed_api_base="https://api.example.com/v1", embed_api_key="k"),
+                return_value=_settings(
+                    embed_api_base="https://api.example.com/v1", embed_api_key="k"
+                ),
             ),
             patch("httpx.post", side_effect=fake_post),
         ):

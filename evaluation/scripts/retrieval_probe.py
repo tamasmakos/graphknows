@@ -35,15 +35,111 @@ from pathlib import Path
 from typing import Any
 
 from evaluation.locomo.dataset import build_documents, first_string, read_rows
-from graphknows.settings import GraphKnowsSettings
 from graphknows.memory import Memory as GraphKnowsRuntime
+from graphknows.settings import GraphKnowsSettings
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 _STOPWORDS = frozenset(
-    ["a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "must", "shall", "can", "cannot", "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "he", "him", "his", "she", "her", "hers", "it", "its", "they", "them", "their", "theirs", "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "at", "by", "for", "from", "in", "into", "of", "on", "or", "so", "to", "up", "and", "but", "if", "or", "nor", "yet", "either", "neither"]
+    [
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "cannot",
+        "i",
+        "me",
+        "my",
+        "myself",
+        "we",
+        "our",
+        "ours",
+        "ourselves",
+        "you",
+        "your",
+        "yours",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "hers",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "this",
+        "that",
+        "these",
+        "those",
+        "am",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "of",
+        "on",
+        "or",
+        "so",
+        "to",
+        "up",
+        "and",
+        "but",
+        "if",
+        "or",
+        "nor",
+        "yet",
+        "either",
+        "neither",
+    ]
 )
 
 
@@ -62,6 +158,7 @@ def _hits_contain_gold(hits: list[dict], gold_toks: set[str], min_match: int = 1
 # ---------------------------------------------------------------------------
 # Direct ArcadeDB existence check
 # ---------------------------------------------------------------------------
+
 
 async def _chunk_exists_in_db(
     runtime: GraphKnowsRuntime,
@@ -93,14 +190,15 @@ async def _chunk_exists_in_db(
             )
             if rows:
                 return True
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"  probe query failed: {exc}")
     return False
 
 
 # ---------------------------------------------------------------------------
 # Per-question classification
 # ---------------------------------------------------------------------------
+
 
 async def _classify(
     runtime: GraphKnowsRuntime,
@@ -131,8 +229,10 @@ async def _classify(
     # --- Classify ---
     if gold_in_5:
         # Found in top-5 — retrieval succeeded; any failure is generation
-        failure = "OK" if gen_result is None else (
-            "GEN_FAIL" if gen_result.strip().lower() == "unknown" else "OK"
+        failure = (
+            "OK"
+            if gen_result is None
+            else ("GEN_FAIL" if gen_result.strip().lower() == "unknown" else "OK")
         )
     elif gold_in_20:
         failure = "RANKING"
@@ -160,16 +260,18 @@ async def _classify(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def _dialogue_id(case_id: str) -> str:
     idx = case_id.rfind("-q")
-    return case_id[:idx] if idx > 0 and case_id[idx + 2:].isdigit() else case_id
+    return case_id[:idx] if idx > 0 and case_id[idx + 2 :].isdigit() else case_id
 
 
 async def _probe(args: argparse.Namespace) -> int:
     rows = read_rows(Path(args.data_root) / args.questions)
     dlg = args.dialogue.strip()
     dlg_rows = [
-        r for r in rows
+        r
+        for r in rows
         if _dialogue_id(first_string(r, ("id", "question_id", "case_id"), "")) == dlg
     ]
     if not dlg_rows:
@@ -187,7 +289,9 @@ async def _probe(args: argparse.Namespace) -> int:
     session_id = f"probe-{dlg}"
 
     if not args.no_ingest:
-        documents = build_documents(dlg_rows[0], max_documents=args.max_documents, max_chars=args.max_chars)
+        documents = build_documents(
+            dlg_rows[0], max_documents=args.max_documents, max_chars=args.max_chars
+        )
         await runtime.purge_memory(session_id=session_id, scope="both")
         print(f"[{dlg}] ingesting {len(documents)} docs …", flush=True)
         for idx, doc in enumerate(documents):
@@ -214,14 +318,16 @@ async def _probe(args: argparse.Namespace) -> int:
         result = await _classify(runtime, session_id, question, gold, gen_result)
         counts[result["failure"]] += 1
 
-        out_rows.append({
-            "case_id": case_id,
-            "category": category,
-            "question": question,
-            "gold": gold,
-            "gen": gen_result,
-            **result,
-        })
+        out_rows.append(
+            {
+                "case_id": case_id,
+                "category": category,
+                "question": question,
+                "gold": gold,
+                "gen": gen_result,
+                **result,
+            }
+        )
         print(
             f"  {case_id}  [{result['failure']:15s}]  "
             f"in_db={result['in_db']}  gold_q={result['gold_query_finds']}  "
@@ -261,8 +367,12 @@ def main() -> None:
     p.add_argument("--questions", default="questions.jsonl")
     p.add_argument("--max-documents", type=int, default=50)
     p.add_argument("--max-chars", type=int, default=4000)
-    p.add_argument("--no-ingest", action="store_true", help="Reuse existing probe session (skip ingest+flush).")
-    p.add_argument("--gen-replay", default="", help="Path to gen_replay JSON for GEN_FAIL labelling.")
+    p.add_argument(
+        "--no-ingest", action="store_true", help="Reuse existing probe session (skip ingest+flush)."
+    )
+    p.add_argument(
+        "--gen-replay", default="", help="Path to gen_replay JSON for GEN_FAIL labelling."
+    )
     p.add_argument("--out", default="")
     raise SystemExit(asyncio.run(_probe(p.parse_args())))
 

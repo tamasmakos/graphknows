@@ -219,7 +219,7 @@ async def test_persons_not_singularized_in_standardization_layer() -> None:
 
 @pytest.mark.asyncio
 async def test_speaker_prefixed_entity_merges_into_the_speaker() -> None:
-    """"Caroline: Thanks, Melanie" heals into "Caroline" at flush.
+    """ "Caroline: Thanks, Melanie" heals into "Caroline" at flush.
 
     Repairs graphs ingested before the mint-point fix; on conv-26 these 27
     names carried 42.5% of REL edges.
@@ -256,8 +256,12 @@ async def test_glued_group_without_a_clean_node_is_promoted() -> None:
                 "type": "PERSON",
                 "mention_count": 63,
             },
-            {"name_norm": "caroline: nah, i", "name": "Caroline: Nah, I", "type": "",
-             "mention_count": 0},
+            {
+                "name_norm": "caroline: nah, i",
+                "name": "Caroline: Nah, I",
+                "type": "",
+                "mention_count": 0,
+            },
             {"name_norm": "caroline:", "name": "Caroline:", "type": "", "mention_count": 0},
         ],
         speakers=[],
@@ -272,7 +276,7 @@ async def test_glued_group_without_a_clean_node_is_promoted() -> None:
 
 @pytest.mark.asyncio
 async def test_colon_name_without_a_person_anchor_is_kept() -> None:
-    """"Charlotte's Web: A Review" has no person anchor — never merged."""
+    """ "Charlotte's Web: A Review" has no person anchor — never merged."""
     store = FakeStore(
         entities=[
             {

@@ -17,9 +17,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from graphknows.ingestion.extraction.entities.extractor import (
+    _BASE_ENTITY_LABELS,
     ExtractionResult,
     GLiNER2EntityExtractor,
-    _BASE_ENTITY_LABELS,
     _SpacySchemaMiner,
 )
 
@@ -285,9 +285,7 @@ def test_explicit_relation_schema_overrides_mined_svo_schema():
 
 
 def test_extract_returns_empty_when_spacy_mines_no_entity_schema():
-    schema = SimpleNamespace(
-        entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[]
-    )
+    schema = SimpleNamespace(entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[])
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
     mock_model = MagicMock()
@@ -425,7 +423,9 @@ class TestSharedModelApiContract:
         schema_miner = MagicMock()
         schema_miner.build.return_value = schema
         mock_model = MagicMock()
-        mock_model.inference.return_value = [[{"text": "Caroline", "label": "person", "score": 0.9}]]
+        mock_model.inference.return_value = [
+            [{"text": "Caroline", "label": "person", "score": 0.9}]
+        ]
         extractor = GLiNER2EntityExtractor(
             model_loader=lambda: mock_model, schema_miner=schema_miner
         )
@@ -465,18 +465,19 @@ class TestSurfaceCleaning:
 
     def test_quoted_entity_is_cleaned_before_it_becomes_a_merge_key(self) -> None:
         extractor, _schema, _m = _mock_extractor(
-            [], relex_entities=[{"text": '"Becoming Nicole"', "label": "work_of_art",
-                                 "score": 0.9}]
+            [], relex_entities=[{"text": '"Becoming Nicole"', "label": "work_of_art", "score": 0.9}]
         )
 
-        assert extractor.extract("She read \"Becoming Nicole\".").entities[0]["name"] == (
+        assert extractor.extract('She read "Becoming Nicole".').entities[0]["name"] == (
             "Becoming Nicole"
         )
 
     def test_quoted_relation_arguments_are_cleaned(self) -> None:
         extractor, _schema, _m = _mock_extractor(
-            [], relex_relations=[_rel("Melanie", "READ", '"Becoming Nicole"', 0.9,
-                                      tail_type="work_of_art")]
+            [],
+            relex_relations=[
+                _rel("Melanie", "READ", '"Becoming Nicole"', 0.9, tail_type="work_of_art")
+            ],
         )
 
         r = extractor.extract('Melanie read "Becoming Nicole".').relations[0]
@@ -516,8 +517,10 @@ class TestSharedModelThreadSafety:
         inner.inference.side_effect = _slow
         model = _SerialInference(inner)
 
-        threads = [threading.Thread(target=lambda: model.inference(texts=["x"], labels=[]))
-                   for _ in range(6)]
+        threads = [
+            threading.Thread(target=lambda: model.inference(texts=["x"], labels=[]))
+            for _ in range(6)
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -605,7 +608,9 @@ class TestExtractorLifetime:
         try:
             got: list = []
             threads = [
-                threading.Thread(target=lambda: got.append(build_entity_extractor(GraphKnowsSettings())))
+                threading.Thread(
+                    target=lambda: got.append(build_entity_extractor(GraphKnowsSettings()))
+                )
                 for _ in range(8)
             ]
             for t in threads:

@@ -26,9 +26,7 @@ def main() -> None:
     if argv and argv[0] in _BENCHMARKS:
         benchmark, argv = argv[0], argv[1:]
     elif argv and not argv[0].startswith("-"):
-        raise SystemExit(
-            f"Unknown benchmark {argv[0]!r}. Choose from: {', '.join(_BENCHMARKS)}"
-        )
+        raise SystemExit(f"Unknown benchmark {argv[0]!r}. Choose from: {', '.join(_BENCHMARKS)}")
 
     benchmark_main = importlib.import_module(_BENCHMARKS[benchmark]).main
     benchmark_main(argv)

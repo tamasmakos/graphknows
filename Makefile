@@ -83,8 +83,8 @@ lint: ## Ruff lint the package + tests
 typecheck: ## Mypy the package
 	mypy graphknows
 
-arch: ## Enforce module boundaries (tach)
-	tach check
+arch: ## Enforce module boundaries (import-linter)
+	lint-imports
 
 build-wheel: ## Build the wheel and assert it stays small + ships py.typed
 	python -m build --wheel

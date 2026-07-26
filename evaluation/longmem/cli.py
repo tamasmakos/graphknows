@@ -102,10 +102,7 @@ async def amain(argv: list[str] | None = None) -> int:
             cfg = base.model_copy(update={"namespace": f"{base.namespace}_{m}"})
             units = load_units(cfg, limit=args.limit, offset=args.offset)
             namespaces = [unit_namespace(cfg, u.group_id) for u in units]
-            print(
-                f"[eval] --reset: dropping {len(namespaces)} per-conversation "
-                f"namespaces for {m}"
-            )
+            print(f"[eval] --reset: dropping {len(namespaces)} per-conversation namespaces for {m}")
             await drop_namespaces(cfg, namespaces)
 
     if args.compare:
@@ -140,9 +137,7 @@ async def amain(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"[eval] benchmark=longmem mode={args.mode}")
-    run, paths = await _run_one(
-        args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest
-    )
+    run, paths = await _run_one(args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest)
 
     print(
         f"\nAccuracy (LLM judge): {run.summary.get('accuracy', 0.0):.3f}  "

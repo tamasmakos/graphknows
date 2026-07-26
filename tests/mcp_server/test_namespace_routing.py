@@ -42,8 +42,10 @@ async def test_distinct_runtime_per_namespace() -> None:
 @pytest.mark.asyncio
 async def test_explicit_namespace_overrides_settings_default() -> None:
     fake_settings = type("S", (), {"namespace": "server_default"})()
-    with patch.object(_state, "get_settings", return_value=fake_settings), \
-         patch("graphknows.memory.Memory", FakeMemory):
+    with (
+        patch.object(_state, "get_settings", return_value=fake_settings),
+        patch("graphknows.memory.Memory", FakeMemory),
+    ):
         default = await _state.get_runtime("")
         explicit = await _state.get_runtime("other")
     assert default.namespace == "server_default"
@@ -52,8 +54,10 @@ async def test_explicit_namespace_overrides_settings_default() -> None:
 
 @pytest.mark.asyncio
 async def test_lru_eviction_closes_oldest() -> None:
-    with patch.object(_state, "_MAX_OPEN_NAMESPACES", 2), \
-         patch("graphknows.memory.Memory", FakeMemory):
+    with (
+        patch.object(_state, "_MAX_OPEN_NAMESPACES", 2),
+        patch("graphknows.memory.Memory", FakeMemory),
+    ):
         a = await _state.get_runtime("a")
         await _state.get_runtime("b")
         await _state.get_runtime("a")  # touch 'a' so 'b' is now least-recently-used

@@ -16,6 +16,12 @@ select = [
     "SIM",  # flake8-simplify — boolean traps, redundant conditions
     "ERA",  # eradicate — commented-out dead code
     "RUF",  # Ruff-specific rules
+    # Silent-swallow detectors. This repo's recurring defect is not a crash, it
+    # is code that runs, passes and does nothing: a BM25 channel that scored
+    # with a fallback, a reranker that was a no-op, a verifier score computed
+    # and discarded. Every one hid behind a swallowed exception.
+    "S110",  # try-except-pass
+    "S112",  # try-except-continue
 ]
 ignore = [
     "E501",   # line too long — formatter handles this
@@ -27,7 +33,13 @@ ignore = [
     "D213",   # multi-line-summary-second-line — conflicts with D212
     "TRY003",  # long messages outside exception class — too strict for this codebase
     "TRY301",  # abstract raise to inner function — style choice, not a bug
-    "BLE001",  # blind except — we have legitimate broad catches in MCP health checks
+    # BLE001 (blind except) stays off, measured rather than assumed: it fires at
+    # 67 sites across 23 files, every one an I/O boundary (ArcadeDB HTTP, torch
+    # model loads, MCP transport) where the set of raisable exceptions is not
+    # enumerable and narrowing would turn a degraded path into a crash. Turning
+    # it on buys 67 `noqa` comments and no defect. S110/S112 below are the half
+    # of this that IS a defect — caught and did nothing — and are enforced.
+    "BLE001",
     "SIM108",  # ternary — readability preference
     "ERA001",  # commented code — false positives on intentional examples
 ]
@@ -46,6 +58,15 @@ ignore = [
 "**/retrieval/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
 "**/channels/_framenet.py" = ["C901"]  # FE assignment is one dependency-parse pass
 "**/llm_assisted/dspy.py" = ["C901"]  # ontology context build is one linear pass
+# Pre-existing complexity, exempted rather than refactored under a gate-hardening
+# change: both are single linear passes over a parse tree / a section, and
+# splitting core extraction to satisfy a metric is churn with defect risk.
+"**/relations/svo.py" = ["C901"]  # extract_svo: one dependency-parse walk (16)
+"**/parsers/base.py" = ["C901"]  # _split_large_section: one section scan (15)
+# RUF059 flags unused names in tuple unpacking. Test fixtures return a fixed
+# tuple and each test binds all of it positionally while using a subset; the
+# alternative is index arithmetic, which is worse to read in a failing test.
+"tests/**" = ["RUF059"]
 # SIM905's autofix expands the compact whitespace-delimited stopword block into
 # ~100 lines of one word each. An inline noqa is impossible — the diagnostic
 # lands on the `"""` line, where the directive becomes string content.

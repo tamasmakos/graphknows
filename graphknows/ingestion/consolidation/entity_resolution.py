@@ -41,17 +41,47 @@ log = logging.getLogger(__name__)
 # hub entities. Matched on name_norm (casefolded, whitespace-collapsed).
 _JUNK_ENTITIES: frozenset[str] = frozenset(
     {
-        "others", "many", "kind", "thing", "things", "everyone", "someone",
-        "anyone", "everything", "nothing", "lot", "lots", "one", "ones",
-        "some", "all", "none", "way", "ways", "bit", "part",
+        "others",
+        "many",
+        "kind",
+        "thing",
+        "things",
+        "everyone",
+        "someone",
+        "anyone",
+        "everything",
+        "nothing",
+        "lot",
+        "lots",
+        "one",
+        "ones",
+        "some",
+        "all",
+        "none",
+        "way",
+        "ways",
+        "bit",
+        "part",
     }
 )
 
 # Leading determiners / possessives stripped when building a standardization key.
 _LEADING_DET: frozenset[str] = frozenset(
     {
-        "the", "a", "an", "this", "that", "these", "those",
-        "my", "your", "his", "her", "its", "our", "their",
+        "the",
+        "a",
+        "an",
+        "this",
+        "that",
+        "these",
+        "those",
+        "my",
+        "your",
+        "his",
+        "her",
+        "its",
+        "our",
+        "their",
     }
 )
 
@@ -78,8 +108,11 @@ def _singularize(word: str) -> str:
 
 
 def _standard_key(name: str) -> str:
-    """Standardized merge key: casefold + whitespace-collapse (``_name_norm``),
-    strip a leading determiner/possessive, singularize the head (last) token."""
+    """Standardized merge key for entity de-duplication.
+
+    Casefold + whitespace-collapse (``_name_norm``), strip a leading
+    determiner/possessive, singularize the head (last) token.
+    """
     toks = _name_norm(name).split()
     while len(toks) > 1 and toks[0] in _LEADING_DET:
         toks = toks[1:]
@@ -95,8 +128,17 @@ def _standard_key(name: str) -> str:
 # onto "philippine". Only untyped / common-noun entities are morphologically merged.
 _PROPER_TYPES: frozenset[str] = frozenset(
     {
-        "PERSON", "ORG", "GPE", "LOC", "FAC", "NORP",
-        "PRODUCT", "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE",
+        "PERSON",
+        "ORG",
+        "GPE",
+        "LOC",
+        "FAC",
+        "NORP",
+        "PRODUCT",
+        "EVENT",
+        "WORK_OF_ART",
+        "LAW",
+        "LANGUAGE",
     }
 )
 
@@ -206,6 +248,7 @@ async def _merge_nicknames(store: Any) -> int:
 
 def _co_occurs(a: dict[str, Any], b: dict[str, Any], speakers: set[str]) -> bool:
     """Both endpoints appear in the namespace (mentioned, or a known speaker)."""
+
     def present(e: dict[str, Any]) -> bool:
         return e.get("mention_count", 0) > 0 or e["name_norm"] in speakers
 
@@ -267,9 +310,10 @@ async def _merge_speaker_prefixed(store: Any) -> int:
 
 
 async def _drop_temporal(store: Any) -> int:
-    """Layer 5 — delete entities the graph-entity gate now rejects but an older
-    ingest let in: temporal/numeric shapes, stopwords, code/markup, over-long
-    clauses, and 1-2 char fragments.
+    """Layer 5 — delete entities the graph-entity gate now rejects.
+
+    Covers what an older ingest let in: temporal/numeric shapes, stopwords,
+    code/markup, over-long clauses, and 1-2 char fragments.
 
     Relation endpoints used to bypass ``graph_entities`` entirely, minting
     "8 May, 2023" / "last Saturday" ENTITY nodes that then received a
@@ -316,6 +360,11 @@ async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
     log.info(
         "resolve_entities: dropped=%d merged=%d "
         "(morphological=%d nickname=%d speaker_prefixed=%d temporal_dropped=%d)",
-        dropped, merged, merged_morph, merged_nick, merged_speaker, dropped_temporal,
+        dropped,
+        merged,
+        merged_morph,
+        merged_nick,
+        merged_speaker,
+        dropped_temporal,
     )
     return {"dropped": dropped, "merged": merged}

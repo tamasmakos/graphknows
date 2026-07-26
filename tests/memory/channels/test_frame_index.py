@@ -2,6 +2,7 @@
 
 Uses a tiny in-process matrix so no embedder/FrameNet is touched.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -54,18 +55,14 @@ def test_frame_embedding_returns_matrix_row():
 
 
 def test_frame_summary_reads_definition(monkeypatch):
-    monkeypatch.setattr(
-        "graphknows.channels._framenet._frame_def", lambda name: f"def of {name}"
-    )
+    monkeypatch.setattr("graphknows.channels._framenet._frame_def", lambda name: f"def of {name}")
     assert fi.frame_summary("Motion") == "def of Motion"
 
 
 @pytest.mark.asyncio
 async def test_ensure_frame_catalog_builds_vector_db(monkeypatch):
     fi._names, fi._matrix = _tiny_index()
-    monkeypatch.setattr(
-        "graphknows.channels._framenet._frame_def", lambda name: f"def of {name}"
-    )
+    monkeypatch.setattr("graphknows.channels._framenet._frame_def", lambda name: f"def of {name}")
     client = MagicMock()
     client.create_database = AsyncMock()
     client.query = AsyncMock(return_value=[])  # FRAME_DEF empty -> populate

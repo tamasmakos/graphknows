@@ -80,7 +80,13 @@ llm-wiki
 .venv
 .agents
 skills-lock.json
-.claude
+.claude/*
+# The enforcement layer IS the gate for agent-authored code, so it is version
+# controlled: a hook that only exists on one laptop protects nothing and does
+# not survive a clone. Personal config (settings.local.json, local skills)
+# stays out.
+!.claude/settings.json
+!.claude/hooks/
 AGENTS.md
 .codegraph
 # local analysis scratch (not committed)
@@ -89,9 +95,9 @@ evaluation/results/.judge_cache/
 
 # Local reference clone (framenet-tools) — unused by code, kept for reference only
 graphknows/utils/
-CLAUDE.md
+# CLAUDE.md is the agent contract (container-not-host, no-silent-fallback, the
+# gate layout). Ignoring it is how this repo ended up with a CLAUDE.md
+# describing an entirely different project.
 .sonar
-sonar-project.properties
-pytest.ini
 .mcp.json
 docs\agents

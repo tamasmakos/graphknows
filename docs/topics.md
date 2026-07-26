@@ -7,13 +7,13 @@ resolution, PageRank or consolidation.
 
 ```bash
 # rebuild in place
-python -m graphknows.topics --namespace mytenant --mode extractive --min-size 3
+graphknows-topics --namespace mytenant --mode extractive --min-size 3
 
 # compare settings before committing to one (never persists)
-python -m graphknows.topics --namespace mytenant --sweep-param min_size --sweep 2,3,5,10
+graphknows-topics --namespace mytenant --sweep-param min_size --sweep 2,3,5,10
 
 # write a read-only JSON artifact alongside the DB write
-python -m graphknows.topics --namespace mytenant --export topics.json
+graphknows-topics --namespace mytenant --export topics.json
 ```
 
 Also available as `Memory.build_topics(...)` and the `memory_topics` MCP tool.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shlex
 from collections.abc import Sequence
@@ -15,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graphknows.exceptions import GraphKnowsError
+
+log = logging.getLogger(__name__)
 
 
 class MCPClientError(GraphKnowsError):
@@ -98,8 +101,10 @@ class GraphKnowsMCPClient:
                 current = asyncio.current_task()
                 if current is not None and current.cancelling():
                     raise
-            except Exception:
-                pass
+            except Exception as exc:
+                # Teardown is best-effort, but an unlogged swallow here hides a
+                # reader task that died earlier for an unrelated reason.
+                log.debug("MCP reader task raised during close: %s", exc)
             self._reader_task = None
         for fut in self._pending.values():
             if not fut.done():

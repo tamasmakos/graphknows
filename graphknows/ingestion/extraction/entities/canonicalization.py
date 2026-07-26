@@ -62,6 +62,7 @@ DEMONYM_SUFFIXES = (
 
 
 def normalize_surface_form(text: str) -> str:
+    """Upper-case, punctuation-stripped, underscore-joined form of *text*."""
     if not text:
         return ""
     normalized = str(text).strip().upper()
@@ -109,6 +110,7 @@ def _likely_region_adjectival_conflict(
 
 
 def surface_forms_conflict(a: str, b: str) -> bool:
+    """True when two surface forms name provably different things."""
     norm_a = normalize_surface_form(a)
     norm_b = normalize_surface_form(b)
     if not norm_a or not norm_b or norm_a == norm_b:
@@ -132,13 +134,11 @@ def surface_forms_conflict(a: str, b: str) -> bool:
     ):
         return True
 
-    if _likely_region_adjectival_conflict(tokens_a, tokens_b):
-        return True
-
-    return False
+    return _likely_region_adjectival_conflict(tokens_a, tokens_b)
 
 
 def classify_surface_form(text: str) -> str:
+    """Coarse class of a surface form (role, artifact, concept-like, unknown)."""
     normalized = normalize_surface_form(text)
     if not normalized:
         return "unknown"
@@ -156,6 +156,7 @@ def classify_surface_form(text: str) -> str:
 
 
 def are_potential_aliases(a: str, b: str) -> bool:
+    """True when two surface forms may denote the same entity."""
     norm_a = normalize_surface_form(a)
     norm_b = normalize_surface_form(b)
     if not norm_a or not norm_b:
@@ -178,7 +179,4 @@ def are_potential_aliases(a: str, b: str) -> bool:
 
     tokens_a = set(norm_a.split("_"))
     tokens_b = set(norm_b.split("_"))
-    if tokens_a and tokens_b and tokens_a == tokens_b:
-        return True
-
-    return False
+    return bool(tokens_a and tokens_b and tokens_a == tokens_b)

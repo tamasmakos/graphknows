@@ -28,7 +28,7 @@ def _load_records(path: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"{path} does not exist (LongMemEval dataset missing).")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        raise ValueError(f"{path} must be a JSON array of question records")
+        raise TypeError(f"{path} must be a JSON array of question records")
     return [row for row in payload if isinstance(row, dict)]
 
 

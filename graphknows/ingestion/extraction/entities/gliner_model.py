@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # knowledgator/gliner-relex-large-v1.0: joint entity+relation extraction in one
 # forward pass (~467M params). Unlike GLiNER2 — which only ever *corroborated* an
@@ -75,6 +78,9 @@ def load_gliner2_model() -> Any:
     if device != "cpu":
         try:
             model = model.to(device)
-        except Exception:
-            pass  # fall back to CPU rather than fail ingest
+        except Exception as exc:
+            # Falling back to CPU beats failing ingest — but silently is how a
+            # GPU box ends up running every extraction on CPU for weeks with no
+            # symptom other than "ingest feels slow".
+            log.warning("relex model could not move to %s, staying on CPU: %s", device, exc)
     return _SerialInference(model)

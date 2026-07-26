@@ -46,7 +46,7 @@ def _build_signature(dspy_mod: Any) -> type:
     """Construct and return the DSPy Signature class using the live dspy module."""
 
     class DecomposeSignature(dspy_mod.Signature):  # type: ignore[misc, name-defined]
-        """Split a complex question into atomic sub-questions for retrieval.
+        r"""Split a complex question into atomic sub-questions for retrieval.
 
         Given a user question that may involve multiple entities, time periods,
         or reasoning hops, produce a numbered list of simple, self-contained
@@ -118,11 +118,12 @@ def decompose(
             return [query]
 
         sub_qs = _parse_sub_questions(raw, query)
-        return sub_qs or [query]
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.debug("decompose fell back to [query]: %s", exc)
         return [query]
+    else:
+        return sub_qs or [query]
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +132,7 @@ def decompose(
 
 
 def _parse_sub_questions(raw: str, fallback: str) -> list[str]:
-    """Parse newline-separated numbered sub-questions from *raw*.
+    r"""Parse newline-separated numbered sub-questions from *raw*.
 
     Accepts:
         "1. What is X?\\n2. When did Y happen?"

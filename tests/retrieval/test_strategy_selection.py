@@ -35,9 +35,7 @@ class TestBuildRetriever:
         assert type(r).__name__ == "DETRetriever"
 
     def test_empty_strategy_uses_the_configured_default(self) -> None:
-        assert (
-            type(build_retriever(_settings(), store=MagicMock())).__name__ == "DETRetriever"
-        )
+        assert type(build_retriever(_settings(), store=MagicMock())).__name__ == "DETRetriever"
         s = _settings(GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.agentic)
         assert type(build_retriever(s, store=MagicMock())).__name__ == "AgenticRetriever"
 
@@ -74,7 +72,7 @@ class TestMemoryRetrieverCache:
 
     @pytest.mark.asyncio
     async def test_default_and_explicit_share_a_cache_entry(self) -> None:
-        """"" and "det" resolve to the same key under llm_free, not two retrievers."""
+        """ "" and "det" resolve to the same key under llm_free, not two retrievers."""
         from graphknows.memory import Memory
 
         mem = Memory(_settings(GRAPHKNOWS_MODE=MemoryMode.llm_free), namespace="")

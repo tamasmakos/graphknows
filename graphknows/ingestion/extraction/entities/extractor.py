@@ -194,7 +194,7 @@ def _clean_surface(text: str) -> str:
     prev = None
     while cleaned and cleaned != prev:
         prev = cleaned
-        cleaned = cleaned.strip("\"'“”‘’`()[]{}")
+        cleaned = cleaned.strip("\"'“”‘’`()[]{}")  # noqa: RUF001 - typographic quotes are the point: they are being stripped
         cleaned = cleaned.strip(" .,;:!?")
     return cleaned
 
@@ -375,12 +375,12 @@ def _svo_structural_relations(
     Gate: BOTH arguments named, or a copular/appositive/possessive pattern
     with a named head.
     """
-    _NAMED_HEAD_PATTERNS = ("copular", "appositive", "possessive")
+    named_head_patterns = ("copular", "appositive", "possessive")
     out: list[dict[str, Any]] = []
     for triple in svo_triples:
         pattern = triple.get("pattern", "svo")
         if (triple["head_named"] and triple["tail_named"]) or (
-            pattern in _NAMED_HEAD_PATTERNS and triple["head_named"]
+            pattern in named_head_patterns and triple["head_named"]
         ):
             pass
         else:

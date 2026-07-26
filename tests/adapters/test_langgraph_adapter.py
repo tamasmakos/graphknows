@@ -11,8 +11,8 @@ import importlib.util
 
 import pytest
 
-from graphknows.integrations.langgraph import recall, remember
 from graphknows.exceptions import MissingExtraError
+from graphknows.integrations.langgraph import recall, remember
 
 _HAS_LANGGRAPH = importlib.util.find_spec("langgraph") is not None
 
@@ -26,9 +26,7 @@ class _FakeMemory:
         self.ingested.append((session_id, text))
         return {"chunks": 1}
 
-    async def recall_memory(
-        self, query: str, *, session_id: str, top_k: int, scope: str
-    ) -> dict:
+    async def recall_memory(self, query: str, *, session_id: str, top_k: int, scope: str) -> dict:
         self.recall_calls.append(
             {"query": query, "session_id": session_id, "top_k": top_k, "scope": scope}
         )
@@ -54,7 +52,13 @@ async def test_recall_extracts_text_from_multimodal_content() -> None:
     mem = _FakeMemory()
     state = {
         "messages": [
-            {"role": "user", "content": [{"type": "text", "text": "what is my cat?"}, {"type": "image_url", "image_url": "x"}]}
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "what is my cat?"},
+                    {"type": "image_url", "image_url": "x"},
+                ],
+            }
         ]
     }
     await recall(state, memory=mem, session_id="s1")

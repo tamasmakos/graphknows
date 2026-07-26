@@ -34,9 +34,7 @@ log = logging.getLogger(__name__)
 # it is the conversation. Returning its members floods recall with everything —
 # the same failure mode as saturated speaker entities, generic frames and the
 # ubiquitous Person ontology class.
-_TOPIC_SATURATION_RATIO: float = float(
-    os.environ.get("GRAPHKNOWS_TOPIC_SATURATION_RATIO", "0.5")
-)
+_TOPIC_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_TOPIC_SATURATION_RATIO", "0.5"))
 
 # Topic centroids considered per query.
 _TOPIC_TOP_K: int = 3

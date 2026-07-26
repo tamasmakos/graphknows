@@ -200,8 +200,12 @@ async def ensure_frame_catalog(client: Any, db: str = _CATALOG_DB, dims: int | N
         rows = await client.query(db, "SELECT count(*) AS c FROM FRAME_DEF", language="sql")
         if rows and int(rows[0].get("c") or 0) >= len(names):
             return int(rows[0]["c"])
-    except Exception:
-        pass
+    except Exception as exc:
+        # Expected on a first run (FRAME_DEF does not exist yet) — but log it,
+        # because the same swallow hides a broken connection, and a "populate"
+        # that silently re-runs every call is indistinguishable from one that
+        # never worked.
+        log.debug("FRAME_DEF idempotency probe failed, populating: %s", exc)
 
     ddl = [
         "CREATE VERTEX TYPE FRAME_DEF IF NOT EXISTS",

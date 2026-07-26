@@ -16,7 +16,7 @@ satisfy ``mypy --strict``; they change no behaviour.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -33,11 +33,11 @@ class VerifierConfig:
     dropout: float = 0.3
     threshold: float = 0.55
     encoder_name: str = "microsoft/deberta-v3-base"
-    distance_buckets: list[int] | None = None
-
-    def __post_init__(self) -> None:
-        if self.distance_buckets is None:
-            self.distance_buckets = [0, 5, 10, 20, 50]
+    # Upstream declared this `list[int] | None = None` and filled the default in
+    # `__post_init__`, which left every read site statically Optional — three of
+    # them index or `len()` it without a guard. `default_factory` gives the same
+    # default with the None branch deleted.
+    distance_buckets: list[int] = field(default_factory=lambda: [0, 5, 10, 20, 50])
 
 
 class RelationVerifierModel(nn.Module):  # type: ignore[misc]
@@ -165,8 +165,8 @@ class RelationVerifier:
         """Load verifier from local checkpoint file."""
         return cls.from_pretrained(checkpoint_path, threshold=threshold, device=device)
 
-    def _get_token_embeddings(self, text: str) -> torch.Tensor:
-        """Get token embeddings for text."""
+    def _get_token_embeddings(self, text: str) -> tuple[torch.Tensor, torch.Tensor]:
+        """Get token embeddings for *text*, paired with its char→token offset map."""
         inputs = self.tokenizer(
             text, return_tensors="pt", truncation=True, max_length=512, return_offsets_mapping=True
         )

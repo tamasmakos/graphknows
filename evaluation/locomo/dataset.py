@@ -141,9 +141,7 @@ def build_documents(
         if not isinstance(session, dict):
             continue
         title = first_string(session, ("title", "id", "session_id"), f"session-{index}")
-        text = "\n".join(
-            filter(None, (_message_text(msg) for msg in session.get("messages", [])))
-        )
+        text = "\n".join(filter(None, (_message_text(msg) for msg in session.get("messages", []))))
         text = _clip(text, max_chars)
         if text:
             documents.append(
@@ -154,9 +152,7 @@ def build_documents(
 
 def _reference_date(documents: list[EvalDocument]) -> str:
     """Human-readable date of the newest session (anchors relative time)."""
-    parsed = [
-        dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))
-    ]
+    parsed = [dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))]
     if not parsed:
         return ""
     return max(parsed).strftime("%d %B %Y")

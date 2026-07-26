@@ -142,9 +142,7 @@ async def amain(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"[eval] benchmark=beam mode={args.mode}")
-    run, paths = await _run_one(
-        args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest
-    )
+    run, paths = await _run_one(args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest)
 
     print(
         f"\nAccuracy (LLM judge): {run.summary.get('accuracy', 0.0):.3f}  "

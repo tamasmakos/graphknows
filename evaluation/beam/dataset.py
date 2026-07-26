@@ -38,7 +38,7 @@ def _load_records(path: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"{path} does not exist (BEAM dataset missing).")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        raise ValueError(f"{path} must be a JSON array of conversations")
+        raise TypeError(f"{path} must be a JSON array of conversations")
     return [row for row in payload if isinstance(row, dict)]
 
 
@@ -136,9 +136,7 @@ def build_documents(
 
 
 def _reference_date(documents: list[EvalDocument]) -> str:
-    parsed = [
-        dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))
-    ]
+    parsed = [dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))]
     return max(parsed).strftime("%d %B %Y") if parsed else ""
 
 

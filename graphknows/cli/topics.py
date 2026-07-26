@@ -1,8 +1,10 @@
-"""CLI: ``python -m graphknows.topics`` — rebuild or sweep the topic layer.
+"""CLI: ``graphknows-topics`` — rebuild or sweep the topic layer.
 
 Rebuild one namespace's topics at chosen settings, or sweep a granularity range
 and print the metric table so the setting is picked from evidence rather than
 taste.
+
+Also runnable as ``python -m graphknows.cli.topics``.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from graphknows.topics.config import TopicConfig
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the topic CLI argument parser."""
-    p = argparse.ArgumentParser(prog="python -m graphknows.topics", description=__doc__)
+    p = argparse.ArgumentParser(prog="graphknows-topics", description=__doc__)
     p.add_argument("--namespace", default="", help="Tenant namespace (default: configured).")
     p.add_argument(
         "--mode",
@@ -117,10 +119,7 @@ async def amain(argv: list[str] | None = None) -> int:
                     value = int(text)
                     cfg = replace(base, min_size=value)
                 out = await mem.build_topics(config=cfg, persist=False)
-                print(
-                    f"{value:>10}  "
-                    + "  ".join(f"{out.get(k, 0)!s:>10}" for k, _ in _COLUMNS)
-                )
+                print(f"{value:>10}  " + "  ".join(f"{out.get(k, 0)!s:>10}" for k, _ in _COLUMNS))
             print(
                 "\nPick on newman Q + coherence, and check entity_coverage. The "
                 "reported ArcadeDB modularity is NOT Newman's Q and rewards coarser "

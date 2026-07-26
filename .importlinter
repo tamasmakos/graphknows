@@ -6,11 +6,12 @@ unmatched_ignore_imports_alerting = none
 name = Declared architecture layers
 type = layers
 layers =
-    graphknows.server | graphknows.integrations
+    graphknows.cli | graphknows.server | graphknows.integrations
     graphknows.memory
     graphknows.ingestion | graphknows.retrieval
     graphknows.channels
-    graphknows.ranking
+    graphknows.ontology
+    graphknows.ranking | graphknows.topics
     graphknows.storage
     graphknows.models | graphknows.settings | graphknows.llm
     graphknows.exceptions

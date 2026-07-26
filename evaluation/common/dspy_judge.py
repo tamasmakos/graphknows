@@ -81,7 +81,9 @@ class RubricSignature(dspy.Signature):
     rubric: str = dspy.InputField(desc="the grading criteria the answer must satisfy")
     generated: str = dspy.InputField(desc="the answer to evaluate")
     reasoning: str = dspy.OutputField(desc="one sentence justifying the score")
-    score: float = dspy.OutputField(desc="rubric satisfaction from 0.0 (fails) to 1.0 (fully meets)")
+    score: float = dspy.OutputField(
+        desc="rubric satisfaction from 0.0 (fails) to 1.0 (fully meets)"
+    )
 
 
 class DSPyJudge:
