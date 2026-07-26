@@ -41,8 +41,16 @@ computed and then discarded. All were green.
 `pre-push` (~2-4 min): full unit suite, whole-package mypy, `lint-imports`,
 gitleaks, pip-audit, coverage floor, SonarCloud quality gate.
 
-`make ci` runs the local equivalent. Architecture boundaries live in
-`.importlinter` — one checker, not two.
+`make gate` runs the pre-push gate; `make hooks` installs both hooks (once per
+clone). Architecture boundaries live in `.importlinter` — one checker, not two.
+
+The SonarCloud verdict is **reported, not enforced**: `GRAPHKNOWS_SONAR_BLOCKING`
+defaults to `0`. It cannot be armed yet — the project has a manual New Code
+Period baseline pointing at an analysis that no longer exists, so every scanner
+run fails with HTTP 422 before uploading, and `new_coverage` therefore reads
+0.0. Fix in the SonarCloud UI (Project Settings → New Code → switch off
+"Specific analysis"; the v1 `new_code_periods` API is not exposed on this
+instance), let one analysis upload, then set the variable to `1`.
 
 **Never weaken a gate to make it pass.** Do not add `# type: ignore` without a
 named reason, do not extend `disable_error_code`, do not lower a coverage
