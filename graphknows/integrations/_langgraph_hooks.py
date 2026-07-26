@@ -14,25 +14,38 @@ from typing import Any, Protocol
 
 
 class _Memory(Protocol):
-    async def ingest_memory(self, text: str, *, session_id: str, **kw: Any) -> dict[str, Any]: ...
+    async def ingest_memory(
+        self,
+        messages: str | list[dict[str, Any]] | dict[str, Any] = ...,
+        *,
+        session_id: str = ...,
+    ) -> dict[str, Any]: ...
     async def recall_memory(
-        self, query: str, *, session_id: str, top_k: int, scope: str
+        self,
+        query: str,
+        *,
+        session_id: str = ...,
+        top_k: int = ...,
+        scope: str = ...,
+        cross_session: bool = ...,
     ) -> dict[str, Any]: ...
 
 
-def _last_text(state: dict[str, Any], messages_key: str) -> str:
-    """Return the last message's text from a LangGraph-style messages list.
+def _last_message(state: dict[str, Any], messages_key: str) -> Any | None:
+    """Return the last entry of a LangGraph-style messages list, or ``None``."""
+    messages = state.get(messages_key) or []
+    return messages[-1] if messages else None
+
+
+def _message_text(message: Any) -> str:
+    """Return one message's text content.
 
     Handles both plain-string content and LangChain multimodal content (a list
     of blocks, where text blocks are ``{"type": "text", "text": ...}``).
     """
-    messages = state.get(messages_key) or []
-    if not messages:
-        return ""
-    last = messages[-1]
-    content = getattr(last, "content", None)
-    if content is None and isinstance(last, dict):
-        content = last.get("content")
+    content = getattr(message, "content", None)
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
     if isinstance(content, list):
         parts: list[str] = []
         for block in content:
@@ -44,6 +57,20 @@ def _last_text(state: dict[str, Any], messages_key: str) -> str:
     return str(content or "")
 
 
+def _message_role(message: Any) -> str:
+    """Return one message's role, defaulting to ``"user"`` when unavailable."""
+    role = getattr(message, "type", None)
+    if role is None and isinstance(message, dict):
+        role = message.get("role")
+    return str(role) if role else "user"
+
+
+def _last_text(state: dict[str, Any], messages_key: str) -> str:
+    """Return the last message's text from a LangGraph-style messages list."""
+    last = _last_message(state, messages_key)
+    return _message_text(last) if last is not None else ""
+
+
 async def recall(
     state: dict[str, Any],
     *,
@@ -53,18 +80,38 @@ async def recall(
     top_k: int = 5,
     scope: str = "both",
     out_key: str = "memories",
+    cross_session: bool = True,
 ) -> dict[str, Any]:
     """Recall memories for the latest user turn and return them as a state update.
 
     Reads the last message in ``state[messages_key]`` as the query; writes the
-    ranked hit texts to ``state[out_key]``. Returns only the partial update.
+    ranked hit texts to ``state[out_key]`` and each hit's retrieval channel
+    (e.g. ``"stm"``/``"vector"``/``"entity"``) to ``state[out_key + "_sources"]``,
+    so a caller can see honestly which channel answered. Returns only the
+    partial update.
+
+    ``cross_session`` defaults to True — an agent's memory is expected to span
+    the conversations it has already had, so the graph half of the search is
+    namespace-wide. Set it False to confine recall to this session's own graph.
+    The unflushed short-term buffer is session-scoped either way.
     """
     query = _last_text(state, messages_key)
+    sources_key = f"{out_key}_sources"
     if not query:
-        return {out_key: []}
-    result = await memory.recall_memory(query, session_id=session_id, top_k=top_k, scope=scope)
-    hits = result.get("hits", []) if isinstance(result, dict) else []
-    return {out_key: [h.get("text", "") for h in hits if isinstance(h, dict)]}
+        return {out_key: [], sources_key: []}
+    result = await memory.recall_memory(
+        query,
+        session_id=session_id,
+        top_k=top_k,
+        scope=scope,
+        cross_session=cross_session,
+    )
+    raw_hits = result.get("hits", []) if isinstance(result, dict) else []
+    hits = [h for h in raw_hits if isinstance(h, dict)]
+    return {
+        out_key: [h.get("text", "") for h in hits],
+        sources_key: [h.get("sources", "") for h in hits],
+    }
 
 
 async def remember(
@@ -76,9 +123,16 @@ async def remember(
 ) -> dict[str, Any]:
     """Persist the latest turn into memory. Returns an empty state update.
 
-    Ingests the last message in ``state[messages_key]``; a no-op when empty.
+    Ingests the last message in ``state[messages_key]`` as a one-message
+    conversation (``[{"role": ..., "content": ...}]``), not a bare string —
+    a bare string takes the immediate-extraction document path instead of the
+    short-term turn buffer. A no-op when there is no message or no text.
     """
-    text = _last_text(state, messages_key)
+    last = _last_message(state, messages_key)
+    if last is None:
+        return {}
+    text = _message_text(last)
     if text:
-        await memory.ingest_memory(text, session_id=session_id)
+        role = _message_role(last)
+        await memory.ingest_memory([{"role": role, "content": text}], session_id=session_id)
     return {}

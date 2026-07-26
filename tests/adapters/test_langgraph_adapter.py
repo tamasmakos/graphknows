@@ -19,18 +19,31 @@ _HAS_LANGGRAPH = importlib.util.find_spec("langgraph") is not None
 
 class _FakeMemory:
     def __init__(self) -> None:
-        self.ingested: list[tuple[str, str]] = []
+        self.ingested: list[tuple[str, object]] = []
         self.recall_calls: list[dict] = []
 
-    async def ingest_memory(self, text: str, *, session_id: str, **kw: object) -> dict:
-        self.ingested.append((session_id, text))
+    async def ingest_memory(self, messages: object, *, session_id: str, **kw: object) -> dict:
+        self.ingested.append((session_id, messages))
         return {"chunks": 1}
 
-    async def recall_memory(self, query: str, *, session_id: str, top_k: int, scope: str) -> dict:
+    async def recall_memory(
+        self, query: str, *, session_id: str, top_k: int, scope: str, cross_session: bool = False
+    ) -> dict:
         self.recall_calls.append(
-            {"query": query, "session_id": session_id, "top_k": top_k, "scope": scope}
+            {
+                "query": query,
+                "session_id": session_id,
+                "top_k": top_k,
+                "scope": scope,
+                "cross_session": cross_session,
+            }
         )
-        return {"hits": [{"text": "Mochi is a cat"}, {"text": "unrelated"}]}
+        return {
+            "hits": [
+                {"text": "Mochi is a cat", "sources": "vector"},
+                {"text": "unrelated", "sources": "stm"},
+            ]
+        }
 
 
 @pytest.mark.asyncio
@@ -38,12 +51,16 @@ async def test_recall_reads_last_message_and_returns_memories() -> None:
     mem = _FakeMemory()
     state = {"messages": [{"role": "user", "content": "what is my cat?"}]}
     update = await recall(state, memory=mem, session_id="s1", top_k=3)
-    assert update == {"memories": ["Mochi is a cat", "unrelated"]}
+    assert update == {
+        "memories": ["Mochi is a cat", "unrelated"],
+        "memories_sources": ["vector", "stm"],
+    }
     assert mem.recall_calls[0] == {
         "query": "what is my cat?",
         "session_id": "s1",
         "top_k": 3,
         "scope": "both",
+        "cross_session": True,
     }
 
 
@@ -68,7 +85,10 @@ async def test_recall_extracts_text_from_multimodal_content() -> None:
 @pytest.mark.asyncio
 async def test_recall_empty_messages_is_noop() -> None:
     mem = _FakeMemory()
-    assert await recall({}, memory=mem, session_id="s1") == {"memories": []}
+    assert await recall({}, memory=mem, session_id="s1") == {
+        "memories": [],
+        "memories_sources": [],
+    }
     assert mem.recall_calls == []
 
 
@@ -77,7 +97,7 @@ async def test_remember_ingests_last_message() -> None:
     mem = _FakeMemory()
     state = {"messages": [{"role": "user", "content": "My cat is Mochi."}]}
     assert await remember(state, memory=mem, session_id="s1") == {}
-    assert mem.ingested == [("s1", "My cat is Mochi.")]
+    assert mem.ingested == [("s1", [{"role": "user", "content": "My cat is Mochi."}])]
 
 
 @pytest.mark.skipif(_HAS_LANGGRAPH, reason="langgraph installed — guard not exercised")

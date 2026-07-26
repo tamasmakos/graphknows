@@ -261,6 +261,78 @@ class GraphStore(ArcadeStoreBase):
                     await self._set_embedding("CHUNK", "chunk_id", c["chunk_id"], c["embedding"])
 
     # ------------------------------------------------------------------
+    # Write API — TURN (short-term conversation buffer)
+    # ------------------------------------------------------------------
+    #
+    # TURN is the cheap short-term-memory tier: one vertex per conversation
+    # turn, written with no extraction and no embedding. flush() later ingests
+    # the buffered raw turns through the real pipeline and flips them
+    # raw -> consolidated via mark_turns_consolidated. The caller is
+    # responsible for ensure_session() first — write_turn does not create it.
+
+    async def write_turn(
+        self, session_id: str, role: str, text: str, seq: int, ts: str = ""
+    ) -> str:
+        """Append one raw TURN to the session's short-term buffer; returns the turn_id."""
+        turn_id = f"{session_id}:{seq}"
+        ts = ts or datetime.now(UTC).isoformat()
+        await self.command(
+            "MERGE (t:TURN {turn_id: $tid}) "
+            "SET t.session_id = $sid, t.role = $role, t.text = $text, "
+            "    t.seq = $seq, t.ts = $ts, t.state = coalesce(t.state, 'raw') "
+            "WITH t MATCH (s:SESSION {session_id: $sid}) "
+            "MERGE (t)-[:IN_SESSION]->(s)",
+            tid=turn_id,
+            sid=session_id,
+            role=role,
+            text=text,
+            seq=seq,
+            ts=ts,
+        )
+        return turn_id
+
+    async def next_turn_seq(self, session_id: str) -> int:
+        """Next 1-based sequence number for this session's buffer (1 when empty)."""
+        rows = await self.query(
+            "MATCH (t:TURN {session_id: $sid}) RETURN max(t.seq) AS m",
+            sid=session_id,
+        )
+        m = rows[0].get("m") if rows else None
+        return int(m or 0) + 1
+
+    async def list_turns(
+        self, session_id: str, *, state: str = "raw", limit: int = 30
+    ) -> list[dict[str, Any]]:
+        """Return the session's buffered turns, newest first (ORDER BY seq DESC)."""
+        rows = await self.query(
+            "MATCH (t:TURN {session_id: $sid}) WHERE t.state = $state "
+            "RETURN t.turn_id AS turn_id, t.session_id AS session_id, t.role AS role, "
+            "       t.text AS text, t.seq AS seq, t.ts AS ts, t.state AS state "
+            "ORDER BY t.seq DESC LIMIT $limit",
+            sid=session_id,
+            state=state,
+            limit=limit,
+        )
+        return rows
+
+    async def mark_turns_consolidated(self, session_id: str) -> int:
+        """Flip this session's raw TURNs to consolidated; returns how many flipped."""
+        # Count first (query endpoint rejects a mutating SET...RETURN as
+        # non-idempotent), then flip via the command endpoint. Same pattern as
+        # consolidate_session.
+        rows = await self.query(
+            "MATCH (t:TURN {session_id: $sid}) WHERE t.state = 'raw' RETURN count(t) AS n",
+            sid=session_id,
+        )
+        await self.command(
+            "MATCH (t:TURN {session_id: $sid}) WHERE t.state = 'raw' SET t.state = 'consolidated'",
+            sid=session_id,
+        )
+        flipped = int(rows[0].get("n") or 0) if rows else 0
+        logger.info("mark_turns_consolidated %s: flipped %d turns", session_id, flipped)
+        return flipped
+
+    # ------------------------------------------------------------------
     # Write API — entities / relations
     # ------------------------------------------------------------------
 

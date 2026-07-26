@@ -142,6 +142,33 @@ To plug a different storage backend, implement `IGraphStore` from
 [graphknows/storage/base.py](graphknows/storage/base.py) — the single-database
 contract `Memory` actually uses.
 
+### LangGraph
+
+`GraphKnowsMemory` binds a session to ready-to-use LangGraph nodes — three
+`add_node` calls instead of hand-wiring `recall`/`remember` with
+`functools.partial`. Turns go to the STM buffer as you converse; `flush()` at
+end of session ingests them into the knowledge graph so a later session can
+recall them.
+
+```python
+from graphknows.integrations.langgraph import GraphKnowsMemory
+
+async with GraphKnowsMemory("s1") as mem:
+    graph.add_node("recall", mem.recall)
+    graph.add_node("remember", mem.remember)  # before respond: both hooks read
+    graph.add_node("respond", respond)        # the LAST message, and respond
+    ...                                       # appends the assistant's reply
+    await app.ainvoke({"messages": [...]})
+    await mem.flush()
+```
+
+```bash
+python examples/langgraph_agent.py --session s1   # teach it something
+python examples/langgraph_agent.py --session s2   # recall it in a new session
+```
+
+Full runnable example: [examples/langgraph_agent.py](examples/langgraph_agent.py).
+
 ## Benchmarks
 
 Full [LoCoMo](https://arxiv.org/abs/2402.17753) run — 1540 questions across all 10

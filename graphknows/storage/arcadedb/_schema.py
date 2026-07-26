@@ -25,6 +25,20 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY SESSION.consolidated_at IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY SESSION.label IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON SESSION(session_id) UNIQUE"),
+    # Short-term buffer: one TURN per conversation turn, written with no
+    # extraction and no embedding. flush() ingests them through the real
+    # pipeline and flips state raw -> consolidated (see mark_turns_consolidated).
+    ("sql", "CREATE VERTEX TYPE TURN IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY TURN.turn_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY TURN.session_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY TURN.role IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY TURN.text IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY TURN.seq IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY TURN.ts IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY TURN.state IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON TURN(turn_id) UNIQUE"),
+    ("sql", "CREATE INDEX ON TURN(session_id) NOTUNIQUE"),
+    ("sql", "CREATE INDEX ON TURN(state) NOTUNIQUE"),
     ("sql", "CREATE VERTEX TYPE FILE IF NOT EXISTS"),
     ("sql", "CREATE PROPERTY FILE.file_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FILE.name IF NOT EXISTS STRING"),
@@ -163,7 +177,7 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE INDEX IF NOT EXISTS ON ONTOLOGY_PROPERTY(label) NOTUNIQUE"),
     # ---- Edge types -------------------------------------------------------
     ("sql", "CREATE EDGE TYPE PART_OF IF NOT EXISTS"),  # CHUNK -> FILE
-    ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE -> SESSION
+    ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE|TURN -> SESSION
     ("sql", "CREATE EDGE TYPE MENTIONS IF NOT EXISTS"),  # CHUNK -> ENTITY
     ("sql", "CREATE PROPERTY MENTIONS.confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE MENTIONS_DATE IF NOT EXISTS"),  # CHUNK -> TEMPORAL

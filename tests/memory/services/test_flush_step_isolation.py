@@ -18,6 +18,10 @@ from graphknows.memory import Memory
 def _store() -> MagicMock:
     store = MagicMock()
     store._ensure_analytical_view = AsyncMock()
+    # No buffered turns in these tests — the drain step is exercised separately
+    # in tests/memory/test_turn_buffer.py (integration, live ArcadeDB).
+    store.list_turns = AsyncMock(return_value=[])
+    store.mark_turns_consolidated = AsyncMock(return_value=0)
     store.compute_and_persist_pagerank = AsyncMock(return_value=3)
     store.compute_graph_embeddings = AsyncMock(return_value=4)
     store.compute_communities = AsyncMock(return_value=5)

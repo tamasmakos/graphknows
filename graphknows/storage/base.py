@@ -86,6 +86,26 @@ class IGraphStore(Protocol):
         """Upsert CHUNK vertices in batches."""
         ...
 
+    async def write_turn(
+        self, session_id: str, role: str, text: str, seq: int, ts: str = ...
+    ) -> str:
+        """Append one raw TURN to the session's short-term buffer; returns the turn_id."""
+        ...
+
+    async def next_turn_seq(self, session_id: str) -> int:
+        """Next 1-based sequence number for this session's buffer (1 when empty)."""
+        ...
+
+    async def list_turns(
+        self, session_id: str, *, state: str = ..., limit: int = ...
+    ) -> list[dict[str, Any]]:
+        """Return the session's buffered turns, newest first (ORDER BY seq DESC)."""
+        ...
+
+    async def mark_turns_consolidated(self, session_id: str) -> int:
+        """Flip this session's raw TURNs to consolidated; returns how many flipped."""
+        ...
+
     async def write_entities_bulk(
         self, session_id: str, chunk_id: str, entities: list[dict[str, Any]]
     ) -> None:

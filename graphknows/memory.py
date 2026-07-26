@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import uuid
 from typing import Any
 
@@ -34,6 +35,48 @@ def _format_fused_hits(
             "metadata": r.get("metadata", {}),
         }
         for r in fused_results
+    ]
+
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _format_stm_hits(
+    turns: list[dict[str, Any]], query: str, top_k: int, session_id: str
+) -> list[dict[str, Any]]:
+    """Rank buffered TURN rows by cheap word-overlap against ``query``.
+
+    Deliberately no embeddings: the STM buffer is meant to stay free (no
+    extraction, no vectors) until ``flush`` runs it through the real pipeline.
+    Ranked by (overlap desc, seq desc) so ties favour the most recent turn;
+    zero-overlap turns are dropped entirely.
+    """
+    q_terms = set(_WORD_RE.findall(query.lower()))
+    if not q_terms:
+        return []
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for t in turns:
+        words = set(_WORD_RE.findall(str(t.get("text", "")).lower()))
+        overlap = len(q_terms & words)
+        if overlap:
+            scored.append((overlap, int(t.get("seq", 0) or 0), t))
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+    return [
+        {
+            "score": float(overlap),
+            "cosine_score": float(overlap),
+            "type": "stm",
+            "sources": "stm",
+            "text": strip_content_heading(str(t.get("text", ""))),
+            "session_id": session_id,
+            "entities": [],
+            "metadata": {
+                "turn_id": t.get("turn_id", ""),
+                "role": t.get("role", ""),
+                "seq": t.get("seq", 0),
+            },
+        }
+        for overlap, _seq, t in scored[:top_k]
     ]
 
 
@@ -172,6 +215,17 @@ class Memory:
                     "RETURN count(n) AS c",
                     params={"sid": sid},
                 )
+                raw_turns = await c.query(
+                    db,
+                    "MATCH (n:TURN {session_id: $sid}) WHERE n.state = 'raw' RETURN count(n) AS c",
+                    params={"sid": sid},
+                )
+                cons_turns = await c.query(
+                    db,
+                    "MATCH (n:TURN {session_id: $sid}) WHERE n.state = 'consolidated' "
+                    "RETURN count(n) AS c",
+                    params={"sid": sid},
+                )
             else:
                 raw_chunks = await c.query(
                     db, "MATCH (n:CHUNK) WHERE n.state = 'raw' RETURN count(n) AS c"
@@ -179,10 +233,20 @@ class Memory:
                 cons_chunks = await c.query(
                     db, "MATCH (n:CHUNK) WHERE n.state = 'consolidated' RETURN count(n) AS c"
                 )
+                raw_turns = await c.query(
+                    db, "MATCH (n:TURN) WHERE n.state = 'raw' RETURN count(n) AS c"
+                )
+                cons_turns = await c.query(
+                    db, "MATCH (n:TURN) WHERE n.state = 'consolidated' RETURN count(n) AS c"
+                )
 
             entities = await c.query(db, "MATCH (n:ENTITY) RETURN count(n) AS c")
             topics = await c.query(db, "MATCH (n:TOPIC) RETURN count(n) AS c")
             sessions = await c.query(db, "MATCH (n:SESSION) RETURN count(n) AS c")
+            # ENTITY-[:REL]->ENTITY is the extracted relation layer. Reported
+            # so a caller can see whether ingest produced relations at all —
+            # an entity count alone hides an empty relation graph.
+            relations = await c.query(db, "MATCH (:ENTITY)-[r:REL]->(:ENTITY) RETURN count(r) AS c")
 
             def _n(rows: list[dict[str, Any]]) -> int:
                 return int(rows[0].get("c") or 0) if rows else 0
@@ -190,8 +254,10 @@ class Memory:
             return {
                 "sessions": _n(sessions),
                 "entities": _n(entities),
+                "relations": _n(relations),
                 "topics": _n(topics),
                 "chunks": {"raw": _n(raw_chunks), "consolidated": _n(cons_chunks)},
+                "turns": {"raw": _n(raw_turns), "consolidated": _n(cons_turns)},
             }
         finally:
             await c.close()
@@ -221,13 +287,21 @@ class Memory:
         metadata: dict[str, Any] | None = None,
         text: str = "",
     ) -> dict[str, Any]:
-        """Ingest text or messages into short-term memory."""
+        """Ingest text or messages into memory — two DIFFERENT lifecycles, same method.
+
+        - **Conversation turns** (a list, or a dict with a ``"role"`` key): land as
+          cheap ``TURN`` vertices — no NER, no embedding, no CHUNK nodes. They are
+          NOT retrievable via LTM/graph search and NOT counted in ``entities``
+          until :meth:`flush_memory` drains the buffer through the real pipeline.
+          Only :meth:`recall_memory` with ``scope="stm"``/``"both"`` sees them.
+        - **A plain string / document** (no ``"role"`` key): runs the full
+          extraction pipeline (GLiNER + embeddings) immediately and is graph-
+          searchable right away. Unchanged from before — web upload,
+          ``corpus_ingest``, and the eval harness depend on this staying eager.
+        """
         if text and not messages:
             messages = text
 
-        from graphknows.ingestion import build_stm_service
-        from graphknows.models.ingest_options import IngestOptions
-        from graphknows.models.memory_class import MemoryClass
         from graphknows.models.message import normalize_messages
         from graphknows.models.scope import MemoryScope
 
@@ -240,35 +314,44 @@ class Memory:
             isinstance(messages, dict) and "role" in messages
         )
 
+        if is_conversation:
+            import time
+
+            t0 = time.monotonic()
+            msgs = normalize_messages(messages)
+            if not msgs:
+                return {
+                    "file_id": "",
+                    "chunks": 0,
+                    "entities": 0,
+                    "turns": 0,
+                    "elapsed_s": round(time.monotonic() - t0, 3),
+                    "errors": [],
+                }
+            await self._get_retriever()  # connects the store + ensures schema
+            store = self._retriever_stores[0]
+            sid = scope.to_session_id()
+            await store.ensure_session(sid)
+            seq = await store.next_turn_seq(sid)
+            for m in msgs:
+                await store.write_turn(sid, m.role.value, m.content, seq)
+                seq += 1
+            return {
+                "file_id": "",
+                "chunks": 0,
+                "entities": 0,
+                "turns": len(msgs),
+                "elapsed_s": round(time.monotonic() - t0, 3),
+                "errors": [],
+            }
+
+        from graphknows.ingestion import build_stm_service
+
         service = build_stm_service(self.settings, self.namespace)
         try:
             # connect() inside the try so a failure after the pool opens (schema
             # DDL, transient ArcadeDB error) still runs close() in the finally.
             await service.connect()
-            # Only structured conversations go through the turn-based path. A plain
-            # string (even without a title) must go through the text/chunk path —
-            # the turn path creates no CHUNK nodes, leaving retrieval-over-chunks
-            # empty for bare-string ingests.
-            if is_conversation:
-                try:
-                    resolved_class = MemoryClass(memory_class)
-                except ValueError:
-                    resolved_class = MemoryClass.raw_evidence
-                options = IngestOptions(
-                    scope=scope,
-                    metadata=metadata or {},
-                    infer=infer,
-                    memory_class=resolved_class,
-                )
-                result = await service.ingest_messages(normalize_messages(messages), options)
-                return {
-                    "file_id": result.file_id,
-                    "chunks": result.chunk_count,
-                    "entities": result.entity_count,
-                    "elapsed_s": round(result.elapsed_s, 3),
-                    "errors": list(result.errors),
-                }
-
             result = await service.ingest(
                 messages,  # type: ignore[arg-type]
                 session_id=scope.to_session_id(),
@@ -295,21 +378,54 @@ class Memory:
         top_k: int = 5,
         scope: str = "stm",
         strategy: str = "",
+        cross_session: bool = False,
     ) -> dict[str, Any]:
-        """Recall ranked STM/LTM hits using the compatibility result shape.
+        """Recall ranked hits using the compatibility result shape.
+
+        ``scope`` now has real meaning: ``"stm"`` searches ONLY the session's
+        buffered ``TURN`` rows (cheap word-overlap, no embeddings — see
+        :func:`_format_stm_hits`); ``"ltm"`` searches ONLY the graph via the
+        configured retriever; ``"both"`` (default for :meth:`search`) returns
+        STM hits first, then graph hits, truncated to ``top_k`` total.
 
         ``strategy`` selects ``det`` or ``agentic`` for this call; empty uses the
         configured default. It is independent of how the graph was ingested.
+
+        ``cross_session``, when True, makes the GRAPH half namespace-wide
+        (``session_id=""`` to the retriever, which treats that as "no session
+        filter"). The STM buffer stays session-scoped regardless — a caller
+        cannot cross-session-read another session's unflushed turns. Defaults
+        to False so the MCP server and web UI keep today's session-scoped graph
+        behaviour unless they opt in.
         """
         top_k = max(1, min(top_k, 25))
         if scope not in {"stm", "ltm", "both"}:
             scope = "both"
-        retriever = await self._get_retriever(strategy)
-        ctx = await retriever.retrieve(query, session_id=session_id, top_k=top_k, scope=scope)
-        return {
-            "hits": _format_fused_hits(ctx.fused_results, session_id),
-            "facts": list(getattr(ctx, "facts", []) or []),
-        }
+
+        stm_hits: list[dict[str, Any]] = []
+        graph_hits: list[dict[str, Any]] = []
+        facts: list[Any] = []
+
+        if scope in ("stm", "both"):
+            await self._get_retriever()  # connects the store + ensures schema
+            store = self._retriever_stores[0]
+            turns = await store.list_turns(session_id, state="raw", limit=30)
+            stm_hits = _format_stm_hits(turns, query, top_k, session_id)
+
+        if scope in ("ltm", "both"):
+            retriever = await self._get_retriever(strategy)
+            graph_session_id = "" if cross_session else session_id
+            # "both" here means "no chunk-state filter" inside the retriever —
+            # the raw/consolidated split is orthogonal now that it no longer
+            # doubles as the stm/ltm switch (the TURN buffer is that switch).
+            graph_scope = "ltm" if scope == "ltm" else "both"
+            ctx = await retriever.retrieve(
+                query, session_id=graph_session_id, top_k=top_k, scope=graph_scope
+            )
+            graph_hits = _format_fused_hits(ctx.fused_results, session_id)
+            facts = list(getattr(ctx, "facts", []) or [])
+
+        return {"hits": (stm_hits + graph_hits)[:top_k], "facts": facts}
 
     def _topic_summarizer(self) -> Any:
         """The LLM summarizer for the configured topic mode."""
@@ -408,18 +524,53 @@ class Memory:
             out["export_path"] = str(export_json(topic_set, export_path))
         return out
 
+    async def _ingest_buffered_turns(
+        self, store: Any, session_id: str, raw_turns: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Run the session's buffered ``TURN`` rows through the real STM pipeline.
+
+        This is the expensive step (GLiNER extraction + embeddings) that the
+        buffer exists to defer. ``raw_turns`` is newest-first (as returned by
+        ``list_turns``); it is reversed to oldest-first so seq order in the
+        graph matches the order the turns actually happened.
+        """
+        from graphknows.ingestion import build_stm_service
+        from graphknows.models.ingest_options import IngestOptions
+        from graphknows.models.message import Message, Role
+        from graphknows.models.scope import MemoryScope
+
+        ordered = list(reversed(raw_turns))
+        messages = [Message(role=Role(t["role"]), content=t["text"]) for t in ordered]
+        options = IngestOptions(scope=MemoryScope(run_id=session_id))
+
+        service = build_stm_service(self.settings, self.namespace)
+        try:
+            await service.connect()
+            result = await service.ingest_messages(messages, options)
+        finally:
+            await service.close()
+        return {"turns": len(messages), "chunks": result.chunk_count}
+
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Consolidate a session in place.
 
-        The full STM->LTM promotion pipeline is retired in the golden layer.
-        This resolves duplicate/junk ENTITY nodes (layered resolver: junk-hub
-        filter, name-standardization merge, person-nickname merge), then
-        recomputes PageRank/node2vec embeddings/communities over the *merged*
-        entity graph (native ArcadeDB algos, each with its own soft-fail —
-        see ``GraphStore.compute_and_persist_pagerank`` et al.), builds the
-        TOPIC layer over those communities when ``GRAPHKNOWS_TOPICS`` asks for
-        it, and flips the session's lifecycle ``state`` raw -> consolidated in
-        place. Nothing else is deleted; relation canonicalize lands later.
+        Flush now does two things where it used to do one, in order:
+
+        1. **Drains the TURN buffer**: every buffered turn for this session is
+           run through the real ingestion pipeline (GLiNER extraction +
+           embeddings — this is the materially slower call now, not the
+           analytics below), producing CHUNK/ENTITY nodes, then the buffer is
+           marked ``consolidated`` so it is not drained again.
+        2. **Consolidates the graph**: resolves duplicate/junk ENTITY nodes
+           (layered resolver: junk-hub filter, name-standardization merge,
+           person-nickname merge), then recomputes PageRank/node2vec
+           embeddings/communities over the *merged* entity graph (native
+           ArcadeDB algos, each with its own soft-fail — see
+           ``GraphStore.compute_and_persist_pagerank`` et al.), builds the
+           TOPIC layer over those communities when ``GRAPHKNOWS_TOPICS`` asks
+           for it, and flips the session's CHUNK lifecycle ``state`` raw ->
+           consolidated in place. Nothing else is deleted; relation
+           canonicalize lands later.
         """
         import time
 
@@ -432,6 +583,8 @@ class Memory:
         communities_computed = 0
         chunks_flipped = 0
         topics_created = 0
+        turns_ingested = 0
+        turn_chunks = 0
         modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0}
 
@@ -459,6 +612,19 @@ class Memory:
             store = None
 
         if store is not None:
+            raw_turns = await step(
+                "list_turns", store.list_turns(session_id, state="raw", limit=10000), []
+            )
+            if raw_turns:
+                drained = await step(
+                    "drain_turns",
+                    self._ingest_buffered_turns(store, session_id, raw_turns),
+                    {"turns": 0, "chunks": 0},
+                )
+                turns_ingested = drained["turns"]
+                turn_chunks = drained["chunks"]
+            await step("mark_turns_consolidated", store.mark_turns_consolidated(session_id), 0)
+
             resolution = await step(
                 "resolve_entities", resolve_entities(store, session_id), resolution
             )
@@ -500,7 +666,8 @@ class Memory:
             "nodes": pagerank_updated,
             "edges": 0,
             "chunks": chunks_flipped,
-            "turns": 0,
+            "turns": turns_ingested,
+            "turn_chunks": turn_chunks,
             "topics_created": topics_created,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],
@@ -568,10 +735,17 @@ class Memory:
         scope: str = "both",
         strategy: str = "",
     ) -> dict[str, Any]:
-        """Search memory scoped to a user/agent/run (or an explicit session)."""
+        """Search memory scoped to a user/agent/run (or an explicit session).
+
+        Always passes ``cross_session=True`` to :meth:`recall_memory`: the GRAPH
+        half of the search is namespace-wide, so a later session recalls facts
+        consolidated from earlier sessions in the same namespace. The STM
+        buffer half stays scoped to this session regardless — unflushed turns
+        from another session are never visible here.
+        """
         sid = self._scoped_session_id(user_id, agent_id, run_id, session_id)
         return await self.recall_memory(
-            query, session_id=sid, top_k=top_k, scope=scope, strategy=strategy
+            query, session_id=sid, top_k=top_k, scope=scope, strategy=strategy, cross_session=True
         )
 
     async def flush(
@@ -582,7 +756,13 @@ class Memory:
         run_id: str = "",
         session_id: str = "",
     ) -> dict[str, Any]:
-        """Promote a user/agent/run scope (or an explicit session) from STM to LTM."""
+        """Promote a user/agent/run scope (or an explicit session) from STM to LTM.
+
+        Ingests the session's buffered ``TURN`` rows into the graph (real
+        extraction + embeddings), marks them consolidated, then runs the usual
+        entity-resolution/analytics consolidation pass. See
+        :meth:`flush_memory` for the full step order.
+        """
         sid = self._scoped_session_id(user_id, agent_id, run_id, session_id)
         return await self.flush_memory(sid)
 

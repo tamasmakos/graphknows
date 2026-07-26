@@ -72,6 +72,7 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
     # (graphknows.topics.metrics.newman_modularity) is the real number now.
     for vertex in (
         "SESSION",
+        "TURN",
         "FILE",
         "CHUNK",
         "ENTITY",
@@ -96,8 +97,13 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
         assert created("EDGE", edge), f"missing edge {edge}"
     # IN_TOPIC (ENTITY -> TOPIC) carries the cluster-membership pagerank.
     assert "CREATE PROPERTY IN_TOPIC.pagerank IF NOT EXISTS DOUBLE" in stmts
-    # Dead schema must NOT be recreated
-    for vertex in ("DIALOG", "TURN", "SEGMENT", "DOC", "SESSIONENTITY", "COMMUNITY"):
+    # Dead schema must NOT be recreated. TURN used to sit in this list: the
+    # pre-golden-layer TURN was a dialog-turn model (DIALOG-[:HAS_TURN]->TURN
+    # with NEXT/MENTIONS edges) and that one stays dead — HAS_TURN below still
+    # guards it. The TURN asserted above is a different vertex: a flat
+    # short-term buffer keyed by session_id, linked with IN_SESSION, drained by
+    # flush(). Same name, unrelated shape.
+    for vertex in ("DIALOG", "SEGMENT", "DOC", "SESSIONENTITY", "COMMUNITY"):
         assert not created("VERTEX", vertex), f"dead vertex {vertex} present"
     for edge in (
         "HAS_CHUNK",
