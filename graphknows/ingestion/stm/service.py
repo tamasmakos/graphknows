@@ -156,13 +156,22 @@ class STMService:
         handler = self._handler()
         for i, msg in enumerate(messages):
             try:
+                # The turn's own timestamp is the anchor ingest_turn resolves
+                # relative dates against. Passing it per message, not once for
+                # the batch: a conversation spans days, and anchoring every turn
+                # to one date is only marginally better than anchoring to now.
+                turn_metadata = (
+                    {**extra_metadata, "timestamp": msg.timestamp}
+                    if msg.timestamp
+                    else extra_metadata
+                )
                 total_entities += await handler.ingest_turn(
                     session_id=session_id,
                     file_id=dialog_id,
                     seq=options.turn_index_offset + i,
                     role=msg.role.value,
                     text=msg.content,
-                    metadata=extra_metadata,
+                    metadata=turn_metadata,
                     infer=options.infer,
                 )
             except Exception as exc:

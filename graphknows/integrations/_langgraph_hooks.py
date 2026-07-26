@@ -31,6 +31,14 @@ class _Memory(Protocol):
     ) -> dict[str, Any]: ...
 
 
+def _message_timestamp(message: Any) -> str | None:
+    """Return a message's timestamp, from a dict key or an attribute."""
+    ts = getattr(message, "timestamp", None)
+    if ts is None and isinstance(message, dict):
+        ts = message.get("timestamp")
+    return str(ts) if ts else None
+
+
 def _last_message(state: dict[str, Any], messages_key: str) -> Any | None:
     """Return the last entry of a LangGraph-style messages list, or ``None``."""
     messages = state.get(messages_key) or []
@@ -159,5 +167,10 @@ async def remember(
         turn: dict[str, Any] = {"role": role, "content": text}
         if name:
             turn["name"] = name
+        # A turn's timestamp is the anchor its relative dates ("next Friday")
+        # resolve against. Without it they resolve against ingestion time, which
+        # silently dates the whole conversation to whenever it was imported.
+        if (ts := _message_timestamp(last)) is not None:
+            turn["timestamp"] = ts
         await memory.ingest_memory([turn], session_id=session_id)
     return {}

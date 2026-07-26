@@ -334,7 +334,11 @@ class Memory:
             await store.ensure_session(sid)
             seq = await store.next_turn_seq(sid)
             for m in msgs:
-                await store.write_turn(sid, m.role.value, m.content, seq)
+                # The message's own timestamp, when it carries one, becomes the
+                # TURN's ts — and flush() feeds it back as the temporal anchor.
+                # Defaulting to write time would date every relative expression
+                # in the turn to whenever the buffer happened to be written.
+                await store.write_turn(sid, m.role.value, m.content, seq, m.timestamp or "")
                 seq += 1
             return {
                 "file_id": "",
@@ -540,7 +544,15 @@ class Memory:
         from graphknows.models.scope import MemoryScope
 
         ordered = list(reversed(raw_turns))
-        messages = [Message(role=Role(t["role"]), content=t["text"]) for t in ordered]
+        # Carry each turn's ts through as the Message timestamp: it is the
+        # anchor the extractor resolves that turn's relative dates against.
+        # Dropping it here is what dated a Jan-Jul 2023 conversation's TEMPORAL
+        # nodes to 2026 — 42 of 62 wrong — because every unanchored expression
+        # fell back to ingestion time.
+        messages = [
+            Message(role=Role(t["role"]), content=t["text"], timestamp=t.get("ts") or None)
+            for t in ordered
+        ]
         options = IngestOptions(scope=MemoryScope(run_id=session_id))
 
         service = build_stm_service(self.settings, self.namespace)

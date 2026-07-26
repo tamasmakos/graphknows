@@ -169,3 +169,36 @@ async def test_aexit_closes_self_built_memory_but_not_caller_supplied() -> None:
     async with gm_owned:
         pass
     gm_owned._memory.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_remember_carries_the_turn_timestamp() -> None:
+    """The turn's timestamp is the anchor its relative dates resolve against.
+
+    Without it, "next Friday" in a 2023 conversation resolves against ingestion
+    time. Measured on conv-30: 42 of 62 TEMPORAL nodes landed in 2025/2026 for a
+    conversation that ran January-July 2023.
+    """
+    mem = _FakeMemory()
+    gm = GraphKnowsMemory("s1", memory=mem)
+    state = {
+        "messages": [
+            {"role": "user", "content": "See you next Friday", "timestamp": "20 January, 2023"}
+        ]
+    }
+
+    await gm.remember(state)
+
+    _, messages = mem.ingested[0]
+    assert messages[0]["timestamp"] == "20 January, 2023"
+
+
+@pytest.mark.asyncio
+async def test_remember_omits_timestamp_when_absent() -> None:
+    mem = _FakeMemory()
+    gm = GraphKnowsMemory("s1", memory=mem)
+
+    await gm.remember({"messages": [{"role": "user", "content": "hello"}]})
+
+    _, messages = mem.ingested[0]
+    assert "timestamp" not in messages[0]

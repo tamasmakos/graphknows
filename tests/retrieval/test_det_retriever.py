@@ -26,6 +26,9 @@ def _make_retriever():
     store.query_entity_chunks = AsyncMock(return_value=[])
     store.full_text_search_chunks = AsyncMock(return_value=[])
     store.query_temporal_chunks = AsyncMock(return_value=[])
+    # The "when did X?" fallback: reached whenever the query states no date,
+    # which is every question of that shape.
+    store.query_dated_chunks_by_entities = AsyncMock(return_value=[])
     store.search_topics = AsyncMock(return_value=[])
     store.search_topics_with_chunks = AsyncMock(return_value=[])
     store.search_chunks_ann = AsyncMock(return_value=[])
@@ -224,3 +227,47 @@ async def test_neighbor_expansion_dedupes_and_survives_store_failure(monkeypatch
 
     # Failure is non-fatal — the base results are still returned.
     assert [f["chunk_id"] for f in ctx.fused_results] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_when_question_falls_back_to_dated_chunks_for_its_entities():
+    """A "when did X?" query states no date, so the date-keyed path finds nothing.
+
+    Measured on conv-30: the temporal channel produced candidates for 2 of 81
+    queries and for 0 of the 26 temporal questions, because
+    query_date_candidates() requires a digit-bearing date IN the query — and a
+    question asking FOR a date contains none. The fallback keys on the entity
+    instead and returns the dated chunks about it.
+    """
+    retriever, store = _make_retriever()
+    store.query_dated_chunks_by_entities = AsyncMock(
+        return_value=[{"chunk_id": "c9", "text": "Gina lost her job", "date": "2023-01-19"}]
+    )
+
+    result = await retriever.temporal_traversal(
+        "When did Gina lose her job?", "s1", None, 5, ["gina", "job"]
+    )
+
+    assert list(result) == ["c9"]
+    assert result["c9"][1]["sources"] == {"temporal"}
+    assert result["c9"][1]["metadata"]["date"] == "2023-01-19"
+    # The date-keyed path must NOT have been consulted — there is no date to key on.
+    store.query_temporal_chunks.assert_not_called()
+    store.query_dated_chunks_by_entities.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_query_stating_a_date_still_uses_the_date_keyed_path():
+    """The original behaviour is untouched when the query does carry a date."""
+    retriever, store = _make_retriever()
+    store.query_temporal_chunks = AsyncMock(
+        return_value=[{"chunk_id": "c1", "text": "on that day", "date": "2023-02-01"}]
+    )
+
+    result = await retriever.temporal_traversal(
+        "What did Gina find on 1 February, 2023?", "s1", None, 5, ["gina"]
+    )
+
+    assert list(result) == ["c1"]
+    store.query_temporal_chunks.assert_awaited_once()
+    store.query_dated_chunks_by_entities.assert_not_called()

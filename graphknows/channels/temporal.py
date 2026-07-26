@@ -46,7 +46,15 @@ _GRANULARITY_FMT: dict[str, str] = {
 
 
 def _anchor_to_datetime(anchor: Any) -> datetime | None:
-    """Coerce an anchor (datetime, unix ts, or ISO/unix string) to datetime."""
+    """Coerce an anchor (datetime, unix ts, ISO string, or prose date) to datetime.
+
+    Prose matters: a conversation's timestamp is written the way people write
+    them ("4:04 pm on 20 January, 2023", "Jan 20 2023"), not as ISO. Accepting
+    only unix/ISO made every such anchor return None, which does not fail — it
+    silently drops RELATIVE_BASE, so the turn's relative dates resolve against
+    *ingestion* time instead. Measured on LoCoMo conv-30: 42 of 62 TEMPORAL
+    nodes dated 2025/2026 for a conversation that ran January-July 2023.
+    """
     if anchor is None or isinstance(anchor, bool):
         return None
     if isinstance(anchor, datetime):
@@ -65,6 +73,15 @@ def _anchor_to_datetime(anchor: Any) -> datetime | None:
         try:
             return datetime.fromisoformat(raw)
         except ValueError:
+            pass
+        # Prose fallback. dateparser is already this module's date engine, so
+        # the anchor is parsed by the same rules as the spans it anchors.
+        from dateparser import parse as _parse  # type: ignore[import-untyped]
+
+        try:
+            return _parse(raw)  # type: ignore[no-any-return]
+        except Exception as exc:  # dateparser raises on some locale inputs
+            log.debug("anchor %r did not parse: %s", raw, exc)
             return None
     return None
 

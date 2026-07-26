@@ -1162,6 +1162,55 @@ class GraphStore(ArcadeStoreBase):
             for r in rows
         ]
 
+    async def query_dated_chunks_by_entities(
+        self,
+        entity_names: list[str],
+        session_id: str | None = None,
+        top_k: int = 10,
+        state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Date-bearing CHUNKs that also mention one of ``entity_names``.
+
+        Serves the "when did X happen" shape, which
+        :func:`~graphknows.channels.temporal.query_date_candidates` cannot: such
+        a question asks FOR a date and so contains none, leaving the date-keyed
+        lookup with nothing to match. Here the entity is the key and the date is
+        what we are looking for — chunks that mention the subject AND carry a
+        TEMPORAL edge are exactly the dated evidence about it.
+
+        Ordered by how many of the query's entities a chunk mentions, so a chunk
+        naming both subjects of a question outranks one naming either.
+        """
+        safe = [sanitize(n) for n in entity_names if n]
+        if not safe:
+            return []
+        # Same short-token rule as query_entity_chunks: exact match under 5
+        # chars so "war" does not match "edward", CONTAINS above it.
+        where_entity = " OR ".join(
+            f"e.name_norm = '{n.casefold()}'"
+            if len(n) < 5
+            else f"e.name_norm CONTAINS '{n.casefold()}'"
+            for n in safe
+        )
+        filters = self._chunk_filters(session_id, state)
+        rows = await self.query(
+            f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
+            f"WHERE ({where_entity}){filters} "
+            f"WITH c "
+            f"MATCH (c)-[:MENTIONS_DATE]->(d:TEMPORAL) "
+            f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text, d.date AS date "
+            f"LIMIT $k",
+            k=top_k,
+        )
+        return [
+            {
+                "chunk_id": r["chunk_id"],
+                "text": r.get("text", ""),
+                "date": r.get("date", ""),
+            }
+            for r in rows
+        ]
+
     async def neighbor_chunks(
         self, chunk_ids: list[str], radius: int = 1
     ) -> dict[str, list[dict[str, Any]]]:

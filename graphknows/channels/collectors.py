@@ -56,8 +56,15 @@ class TemporalChannel(Channel):
     name = "temporal"
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
-        """Delegate to the retriever's temporal-traversal collector."""
-        return await rt.temporal_traversal(ctx.query, ctx.session_id, ctx.state, top_k)
+        """Delegate to the retriever's temporal-traversal collector.
+
+        ``words_graph`` is passed so a "when did X happen" query — which states
+        no date for the date-keyed path to match — can still find dated chunks
+        about X.
+        """
+        return await rt.temporal_traversal(
+            ctx.query, ctx.session_id, ctx.state, top_k, ctx.words_graph
+        )
 
 
 # TopicChannel lives in channels/topics.py — it routes to member chunks and

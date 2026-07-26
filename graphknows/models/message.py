@@ -25,12 +25,17 @@ class Message(BaseModel, frozen=True):
         content: Text content.
         name: Optional speaker alias or tool name.
         tool_call_id: For role=tool replies, the originating tool call id.
+        timestamp: When the turn was said, as a date/datetime string. This is
+            the anchor relative dates resolve against: without it "next Friday"
+            or "20 January" in a turn resolves against *ingestion* time, which
+            silently dates a 2023 conversation to the year it was imported.
     """
 
     role: Role
     content: str
     name: str | None = None
     tool_call_id: str | None = None
+    timestamp: str | None = None
 
     @model_validator(mode="before")
     @classmethod

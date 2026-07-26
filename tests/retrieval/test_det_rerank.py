@@ -34,6 +34,8 @@ def _make_retriever():
     store.query_entity_chunks = AsyncMock(return_value=[])
     store.full_text_search_chunks = AsyncMock(return_value=[])
     store.query_temporal_chunks = AsyncMock(return_value=[])
+    # Reached whenever the query states no date — i.e. every "when did X?" query.
+    store.query_dated_chunks_by_entities = AsyncMock(return_value=[])
     store.search_topics = AsyncMock(return_value=[])
     store.search_topics_with_chunks = AsyncMock(return_value=[])
     store.search_chunks_ann = AsyncMock(return_value=[])

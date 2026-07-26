@@ -189,6 +189,16 @@ class IGraphStore(Protocol):
         """Chunks linked to TEMPORAL nodes matching the given ISO dates."""
         ...
 
+    async def query_dated_chunks_by_entities(
+        self,
+        entity_names: list[str],
+        session_id: str | None = ...,
+        top_k: int = ...,
+        state: str | None = ...,
+    ) -> list[dict[str, Any]]:
+        """Date-bearing chunks that mention one of the given entity names."""
+        ...
+
     async def query_frame_chunks(
         self, frame_types: list[str], session_id: str | None = ..., state: str | None = ...
     ) -> list[dict[str, Any]]:

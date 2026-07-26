@@ -65,3 +65,30 @@ def test_query_date_candidates_filters_word_noise():
     # "When did the race happen?" — dateparser parses "did" as a date; the
     # digit filter must drop it.
     assert query_date_candidates("When did the race happen?") == []
+
+
+@pytest.mark.parametrize(
+    "anchor",
+    [
+        "4:04 pm on 20 January, 2023",  # LoCoMo turn timestamp
+        "20 January, 2023",
+        "Jan 20 2023",
+        "2023-01-20",  # ISO must keep working
+    ],
+)
+def test_natural_language_anchor_resolves_relative_dates(anchor: str):
+    """A conversation timestamp is prose, not ISO — and must still anchor.
+
+    _anchor_to_datetime accepted only unix/ISO strings, so a real chat
+    timestamp returned None, no RELATIVE_BASE was set, and every relative
+    expression silently resolved against ingestion time. Measured on LoCoMo
+    conv-30: 42 of 62 TEMPORAL nodes landed in 2025/2026 for a conversation
+    that ran January-July 2023.
+    """
+    out = resolve_temporal(_ents("20 January"), anchor)
+    assert out == [{"raw": "20 January", "iso": "2023-01-20", "granularity": "day"}]
+
+
+def test_unparseable_anchor_is_ignored_not_fatal():
+    out = resolve_temporal(_ents("2022"), "not a date at all")
+    assert out == [{"raw": "2022", "iso": "2022", "granularity": "year"}]

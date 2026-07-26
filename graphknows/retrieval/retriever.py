@@ -488,15 +488,27 @@ class DETRetriever(BaseGraphRetriever):
         session_id: str,
         state: str | None,
         top_k: int,
+        words: list[str] | None = None,
     ) -> dict[str, tuple[float, dict[str, Any]]]:
         """Match chunks by canonical TEMPORAL node (MENTIONS_DATE).
 
-        No-op when the query contains no resolvable date.
+        Two shapes, because a date-keyed lookup only serves one of them:
+
+        - the query STATES a date ("what happened on 1 February 2023") — match
+          chunks linked to that TEMPORAL node;
+        - the query ASKS for one ("when did Gina lose her job") — it contains no
+          date at all, so the date-keyed path returns nothing. Measured on
+          conv-30, this was 26 of 26 temporal questions: the channel fired on
+          2 of 81 queries, both of which happened to quote a literal date.
+          Here the ENTITY is the key and the date is the answer, so we ask for
+          date-bearing chunks about the query's entities instead.
         """
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         candidates = query_date_candidates(query)
         if not candidates:
-            return result
+            return await self._dated_chunks_for_query_entities(
+                words or [], session_id, state, top_k
+            )
         rows = await self.store.query_temporal_chunks(candidates, session_id or None, top_k, state)
         for rank, row in enumerate(rows):
             _add_result(
@@ -509,6 +521,40 @@ class DETRetriever(BaseGraphRetriever):
                     "sources": {"temporal"},
                     "doc_id": "",
                     "metadata": {},
+                },
+            )
+        return result
+
+    async def _dated_chunks_for_query_entities(
+        self,
+        words: list[str],
+        session_id: str,
+        state: str | None,
+        top_k: int,
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Dated chunks about the query's entities — the "when did X?" fallback.
+
+        Takes the same ``words_graph`` tokens the entity channel matches on, so
+        the two channels agree on what the query is about and the saturation
+        filtering applied upstream carries over.
+        """
+        result: dict[str, tuple[float, dict[str, Any]]] = {}
+        if not words:
+            return result
+        rows = await self.store.query_dated_chunks_by_entities(
+            words, session_id or None, top_k, state
+        )
+        for rank, row in enumerate(rows):
+            _add_result(
+                result,
+                row["chunk_id"],
+                rrf_score(rank, RRF_RELATION_BOOST),
+                {
+                    "text": row.get("text", ""),
+                    "entities": [],
+                    "sources": {"temporal"},
+                    "doc_id": "",
+                    "metadata": {"date": row.get("date", "")},
                 },
             )
         return result
