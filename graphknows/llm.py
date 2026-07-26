@@ -26,6 +26,7 @@ def build_lm(
     api_base: str = "",
     temperature: float = 0.0,
     max_tokens: int = 2048,
+    timeout: float = 120.0,
     **extra: Any,
 ) -> Any:
     """Construct a provider-neutral ``dspy.LM``.
@@ -45,7 +46,17 @@ def build_lm(
     if not api_base and model.startswith("openrouter/"):
         api_base = "https://openrouter.ai/api/v1"
 
-    kwargs: dict[str, Any] = {"model": model, "temperature": temperature, "max_tokens": max_tokens}
+    # litellm sets no socket timeout of its own, so a dropped upstream
+    # connection neither raises nor returns — the await simply never completes
+    # and the whole run wedges with the process alive and its log frozen
+    # (observed: 2h49m on a single judge call). Every LM this repo builds gets a
+    # ceiling; pass timeout=... to widen it for a deliberately long call.
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "timeout": timeout,
+    }
     if api_key:
         kwargs["api_key"] = api_key
     if api_base:

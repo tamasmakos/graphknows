@@ -100,6 +100,29 @@ async def test_remember_ingests_last_message() -> None:
     assert mem.ingested == [("s1", [{"role": "user", "content": "My cat is Mochi."}])]
 
 
+@pytest.mark.skipif(not _HAS_LANGGRAPH, reason="requires the langgraph extra")
+@pytest.mark.asyncio
+async def test_store_search_returns_constructible_search_items() -> None:
+    """GraphKnowsStore.search() must return real SearchItems, not raise.
+
+    created_at/updated_at are required positional fields on langgraph's
+    SearchItem; omitting them made every search() call raise TypeError. Nothing
+    caught it: langgraph is an optional extra absent from the environment the
+    gates run in, so --ignore-missing-imports resolved SearchItem to Any and the
+    strict type check passed. This test only bites where the extra is installed
+    — the environment where the adapter is actually reachable.
+    """
+    from langgraph.store.base import SearchOp
+
+    from graphknows.integrations.langgraph import GraphKnowsStore
+
+    store = GraphKnowsStore(_FakeMemory())
+    items = await store._search(SearchOp(namespace_prefix=("s1",), query="cat", limit=5))
+
+    assert [i.value["text"] for i in items] == ["Mochi is a cat", "unrelated"]
+    assert all(i.created_at is not None and i.updated_at is not None for i in items)
+
+
 @pytest.mark.skipif(_HAS_LANGGRAPH, reason="langgraph installed — guard not exercised")
 def test_store_import_without_langgraph_raises_missing_extra() -> None:
     with pytest.raises(MissingExtraError) as exc:

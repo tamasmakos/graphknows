@@ -57,12 +57,34 @@ def _message_text(message: Any) -> str:
     return str(content or "")
 
 
-def _message_role(message: Any) -> str:
-    """Return one message's role, defaulting to ``"user"`` when unavailable."""
-    role = getattr(message, "type", None)
-    if role is None and isinstance(message, dict):
-        role = message.get("role")
-    return str(role) if role else "user"
+# graphknows' Role is a four-value enum, but the labels that reach a node come
+# from whatever the caller's framework uses. LangChain's own message objects
+# report ``type`` as "human"/"ai", neither of which is a Role — passing them
+# through raises a pydantic ValidationError on the first real LangChain state.
+_ROLE_ALIASES = {"human": "user", "ai": "assistant", "agent": "assistant", "bot": "assistant"}
+_ROLES = {"user", "assistant", "system", "tool"}
+
+
+def _message_role(message: Any) -> tuple[str, str | None]:
+    """Return one message's ``(role, speaker_name)``.
+
+    A multi-party conversation labels turns with participant names ("Gina",
+    "Jon"), which no four-value enum can hold. Rather than reject the turn or
+    silently discard the label, an unrecognised label is recorded as the
+    speaker ``name`` and the turn is stored as a ``user`` turn — the identity
+    survives on the field meant for it instead of being lost in a coercion.
+    """
+    raw = getattr(message, "type", None)
+    if raw is None and isinstance(message, dict):
+        raw = message.get("role")
+    if not raw:
+        return "user", None
+    label = str(raw)
+    if label in _ROLES:
+        return label, None
+    if (mapped := _ROLE_ALIASES.get(label.lower())) is not None:
+        return mapped, None
+    return "user", label
 
 
 def _last_text(state: dict[str, Any], messages_key: str) -> str:
@@ -133,6 +155,9 @@ async def remember(
         return {}
     text = _message_text(last)
     if text:
-        role = _message_role(last)
-        await memory.ingest_memory([{"role": role, "content": text}], session_id=session_id)
+        role, name = _message_role(last)
+        turn: dict[str, Any] = {"role": role, "content": text}
+        if name:
+            turn["name"] = name
+        await memory.ingest_memory([turn], session_id=session_id)
     return {}

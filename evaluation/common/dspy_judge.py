@@ -103,7 +103,14 @@ class DSPyJudge:
             raise RuntimeError("OPENROUTER_API_KEY is not set in the environment.")
         # litellm (DSPy's backend) needs the openrouter/ route prefix.
         lm_model = model if model.startswith("openrouter/") else f"openrouter/{model}"
-        self._lm = dspy.LM(lm_model, api_key=key, temperature=temperature, max_tokens=max_tokens)
+        # Build through graphknows.llm.build_lm rather than dspy.LM directly: it
+        # is the single place the timeout and the OpenRouter api_base are pinned.
+        # Constructing the LM here instead meant the judge had neither — no
+        # timeout (a run wedged 2h49m on one call) and no pinned base (litellm
+        # can strip the openrouter/ prefix and mis-route the nested provider).
+        from graphknows.llm import build_lm
+
+        self._lm = build_lm(lm_model, api_key=key, temperature=temperature, max_tokens=max_tokens)
         dspy.configure(lm=self._lm)
         self._predict = dspy.Predict(JudgeSignature)
         self._verdict_predict = dspy.Predict(VerdictSignature)

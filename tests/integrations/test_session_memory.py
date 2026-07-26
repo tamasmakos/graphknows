@@ -73,6 +73,36 @@ async def test_remember_preserves_role_from_last_message() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("incoming", "expected_role", "expected_name"),
+    [
+        ("user", "user", None),
+        ("assistant", "assistant", None),
+        ("human", "user", None),  # LangChain HumanMessage.type
+        ("ai", "assistant", None),  # LangChain AIMessage.type
+        ("Gina", "user", "Gina"),  # a named participant in a group conversation
+    ],
+)
+async def test_remember_maps_foreign_role_labels(
+    incoming: str, expected_role: str, expected_name: str | None
+) -> None:
+    """Role labels from other frameworks must not reach the Role enum raw.
+
+    graphknows' Role accepts only user/assistant/system/tool. LangChain's own
+    messages report "human"/"ai", and a multi-party transcript uses participant
+    names — passing either through raises a pydantic ValidationError on ingest.
+    """
+    mem = _FakeMemory()
+    gm = GraphKnowsMemory("s1", memory=mem)
+
+    await gm.remember({"messages": [{"role": incoming, "content": "hello"}]})
+
+    _, messages = mem.ingested[0]
+    assert messages[0]["role"] == expected_role
+    assert messages[0].get("name") == expected_name
+
+
+@pytest.mark.asyncio
 async def test_recall_is_cross_session_by_default() -> None:
     """A later session must see earlier sessions' graph, or memory is per-session only.
 

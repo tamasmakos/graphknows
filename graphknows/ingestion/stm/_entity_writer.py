@@ -86,6 +86,16 @@ _STOPWORD_NAMES = frozenset(
 # "http://localhost:5000" or "Flask application: ```python from flask import".
 _CODE_MARKUP_RE = re.compile(r"```|https?://|www\.|://|[{}<>=|]|::|\(\)|\[\]")
 # A proper entity is a noun phrase, not a sentence or a heading — cap the words.
+#
+# KNOWN TOO PERMISSIVE, deliberately unchanged. Measured on LoCoMo conv-30 (369
+# turns): the graph held 1863 ENTITY nodes over 1863 distinct name_norms — every
+# surface unique, so entity resolution has nothing to merge — and 377 (20%) were
+# >=4 words, clause fragments like "Been having some tough times lately".
+# Lowering to 3 removes them, but also deletes legitimate 4-word titles
+# (tests/ingestion/consolidation asserts "Charlotte's Web: A Review" survives),
+# and no measurement yet shows a smaller entity population improves retrieval —
+# this repo's history is of graph-quality wins that do not move accuracy. The cap
+# stays at 8 until the relation/entity layer's contribution is ablated end to end.
 _MAX_ENTITY_WORDS = 8
 
 

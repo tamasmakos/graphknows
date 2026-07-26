@@ -13,6 +13,8 @@ by ``examples/langgraph_agent.py`` against a live ArcadeDB.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Any
 
 try:
@@ -54,7 +56,7 @@ class GraphKnowsStore(BaseStore):  # type: ignore[misc]
         self._memory = memory
         self._top_k = top_k
 
-    async def abatch(self, ops: list[Op]) -> list[Result]:
+    async def abatch(self, ops: Iterable[Op]) -> list[Result]:
         """Async dispatch of langgraph store operations onto graphknows verbs."""
         results: list[Result] = []
         for op in ops:
@@ -71,7 +73,7 @@ class GraphKnowsStore(BaseStore):  # type: ignore[misc]
                 results.append(None if isinstance(op, GetOp) else [])
         return results
 
-    def batch(self, ops: list[Op]) -> list[Result]:
+    def batch(self, ops: Iterable[Op]) -> list[Result]:
         """Sync batch is unsupported — GraphKnowsStore is async-only."""
         raise NotImplementedError(
             "GraphKnowsStore is async-only; use the async graph API (abatch)."
@@ -105,11 +107,21 @@ class GraphKnowsStore(BaseStore):  # type: ignore[misc]
         for i, hit in enumerate(hits):
             if not isinstance(hit, dict):
                 continue
+            # created_at/updated_at are REQUIRED positional fields on SearchItem;
+            # omitting them raised TypeError on every search() call. It went
+            # unseen because langgraph is an optional extra that is absent from
+            # the environment the gates run in, so --ignore-missing-imports
+            # resolved SearchItem to Any and mypy stayed silent. graphknows does
+            # not track per-hit write times, so both carry the retrieval time —
+            # the honest value for a view materialised from the graph.
+            now = datetime.now(UTC)
             items.append(
                 SearchItem(
                     namespace=op.namespace_prefix,
                     key=str(hit.get("metadata", {}).get("langgraph_key") or i),
                     value={"text": hit.get("text", ""), "sources": hit.get("sources", "")},
+                    created_at=now,
+                    updated_at=now,
                     score=float(hit.get("score", 0.0) or 0.0),
                 )
             )

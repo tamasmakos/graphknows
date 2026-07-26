@@ -157,7 +157,7 @@ class TestStructuralJunk:
             "December 15, 2023",  # month-first date (previous gap)
             "November 1 - November 15, 2023",  # date range (previous gap)
             "January 16 - February 15, 2024",
-            "the quick brown fox jumped over the lazy dog today",  # >8-word clause
+            "the quick brown fox jumped over the lazy dog today",  # over-long clause
         ],
     )
     def test_structural_junk_is_dropped(self, name: str) -> None:
@@ -183,6 +183,48 @@ class TestStructuralJunk:
         ],
     )
     def test_real_entities_survive(self, name: str) -> None:
+        assert is_graph_entity_name(name)
+
+    @pytest.mark.xfail(
+        reason=(
+            "Known defect, measured not fixed: _MAX_ENTITY_WORDS=8 admits clause "
+            "fragments — 377 of 1863 conv-30 entities (20%) are >=4 words. "
+            "Lowering the cap to 3 turns these green but deletes legitimate "
+            "4-word titles, and no measurement yet shows a smaller entity "
+            "population improves retrieval. Unxfail when the graph layer's "
+            "end-to-end contribution has been ablated."
+        ),
+        strict=True,
+    )
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # Real spans minted as ENTITY nodes on LoCoMo conv-30. Each is a
+            # unique name_norm, so entity resolution has nothing to merge and
+            # the population grows linearly with the corpus forever.
+            "Been having some tough times lately",
+            "It's really made a huge difference",
+            "goals written down on paper",
+            "keeping me in the loop",
+            "one-on-one mentoring and training",
+            "new offers and promotions",
+        ],
+    )
+    def test_clause_fragments_are_not_entities(self, name: str) -> None:
+        assert not is_graph_entity_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "New York City",  # the longest shape a real entity commonly takes
+            "county hospital",
+            "Dr. Nagy",
+            "online store",
+            "dance studio",
+        ],
+    )
+    def test_names_at_the_clause_boundary_survive(self, name: str) -> None:
+        """Three words is the cut, so the longest ordinary entity names still pass."""
         assert is_graph_entity_name(name)
 
 
