@@ -200,4 +200,5 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY ENTITY.ontology_class_score IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY REL.ontology_property IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY REL.map_score IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY REL.verifier_score IF NOT EXISTS DOUBLE"),
 ]

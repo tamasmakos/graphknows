@@ -435,6 +435,7 @@ class _STMIngestHandler:
                 dst_type=rel.get("tail_type", ""),
                 ontology_property=ont_property,
                 map_score=map_score,
+                verifier_score=rel.get("verifier_score"),
             )
 
         # DSPy ontology-guided relations (llm_assisted mode only).

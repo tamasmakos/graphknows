@@ -382,6 +382,7 @@ class GraphStore(ArcadeStoreBase):
         dst_type: str = "",
         ontology_property: str = "",
         map_score: float = 0.0,
+        verifier_score: float | None = None,
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
@@ -398,6 +399,13 @@ class GraphStore(ArcadeStoreBase):
         ``ontology_property``/``map_score`` annotate the edge with the ontology
         property its predicate mapped onto, when an ontology is configured. They
         are annotations only — an unmapped predicate is written unchanged.
+
+        ``verifier_score`` is the relation verifier's judgment of this triple
+        (see relations/verifier.py). It merges like ``confidence`` — the max
+        wins — but is left NULL when the verifier never scored the relation
+        (gate disabled, or a surface it could not locate and so passed through),
+        so "unscored" stays distinguishable from "scored 0.0". It annotates
+        only; ``confidence`` is unchanged by it.
         """
         predicate = predicate.strip()
         if not predicate or not src_name or not dst_name:
@@ -418,6 +426,16 @@ class GraphStore(ArcadeStoreBase):
             f"ELSE coalesce(r.evidence, []) + [{cid_lit}] END, "
             if chunk_id
             else "r.evidence = coalesce(r.evidence, []), "
+        )
+        # Omitted entirely when unscored, so the property stays NULL rather than
+        # collapsing "the verifier never saw this" into "the verifier hated it".
+        # Floor is -1.0, not 0, so a legitimate 0.0 score still writes.
+        verifier_set = (
+            "r.verifier_score = CASE "
+            "WHEN $vscore > coalesce(r.verifier_score, -1.0) THEN $vscore "
+            "ELSE r.verifier_score END, "
+            if verifier_score is not None
+            else ""
         )
         await self.command(
             f"MERGE (a:ENTITY {{name_norm: $src_nn}}) "
@@ -441,6 +459,7 @@ class GraphStore(ArcadeStoreBase):
             f"    r.source = coalesce(r.source, $source), "
             f"    r.ontology_property = coalesce(r.ontology_property, $ont_prop), "
             f"    r.map_score = coalesce(r.map_score, $map_score), "
+            f"    {verifier_set}"
             f"    r.created_at = coalesce(r.created_at, $now)",
             src_nn=src_norm,
             dst_nn=dst_norm,
@@ -455,6 +474,7 @@ class GraphStore(ArcadeStoreBase):
             dst_type=dst_type or None,
             ont_prop=ontology_property or None,
             map_score=float(map_score) or None,
+            vscore=None if verifier_score is None else float(verifier_score),
             now=now,
         )
 
@@ -1986,6 +2006,10 @@ class GraphStore(ArcadeStoreBase):
         fact = row.get("fact") or ""
         valid_at = row.get("valid_at") or None
         source = row.get("source") or ""
+        # Carried, not defaulted: the loser edge is DETACH DELETEd right after, so
+        # dropping this would wipe the verifier's judgment to NULL — which means
+        # "never scored" — on every edge the entity repair touches.
+        vscore = row.get("verifier_score")
         evidence = [e for e in (row.get("evidence") or []) if e]
         if not evidence:
             await self.write_relation(
@@ -1996,6 +2020,7 @@ class GraphStore(ArcadeStoreBase):
                 confidence=conf,
                 valid_at=valid_at,
                 source=source,
+                verifier_score=vscore,
             )
             return
         for cid in evidence:
@@ -2008,6 +2033,7 @@ class GraphStore(ArcadeStoreBase):
                 confidence=conf,
                 valid_at=valid_at,
                 source=source,
+                verifier_score=vscore,
             )
 
     async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
@@ -2060,14 +2086,16 @@ class GraphStore(ArcadeStoreBase):
             "MATCH (:ENTITY {name_norm: $loser})-[r:REL]->(b:ENTITY) "
             "RETURN b.name AS dst, b.name_norm AS dst_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
-            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source",
+            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source, "
+            "r.verifier_score AS verifier_score",
             loser=loser_norm,
         )
         in_rows = await self.query(
             "MATCH (a:ENTITY)-[r:REL]->(:ENTITY {name_norm: $loser}) "
             "RETURN a.name AS src, a.name_norm AS src_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
-            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source",
+            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source, "
+            "r.verifier_score AS verifier_score",
             loser=loser_norm,
         )
         for row in out_rows:

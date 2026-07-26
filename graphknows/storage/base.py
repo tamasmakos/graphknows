@@ -104,6 +104,7 @@ class IGraphStore(Protocol):
         source: str = ...,
         src_type: str = ...,
         dst_type: str = ...,
+        verifier_score: float | None = ...,
     ) -> None:
         """Merge a typed entity->entity relation edge."""
         ...
