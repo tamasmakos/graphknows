@@ -174,6 +174,7 @@ class _STMIngestHandler:
                 seq=idx,
                 kind="text",
                 speaker="",
+                ts=str(seg.metadata.get("timestamp") or metadata.get("timestamp") or ""),
                 embedding=embedding,
                 extraction=extraction,
                 temporal=temporal,
@@ -288,6 +289,10 @@ class _STMIngestHandler:
             seq=seq,
             kind="turn",
             speaker=speaker or role,
+            # The same anchor the relative dates resolve against is what dates
+            # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
+            # the column was written, indexed and selected as "" everywhere.
+            ts=str(anchor or ""),
             embedding=embedding,
             extraction=extraction,
             temporal=temporal,
@@ -325,6 +330,7 @@ class _STMIngestHandler:
         seq: int,
         kind: str,
         speaker: str,
+        ts: str,
         embedding: list[float],
         extraction: ExtractionResult,
         temporal: list[dict[str, str]],
@@ -343,6 +349,7 @@ class _STMIngestHandler:
                 "seq": seq,
                 "kind": kind,
                 "speaker": speaker,
+                "ts": ts,
                 "memory_class": memory_class,
                 "atom_type": atom_type,
                 "entity_names": [e["name"] for e in filtered],

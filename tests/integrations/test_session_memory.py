@@ -40,9 +40,20 @@ class _FakeMemory:
         )
         return {
             "hits": [
-                {"text": "Mochi is a ragdoll", "sources": "stm"},
-                {"text": "Dr. Nagy is in Budapest", "sources": "vector"},
-            ]
+                {
+                    "text": "Mochi is a ragdoll",
+                    "sources": "stm",
+                    "speaker": "Gina",
+                    "ts": "2023-01-20",
+                },
+                {
+                    "text": "Dr. Nagy is in Budapest",
+                    "sources": "vector",
+                    "speaker": "Jon",
+                    "ts": "2023-02-01",
+                },
+            ],
+            "facts": ["Mochi -[IS_A]-> ragdoll"],
         }
 
 
@@ -137,10 +148,14 @@ async def test_recall_returns_texts_and_sources() -> None:
 
     update = await gm.recall(state)
 
-    assert update == {
-        "memories": ["Mochi is a ragdoll", "Dr. Nagy is in Budapest"],
-        "memories_sources": ["stm", "vector"],
-    }
+    assert update["memories"] == ["Mochi is a ragdoll", "Dr. Nagy is in Budapest"]
+    assert update["memories_sources"] == ["stm", "vector"]
+    # The attribution an agent needs to date and credit a memory reaches state.
+    assert [(h["speaker"], h["ts"]) for h in update["memories_hits"]] == [
+        ("Gina", "2023-01-20"),
+        ("Jon", "2023-02-01"),
+    ]
+    assert update["memories_facts"] == ["Mochi -[IS_A]-> ragdoll"]
 
 
 @pytest.mark.asyncio
@@ -150,7 +165,12 @@ async def test_recall_empty_messages_is_noop() -> None:
 
     update = await gm.recall({"messages": []})
 
-    assert update == {"memories": [], "memories_sources": []}
+    assert update == {
+        "memories": [],
+        "memories_sources": [],
+        "memories_hits": [],
+        "memories_facts": [],
+    }
     assert mem.recall_calls == []
 
 

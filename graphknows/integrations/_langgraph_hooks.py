@@ -120,15 +120,25 @@ async def recall(
     so a caller can see honestly which channel answered. Returns only the
     partial update.
 
+    Two more keys carry what the flat text list cannot: ``_hits`` holds the full
+    hit dicts (``speaker``, ``ts``, ``score``, ``metadata`` …) so a caller can
+    attribute and date a memory, and ``_facts`` holds the structured fact-sheet.
+    Both were previously computed and discarded here, leaving every agent built
+    on this node to answer from undated, unattributed sentences.
+
     ``cross_session`` defaults to True — an agent's memory is expected to span
     the conversations it has already had, so the graph half of the search is
     namespace-wide. Set it False to confine recall to this session's own graph.
     The unflushed short-term buffer is session-scoped either way.
     """
     query = _last_text(state, messages_key)
-    sources_key = f"{out_key}_sources"
+    sources_key, hits_key, facts_key = (
+        f"{out_key}_sources",
+        f"{out_key}_hits",
+        f"{out_key}_facts",
+    )
     if not query:
-        return {out_key: [], sources_key: []}
+        return {out_key: [], sources_key: [], hits_key: [], facts_key: []}
     result = await memory.recall_memory(
         query,
         session_id=session_id,
@@ -141,6 +151,8 @@ async def recall(
     return {
         out_key: [h.get("text", "") for h in hits],
         sources_key: [h.get("sources", "") for h in hits],
+        hits_key: hits,
+        facts_key: list(result.get("facts", []) or []) if isinstance(result, dict) else [],
     }
 
 

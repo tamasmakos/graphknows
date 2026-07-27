@@ -316,9 +316,12 @@ class DETRetriever(BaseGraphRetriever):
         so the pool has a deterministic pre-rerank order (e.g. for tie-breaking
         and tracing), not to shape which candidates survive.
         """
-        # Fetch metadata for all candidates that lack it.
-        needs_meta = [cid for cid, (_, info) in combined.items() if not info.get("metadata")]
-        text_map = await self.store.get_chunks_by_ids(needs_meta) if needs_meta else {}
+        # Fetch the stored chunk for EVERY candidate. The old gate skipped any
+        # candidate whose channel had already set a truthy ``metadata`` — but
+        # ``get_chunks_by_ids`` returns no ``metadata`` key at all, so the gate
+        # never saved the fetch it claimed to; it only starved those rows of
+        # ``speaker``/``ts``, temporal hits worst of all.
+        text_map = await self.store.get_chunks_by_ids(list(combined)) if combined else {}
 
         ordered = sorted(combined.items(), key=lambda kv: -kv[1][0])
 
@@ -332,6 +335,8 @@ class DETRetriever(BaseGraphRetriever):
                     "doc_id": fc.get("doc_id") or info.get("doc_id", ""),
                     "text": fc.get("text") or info.get("text", ""),
                     "metadata": fc.get("metadata") or info.get("metadata") or {},
+                    "speaker": fc.get("speaker") or info.get("speaker") or "",
+                    "ts": fc.get("ts") or info.get("ts") or "",
                     "rrf_score": round(base_score, 6),
                     "sources": ",".join(sorted(info["sources"])),
                     "rank": rank_i + 1,

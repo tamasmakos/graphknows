@@ -113,6 +113,8 @@ class QAState(TypedDict, total=False):
     messages: list[dict[str, str]]
     memories: list[str]
     memories_sources: list[str]
+    memories_hits: list[dict[str, Any]]
+    memories_facts: list[str]
 
 
 def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter[str]) -> Any:
@@ -148,11 +150,27 @@ def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter
     return g.compile()
 
 
+def render(hits: list[dict[str, Any]]) -> str:
+    """``Gina (4:04 pm on 20 January, 2023): Mochi's vet is Dr. Nagy``.
+
+    The attribution the 0.9-era harness got by PREFIXING it into the ingested
+    text, restored at read time from ``CHUNK.speaker``/``CHUNK.ts`` — so the
+    answerer sees who and when without the extractor ever seeing it and minting
+    speakers and dates as entities. That separation is the whole point.
+    """
+    out = []
+    for h in hits:
+        who, when = str(h.get("speaker") or ""), str(h.get("ts") or "")
+        tag = f"{who} ({when})" if who and when else who or when
+        out.append(f"{tag}: {h['text']}" if tag else str(h["text"]))
+    return "\n".join(out)
+
+
 def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI) -> Any:
     """recall -> answer. One question per invocation."""
 
     async def answer(state: QAState) -> dict[str, Any]:
-        ctx = "\n".join(state.get("memories", [])) or "(nothing recalled)"
+        ctx = render(state.get("memories_hits", [])) or "(nothing recalled)"
         q = state["messages"][-1]["content"]
         r = await llm.ainvoke(
             f"Memories:\n{ctx}\n\nQuestion: {q}\n\nAnswer from the memories above, "

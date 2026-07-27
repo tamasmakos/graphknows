@@ -31,6 +31,8 @@ def _format_fused_hits(
             "sources": r.get("sources", ""),
             "text": strip_content_heading(r.get("text", "")),
             "session_id": session_id,
+            "speaker": r.get("speaker", ""),
+            "ts": r.get("ts", ""),
             "entities": r.get("entities", []),
             "metadata": r.get("metadata", {}),
         }
@@ -69,6 +71,8 @@ def _format_stm_hits(
             "sources": "stm",
             "text": strip_content_heading(str(t.get("text", ""))),
             "session_id": session_id,
+            "speaker": str(t.get("speaker", "") or ""),
+            "ts": str(t.get("ts", "") or ""),
             "entities": [],
             "metadata": {
                 "turn_id": t.get("turn_id", ""),

@@ -271,3 +271,43 @@ async def test_query_stating_a_date_still_uses_the_date_keyed_path():
     assert list(result) == ["c1"]
     store.query_temporal_chunks.assert_awaited_once()
     store.query_dated_chunks_by_entities.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fused_hits_carry_speaker_and_ts_even_for_channels_that_set_metadata():
+    """Attribution survives fusion — for every channel, not just the bare ones.
+
+    Measured 27 Jul 2026: ``_shape_and_rank`` built a fixed 8-key row that
+    dropped ``speaker``/``ts`` outright, and its ``needs_meta`` gate skipped the
+    chunk fetch for any candidate whose channel had already set a truthy
+    ``metadata`` (temporal sets ``{"date": ...}``, ppr ``{"ppr_mass": ...}``).
+    The temporal channel — the one whose hits most need a date — was therefore
+    the one guaranteed to lose it. Asserts on VALUES, not key presence.
+    """
+    retriever, store = _make_retriever()
+    store.search_chunks_ann = AsyncMock(
+        return_value=[{"chunk_id": "sem-c1", "text": "semantic chunk", "cosine_score": 0.9}]
+    )
+    # A temporal hit arrives with metadata already set -> the old gate skipped it.
+    store.query_dated_chunks_by_entities = AsyncMock(
+        return_value=[{"chunk_id": "tmp-c1", "text": "on that day", "date": "2023-02-01"}]
+    )
+    store.get_chunks_by_ids = AsyncMock(
+        return_value={
+            "sem-c1": {"text": "semantic chunk", "speaker": "Gina", "ts": "2023-01-20"},
+            "tmp-c1": {"text": "on that day", "speaker": "Jon", "ts": "2023-02-01"},
+        }
+    )
+
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
+        ctx = await retriever.retrieve(
+            "What did Gina find that weekend?", session_id="s1", scope="both"
+        )
+
+    by_id = {fr["chunk_id"]: fr for fr in ctx.fused_results}
+    assert by_id["sem-c1"]["speaker"] == "Gina"
+    assert by_id["sem-c1"]["ts"] == "2023-01-20"
+    assert by_id["tmp-c1"]["speaker"] == "Jon"
+    assert by_id["tmp-c1"]["ts"] == "2023-02-01"
+    # The metadata the channel set is not clobbered by the fetch.
+    assert by_id["tmp-c1"]["metadata"] == {"date": "2023-02-01"}

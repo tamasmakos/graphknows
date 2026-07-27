@@ -40,9 +40,15 @@ class _FakeMemory:
         )
         return {
             "hits": [
-                {"text": "Mochi is a cat", "sources": "vector"},
-                {"text": "unrelated", "sources": "stm"},
-            ]
+                {
+                    "text": "Mochi is a cat",
+                    "sources": "vector",
+                    "speaker": "Gina",
+                    "ts": "2023-01-20",
+                },
+                {"text": "unrelated", "sources": "stm", "speaker": "Jon", "ts": "2023-02-01"},
+            ],
+            "facts": ["Mochi -[IS_A]-> cat"],
         }
 
 
@@ -51,10 +57,17 @@ async def test_recall_reads_last_message_and_returns_memories() -> None:
     mem = _FakeMemory()
     state = {"messages": [{"role": "user", "content": "what is my cat?"}]}
     update = await recall(state, memory=mem, session_id="s1", top_k=3)
-    assert update == {
-        "memories": ["Mochi is a cat", "unrelated"],
-        "memories_sources": ["vector", "stm"],
-    }
+    assert update["memories"] == ["Mochi is a cat", "unrelated"]
+    assert update["memories_sources"] == ["vector", "stm"]
+    # Measured 27 Jul 2026: the node returned only the two lists above, so an
+    # agent could not tell who said a memory or when — LoCoMo temporal accuracy
+    # fell 0.808 -> 0.058 on exactly that loss — and the fact-sheet (40 facts on
+    # conv-30) was computed and thrown away. Assert on VALUES, not key presence.
+    assert [(h["speaker"], h["ts"]) for h in update["memories_hits"]] == [
+        ("Gina", "2023-01-20"),
+        ("Jon", "2023-02-01"),
+    ]
+    assert update["memories_facts"] == ["Mochi -[IS_A]-> cat"]
     assert mem.recall_calls[0] == {
         "query": "what is my cat?",
         "session_id": "s1",
@@ -88,6 +101,8 @@ async def test_recall_empty_messages_is_noop() -> None:
     assert await recall({}, memory=mem, session_id="s1") == {
         "memories": [],
         "memories_sources": [],
+        "memories_hits": [],
+        "memories_facts": [],
     }
     assert mem.recall_calls == []
 

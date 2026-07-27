@@ -95,3 +95,39 @@ async def test_rel_extractor_skipped_with_fewer_than_2_entities():
     handler._rel_extractor = rel_extractor
     await handler.ingest_text("Alice alone", session_id="s5")
     rel_extractor.extract.assert_not_called()
+
+
+async def test_ingest_turn_writes_the_timestamp_onto_the_chunk():
+    """CHUNK.ts must carry the turn's timestamp, or retrieval returns undated text.
+
+    Measured 27 Jul 2026: NOTHING ever populated CHUNK.ts. The column was
+    declared, written, indexed and selected by both read queries, and was ""
+    for every chunk in every namespace on disk — the storage layer looked
+    correct end to end while carrying no data. The timestamp was already in
+    hand here as ``anchor`` (it anchors relative-date resolution); it simply
+    never rode into the chunk dict. Asserts on the VALUE.
+    """
+    handler, store, _ = _make_handler(extractor=None)
+
+    await handler.ingest_turn(
+        "s1",
+        "f1",
+        0,
+        "user",
+        "Mochi's vet is Dr. Nagy.",
+        metadata={"timestamp": "4:04 pm on 20 January, 2023"},
+        speaker="Gina",
+    )
+
+    chunk = store.write_chunk.await_args.args[0]
+    assert chunk["ts"] == "4:04 pm on 20 January, 2023"
+    assert chunk["speaker"] == "Gina"
+
+
+async def test_ingest_turn_without_a_timestamp_writes_empty_not_ingest_time():
+    """No timestamp means no timestamp — never "now", which would date the memory wrong."""
+    handler, store, _ = _make_handler(extractor=None)
+
+    await handler.ingest_turn("s1", "f1", 0, "user", "Hello there.", speaker="Gina")
+
+    assert store.write_chunk.await_args.args[0]["ts"] == ""
