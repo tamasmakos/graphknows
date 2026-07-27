@@ -35,11 +35,16 @@ import collections
 import json
 import os
 import time
+from datetime import datetime
 from typing import Any, TypedDict
 
+from dateparser import parse as _parse_date
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
+from evaluation.common.llm import extract_answer
+from evaluation.common.memories import extract_date
+from evaluation.locomo.prompts import ANSWER_PROMPT
 from graphknows.integrations.langgraph import GraphKnowsMemory
 
 DATA = "evaluation/data/locomo/questions.jsonl"
@@ -56,17 +61,25 @@ def load(conv: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     return qs[0]["sessions"], qs
 
 
-def parse_turn(message: dict[str, Any]) -> dict[str, str]:
+def parse_turn(message: dict[str, Any], *, prefix: bool = False) -> dict[str, str]:
     """A LoCoMo message -> the three fields graphknows has homes for.
 
     The speaker and timestamp are METADATA. They are deliberately NOT prepended
     to the text: doing so is what minted them as entities.
+
+    ``prefix=True`` reproduces the pre-metadata baseline EXACTLY — the speaker
+    and timestamp are flattened into the text and the metadata fields are left
+    empty, so ``CHUNK.speaker`` falls back to the role and ``CHUNK.ts`` stays
+    "". That is the arm that scored 0.700, and holding everything else constant
+    (same program, same prompt, same renderer, same judge) is what makes the
+    clean-vs-prefixed comparison a one-variable test.
     """
-    return {
-        "speaker": str(message.get("role", "") or ""),
-        "timestamp": str(message.get("timestamp", "") or ""),
-        "text": str(message.get("content", "") or "").strip(),
-    }
+    speaker = str(message.get("role", "") or "")
+    timestamp = str(message.get("timestamp", "") or "")
+    text = str(message.get("content", "") or "").strip()
+    if prefix:
+        return {"speaker": "", "timestamp": "", "text": f"{timestamp} | {speaker}: {text}"}
+    return {"speaker": speaker, "timestamp": timestamp, "text": text}
 
 
 # ------------------------------------------------------------- classify ----
@@ -99,6 +112,13 @@ def should_extract(text: str, nlp: Any) -> tuple[bool, str]:
         return True, f"clause about {subject.text!r}"
     if (noun := next((t for t in doc if t.pos_ == "NOUN"), None)) is not None:
         return True, f"clause mentioning {noun.text!r}"
+    # A first-person subject IS nameable now that graphknows takes the speaker
+    # as a parameter — "I moved to Budapest" is a fact about Gina. This branch
+    # used to reject it as "a bare pronoun", which is also why the prefixed arm
+    # extracted 98% of turns to this one's 91%: its "Gina:" prefix handed every
+    # turn a PROPN subject, so the skip never fired.
+    if subject.text.lower() in {"i", "we", "you", "my", "our"}:
+        return True, f"first-person clause: {subject.text!r} resolves to the speaker"
     return False, "clause subject is a bare pronoun with no content noun"
 
 
@@ -115,6 +135,8 @@ class QAState(TypedDict, total=False):
     memories_sources: list[str]
     memories_hits: list[dict[str, Any]]
     memories_facts: list[str]
+    dated: int
+    undated: int
 
 
 def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter[str]) -> Any:
@@ -150,34 +172,102 @@ def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter
     return g.compile()
 
 
-def render(hits: list[dict[str, Any]]) -> str:
-    """``Gina (4:04 pm on 20 January, 2023): Mochi's vet is Dr. Nagy``.
+MAX_CONTEXT_CHARS = 72_000
 
-    The attribution the 0.9-era harness got by PREFIXING it into the ingested
-    text, restored at read time from ``CHUNK.speaker``/``CHUNK.ts`` — so the
-    answerer sees who and when without the extractor ever seeing it and minting
-    speakers and dates as entities. That separation is the whole point.
+
+def render_hit(hit: dict[str, Any]) -> tuple[str, datetime | None]:
+    """One hit -> ``("(January 20, 2023) Gina: text", when)``.
+
+    ``ANSWER_PROMPT`` Stage 5 does date arithmetic keyed on a literal
+    ``(Month DD, YYYY)`` prefix, and tells the model never to carry a clock time
+    into an answer — so the raw ``ts`` ("4:04 pm on 20 January, 2023") is parsed
+    down to the day. The speaker is kept because Stage 2 checks attribution; the
+    prefixed baseline got that for free with ``Gina:`` inline in the text.
+
+    NO ``ts`` -> the text is passed through untouched. That is the ``--prefix``
+    arm, whose text already carries its own date and speaker inline; prefixing
+    it again would double the date, and dropping it would render a whole arm
+    undated against a prompt that promises dates. Both paths end at the same
+    information, which is what makes the two arms comparable.
     """
-    out = []
-    for h in hits:
-        who, when = str(h.get("speaker") or ""), str(h.get("ts") or "")
-        tag = f"{who} ({when})" if who and when else who or when
-        out.append(f"{tag}: {h['text']}" if tag else str(h["text"]))
-    return "\n".join(out)
+    text = str(hit.get("text") or "").strip()
+    raw_ts = str(hit.get("ts") or "").strip()
+    when = _parse_date(raw_ts) if raw_ts else None
+    if when is None:
+        return text, extract_date(text)
+    when = when.replace(tzinfo=None)
+    who = str(hit.get("speaker") or "").strip()
+    lead = f"({when.strftime('%B %d, %Y')})"
+    return (f"{lead} {who}: {text}" if who else f"{lead} {text}"), when
 
 
-def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI) -> Any:
-    """recall -> answer. One question per invocation."""
+def render(hits: list[dict[str, Any]]) -> tuple[str, int, int]:
+    """Hits -> the memory block, plus ``(dated, undated)`` counts.
+
+    Dedup and the character budget run in RELEVANCE order (dropping whole
+    memories, never truncating one mid-sentence); only the survivors are then
+    sorted chronologically, because the prompt reads the timeline oldest-first
+    while the choice of what to keep must follow the ranking. Same contract as
+    ``evaluation.common.memories.format_memories`` — reimplemented here rather
+    than imported because that one sources its date by regex-scraping the
+    passage text, which returns nothing once the date is no longer prefixed
+    into it. Every LoCoMo-specific decision stays in this file.
+
+    The counts are returned so a run reports how many memories rendered dated.
+    A clean arm silently falling back to the undated branch is the failure this
+    whole change exists to prevent; it should be visible, not inferred.
+    """
+    seen: set[str] = set()
+    dated: list[tuple[datetime, str]] = []
+    undated: list[str] = []
+    used = 0
+    for hit in hits:
+        block, when = render_hit(hit)
+        if not block or block in seen:
+            continue
+        seen.add(block)
+        cost = len(block) + (2 if used else 0)
+        if used + cost > MAX_CONTEXT_CHARS:
+            continue  # a shorter, lower-ranked memory may still fit
+        used += cost
+        (dated.append((when, block)) if when else undated.append(block))
+    dated.sort(key=lambda pair: pair[0])
+    return "\n\n".join([b for _, b in dated] + undated), len(dated), len(undated)
+
+
+def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI, reference_date: str) -> Any:
+    """recall -> answer. One question per invocation.
+
+    The answerer is the harness's staged ``ANSWER_PROMPT`` verbatim. It is built
+    on dated, attributed memories and a structured fact-sheet; the three-line
+    prompt it replaces threw both away, which is half of why the clean-parse arm
+    read as a regression.
+    """
 
     async def answer(state: QAState) -> dict[str, Any]:
-        ctx = render(state.get("memories_hits", [])) or "(nothing recalled)"
-        q = state["messages"][-1]["content"]
-        r = await llm.ainvoke(
-            f"Memories:\n{ctx}\n\nQuestion: {q}\n\nAnswer from the memories above, "
-            "as briefly as possible — a name, a date, or one short phrase. If they "
-            "do not contain the answer, reply exactly: Unknown"
+        body, n_dated, n_undated = render(state.get("memories_hits", []))
+        facts = state.get("memories_facts", [])
+        prompt = ANSWER_PROMPT.format(
+            reference_date=reference_date or "2023",
+            facts=(
+                "Known facts (structured, extracted from the conversations):\n"
+                + "\n".join(f"- {f}" for f in facts)
+                + "\n\n"
+                if facts
+                else ""
+            ),
+            memories=body or "(nothing recalled)",
+            question=state["messages"][-1]["content"],
         )
-        return {"messages": [*state["messages"], {"role": "assistant", "content": str(r.content)}]}
+        r = await llm.ainvoke(prompt)
+        return {
+            "messages": [
+                *state["messages"],
+                {"role": "assistant", "content": extract_answer(str(r.content)) or "Unknown"},
+            ],
+            "dated": n_dated,
+            "undated": n_undated,
+        }
 
     g = StateGraph(QAState)
     g.add_node("recall", mem.recall)
@@ -189,7 +279,9 @@ def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI) -> Any:
 
 
 # ---------------------------------------------------------------- phases ----
-async def ingest(sessions: list[dict[str, Any]], ns: str, nlp: Any) -> collections.Counter[str]:
+async def ingest(
+    sessions: list[dict[str, Any]], ns: str, nlp: Any, prefix: bool = False
+) -> collections.Counter[str]:
     stats: collections.Counter[str] = collections.Counter()
     for s in sessions:
         sid = s["session_id"]
@@ -197,7 +289,7 @@ async def ingest(sessions: list[dict[str, Any]], ns: str, nlp: Any) -> collectio
         async with GraphKnowsMemory(sid, namespace=ns) as mem:
             app = build_ingest_app(mem, nlp, stats)
             for msg in s["messages"]:
-                turn = parse_turn(msg)
+                turn = parse_turn(msg, prefix=prefix)
                 if turn["text"]:
                     await app.ainvoke({"turn": turn})
             flush = await mem.flush()
@@ -213,8 +305,23 @@ async def ingest(sessions: list[dict[str, Any]], ns: str, nlp: Any) -> collectio
     return stats
 
 
+def reference_date_of(sessions: list[dict[str, Any]]) -> str:
+    """Newest turn timestamp, human-readable — Stage 5's "around {reference_date}".
+
+    Anchors the prompt's relative-time reasoning to the conversation's own era
+    instead of today; the harness derives the same value from session headers.
+    """
+    seen = [
+        parsed.replace(tzinfo=None)
+        for s in sessions
+        for m in s["messages"]
+        if (raw := str(m.get("timestamp") or "").strip()) and (parsed := _parse_date(raw))
+    ]
+    return max(seen).strftime("%d %B %Y") if seen else ""
+
+
 async def answer_questions(
-    questions: list[dict[str, Any]], ns: str, conv: str, limit: int
+    questions: list[dict[str, Any]], ns: str, conv: str, limit: int, reference_date: str
 ) -> list[dict[str, Any]]:
     from evaluation.common.dspy_judge import DSPyJudge
 
@@ -229,19 +336,25 @@ async def answer_questions(
     )
     out: list[dict[str, Any]] = []
     async with GraphKnowsMemory(f"{conv}-qa", namespace=ns, top_k=25) as mem:
-        app = build_qa_app(mem, llm)
+        app = build_qa_app(mem, llm, reference_date)
         for i, q in enumerate(questions[:limit], start=1):
-            try:
-                st = await asyncio.wait_for(
-                    app.ainvoke({"messages": [{"role": "user", "content": q["question"]}]}),
-                    timeout=180,
-                )
-                ans = str(st["messages"][-1]["content"])
-                score, _ = await judge.judge_two_stage(q["question"], str(q["answer"]), ans)
-                sources = st.get("memories_sources", [])
-            except Exception as exc:  # provider hiccup: one datapoint, not the run
-                print(f"[{i}] {q['id']} ERROR {exc!s:.80}", flush=True)
-                ans, score, sources = "", 0.0, []
+            state = {"messages": [{"role": "user", "content": q["question"]}]}
+            ans, score, sources, dated, undated, errored = "", 0.0, [], 0, 0, False
+            # One retry: a transient 502 scored as a wrong answer moves the mean
+            # by 0.012 per question, which is inside the 0.04 parity threshold
+            # these arms are compared at. A real failure still lands as 0.0.
+            for attempt in (1, 2):
+                try:
+                    st = await asyncio.wait_for(app.ainvoke(state), timeout=180)
+                    ans = str(st["messages"][-1]["content"])
+                    score, _ = await judge.judge_two_stage(q["question"], str(q["answer"]), ans)
+                    sources = st.get("memories_sources", [])
+                    dated, undated = int(st.get("dated", 0)), int(st.get("undated", 0))
+                    errored = False
+                    break
+                except Exception as exc:
+                    errored = True
+                    print(f"[{i}] {q['id']} ERROR attempt {attempt} {exc!s:.70}", flush=True)
             out.append(
                 {
                     "id": q["id"],
@@ -250,6 +363,9 @@ async def answer_questions(
                     "answer": ans,
                     "score": score,
                     "sources": sources,
+                    "dated": dated,
+                    "undated": undated,
+                    "errored": errored,
                 }
             )
             print(
@@ -284,6 +400,15 @@ def report(stats: collections.Counter[str], qa: list[dict[str, Any]]) -> None:
                 if p:
                     ch[p] += 1
     print(f"    channels: {dict(ch.most_common())}")
+    # Both are arm-validity checks, not decoration. `errors` says how much of
+    # this mean is provider failure rather than memory quality; `dated` says
+    # whether the memories actually reached the answerer with dates on them —
+    # a clean arm falling back to the undated branch would otherwise look like
+    # a mysteriously bad score.
+    dated, undated = sum(r["dated"] for r in qa), sum(r["undated"] for r in qa)
+    shown = dated + undated
+    print(f"    errors: {sum(1 for r in qa if r['errored'])}/{len(qa)}")
+    print(f"    memories shown: {shown}  dated={dated} ({dated / shown:.0%})  undated={undated}")
 
 
 async def main() -> None:
@@ -292,6 +417,12 @@ async def main() -> None:
     p.add_argument("--namespace", default="lg30")
     p.add_argument("--phase", choices=["ingest", "qa", "both"], default="both")
     p.add_argument("--limit", type=int, default=1000)
+    p.add_argument(
+        "--prefix",
+        action="store_true",
+        help="baseline arm: flatten speaker+timestamp into the text and set no "
+        "metadata fields, exactly as the 0.700 run did",
+    )
     a = p.parse_args()
 
     import spacy
@@ -303,10 +434,13 @@ async def main() -> None:
 
     stats: collections.Counter[str] = collections.Counter()
     qa: list[dict[str, Any]] = []
+    print(f"arm: {'PREFIXED (baseline replication)' if a.prefix else 'CLEAN (metadata fields)'}")
     if a.phase in ("ingest", "both"):
-        stats = await ingest(sessions, a.namespace, nlp)
+        stats = await ingest(sessions, a.namespace, nlp, a.prefix)
     if a.phase in ("qa", "both"):
-        qa = await answer_questions(questions, a.namespace, a.conv, a.limit)
+        qa = await answer_questions(
+            questions, a.namespace, a.conv, a.limit, reference_date_of(sessions)
+        )
     report(stats, qa)
 
 
