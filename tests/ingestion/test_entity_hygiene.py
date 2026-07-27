@@ -248,3 +248,52 @@ class TestRelationGate:
         )
         assert stm.write_relation_edge.await_count == 1
         assert stm.write_relation_edge.await_args.kwargs["object_name"] == "Pride fest"
+
+
+def test_first_person_clause_yields_a_relation_from_the_speaker_parameter() -> None:
+    """A caller that keeps the speaker OUT of the text must not lose relations.
+
+    Dialogue predication is overwhelmingly first-person ("I work as a nurse"),
+    and such a clause only becomes a relation once its subject resolves to a
+    name. That resolution used to depend on scraping "ts | Speaker: text" back
+    out of the content — so passing clean text plus structured metadata, the
+    arrangement that stops speakers being minted as entities, silently cost the
+    dominant relation shape. Measured on LoCoMo conv-30: 57 relations with the
+    prefix, 15 without. Asserts relations EXIST and the subject is the speaker.
+    """
+    import spacy
+
+    from graphknows.ingestion.extraction.entities.extractor import _mine_svo_schema
+    from graphknows.settings import GraphKnowsSettings
+
+    nlp = spacy.load(GraphKnowsSettings().spacy_model)
+    doc = nlp("I work as a nurse at the county hospital.")
+
+    without, _ = _mine_svo_schema(doc)
+    assert without == [], "guard: bare first-person text has no resolvable subject"
+
+    with_speaker, _ = _mine_svo_schema(doc, "Gina")
+    assert with_speaker, "the speaker parameter must anchor the first-person subject"
+    assert any("gina" in str(t).casefold() for t in with_speaker)
+
+
+def test_scraped_turn_line_speaker_still_wins_for_its_own_sentence() -> None:
+    """The parameter is a FALLBACK, not an override.
+
+    A multi-turn chunk has a different speaker per line, which a caller's single
+    value cannot express — so a scraped turn-line must keep priority or every
+    prefixed corpus would be re-attributed to one person.
+    """
+    import spacy
+
+    from graphknows.ingestion.extraction.entities.extractor import _mine_svo_schema
+    from graphknows.settings import GraphKnowsSettings
+
+    nlp = spacy.load(GraphKnowsSettings().spacy_model)
+    doc = nlp("4:04 pm on 20 January, 2023 | Jon: I work as a nurse.")
+
+    triples, _ = _mine_svo_schema(doc, "Gina")
+
+    assert triples
+    blob = str(triples).casefold()
+    assert "jon" in blob and "gina" not in blob

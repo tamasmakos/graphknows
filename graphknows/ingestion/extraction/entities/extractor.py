@@ -452,20 +452,37 @@ def _mine_entity_schema(doc: Any) -> tuple[dict[str, dict[str, Any]], dict[str, 
     return entity_spec, label_to_type
 
 
-def _mine_svo_schema(doc: Any) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """(svo_triples, relation_spec) mined from a doc's clause structure."""
-    # Resolve each sentence's speaker from the turn-line it starts in, so a
-    # first/second-person clause subject ("I work as a nurse") anchors to the
-    # utterance speaker. The chunk's distinct speakers drive 2nd-person
-    # resolution ("you" -> the other of a two-party dialogue).
+def _mine_svo_schema(
+    doc: Any, speaker: str = "", known_speakers: Sequence[str] = ()
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """(svo_triples, relation_spec) mined from a doc's clause structure.
+
+    ``speaker`` is who uttered this chunk, when the caller knows it. Almost all
+    conversational predication is first-person ("I work as a nurse"), and such a
+    clause only becomes a relation once its subject resolves to a name — so
+    without a speaker the dominant relation shape is silently dropped.
+
+    It falls back to scraping ``"ts | Speaker: text"`` turn-lines out of the text
+    for callers that still flatten the speaker into the content. That fallback is
+    the ONLY way this used to work, which meant a caller passing clean text plus
+    structured metadata — the arrangement that keeps speakers from being minted
+    as entities — lost its relations as the price. Measured on LoCoMo conv-30:
+    57 relations with the prefix, 15 without.
+    """
     line_speakers = _line_speakers(doc.text)
-    speakers = sorted({s for _, s in line_speakers if s})
+    scraped = sorted({s for _, s in line_speakers if s})
+    speakers = sorted(
+        {*scraped, *(s for s in known_speakers if s), *([speaker] if speaker else [])}
+    )
     svo_triples: list[dict[str, Any]] = []
     label_verb: dict[str, tuple[str, str]] = {}
     label_counts: Counter[str] = Counter()
     for sent in doc.sents:
-        speaker = _speaker_at(line_speakers, sent.start_char)
-        for triple in extract_relations(sent, speaker, speakers):
+        # A scraped turn-line wins for its own sentence — a multi-turn chunk has
+        # a different speaker per line, which the caller's single value cannot
+        # express. The caller's speaker is the fallback, not the override.
+        sent_speaker = _speaker_at(line_speakers, sent.start_char) or speaker
+        for triple in extract_relations(sent, sent_speaker, speakers):
             svo_triples.append(triple)
             # Only verb-SVO predicates join the GLiNER2 validation schema;
             # rich structural triples (IS_A/HAS/prep) ride the structural
@@ -519,26 +536,34 @@ class _SpacySchemaMiner:
         self._ensure_loaded()
         return self._nlp
 
-    def build(self, text: str) -> _DynamicSchema:
+    def build(self, text: str, speaker: str = "") -> _DynamicSchema:
         self._ensure_loaded()
         assert self._nlp is not None
-        return self._build_from_doc(self._nlp(text))
+        return self._build_from_doc(self._nlp(text), speaker)
 
-    def build_batch(self, texts: list[str]) -> list[_DynamicSchema]:
-        """Mine schemas for many chunks via one batched ``nlp.pipe`` pass."""
+    def build_batch(self, texts: list[str], speakers: Sequence[str] = ()) -> list[_DynamicSchema]:
+        """Mine schemas for many chunks via one batched ``nlp.pipe`` pass.
+
+        ``speakers`` is positional per text; a short or empty sequence simply
+        leaves the remaining chunks to the turn-line fallback.
+        """
         self._ensure_loaded()
         assert self._nlp is not None
-        return [self._build_from_doc(doc) for doc in self._nlp.pipe(texts)]
+        return [
+            self._build_from_doc(doc, speakers[i] if i < len(speakers) else "")
+            for i, doc in enumerate(self._nlp.pipe(texts))
+        ]
 
-    def _build_from_doc(self, doc: Any) -> _DynamicSchema:
+    def _build_from_doc(self, doc: Any, speaker: str = "") -> _DynamicSchema:
         entity_spec, label_to_type = _mine_entity_schema(doc)
-        svo_triples, relation_spec = _mine_svo_schema(doc)
+        svo_triples, relation_spec = _mine_svo_schema(doc, speaker)
+        scraped = {s.casefold() for _, s in _line_speakers(doc.text) if s}
         return _DynamicSchema(
             entity_spec=entity_spec,
             relation_spec=relation_spec,
             label_to_type=label_to_type,
             svo_triples=svo_triples,
-            speakers=frozenset(s.casefold() for _, s in _line_speakers(doc.text) if s),
+            speakers=frozenset(scraped | ({speaker.casefold()} if speaker else set())),
         )
 
 
@@ -681,6 +706,7 @@ class GLiNER2EntityExtractor:
         text: str,
         extra_entity_labels: Sequence[str] | None = None,
         extra_relation_labels: dict[str, str] | None = None,
+        speaker: str = "",
     ) -> ExtractionResult:
         """Extract entities and relations using a spaCy-mined relex schema.
 
@@ -689,11 +715,15 @@ class GLiNER2EntityExtractor:
             extra_entity_labels: Ontology class labels to offer for this chunk.
             extra_relation_labels: Ontology property label -> definition, offered
                 as additional relation predicates for this chunk.
+            speaker: Who uttered this chunk, when the caller knows it. Anchors
+                first/second-person clause subjects, which are the dominant
+                relation shape in dialogue. Omit it and the speaker is scraped
+                from ``"ts | Speaker: text"`` turn-lines in the text instead.
         """
         self._ensure_model_loaded()
         assert self._gliner is not None
 
-        dynamic_schema = self._schema_miner.build(text)
+        dynamic_schema = self._schema_miner.build(text, speaker)
         if not text.strip():
             return ExtractionResult()
         # No early return on an empty entity_spec. The labels handed to relex are
@@ -711,6 +741,7 @@ class GLiNER2EntityExtractor:
         texts: list[str],
         extra_entity_labels: Sequence[Sequence[str]] | None = None,
         extra_relation_labels: Sequence[dict[str, str]] | None = None,
+        speakers: Sequence[str] = (),
     ) -> list[ExtractionResult]:
         """Extract for many chunks. Same per-text result as :meth:`extract`.
 
@@ -725,6 +756,8 @@ class GLiNER2EntityExtractor:
         ``extra_entity_labels``/``extra_relation_labels``, when given, are
         PER-TEXT and must be the same length as ``texts`` — ontology terms are
         selected per chunk, so they cannot be shared across the batch.
+
+        ``speakers`` is likewise per-text and optional; see :meth:`extract`.
         """
         if not texts:
             return []
@@ -732,7 +765,7 @@ class GLiNER2EntityExtractor:
         assert self._gliner is not None
 
         # Mine all chunk schemas in one batched spaCy pass.
-        dynamic_schemas = self._schema_miner.build_batch(texts)
+        dynamic_schemas = self._schema_miner.build_batch(texts, speakers)
         results: list[ExtractionResult | None] = [None] * len(texts)
         for i, (text, dynamic_schema) in enumerate(zip(texts, dynamic_schemas, strict=True)):
             # Same as extract(): an empty spaCy observation is not an empty

@@ -274,6 +274,12 @@ class _STMIngestHandler:
                 clean,
                 ent_hints[0] if ent_hints else None,
                 rel_hints[0] if rel_hints else None,
+                # The turn's speaker anchors its first-person clauses. Without
+                # it the extractor can only scrape a speaker back out of the
+                # text, so a caller that keeps speaker OUT of the content —
+                # which is what stops speakers being minted as entities — pays
+                # for it in lost relations.
+                speaker or role,
             )
             if infer
             else ExtractionResult()
@@ -675,12 +681,15 @@ class _STMIngestHandler:
         clean_text: str,
         extra_entity_labels: list[str] | None = None,
         extra_relation_labels: dict[str, str] | None = None,
+        speaker: str = "",
     ) -> ExtractionResult:
         if self._extractor is not None:
             from typing import cast
 
             return cast(
                 ExtractionResult,
-                self._extractor.extract(clean_text, extra_entity_labels, extra_relation_labels),
+                self._extractor.extract(
+                    clean_text, extra_entity_labels, extra_relation_labels, speaker
+                ),
             )
         return ExtractionResult()
