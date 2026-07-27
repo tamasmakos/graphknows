@@ -60,6 +60,11 @@ class GraphKnowsMemory:
         """The underlying ``Memory`` instance (read-only)."""
         return self._memory
 
+    @property
+    def session_id(self) -> str:
+        """The session this view is bound to (read-only)."""
+        return self._session_id
+
     async def __aenter__(self) -> GraphKnowsMemory:
         return self
 

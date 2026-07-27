@@ -134,6 +134,7 @@ _PRONOUNS: frozenset[str] = frozenset(
 _SPACY_MODEL = "en_core_web_lg"
 _MIN_ENTITY_LABEL_COUNT = 1
 _MAX_ENTITY_LABELS = 24
+
 # SVO mines one predicate per clause verb, so a multi-turn dialogue chunk yields
 # many distinct labels. relex scores every supplied relation label against every
 # candidate entity pair, so this cap is now a COST knob as well as a recall one.
@@ -693,8 +694,15 @@ class GLiNER2EntityExtractor:
         assert self._gliner is not None
 
         dynamic_schema = self._schema_miner.build(text)
-        if not dynamic_schema.entity_spec:
+        if not text.strip():
             return ExtractionResult()
+        # No early return on an empty entity_spec. The labels handed to relex are
+        # the chunk's OBSERVED spaCy labels unioned with _BASE_ENTITY_LABELS, so
+        # an empty observation is not an empty schema — it is exactly the case
+        # the base inventory exists for. Skipping here was a cost optimisation
+        # that assumed spaCy sees what matters; on dialogue it does not.
+        # Measured on LoCoMo conv-30: 170 of 369 turns (46%) observed no label
+        # and so were never extracted from, including plain factual statements.
         ents, rels = self._relex(text, dynamic_schema, extra_entity_labels, extra_relation_labels)
         return self._map_relex(text, ents, rels, dynamic_schema)
 
@@ -727,7 +735,9 @@ class GLiNER2EntityExtractor:
         dynamic_schemas = self._schema_miner.build_batch(texts)
         results: list[ExtractionResult | None] = [None] * len(texts)
         for i, (text, dynamic_schema) in enumerate(zip(texts, dynamic_schemas, strict=True)):
-            if not dynamic_schema.entity_spec:
+            # Same as extract(): an empty spaCy observation is not an empty
+            # schema, because _BASE_ENTITY_LABELS is unioned in downstream.
+            if not text.strip():
                 results[i] = ExtractionResult()
                 continue
             try:

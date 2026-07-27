@@ -271,15 +271,29 @@ class GraphStore(ArcadeStoreBase):
     # responsible for ensure_session() first — write_turn does not create it.
 
     async def write_turn(
-        self, session_id: str, role: str, text: str, seq: int, ts: str = ""
+        self,
+        session_id: str,
+        role: str,
+        text: str,
+        seq: int,
+        ts: str = "",
+        speaker: str = "",
+        infer: bool = True,
     ) -> str:
-        """Append one raw TURN to the session's short-term buffer; returns the turn_id."""
+        """Append one raw TURN to the session's short-term buffer; returns the turn_id.
+
+        ``speaker`` and ``infer`` are carried so ``flush`` can reproduce the
+        caller's original intent: who said it, and whether this turn was meant
+        to be extracted from. Both are lost otherwise — the buffer would flatten
+        every turn onto one shared decision made at flush time.
+        """
         turn_id = f"{session_id}:{seq}"
         ts = ts or datetime.now(UTC).isoformat()
         await self.command(
             "MERGE (t:TURN {turn_id: $tid}) "
             "SET t.session_id = $sid, t.role = $role, t.text = $text, "
-            "    t.seq = $seq, t.ts = $ts, t.state = coalesce(t.state, 'raw') "
+            "    t.seq = $seq, t.ts = $ts, t.speaker = $speaker, t.infer = $infer, "
+            "    t.state = coalesce(t.state, 'raw') "
             "WITH t MATCH (s:SESSION {session_id: $sid}) "
             "MERGE (t)-[:IN_SESSION]->(s)",
             tid=turn_id,
@@ -288,6 +302,8 @@ class GraphStore(ArcadeStoreBase):
             text=text,
             seq=seq,
             ts=ts,
+            speaker=speaker,
+            infer=infer,
         )
         return turn_id
 
@@ -307,7 +323,8 @@ class GraphStore(ArcadeStoreBase):
         rows = await self.query(
             "MATCH (t:TURN {session_id: $sid}) WHERE t.state = $state "
             "RETURN t.turn_id AS turn_id, t.session_id AS session_id, t.role AS role, "
-            "       t.text AS text, t.seq AS seq, t.ts AS ts, t.state AS state "
+            "       t.text AS text, t.seq AS seq, t.ts AS ts, t.state AS state, "
+            "       t.speaker AS speaker, t.infer AS infer "
             "ORDER BY t.seq DESC LIMIT $limit",
             sid=session_id,
             state=state,

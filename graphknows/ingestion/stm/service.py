@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from graphknows.ingestion.stm.config import STMConfig
@@ -133,8 +134,16 @@ class STMService:
         self,
         messages: list[Message],
         options: IngestOptions,
+        infer_flags: Sequence[bool] | None = None,
     ) -> IngestResult:
-        """Ingest normalized Messages as CHUNK(kind='turn') rows."""
+        """Ingest normalized Messages as CHUNK(kind='turn') rows.
+
+        ``infer_flags``, when given, is parallel to ``messages`` and overrides
+        ``options.infer`` per turn — the caller's own judgement about which
+        turns are worth extracting from. This layer applies no content policy of
+        its own; a turn with ``infer=False`` is still written and embedded and
+        stays retrievable, it simply mints no entities or relations.
+        """
         from graphknows.models.ingest import IngestResult
 
         session_id = options.scope.to_session_id()
@@ -172,7 +181,20 @@ class STMService:
                     role=msg.role.value,
                     text=msg.content,
                     metadata=turn_metadata,
-                    infer=options.infer,
+                    infer=(
+                        options.infer
+                        and (
+                            infer_flags[i]
+                            if infer_flags is not None and i < len(infer_flags)
+                            else True
+                        )
+                    ),
+                    # Message.name is the speaker alias — "Gina", not "user".
+                    # It was accepted by the model and then dropped here, so a
+                    # two-human conversation recorded every chunk's speaker as
+                    # its coarse role and the real participants never reached
+                    # CHUNK.speaker at all.
+                    speaker=msg.name or "",
                 )
             except Exception as exc:
                 errors.append(f"turn {i}: {exc}")

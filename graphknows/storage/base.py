@@ -87,7 +87,14 @@ class IGraphStore(Protocol):
         ...
 
     async def write_turn(
-        self, session_id: str, role: str, text: str, seq: int, ts: str = ...
+        self,
+        session_id: str,
+        role: str,
+        text: str,
+        seq: int,
+        ts: str = ...,
+        speaker: str = ...,
+        infer: bool = ...,
     ) -> str:
         """Append one raw TURN to the session's short-term buffer; returns the turn_id."""
         ...

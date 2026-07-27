@@ -243,12 +243,21 @@ class _STMIngestHandler:
         text: str,
         metadata: dict[str, Any] | None = None,
         infer: bool = True,
+        speaker: str = "",
     ) -> int:
         """Write one conversation turn as a CHUNK(kind='turn'). Returns entity count.
 
         Phase-1 bridge: gives the messages path the same full extraction (ENTITY
         + MENTIONS + evidenced relations + temporal) the text/chunk path has.
         ``infer=False`` writes the embedded turn without entity/relation extraction.
+
+        ``speaker`` is who actually said it ("Gina"); it falls back to ``role``,
+        which is all this had before — so a two-human conversation recorded every
+        chunk's speaker as "user".
+
+        Whether a given turn is worth extracting from is the CALLER's decision,
+        expressed through ``infer`` — this layer applies no content policy of
+        its own.
         """
         metadata = metadata or {}
         clean = self._clean_text(text) or text
@@ -278,7 +287,7 @@ class _STMIngestHandler:
             text=clean,
             seq=seq,
             kind="turn",
-            speaker=role,
+            speaker=speaker or role,
             embedding=embedding,
             extraction=extraction,
             temporal=temporal,

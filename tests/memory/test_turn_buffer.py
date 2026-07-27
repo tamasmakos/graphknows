@@ -133,3 +133,45 @@ async def test_stats_raw_turn_count_grows_per_add(mem: object) -> None:
     await mem.add([{"role": "user", "content": "second turn"}], run_id="s6")
     stats2 = await mem.stats()
     assert stats2["turns"]["raw"] == 2
+
+
+async def test_per_turn_infer_and_speaker_survive_the_flush(mem) -> None:
+    """The buffer must not flatten the caller's per-turn decisions.
+
+    Extraction policy belongs to the caller, not the library: it says which
+    turns are worth extracting from (infer) and who said them (Message.name).
+    The buffer defers ingestion to flush, so both have to be carried across
+    that boundary — otherwise flush re-ingests every turn under one shared flag
+    and the caller's per-turn choice is silently lost.
+    """
+    # A sentence spaCy's NER actually fires on: extraction short-circuits to an
+    # empty result whenever the chunk mines no entity label at all.
+    await mem.add(
+        [
+            {
+                "role": "user",
+                "name": "Gina",
+                "content": "Mochi's vet is Dr. Nagy, her clinic is in Budapest.",
+            }
+        ],
+        run_id="s1",
+        infer=True,
+    )
+    await mem.add(
+        [{"role": "user", "name": "Jon", "content": "Hey Gina, good to see you!"}],
+        run_id="s1",
+        infer=False,
+    )
+
+    await mem.flush(run_id="s1")
+
+    hits = await mem.search("Mochi vet", run_id="s1", top_k=10, scope="ltm")
+    assert hits["hits"], "extracted turn must still be retrievable"
+
+    # Both turns are stored and retrievable; only the infer=True one has entities.
+    entities = await mem.ltm_entities(limit=200)
+    names = {str(e.get("name", "")).casefold() for e in entities.get("entities", [])}
+    assert any("mochi" in n for n in names), f"expected Mochi among {sorted(names)[:20]}"
+    assert not any("hey gina" in n for n in names), (
+        f"infer=False turn must mint no entities, got {sorted(names)[:20]}"
+    )

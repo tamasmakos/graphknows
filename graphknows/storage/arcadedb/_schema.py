@@ -36,6 +36,12 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TURN.seq IF NOT EXISTS INTEGER"),
     ("sql", "CREATE PROPERTY TURN.ts IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TURN.state IF NOT EXISTS STRING"),
+    # Who said it, when the caller knows a name rather than only a coarse role.
+    ("sql", "CREATE PROPERTY TURN.speaker IF NOT EXISTS STRING"),
+    # The caller's per-turn "extract from this?" decision, carried across the
+    # buffer. Without it flush re-ingests every turn under one shared flag and
+    # the caller's per-turn choice is silently lost at the flush boundary.
+    ("sql", "CREATE PROPERTY TURN.infer IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE INDEX ON TURN(turn_id) UNIQUE"),
     ("sql", "CREATE INDEX ON TURN(session_id) NOTUNIQUE"),
     ("sql", "CREATE INDEX ON TURN(state) NOTUNIQUE"),

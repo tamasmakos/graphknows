@@ -284,14 +284,49 @@ def test_explicit_relation_schema_overrides_mined_svo_schema():
     assert mock_model.inference.call_args.kwargs["relations"] == ["created"]
 
 
-def test_extract_returns_empty_when_spacy_mines_no_entity_schema():
-    schema = SimpleNamespace(entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[])
+def test_extract_still_runs_when_spacy_mines_no_entity_schema():
+    """An empty spaCy observation must NOT skip the model.
+
+    This asserted the opposite until measured: the label set handed to relex is
+    the observed spaCy labels UNIONed with _BASE_ENTITY_LABELS, so an empty
+    observation is not an empty schema — it is exactly when the base inventory
+    earns its keep. Skipping was a cost optimisation that assumed spaCy sees
+    what matters, which holds for documents and fails for dialogue. On LoCoMo
+    conv-30, 170 of 369 turns (46%) observed no spaCy label and were therefore
+    never extracted from at all, including plain factual statements like
+    "I'm starting a dance studio".
+    """
+    schema = SimpleNamespace(
+        entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[], speakers=frozenset()
+    )
+    schema_miner = MagicMock()
+    schema_miner.build.return_value = schema
+    mock_model = MagicMock()
+    # relex.inference() -> (entities_per_text, relations_per_text)
+    mock_model.inference.return_value = (
+        [[{"text": "dance studio", "label": "activity", "score": 0.9}]],
+        [[]],
+    )
+    extractor = GLiNER2EntityExtractor(model_loader=lambda: mock_model, schema_miner=schema_miner)
+
+    result = extractor.extract("No named entities here.")
+    assert [e["name"] for e in result.entities] == ["dance studio"]
+
+    mock_model.inference.assert_called_once()
+    # The base inventory is what it falls back to.
+    assert "activity" in mock_model.inference.call_args.kwargs["labels"]
+
+
+def test_extract_returns_empty_for_blank_text():
+    schema = SimpleNamespace(
+        entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[], speakers=frozenset()
+    )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
     mock_model = MagicMock()
     extractor = GLiNER2EntityExtractor(model_loader=lambda: mock_model, schema_miner=schema_miner)
 
-    assert extractor.extract("No named entities here.") == ExtractionResult()
+    assert extractor.extract("   ") == ExtractionResult()
     mock_model.inference.assert_not_called()
 
 

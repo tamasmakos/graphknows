@@ -338,7 +338,15 @@ class Memory:
                 # TURN's ts — and flush() feeds it back as the temporal anchor.
                 # Defaulting to write time would date every relative expression
                 # in the turn to whenever the buffer happened to be written.
-                await store.write_turn(sid, m.role.value, m.content, seq, m.timestamp or "")
+                await store.write_turn(
+                    sid,
+                    m.role.value,
+                    m.content,
+                    seq,
+                    m.timestamp or "",
+                    speaker=m.name or "",
+                    infer=infer,
+                )
                 seq += 1
             return {
                 "file_id": "",
@@ -550,15 +558,24 @@ class Memory:
         # nodes to 2026 — 42 of 62 wrong — because every unanchored expression
         # fell back to ingestion time.
         messages = [
-            Message(role=Role(t["role"]), content=t["text"], timestamp=t.get("ts") or None)
+            Message(
+                role=Role(t["role"]),
+                content=t["text"],
+                name=t.get("speaker") or None,
+                timestamp=t.get("ts") or None,
+            )
             for t in ordered
         ]
+        # Each turn's own extract/skip decision, made by the caller at add()
+        # time. A turn stored with infer=False is still written and embedded —
+        # it stays retrievable as text — it just mints no entities.
+        infer_flags = [bool(t.get("infer", True)) for t in ordered]
         options = IngestOptions(scope=MemoryScope(run_id=session_id))
 
         service = build_stm_service(self.settings, self.namespace)
         try:
             await service.connect()
-            result = await service.ingest_messages(messages, options)
+            result = await service.ingest_messages(messages, options, infer_flags=infer_flags)
         finally:
             await service.close()
         return {"turns": len(messages), "chunks": result.chunk_count}
