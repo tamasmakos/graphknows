@@ -34,6 +34,7 @@ import asyncio
 import collections
 import json
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any, TypedDict
@@ -320,8 +321,49 @@ def reference_date_of(sessions: list[dict[str, Any]]) -> str:
     return max(seen).strftime("%d %B %Y") if seen else ""
 
 
+def evidence_recall(gold_turns: list[str], memories: list[str]) -> float:
+    """Fraction of the gold evidence turns present verbatim in what was recalled.
+
+    THE metric that separates a retrieval miss from a generation miss, and the
+    only one that can tell you which half to work on. Without it a wrong answer
+    is unattributable: "Unknown" looks identical whether the evidence never
+    arrived or arrived and was ignored.
+
+    Same contract as ``evaluation.common.lexical.evidence_recall`` — exact
+    substring on whitespace-normalised text, per-hop so a 4-evidence question
+    can score 0.25, and it cannot be inflated by retrieving more. Reimplemented
+    over hit dicts rather than imported because that one takes RetrievedPassage.
+
+    Scoring only. The gold turns never reach the retriever or the answerer.
+    """
+    if not gold_turns:
+        return -1.0  # no gold evidence — excluded from the mean, never scored 0
+    haystack = " ".join(" ".join(m.split()) for m in memories)
+    return sum(1 for turn in gold_turns if turn in haystack) / len(gold_turns)
+
+
+def gold_evidence(q: dict[str, Any], sessions: list[dict[str, Any]]) -> list[str]:
+    """``['D1:3']`` -> the utterance CONTENTS. 1-indexed on both axes."""
+    ids = [(int(a), int(b)) for a, b in re.findall(r"D(\d+):(\d+)", str(q.get("evidence") or ""))]
+    out: list[str] = []
+    for doc_no, turn_no in ids:
+        try:
+            content = sessions[doc_no - 1]["messages"][turn_no - 1].get("content")
+        except (IndexError, KeyError, TypeError, AttributeError):
+            continue
+        if content and (text := " ".join(str(content).split())):
+            out.append(text)
+    return out
+
+
 async def answer_questions(
-    questions: list[dict[str, Any]], ns: str, conv: str, limit: int, reference_date: str
+    questions: list[dict[str, Any]],
+    ns: str,
+    conv: str,
+    limit: int,
+    reference_date: str,
+    sessions: list[dict[str, Any]],
+    top_k: int = 25,
 ) -> list[dict[str, Any]]:
     from evaluation.common.dspy_judge import DSPyJudge
 
@@ -335,11 +377,13 @@ async def answer_questions(
         max_retries=2,
     )
     out: list[dict[str, Any]] = []
-    async with GraphKnowsMemory(f"{conv}-qa", namespace=ns, top_k=25) as mem:
+    async with GraphKnowsMemory(f"{conv}-qa", namespace=ns, top_k=top_k) as mem:
         app = build_qa_app(mem, llm, reference_date)
         for i, q in enumerate(questions[:limit], start=1):
             state = {"messages": [{"role": "user", "content": q["question"]}]}
             ans, score, sources, dated, undated, errored = "", 0.0, [], 0, 0, False
+            gold_turns = gold_evidence(q, sessions)
+            ev_recall, recalled = -1.0, []
             # One retry: a transient 502 scored as a wrong answer moves the mean
             # by 0.012 per question, which is inside the 0.04 parity threshold
             # these arms are compared at. A real failure still lands as 0.0.
@@ -350,6 +394,8 @@ async def answer_questions(
                     score, _ = await judge.judge_two_stage(q["question"], str(q["answer"]), ans)
                     sources = st.get("memories_sources", [])
                     dated, undated = int(st.get("dated", 0)), int(st.get("undated", 0))
+                    recalled = list(st.get("memories", []))
+                    ev_recall = evidence_recall(gold_turns, recalled)
                     errored = False
                     break
                 except Exception as exc:
@@ -366,11 +412,21 @@ async def answer_questions(
                     "dated": dated,
                     "undated": undated,
                     "errored": errored,
+                    # The triage fields. `evidence_recall` says whether the
+                    # evidence ARRIVED; `score` says whether it was USED. A low
+                    # score with recall 1.0 is a generation problem, with recall
+                    # 0.0 a retrieval problem — and nothing else distinguishes
+                    # them. `memories` is kept so a failure can be read directly
+                    # instead of re-run.
+                    "evidence_recall": ev_recall,
+                    "gold_evidence": gold_turns,
+                    "memories": recalled,
                 }
             )
             print(
                 f"[{i:>2}/{min(limit, len(questions))}] {q['id']} "
-                f"{q['category']:<20} score={score:.2f}",
+                f"{q['category']:<20} score={score:.2f}"
+                + (f" ev_recall={ev_recall:.2f}" if ev_recall >= 0 else " ev_recall=n/a"),
                 flush=True,
             )
             with open(f"/tmp/locomo_lg_{conv}.json", "w", encoding="utf-8") as fh:
@@ -410,6 +466,31 @@ def report(stats: collections.Counter[str], qa: list[dict[str, Any]]) -> None:
     print(f"    errors: {sum(1 for r in qa if r['errored'])}/{len(qa)}")
     print(f"    memories shown: {shown}  dated={dated} ({dated / shown:.0%})  undated={undated}")
 
+    # Retrieval vs generation. Questions with no gold evidence are excluded
+    # rather than scored 0 — 4 of LoCoMo's 1540 rows ship none.
+    scored = [r for r in qa if r.get("evidence_recall", -1) >= 0]
+    if not scored:
+        return
+    mean_ev = sum(r["evidence_recall"] for r in scored) / len(scored)
+    print(f"\n    evidence_recall: {mean_ev:.3f}  (n={len(scored)})")
+    got, missed = [r for r in scored if r["evidence_recall"] >= 0.5], []
+    missed = [r for r in scored if r["evidence_recall"] < 0.5]
+    quadrant = {
+        "retrieved + answered": [r for r in got if r["score"] >= 0.5],
+        "RETRIEVED, NOT USED  ": [r for r in got if r["score"] < 0.5],
+        "not retrieved, lucky ": [r for r in missed if r["score"] >= 0.5],
+        "NOT RETRIEVED        ": [r for r in missed if r["score"] < 0.5],
+    }
+    print("    triage:")
+    for label, rows in quadrant.items():
+        print(f"      {label} {len(rows):>3}  {len(rows) / len(scored):>5.1%}")
+    gen_bound = quadrant["RETRIEVED, NOT USED  "]
+    ret_bound = quadrant["NOT RETRIEVED        "]
+    print(
+        f"    -> of {len(gen_bound) + len(ret_bound)} failures: "
+        f"{len(gen_bound)} generation-bound, {len(ret_bound)} retrieval-bound"
+    )
+
 
 async def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
@@ -417,6 +498,7 @@ async def main() -> None:
     p.add_argument("--namespace", default="lg30")
     p.add_argument("--phase", choices=["ingest", "qa", "both"], default="both")
     p.add_argument("--limit", type=int, default=1000)
+    p.add_argument("--top-k", type=int, default=25, help="memories recalled per question")
     p.add_argument(
         "--prefix",
         action="store_true",
@@ -439,7 +521,7 @@ async def main() -> None:
         stats = await ingest(sessions, a.namespace, nlp, a.prefix)
     if a.phase in ("qa", "both"):
         qa = await answer_questions(
-            questions, a.namespace, a.conv, a.limit, reference_date_of(sessions)
+            questions, a.namespace, a.conv, a.limit, reference_date_of(sessions), sessions, a.top_k
         )
     report(stats, qa)
 
