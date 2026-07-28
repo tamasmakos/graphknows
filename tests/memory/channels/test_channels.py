@@ -94,7 +94,15 @@ class TestFrameChannelCollect:
     async def test_saturated_frame_dropped(self):
         """A frame evoked in >50% of session chunks is dropped as non-discriminative."""
         rt = MagicMock()
-        rt.store.query = AsyncMock(return_value=[{"c": 4}])  # 4 session chunks
+        rt.store.query = AsyncMock(
+            side_effect=[
+                [{"c": 4}],  # 4 session chunks
+                [  # corpus coverage: Activity_ongoing in 3/4, Process_start in 1/4
+                    {"ft": "Activity_ongoing", "n": 3},
+                    {"ft": "Process_start", "n": 1},
+                ],
+            ]
+        )
         rt.store.query_frames_by_embedding = AsyncMock(
             return_value=[
                 # Activity_ongoing floods 3/4 chunks -> saturated, dropped.
@@ -106,6 +114,68 @@ class TestFrameChannelCollect:
         )
         out = await FrameChannel().collect(_ctx(), rt, 5)
         assert set(out) == {"c4"}  # only the discriminative frame's chunk survives
+
+    async def test_saturation_measured_on_corpus_not_on_the_sample(self):
+        """A frame saturated in the SESSION is dropped even when the sample is sparse.
+
+        The regression this pins: ``_drop_saturated`` used to count coverage from
+        the rows it was handed. Those rows come from an ANN capped at ``top_k``
+        FRAME nodes -- and FRAME is one node per (chunk, frame) pair -- so the
+        numerator was bounded by the sample while the denominator was the whole
+        session. The ratio could not reach 0.5 and the guard never fired.
+
+        Measured on conv-30/lgdemo before the fix: ``Activity_done_state`` is
+        evoked in 19 of session s1's 28 chunks (68%), yet appeared on only 8 of
+        any query's 25 returned rows (29%) -- under the threshold, so it was kept
+        on every query. It saturated 18 of 19 sessions, to as high as 86%.
+
+        Here the sample shows it on 2 of 28 chunks (7%) while the corpus says
+        19/28 (68%). Sample-based counting keeps it; corpus-based drops it.
+        """
+        rt = MagicMock()
+        rt.store.query = AsyncMock(
+            side_effect=[
+                [{"c": 28}],  # 28 chunks in the session
+                [
+                    {"ft": "Activity_done_state", "n": 19},  # 68% -> saturated
+                    {"ft": "Process_start", "n": 3},  # 11% -> discriminative
+                ],
+            ]
+        )
+        rt.store.query_frames_by_embedding = AsyncMock(
+            return_value=[
+                {"chunk_id": "c1", "frame_type": "Activity_done_state", "score": 0.42},
+                {"chunk_id": "c2", "frame_type": "Activity_done_state", "score": 0.41},
+                {"chunk_id": "c3", "frame_type": "Process_start", "score": 0.30},
+            ]
+        )
+        out = await FrameChannel().collect(_ctx(), rt, 5)
+        assert set(out) == {"c3"}
+
+    async def test_sample_dense_but_corpus_sparse_frame_survives(self):
+        """The inverse: dominating one query's results is not saturation.
+
+        A frame the query genuinely matches will fill the sample. That is the
+        channel working, not flooding -- so it must survive as long as its
+        coverage across the session stays low.
+        """
+        rt = MagicMock()
+        rt.store.query = AsyncMock(
+            side_effect=[
+                [{"c": 40}],
+                [{"ft": "Process_start", "n": 4}],  # 10% of the session
+            ]
+        )
+        rt.store.query_frames_by_embedding = AsyncMock(
+            return_value=[
+                {"chunk_id": "c1", "frame_type": "Process_start", "score": 0.42},
+                {"chunk_id": "c2", "frame_type": "Process_start", "score": 0.41},
+                {"chunk_id": "c3", "frame_type": "Process_start", "score": 0.40},
+            ]
+        )
+        out = await FrameChannel().collect(_ctx(), rt, 5)
+        assert set(out) == {"c1", "c2", "c3"}
+        assert out["c1"][0] > out["c2"][0] > out["c3"][0]
 
     async def test_empty_store_result_returns_empty(self):
         rt = MagicMock()

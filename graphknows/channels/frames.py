@@ -41,6 +41,29 @@ _SPEAKER_LINE = re.compile(r"^.*?\|\s*(\w+):")
 _FRAME_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_FRAME_SATURATION_RATIO", "0.5"))
 
 
+async def _frame_coverage(rt: Any, session_id: str, state: str | None) -> dict[str, int]:
+    """How many of the session's chunks each frame_type is evoked in.
+
+    Measured over the GRAPH, not over the rows a query happened to return. The
+    distinction is the whole point: FRAME is one vertex per (chunk, frame) pair,
+    so an ANN capped at ``top_k`` vertices yields at most ``top_k`` (chunk, frame)
+    rows — counting coverage from those bounds the numerator by the sample size
+    while the denominator stays the whole session. ``ONTOLOGY_CLASS`` has one
+    vertex per class and expands to every tagged chunk, which is why the same
+    guard is sound there and had to be replaced here.
+    """
+    q = "MATCH (f:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE f.session_id = $sid"
+    if state:
+        q += " AND c.state = $st"
+    q += " RETURN f.frame_type AS ft, count(DISTINCT c.chunk_id) AS n"
+    rows = (
+        await rt.store.query(q, sid=session_id, st=state)
+        if state
+        else await rt.store.query(q, sid=session_id)
+    )
+    return {r["ft"]: int(r.get("n") or 0) for r in rows if r.get("ft")}
+
+
 async def _session_chunk_count(rt: Any, session_id: str, state: str | None) -> int:
     """Total CHUNK count for a session (optionally filtered by lifecycle state)."""
     if state:
@@ -110,16 +133,21 @@ class FrameChannel(Channel):
 
         Session-scoped only; without a session there is no corpus to measure
         saturation against, so the rows pass through unchanged.
+
+        Coverage comes from the graph, never from ``rows`` — see
+        :func:`_frame_coverage`. Counting the sample made this guard unable to
+        fire at all: on conv-30, ``Activity_done_state`` covers 19 of session
+        s1's 28 chunks (68%) but showed up on only 8 of any query's 25 rows
+        (29%), so it cleared the 50% test on every query and was never dropped.
         """
         if not ctx.session_id:
             return rows
         total = await _session_chunk_count(rt, ctx.session_id, ctx.state)
         if not total:
             return rows
-        cover: dict[str, set[str]] = defaultdict(set)
-        for r in rows:
-            cover[r["frame_type"]].add(r["chunk_id"])
-        saturated = {ft for ft, cs in cover.items() if len(cs) / total > _FRAME_SATURATION_RATIO}
+        cover = await _frame_coverage(rt, ctx.session_id, ctx.state)
+        present = {r["frame_type"] for r in rows}
+        saturated = {ft for ft in present if cover.get(ft, 0) / total > _FRAME_SATURATION_RATIO}
         if not saturated:
             return rows
         log.debug("frame channel dropping saturated frames: %s", sorted(saturated))
