@@ -1222,13 +1222,23 @@ async def test_write_entities_bulk_collapses_duplicate_merge_keys() -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_frame_instances_merges_fillers_before_the_edge_pass() -> None:
-    """One entity filling TWO roles must not MERGE twice in one UNWIND.
+async def test_write_frame_instances_never_creates_entity_nodes() -> None:
+    """The frame layer attaches to entities; it must never mint them.
 
-    Regression: role_rows is keyed (fid, nn, role), so a frame like Being_named
-    with Entity=X and Name=X repeats X's name_norm. MERGEing the ENTITY inside the
-    edge UNWIND created it twice before ENTITY[name_norm] settled ->
-    DuplicatedKeyException -> the caller's whole DOCUMENT failed to ingest.
+    This asserted the OPPOSITE until measured. It used to MERGE each filler as
+    an ENTITY before the edge pass, guarding a DuplicatedKeyException when one
+    entity filled two roles (Being_named with Entity=X and Name=X). That guard
+    is now structurally unnecessary — there is no entity write to duplicate —
+    and the MERGE it guarded was itself the defect: on LoCoMo conv-30 it invented
+    624 of 2105 ENTITY nodes (30%) with no type, no confidence and no MENTIONS
+    edge to any chunk, purely because a frame pointed at a span. Those nodes are
+    unreachable by any entity query and cannot be resolved or merged with
+    anything, yet they reached the generator's fact-sheet as role fillers
+    ("Buyer=Hey Gina!", "Speaker=Yeah").
+
+    A span worth a node is one the EXTRACTION path recognised on its own
+    evidence. A role citing a span nothing else saw has no provenance, so the
+    edge is dropped rather than the node invented.
     """
     client = _mock_client()
     store = GraphStore(client=client)
@@ -1248,15 +1258,14 @@ async def test_write_frame_instances_merges_fillers_before_the_edge_pass() -> No
     )
 
     stmts = _command_strings(client)
-    ent_call = next(
-        c
-        for c in client.command.await_args_list
-        if "MERGE (e:ENTITY {name_norm: row.nn})" in c.args[1] and "PLAYS_ROLE" not in c.args[1]
-    )
-    keys = [r["nn"] for r in ent_call.kwargs["params"]["rows"]]
-    assert keys == ["becoming nicole"], "filler must be collapsed to ONE merge key"
 
-    # The edge pass must only MATCH the entity, never MERGE it.
+    # No statement anywhere in this path may create an ENTITY.
+    assert not [s for s in stmts if "MERGE (e:ENTITY" in s], (
+        "the frame path must not mint ENTITY nodes — a filler with no extraction "
+        "evidence has no provenance and becomes an unreachable, untyped node"
+    )
+
+    # The role edge MATCHes an already-existing entity; a filler the extractor
+    # never saw simply matches nothing and the edge is not written.
     edge = next(s for s in stmts if "PLAYS_ROLE {role: row.role}" in s)
     assert "MATCH (e:ENTITY {name_norm: row.nn})" in edge
-    assert "MERGE (e:ENTITY" not in edge, "edge pass must not create entities"

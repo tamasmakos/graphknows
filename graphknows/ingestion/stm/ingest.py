@@ -613,6 +613,24 @@ class _STMIngestHandler:
         label, score = self._property_mapper.map_predicate(predicate)
         return (label or ""), score
 
+    @staticmethod
+    def _dedupe_nested(fills: list[str]) -> list[str]:
+        """Drop fillers wholly contained in another filler of the same role.
+
+        The extractor emits overlapping spans of one phrase, and each became a
+        separate role fill on the same frame: "Goal=shopping experience,
+        Goal=special shopping experience, Goal=make a special shopping
+        experience" is one goal stated three times. Keeps the SHORTEST of a
+        nested set — it is the noun phrase; the longer ones have picked up the
+        verb and modifiers around it.
+        """
+        kept: list[str] = []
+        for fill in sorted(fills, key=len):
+            low = fill.casefold()
+            if not any(k.casefold() in low for k in kept):
+                kept.append(fill)
+        return kept
+
     def _frame_instances(
         self, text: str, chunk_id: str, speaker: str, embedding: list[float] | None = None
     ) -> list[dict[str, Any]]:
@@ -650,15 +668,32 @@ class _STMIngestHandler:
             gliner,
             lambda t: lu_candidate_frames(t, nlp, embedding=embedding),
         )
-        return [
-            {
-                "frame": inst.frame,
-                "match_sim": inst.match_sim,
-                "role_confidence": inst.role_confidence,
-                "roles": inst.roles,
+        # Role fillers become ENTITY nodes, so they must clear the SAME junk gate
+        # every other minting path uses. This was the one path that did not call
+        # it: measured on LoCoMo conv-30, it minted 624 ENTITY nodes with no type,
+        # no confidence and no MENTIONS edge to any chunk — 30% of the graph —
+        # and fed them to the generator's fact-sheet ("Buyer=Hey Gina!",
+        # "Speaker=Yeah", "Cognizer=Wow").
+        out: list[dict[str, Any]] = []
+        for inst in instances:
+            roles = {
+                role: self._dedupe_nested([f for f in fills if is_graph_entity_name(f)])
+                for role, fills in inst.roles.items()
             }
-            for inst in instances
-        ]
+            roles = {r: f for r, f in roles.items() if f}
+            # The frame's own gate: an instance under two filled roles is not a
+            # fact, it is a frame label with a stray span attached.
+            if len(roles) < 2:
+                continue
+            out.append(
+                {
+                    "frame": inst.frame,
+                    "match_sim": inst.match_sim,
+                    "role_confidence": inst.role_confidence,
+                    "roles": roles,
+                }
+            )
+        return out
 
     def _resolve_temporal(
         self, entities: list[dict[str, Any]], seg: Any, metadata: dict[str, Any]

@@ -65,9 +65,18 @@ _ADJACENCY_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_ADJACENCY",
 # a chunk whose NER found just PERSON types "LGBTQ support group" and "lake
 # sunrise" as person. This is spaCy's own NER inventory rendered in the natural
 # language relex expects, UNIONed with the chunk's observed labels, plus the
-# conversational types spaCy has no tag for at all (occupation/animal/activity/
-# emotion) — the ones dialogue is actually made of. Not a domain taxonomy: no
-# entity is required to exist, and the miner still decides what it saw.
+# conversational types spaCy has no tag for at all (occupation, animal, food).
+# Not a domain taxonomy: no entity is required to exist, and the miner still
+# decides what it saw.
+#
+# "activity" and "emotion" were here and are REMOVED. A zero-shot extractor asked
+# for an "activity" returns every verb, and for an "emotion" every adjective —
+# they name STATES and PROCESSES, which are not things and cannot be graph nodes.
+# Measured on LoCoMo conv-30 they produced 906 of 2105 ENTITY nodes (43%), and
+# the most-mentioned "entities" in the whole graph were `keep` x56, `really` x30,
+# `going` x32, `make` x29. Those reached the generator's fact-sheet as frame role
+# fillers. No downstream name filter can repair a label that instructs the model
+# to tag the wrong part of speech; the fix has to be not asking for it.
 _BASE_ENTITY_LABELS: tuple[str, ...] = (
     "person",
     "organization",
@@ -85,8 +94,6 @@ _BASE_ENTITY_LABELS: tuple[str, ...] = (
     "quantity",
     "occupation",
     "animal",
-    "activity",
-    "emotion",
     "food",
     "artifact",
 )

@@ -304,7 +304,7 @@ def test_extract_still_runs_when_spacy_mines_no_entity_schema():
     mock_model = MagicMock()
     # relex.inference() -> (entities_per_text, relations_per_text)
     mock_model.inference.return_value = (
-        [[{"text": "dance studio", "label": "activity", "score": 0.9}]],
+        [[{"text": "dance studio", "label": "facility", "score": 0.9}]],
         [[]],
     )
     extractor = GLiNER2EntityExtractor(model_loader=lambda: mock_model, schema_miner=schema_miner)
@@ -314,7 +314,7 @@ def test_extract_still_runs_when_spacy_mines_no_entity_schema():
 
     mock_model.inference.assert_called_once()
     # The base inventory is what it falls back to.
-    assert "activity" in mock_model.inference.call_args.kwargs["labels"]
+    assert "facility" in mock_model.inference.call_args.kwargs["labels"]
 
 
 def test_extract_returns_empty_for_blank_text():
@@ -403,8 +403,25 @@ def test_extract_batch_survives_a_failing_chunk():
 
 def test_base_entity_labels_cover_conversational_types():
     """spaCy has no tag for the types dialogue is actually made of."""
-    for label in ("occupation", "animal", "activity", "emotion"):
+    for label in ("occupation", "animal", "food"):
         assert label in _BASE_ENTITY_LABELS
+
+
+def test_base_entity_labels_ask_for_no_state_or_process_types():
+    """A zero-shot extractor returns whatever part of speech the label names.
+
+    "activity" and "emotion" were in this inventory. Asked for an activity the
+    model returns every VERB, asked for an emotion every ADJECTIVE — neither is
+    a thing, and neither can be a graph node. Measured on LoCoMo conv-30 they
+    produced 906 of 2105 ENTITY nodes (43%), and the most-mentioned "entities"
+    in the entire graph were `keep` x56, `going` x32, `make` x29, `really` x30.
+    Those then reached the generator's fact-sheet through the frame layer.
+
+    No downstream name filter can repair this: the span really is what the label
+    asked for. The gate is not asking.
+    """
+    for label in ("activity", "emotion", "action", "feeling", "state"):
+        assert label not in _BASE_ENTITY_LABELS
 
 
 class TestSharedModelApiContract:

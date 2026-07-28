@@ -99,6 +99,96 @@ _CODE_MARKUP_RE = re.compile(r"```|https?://|www\.|://|[{}<>=|]|::|\(\)|\[\]")
 _MAX_ENTITY_WORDS = 8
 
 
+# Backchannel, greetings and discourse markers. Dialogue is full of them and
+# they are not entities in any conversation — measured on LoCoMo conv-30, these
+# reached the ANSWER PROMPT as frame role fillers ("Buyer=Hey Gina!",
+# "Speaker=Yeah", "Cognizer=Wow"). Matched only as a WHOLE single-token name, so
+# real titles containing them survive ("Cool Runnings", "Great Expectations").
+_BACKCHANNEL_NAMES = frozenset(
+    """
+    hey hi hello bye goodbye
+    thanks thank ta cheers welcome please sorry oops oof
+    yeah yeh yep yup nope nah sure ok okay alright right
+    wow whoa woah oh ah aha ooh huh hmm hm um uh eh
+    great cool nice awesome amazing lovely fine good bad
+    congrats congratulations kudos
+    same next got gotta wanna gonna lets check
+    """.split()
+)
+
+# Multi-word discourse formulas. Each is a fixed idiom whose head noun is not
+# what it is about ("way" in "way to go"), so no head-based rule reaches them.
+_BACKCHANNEL_PHRASES = frozenset(
+    {
+        "way to go",
+        "me too",
+        "same here",
+        "no worries",
+        "no problem",
+        "good luck",
+        "take care",
+        "sounds great",
+        "sounds good",
+        "thank you",
+    }
+)
+
+# Pronouns and auxiliaries that can only ever OPEN a clause, never head a noun
+# phrase. A multi-word name starting with one of these is a sentence fragment
+# ("I can teach", "it looks awesome", "since I was a kid"), not an entity.
+#
+# Deliberately excludes articles and prepositions: "the White House" and "of
+# Mice and Men" are real names that open with closed-class words, so gating on
+# those would delete legitimate entities. Pronoun/auxiliary/subordinator-initial
+# is the subset where a drop cannot lose a real name.
+_CLAUSE_OPENERS = frozenset(
+    """
+    i me my mine myself we us our ours ourselves
+    you your yours yourself yourselves
+    he him his she her hers it its they them their theirs em
+    am is are was were be been being
+    do does did done have has had
+    can could will would shall should may might must
+    lets let
+    since because although though unless whenever wherever whereas
+    """.split()
+)
+
+
+def _is_backchannel(name: str) -> bool:
+    """A greeting, discourse marker or fixed formula standing alone as a name."""
+    stripped = name.strip().strip("!?.,").casefold()
+    if stripped in _BACKCHANNEL_PHRASES:
+        return True
+    return " " not in stripped and stripped.replace("'", "") in _BACKCHANNEL_NAMES
+
+
+def _is_clause_fragment(name: str) -> bool:
+    """A multi-word span that opens like a clause, or ends like a sentence.
+
+    Two independent signals, both grammatical rather than heuristic:
+
+    * a name ending in ``!`` or ``?`` is an utterance, never a noun phrase;
+    * a multi-word name whose first token is a pronoun, auxiliary or
+      subordinator is a clause fragment — the extractor caught a predicate and
+      called it a thing.
+    """
+    stripped = name.strip()
+    if stripped.endswith(("!", "?")):
+        return True
+    tokens = stripped.split()
+    if not tokens:
+        return False
+    first = tokens[0].casefold().strip("\"'")
+    # Contractions carry the opener in the stem: "I'm" -> i, "we've" -> we,
+    # "let's" -> let, "'em" -> (leading quote stripped above) em.
+    stem = first.split("'")[0] if "'" in first else first
+    if len(tokens) >= 2:
+        return stem in _CLAUSE_OPENERS
+    # A lone contraction is a pronoun+auxiliary, never a name: "I'm", "we've".
+    return "'" in tokens[0] and (stem in _CLAUSE_OPENERS or stem == "")
+
+
 def _is_stopword_name(name: str) -> bool:
     stripped = name.strip()
     # Acronym-shaped tokens (all-caps, 2-3 chars) collide with function words
@@ -143,6 +233,10 @@ def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
     if (ent_type or "").upper() in _NON_GRAPH_ENTITY_TYPES:
         return False
     if _is_stopword_name(stripped):
+        return False
+    if _is_backchannel(stripped):
+        return False
+    if _is_clause_fragment(stripped):
         return False
     if _is_degenerate_name(stripped):
         return False

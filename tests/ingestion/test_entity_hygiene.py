@@ -185,32 +185,64 @@ class TestStructuralJunk:
     def test_real_entities_survive(self, name: str) -> None:
         assert is_graph_entity_name(name)
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # Clause-opener-initial: a pronoun or auxiliary can only start a
+            # clause, never head a noun phrase.
+            "Been having some tough times lately",
+            "It's really made a huge difference",
+            "I can teach",
+            "since I was a kid",
+            "We've",
+            "I'm",
+            # Utterances: a noun phrase never ends in sentence punctuation.
+            "Hey Gina!",
+            "Sorry to hear that!",
+            "Cool setup!",
+            # Backchannel and fixed formulas.
+            "Yeah",
+            "Wow",
+            "Thanks",
+            "way to go",
+            "me too",
+        ],
+    )
+    def test_clause_fragments_are_not_entities(self, name: str) -> None:
+        """Every string here was minted as an ENTITY node on LoCoMo conv-30.
+
+        These reached the GENERATOR, not just the database: the frame layer
+        turned role fillers into entities without the junk gate, so the answer
+        prompt's fact-sheet carried "Buyer=Hey Gina!", "Speaker=Yeah" and
+        "Cognizer=Wow". Grammar decides each case — clause opener, sentence
+        punctuation, or closed-class discourse marker — so none can lose a real
+        name.
+        """
+        assert not is_graph_entity_name(name)
+
     @pytest.mark.xfail(
         reason=(
-            "Known defect, measured not fixed: _MAX_ENTITY_WORDS=8 admits clause "
-            "fragments — 377 of 1863 conv-30 entities (20%) are >=4 words. "
-            "Lowering the cap to 3 turns these green but deletes legitimate "
-            "4-word titles, and no measurement yet shows a smaller entity "
-            "population improves retrieval. Unxfail when the graph layer's "
-            "end-to-end contribution has been ablated."
+            "Known defect, measured not fixed: _MAX_ENTITY_WORDS=8 still admits "
+            "NOUN-headed and gerund-headed long spans. The clause-opener and "
+            "sentence-punctuation rules do not reach them — they are grammatical "
+            "noun phrases, just far too long to be entities — and distinguishing "
+            "them needs the parse, not the string. The 8-word cap stays: lowering "
+            "it to 3 turns these green but deletes legitimate 4-word titles "
+            "('Charlotte's Web: A Review'). Unxfail when the minting paths pass "
+            "the span's head POS to the gate."
         ),
         strict=True,
     )
     @pytest.mark.parametrize(
         "name",
         [
-            # Real spans minted as ENTITY nodes on LoCoMo conv-30. Each is a
-            # unique name_norm, so entity resolution has nothing to merge and
-            # the population grows linearly with the corpus forever.
-            "Been having some tough times lately",
-            "It's really made a huge difference",
             "goals written down on paper",
             "keeping me in the loop",
             "one-on-one mentoring and training",
             "new offers and promotions",
         ],
     )
-    def test_clause_fragments_are_not_entities(self, name: str) -> None:
+    def test_long_noun_headed_spans_are_still_admitted(self, name: str) -> None:
         assert not is_graph_entity_name(name)
 
     @pytest.mark.parametrize(

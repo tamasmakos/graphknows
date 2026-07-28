@@ -948,16 +948,18 @@ class GraphStore(ArcadeStoreBase):
         # whole document. ("Being_named" with Entity=X and Name=X is exactly this.)
         # Collapsing on the merge key first makes the edge pass a pure MATCH.
         if role_rows:
-            ent_rows = list(
-                {r["nn"]: {"nn": r["nn"], "name": r["name"]} for r in role_rows}.values()
-            )
-            await self.command(
-                "UNWIND $rows AS row "
-                "MERGE (e:ENTITY {name_norm: row.nn}) "
-                "SET e.name = coalesce(e.name, row.name), e.state = coalesce(e.state, 'raw')",
-                rows=ent_rows,
-            )
-            # Batch 2b: now every filler exists — the edge pass only MATCHes.
+            # A role edge attaches to an entity the EXTRACTION path already
+            # minted — it never creates one. This used to MERGE, and a MERGE here
+            # invents a node with no type, no confidence and no MENTIONS edge to
+            # any chunk: 624 of 2105 nodes on LoCoMo conv-30 (30%) existed only
+            # because a frame pointed at a span. They are unreachable by any
+            # entity query, they cannot be resolved or merged with anything, and
+            # they reached the generator's fact-sheet as role fillers.
+            #
+            # A span worth a graph node is one the extractor recognised on its
+            # own evidence. If it did not, the frame layer citing it is not extra
+            # knowledge — it is an assertion with no provenance, so the role is
+            # dropped. MATCH, never MERGE.
             await self.command(
                 "UNWIND $rows AS row "
                 "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
