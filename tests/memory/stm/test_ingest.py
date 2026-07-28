@@ -131,3 +131,41 @@ async def test_ingest_turn_without_a_timestamp_writes_empty_not_ingest_time():
     await handler.ingest_turn("s1", "f1", 0, "user", "Hello there.", speaker="Gina")
 
     assert store.write_chunk.await_args.args[0]["ts"] == ""
+
+
+def test_search_surface_carries_the_speaker_but_never_doubles_it():
+    """The retrieval surface names who spoke; CHUNK.text never changes.
+
+    "I'm opening a dance studio" is a fact about Gina and names her nowhere, so
+    stored verbatim it is unreachable by any question about Gina — the measured
+    reason the prefixed arm led on knowledge_synthesis (0.736 vs 0.573) despite
+    the clean arm holding MORE relations (72 vs 57). Prefixing the retrieval
+    surface buys that reach without putting the name into the extractor's input,
+    which is what mints speakers as ENTITY nodes.
+    """
+    from graphknows.ingestion.parsers.base import search_surface
+
+    assert search_surface("I'm opening a dance studio.", "Gina") == (
+        "Gina: I'm opening a dance studio."
+    )
+    # A caller that already flattened the speaker in must not get it twice.
+    assert search_surface("Gina: I'm opening a dance studio.", "Gina") == (
+        "Gina: I'm opening a dance studio."
+    )
+    assert search_surface("No speaker known.", "") == "No speaker known."
+    assert search_surface("", "Gina") == ""
+
+
+async def test_ingest_turn_embeds_the_surface_but_stores_text_verbatim():
+    """The embedding is of "Gina: ..."; CHUNK.text stays exactly what was said."""
+    embedded: list[str] = []
+    handler, store, _ = _make_handler(
+        extractor=None, embed_fn=lambda t: embedded.append(t) or [0.1] * 10
+    )
+
+    await handler.ingest_turn("s1", "f1", 0, "user", "I'm opening a dance studio.", speaker="Gina")
+
+    assert embedded == ["Gina: I'm opening a dance studio."]
+    chunk = store.write_chunk.await_args.args[0]
+    assert chunk["text"] == "I'm opening a dance studio."
+    assert chunk["search_text"] == "Gina: I'm opening a dance studio."

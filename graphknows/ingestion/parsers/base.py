@@ -28,6 +28,27 @@ def strip_content_heading(text: str) -> str:
     return _CONTENT_HEADING_RE.sub("", text).strip()
 
 
+def search_surface(text: str, speaker: str = "") -> str:
+    """The text as it should be EMBEDDED and lexically scanned.
+
+    An utterance usually omits its own speaker: "I'm opening a dance studio" is
+    a fact about Gina and names her nowhere. Stored verbatim, no query asking
+    about Gina can reach it — not lexically, and not by embedding either. So the
+    retrieval surface carries the attribution while ``CHUNK.text`` stays exactly
+    what was said, and the EXTRACTOR keeps seeing the bare text (putting the
+    name in its input is what mints speakers as ENTITY nodes).
+
+    Returns ``text`` unchanged when there is no speaker, or when the text
+    already opens with it — a caller that flattens "Gina: ..." into the content
+    itself must not end up with "Gina: Gina: ...".
+    """
+    name = (speaker or "").strip()
+    body = (text or "").strip()
+    if not name or not body or body.casefold().startswith(f"{name.casefold()}:"):
+        return body
+    return f"{name}: {body}"
+
+
 def _tokens(s: str) -> int:
     return len(s) // APPROX_CHARS_PER_TOKEN
 

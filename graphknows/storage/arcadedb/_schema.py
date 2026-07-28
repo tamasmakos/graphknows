@@ -54,6 +54,11 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE VERTEX TYPE CHUNK IF NOT EXISTS"),
     ("sql", "CREATE PROPERTY CHUNK.chunk_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY CHUNK.text IF NOT EXISTS STRING"),
+    # The retrieval surface: `text` verbatim, prefixed with the speaker when one
+    # is known. `text` stays exactly what was said, so nothing that reads it
+    # changes meaning; this is what gets embedded and lexically scanned, so a
+    # query naming a person can reach an utterance that never names them.
+    ("sql", "CREATE PROPERTY CHUNK.search_text IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY CHUNK.seq IF NOT EXISTS INTEGER"),
     ("sql", "CREATE PROPERTY CHUNK.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY CHUNK.kind IF NOT EXISTS STRING"),

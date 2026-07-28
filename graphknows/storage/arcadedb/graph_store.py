@@ -226,6 +226,7 @@ class GraphStore(ArcadeStoreBase):
                     "sid": c.get("session_id", ""),
                     "fid": c.get("file_id", ""),
                     "text": c.get("text", ""),
+                    "stext": c.get("search_text") or c.get("text", ""),
                     "seq": int(c.get("seq") or 0),
                     "kind": c.get("kind", "text"),
                     "speaker": c.get("speaker", "") or "",
@@ -240,6 +241,7 @@ class GraphStore(ArcadeStoreBase):
                 "UNWIND $rows AS row "
                 "MERGE (c:CHUNK {chunk_id: row.cid}) "
                 "SET c.session_id = row.sid, c.text = row.text, c.seq = row.seq, "
+                "    c.search_text = row.stext, "
                 "    c.kind = row.kind, c.speaker = row.speaker, c.ts = row.ts, "
                 "    c.memory_class = row.mc, c.atom_type = row.at, "
                 "    c.entity_names = row.en, "
@@ -1130,6 +1132,12 @@ class GraphStore(ArcadeStoreBase):
 
         A CONTAINS scan for now; a FULL_TEXT index replaces this in Phase 4.
         ``require_all=True`` uses AND (all terms must appear); False uses OR.
+
+        Scans ``search_text`` — ``text`` prefixed with the speaker — so a query
+        naming a person reaches utterances that never name them ("I'm opening a
+        dance studio" is about Gina and says so nowhere). ``text`` stays in the
+        predicate as a fallback: chunks written before ``search_text`` existed
+        have it unset, and a bare CONTAINS on a null would silently drop them.
         """
         if not terms:
             return []
@@ -1137,7 +1145,11 @@ class GraphStore(ArcadeStoreBase):
         if not safe:
             return []
         op = " AND " if require_all else " OR "
-        text_where = op.join(f"toLower(c.text) CONTAINS '{t.lower()}'" for t in safe)
+        text_where = op.join(
+            f"(toLower(c.search_text) CONTAINS '{t.lower()}' "
+            f"OR toLower(c.text) CONTAINS '{t.lower()}')"
+            for t in safe
+        )
         filters = self._chunk_filters(session_id, state)
         rows = await self.query(
             f"MATCH (c:CHUNK) WHERE ({text_where}){filters} "

@@ -16,7 +16,11 @@ import time
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
-from graphknows.ingestion.parsers.base import ParsedFile, strip_content_heading
+from graphknows.ingestion.parsers.base import (
+    ParsedFile,
+    search_surface,
+    strip_content_heading,
+)
 from graphknows.ingestion.parsers.registry import get_parser
 from graphknows.ingestion.stm._entity_writer import graph_entities, is_graph_entity_name
 from graphknows.models.ingest import IngestResult
@@ -264,7 +268,14 @@ class _STMIngestHandler:
         clean = self._clean_text(text) or text
         if not clean.strip():
             return 0
-        embedding = self._embed_fn(clean)
+        # The retrieval surface carries the attribution the utterance itself
+        # omits: "I'm opening a dance studio" is a fact about Gina and names her
+        # nowhere, so neither the embedding nor a lexical scan of `clean` can be
+        # reached by a question that asks about Gina. The EXTRACTOR still sees
+        # `clean` — putting the name in its input is what minted speakers as
+        # ENTITY nodes — and CHUNK.text stays verbatim.
+        surface = search_surface(clean, speaker or role)
+        embedding = self._embed_fn(surface)
         # Same ontology steering as the chunk path — the turn's own embedding
         # selects the candidate labels, so no extra embedding call.
         ent_hints, rel_hints = self._label_hints([embedding])
@@ -295,6 +306,7 @@ class _STMIngestHandler:
             seq=seq,
             kind="turn",
             speaker=speaker or role,
+            search_text=surface,
             # The same anchor the relative dates resolve against is what dates
             # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
             # the column was written, indexed and selected as "" everywhere.
@@ -338,6 +350,7 @@ class _STMIngestHandler:
         speaker: str,
         ts: str,
         embedding: list[float],
+        search_text: str = "",
         extraction: ExtractionResult,
         temporal: list[dict[str, str]],
         memory_class: str,
@@ -352,6 +365,7 @@ class _STMIngestHandler:
                 "session_id": session_id,
                 "file_id": file_id,
                 "text": text,
+                "search_text": search_text or text,
                 "seq": seq,
                 "kind": kind,
                 "speaker": speaker,
