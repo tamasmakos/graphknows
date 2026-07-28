@@ -207,3 +207,69 @@ def test_predicate_mapper_maps_surface_forms_to_ontology_properties(index):
 
     unmapped, score = mapper.map_predicate("photosynthesizes")
     assert unmapped is None, f"expected unmappable, got {unmapped!r} at {score:.3f}"
+
+
+def test_declared_range_blocks_a_predicate_mapping_the_object_cannot_satisfy(index):
+    """``Gina HAS Maria`` must not be recorded as ``Gina owns Maria``.
+
+    ``_SURFACE_ALIASES`` maps the bare predicate "has" onto ``owns``, which is
+    right for a possession and wrong for a person. The ontology already carries
+    the constraint that settles it -- ``:owns rdfs:range :Possession`` -- but the
+    mapper is a pure string matcher and never saw the object.
+
+    Measured on the 5-turn ingest smoke (namespace ``smoke``) before the gate:
+    all three extracted relations mapped to ``owns`` at ``map_score=0.95``,
+    including ``Jon HAS mother`` and ``Gina HAS Maria`` -- confident, persisted,
+    false assertions about people. ``Jon HAS dance studio`` is the one the
+    alias gets right, so the gate must keep it.
+
+    The gate ANNOTATES, never filters: a blocked mapping drops the
+    ``ontology_property`` only. The relation is still written under its
+    extracted predicate.
+    """
+    from graphknows.ingestion.stm.ingest import _STMIngestHandler
+
+    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+
+    # A person object cannot satisfy `owns` (range: Possession) -> no mapping.
+    assert handler._map_predicate("HAS", "PERSON") == ("", 0.0)
+    # The same predicate over a possession still maps.
+    prop, score = handler._map_predicate("HAS", "POSSESSION")
+    assert prop == "owns", f"expected owns for a possession object, got {prop!r}"
+    assert score > 0.0
+
+    # Unknown object type -> admit. Enrichment must never become a filter.
+    assert handler._map_predicate("HAS", "")[0] == "owns"
+
+    # A property with no declared range is unaffected by the gate.
+    assert handler._map_predicate("is friends with", "PERSON")[0] == "friend_of"
+
+
+@pytest.mark.parametrize("object_type", ["PLACE", "PRODUCT", "ORGANIZATION", "OCCUPATION"])
+def test_range_gate_keeps_mappings_the_ontology_is_merely_too_narrow_for(index, object_type):
+    """A non-person object keeps ``owns`` even when it misses the declared range.
+
+    The first cut of this gate enforced every ``rdfs:range`` and was measured far
+    too strict. On conv-30 (369 turns, namespace ``lg30o``, ontology on) there
+    are 27 ``owns`` edges; 26 are correct — ``Gina -> collection``, ``-> store``,
+    ``-> fashion pieces``, ``-> business``, ``-> online store`` — and their types
+    are PLACE / PRODUCT / ORGANIZATION / OCCUPATION, none of which satisfy
+    ``:owns rdfs:range :Possession``. Full enforcement dropped all 26 to catch
+    the single genuine error (``Jon owns students``).
+
+    So the ontology is narrower than the data, and a range miss is NOT by itself
+    evidence of a wrong assertion. Only a CONFIDENT person-object is.
+
+    PRODUCT is the case that pins the confidence floor rather than the class
+    rule: the type->class embedding maps PRODUCT onto Person at 0.580, which
+    clears ``_ONT_CLASS_MIN_SIM`` (0.45). Gating on the class alone therefore
+    still deleted ``Gina owns fashion pieces`` and ``Gina owns online store``.
+    Requiring a confident match (a type-label hit scores 1.0) leaves them.
+
+    Measured over all 37 annotated edges in lg30o: 36 kept, 1 blocked, and the
+    one blocked is ``Jon owns students``.
+    """
+    from graphknows.ingestion.stm.ingest import _STMIngestHandler
+
+    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+    assert handler._map_predicate("HAS", object_type)[0] == "owns"

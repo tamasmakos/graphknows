@@ -44,6 +44,21 @@ _ONT_TAG_TOP_K = 3
 # entity unmapped is the safe outcome, so the floor errs high.
 _ONT_CLASS_MIN_SIM = 0.45
 
+# The one class the range gate enforces against (see _range_admits). Asserting a
+# non-person-ranged property over a person is the whole observed defect; every
+# other range mismatch is the ontology being narrower than the data.
+_PERSON_CLASS = "person"
+
+# The gate only fires on a CONFIDENT person, which in practice means the
+# extractor's type label matched an ontology class outright (_map_to_class
+# returns 1.0 for a label hit, and an embedding cosine below it otherwise).
+# Measured on conv-30/lg30o: type->class embedding puts PRODUCT at Person 0.580
+# and OCCUPATION at Activity 0.613 — both above _ONT_CLASS_MIN_SIM, so an
+# embedding-strength match is not evidence enough to delete an annotation. At
+# this floor the gate blocks `Jon owns students` and leaves `Gina owns fashion
+# pieces` / `Gina owns online store` alone.
+_RANGE_GATE_MIN_CLASS_SIM = 0.9
+
 
 class _STMIngestHandler:
     """Ingest parsed text into the golden GraphStore (state='raw').
@@ -80,11 +95,20 @@ class _STMIngestHandler:
         self._property_mapper: Any = None
         self._uri_by_label: dict[str, str] = {}
         self._type_cache: dict[str, tuple[str, str, float]] = {}
+        # rdfs:range per property label, and each class's parent chain — the two
+        # halves of the range gate in _range_admits. Both are already parsed by
+        # the loader; the mapper is a pure string matcher and never sees them.
+        self._range_by_property: dict[str, str] = {}
+        self._parents_by_class: dict[str, tuple[str, ...]] = {}
         if ontology_index is not None:
             from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
 
             self._property_mapper = OntologyPredicateMapper(ontology_index.property_labels)
             self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
+            self._range_by_property = {
+                t.label.casefold(): t.range for t in ontology_index.properties if t.range
+            }
+            self._parents_by_class = {t.label.casefold(): t.parents for t in ontology_index.classes}
         if embed_fn is not None:
             self._embed_fn = embed_fn
         else:
@@ -458,7 +482,7 @@ class _STMIngestHandler:
                 not is_graph_entity_name(rel["tail"], rel.get("tail_type", ""))
             ):
                 continue
-            ont_property, map_score = self._map_predicate(rel["relation"])
+            ont_property, map_score = self._map_predicate(rel["relation"], rel.get("tail_type", ""))
             await self._store.write_relation(
                 rel["head"],
                 rel["relation"],
@@ -606,12 +630,69 @@ class _STMIngestHandler:
         if mappings:
             await self._store.write_instance_of(mappings)
 
-    def _map_predicate(self, predicate: str) -> tuple[str, float]:
-        """Map a relation predicate onto an ontology property label."""
+    def _map_predicate(self, predicate: str, object_type: str = "") -> tuple[str, float]:
+        """Map a relation predicate onto an ontology property label.
+
+        Gated by the property's declared ``rdfs:range``: the surface-alias table
+        maps the bare predicate "has" onto ``owns``, which is right for a
+        possession and wrong for a person, and the mapper is a pure string
+        matcher that never sees the object. The ontology already carries what
+        settles it, so the range decides rather than a special case per alias.
+        """
         if self._property_mapper is None or not predicate:
             return "", 0.0
         label, score = self._property_mapper.map_predicate(predicate)
+        if label and not self._range_admits(label, object_type):
+            return "", 0.0
         return (label or ""), score
+
+    def _range_admits(self, property_label: str, object_type: str) -> bool:
+        """Can an object of ``object_type`` satisfy the property's ``rdfs:range``?
+
+        Enrichment, never a filter: an undeclared range or an unmappable object
+        type ADMITS, and a blocked mapping drops only the ``ontology_property``
+        annotation — the relation is still written under its extracted predicate.
+
+        A satisfied range admits. An UNsatisfied one admits too, unless the
+        object is a person. Enforcing every declared range was measured on
+        conv-30 (369 turns, namespace ``lg30o``) and is far too strict: of 27
+        ``owns`` edges, 26 are correct (``collection``, ``store``, ``fashion
+        pieces``, ``business``) and carry types — PLACE, PRODUCT, ORGANIZATION,
+        OCCUPATION — that the bundled ontology's narrow ``rdfs:range
+        :Possession`` does not admit. Full enforcement destroyed all 26 to catch
+        the one real error.
+
+        That one error is ``Jon owns students``, and every instance of this
+        defect has the same shape: a property whose range excludes people,
+        asserted over a person. The surface-alias table maps the bare predicate
+        "has" onto ``owns``, so "my sister Maria" and "my mother" become
+        ownership claims about humans. Restricting the gate to person-objects
+        removes exactly those and keeps the rest.
+        """
+        declared = self._range_by_property.get(property_label.casefold(), "")
+        if not declared:
+            return True
+        _uri, obj_label, score = self._map_to_class(object_type)
+        if not obj_label:
+            return True
+        ancestors = self._class_ancestors(obj_label)
+        if declared.casefold() in ancestors:
+            return True
+        if score < _RANGE_GATE_MIN_CLASS_SIM:
+            return True  # not confident the object is a person — leave it alone
+        return _PERSON_CLASS not in ancestors
+
+    def _class_ancestors(self, label: str) -> set[str]:
+        """``label`` plus its transitive rdfs:subClassOf parents, casefolded."""
+        seen: set[str] = set()
+        frontier = [label.casefold()]
+        while frontier:
+            current = frontier.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            frontier.extend(p.casefold() for p in self._parents_by_class.get(current, ()))
+        return seen
 
     @staticmethod
     def _dedupe_nested(fills: list[str]) -> list[str]:
