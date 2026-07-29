@@ -211,6 +211,40 @@ def _clean_surface(text: str) -> str:
     return cleaned
 
 
+# WordNet noun supersenses -> the NER taxonomy the rest of the graph speaks.
+# _arg_type falls back to a supersense when NER does not label a relation
+# argument, and ENTITY.type is first-write-wins, so an entity first seen as a
+# relation endpoint kept the supersense forever: measured on conv-30, every
+# entity whose type sat outside the taxonomy was a relation endpoint
+# ('clothes store' noun.artifact, 'stress buster' noun.person, 'target audience'
+# noun.group). Two vocabularies in one column make ENTITY.type unqueryable, and
+# the supersense form also reaches the ontology class-matcher as an unknown
+# label, where it can only ever score by embedding.
+#
+# A supersense with no defensible taxonomy equivalent maps to "" — untyped, not
+# wrong — which coalesce lets a later NER write fill in.
+_SUPERSENSE_TO_TYPE = {
+    "noun.person": "PERSON",
+    "noun.group": "ORGANIZATION",
+    "noun.location": "LOCATION",
+    "noun.artifact": "ARTIFACT",
+    "noun.event": "EVENT",
+    "noun.act": "ACTIVITY",
+    "noun.possession": "POSSESSION",
+    "noun.time": "TIME",
+    "noun.animal": "ANIMAL",
+    "noun.feeling": "EMOTION",
+    "noun.food": "PRODUCT",
+    "noun.body": "ARTIFACT",
+    "noun.communication": "ARTIFACT",
+}
+
+
+def _taxonomy_type(supersense: str) -> str:
+    """A WordNet supersense rendered in the graph's own type vocabulary."""
+    return _SUPERSENSE_TO_TYPE.get((supersense or "").strip().lower(), "")
+
+
 def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
     """Type for a relation argument: spaCy/GLiNER2 NER label, else WordNet supersense.
 
@@ -219,6 +253,10 @@ def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
     "cat", "job") reached the graph untyped, leaving the type space too degenerate
     to condition on. The supersense ("noun.person", "noun.artifact", ...) is
     already computed inside svo's concreteness gates and was being discarded.
+
+    The supersense is translated into the graph's own taxonomy before it is
+    returned (see ``_SUPERSENSE_TO_TYPE``); it must never reach ENTITY.type in
+    WordNet's vocabulary.
 
     Returns "" — NOT a placeholder — when the argument is neither NER-typed nor in
     WordNet. ENTITY.type is written first-write-wins (``coalesce``), so emitting a
@@ -229,7 +267,7 @@ def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
         (e["type"] for e in entities if e["name"].casefold() == arg.casefold()),
         "",
     )
-    return named or noun_supersense(arg)
+    return named or _taxonomy_type(noun_supersense(arg))
 
 
 def _canonical_type(raw_label: str, label_to_type: dict[str, str]) -> str:

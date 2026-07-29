@@ -224,6 +224,11 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY ENTITY.ontology_class IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY ENTITY.ontology_class_score IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY REL.ontology_property IF NOT EXISTS STRING"),
+    # Sticky "do not annotate this edge". The ontology range gate runs per chunk,
+    # and the same edge is written once per chunk that asserts it — so without a
+    # record of a REFUSAL, a refusal is indistinguishable from having nothing to
+    # say (both arrive as NULL) and coalesce lets a single permissive write win.
+    ("sql", "CREATE PROPERTY REL.ontology_blocked IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE PROPERTY REL.map_score IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY REL.verifier_score IF NOT EXISTS DOUBLE"),
 ]

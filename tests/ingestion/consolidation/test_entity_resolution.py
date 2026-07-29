@@ -310,3 +310,58 @@ async def test_temporal_entities_from_old_ingests_are_dropped() -> None:
     assert "8 may, 2023" not in store.entities
     assert "last saturday" not in store.entities
     assert "may" in store.entities
+
+
+@pytest.mark.asyncio
+async def test_standardization_elects_the_singular_even_when_the_plural_leads() -> None:
+    """The standardization layer must name the survivor for the SINGULAR form.
+
+    ``_canonical`` breaks ties on the longest surface, which in a {style, styles}
+    group is always the plural — so the layer whose stated job is to "collapse
+    morphological (plural) variants" was standardising onto the plural.
+
+    The observable damage is provenance: a MENTIONS edge points at a name its own
+    chunk never used. Measured on conv-30 (namespace lg30v3) 38 of 2491 MENTIONS
+    were in that state -- ``downs`` x8, ``dreams`` x7, ``customers``, ``plans``,
+    ``projects``, ``styles``. ``downs``, typed EMOTION, was minted from "don't
+    let it get you down".
+
+    Here the plural also has MORE mentions, so this pins the rule rather than the
+    tiebreak: singular wins on being the standard form, not on counting.
+    """
+    store = FakeStore(
+        entities=[
+            {"name_norm": "downs", "name": "downs", "type": "EMOTION", "mention_count": 8},
+            {"name_norm": "down", "name": "down", "type": "EMOTION", "mention_count": 2},
+        ],
+        speakers=["gina"],
+    )
+    await resolve_entities(store, "conv-30")
+
+    assert set(store.entities) == {"down"}, "the singular must be the surviving node"
+    assert store.entities["down"]["name"] == "down"
+    # The merge is not lost — the plural's mentions come across.
+    assert store.entities["down"]["mention_count"] == 10
+
+
+@pytest.mark.asyncio
+async def test_all_plural_group_still_merges() -> None:
+    """No singular member present -> fall back to the old rule rather than skip."""
+    store = FakeStore(
+        entities=[
+            {"name_norm": "glasses", "name": "glasses", "type": "ARTIFACT", "mention_count": 5},
+            {"name_norm": "glass", "name": "glass", "type": "ARTIFACT", "mention_count": 1},
+        ],
+        speakers=["gina"],
+    )
+    await resolve_entities(store, "conv-30")
+    assert set(store.entities) == {"glass"}
+
+
+@pytest.mark.asyncio
+async def test_nickname_layer_still_prefers_the_longer_surface() -> None:
+    """The singular rule is scoped to standardization; 'mel' must still lose to 'Melanie'."""
+    store = _mel_caroline_store()
+    await resolve_entities(store, "conv-26")
+    assert "melanie" in store.entities
+    assert "mel" not in store.entities

@@ -489,6 +489,11 @@ class _STMIngestHandler:
             ):
                 continue
             ont_property, map_score = self._map_predicate(rel["relation"], rel.get("tail_type", ""))
+            # A refusal is a verdict about this edge, not a lack of one, and it
+            # has to outlive the chunk that made it: the same edge is written
+            # once per chunk asserting it, and those chunks disagree about the
+            # object's type. See write_relation's ontology_blocked.
+            blocked = self._range_blocked(rel["relation"], rel.get("tail_type", ""))
             await self._store.write_relation(
                 rel["head"],
                 rel["relation"],
@@ -502,6 +507,7 @@ class _STMIngestHandler:
                 ontology_property=ont_property,
                 map_score=map_score,
                 verifier_score=rel.get("verifier_score"),
+                ontology_blocked=blocked,
             )
 
         # DSPy ontology-guided relations (llm_assisted mode only).
@@ -651,6 +657,18 @@ class _STMIngestHandler:
         if label and not self._range_admits(label, object_type):
             return "", 0.0
         return (label or ""), score
+
+    def _range_blocked(self, predicate: str, object_type: str) -> bool:
+        """Did the range gate REFUSE to annotate this predicate for this object?
+
+        Distinct from "there was nothing to map": an unmappable predicate is
+        silence, a refused one is a verdict that must survive later writes of the
+        same edge from other chunks.
+        """
+        if self._property_mapper is None or not predicate:
+            return False
+        label, _score = self._property_mapper.map_predicate(predicate)
+        return bool(label) and not self._range_admits(label, object_type)
 
     def _range_admits(self, property_label: str, object_type: str) -> bool:
         """Can an object of ``object_type`` satisfy the property's ``rdfs:range``?

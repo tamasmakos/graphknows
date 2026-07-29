@@ -294,3 +294,44 @@ def test_range_gate_fires_on_a_wordnet_supersense_person(index):
     assert handler._map_predicate("HAS", "noun.person") == ("", 0.0)
     # ...while the WRONG Person mapping stays below the floor and is left alone.
     assert handler._map_predicate("HAS", "PRODUCT")[0] == "owns"
+
+
+def test_a_refusal_is_reported_separately_from_silence(index):
+    """The gate must distinguish "I refuse to annotate this" from "nothing to map".
+
+    Both used to reach the store as an empty ``ontology_property``, and
+    ``write_relation`` coalesces — first non-null wins. The same edge is written
+    once per chunk that asserts it, and those chunks disagree about the object's
+    type, so one permissive chunk overrode every refusing one.
+
+    Measured on conv-30: ``(Jon, HAS, students)`` is written five times. Four
+    chunks type ``students`` PERSON and refuse; one types it POSSESSION and
+    admits. Under plain coalesce the single admit won and the graph published
+    ``Jon owns students`` — through TWO full re-ingests with the gate in place.
+    """
+    from graphknows.ingestion.stm.ingest import _STMIngestHandler
+
+    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+
+    # A person object: the predicate maps, and the gate refuses it.
+    assert handler._map_predicate("HAS", "PERSON") == ("", 0.0)
+    assert handler._range_blocked("HAS", "PERSON") is True
+
+    # A possession object: mapped and admitted -> no refusal to record.
+    assert handler._map_predicate("HAS", "POSSESSION")[0] == "owns"
+    assert handler._range_blocked("HAS", "POSSESSION") is False
+
+    # An unmappable predicate is SILENCE, not a refusal — it must not become
+    # sticky, or one unmappable chunk would suppress every later annotation.
+    # (map_predicate still reports the below-threshold similarity alongside the
+    # empty label, so assert on the label rather than the pair.)
+    assert handler._map_predicate("photosynthesizes", "PERSON")[0] == ""
+    assert handler._range_blocked("photosynthesizes", "PERSON") is False
+
+
+def test_no_ontology_configured_never_blocks(index):
+    """Without an ontology there is no gate, so nothing is ever refused."""
+    from graphknows.ingestion.stm.ingest import _STMIngestHandler
+
+    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=None)
+    assert handler._range_blocked("HAS", "PERSON") is False

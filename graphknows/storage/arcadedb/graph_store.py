@@ -474,6 +474,7 @@ class GraphStore(ArcadeStoreBase):
         ontology_property: str = "",
         map_score: float = 0.0,
         verifier_score: float | None = None,
+        ontology_blocked: bool = False,
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
@@ -490,6 +491,15 @@ class GraphStore(ArcadeStoreBase):
         ``ontology_property``/``map_score`` annotate the edge with the ontology
         property its predicate mapped onto, when an ontology is configured. They
         are annotations only — an unmapped predicate is written unchanged.
+
+        ``ontology_blocked`` records that a caller's range gate REFUSED to
+        annotate this edge, and once true it is sticky: no later write can
+        annotate it. The distinction matters because the gate runs per chunk and
+        the same edge is written once per chunk asserting it. Measured on
+        conv-30, (Jon, HAS, students) is written five times — four chunks type
+        ``students`` PERSON and refuse, one types it POSSESSION and admits — and
+        under plain coalesce the single admit won, publishing `Jon owns
+        students`. A refusal is a verdict, not an absence of one.
 
         ``verifier_score`` is the relation verifier's judgment of this triple
         (see relations/verifier.py). It merges like ``confidence`` — the max
@@ -548,8 +558,13 @@ class GraphStore(ArcadeStoreBase):
             f"    r.is_current = true, "
             f"    r.state = coalesce(r.state, 'raw'), "
             f"    r.source = coalesce(r.source, $source), "
-            f"    r.ontology_property = coalesce(r.ontology_property, $ont_prop), "
-            f"    r.map_score = coalesce(r.map_score, $map_score), "
+            f"    r.ontology_blocked = coalesce(r.ontology_blocked, false) OR $ont_blocked, "
+            f"    r.ontology_property = CASE "
+            f"        WHEN coalesce(r.ontology_blocked, false) OR $ont_blocked THEN null "
+            f"        ELSE coalesce(r.ontology_property, $ont_prop) END, "
+            f"    r.map_score = CASE "
+            f"        WHEN coalesce(r.ontology_blocked, false) OR $ont_blocked THEN null "
+            f"        ELSE coalesce(r.map_score, $map_score) END, "
             f"    {verifier_set}"
             f"    r.created_at = coalesce(r.created_at, $now)",
             src_nn=src_norm,
@@ -565,9 +580,30 @@ class GraphStore(ArcadeStoreBase):
             dst_type=dst_type or None,
             ont_prop=ontology_property or None,
             map_score=float(map_score) or None,
+            ont_blocked=bool(ontology_blocked),
             vscore=None if verifier_score is None else float(verifier_score),
             now=now,
         )
+
+        # Provenance for the endpoints this call just MERGEd. Without it an
+        # entity that only ever appears as a relation argument has no edge back
+        # to any chunk: measured on conv-30, 4 of 49 relation endpoints
+        # ('clothes store', 'running', 'stress buster', 'target audience') were
+        # reachable from no CHUNK at all, so nothing could explain where they
+        # came from and the entity->chunk retrieval path could not see them.
+        # The chunk is already known here — it is the same one recorded in
+        # r.evidence — so this adds provenance, never a new claim.
+        if chunk_id:
+            await self.command(
+                "MATCH (c:CHUNK {chunk_id: $cid}) "
+                "MATCH (e:ENTITY) WHERE e.name_norm IN [$src_nn, $dst_nn] "
+                "MERGE (c)-[m:MENTIONS]->(e) "
+                "SET m.confidence = coalesce(m.confidence, $conf)",
+                cid=chunk_id,
+                src_nn=src_norm,
+                dst_nn=dst_norm,
+                conf=float(confidence),
+            )
 
     # ------------------------------------------------------------------
     # Write API — temporal / frames / topics

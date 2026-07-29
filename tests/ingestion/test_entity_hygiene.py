@@ -423,3 +423,48 @@ class TestDeterminerStripping:
         ]
         out = _dedupe_entities(raw, {"occupation": "OCCUPATION"}, frozenset())
         assert [e["name"] for e in out] == ["banker"]
+
+
+class TestSupersenseTypesReachTheTaxonomy:
+    """A relation endpoint must not carry WordNet's vocabulary into ENTITY.type.
+
+    ``_arg_type`` falls back to a WordNet supersense when NER does not label a
+    relation argument, and ``ENTITY.type`` is first-write-wins, so an entity
+    first seen as a relation endpoint kept that supersense permanently. Measured
+    on conv-30 (namespace lg30v3): EVERY entity whose type sat outside the
+    taxonomy was a relation endpoint — ``clothes store`` noun.artifact,
+    ``customer base`` noun.artifact, ``stress buster`` noun.person, ``target
+    audience`` noun.group.
+
+    Two vocabularies in one column make ENTITY.type unqueryable, and the
+    supersense form also reaches the ontology class matcher as an unknown label,
+    where it can only ever score by embedding (``noun.person`` -> Person 0.840
+    rather than the 1.000 a label hit gives).
+    """
+
+    def test_supersense_is_translated(self) -> None:
+        from graphknows.ingestion.extraction.entities.extractor import _taxonomy_type
+
+        assert _taxonomy_type("noun.person") == "PERSON"
+        assert _taxonomy_type("noun.group") == "ORGANIZATION"
+        assert _taxonomy_type("noun.artifact") == "ARTIFACT"
+
+    def test_unmapped_supersense_goes_untyped_not_wrong(self) -> None:
+        """ "" is the safe answer: coalesce lets a later NER write fill it in."""
+        from graphknows.ingestion.extraction.entities.extractor import _taxonomy_type
+
+        assert _taxonomy_type("noun.tops") == ""
+        assert _taxonomy_type("") == ""
+
+    def test_arg_type_never_returns_wordnet_vocabulary(self) -> None:
+        from graphknows.ingestion.extraction.entities.extractor import _arg_type
+
+        # Not in the entity list -> falls through to the supersense path.
+        assert not _arg_type("students", []).startswith("noun.")
+        assert _arg_type("students", []) == "PERSON"
+
+    def test_ner_label_still_wins_over_the_supersense(self) -> None:
+        from graphknows.ingestion.extraction.entities.extractor import _arg_type
+
+        entities = [{"name": "Maria", "type": "PERSON"}]
+        assert _arg_type("Maria", entities) == "PERSON"

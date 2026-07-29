@@ -154,8 +154,33 @@ def _is_proper(entity: dict[str, Any]) -> bool:
 
 
 def _canonical(members: list[dict[str, Any]]) -> dict[str, Any]:
-    """Pick the canonical entity of a merge group: most mentions, then longest surface."""
+    """Pick the canonical entity of a merge group: most mentions, then longest surface.
+
+    Correct for the nickname and speaker-prefix layers, where the longer surface
+    IS the fuller name ("mel" -> "Melanie"). Wrong for the standardization layer
+    — see :func:`_standard_canonical`.
+    """
     return max(members, key=lambda m: (m.get("mention_count", 0), len(m["name"])))
+
+
+def _standard_canonical(key: str, members: list[dict[str, Any]]) -> dict[str, Any]:
+    """Canonical entity of a plural-variant group: the SINGULAR surface.
+
+    ``_canonical``'s longest-surface tiebreak elects the plural every time in a
+    {style, styles} group, so a layer whose whole job is to "collapse
+    morphological (plural) variants" standardised onto the plural. Measured on
+    conv-30: 38 of 2491 MENTIONS edges pointed at a name absent from their own
+    chunk text — ``downs`` x8, ``dreams`` x7, ``customers``, ``plans``,
+    ``projects`` — because the surviving node was named for a form that chunk
+    never used. ``downs`` (EMOTION), minted from "don't let it get you down", is
+    the shape of it.
+
+    ``key`` is the group's standard key, which is already the singularized form,
+    so the member matching it is the singular. Falls back to ``_canonical`` when
+    no member does (every variant is plural).
+    """
+    exact = [m for m in members if str(m["name_norm"]) == key]
+    return _canonical(exact) if exact else _canonical(members)
 
 
 async def _drop_junk(store: Any) -> int:
@@ -176,10 +201,10 @@ async def _merge_standardized(store: Any) -> int:
         groups.setdefault(_standard_key(e["name"]), []).append(e)
 
     merged = 0
-    for members in groups.values():
+    for key, members in groups.items():
         if len(members) < 2:
             continue
-        winner = _canonical(members)
+        winner = _standard_canonical(key, members)
         for m in members:
             if m["name_norm"] == winner["name_norm"]:
                 continue
