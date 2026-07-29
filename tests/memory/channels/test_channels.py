@@ -31,13 +31,16 @@ class TestBuildChannels:
     def test_default_channels_no_frames(self):
         s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
         names = [c.name for c in build_channels(s)]
+        # `topic` and `ppr` are GONE. topic_mode is `none` in the default preset
+        # so TOPIC count was 0 and the channel returned empty on every query;
+        # ppr had the worst gold precision of six channels measured on conv-30
+        # (367 hits, 12 gold-bearing = 3.3%) and was the only consumer of REL
+        # edges, which is why improving the relation layer never moved recall.
         assert names == [
             "entity",
             "vector",
             "bm25",
             "temporal",
-            "topic",
-            "ppr",
         ]
         assert "frame" not in names
 

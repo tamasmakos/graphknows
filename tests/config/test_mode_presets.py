@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.exceptions import ConfigurationError
 from graphknows.settings import (
     GraphKnowsSettings,
     MemoryMode,
@@ -29,7 +28,8 @@ class TestPresetExpansion:
         s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_assisted)
         assert s.topic_mode is TopicMode.llm
         assert s.dspy_relations is True
-        assert s.retrieval_strategy is RetrievalStrategy.agentic
+        # agentic retrieval is gone; every mode resolves to the one strategy.
+        assert s.retrieval_strategy is RetrievalStrategy.det
         assert s.uses_llm is True
 
     def test_default_matches_llm_free(self) -> None:
@@ -52,15 +52,6 @@ class TestKnobOverrides:
         assert s.dspy_relations is False  # untouched by the override
         assert s.retrieval_strategy is RetrievalStrategy.det
         assert s.uses_llm is False  # extractive topics make no network call
-
-    def test_agentic_retrieval_under_llm_free(self) -> None:
-        s = GraphKnowsSettings(
-            GRAPHKNOWS_MODE=MemoryMode.llm_free,
-            GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.agentic,
-        )
-        assert s.retrieval_strategy is RetrievalStrategy.agentic
-        assert s.dspy_relations is False
-        assert s.uses_llm is True
 
     def test_dspy_disabled_under_llm_assisted(self) -> None:
         s = GraphKnowsSettings(
@@ -138,16 +129,6 @@ class TestProductionGuard:
             GRAPHKNOWS_ARCADEDB_PASSWORD="secret",
             GRAPHKNOWS_LLM_API_KEY="",
         )  # must not raise
-
-    def test_agentic_retrieval_needs_a_key_even_in_llm_free(self) -> None:
-        with pytest.raises(ConfigurationError, match="GRAPHKNOWS_LLM_API_KEY"):
-            GraphKnowsSettings(
-                GRAPHKNOWS_ENV="production",
-                GRAPHKNOWS_ARCADEDB_PASSWORD="secret",
-                GRAPHKNOWS_LLM_API_KEY="",
-                GRAPHKNOWS_MODE=MemoryMode.llm_free,
-                GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.agentic,
-            )
 
     def test_llm_assisted_with_capabilities_off_needs_no_key(self) -> None:
         GraphKnowsSettings(

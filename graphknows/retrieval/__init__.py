@@ -1,7 +1,7 @@
 """retrieval — the read path: collect (channels) -> rank (RRF/rerank) -> context.
 
 ``build_retriever(settings, store)`` is the one place a retrieval strategy is
-selected: ``agentic`` returns the ReAct retriever (which wraps the deterministic
+selected: the deterministic retriever (the only one)
 engine), ``det`` returns the deterministic engine driven by the configured
 channels. Both read from the one per-namespace
 :class:`~graphknows.storage.arcadedb.graph_store.GraphStore`.
@@ -33,17 +33,13 @@ def build_retriever(
     Args:
         settings: Runtime configuration.
         store: A connected per-namespace GraphStore, shared across strategies.
-        strategy: ``det`` or ``agentic``; empty selects
+        strategy: ``det`` (the only strategy); empty selects
             :attr:`~graphknows.settings.GraphKnowsSettings.retrieval_strategy`.
 
     Raises:
         ValueError: When ``strategy`` is not a known strategy name.
     """
-    resolved = RetrievalStrategy(strategy) if strategy else settings.retrieval_strategy
-    if resolved is RetrievalStrategy.agentic:
-        from graphknows.retrieval.agentic import AgenticRetriever
-
-        return AgenticRetriever(settings=settings, store=store)
+    RetrievalStrategy(strategy) if strategy else settings.retrieval_strategy  # validates
 
     from graphknows.channels.registry import default_channels
     from graphknows.retrieval.retriever import DETRetriever
@@ -62,7 +58,6 @@ def __getattr__(name: str) -> Any:
     """
     lazy = {
         "DETRetriever": ("graphknows.retrieval.retriever", "DETRetriever"),
-        "AgenticRetriever": ("graphknows.retrieval.agentic", "AgenticRetriever"),
     }
     target = lazy.get(name)
     if target is None:

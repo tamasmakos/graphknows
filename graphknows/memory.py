@@ -19,11 +19,6 @@ from graphknows.settings import GraphKnowsSettings
 
 logger = logging.getLogger(__name__)
 
-# Ceiling on a single recall. A bound against a runaway request, NOT a tuning
-# knob — the caller decides how much memory it wants and pays the context for
-# it. Matches the MCP memory_query tool's own ceiling so the two agree.
-_MAX_RECALL_TOP_K = 100
-
 
 def _format_fused_hits(
     fused_results: list[dict[str, Any]], session_id: str
@@ -419,21 +414,12 @@ class Memory:
         to False so the MCP server and web UI keep today's session-scoped graph
         behaviour unless they opt in.
         """
-        # Honour what the caller asked for, up to a ceiling that exists only to
-        # bound a runaway request — and SAY SO when it binds. This clamped to 25
-        # silently: a caller asking for 50 got 25 with no error and no log, so
-        # the ceiling was indistinguishable from "that is all the memory holds".
-        # Measured on LoCoMo conv-30, evidence_recall was still CLIMBING at the
-        # old cap (k=5 0.510, k=10 0.552, k=25 0.636), so the cap was discarding
-        # evidence the retriever had already ranked and paid for.
-        if top_k > _MAX_RECALL_TOP_K:
-            logger.warning(
-                "recall_memory: top_k=%d exceeds the ceiling %d; returning %d hits",
-                top_k,
-                _MAX_RECALL_TOP_K,
-                _MAX_RECALL_TOP_K,
-            )
-        top_k = max(1, min(top_k, _MAX_RECALL_TOP_K))
+        # No ceiling. The caller decides how much memory it wants and pays the
+        # context for it. A cap here was measured discarding evidence the
+        # retriever had already ranked: a recall-vs-depth sweep on conv-30
+        # plateaued at 0.827 under the old cap of 100 and reads as gold chunks
+        # being UNREACHABLE, when lifting it reaches 1.000 at k=369.
+        top_k = max(1, top_k)
         if scope not in {"stm", "ltm", "both"}:
             scope = "both"
 

@@ -13,16 +13,18 @@ from typing import TYPE_CHECKING
 
 from graphknows.channels.base import Channel
 from graphknows.channels.collectors import DEFAULT_COLLECTOR_CHANNELS
-from graphknows.channels.graph_ppr import GraphPPRChannel
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
 
 # name -> channel class. Insertion order defines the default fusion order.
+#
+# No graph-traversal channel. Measured on conv-30, `ppr` returned 367 hits for 12
+# gold-bearing ones (3.3% -- the worst of six channels) and was the ONLY consumer
+# of REL edges, which is why every improvement to the relation layer measured
+# flat on retrieval. `topic` is gone for a simpler reason: topic_mode is `none`
+# in both presets, so it returned empty on every query.
 CHANNEL_REGISTRY: dict[str, type[Channel]] = {cls.name: cls for cls in DEFAULT_COLLECTOR_CHANNELS}
-# Personalized-PageRank graph channel — seeds on query entities, propagates over
-# the relation graph. Fused alongside the deterministic collectors.
-CHANNEL_REGISTRY[GraphPPRChannel.name] = GraphPPRChannel
 
 
 def register(name: str, channel_cls: type[Channel]) -> None:

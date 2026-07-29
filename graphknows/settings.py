@@ -35,7 +35,7 @@ class MemoryMode(StrEnum):
 
     - ``llm_free``: no network LLM call on the ingestion or retrieval hot path.
     - ``llm_assisted``: adds DSPy relation extraction, LLM topic summaries, and
-      the agentic retriever.
+      LLM-backed capabilities.
     """
 
     llm_free = "llm_free"
@@ -60,14 +60,12 @@ class RetrievalStrategy(StrEnum):
     """Which retriever answers a query.
 
     - ``det``: deterministic hybrid channels + RRF fusion.
-    - ``agentic``: ReAct loop over the deterministic retriever's collectors.
 
     Independent of how the graph was ingested: nothing writes a mode marker to
     the store, so either strategy runs over any namespace.
     """
 
     det = "det"
-    agentic = "agentic"
 
 
 @dataclass(frozen=True)
@@ -88,7 +86,7 @@ _PRESETS: dict[MemoryMode, _Preset] = {
     MemoryMode.llm_assisted: _Preset(
         topics=TopicMode.llm,
         dspy_relations=True,
-        retrieval=RetrievalStrategy.agentic,
+        retrieval=RetrievalStrategy.det,
     ),
 }
 
@@ -264,11 +262,7 @@ class GraphKnowsSettings(BaseSettings):
     @property
     def uses_llm(self) -> bool:
         """Whether any resolved capability makes network LLM calls."""
-        return (
-            self.dspy_relations
-            or self.topic_mode is TopicMode.llm
-            or self.retrieval_strategy is RetrievalStrategy.agentic
-        )
+        return self.dspy_relations or self.topic_mode is TopicMode.llm
 
     def check_production_secrets(self) -> None:
         """Raise if running in production with unsafe defaults.
@@ -287,11 +281,11 @@ class GraphKnowsSettings(BaseSettings):
                 "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
             )
         # Keyed off the resolved capabilities, not the mode: llm_free with
-        # GRAPHKNOWS_RETRIEVAL=agentic needs a key, and llm_assisted with every
+        # llm_assisted with every
         # LLM capability disabled does not.
         if self.uses_llm and not self.llm_api_key:
             raise ConfigurationError(
-                "LLM-backed capabilities (DSPy relations, LLM topics, agentic "
+                "LLM-backed capabilities (DSPy relations, LLM topics) "
                 "retrieval) in production require GRAPHKNOWS_LLM_API_KEY."
             )
 

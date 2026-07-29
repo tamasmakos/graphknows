@@ -67,18 +67,13 @@ class TemporalChannel(Channel):
         )
 
 
-# TopicChannel lives in channels/topics.py — it routes to member chunks and
-# needs its own saturation guard, which outgrew a delegating one-liner.
-from graphknows.channels.topics import TopicChannel  # noqa: E402
-
 # The default retrieval channel set, in fusion order. The registry appends
-# optional channels (e.g. ppr, frames).
+# optional channels (frames when enabled, ontology when one is configured).
 DEFAULT_COLLECTOR_CHANNELS: list[type[Channel]] = [
     EntityChannel,
     VectorChannel,
     Bm25Channel,
     TemporalChannel,
-    TopicChannel,
 ]
 
 __all__ = [
@@ -86,6 +81,5 @@ __all__ = [
     "Bm25Channel",
     "EntityChannel",
     "TemporalChannel",
-    "TopicChannel",
     "VectorChannel",
 ]
