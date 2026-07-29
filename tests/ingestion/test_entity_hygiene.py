@@ -329,3 +329,97 @@ def test_scraped_turn_line_speaker_still_wins_for_its_own_sentence() -> None:
     assert triples
     blob = str(triples).casefold()
     assert "jon" in blob and "gina" not in blob
+
+
+class TestVerbSurfacesAreNotEntities:
+    """Predicate spans returned as entities are dropped — using CONTEXT, not a lexicon.
+
+    Measured on conv-30 (namespace ``lgdemo``, 941 entities): of the 912 whose
+    mention could be located in a chunk, 164 (18.0%) are verb-headed where they
+    actually occur — ``starting``, ``take``, ``Lost``, ``speaks``, ``explore``,
+    ``Winning`` — and the extractor types most of them PERSON (79) or EVENT (52).
+
+    The reason this reads the doc rather than the name: tagging those same names
+    in ISOLATION calls a further 67 of them (7.3%) verbs when the parser reads
+    them as nouns in their own sentence — ``shot`` in "take a shot at starting",
+    ``work`` in "after work", ``dances`` in "I love all dances", ``moves`` in
+    "see my moves". A lexicon or a string rule deletes exactly those. An earlier
+    pass of this audit reported 26.1% from the isolated tagging; the in-context
+    figure is 18.0%.
+    """
+
+    @staticmethod
+    def _doc(text: str):
+        import spacy
+
+        from graphknows.settings import GraphKnowsSettings
+
+        return spacy.load(GraphKnowsSettings().spacy_model, disable=["ner"])(text)
+
+    def test_verb_only_surface_is_mined(self) -> None:
+        from graphknows.ingestion.extraction.entities.extractor import _mine_verb_surfaces
+
+        surfaces = _mine_verb_surfaces(self._doc("I explore the city and she speaks Italian."))
+        assert "explore" in surfaces
+        assert "speaks" in surfaces
+        assert "city" not in surfaces
+
+    def test_surface_used_as_a_noun_is_not_mined(self) -> None:
+        """`work` is a verb AND a noun here — mining it would delete a real entity."""
+        from graphknows.ingestion.extraction.entities.extractor import _mine_verb_surfaces
+
+        surfaces = _mine_verb_surfaces(self._doc("I work at the store after work."))
+        assert "work" not in surfaces
+
+    def test_noun_reading_survives(self) -> None:
+        """The 7.3% an isolated-tagging rule would wrongly drop."""
+        from graphknows.ingestion.extraction.entities.extractor import _mine_verb_surfaces
+
+        surfaces = _mine_verb_surfaces(
+            self._doc("Lost my job as a banker, so I'm gonna take a shot at it.")
+        )
+        assert "shot" not in surfaces
+
+    def test_dedupe_drops_a_verb_surface(self) -> None:
+        raw = [
+            {"text": "speaks", "label": "person", "score": 0.9},
+            {"text": "Maria", "label": "person", "score": 0.9},
+        ]
+        out = _dedupe_entities(raw, {"person": "PERSON"}, frozenset(), frozenset({"speaks"}))
+        assert [e["name"] for e in out] == ["Maria"]
+
+    def test_dedupe_without_verb_surfaces_is_unchanged(self) -> None:
+        raw = [{"text": "speaks", "label": "person", "score": 0.9}]
+        assert len(_dedupe_entities(raw, {"person": "PERSON"}, frozenset())) == 1
+
+
+class TestDeterminerStripping:
+    """A leading article is not part of the entity, and it forks the merge key.
+
+    Measured on conv-30: 31 names carry one (``a banker``, ``the ideal spot``,
+    ``The process``), each becoming a second ENTITY node for a referent that
+    already has one.
+    """
+
+    def test_article_is_stripped(self) -> None:
+        from graphknows.ingestion.extraction.entities.extractor import _strip_determiner
+
+        assert _strip_determiner("a banker") == "banker"
+        assert _strip_determiner("The process") == "process"
+        assert _strip_determiner("an owl") == "owl"
+
+    def test_non_article_prefix_is_untouched(self) -> None:
+        from graphknows.ingestion.extraction.entities.extractor import _strip_determiner
+
+        assert _strip_determiner("Andrew Marr") == "Andrew Marr"
+        assert _strip_determiner("Theatre Royal") == "Theatre Royal"
+        assert _strip_determiner("Ann") == "Ann"
+
+    def test_dedupe_merges_the_determiner_variant(self) -> None:
+        """`a banker` and `banker` are one referent, so one node."""
+        raw = [
+            {"text": "a banker", "label": "occupation", "score": 0.9},
+            {"text": "banker", "label": "occupation", "score": 0.8},
+        ]
+        out = _dedupe_entities(raw, {"occupation": "OCCUPATION"}, frozenset())
+        assert [e["name"] for e in out] == ["banker"]

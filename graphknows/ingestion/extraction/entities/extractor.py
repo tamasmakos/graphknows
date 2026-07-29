@@ -169,6 +169,10 @@ class _DynamicSchema:
     entity_spec: dict[str, dict[str, Any]]
     relation_spec: dict[str, str]
     label_to_type: dict[str, str]
+    # Casefolded surfaces used ONLY as a verb in this chunk (see
+    # _mine_verb_surfaces). Consumed by _dedupe_entities to drop predicate spans
+    # the model returned as entities.
+    verb_surfaces: frozenset[str] = frozenset()
     # Relation triples mined for the chunk (the candidate facts): verb-SVO plus
     # rich dependency-grammar triples (copular/possessive/appositive/noun-prep),
     # each dict as returned by ``extract_relations``; consumed by the _map_raw
@@ -274,10 +278,58 @@ def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
     return name
 
 
+_DETERMINERS = ("a ", "an ", "the ")
+
+
+def _strip_determiner(name: str) -> str:
+    """Drop a leading article: "a banker" -> "banker".
+
+    The determiner is not part of the entity, and it forks the merge key —
+    "a banker" and "banker" become two ENTITY nodes for one referent. Measured
+    on conv-30: 31 names carry one, and they account for a share of the 472
+    nested-span pairs (``('a banker', 'as a banker')``).
+    """
+    low = name.casefold()
+    for det in _DETERMINERS:
+        if low.startswith(det) and len(name) > len(det):
+            return name[len(det) :].strip()
+    return name
+
+
+def _mine_verb_surfaces(doc: Any) -> frozenset[str]:
+    """Casefolded surfaces this chunk uses ONLY as a verb.
+
+    The entity model returns predicate spans as entities: measured on conv-30,
+    164 of 912 mentioned entities (18.0%) are verb-headed where they occur, and
+    the extractor types most of them PERSON (79) or EVENT (52) -- "speaks",
+    "practicing", "explore", "Winning".
+
+    Context is what makes this safe, and a name-only test is not a substitute:
+    tagging the same 912 names in ISOLATION calls 67 more of them verbs (7.3%)
+    that the parser reads as nouns in their own sentence -- "shot" in "take a
+    shot", "work" in "after work", "dances" in "I love all dances". A lexicon or
+    a bare-string rule deletes exactly those.
+
+    A surface is only reported when it appears as a verb and NEVER as a
+    noun/proper noun anywhere in this chunk, so "I work at the store after work"
+    keeps "work".
+    """
+    verbal: set[str] = set()
+    nominal: set[str] = set()
+    for tok in doc:
+        surface = tok.text.casefold()
+        if tok.pos_ in {"VERB", "AUX"}:
+            verbal.add(surface)
+        elif tok.pos_ in {"NOUN", "PROPN"}:
+            nominal.add(surface)
+    return frozenset(verbal - nominal)
+
+
 def _dedupe_entities(
     raw_entities: list[dict[str, Any]],
     label_to_type: dict[str, str],
     speakers: frozenset[str] = frozenset(),
+    verb_surfaces: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Score-ranked, merge-key-deduped entity dicts from one relex span list.
 
@@ -295,9 +347,14 @@ def _dedupe_entities(
         conf = float(span.get("score", 0.0) or 0.0)
         if conf < _BASE_THRESHOLD:
             continue
-        name = _reduce_speaker_span(_clean_surface(str(span.get("text") or "")), speakers)
+        name = _strip_determiner(
+            _reduce_speaker_span(_clean_surface(str(span.get("text") or "")), speakers)
+        )
         label = str(span.get("label") or "").strip()
         if not name or not label or name.casefold() in _PRONOUNS:
+            continue
+        # A span this chunk only ever uses as a verb is a predicate, not a thing.
+        if name.casefold() in verb_surfaces:
             continue
         # relex echoes the schema key it was given (lowercased spaCy label);
         # map back to the canonical NER type the graph stores.
@@ -571,6 +628,7 @@ class _SpacySchemaMiner:
             label_to_type=label_to_type,
             svo_triples=svo_triples,
             speakers=frozenset(scraped | ({speaker.casefold()} if speaker else set())),
+            verb_surfaces=_mine_verb_surfaces(doc),
         )
 
 
@@ -831,7 +889,12 @@ class GLiNER2EntityExtractor:
         """
         # getattr: tests stub the schema with SimpleNamespace and predate the field.
         speakers: frozenset[str] = getattr(dynamic_schema, "speakers", frozenset())
-        entities = _dedupe_entities(raw_entities, dynamic_schema.label_to_type, speakers)
+        entities = _dedupe_entities(
+            raw_entities,
+            dynamic_schema.label_to_type,
+            speakers,
+            getattr(dynamic_schema, "verb_surfaces", frozenset()),
+        )
 
         # relex first, then SVO: a mined triple relex already emitted is dropped
         # here, so the model's own score wins over the structural prior.
