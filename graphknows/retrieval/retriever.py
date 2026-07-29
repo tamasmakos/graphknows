@@ -3,7 +3,7 @@
 Collectors run concurrently over a single per-namespace ``GraphStore``, each
 filtered by a lifecycle ``state`` derived from the query scope (raw /
 consolidated / both): entity traversal, dense vector ANN, BM25, temporal, and
-topic match. The spine is channel-blind — it fuses and reranks only.
+topic match. The spine is channel-blind — it fuses and ranks only.
 
 Topic nodes are LLM-assisted enrichment artifacts; deterministic retrieval
 returns them as synthetic topic-summary hits fused alongside chunk candidates
@@ -11,7 +11,7 @@ like any other channel.
 
 The cross-encoder is the sole ranker: channels only decide pool MEMBERSHIP
 (via RRF fusion), ``_shape_and_rank`` sorts the fused pool by that base score
-purely for deterministic ordering, and the cross-encoder (``rerank.py``)
+purely for deterministic ordering
 re-scores the ENTIRE pool — nothing is cut before it sees every candidate.
 
 WS-2 additions
@@ -19,8 +19,6 @@ WS-2 additions
 * BM25 sparse channel — replaces the homegrown two-pass full-text with a proper
   BM25 ranking (``rank_bm25.BM25Okapi``) over chunk texts, feeding one RRF
   source.
-* Cross-encoder rerank — every fused candidate is re-scored by a local CPU
-  cross-encoder (``rerank.py``); raises if the model is unavailable.
 * PageRank boost and IDF discriminativeness were never wired: the former read
   ``pagerank`` from CHUNK metadata while the value lives on ENTITY nodes (so the
   multiplier was always 1.0), and nothing ever called the latter. Both have been
@@ -46,7 +44,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broke
 
 from graphknows.channels.base import ChannelContext
 from graphknows.channels.temporal import query_date_candidates
-from graphknows.ranking.rerank import rerank as _ce_rerank
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
@@ -153,6 +150,14 @@ def _declarative_variant(question: str) -> str | None:
 # 1). Enable per-corpus via GRAPHKNOWS_NEIGHBOR_RADIUS.
 _NEIGHBOR_RADIUS: int = int(os.environ.get("GRAPHKNOWS_NEIGHBOR_RADIUS", "0"))
 
+# Candidate pool handed to fusion, as a multiple of the caller's top_k with a
+# floor. Retrieve wide, return narrow: fusion can only rank what it was given,
+# and asking each channel for exactly top_k made the pool the same size as the
+# answer. Measured on conv-30 evidence_recall@25 without a reranker: pool=25
+# gives 0.589, pool=100 gives 0.692.
+_POOL_FACTOR: int = int(os.environ.get("GRAPHKNOWS_POOL_FACTOR", "4"))
+_MIN_POOL: int = int(os.environ.get("GRAPHKNOWS_MIN_POOL", "100"))
+
 
 def _fact_context_enabled() -> bool:
     """Whether the D8 structured fact-sheet is fed to the generator (default on).
@@ -178,7 +183,7 @@ class DETRetriever(BaseGraphRetriever):
     ) -> None:
         self.store = store
         self.embed_model = embed_model
-        # Channels provide ranked candidates; this spine fuses/reranks them and is
+        # Channels provide ranked candidates; this spine fuses+ranks them and is
         # channel-blind. Defaults to the seven built-in collectors (behaviour
         # identical to the original hardcoded gather); callers pass a richer set
         # (e.g. + frames) built from settings via channels.registry.
@@ -209,8 +214,15 @@ class DETRetriever(BaseGraphRetriever):
         # Channels run concurrently; a failure in ANY of them raises loudly
         # (no return_exceptions swallow) so a broken channel surfaces immediately
         # rather than silently degrading recall. Each returns chunk_id -> (score,
-        # info); the spine below is channel-blind (fuses + reranks only).
-        sources = await asyncio.gather(*(c.collect(ctx, self, top_k) for c in self._channels))
+        # info); the spine below is channel-blind (fuses + ranks only).
+        # Over-fetch: channels are asked for a POOL, not for the caller's page.
+        # Fusion can only rank what it was handed, and asking each channel for
+        # exactly top_k made the pool the same size as the answer, so a chunk no
+        # single channel ranked in its own top-25 could never be recovered by
+        # agreement between channels. Measured on conv-30, evidence_recall@25:
+        # pool=25 0.589, pool=100 0.692.
+        pool_k = max(top_k * _POOL_FACTOR, _MIN_POOL)
+        sources = await asyncio.gather(*(c.collect(ctx, self, pool_k) for c in self._channels))
         collectors_fired = {c.name: len(s) for c, s in zip(self._channels, sources, strict=False)}
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -218,12 +230,11 @@ class DETRetriever(BaseGraphRetriever):
             for cid, (score, info) in src.items():
                 _add_result(combined, cid, score, info)
 
-        pre_rerank = await self._shape_and_rank(combined)
-
-        # Cross-encoder rerank scores the WHOLE fused pool (raises if the
-        # reranker is unavailable) — it is the only ranker in this pipeline.
-        ranked = await asyncio.to_thread(_ce_rerank, query, pre_rerank, len(pre_rerank))
-        fused = ranked[:top_k]
+        # The fused RRF score IS the ranking. A cross-encoder used to re-score
+        # this pool and was measured WORSE at every depth a caller uses
+        # (evidence_recall@25 0.567 against 0.692 without it) at 3.5x the wall
+        # clock; see tests/retrieval/test_no_cross_encoder.py.
+        fused = (await self._shape_and_rank(combined))[:top_k]
         fused = await self._expand_neighbors(fused)
         for i, item in enumerate(fused):
             item["rank"] = i + 1
@@ -312,9 +323,10 @@ class DETRetriever(BaseGraphRetriever):
     ) -> list[dict[str, Any]]:
         """Fetch missing metadata, build the row dicts, and sort by fused score.
 
-        The cross-encoder is the sole ranker downstream; this sort exists only
-        so the pool has a deterministic pre-rerank order (e.g. for tie-breaking
-        and tracing), not to shape which candidates survive.
+        This sort IS the ranking — it decides which candidates survive the
+        top-k cut. It was previously described as a mere tie-break ahead of a
+        cross-encoder; that reranker measured worse than this order at every
+        useful depth and is gone.
         """
         # Fetch the stored chunk for EVERY candidate. The old gate skipped any
         # candidate whose channel had already set a truthy ``metadata`` — but

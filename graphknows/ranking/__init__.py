@@ -1,4 +1,4 @@
-"""Ranking — reciprocal-rank fusion (RRF) and cross-encoder reranking."""
+"""Ranking — reciprocal-rank fusion (RRF)."""
 
 from graphknows.ranking.rrf import rrf_score
 

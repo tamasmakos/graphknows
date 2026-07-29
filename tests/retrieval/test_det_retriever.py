@@ -106,12 +106,8 @@ async def test_multi_source_chunk_ranks_higher():
         ]
     )
 
-    with (
-        patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed),
-        # Test fusion order deterministically, independent of whether the
-        # cross-encoder model happens to be cached in this environment.
-        patch("graphknows.retrieval.retriever._ce_rerank", side_effect=lambda q, c, k: c[:k]),
-    ):
+    # The fused RRF score IS the ranking now — no reranker to neutralise.
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
         ctx = await retriever.retrieve("alice", session_id="s1", scope="stm")
 
     by_id = {fr["chunk_id"]: fr for fr in ctx.fused_results}
@@ -128,10 +124,7 @@ async def test_no_synthetic_topic_chunks_without_topics():
         ]
     )
 
-    with (
-        patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed),
-        patch("graphknows.retrieval.retriever._ce_rerank", side_effect=lambda q, c, k: c[:k]),
-    ):
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
         ctx = await retriever.retrieve("climate policy", session_id="s1", scope="stm")
 
     assert ctx.fused_results[0]["chunk_id"] == "plain-hit"

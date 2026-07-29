@@ -171,9 +171,6 @@ class GraphKnowsSettings(BaseSettings):
     # you deliberately re-size the store.
     embed_dimensions: int = Field(default=0, alias="GRAPHKNOWS_EMBED_DIMENSIONS")
 
-    # Cross-encoder reranker (ranking/rerank.py) device: "auto"/"cuda"/"cpu".
-    rerank_device: str = Field(default="auto", alias="GRAPHKNOWS_RERANK_DEVICE")
-
     # Chunking. Defaults mirror STMConfig, which is what the chunker actually
     # applies — these were 1200/100 while the chunker used 512/64 and nothing
     # read these fields, so setting the env vars silently did nothing.
