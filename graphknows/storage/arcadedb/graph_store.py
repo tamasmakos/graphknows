@@ -475,6 +475,7 @@ class GraphStore(ArcadeStoreBase):
         map_score: float = 0.0,
         verifier_score: float | None = None,
         ontology_blocked: bool = False,
+        speaker: str = "",
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
@@ -593,15 +594,23 @@ class GraphStore(ArcadeStoreBase):
         # came from and the entity->chunk retrieval path could not see them.
         # The chunk is already known here — it is the same one recorded in
         # r.evidence — so this adds provenance, never a new claim.
-        if chunk_id:
+        # The chunk's SPEAKER is excluded. A relation head is usually the speaker
+        # resolved from metadata ("my collection" -> Gina), and that relationship
+        # is already carried by CHUNK.speaker — typed, and stronger than
+        # MENTIONS. Writing it again here duplicated it in a weaker form and
+        # attached the two conversation participants to chunks that never name
+        # them: measured on conv-30, an unfiltered version of this added 62
+        # MENTIONS edges to Jon and Gina, the two most saturated entities in the
+        # graph and precisely the ones retrieval already has to de-weight.
+        mention_norms = [n for n in (src_norm, dst_norm) if n != _name_norm(speaker or "")]
+        if chunk_id and mention_norms:
             await self.command(
                 "MATCH (c:CHUNK {chunk_id: $cid}) "
-                "MATCH (e:ENTITY) WHERE e.name_norm IN [$src_nn, $dst_nn] "
+                "MATCH (e:ENTITY) WHERE e.name_norm IN $norms "
                 "MERGE (c)-[m:MENTIONS]->(e) "
                 "SET m.confidence = coalesce(m.confidence, $conf)",
                 cid=chunk_id,
-                src_nn=src_norm,
-                dst_nn=dst_norm,
+                norms=mention_norms,
                 conf=float(confidence),
             )
 

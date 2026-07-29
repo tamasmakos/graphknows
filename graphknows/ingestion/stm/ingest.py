@@ -460,7 +460,7 @@ class _STMIngestHandler:
             if instances:
                 await self._store.write_frame_instances(session_id, chunk_id, instances)
 
-        await self._write_relations(extraction, chunk_id, text)
+        await self._write_relations(extraction, chunk_id, text, speaker)
 
         iso_dates = [t["iso"] for t in temporal if t.get("iso")]
         if iso_dates:
@@ -468,7 +468,7 @@ class _STMIngestHandler:
         return len(filtered)
 
     async def _write_relations(
-        self, extraction: ExtractionResult, chunk_id: str, text: str
+        self, extraction: ExtractionResult, chunk_id: str, text: str, speaker: str = ""
     ) -> None:
         """Write the chunk's relation edges — deterministic pass, then DSPy.
 
@@ -508,6 +508,7 @@ class _STMIngestHandler:
                 map_score=map_score,
                 verifier_score=rel.get("verifier_score"),
                 ontology_blocked=blocked,
+                speaker=speaker,
             )
 
         # DSPy ontology-guided relations (llm_assisted mode only).

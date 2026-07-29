@@ -468,3 +468,77 @@ class TestSupersenseTypesReachTheTaxonomy:
 
         entities = [{"name": "Maria", "type": "PERSON"}]
         assert _arg_type("Maria", entities) == "PERSON"
+
+
+class TestRelationEndpointProvenance:
+    """write_relation gives its endpoints chunk provenance — but not the speaker.
+
+    An entity that only ever appears as a relation argument had no MENTIONS edge
+    at all: measured on conv-30, 4 of 49 endpoints ('clothes store', 'running',
+    'stress buster', 'target audience') were reachable from no CHUNK, so nothing
+    could explain where they came from.
+
+    The chunk's SPEAKER is deliberately excluded. A relation head is usually the
+    speaker resolved from metadata ("my collection" -> Gina), and CHUNK.speaker
+    already carries that — typed, and stronger than MENTIONS. An unfiltered
+    version of this fix added 62 MENTIONS edges to Jon and Gina on conv-30, the
+    two most saturated entities in the graph and exactly the ones retrieval has
+    to de-weight (see _discriminative_entities).
+    """
+
+    @staticmethod
+    def _norms_written(commands):
+        for sql, kwargs in commands:
+            if "MENTIONS" in sql:
+                return kwargs.get("norms")
+        return None
+
+    async def test_endpoints_get_mentions_but_speaker_does_not(self) -> None:
+        from graphknows.storage.arcadedb.graph_store import GraphStore
+
+        calls: list[tuple[str, dict]] = []
+
+        class _Store(GraphStore):
+            def __init__(self) -> None:  # no connection
+                pass
+
+            async def command(self, sql, **kwargs):  # type: ignore[override]
+                calls.append((sql, kwargs))
+                return []
+
+        await _Store().write_relation("Gina", "HAS", "collection", chunk_id="c1", speaker="Gina")
+        assert self._norms_written(calls) == ["collection"], (
+            "the speaker must not gain a MENTIONS edge from its own chunk"
+        )
+
+    async def test_both_endpoints_when_neither_is_the_speaker(self) -> None:
+        from graphknows.storage.arcadedb.graph_store import GraphStore
+
+        calls: list[tuple[str, dict]] = []
+
+        class _Store(GraphStore):
+            def __init__(self) -> None:
+                pass
+
+            async def command(self, sql, **kwargs):  # type: ignore[override]
+                calls.append((sql, kwargs))
+                return []
+
+        await _Store().write_relation("Maria", "HAS", "lease", chunk_id="c1", speaker="Gina")
+        assert self._norms_written(calls) == ["maria", "lease"]
+
+    async def test_no_chunk_id_writes_no_mentions(self) -> None:
+        from graphknows.storage.arcadedb.graph_store import GraphStore
+
+        calls: list[tuple[str, dict]] = []
+
+        class _Store(GraphStore):
+            def __init__(self) -> None:
+                pass
+
+            async def command(self, sql, **kwargs):  # type: ignore[override]
+                calls.append((sql, kwargs))
+                return []
+
+        await _Store().write_relation("Maria", "HAS", "lease", speaker="Gina")
+        assert self._norms_written(calls) is None
