@@ -264,12 +264,33 @@ def test_range_gate_keeps_mappings_the_ontology_is_merely_too_narrow_for(index, 
     rule: the type->class embedding maps PRODUCT onto Person at 0.580, which
     clears ``_ONT_CLASS_MIN_SIM`` (0.45). Gating on the class alone therefore
     still deleted ``Gina owns fashion pieces`` and ``Gina owns online store``.
-    Requiring a confident match (a type-label hit scores 1.0) leaves them.
+    Requiring a confident match leaves them.
 
-    Measured over all 37 annotated edges in lg30o: 36 kept, 1 blocked, and the
-    one blocked is ``Jon owns students``.
+    Measured over all 37 annotated edges in lg30v2: 35 kept, 2 blocked.
     """
     from graphknows.ingestion.stm.ingest import _STMIngestHandler
 
     handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
     assert handler._map_predicate("HAS", object_type)[0] == "owns"
+
+
+def test_range_gate_fires_on_a_wordnet_supersense_person(index):
+    """A relation endpoint typed by supersense is still a person.
+
+    ``_arg_type`` falls back to a WordNet supersense when NER does not label the
+    argument, and a supersense never label-matches an ontology class — so
+    ``noun.person`` reaches the gate at an EMBEDDING score (0.840), not 1.0.
+    A confidence floor set from the label-hit score alone (0.9) sat above it and
+    let through ``Jon owns students`` — the one edge in all of conv-30 that this
+    gate exists to stop. It survived a full re-ingest before this was found.
+
+    Censused over all 20 entity/endpoint types in conv-30, exactly three map to
+    Person: PERSON 1.000 and noun.person 0.840, both correct, against PRODUCT
+    0.580, wrong. The floor sits at the midpoint of that gap.
+    """
+    from graphknows.ingestion.stm.ingest import _STMIngestHandler
+
+    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+    assert handler._map_predicate("HAS", "noun.person") == ("", 0.0)
+    # ...while the WRONG Person mapping stays below the floor and is left alone.
+    assert handler._map_predicate("HAS", "PRODUCT")[0] == "owns"

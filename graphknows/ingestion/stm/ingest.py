@@ -49,15 +49,21 @@ _ONT_CLASS_MIN_SIM = 0.45
 # other range mismatch is the ontology being narrower than the data.
 _PERSON_CLASS = "person"
 
-# The gate only fires on a CONFIDENT person, which in practice means the
-# extractor's type label matched an ontology class outright (_map_to_class
-# returns 1.0 for a label hit, and an embedding cosine below it otherwise).
-# Measured on conv-30/lg30o: type->class embedding puts PRODUCT at Person 0.580
-# and OCCUPATION at Activity 0.613 — both above _ONT_CLASS_MIN_SIM, so an
-# embedding-strength match is not evidence enough to delete an annotation. At
-# this floor the gate blocks `Jon owns students` and leaves `Gina owns fashion
-# pieces` / `Gina owns online store` alone.
-_RANGE_GATE_MIN_CLASS_SIM = 0.9
+# The gate only fires when the object is CONFIDENTLY a person. Censused over
+# every entity/relation-endpoint type in conv-30 (20 distinct, namespace
+# lg30v2), exactly three map onto Person:
+#
+#     PERSON        1.000   correct   -> must block
+#     noun.person   0.840   correct   -> must block
+#     PRODUCT       0.580   WRONG     -> must admit
+#
+# so the floor goes at the midpoint of that gap. An earlier 0.9 was set from the
+# label-hit score alone and sat on the wrong side of it: relation endpoints are
+# typed by WordNet supersense when NER does not label them (see _arg_type), a
+# supersense never label-matches a class, and `noun.person` therefore scored
+# 0.840 and let `Jon owns students` through — the single edge the gate exists
+# for. Retune only against a fresh census; the two neighbours are 0.26 apart.
+_RANGE_GATE_MIN_CLASS_SIM = 0.7
 
 
 class _STMIngestHandler:
