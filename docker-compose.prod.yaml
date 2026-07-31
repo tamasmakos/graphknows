@@ -62,21 +62,6 @@ services:
       retries: 10
       start_period: 30s
 
-  web:
-    image: "${GRAPHKNOWS_IMAGE:-graphknows}:${GRAPHKNOWS_TAG:-latest}"
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: web
-    ports:
-      - "${GRAPHKNOWS_WEB_PORT:-8800}:8800"
-    environment:
-      <<: *graphknows-env
-    depends_on:
-      arcadedb:
-        condition: service_healthy
-    restart: unless-stopped
-
   mcp:
     image: "${GRAPHKNOWS_IMAGE:-graphknows}:${GRAPHKNOWS_TAG:-latest}"
     build:

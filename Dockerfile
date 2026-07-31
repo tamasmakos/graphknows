@@ -80,7 +80,6 @@ RUN useradd -m -u 1000 graphknows
 COPY --from=builder --chown=graphknows:graphknows /opt/venv /opt/venv
 COPY --from=models  --chown=graphknows:graphknows /opt/models /opt/models
 COPY --chown=graphknows:graphknows graphknows ./graphknows
-COPY --chown=graphknows:graphknows frontend ./frontend
 COPY --chown=graphknows:graphknows scripts/bake_models.py ./scripts/bake_models.py
 COPY --chown=graphknows:graphknows scripts/preflight.py ./scripts/preflight.py
 COPY --chown=graphknows:graphknows scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
@@ -117,27 +116,6 @@ HEALTHCHECK --interval=60s --timeout=30s --start-period=10s --retries=3 \
 ENTRYPOINT ["/bin/sh", "/app/scripts/docker-entrypoint.sh"]
 
 CMD ["graphknows-mcp"]
-
-# ─── web ───────────────────────────────────────────────────────────────────────
-# Memory Mirror UI. A stage rather than a second Dockerfile: the old
-# Dockerfile.web duplicated the install and had already drifted (it omitted the
-# groups that were smuggling nltk in, so the web image lacked deps the mcp image
-# had — from the same commit). One build, one dependency set, two entrypoints.
-FROM runtime AS web
-
-ENV GRAPHKNOWS_WEB_HOST="0.0.0.0" \
-    GRAPHKNOWS_WEB_PORT="8800" \
-    GRAPHKNOWS_FRONTEND_DIR="/app/frontend"
-
-EXPOSE 8800
-
-# Timeout raised to 15s: the probe cold-starts a Python interpreter each run and
-# was timing out under CPU load (the endpoint itself returns 200), flapping
-# unhealthy.
-HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8800/healthz')" || exit 1
-
-CMD ["graphknows-web"]
 
 # ─── dev ───────────────────────────────────────────────────────────────────────
 # The workspace image: developer tooling that MUST NOT leak into `runtime`.

@@ -11,8 +11,8 @@ entrypoint for all memory operations::
     hits = await mem.search("what did she decide?", user_id="u1")
     await mem.flush(user_id="u1")                      # STM -> LTM promotion
 
-The same class backs the MCP stdio server and the web Memory Mirror, so every
-transport sees identical behaviour. For out-of-process use over MCP, see
+The same class backs the MCP stdio server, so every transport sees identical
+behaviour. For out-of-process use over MCP, see
 :mod:`graphknows.integrations.client`; to implement a custom storage backend,
 see :mod:`graphknows.storage.base`.
 """

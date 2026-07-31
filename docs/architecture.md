@@ -8,8 +8,7 @@ retrieval to an agent. This document traces the moving parts and where each live
 
 Everything is reached through `Memory` (`graphknows/memory.py`), a
 transport-neutral, async facade. It is wrapped by the MCP stdio server
-(`graphknows/server/mcp/`) and the web server (`graphknows/server/web/server.py`),
-but the class is usable directly:
+(`graphknows/server/mcp/`), but the class is usable directly:
 
 ```python
 from graphknows import Memory
@@ -273,18 +272,13 @@ back to a plain `DETRetriever.retrieve()`.
 
 ## Transports
 
-Both transports are thin wrappers over one `Memory` instance, so they see
-identical behaviour.
-
 - **MCP stdio** — `graphknows/server/mcp/stdio_server.py` (console script
   `graphknows-mcp`) over the shared FastMCP app in `graphknows/server/mcp/_app.py`.
   `graphknows/server/mcp/tools/__init__.py` is the authoritative inventory:
   `memory_ingest`, `memory_flush`, `memory_recall`, `memory_query`, `memory_stats`,
-  `memory_doctor`, `memory_purge`, `memory_drop_namespace`, `memory_mirror`,
-  `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`, `ltm_query`.
-- **Web (Memory Mirror)** — `graphknows/server/web/server.py` (console script
-  `graphknows-web`), a Starlette app holding one `Memory` per namespace so a single
-  process can browse many tenants.
+  `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
+  `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`, `ltm_query`. A thin
+  wrapper over one `Memory` instance.
 
 ## Ingest path
 

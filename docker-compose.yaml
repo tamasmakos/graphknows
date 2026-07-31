@@ -1,6 +1,6 @@
-# docker-compose.yaml — GraphKnows stack (ArcadeDB + MCP server + web Memory Mirror)
+# docker-compose.yaml — GraphKnows stack (ArcadeDB + MCP server)
 #
-#   docker compose up -d                 # arcadedb + mcp + web
+#   docker compose up -d                 # arcadedb + mcp
 #   docker compose --profile dev up -d   # + workspace dev container
 #   docker compose --profile observability up -d   # + Langfuse
 #
@@ -81,40 +81,6 @@ services:
       arcadedb:
         condition: service_healthy
     restart: "no"
-
-  web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      # The `web` stage — same venv and baked models as `runtime`, different
-      # entrypoint. (Was a separate Dockerfile.web, which had drifted to a
-      # different dependency set from the same commit.)
-      target: web
-    ports:
-      - "${GRAPHKNOWS_WEB_PORT:-8800}:8800"
-    # Bind-mount the repo so backend (graphknows) and frontend (static SPA)
-    # edits take effect on `restart` without a rebuild. PYTHONPATH=/app makes
-    # the live source shadow the image-installed copy; GRAPHKNOWS_FRONTEND_DIR
-    # already points at /app/frontend, which the mount now serves live. Deps
-    # still come from the image (pyproject/uv.lock changes need a rebuild).
-    volumes:
-      - .:/app
-    environment:
-      <<: *graphknows-env
-      GRAPHKNOWS_WEB_HOST: "0.0.0.0"
-      GRAPHKNOWS_WEB_PORT: "8800"
-      GRAPHKNOWS_FRONTEND_DIR: "/app/frontend"
-      PYTHONPATH: /app
-    depends_on:
-      arcadedb:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8800/healthz')"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
 
   # Dev container (mounts the repo, interactive shell). `--profile dev`.
   workspace:

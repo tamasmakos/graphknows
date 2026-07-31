@@ -13,13 +13,13 @@ Two extraction modes:
 - **`llm_assisted`** — LLM-driven extraction with an **injectable RDF/OWL ontology**, so
   the graph stays domain-specific. Adds `pip install "graphknows[assisted]"`.
 
-Use it three ways from the same core: as a **Python library**, as an **MCP stdio server**
-(Claude Desktop / Claude Code), or as a **web Memory Mirror**.
+Use it two ways from the same core: as a **Python library**, or as an **MCP stdio
+server** (Claude Desktop / Claude Code).
 
 ## Install
 
 ```bash
-pip install graphknows              # full llm_free stack, MCP server and web UI
+pip install graphknows              # full llm_free stack + MCP server
 pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
 ```
 
@@ -30,9 +30,9 @@ pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
 | `langchain` | LangChain retriever adapter |
 
 `pip install graphknows` is batteries-included: GLiNER/GLiNER2 extraction, local
-embeddings, BM25, community detection, document parsers, the MCP server and the
-Memory Mirror web UI are all base dependencies. The extras above are only
-framework adapters and the LLM-assisted mode.
+embeddings, BM25, community detection, document parsers, and the MCP server are
+all base dependencies. The extras above are only framework adapters and the
+LLM-assisted mode.
 
 The `graphknows.integrations.client` SDK (drive the server out-of-process) needs no extras.
 
@@ -103,12 +103,10 @@ async with RemoteMemory(command="graphknows-mcp") as mem:
 Configuration is via `GRAPHKNOWS_*` environment variables (or a `.env` file) — see
 [.env.example](.env.example) and [docs/configuration.md](docs/configuration.md).
 
-## Running the servers
-
-The same runtime backs an MCP stdio server and a web Memory Mirror.
+## Running the server
 
 ```bash
-docker compose up -d            # arcadedb + mcp + web (Memory Mirror on :8800)
+docker compose up -d            # arcadedb + mcp
 ```
 
 **MCP** (Claude Desktop / Claude Code) — register the stdio server:
@@ -123,11 +121,6 @@ docker compose up -d            # arcadedb + mcp + web (Memory Mirror on :8800)
   }
 }
 ```
-
-**Web** — `graphknows-web` serves the Memory Mirror (liveness at `/healthz`,
-readiness at `/readyz`). The bundled SPA ships via the Docker image; a bare
-`pip` install exposes the JSON API and can point at a static dir with
-`GRAPHKNOWS_FRONTEND_DIR`.
 
 ## Integrating into an agent framework
 

@@ -22,7 +22,6 @@ rt = GraphKnowsRuntime(settings)
 |---|---|---|
 | `GRAPHKNOWS_MODE` | `llm_free` | `llm_free` or `llm_assisted`. Drives both extraction and retrieval. |
 | `GRAPHKNOWS_ENV` | `development` | Set to `production` to enforce secret checks at server startup. |
-| `GRAPHKNOWS_PORT` | `8025` | Web Memory Mirror port. |
 | **ArcadeDB** | | |
 | `GRAPHKNOWS_ARCADEDB_URL` | `http://localhost:2480` | ArcadeDB HTTP base URL. |
 | `GRAPHKNOWS_ARCADEDB_USER` | `root` | ArcadeDB user. |

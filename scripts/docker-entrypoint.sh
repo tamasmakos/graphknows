@@ -1,7 +1,7 @@
 #!/bin/sh
 # Container entrypoint: verify the image is not stale, then hand off.
 #
-# Wraps EVERY command — graphknows-mcp, graphknows-web, and the dev shell — so a
+# Wraps EVERY command — graphknows-mcp and the dev shell — so a
 # dependency mismatch cannot be walked past. See scripts/preflight.py for what is
 # checked and why, and GRAPHKNOWS_SKIP_PREFLIGHT=1 to bypass.
 #

@@ -11,8 +11,7 @@ Semver applies to the **documented public surface** only:
 - `graphknows.storage.base` (the store/embedder protocols);
 - `graphknows.integrations.client` (the out-of-process SDK);
 - `graphknows.integrations.*` (framework adapters);
-- the `graphknows-mcp` and `graphknows-web` CLI entry points and the MCP tool
-  contract.
+- the `graphknows-mcp` CLI entry point and the MCP tool contract.
 
 Everything else — including underscore-free names inside internal modules such
 as `graphknows.memory.*`, `graphknows.runtime` internals, and the ArcadeDB

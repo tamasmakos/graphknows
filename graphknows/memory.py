@@ -1,8 +1,8 @@
 """Runtime facade for graphknows memory operations.
 
-This module is the transport-neutral seam for MCP, the Memory Mirror web UI,
-and in-process callers that need memory operations without learning store
-lifecycles, background-loop details, or promotion ordering.
+This module is the transport-neutral seam for MCP and in-process callers that
+need memory operations without learning store lifecycles, background-loop
+details, or promotion ordering.
 """
 
 from __future__ import annotations
@@ -87,9 +87,9 @@ def _format_stm_hits(
 class Memory:
     """The graphknows memory facade — the primary developer-facing API.
 
-    Transport-neutral: the MCP server and the Memory Mirror web UI are thin
-    wrappers over this class, so every transport sees identical behaviour. One
-    ``Memory`` instance is safe for concurrent asyncio use.
+    Transport-neutral: the MCP server is a thin wrapper over this class, so
+    every transport sees identical behaviour. One ``Memory`` instance is safe
+    for concurrent asyncio use.
     """
 
     def __init__(
@@ -265,17 +265,6 @@ class Memory:
             }
         finally:
             await c.close()
-
-    def mirror(self, session_id: str = "", scope: str = "ltm") -> dict[str, Any]:
-        """Return Memory Mirror URL metadata."""
-        from graphknows.links import mirror_url
-
-        selected_scope = scope if scope in {"stm", "ltm"} else "ltm"
-        return {
-            "url": mirror_url(session_id=session_id, scope=selected_scope),
-            "session_id": session_id,
-            "scope": selected_scope,
-        }
 
     async def ingest_memory(
         self,

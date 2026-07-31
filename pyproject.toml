@@ -73,9 +73,6 @@ dependencies = [
     "python-docx>=1.1.0",
     # plug-and-play MCP server
     "mcp>=1.0.0",
-    # Memory Mirror web UI
-    "starlette>=1.0.1",
-    "uvicorn[standard]>=0.29.0",
 ]
 
 [project.optional-dependencies]
@@ -114,7 +111,6 @@ exclude = ["evaluation", "examples", "tests", "research", ".scratch"]
 
 [project.scripts]
 graphknows-mcp = "graphknows.server.mcp.stdio_server:main"
-graphknows-web = "graphknows.server.web.server:main"
 graphknows-topics = "graphknows.cli.topics:main"
 
 # ── Dev tooling ────────────────────────────────────────────────────────────────

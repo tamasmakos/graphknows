@@ -32,9 +32,6 @@ Admin:
 Corpus:
   corpus_ingest         — batch document ingestion into LTM knowledge graph
 
-Web:
-  memory_mirror         — return the local Memory Mirror browser URL
-
 Usage (stdio probe)::
 
     echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
