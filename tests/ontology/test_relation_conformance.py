@@ -99,7 +99,12 @@ class _FakeStore:
 
 
 def _handler(index, store=None):
-    return _STMIngestHandler(store=store, extractor=None, embed_fn=None, ontology_index=index)
+    # Same index for both jobs: these assertions are about personal.ttl's own
+    # domain/range declarations, so the relation vocabulary must be that file
+    # rather than the bundled profile ``relation_index=None`` would load.
+    return _STMIngestHandler(
+        store=store, extractor=None, embed_fn=None, ontology_index=index, relation_index=index
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +332,7 @@ async def test_ingesting_a_turn_annotates_conforming_relations_and_refuses_the_r
         store=store,
         extractor=_StubExtractor(extraction),
         ontology_index=index,
+        relation_index=index,
     )
 
     await handler.ingest_turn(

@@ -57,7 +57,7 @@ class TestMintPoints:
         assert out[0]["score"] == 0.9  # highest-scoring span won the merge key
 
     def test_relation_endpoints_are_reduced(self) -> None:
-        rel = _build_relation(
+        rel, reason = _build_relation(
             "Caroline: Thank you so much",
             "attended",
             "pride event",
@@ -66,15 +66,20 @@ class TestMintPoints:
             [],
             speakers=SPEAKERS,
         )
-        assert rel is not None
+        assert rel is not None, reason
         assert rel["head"] == "Caroline"
 
     def test_reduction_can_collapse_a_self_relation(self) -> None:
-        """(Caroline: hi, told, Caroline) becomes head==tail and is dropped."""
-        rel = _build_relation(
+        """(Caroline: hi, told, Caroline) becomes head==tail and is dropped.
+
+        The reason travels with the None so the caller can count it: an unlogged
+        swallow makes "found nothing" and "guard ate everything" indistinguishable.
+        """
+        rel, reason = _build_relation(
             "Caroline: hi", "told", "Caroline", 0.9, "relex", [], speakers=SPEAKERS
         )
         assert rel is None
+        assert reason == "self-relation"
 
 
 class TestTemporalShapes:
@@ -347,53 +352,35 @@ class TestRelationGate:
         assert store.write_relation.await_args.args[2] == "Pride fest"
 
 
-def test_first_person_clause_yields_a_relation_from_the_speaker_parameter() -> None:
-    """A caller that keeps the speaker OUT of the text must not lose relations.
+def test_speaker_parameter_reaches_the_schema_when_the_text_omits_it() -> None:
+    """A caller that keeps the speaker OUT of the text must still name the speaker.
 
-    Dialogue predication is overwhelmingly first-person ("I work as a nurse"),
-    and such a clause only becomes a relation once its subject resolves to a
-    name. That resolution used to depend on scraping "ts | Speaker: text" back
-    out of the content — so passing clean text plus structured metadata, the
-    arrangement that stops speakers being minted as entities, silently cost the
-    dominant relation shape. Measured on LoCoMo conv-30: 57 relations with the
-    prefix, 15 without. Asserts relations EXIST and the subject is the speaker.
+    ``_DynamicSchema.speakers`` is what ``_reduce_speaker_span`` keys on to fold
+    a span that ran across a ``"Speaker:"`` colon back onto the person — the
+    mechanism that stopped 27 malformed names carrying 42.5% of REL edges. A
+    caller passing clean text plus structured metadata (the arrangement that
+    stops speakers being minted as entities) has no turn-line to scrape, so the
+    parameter is the only source.
     """
-    import spacy
+    from graphknows.ingestion.extraction.entities.extractor import _SpacySchemaMiner
 
-    from graphknows.ingestion.extraction.entities.extractor import _mine_svo_schema
-    from graphknows.settings import GraphKnowsSettings
+    miner = _SpacySchemaMiner()
 
-    nlp = spacy.load(GraphKnowsSettings().spacy_model)
-    doc = nlp("I work as a nurse at the county hospital.")
-
-    without, _ = _mine_svo_schema(doc)
-    assert without == [], "guard: bare first-person text has no resolvable subject"
-
-    with_speaker, _ = _mine_svo_schema(doc, "Gina")
-    assert with_speaker, "the speaker parameter must anchor the first-person subject"
-    assert any("gina" in str(t).casefold() for t in with_speaker)
+    assert miner.build("I work as a nurse at the county hospital.").speakers == frozenset()
+    assert miner.build("I work as a nurse.", "Gina").speakers == frozenset({"gina"})
 
 
-def test_scraped_turn_line_speaker_still_wins_for_its_own_sentence() -> None:
-    """The parameter is a FALLBACK, not an override.
+def test_scraped_turn_line_speakers_join_the_caller_supplied_one() -> None:
+    """A multi-turn chunk has a speaker per line, which one caller value cannot express."""
+    from graphknows.ingestion.extraction.entities.extractor import _SpacySchemaMiner
 
-    A multi-turn chunk has a different speaker per line, which a caller's single
-    value cannot express — so a scraped turn-line must keep priority or every
-    prefixed corpus would be re-attributed to one person.
-    """
-    import spacy
+    schema = _SpacySchemaMiner().build(
+        "4:04 pm on 20 January, 2023 | Jon: I work as a nurse.\n"
+        "4:06 pm on 20 January, 2023 | Melanie: Nice.",
+        "Gina",
+    )
 
-    from graphknows.ingestion.extraction.entities.extractor import _mine_svo_schema
-    from graphknows.settings import GraphKnowsSettings
-
-    nlp = spacy.load(GraphKnowsSettings().spacy_model)
-    doc = nlp("4:04 pm on 20 January, 2023 | Jon: I work as a nurse.")
-
-    triples, _ = _mine_svo_schema(doc, "Gina")
-
-    assert triples
-    blob = str(triples).casefold()
-    assert "jon" in blob and "gina" not in blob
+    assert schema.speakers == frozenset({"jon", "melanie", "gina"})
 
 
 class TestVerbSurfacesAreNotEntities:

@@ -64,7 +64,7 @@ def _rel(head: str, relation: str, tail: str, score: float, **extra: Any) -> dic
         "relation": relation,
         "tail": tail,
         "score": score,
-        "source": "svo",
+        "source": "relex",
         "head_type": "PERSON",
         "tail_type": "ORG",
         **extra,
@@ -175,7 +175,7 @@ async def test_verifier_score_survives_entity_merge() -> None:
             "clothing store",
             chunk_id="chunk-a",
             confidence=0.6,
-            source="svo",
+            source="relex",
             verifier_score=0.6079,
         )
         await store.write_relation(
@@ -194,7 +194,7 @@ async def test_verifier_score_survives_entity_merge() -> None:
             "downtown",
             chunk_id="chunk-a",
             confidence=0.5,
-            source="svo",
+            source="relex",
             verifier_score=0.5500,
         )
 

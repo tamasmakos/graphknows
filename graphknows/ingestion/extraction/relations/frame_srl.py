@@ -21,7 +21,9 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
-from graphknows.ingestion.extraction.relations.svo import _resolve  # speaker resolution
+from graphknows.ingestion.extraction.relations._lingfeatures import (
+    _resolve,  # speaker resolution
+)
 
 _MARKUP = re.compile(r"<[^>]+>")
 # Gate: keep a frame instance only if the best candidate fills >= this many core
@@ -200,7 +202,7 @@ def _resolve_surface(surface: str, speaker: str, speakers: list[str]) -> str:
     low = surface.lower().strip(" .,!?")
     if low in _PRON:
 
-        class _T:  # minimal shim for svo._resolve (expects .text)
+        class _T:  # minimal shim for _lingfeatures._resolve (expects .text)
             text = low
 
         return _resolve(_T(), speaker, speakers)

@@ -28,19 +28,19 @@ if TYPE_CHECKING:
 def default_channels(settings: GraphKnowsSettings) -> list[Channel]:
     """Instantiate the optional channels this configuration turns on.
 
-    Frames are opt-in via ``settings.enable_frames``. Ontology is data-gated:
-    without an ontology there are no ONTOLOGY_CLASS nodes to search, so the
-    channel would cost a vector query per call to return nothing.
+    Frames are opt-in via ``settings.enable_frames``. Ontology is
+    unconditional: ``ontology_source`` always resolves to an ontology (the
+    bundled schema.org digest when nothing is configured), so the old
+    data-gating check could never be false.
     """
+    from graphknows.channels.ontology import OntologyChannel
+
     channels: list[Channel] = []
     if settings.enable_frames:
         from graphknows.channels.frames import FrameChannel
 
         channels.append(FrameChannel())
-    if settings.ontology_source:
-        from graphknows.channels.ontology import OntologyChannel
-
-        channels.append(OntologyChannel())
+    channels.append(OntologyChannel())
     return channels
 
 

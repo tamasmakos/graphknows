@@ -6,10 +6,10 @@ conversational prose, does the ontology term a human would pick actually rank
 above one they would not?
 
 Assertions are deliberately **pairwise and wide-margin**. Absolute cosines are
-low and model-dependent (the catalog notes top-1 class medians ~0.20), and rank
-positions shift between embedding models, so "works_as beats dislikes for a
-sentence about a job" is a claim any competent embedder should satisfy whereas
-"works_as ranks first" is not.
+uncalibrated and model-dependent (see the catalog module docstring: a wrong
+class can score 0.72), and rank positions shift between embedding models, so
+"works_as beats dislikes for a sentence about a job" is a claim any competent
+embedder should satisfy whereas "works_as ranks first" is not.
 
 Every case below holds under both ``BAAI/bge-small-en-v1.5`` and
 ``zeroentropy/zembed-1-embedding``.
@@ -137,24 +137,25 @@ def test_relevant_class_outranks_irrelevant_one(index, text, expected, irrelevan
 
 
 def test_small_ontology_is_injected_whole_at_the_production_top_k(index):
-    """Why ranking weakness is survivable for a small ontology.
+    """Ranking is load-bearing now; for a small ontology the FLOOR is what bites.
 
-    Injection is gated by top-k alone (``DEFAULT_MIN_SIM`` is 0.0) and
-    ``DEFAULT_TOP_K`` is 12, so for an ontology this size essentially every term
-    reaches the extractor no matter how it ranks. Ranking only becomes
-    load-bearing for ontologies larger than the budget — which is exactly where
-    a regression here would start to bite.
+    This test used to assert ``DEFAULT_MIN_SIM == 0.0`` — injection gated by
+    top-k alone — which was survivable only because personal.ttl has 11 classes,
+    so top-12 was the whole ontology. The default ontology is schema.org's 979
+    classes, so there is a floor (0.50, measured over real LoCoMo turns), and
+    against a 13-property ontology it is the floor, not the budget, that decides
+    what reaches the extractor.
     """
     from graphknows.ontology.catalog import DEFAULT_MIN_SIM, DEFAULT_TOP_K
 
-    assert DEFAULT_MIN_SIM == 0.0, "a non-zero floor would make ranking load-bearing"
+    assert DEFAULT_MIN_SIM == 0.50
 
     emb = embed_one("Some ordinary sentence about nothing in particular.")
-    classes = index.match_classes(emb, top_k=DEFAULT_TOP_K)
-    properties = index.match_properties(emb, top_k=DEFAULT_TOP_K)
+    unfloored = index.match_classes(emb, top_k=DEFAULT_TOP_K, min_sim=-1.0)
+    assert len(unfloored) == len(index.classes), "every class fits the budget"
 
-    assert len(classes) == len(index.classes), "every class should survive the budget"
-    assert len(properties) == min(DEFAULT_TOP_K, len(index.properties))
+    floored = index.match_classes(emb, top_k=DEFAULT_TOP_K)
+    assert [t.label for t, _ in floored] == [t.label for t, s in unfloored if s >= DEFAULT_MIN_SIM]
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +230,9 @@ def test_declared_range_blocks_a_predicate_mapping_the_object_cannot_satisfy(ind
     """
     from graphknows.ingestion.stm.ingest import _STMIngestHandler
 
-    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+    handler = _STMIngestHandler(
+        store=None, extractor=None, embed_fn=None, ontology_index=index, relation_index=index
+    )
 
     # A person object cannot satisfy `owns` (range: Possession) -> no mapping.
     assert handler._map_predicate("HAS", "PERSON") == ("", 0.0)
@@ -270,7 +273,9 @@ def test_range_gate_keeps_mappings_the_ontology_is_merely_too_narrow_for(index, 
     """
     from graphknows.ingestion.stm.ingest import _STMIngestHandler
 
-    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+    handler = _STMIngestHandler(
+        store=None, extractor=None, embed_fn=None, ontology_index=index, relation_index=index
+    )
     assert handler._map_predicate("HAS", object_type)[0] == "owns"
 
 
@@ -290,7 +295,9 @@ def test_range_gate_fires_on_a_wordnet_supersense_person(index):
     """
     from graphknows.ingestion.stm.ingest import _STMIngestHandler
 
-    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+    handler = _STMIngestHandler(
+        store=None, extractor=None, embed_fn=None, ontology_index=index, relation_index=index
+    )
     assert handler._map_predicate("HAS", "noun.person") == ("", 0.0)
     # ...while the WRONG Person mapping stays below the floor and is left alone.
     assert handler._map_predicate("HAS", "PRODUCT")[0] == "owns"
@@ -311,7 +318,9 @@ def test_a_refusal_is_reported_separately_from_silence(index):
     """
     from graphknows.ingestion.stm.ingest import _STMIngestHandler
 
-    handler = _STMIngestHandler(store=None, extractor=None, embed_fn=None, ontology_index=index)
+    handler = _STMIngestHandler(
+        store=None, extractor=None, embed_fn=None, ontology_index=index, relation_index=index
+    )
 
     # A person object: the predicate maps, and the gate refuses it.
     assert handler._map_predicate("HAS", "PERSON") == ("", 0.0)

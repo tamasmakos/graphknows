@@ -35,8 +35,10 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
         rel_extractor=build_relation_extractor(settings),
         embed_dims=settings.embed_dimensions,
         enable_frames=settings.enable_frames,
-        # Mode-independent: ontology injection steers extraction identically in
-        # llm_free and llm_assisted. None when GRAPHKNOWS_ONTOLOGY is unset.
+        # Mode-independent and always on: ontology injection steers extraction
+        # identically in llm_free and llm_assisted, and ``ontology_source``
+        # falls back to the bundled schema.org digest. ``None`` here therefore
+        # means the load FAILED, which load_ontology_index logs.
         ontology_index=load_ontology_index(settings.ontology_source),
     )
 

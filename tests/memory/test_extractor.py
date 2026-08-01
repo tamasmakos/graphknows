@@ -1,16 +1,21 @@
-"""Unit tests for the dynamic spaCy-hinted relex extractor.
+"""Unit tests for the ontology-labelled relex extractor.
 
-The model swap (GLiNER2 -> knowledgator/gliner-relex-large-v1.0) changed what the
-extractor's relations MEAN, so these tests changed with it. GLiNER2 could only
-corroborate an SVO triple, which is why the old suite tested surface-matching a
-model relation against a mined one (lenient tails, subject-agreement rescue) —
-none of that exists now: relex returns span-grounded typed head/tail pairs, so
-its output is the fact. What survives unchanged is the SVO structural keep, which
-still carries the identity/possession facts relex has no predicate label for.
+Two changes shaped this suite. The model swap (GLiNER2 ->
+knowledgator/gliner-relex-large-v1.0) made relations facts rather than votes:
+relex returns span-grounded typed head/tail pairs, so its output IS the fact and
+none of the old surface-matching corroboration survives.
+
+Then the SVO miner went. It had been doing two jobs — emitting structural triples
+AND supplying the predicate vocabulary relex was asked to extract against — and
+measured on a live conv-30 graph it produced 28 of 43 relation edges, 25 of which
+were ``<speaker> HAS <common noun>`` over a four-word predicate vocabulary. The
+relation label space now comes from the ontology properties nearest the chunk
+embedding (``extra_relation_labels``), which is the only relation source left.
 """
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -22,6 +27,14 @@ from graphknows.ingestion.extraction.entities.extractor import (
     GLiNER2EntityExtractor,
     _SpacySchemaMiner,
 )
+
+# The ontology property hints ingest._label_hints selects for a chunk:
+# {property label -> definition}, nearest-first by cosine against the chunk
+# embedding. schema.org labels, because that is what the bundled digest speaks.
+_ONTOLOGY_PROPERTIES = {
+    "worksFor": "Organizations that the person works for.",
+    "knows": "The most generic bi-directional social/work relation.",
+}
 
 
 def test_extraction_result_has_entities_and_relations_fields():
@@ -43,13 +56,11 @@ def test_extraction_result_has_entities_and_relations_fields():
     assert result.relations[0]["relation"] == "BUILD"
 
 
-def _mock_extractor(svo_triples, relex_relations=None, relex_entities=None):
+def _mock_extractor(relex_relations=None, relex_entities=None):
     """Extractor with a mocked relex model and a hand-built dynamic schema."""
     schema = SimpleNamespace(
         entity_spec={"person": {"description": "dynamic person", "threshold": 0.35}},
-        relation_spec={"WORK_AS": "dynamic relation"},
         label_to_type={"person": "PERSON"},
-        svo_triples=svo_triples,
     )
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
@@ -70,29 +81,6 @@ def _mock_extractor(svo_triples, relex_relations=None, relex_entities=None):
     return extractor, schema, mock_model
 
 
-def _svo(head, relation, tail, *, head_named, tail_named, verb="work", prep="as"):
-    return {
-        "head": head,
-        "relation": relation,
-        "tail": tail,
-        "verb": verb,
-        "prep": prep,
-        "head_named": head_named,
-        "tail_named": tail_named,
-    }
-
-
-def _rich(head, relation, tail, pattern, *, head_named, tail_named):
-    return {
-        "head": head,
-        "relation": relation,
-        "tail": tail,
-        "pattern": pattern,
-        "head_named": head_named,
-        "tail_named": tail_named,
-    }
-
-
 def _rel(head, relation, tail, score, *, head_type="person", tail_type="occupation"):
     return {
         "head": {"text": head, "type": head_type},
@@ -102,40 +90,99 @@ def _rel(head, relation, tail, score, *, head_type="person", tail_type="occupati
     }
 
 
-def test_spacy_schema_miner_mines_entity_and_svo_schema():
-    """Real spaCy: entity schema from NER, relation schema + triples from SVO."""
+def test_spacy_schema_miner_mines_the_entity_schema():
+    """Real spaCy: the entity schema comes from NER. No relation mining happens."""
     miner = _SpacySchemaMiner()
     schema = miner.build("Caroline: I work as a nurse at Mercy Hospital.")
 
     assert schema.entity_spec, "spaCy NER should mine at least one entity label"
     assert all(k == k.lower() for k in schema.entity_spec), "schema keys are lowercased"
-    assert schema.svo_triples, "SVO should mine at least one triple"
+    assert not hasattr(schema, "svo_triples"), "the SVO miner is gone"
+    assert not hasattr(schema, "relation_spec"), "relation labels come from the ontology"
 
 
-# --- relex relations are facts in their own right ---------------------------
+# --- the relation label space is the ontology's ------------------------------
 
 
-def test_relex_relation_is_kept_as_a_fact():
-    # No SVO triple at all: the relation exists solely because relex emitted it.
-    extractor, _schema, _m = _mock_extractor(
-        [], relex_relations=[_rel("Caroline", "WORK_AS", "nurse", 0.91)]
+def test_relation_spec_handed_to_relex_is_the_ontology_property_labels():
+    """ "the GLiNER relex model with the schema.org labels based on the closest
+    ontology module embedding" — the labels ingest._label_hints selected for this
+    chunk ARE the relation spec, verbatim and in order.
+    """
+    extractor, _schema, mock_model = _mock_extractor()
+
+    extractor.extract(
+        "Caroline: I work as a nurse.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
     )
 
-    result = extractor.extract("Caroline: I work as a nurse.")
+    kwargs = mock_model.inference.call_args.kwargs
+    assert kwargs["relations"] == ["worksFor", "knows"]
+    assert kwargs["return_relations"] is True
+
+
+def test_a_relation_is_named_after_the_ontology_property_that_matched():
+    extractor, _schema, _m = _mock_extractor(
+        relex_relations=[_rel("Caroline", "worksFor", "Mercy Hospital", 0.91)]
+    )
+
+    result = extractor.extract(
+        "Caroline: I work as a nurse at Mercy Hospital.",
+        extra_relation_labels=dict(_ONTOLOGY_PROPERTIES),
+    )
 
     r = result.relations[0]
-    assert (r["head"], r["relation"], r["tail"]) == ("Caroline", "WORK_AS", "nurse")
+    assert (r["head"], r["relation"], r["tail"]) == ("Caroline", "worksFor", "Mercy Hospital")
     assert r["source"] == "relex"
     assert r["score"] == pytest.approx(0.91)
+
+
+def test_chunk_with_no_ontology_property_asks_for_no_relations_and_says_why(caplog):
+    """An unlogged empty result is indistinguishable from a broken extractor.
+
+    ``{}`` means the selection RAN and nothing matched — that is the warning.
+    """
+    extractor, _schema, mock_model = _mock_extractor()
+    mock_model.inference.return_value = [[{"text": "Caroline", "label": "person", "score": 0.9}]]
+
+    with caplog.at_level(logging.WARNING):
+        result = extractor.extract("Caroline: I work as a nurse.", extra_relation_labels={})
+
+    kwargs = mock_model.inference.call_args.kwargs
+    assert kwargs["relations"] == []
+    assert kwargs["return_relations"] is False
+    assert result.relations == []
+    assert [e["name"] for e in result.entities] == ["Caroline"], "entities still extract"
+    assert "no ontology property" in caplog.text
+
+
+def test_the_entity_only_pass_does_not_warn_about_a_missing_ontology_property(caplog):
+    """``None`` means the caller never asked — that is not the ontology finding nothing.
+
+    The ingest handler is two-pass: pass 1 extracts entities with NO relation
+    labels, because the property vocabulary is selected FROM the types pass 1
+    finds. Warning there fires once per chunk by design and drowns the case the
+    warning exists for. The two must stay distinguishable — "the gate ran and
+    found nothing" is a warning, "the gate was not asked to run" is not.
+    """
+    extractor, _schema, mock_model = _mock_extractor()
+    mock_model.inference.return_value = [[{"text": "Caroline", "label": "person", "score": 0.9}]]
+
+    with caplog.at_level(logging.DEBUG):
+        extractor.extract("Caroline: I work as a nurse.", extra_relation_labels=None)
+
+    assert "no ontology property" not in caplog.text
+    assert "entity-only pass" in caplog.text, "still traceable, just not a warning"
 
 
 def test_relex_types_its_own_arguments():
     """relex types head and tail natively — richer than the NER/supersense fallback."""
     extractor, _schema, _m = _mock_extractor(
-        [], relex_relations=[_rel("Caroline", "WORK_AS", "nurse", 0.9)]
+        relex_relations=[_rel("Caroline", "worksFor", "nurse", 0.9)]
     )
 
-    r = extractor.extract("Caroline: I work as a nurse.").relations[0]
+    r = extractor.extract(
+        "Caroline: I work as a nurse.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+    ).relations[0]
 
     assert r["head_type"] == "PERSON"  # label_to_type maps the observed schema key
     assert r["tail_type"] == "OCCUPATION"  # base-inventory label, upper-cased
@@ -143,10 +190,15 @@ def test_relex_types_its_own_arguments():
 
 def test_subthreshold_relex_relation_is_dropped():
     extractor, _schema, _m = _mock_extractor(
-        [], relex_relations=[_rel("Caroline", "WORK_AS", "nurse", 0.2)]
+        relex_relations=[_rel("Caroline", "worksFor", "nurse", 0.2)]
     )
 
-    assert extractor.extract("Caroline: I work as a nurse.").relations == []
+    assert (
+        extractor.extract(
+            "Caroline: I work as a nurse.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+        ).relations
+        == []
+    )
 
 
 def test_pronoun_arguments_are_dropped():
@@ -154,16 +206,18 @@ def test_pronoun_arguments_are_dropped():
 
     Keeping them would MERGE every speaker's facts onto one ENTITY node called "I".
     """
-    extractor, _schema, _m = _mock_extractor(
-        [], relex_relations=[_rel("I", "WORK_AS", "nurse", 0.99)]
-    )
+    extractor, _schema, _m = _mock_extractor(relex_relations=[_rel("I", "worksFor", "nurse", 0.99)])
 
-    assert extractor.extract("Caroline: I work as a nurse.").relations == []
+    assert (
+        extractor.extract(
+            "Caroline: I work as a nurse.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+        ).relations
+        == []
+    )
 
 
 def test_pronoun_entities_are_dropped():
     extractor, _schema, _m = _mock_extractor(
-        [],
         relex_entities=[
             {"text": "I", "label": "person", "score": 0.99},
             {"text": "Caroline", "label": "person", "score": 0.95},
@@ -181,12 +235,11 @@ def test_relex_is_given_the_mined_labels_plus_the_base_inventory():
     whose NER saw only PERSON types every span person), so the base inventory is
     unioned in.
     """
-    extractor, schema, mock_model = _mock_extractor([])
+    extractor, _schema, mock_model = _mock_extractor()
 
     extractor.extract("Caroline: I work as a nurse.")
 
     kwargs = mock_model.inference.call_args.kwargs
-    assert kwargs["relations"] == list(schema.relation_spec.keys())
     assert "person" in kwargs["labels"]  # the observed label
     for base in ("occupation", "organization", "event"):
         assert base in kwargs["labels"], f"base label {base!r} must reach relex"
@@ -194,92 +247,302 @@ def test_relex_is_given_the_mined_labels_plus_the_base_inventory():
 
 
 def test_relex_receives_the_pair_and_relation_thresholds():
-    extractor, _schema, mock_model = _mock_extractor([])
+    extractor, _schema, mock_model = _mock_extractor()
 
-    extractor.extract("Caroline: I work as a nurse.")
+    extractor.extract(
+        "Caroline: I work as a nurse.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+    )
 
     kwargs = mock_model.inference.call_args.kwargs
     assert kwargs["adjacency_threshold"] > 0, "unbounded entity pairing invents relations"
     assert kwargs["relation_threshold"] > 0
 
 
-# --- the SVO structural keep survives the model swap ------------------------
+# --- deixis: the speaker is the missing end of every first-person fact -------
 
 
-def test_structural_svo_kept_when_both_named():
-    svo = [_svo("Gina", "VISIT", "Rome", head_named=True, tail_named=True, verb="visit", prep="")]
-    extractor, *_ = _mock_extractor(svo)  # relex emits no relations
+class TestDeixisResolvedRelationSurface:
+    """Relations are read off a surface where "I"/"my" have become the speaker.
 
-    r = extractor.extract("Gina: I visited Rome.").relations[0]
+    LoCoMo speakers state facts about themselves in the first person ("I opened
+    an online clothing store", "My collection has twenty pieces"). relex needs
+    two entity SPANS to emit a relation and a pronoun is not a span, so the
+    SUBJECT of nearly every stated fact is invisible and the relation has only
+    one end. Measured on 40 real conv-30 turns, same model/labels/threshold:
+    3 relations from the raw text, 19 from the resolved surface.
 
-    assert (r["relation"], r["tail"]) == ("VISIT", "Rome")
-    assert r["source"] == "svo"
-    assert r["score"] == pytest.approx(0.6)
+    The stored chunk text is NOT rewritten — the repo guarantees it stays the
+    original, and character offsets carry alias candidates and overlap
+    resolution. So entities come off the original text and relations off the
+    surface; they decouple because relation heads/tails are matched by NAME.
+    """
+
+    def _extractor(self, relex_relations=None):
+        mock_model = MagicMock()
+        mock_model.inference.return_value = (
+            [[{"text": "Gina", "label": "person", "score": 0.9}]],
+            [relex_relations or []],
+        )
+        return GLiNER2EntityExtractor(
+            model_loader=lambda: mock_model, schema_miner=_SpacySchemaMiner()
+        ), mock_model
+
+    def test_relations_are_read_off_the_resolved_surface(self):
+        extractor, mock_model = self._extractor()
+
+        extractor.extract(
+            "Gina: I opened an online clothing store.",
+            extra_relation_labels=dict(_ONTOLOGY_PROPERTIES),
+        )
+
+        calls = mock_model.inference.call_args_list
+        assert len(calls) == 2, "one pass for entities on the original, one for relations"
+        relation_call = next(c for c in calls if c.kwargs["return_relations"])
+        assert "Gina opened an online clothing store" in relation_call.kwargs["texts"][0]
+
+    def test_entities_are_still_read_off_the_unmodified_text(self):
+        """Offsets, alias candidates and overlap resolution anchor on the original."""
+        extractor, mock_model = self._extractor()
+        text = "Gina: I opened an online clothing store."
+
+        extractor.extract(text, extra_relation_labels=dict(_ONTOLOGY_PROPERTIES))
+
+        entity_call = next(
+            c for c in mock_model.inference.call_args_list if not c.kwargs["return_relations"]
+        )
+        assert entity_call.kwargs["texts"] == [text]
+
+    def test_no_known_speaker_falls_back_to_one_pass_on_the_raw_text(self, caplog):
+        extractor, mock_model = self._extractor()
+
+        with caplog.at_level(logging.DEBUG):
+            extractor.extract(
+                "The store opened in Denver.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+            )
+
+        assert mock_model.inference.call_count == 1
+        assert mock_model.inference.call_args.kwargs["texts"] == ["The store opened in Denver."]
+        assert "no speaker" in caplog.text, "a silent fallback is indistinguishable from a bug"
+
+    def test_text_without_deixis_costs_no_second_pass(self):
+        extractor, mock_model = self._extractor()
+
+        extractor.extract(
+            "Gina: Melanie opened the store.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+        )
+
+        assert mock_model.inference.call_count == 1
+
+    def test_a_first_person_fact_reaches_the_graph_with_the_speaker_as_its_head(self):
+        extractor, _m = self._extractor(
+            relex_relations=[_rel("Gina", "worksFor", "clothing store", 0.5, tail_type="facility")]
+        )
+
+        result = extractor.extract(
+            "Gina: I opened an online clothing store.",
+            extra_relation_labels=dict(_ONTOLOGY_PROPERTIES),
+        )
+
+        assert [(r["head"], r["relation"], r["tail"]) for r in result.relations] == [
+            ("Gina", "worksFor", "clothing store")
+        ]
 
 
-def test_svo_with_common_noun_object_dropped_when_relex_is_silent():
-    """A bare common-noun tail needs the model to vouch for it."""
-    svo = [_svo("Caroline", "WORK_AS", "nurse", head_named=True, tail_named=False)]
-    extractor, *_ = _mock_extractor(svo)
-
-    assert extractor.extract("Caroline: I work as a nurse.").relations == []
+# --- the threshold ----------------------------------------------------------
 
 
-def test_relex_and_svo_do_not_double_count_the_same_fact():
-    svo = [_svo("Caroline", "WORK_AS", "nurse", head_named=True, tail_named=True)]
-    extractor, *_ = _mock_extractor(
-        svo, relex_relations=[_rel("Caroline", "WORK_AS", "nurse", 0.9)]
+def test_relation_threshold_admits_a_correct_ontology_labelled_relation():
+    """0.7 came from the model card and discards every correct extraction.
+
+    Measured: relex scores the textbook "Caroline works for Mercy Hospital" under
+    the injected label ``worksFor`` at 0.437. The card's floor is calibrated for
+    the model's own in-distribution label vocabulary, not for injected ontology
+    property names, which score markedly lower.
+    """
+    from graphknows.ingestion.extraction.entities.extractor import _RELATION_THRESHOLD
+
+    assert _RELATION_THRESHOLD <= 0.437, "the measured score of a CORRECT relation"
+    assert _RELATION_THRESHOLD >= 0.3, "at 0.1 sub-span noise appears; at 0.0 it explodes"
+
+    extractor, _schema, _m = _mock_extractor(
+        relex_relations=[_rel("Caroline", "worksFor", "Mercy Hospital", 0.437)]
     )
-
-    result = extractor.extract("Caroline: I work as a nurse.")
-
-    assert len(result.relations) == 1
-    assert result.relations[0]["source"] == "relex", "the model's score should win"
-
-
-def test_rich_copular_kept_structurally():
-    """A copular IS_A with a named head survives at the 0.6 structural prior."""
-    svo = [_rich("Caroline", "IS_A", "nurse", "copular", head_named=True, tail_named=False)]
-    extractor, *_ = _mock_extractor(svo)
-
-    r = extractor.extract("Caroline: I am a nurse.").relations[0]
-
-    assert (r["head"], r["relation"], r["tail"]) == ("Caroline", "IS_A", "nurse")
-    assert r["source"] == "svo" and r["score"] == pytest.approx(0.6)
+    result = extractor.extract(
+        "Caroline works for Mercy Hospital.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+    )
+    assert [r["relation"] for r in result.relations] == ["worksFor"]
 
 
-def test_rich_possessive_kept_with_named_head_only():
-    svo = [_rich("Caroline", "HAS", "studio", "possessive", head_named=True, tail_named=False)]
-    extractor, *_ = _mock_extractor(svo)
-
-    r = extractor.extract("Caroline: That is my studio.").relations[0]
-    assert (r["relation"], r["source"]) == ("HAS", "svo")
+# --- precision guards -------------------------------------------------------
 
 
-def test_rich_noun_prep_dropped_unless_both_named():
-    """noun_prep is not a named-head pattern; a common-noun tail drops it."""
-    svo = [_rich("Paris", "FROM", "friend", "noun_prep", head_named=True, tail_named=False)]
-    extractor, *_ = _mock_extractor(svo)
+class TestRelationEndpointGuards:
+    """More recall makes precision the problem, and the label set is CLOSED.
 
-    assert extractor.extract("Paris letter from a friend.").relations == []
+    Offered 5 ontology properties on two friends chatting, relex is FORCED to
+    choose and emitted both ``Gina spouse Jon`` and ``Gina children Jon``. Neither
+    is true. Two structural drops are cheap and safe, and every drop is counted
+    and logged — an unlogged swallow makes "nothing matched" and "broken"
+    indistinguishable from outside.
+    """
+
+    def test_a_self_relation_is_dropped(self):
+        """The resolved surface makes "Gina knows Gina" easy to produce."""
+        extractor, _schema, _m = _mock_extractor(
+            relex_relations=[_rel("Gina", "knows", "gina", 0.9, tail_type="person")]
+        )
+
+        assert (
+            extractor.extract(
+                "Gina: I know myself.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+            ).relations
+            == []
+        )
+
+    def test_a_determiner_does_not_hide_a_self_relation(self):
+        """``the fair -[attendee]-> fair``: two spans of ONE entity, measured live.
+
+        The determiner is not part of the entity — it already forks the ENTITY
+        merge key on the entity path (``_strip_determiner``), and on the relation
+        path it also walks the two ends past the same-entity check.
+        """
+        extractor, _schema, _m = _mock_extractor(
+            relex_relations=[_rel("the fair", "attendee", "fair", 0.9, head_type="event")]
+        )
+
+        assert (
+            extractor.extract(
+                "Gina: The fair was great.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+            ).relations
+            == []
+        )
+
+    def test_an_endpoint_that_is_not_an_entity_name_is_dropped(self):
+        """``is_graph_entity_name`` is the ONE junk predicate; it applies to both ends."""
+        extractor, _schema, _m = _mock_extractor(
+            relex_relations=[
+                _rel("Gina! I", "knows", "Jon", 0.9, tail_type="person"),
+                _rel("Gina", "knows", "23 July 2023", 0.9, tail_type="date"),
+                _rel("Gina", "knows", "Jon", 0.9, tail_type="person"),
+            ]
+        )
+
+        result = extractor.extract(
+            "Gina: Thanks, Jon!", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+        )
+
+        assert [(r["head"], r["tail"]) for r in result.relations] == [("Gina", "Jon")]
+
+    def test_a_speaker_initial_clause_reduces_to_the_speaker(self):
+        """The substitution defeats the clause-fragment rule, which keys on PRONOUNS.
+
+        ``is_graph_entity_name`` drops "I'm over the moon because" because its
+        first token is a pronoun. Rewrite the pronoun to "Gina" and the same span
+        sails through — measured on the 40-turn probe, "Gina is over the moon
+        because" and "Jon is staying positive. Jon" both reached the graph as
+        relation endpoints. The referent of such a span is the speaker, exactly as
+        for the "Caroline: Thanks, Melanie" shape this reduction already handles.
+        """
+        from graphknows.ingestion.extraction.entities.extractor import _reduce_speaker_span
+
+        speakers = frozenset({"gina", "jon"})
+        assert _reduce_speaker_span("Gina is over the moon because", speakers) == "Gina"
+        assert _reduce_speaker_span("Jon is staying positive. Jon", speakers) == "Jon"
+        # A proper-name sequence is a name, not a clause, and must survive.
+        assert _reduce_speaker_span("Gina Torres", speakers) == "Gina Torres"
+        assert _reduce_speaker_span("Gina", speakers) == "Gina"
+        # A bare genitive is the same person. Measured live it forked the node
+        # ("Jon's owns biz" beside "Jon owns biz") and hid a self-relation
+        # outright: "Jon's -[spouse]-> Jon" passed the head!=tail check.
+        assert _reduce_speaker_span("Jon's", speakers) == "Jon"
+        # ...but only when the genitive IS the whole span: a genitive phrase
+        # names something else and keeps its owner.
+        assert _reduce_speaker_span("Jon's studio", speakers) == "Jon's studio"
+        # Non-dialogue text knows no speakers, so this is the identity function.
+        assert _reduce_speaker_span("Gina is over the moon", frozenset()) == (
+            "Gina is over the moon"
+        )
+
+    def test_every_drop_is_counted_and_logged(self, caplog):
+        extractor, _schema, _m = _mock_extractor(
+            relex_relations=[
+                _rel("Gina", "knows", "Gina", 0.9, tail_type="person"),
+                _rel("Gina", "knows", "23 July 2023", 0.9, tail_type="date"),
+            ]
+        )
+
+        with caplog.at_level(logging.INFO):
+            extractor.extract(
+                "Gina: Thanks, Jon!", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+            )
+
+        assert "2 of 2" in caplog.text
+        assert "self-relation" in caplog.text
+        assert "tail is not an entity name" in caplog.text
 
 
-def test_rich_copular_dropped_when_head_not_named():
-    svo = [_rich("brother", "IS_A", "nurse", "copular", head_named=False, tail_named=False)]
-    extractor, *_ = _mock_extractor(svo)
+# --- the SVO miner is gone --------------------------------------------------
 
-    assert extractor.extract("My brother is a nurse.").relations == []
+
+class TestSvoMinerIsGone:
+    """Nothing but relex may mint a relation.
+
+    Measured on a live conv-30 graph: the relation layer was 43 edges over 763
+    entities, SVO owned 28 of them, and 25 of those 28 were
+    ``<speaker> HAS <common noun>`` (``Jon HAS back``, ``Jon HAS corner``,
+    ``Jon HAS side``) — its entire predicate vocabulary was
+    ``{HAS: 25, BE_TO: 1, IS_A: 1, LOSE_AT: 1}``. relex, over 15 edges, used 9
+    distinct predicates.
+    """
+
+    def _real_miner_extractor(self):
+        mock_model = MagicMock()
+        mock_model.inference.return_value = ([[]], [[]])
+        return GLiNER2EntityExtractor(
+            model_loader=lambda: mock_model, schema_miner=_SpacySchemaMiner()
+        ), mock_model
+
+    def test_a_possessive_no_longer_mints_a_has_relation(self):
+        extractor, _m = self._real_miner_extractor()
+
+        result = extractor.extract(
+            "Jon: My back hurts and Caroline's studio is nice.",
+            extra_relation_labels=dict(_ONTOLOGY_PROPERTIES),
+        )
+
+        assert result.relations == []
+
+    def test_a_copular_clause_no_longer_mints_an_is_a_relation(self):
+        extractor, _m = self._real_miner_extractor()
+
+        result = extractor.extract(
+            "Caroline: I am a nurse.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+        )
+
+        assert result.relations == []
+
+    def test_mined_verb_predicates_never_reach_the_relation_spec(self):
+        """WORK_AS/VISIT_WITH were SVO's open-vocabulary labels; the ontology's are all
+        relex is offered now."""
+        extractor, mock_model = self._real_miner_extractor()
+
+        extractor.extract(
+            "Caroline: I work as a nurse and I visited Rome with David.",
+            extra_relation_labels=dict(_ONTOLOGY_PROPERTIES),
+        )
+
+        assert mock_model.inference.call_args.kwargs["relations"] == ["worksFor", "knows"]
 
 
 # --- schema / lifecycle -----------------------------------------------------
 
 
-def test_explicit_relation_schema_overrides_mined_svo_schema():
+def test_explicit_relation_schema_overrides_the_ontology_hints():
     """An explicitly passed taxonomy schema (escape hatch) reaches relex."""
-    extractor, _schema, mock_model = _mock_extractor([])
+    extractor, _schema, mock_model = _mock_extractor()
     extractor._relation_schema = {"created": "one entity created another"}
 
-    extractor.extract("OpenAI built ChatGPT.")
+    extractor.extract("OpenAI built ChatGPT.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES))
 
     assert mock_model.inference.call_args.kwargs["relations"] == ["created"]
 
@@ -296,9 +559,7 @@ def test_extract_still_runs_when_spacy_mines_no_entity_schema():
     never extracted from at all, including plain factual statements like
     "I'm starting a dance studio".
     """
-    schema = SimpleNamespace(
-        entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[], speakers=frozenset()
-    )
+    schema = SimpleNamespace(entity_spec={}, label_to_type={}, speakers=frozenset())
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
     mock_model = MagicMock()
@@ -318,9 +579,7 @@ def test_extract_still_runs_when_spacy_mines_no_entity_schema():
 
 
 def test_extract_returns_empty_for_blank_text():
-    schema = SimpleNamespace(
-        entity_spec={}, relation_spec={}, label_to_type={}, svo_triples=[], speakers=frozenset()
-    )
+    schema = SimpleNamespace(entity_spec={}, label_to_type={}, speakers=frozenset())
     schema_miner = MagicMock()
     schema_miner.build.return_value = schema
     mock_model = MagicMock()
@@ -332,7 +591,6 @@ def test_extract_returns_empty_for_blank_text():
 
 def test_extract_filters_low_confidence_and_blank_entities():
     extractor, _schema, _m = _mock_extractor(
-        [],
         relex_entities=[
             {"text": "Alice", "label": "person", "score": 0.9},
             {"text": "Bob", "label": "person", "score": 0.2},  # < threshold
@@ -356,9 +614,7 @@ def test_extract_batch_calls_relex_once_per_chunk():
     """No sub-windowing: relex takes the whole chunk in one pass."""
     schema = SimpleNamespace(
         entity_spec={"person": {"description": "p", "threshold": 0.35}},
-        relation_spec={},
         label_to_type={"person": "PERSON"},
-        svo_triples=[],
     )
     schema_miner = MagicMock()
     schema_miner.build_batch.return_value = [schema, schema]
@@ -381,9 +637,7 @@ def test_extract_batch_survives_a_failing_chunk():
     """One bad chunk must not abort a whole ingest."""
     schema = SimpleNamespace(
         entity_spec={"person": {"description": "p", "threshold": 0.35}},
-        relation_spec={},
         label_to_type={"person": "PERSON"},
-        svo_triples=[],
     )
     schema_miner = MagicMock()
     schema_miner.build_batch.return_value = [schema, schema]
@@ -464,13 +718,11 @@ class TestSharedModelApiContract:
         )
         assert roles.get("Employee") == ["Caroline"]
 
-    def test_relex_handles_entities_only_return_when_no_predicates_mined(self) -> None:
-        """A chunk whose SVO pass mined nothing takes the entities-only branch."""
+    def test_relex_handles_entities_only_return_when_no_ontology_property_matched(self) -> None:
+        """A chunk with no ontology relation label takes the entities-only branch."""
         schema = SimpleNamespace(
             entity_spec={"person": {"description": "p", "threshold": 0.35}},
-            relation_spec={},  # no mined predicates -> return_relations=False
             label_to_type={"person": "PERSON"},
-            svo_triples=[],
         )
         schema_miner = MagicMock()
         schema_miner.build.return_value = schema
@@ -517,7 +769,7 @@ class TestSurfaceCleaning:
 
     def test_quoted_entity_is_cleaned_before_it_becomes_a_merge_key(self) -> None:
         extractor, _schema, _m = _mock_extractor(
-            [], relex_entities=[{"text": '"Becoming Nicole"', "label": "work_of_art", "score": 0.9}]
+            relex_entities=[{"text": '"Becoming Nicole"', "label": "work_of_art", "score": 0.9}]
         )
 
         assert extractor.extract('She read "Becoming Nicole".').entities[0]["name"] == (
@@ -526,13 +778,15 @@ class TestSurfaceCleaning:
 
     def test_quoted_relation_arguments_are_cleaned(self) -> None:
         extractor, _schema, _m = _mock_extractor(
-            [],
             relex_relations=[
-                _rel("Melanie", "READ", '"Becoming Nicole"', 0.9, tail_type="work_of_art")
+                _rel("Melanie", "read", '"Becoming Nicole"', 0.9, tail_type="work_of_art")
             ],
         )
 
-        r = extractor.extract('Melanie read "Becoming Nicole".').relations[0]
+        r = extractor.extract(
+            'Melanie read "Becoming Nicole".',
+            extra_relation_labels={"read": "The Book/Article read by a person."},
+        ).relations[0]
         assert r["tail"] == "Becoming Nicole"
 
 

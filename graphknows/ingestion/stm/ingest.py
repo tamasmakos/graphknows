@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import time
+from itertools import zip_longest
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
@@ -44,6 +45,15 @@ _ONT_TAG_TOP_K = 3
 # entity unmapped is the safe outcome, so the floor errs high.
 _ONT_CLASS_MIN_SIM = 0.45
 
+# Relation properties offered to the extractor per chunk, selected by DOMAIN and
+# RANGE (see _relation_labels). Not a free parameter: at 5 offered the extractor
+# emitted `Gina spouse Jon` and `Gina children Jon` about two friends, because a
+# closed vocabulary with no way to decline FORCES a pick; at ~14 the same turns
+# produced colleague/owns/follows. GLiNER and GLiREL are both trained at <=25
+# labels per instance and our relex model card demos 2-5, so the ceiling is real
+# too. 15 sits in the measured band.
+_RELATION_LABEL_CAP = 15
+
 # The one class the range gate enforces against (see _range_admits). Asserting a
 # non-person-ranged property over a person is the whole observed defect; every
 # other range mismatch is the ontology being narrower than the data.
@@ -74,8 +84,17 @@ class _STMIngestHandler:
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Callable that takes text and returns list[float] embedding.
         _rel_extractor: Optional relation extractor (llm_assisted).
-        _ontology: Optional OntologyIndex; steers extraction labels and links
-            the written entities/chunks to their ontology terms.
+        _ontology: Optional OntologyIndex (ctor arg ``ontology_index``); its
+            CLASSES are the per-chunk entity label hints, the chunk
+            MATCHES_CLASS tags and the entity INSTANCE_OF edges. schema.org by
+            default, which does that job well.
+        _relations: Optional OntologyIndex (ctor arg ``relation_index``); its
+            PROPERTIES are the relation vocabulary offered to the extractor and
+            the domain/range gate over what comes back. A SEPARATE index,
+            because schema.org's 945 object properties are measurably the wrong
+            relation vocabulary; defaults to the bundled profile
+            (``settings.relation_ontology_source``), resolved here rather than
+            injected so no composition root has to know there are two.
     """
 
     def __init__(
@@ -86,12 +105,14 @@ class _STMIngestHandler:
         rel_extractor: Any | None = None,
         enable_frames: bool = False,
         ontology_index: Any | None = None,
+        relation_index: Any | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
         self._rel_extractor = rel_extractor
         self._enable_frames = enable_frames
         self._ontology = ontology_index
+        self._relations = relation_index
         # Predicate mapping uses char-n-gram TF-IDF plus a surface-alias table
         # ("is friends with" -> friend_of), which suits multi-word predicates.
         # Class mapping deliberately does NOT: on single-word type labels the
@@ -101,25 +122,61 @@ class _STMIngestHandler:
         self._property_mapper: Any = None
         self._uri_by_label: dict[str, str] = {}
         self._type_cache: dict[str, tuple[str, str, float]] = {}
-        # rdfs:domain / rdfs:range per property label, and each class's parent
-        # chain — the ingredients of the conformance gate (_domain_admits and
-        # _range_admits). All three are already parsed by the loader; the mapper
-        # is a pure string matcher and never sees them.
-        self._domain_by_property: dict[str, str] = {}
-        self._range_by_property: dict[str, str] = {}
+        # Entity type -> RELATION-profile class, memoised the same way and kept
+        # separate: the two vocabularies answer differently on purpose ("STORE"
+        # is schema.org's own ``Store`` for typing, and a ``Place`` for deciding
+        # which properties its presence evokes).
+        self._profile_class_cache: dict[str, tuple[str, float]] = {}
+        # rdfs:domain / rdfs:range per property label (both multi-valued), and
+        # each class's parent chain. These are the ingredients of BOTH halves of
+        # the ontology's job now: selecting which properties a chunk is offered
+        # (_relation_labels) and gating which of the extracted ones get annotated
+        # (_domain_admits / _range_admits). All three are already parsed by the
+        # loader; the predicate mapper is a pure string matcher and never sees
+        # them. They come from the RELATION profile, which declares its own
+        # subClassOf — the schema.org digest carries none, so _class_ancestors
+        # degenerated to the class itself while the gate read that vocabulary.
+        self._domain_by_property: dict[str, tuple[str, ...]] = {}
+        self._range_by_property: dict[str, tuple[str, ...]] = {}
         self._parents_by_class: dict[str, tuple[str, ...]] = {}
+        # Cosine floor for the per-chunk label hints; see
+        # ``GraphKnowsSettings.ontology_hint_min_sim`` for the measurement.
+        self._hint_min_sim: float = 0.0
         if ontology_index is not None:
+            from graphknows.settings import GraphKnowsSettings
+
+            settings = GraphKnowsSettings()
+            self._hint_min_sim = settings.ontology_hint_min_sim
+            self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
+            if self._relations is None:
+                from graphknows.ontology import load_ontology_index
+
+                self._relations = load_ontology_index(settings.relation_ontology_source)
+                if self._relations is None:
+                    # A bundled asset that will not load is broken, not absent —
+                    # but relations are enrichment, so this degrades to the
+                    # entity ontology's properties rather than failing ingest.
+                    # Loudly: silence here reads exactly like "no relations in
+                    # this corpus", which is the defect this layer keeps having.
+                    log.error(
+                        "Relation profile %r did not load; falling back to the entity "
+                        "ontology's properties, which selects relations badly",
+                        settings.relation_ontology_source,
+                    )
+                    self._relations = ontology_index
+        if self._relations is not None:
             from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
 
-            self._property_mapper = OntologyPredicateMapper(ontology_index.property_labels)
-            self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
+            self._property_mapper = OntologyPredicateMapper(self._relations.property_labels)
             self._domain_by_property = {
-                t.label.casefold(): t.domain for t in ontology_index.properties if t.domain
+                t.label.casefold(): t.domain for t in self._relations.properties if t.domain
             }
             self._range_by_property = {
-                t.label.casefold(): t.range for t in ontology_index.properties if t.range
+                t.label.casefold(): t.range for t in self._relations.properties if t.range
             }
-            self._parents_by_class = {t.label.casefold(): t.parents for t in ontology_index.classes}
+            self._parents_by_class = {
+                t.label.casefold(): t.parents for t in self._relations.classes
+            }
         if embed_fn is not None:
             self._embed_fn = embed_fn
         else:
@@ -172,7 +229,7 @@ class _STMIngestHandler:
         # Per-chunk ontology label hints, reusing the embeddings above (no
         # re-embed). Empty when no ontology is configured, which is the default.
         ont_classes = [self._match_classes(e) for e in batch_embeddings]
-        entity_hints, relation_hints = self._label_hints(batch_embeddings)
+        entity_hints = self._label_hints(batch_embeddings)
 
         # Batch NER for ALL chunks in one GLiNER2 forward pass when supported.
         # ``infer=False`` skips extraction entirely (chunks + embeddings only) —
@@ -185,9 +242,13 @@ class _STMIngestHandler:
             and hasattr(type(self._extractor), "extract_batch")
             and cleaned_texts
         ):
-            batch_extractions = await asyncio.to_thread(
-                self._extractor.extract_batch, cleaned_texts, entity_hints, relation_hints
+            # Pass 1 is entities only: the relation vocabulary is derived FROM
+            # the types this pass finds (see _relation_labels), so it cannot be
+            # known before it runs.
+            first_pass: list[ExtractionResult] = await asyncio.to_thread(
+                self._extractor.extract_batch, cleaned_texts, entity_hints, None
             )
+            batch_extractions = await self._relation_pass(cleaned_texts, entity_hints, first_pass)
 
         for idx, seg in enumerate(parsed.segments):
             seg.metadata["chunk_index"] = idx
@@ -272,6 +333,49 @@ class _STMIngestHandler:
             errors=errors,
         )
 
+    async def _relation_pass(
+        self,
+        texts: list[str],
+        entity_hints: list[list[str]] | None,
+        first_pass: list[ExtractionResult],
+    ) -> list[ExtractionResult]:
+        """Re-extract with the relation labels pass 1's entity types selected.
+
+        The second forward pass is the price of selecting properties from what
+        the text actually contains rather than from what it is topically near;
+        the FrameNet layer already pays the same price for the same reason. It
+        is only paid where it can produce something: a chunk whose types evoke
+        no property keeps its pass-1 result and is not re-extracted.
+        """
+        if self._relations is None or not texts:
+            return first_pass
+        hints = [self._relation_labels(r.entities) for r in first_pass]
+        todo = [i for i, h in enumerate(hints) if h]
+        if not todo:
+            log.info(
+                "relation pass skipped for all %d chunks: no entity types evoked a property",
+                len(texts),
+            )
+            return first_pass
+        t0 = time.monotonic()
+        redone = await asyncio.to_thread(
+            self._extractor.extract_batch,
+            [texts[i] for i in todo],
+            [entity_hints[i] for i in todo] if entity_hints else None,
+            [hints[i] for i in todo],
+        )
+        log.info(
+            "relation pass: %d/%d chunks re-extracted in %.2fs (%.0f ms/chunk)",
+            len(todo),
+            len(texts),
+            time.monotonic() - t0,
+            1000 * (time.monotonic() - t0) / len(todo),
+        )
+        merged = list(first_pass)
+        for idx, result in zip(todo, redone, strict=True):
+            merged[idx] = result
+        return merged
+
     async def ingest_turn(
         self,
         session_id: str,
@@ -321,14 +425,17 @@ class _STMIngestHandler:
         surface = search_surface(clean, speaker or role)
         embedding = self._embed_fn(surface)
         # Same ontology steering as the chunk path — the turn's own embedding
-        # selects the candidate labels, so no extra embedding call.
-        ent_hints, rel_hints = self._label_hints([embedding])
+        # selects the candidate entity labels, so no extra embedding call.
+        ent_hints = self._label_hints([embedding])
+        entity_labels = ent_hints[0] if ent_hints else None
         extraction = (
             await asyncio.to_thread(
                 self._extract,
                 clean,
-                ent_hints[0] if ent_hints else None,
-                rel_hints[0] if rel_hints else None,
+                entity_labels,
+                # Pass 1: entities only. The relation vocabulary is selected from
+                # the types this pass finds, so it cannot precede it.
+                None,
                 # The turn's speaker anchors its first-person clauses. Without
                 # it the extractor can only scrape a speaker back out of the
                 # text, so a caller that keeps speaker OUT of the content —
@@ -339,6 +446,17 @@ class _STMIngestHandler:
             if infer
             else ExtractionResult()
         )
+        if infer and (rel_labels := self._relation_labels(extraction.entities)):
+            t_rel = time.monotonic()
+            extraction = await asyncio.to_thread(
+                self._extract, clean, entity_labels, rel_labels, speaker or role
+            )
+            log.debug(
+                "relation pass on turn seq=%s: %d properties offered, %.0f ms",
+                seq,
+                len(rel_labels),
+                1000 * (time.monotonic() - t_rel),
+            )
         anchor = metadata.get("timestamp") or metadata.get("anchor_date")
         temporal = self._resolve_temporal_entities(extraction.entities, anchor)
         chunk_id = hashlib.sha256(f"{session_id}:{file_id}:{seq}:{clean}".encode()).hexdigest()[:16]
@@ -642,7 +760,8 @@ class _STMIngestHandler:
         """Ontology classes this chunk evokes, as ``[(uri, sim)]`` for tagging.
 
         Uses the stricter TAG floor: these become persisted MATCHES_CLASS edges,
-        unlike the label hints which are gated by top-k alone.
+        which retrieval trusts, whereas a label hint the extractor finds no span
+        for simply goes unused.
         """
         if self._ontology is None or not embedding:
             return []
@@ -651,22 +770,130 @@ class _STMIngestHandler:
         matches = self._ontology.match_classes(embedding, top_k=_ONT_TAG_TOP_K, min_sim=TAG_MIN_SIM)
         return [(term.uri, sim) for term, sim in matches]
 
-    def _label_hints(
-        self, embeddings: list[list[float]]
-    ) -> tuple[list[list[str]] | None, list[dict[str, str]] | None]:
-        """Per-chunk ontology class labels and property label->definition maps.
+    def _label_hints(self, embeddings: list[list[float]]) -> list[list[str]] | None:
+        """Per-chunk ontology CLASS labels, offered as candidate entity types.
 
-        ``(None, None)`` when no ontology is configured, which keeps the
-        extractor call byte-identical to the pre-ontology path.
+        ``None`` when no ontology is configured, which keeps the extractor call
+        byte-identical to the pre-ontology path.
+
+        Gated by top-k AND a cosine floor (``ontology_hint_min_sim``). Top-k
+        alone was enough while the bundled ontology had 11 classes; against
+        schema.org's 979 it hands twelve arbitrary labels to a chunk that says
+        "Thanks, Gina!". A chunk with nothing above the floor gets an EMPTY hint
+        list — a distinct, counted outcome, not twelve bad guesses — and the
+        extractor falls back to its base inventory for that chunk.
+
+        Property hints used to be selected here the same way, and that is the
+        half that did not work: cosine over 945 object properties ranks
+        ``liveBlogUpdate`` (0.64) above every property "Still following my
+        passion for dance" actually asserts, so the wrong terms OUTSCORE the
+        right ones and no floor separates them. Relation properties are now
+        selected structurally instead — see :meth:`_relation_labels`.
         """
         if self._ontology is None or not embeddings:
-            return None, None
-        entity_hints = [[t.label for t, _ in self._ontology.match_classes(e)] for e in embeddings]
-        relation_hints = [
-            {t.label: t.definition or t.label for t, _ in self._ontology.match_properties(e)}
-            for e in embeddings
+            return None
+        floor = self._hint_min_sim
+        entity_hints = [
+            [t.label for t, _ in self._ontology.match_classes(e, min_sim=floor)] for e in embeddings
         ]
-        return entity_hints, relation_hints
+        if no_class := sum(1 for h in entity_hints if not h):
+            log.info(
+                "Ontology class hints below floor %.2f for %d/%d chunks",
+                floor,
+                no_class,
+                len(entity_hints),
+            )
+        return entity_hints
+
+    def _relation_labels(self, entities: list[dict[str, Any]]) -> dict[str, str]:
+        """Relation properties this chunk's ENTITY TYPES evoke: ``{label: definition}``.
+
+        The ontology analogue of the FrameNet layer: a frame is evoked by a
+        trigger in the text and its core elements then define the schema to fill;
+        here the extracted entity types evoke the properties whose declared
+        domain and range they satisfy. Structural and anchored in the text —
+        unlike a whole-chunk cosine, which on dialogue ranks by topic and
+        measured 0 relations over 60 real turns.
+
+        Both endpoints must be present. A chunk holding one Person is offered
+        ``knows`` and ``likes`` but not ``worksFor``: with no Organization in it,
+        an extractor offered ``worksFor`` could only invent the other end.
+
+        Capped at ``_RELATION_LABEL_CAP``, round-robin over the (domain, range)
+        pairs rather than in profile order — nine interpersonal Person->Person
+        properties sit at the top of the vocabulary and would otherwise take
+        every slot the moment a person is mentioned, deleting the event, place
+        and employment properties from the offer entirely.
+
+        Offering nothing is a real outcome, and a logged one: an unlogged empty
+        vocabulary is indistinguishable from a broken extractor downstream.
+        """
+        if self._relations is None or not entities:
+            return {}
+        present: set[str] = set()
+        for entity_type in {str(e.get("type", "")) for e in entities}:
+            label, _score = self._map_to_profile_class(entity_type)
+            if label:
+                present |= self._class_ancestors(label)
+
+        offered = [
+            p
+            for p in self._relations.properties
+            if p.domain
+            and p.range
+            and {d.casefold() for d in p.domain} & present
+            and {r.casefold() for r in p.range} & present
+        ]
+        if not offered:
+            log.info(
+                "no relation property matched the extracted types %s (mapped to %s)",
+                sorted({str(e.get("type", "")) for e in entities}),
+                sorted(present) or "nothing in the profile",
+            )
+            return {}
+
+        groups: dict[tuple[tuple[str, ...], tuple[str, ...]], list[Any]] = {}
+        for prop in offered:
+            groups.setdefault((prop.domain, prop.range), []).append(prop)
+        interleaved = [p for row in zip_longest(*groups.values()) for p in row if p is not None][
+            :_RELATION_LABEL_CAP
+        ]
+        return {p.label: p.definition or p.label for p in interleaved}
+
+    def _map_to_profile_class(self, entity_type: str) -> tuple[str, float]:
+        """Map an extracted entity type onto a RELATION-profile class: ``(label, score)``.
+
+        Same two stages as :meth:`_map_to_class` — exact label first ("PERSON" ->
+        ``Person``), then the type string embedded against the class definitions
+        — but over the profile's nine classes rather than schema.org's 979, which
+        is the vocabulary the properties' domain and range are written in.
+
+        ``("", 0.0)`` means the type names nothing the profile can type a
+        relation endpoint with, and contributes no property to the offer.
+        """
+        if self._relations is None or not entity_type:
+            return "", 0.0
+        if (hit := self._profile_class_cache.get(entity_type)) is not None:
+            return hit
+        label = next(
+            (
+                t.label
+                for t in self._relations.classes
+                if t.label.casefold() == entity_type.casefold()
+            ),
+            "",
+        )
+        if label:
+            result = (label, 1.0)
+        else:
+            from graphknows.storage.embedder import embed_one
+
+            matches = self._relations.match_classes(
+                embed_one(entity_type), top_k=1, min_sim=_ONT_CLASS_MIN_SIM
+            )
+            result = (matches[0][0].label, matches[0][1]) if matches else ("", 0.0)
+        self._profile_class_cache[entity_type] = result
+        return result
 
     def _map_to_class(self, entity_type: str) -> tuple[str, str, float]:
         """Map a free-text entity type onto an ontology class: ``(uri, label, score)``.
@@ -762,12 +989,16 @@ class _STMIngestHandler:
         same way: an undeclared domain or an unmappable subject type ADMITS, and
         a refusal drops only the ``ontology_property`` annotation.
 
-        Enforced only for ``rdfs:domain :Person`` — the same narrowing the range
-        gate carries, for the same reason: every other domain miss is the
-        ontology being narrower than the data, and personal.ttl declares a Person
-        domain on 11 of its 13 properties. "London works_as Analytical Engine" is
-        the defect shape: a property that requires a human subject, asserted by a
-        place.
+        Enforced only when ``Person`` is among the declared domains — the same
+        narrowing the range gate carries, for the same reason: every other
+        domain miss is the ontology being narrower than the data, and
+        personal.ttl declares a Person domain on 11 of its 13 properties.
+        "London works_as Analytical Engine" is the defect shape: a property that
+        requires a human subject, asserted by a place.
+
+        Domains are multi-valued (schema.org's ``domainIncludes``), so the check
+        is ANY-match: ``sponsor`` declares Organization, Person, Event and more,
+        and satisfying one of them is conformance.
 
         Unlike the range gate this needs NO confidence floor. That gate concludes
         "the object IS a person", so a wrong ``-> Person`` mapping (``PRODUCT``
@@ -781,13 +1012,15 @@ class _STMIngestHandler:
         ORGANIZATION (1.000) are all correctly not people. ``_map_to_class``
         already refuses to return a class below ``_ONT_CLASS_MIN_SIM``.
         """
-        declared = self._domain_by_property.get(property_label.casefold(), "")
-        if declared.casefold() != _PERSON_CLASS:
+        declared = {
+            d.casefold() for d in self._domain_by_property.get(property_label.casefold(), ())
+        }
+        if _PERSON_CLASS not in declared:
             return True
-        _uri, subj_label, _score = self._map_to_class(subject_type)
+        subj_label, _score = self._map_to_profile_class(subject_type)
         if not subj_label:
             return True  # nothing to judge the subject by — leave it alone
-        return _PERSON_CLASS in self._class_ancestors(subj_label)
+        return bool(declared & self._class_ancestors(subj_label))
 
     def _range_blocked(self, predicate: str, object_type: str) -> bool:
         """Did the range gate REFUSE to annotate this predicate for this object?
@@ -824,14 +1057,16 @@ class _STMIngestHandler:
         ownership claims about humans. Restricting the gate to person-objects
         removes exactly those and keeps the rest.
         """
-        declared = self._range_by_property.get(property_label.casefold(), "")
+        declared = {
+            r.casefold() for r in self._range_by_property.get(property_label.casefold(), ())
+        }
         if not declared:
             return True
-        _uri, obj_label, score = self._map_to_class(object_type)
+        obj_label, score = self._map_to_profile_class(object_type)
         if not obj_label:
             return True
         ancestors = self._class_ancestors(obj_label)
-        if declared.casefold() in ancestors:
+        if declared & ancestors:  # any-match: one satisfied range is conformance
             return True
         if score < _RANGE_GATE_MIN_CLASS_SIM:
             return True  # not confident the object is a person — leave it alone

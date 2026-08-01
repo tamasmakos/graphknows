@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable
 
 # nltk corpora the default (llm_free) relation path looks up. Absent, the call
-# sites in svo.py / _framenet.py catch LookupError and silently return a
+# sites in _lingfeatures.py / _framenet.py catch LookupError and silently return a
 # degraded result — no error, just quietly worse extraction. Bake them.
 NLTK_CORPORA = ("wordnet", "omw-1.4", "framenet_v17")
 
@@ -109,8 +109,8 @@ def _nltk_corpora(_model_id: str, local_only: bool) -> None:
     from nltk.corpus import wordnet as wn
     from nltk.stem import WordNetLemmatizer
 
-    wn.synsets("run", pos=wn.VERB)[0].lexname()  # svo.py _phatic
-    WordNetLemmatizer().lemmatize("motorcycles", "n")  # svo.py _supersense
+    wn.synsets("run", pos=wn.VERB)[0].lexname()  # _lingfeatures.py noun_supersense
+    WordNetLemmatizer().lemmatize("motorcycles", "n")  # _lingfeatures.py noun_supersense
     fn.frames()[:1]  # _framenet.py _lus()
 
 

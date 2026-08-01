@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 import sys
 import tomllib
 from importlib.metadata import packages_distributions
@@ -128,7 +129,7 @@ def test_known_extras_constant_matches_pyproject() -> None:
         # Regression guards: each of these was imported by a default-mode code
         # path while undeclared or declared only in a dev group.
         "gliner",  # entities/gliner_model.py -> knowledgator/gliner-relex-large-v1.0
-        "nltk",  # relations/svo.py, channels/_framenet.py
+        "nltk",  # relations/_lingfeatures.py, channels/_framenet.py
         "sentence-transformers",  # storage/embedder.py, ranking/rerank.py
         "spacy",  # entities/extractor.py
     ],
@@ -145,6 +146,38 @@ def test_default_path_dependencies_are_core(distribution: str) -> None:
         f"'{distribution}' is imported by a default-mode code path but is not a "
         f"core dependency in pyproject.toml [project.dependencies]"
     )
+
+
+def test_bundled_default_ontology_ships_in_the_wheel() -> None:
+    """The always-on ontology is a data file, and data files are easy to lose.
+
+    ``[tool.hatch.build.targets.wheel] packages = ["graphknows"]`` ships the
+    package directory, but hatchling excludes anything the VCS ignores and
+    honours any `exclude` entry — either would produce an installed package
+    whose default ``ontology_source`` points at a file that is not there.
+    """
+    from graphknows.settings import GraphKnowsSettings
+
+    asset = Path(GraphKnowsSettings().ontology_source)
+    assert asset.is_file(), f"bundled ontology missing: {asset}"
+    assert asset.is_relative_to(PKG_ROOT), "asset must live inside the shipped package"
+
+    build = _pyproject()["tool"]["hatch"]["build"]
+    assert build["targets"]["wheel"]["packages"] == ["graphknows"]
+    assert not build.get("exclude"), "a global exclude could drop the asset"
+
+    # Not VCS-ignored: hatchling's default `ignore-vcs = false` drops such files
+    # from the build even though they sit inside the package directory.
+    ignored = subprocess.run(
+        ["git", "check-ignore", str(asset)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if ignored.returncode == 128:  # e.g. "dubious ownership" inside the container
+        pytest.skip("git cannot read this repo here; the VCS check needs a host run")
+    assert ignored.returncode == 1, f"gitignored, so hatchling will not ship it: {asset}"
 
 
 def test_every_imported_third_party_module_is_declared() -> None:

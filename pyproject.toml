@@ -64,9 +64,9 @@ dependencies = [
     # a tf-style scorer — a fused retrieval source that looked live and was not.
     "rank-bm25>=0.2.2",
     # WordNet/FrameNet lookups in the default (llm_free) relation path:
-    # ingestion/extraction/relations/svo.py and channels/_framenet.py. Core, not
-    # eval-only — those call sites guard LookupError (missing *corpus*), which
-    # does not catch the ModuleNotFoundError raised by a missing *package*.
+    # ingestion/extraction/relations/_lingfeatures.py and channels/_framenet.py.
+    # Core, not eval-only — those call sites guard LookupError (missing *corpus*),
+    # which does not catch the ModuleNotFoundError raised by a missing *package*.
     "nltk>=3.8",
     # plug-and-play MCP server
     "mcp>=1.0.0",

@@ -11,6 +11,12 @@ Two views coexist:
 
 Both take a path the caller supplies. Bundled ontologies under ``assets/`` are
 addressed the same way as any other file or folder.
+
+Three input shapes are recognised, in this order: our pre-built **digest** JSON
+(``assets/schemaorg/schemaorg.json``, the always-on default), then RDF/OWL/TTL,
+then the legacy ``*-summary.jsonld`` label lists. The digest is first because it
+is the only shape parsed with the standard library alone — ``rdflib`` lives in
+the ``assisted`` extra, and the default ``llm_free`` install does not have it.
 """
 
 from __future__ import annotations
@@ -59,8 +65,12 @@ class OntologyTerm:
     label: str
     definition: str
     kind: str  # "class" | "property"
-    domain: str = ""
-    range: str = ""
+    # Multi-valued, because schema.org's ``domainIncludes``/``rangeIncludes``
+    # are: ``about`` declares six domains. Conformance is any-match — a relation
+    # conforms when its subject satisfies ANY declared domain (see
+    # ``_domain_admits``). Tuples, not lists: this dataclass is frozen and hashed.
+    domain: tuple[str, ...] = ()
+    range: tuple[str, ...] = ()
     parents: tuple[str, ...] = ()
     source: str = ""
 
@@ -126,12 +136,8 @@ def _collect_terms(graph: Any, subjects: Any, kind: str, source: str) -> list[On
                     graph, node, SKOS.definition, RDFS.comment, DCTERMS.description
                 ),
                 kind=kind,
-                domain=_local_name(graph.value(node, RDFS.domain))
-                if graph.value(node, RDFS.domain)
-                else "",
-                range=_local_name(graph.value(node, RDFS.range))
-                if graph.value(node, RDFS.range)
-                else "",
+                domain=tuple(sorted(_local_name(d) for d in graph.objects(node, RDFS.domain))),
+                range=tuple(sorted(_local_name(r) for r in graph.objects(node, RDFS.range))),
                 parents=tuple(
                     sorted(
                         _local_name(p)
@@ -178,6 +184,55 @@ def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
     ]
 
 
+def _digest_payload(path: Path) -> dict[str, Any] | None:
+    """The parsed digest, or ``None`` when ``path`` is not one.
+
+    A digest is our own pre-parsed shape (``scripts/build_ontology_digest.py``):
+    ``{"classes": [{"uri", "label", "definition"}], "properties": [...]}``. It is
+    recognised BEFORE any RDF path so the bundled schema.org ontology — the
+    default in every mode — never needs ``rdflib``, which ships only in the
+    ``assisted`` extra. rdflib would in fact "parse" this file as JSON-LD and
+    return nothing, so the ordering is what makes the default path work at all.
+    """
+    if path.suffix.lower() not in (".json", ".jsonld"):
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.debug("Not readable as JSON (%s): %s", path.name, exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    entries = [*(data.get("classes") or []), *(data.get("properties") or [])]
+    # The sibling ``*-summary.jsonld`` files carry plain label STRINGS here, not
+    # records; those belong to _terms_from_summary_json.
+    if not entries or not all(isinstance(e, dict) and e.get("label") for e in entries):
+        return None
+    return data
+
+
+def _terms_from_digest(path: Path) -> list[OntologyTerm]:
+    """Parse a pre-built ontology digest. Pure ``json`` — never imports rdflib."""
+    data = _digest_payload(path)
+    if data is None:
+        return []
+    source = str(path)
+    return [
+        OntologyTerm(
+            uri=str(entry["uri"]),
+            label=str(entry["label"]),
+            definition=str(entry.get("definition") or ""),
+            kind=kind,
+            domain=tuple(entry.get("domain") or ()),
+            range=tuple(entry.get("range") or ()),
+            parents=tuple(entry.get("parents") or ()),
+            source=source,
+        )
+        for kind, key in (("class", "classes"), ("property", "properties"))
+        for entry in data.get(key) or []
+    ]
+
+
 def _terms_from_summary_json(path: Path) -> list[OntologyTerm]:
     """Parse a ``*-summary.jsonld`` digest (``classes``/``properties`` lists).
 
@@ -213,7 +268,9 @@ def _ontology_files(source: Path) -> list[Path]:
     """Every candidate ontology file under ``source`` (a file or a folder)."""
     if source.is_file():
         return [source]
-    return sorted(p for p in source.rglob("*") if p.suffix.lower() in _RDF_FORMATS and p.is_file())
+    return sorted(
+        p for p in source.rglob("*") if p.suffix.lower() in (*_RDF_FORMATS, ".json") and p.is_file()
+    )
 
 
 def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
@@ -246,8 +303,12 @@ def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
 
     merged: dict[tuple[str, str], OntologyTerm] = {}
     for path in _ontology_files(resolved):
-        # A summary digest is only consulted when the file is not real RDF.
-        for term in _terms_from_rdf(path) or _terms_from_summary_json(path):
+        # Digest first — it is the only path that avoids importing rdflib, and
+        # rdflib happily "parses" it as JSON-LD into zero terms. A summary
+        # digest is only consulted when the file is not real RDF either.
+        for term in (
+            _terms_from_digest(path) or _terms_from_rdf(path) or _terms_from_summary_json(path)
+        ):
             key = (term.kind, term.label.casefold())
             existing = merged.get(key)
             if existing is None or (not existing.definition and term.definition):
@@ -265,21 +326,44 @@ def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
     return list(merged.values())
 
 
+def _manifest_from_terms(path: Path, terms: list[OntologyTerm]) -> RdfOntologyManifest:
+    """Label-list view of already-parsed terms (the digest path)."""
+    classes = sorted({t.label for t in terms if t.kind == "class"})
+    properties = sorted({t.label for t in terms if t.kind == "property"})
+    if not classes or not properties:
+        raise ValueError(f"Ontology digest has no classes or no properties: {path}")
+    return RdfOntologyManifest(
+        file_path=str(path),
+        class_labels=classes,
+        property_labels=properties,
+        context=json.dumps(
+            {"file": str(path), "classes": classes, "properties": properties}, ensure_ascii=False
+        ),
+    )
+
+
 def load_rdf_ontology_file(path: str | Path) -> RdfOntologyManifest:
     """Load labels from one explicit RDF/OWL ontology file.
 
     This function is intentionally strict for LLM-assisted DSPy extraction:
     callers must provide an RDF/OWL file, and missing labels are errors rather
     than reasons to fall back to taxonomy YAML or generated defaults.
-    """
-    import rdflib  # type: ignore
-    from rdflib import OWL, RDF, RDFS  # type: ignore
 
+    A pre-built digest (the bundled schema.org default) is accepted here too and
+    handled without rdflib: this is the path ``build_relation_extractor`` hands
+    ``settings.ontology_source``, which now defaults to that digest.
+    """
     resolved = Path(path)
     if not resolved.exists():
         raise FileNotFoundError(f"RDF ontology file not found: {resolved}")
     if not resolved.is_file():
         raise ValueError(f"RDF ontology path is not a file: {resolved}")
+
+    if terms := _terms_from_digest(resolved):
+        return _manifest_from_terms(resolved, terms)
+
+    import rdflib  # type: ignore
+    from rdflib import OWL, RDF, RDFS  # type: ignore
 
     graph = rdflib.Graph()
     graph.parse(str(resolved))

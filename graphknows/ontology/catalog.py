@@ -14,8 +14,13 @@ It differs from the frame index in two ways that matter:
 - **Two matrices.** Classes steer entity labels, properties steer relation
   predicates, and they must never be mixed into one ranking.
 
-Absolute cosines run low under the remote embedder (~0.30-0.39), so callers rank
-top-k and treat ``min_sim`` as a permissive floor, not a decision threshold.
+Absolute cosines are NOT calibrated, and the floors below are volume controls,
+not decision thresholds. Measured over 20 real LoCoMo turns against the bundled
+schema.org digest with bge-small, the whole 979-class space spans 0.218-0.721
+(median 0.454) and the top-1 is frequently wrong at the top of that range — a
+job-loss turn matches ``AutoPartsStore`` at 0.721 while ``Person`` ranks 327/979.
+Rank top-k, keep the floor above the space's own median, and do not read a high
+cosine as a correct term.
 """
 
 from __future__ import annotations
@@ -34,17 +39,26 @@ from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
 
 log = logging.getLogger(__name__)
 
-# Label injection is gated by top-k ALONE, not by an absolute cosine. Measured
-# against bge-small on conversational text, the top-1 class cosine has a median
-# of ~0.20 and a floor of ~0.12 — matching a concrete utterance to an abstract
-# class definition is inherently a weak signal. That is acceptable here because
-# a candidate label costs nothing: the extractor only emits labels it actually
-# finds spans for, so an over-broad candidate set loses precision nowhere.
-DEFAULT_MIN_SIM: float = 0.0
+# Fallback floor for direct ``match_*`` callers. The label-hint path passes
+# ``settings.ontology_hint_min_sim`` explicitly and that setting carries the
+# measurement; the two are pinned equal by
+# ``tests/ontology/test_schemaorg_digest.py``.
+#
+# This used to be 0.0 — "gated by top-k alone" — which was harmless while the
+# only bundled ontology had 11 classes, so top-12 WAS the whole ontology. The
+# default ontology is now schema.org's 979 classes, where an unfloored top-12
+# hands twelve arbitrary labels to every chunk, including "Thanks, Gina!".
+DEFAULT_MIN_SIM: float = 0.50
 
 # Persisted CHUNK->ONTOLOGY_CLASS tags are a different matter: they are stored
-# signal that a retrieval channel later trusts, so they take a real floor.
-TAG_MIN_SIM: float = 0.20
+# signal that a retrieval channel later trusts, so they take a stricter floor
+# than the hints. 0.20 was that floor while the ontology had 11 classes; against
+# schema.org it is below the class space's own MEDIAN similarity (0.454 over 20
+# real LoCoMo turns), i.e. no floor at all — every chunk was tagged with three
+# classes regardless of match. 0.60 sits above the space's p95 (0.568), so a tag
+# has to be an outlier match rather than an average one; measured cost is 2/20
+# chunks losing every tag and mean tags/chunk 3.00 -> 2.60.
+TAG_MIN_SIM: float = 0.60
 
 # Ontology terms offered to the extractor per chunk. GLiNER's practical label
 # ceiling is ~24 including the mined + base inventory, so the ontology gets a
@@ -235,6 +249,12 @@ class OntologyIndex:
 def load_ontology_index(source: str) -> OntologyIndex | None:
     """Build (or reuse) the index for an ontology file or folder.
 
+    Ontology injection is always on: ``settings.ontology_source`` defaults to
+    the bundled schema.org digest, so ``None`` here means either a deliberate
+    ``GRAPHKNOWS_ONTOLOGY=""`` or a genuine load failure. Both are logged —
+    silently returning ``None`` would make "switched off" and "broken"
+    indistinguishable from outside.
+
     Args:
         source: Path to an ontology file or folder; empty disables ontology
             injection entirely and returns ``None``.
@@ -245,6 +265,9 @@ def load_ontology_index(source: str) -> OntologyIndex | None:
         continues without it rather than failing.
     """
     if not source:
+        log.warning(
+            "Ontology injection is OFF: no source configured (GRAPHKNOWS_ONTOLOGY is empty)"
+        )
         return None
     cached = _indexes.get(source)
     if cached is not None:

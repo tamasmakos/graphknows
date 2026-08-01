@@ -39,8 +39,9 @@ class TestLoadOntologyTerms:
         terms = load_ontology_terms(PERSONAL_TTL)
         attended = next(t for t in terms if t.label == "attended")
         assert attended.kind == "property"
-        assert attended.domain == "Person"
-        assert attended.range == "Event"
+        # Multi-valued even for a single rdfs:domain — see OntologyTerm.
+        assert attended.domain == ("Person",)
+        assert attended.range == ("Event",)
 
     def test_folder_loads_every_ontology_beneath_it(self) -> None:
         one = load_ontology_terms(PERSONAL_TTL)
@@ -73,8 +74,11 @@ class TestOntologyIndex:
     def _clean(self) -> None:
         reset_ontology_indexes()
 
-    def test_empty_source_disables_injection(self) -> None:
-        assert load_ontology_index("") is None
+    def test_empty_source_disables_injection_loudly(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Injection is always on by default, so "off" must announce itself."""
+        with caplog.at_level("WARNING", logger="graphknows.ontology.catalog"):
+            assert load_ontology_index("") is None
+        assert "Ontology injection is OFF" in caplog.text
 
     def test_unusable_source_is_not_fatal(self, tmp_path: Path) -> None:
         """Ontology injection is enrichment: a bad path must not fail ingestion."""

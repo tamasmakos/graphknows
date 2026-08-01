@@ -17,12 +17,31 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graphknows.exceptions import ConfigurationError
+
+# The always-on default ontology, resolved off this file rather than imported
+# from ``graphknows.ontology``: settings sits BELOW ontology in the layering
+# (see CLAUDE.md), so the dependency may only point the other way.
+_BUNDLED_ONTOLOGY = str(
+    Path(__file__).resolve().parent / "ontology" / "assets" / "schemaorg" / "schemaorg.json"
+)
+
+# The relation vocabulary, which is a DIFFERENT file from the ontology above and
+# deliberately so. schema.org types entities well (a real ingest produced 180
+# correct INSTANCE_OF edges) and supplies relation properties badly: selecting
+# among its 945 object properties by whole-chunk cosine returns topically-close,
+# relationally-irrelevant terms on dialogue and produced ZERO relations over 60
+# real turns. The bundled profile is 25 properties, each declaring a domain and
+# a range, which is what the selection now keys on.
+_BUNDLED_RELATION_PROFILE = str(
+    Path(__file__).resolve().parent / "ontology" / "assets" / "profile" / "personal-profile.json"
+)
 
 
 class MemoryMode(StrEnum):
@@ -167,16 +186,48 @@ class GraphKnowsSettings(BaseSettings):
         alias="GRAPHKNOWS_RELATION_VERIFIER_MODEL",
     )
 
-    # Ontology injection — an RDF/OWL file OR a folder of them. Mode-independent:
-    # when set, ontology class labels steer entity extraction and property labels
-    # steer relation extraction in BOTH modes. Classes are persisted as
-    # ONTOLOGY_CLASS nodes; properties are NOT persisted — domain/range
-    # validation reads the in-memory OntologyTerm from the loader, so
-    # ONTOLOGY_PROPERTY vertices would be write-only. Read via ``ontology_source``.
+    # Ontology injection — ALWAYS ON, like the FrameNet layer. Ontology class
+    # labels steer entity extraction and property labels steer relation
+    # extraction in BOTH modes; classes are persisted as ONTOLOGY_CLASS nodes,
+    # while properties are NOT persisted — domain/range validation reads the
+    # in-memory OntologyTerm from the loader, so ONTOLOGY_PROPERTY vertices
+    # would be write-only. Read via ``ontology_source``.
+    #
+    # The default is the bundled schema.org digest: a pre-parsed JSON of 979
+    # classes and 945 object properties that loads WITHOUT rdflib (which ships
+    # only in the ``assisted`` extra), so a bare `pip install graphknows` gets
+    # the same ontology the container does. GRAPHKNOWS_ONTOLOGY overrides it
+    # with any other RDF/OWL/TTL file, digest, or folder of them — an override,
+    # not an on/off switch: an EMPTY value means "unset" (which is how
+    # docker-compose spells an absent variable,
+    # ``GRAPHKNOWS_ONTOLOGY: "${GRAPHKNOWS_ONTOLOGY:-}"``) and still resolves to
+    # the bundled digest. The fallback lives in ``ontology_source`` so the
+    # deprecated alias below keeps its precedence.
     ontology: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY")
     # Deprecated alias kept so existing GRAPHKNOWS_ONTOLOGY_FILE setups (and the
     # eval CLIs) keep working; ``ontology`` wins when both are set.
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
+
+    # Cosine floor for the per-chunk ontology label hints. Measured over 20 real
+    # LoCoMo conv-30 turns against the bundled schema.org digest with bge-small:
+    # the whole 979-class space spans 0.218-0.721 with median 0.454, while the
+    # weakest genuine top-1 is 0.537 (class) / 0.495 (property). 0.50 therefore
+    # sits above the ontology's average term — a hint has to beat the mean to be
+    # offered — and below the weakest real match, so no contentful chunk loses
+    # its best candidate. Raising it starves the relation vocabulary fast: at
+    # 0.58, 4/20 chunks get NO property hint at all.
+    #
+    # This bounds hint VOLUME, not quality: absolute cosines against schema.org
+    # are not calibrated enough to separate a right term from a wrong one (a
+    # job-loss turn matches ``AutoPartsStore`` at 0.721, while ``Person`` ranks
+    # 327/979 on the same turn). Re-census before retuning.
+    ontology_hint_min_sim: float = Field(default=0.50, alias="GRAPHKNOWS_ONTOLOGY_HINT_MIN_SIM")
+
+    # The relation vocabulary. Same override semantics as ``ontology`` (empty
+    # means unset, not off) and read via ``relation_ontology_source``. Point it
+    # at any digest/RDF file with domain- and range-typed properties; point it at
+    # the same value as ``ontology`` to go back to one vocabulary for both jobs.
+    relation_ontology: str = Field(default="", alias="GRAPHKNOWS_RELATION_ONTOLOGY")
 
     # Retrieval channels — modular ingest+retrieve signals (see memory/channels/).
     # Frames (deterministic FrameNet layer) are ON by default; disable with
@@ -208,8 +259,24 @@ class GraphKnowsSettings(BaseSettings):
 
     @property
     def ontology_source(self) -> str:
-        """The ontology file or folder to load, honouring the deprecated alias."""
-        return self.ontology or self.ontology_file
+        """The ontology file or folder to load, honouring the deprecated alias.
+
+        Never empty: an unset or empty ``GRAPHKNOWS_ONTOLOGY`` falls back to the
+        bundled schema.org digest. There is no "no ontology" state — a caller
+        that hands ``load_ontology_index`` an empty string bypassed settings,
+        and that function logs the fact.
+        """
+        return self.ontology.strip() or self.ontology_file.strip() or _BUNDLED_ONTOLOGY
+
+    @property
+    def relation_ontology_source(self) -> str:
+        """The vocabulary relation properties are drawn from — never empty.
+
+        Separate from :attr:`ontology_source` because the two vocabularies do
+        different jobs: classes type entities, properties type relations, and
+        the vocabulary that is best at one is measurably bad at the other.
+        """
+        return self.relation_ontology.strip() or _BUNDLED_RELATION_PROFILE
 
     @property
     def uses_llm(self) -> bool:

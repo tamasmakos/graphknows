@@ -1,27 +1,31 @@
-"""Dynamic spaCy-hinted relex extractor for the memory ingestion pipeline.
+"""Ontology-labelled relex extractor for the memory ingestion pipeline.
 
-spaCy runs once per chunk and mines the two label vocabularies the extraction
-model needs: the ENTITY labels (from spaCy NER) and the open-vocabulary predicate
-labels of every clause (see :mod:`graphknows.ingestion.extraction.relations.svo`)
-— the predicate is what the text actually says (WORK_AS, LOSE_AT, ADOPT), the
-subject resolves to the utterance speaker for first/second-person clauses, and
-date/phatic/dangling noise is dropped at the source. Supplying labels the text
-itself produced is what makes a label-conditioned extractor usable on open
-dialogue at all, so that half of the old design is unchanged.
+Two vocabularies condition the extraction model, and they come from different
+places.
 
-What changed is the model. GLiNER2 could only *corroborate* a mined SVO triple:
-it emitted a predicate, and agreement promoted the triple to ``svo+gliner``.
-relex (knowledgator/gliner-relex-large-v1.0) extracts entities and relations
-JOINTLY and returns typed, span-grounded head/tail pairs — so its output IS the
-fact, not a vote on someone else's. Two relation sources survive:
+ENTITY labels are mined per chunk by spaCy NER, unioned with
+:data:`_BASE_ENTITY_LABELS` — relex is zero-shot and can only emit a type it was
+handed, so an empty spaCy observation is not an empty schema.
 
-* ``relex`` — the model emitted (head, predicate, tail) under a mined predicate
-  label, kept at its own score.
-* ``svo`` — a mined triple relex did not emit, kept at a fixed 0.6 structural
-  prior when BOTH arguments are named, or the pattern is copular/appositive/
-  possessive with a named head. This retains the durable identity/possession
-  facts ("I'm a nurse", "Caroline's dog") that a verb-relation model has no
-  predicate label to express.
+RELATION labels are the ontology's. ``extra_relation_labels`` is
+``{property label -> definition}`` for the ontology properties nearest THIS
+chunk's embedding, selected by the caller (``stm/ingest.py::_label_hints``), and
+it IS the relation spec — relex is asked for schema.org's ``worksFor``/``knows``,
+nothing else.
+
+That used to be an SVO miner's open-vocabulary predicates, unioned with the
+ontology hints. The miner is gone. Measured on a live conv-30 graph it produced
+28 of the 43 relation edges and 25 of those 28 were ``<speaker> HAS <common
+noun>`` (``Jon HAS back``, ``Jon HAS corner``) — a four-label vocabulary
+``{HAS: 25, BE_TO: 1, IS_A: 1, LOSE_AT: 1}`` against relex's 9 distinct
+predicates over 15 edges. So there is now exactly ONE relation source:
+
+* ``relex`` — the model emitted (head, ontology property, tail) with both
+  arguments span-grounded and typed, kept at its own score.
+
+A chunk for which no ontology property was selected has no relation label space;
+relex is asked for entities only and the omission is logged (see :meth:`_relex`),
+because an unlogged empty result is indistinguishable from a broken extractor.
 
 One forward pass per WHOLE chunk: relex has no fixed max length, so the old
 128-token sub-windowing (~4 calls/chunk, needed because GLiNER2 attended poorly
@@ -42,19 +46,28 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.gliner_model import load_gliner2_model
-from graphknows.ingestion.extraction.relations.svo import (
-    extract_relations,
+from graphknows.ingestion.extraction.relations._lingfeatures import (
     noun_supersense,
     parse_speaker,
+    resolve_deixis,
 )
+from graphknows.ingestion.stm._entity_writer import is_graph_entity_name
 
 log = logging.getLogger(__name__)
 
 _BASE_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_THRESHOLD", "0.35"))
-# relex classifies a candidate entity PAIR as bearing a relation; its own card
+# relex classifies a candidate entity PAIR as bearing a relation, and its card
 # recommends a markedly higher floor here than for entity spans (0.7-0.9 vs
-# 0.3-0.5), because a low relation threshold pairs up every co-occurring entity.
-_RELATION_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_RELATION_THRESHOLD", "0.7"))
+# 0.3-0.5) because a low relation threshold pairs up every co-occurring entity.
+#
+# That figure was 0.7 here and it discarded EVERY correct extraction. The card is
+# calibrated for the model's own in-distribution label vocabulary; this pipeline
+# injects ontology property names instead, which score far lower. Measured:
+# "Caroline works for Mercy Hospital" under the injected label ``worksFor`` — a
+# textbook sentence, a correct relation — scores 0.437. At 0.3 it survives; at
+# 0.1 sub-span noise appears; at 0.0 the output explodes. Precision is defended
+# by the endpoint guards in _relation_reject, not by an unreachable floor.
+_RELATION_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_RELATION_THRESHOLD", "0.3"))
 # Floor on relex's entity-PAIR candidate score. Without it every co-occurring
 # pair of entities is a relation candidate and gets scored against every supplied
 # predicate, which manufactures confident nonsense between unrelated spans.
@@ -100,10 +113,8 @@ _BASE_ENTITY_LABELS: tuple[str, ...] = (
 
 # relex has no speaker resolution, so it happily returns "I"/"you"/"we" as PERSON
 # spans and would create an ENTITY node called "I" that every speaker's facts
-# collapse onto. The SVO path resolves these to the utterance speaker
-# (svo._resolve); a relex relation anchored on a bare pronoun carries no
-# recoverable referent, so it is dropped and the SVO triple for the same clause
-# is the one that survives.
+# collapse onto. A relex relation anchored on a bare pronoun carries no
+# recoverable referent, so it is dropped.
 _PRONOUNS: frozenset[str] = frozenset(
     {
         "i",
@@ -142,11 +153,6 @@ _SPACY_MODEL = "en_core_web_lg"
 _MIN_ENTITY_LABEL_COUNT = 1
 _MAX_ENTITY_LABELS = 24
 
-# SVO mines one predicate per clause verb, so a multi-turn dialogue chunk yields
-# many distinct labels. relex scores every supplied relation label against every
-# candidate entity pair, so this cap is now a COST knob as well as a recall one.
-_MAX_RELATION_LABELS = 96
-
 
 @dataclass
 class ExtractionResult:
@@ -166,23 +172,23 @@ class _EntityHint:
 
 @dataclass(frozen=True)
 class _DynamicSchema:
+    """Per-chunk ENTITY vocabulary. Relation labels are NOT mined — see module doc."""
+
     entity_spec: dict[str, dict[str, Any]]
-    relation_spec: dict[str, str]
     label_to_type: dict[str, str]
     # Casefolded surfaces used ONLY as a verb in this chunk (see
     # _mine_verb_surfaces). Consumed by _dedupe_entities to drop predicate spans
     # the model returned as entities.
     verb_surfaces: frozenset[str] = frozenset()
-    # Relation triples mined for the chunk (the candidate facts): verb-SVO plus
-    # rich dependency-grammar triples (copular/possessive/appositive/noun-prep),
-    # each dict as returned by ``extract_relations``; consumed by the _map_raw
-    # corroboration/structural gate (rich triples ride the structural keep).
-    svo_triples: list[dict[str, Any]] = field(default_factory=list)
     # Casefolded speaker names of the chunk's turn-lines. Model spans sometimes
     # run ACROSS the "Speaker:" colon ("Caroline: Thanks, Melanie" as one
     # PERSON), fragmenting the real speaker node — the mint points reduce such
     # surfaces to the speaker. Empty for non-dialogue text, making that a no-op.
     speakers: frozenset[str] = frozenset()
+    # The chunk's text with 1st/2nd-person pronouns rewritten to the speaker's
+    # name, for the RELATION pass only (see _relex). "" when no speaker is known
+    # or the text carries no deixis, which is the signal to use the text itself.
+    deixis_surface: str = ""
 
 
 def _schema_label(value: str) -> str:
@@ -252,7 +258,7 @@ def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
     the great majority of dialogue relation arguments (common nouns — "a nurse",
     "cat", "job") reached the graph untyped, leaving the type space too degenerate
     to condition on. The supersense ("noun.person", "noun.artifact", ...) is
-    already computed inside svo's concreteness gates and was being discarded.
+    what fills that gap.
 
     The supersense is translated into the graph's own taxonomy before it is
     returned (see ``_SUPERSENSE_TO_TYPE``); it must never reach ENTITY.type in
@@ -284,16 +290,6 @@ def _canonical_type(raw_label: str, label_to_type: dict[str, str]) -> str:
     return label_to_type.get(_schema_label(raw_label), raw_label.upper())
 
 
-def _svo_relation_description(verb: str, prep: str) -> str:
-    """GLiNER2 validator description for a mined SVO predicate label."""
-    phrase = f"{verb} {prep}".strip()
-    return (
-        f"A factual relation where the subject '{phrase}' the object. The object "
-        "is a concise entity or noun phrase (a person, place, organization, role, "
-        "or thing) — never a clause, question, or date."
-    )
-
-
 def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
     """``"Caroline: Thanks, Melanie"`` -> ``"Caroline"`` when Caroline spoke.
 
@@ -304,15 +300,36 @@ def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
     the speaker (its facts are things the SPEAKER did), and any real entity in
     the utterance remainder is emitted by the model as its own span anyway.
 
+    A second shape, same referent and same fix: a span that OPENS with a speaker
+    name and continues into a clause. On the raw text that shape is a pronoun
+    clause and ``is_graph_entity_name`` drops it (``_is_clause_fragment`` keys on
+    a pronoun first token); the deixis-resolved relation surface rewrites the
+    pronoun to a NAME and so walks straight past that rule. Measured on the
+    40-turn conv-30 probe: "Gina is over the moon because" and "Jon is staying
+    positive. Jon" both reached the graph as relation endpoints. A remainder that
+    is entirely capitalised is a proper-name sequence ("Gina Torres") and is left
+    alone; anything lowercase in it means the span stopped being a name.
+
     Keys strictly on *known speakers of this chunk*: a colon alone never fires,
     so titles like "Charlotte's Web: A Review" pass through, and non-dialogue
     text (empty ``speakers``) makes this the identity function.
     """
-    if not speakers or ":" not in name:
+    if not speakers:
         return name
-    head = name.split(":", 1)[0]
-    if " ".join(head.split()).casefold() in speakers:
-        return head.strip()
+    if ":" in name:
+        head = name.split(":", 1)[0]
+        if " ".join(head.split()).casefold() in speakers:
+            return head.strip()
+        return name
+    first, *rest = name.split() or [""]
+    # A bare genitive of a speaker is that speaker. Measured live it forked the
+    # node ("Jon's owns biz" beside "Jon owns biz") and hid a self-relation
+    # outright — "Jon's -[spouse]-> Jon" walked past the head != tail check.
+    # Whole-span only: "Jon's studio" names something else and keeps its owner.
+    if not rest and (bare := first.removesuffix("'s").removesuffix("'")).casefold() in speakers:
+        return bare
+    if rest and first.casefold() in speakers and any(not w[:1].isupper() for w in rest):
+        return first
     return name
 
 
@@ -482,6 +499,34 @@ def _dedupe_entities(
     return out
 
 
+def _relation_reject(head: str, label: str, tail: str, head_type: str, tail_type: str) -> str:
+    """Why this triple must not reach the graph, or "" when it may.
+
+    The ontology label set is CLOSED, so relex is FORCED to pick one of the
+    properties it was handed — offered five on two friends chatting it emitted
+    both ``Gina spouse Jon`` and ``Gina children Jon``, neither true. Nothing here
+    can judge a predicate, but two structural checks cost nothing and are exactly
+    what the extra recall from deixis resolution makes necessary:
+
+    * a relation whose ends are the same entity says nothing (and the resolved
+      surface, where both ends can be the speaker, makes "Gina knows Gina" easy);
+    * an endpoint that is not a graph entity name at all — a date, a clause
+      fragment, a backchannel. ``is_graph_entity_name`` is the ONE junk predicate
+      every minting path shares, so it applies to BOTH ends here too.
+    """
+    if not head or not label or not tail:
+        return "empty argument"
+    if head.casefold() == tail.casefold():
+        return "self-relation"
+    if head.casefold() in _PRONOUNS or tail.casefold() in _PRONOUNS:
+        return "pronoun endpoint"
+    if not is_graph_entity_name(head, head_type):
+        return "head is not an entity name"
+    if not is_graph_entity_name(tail, tail_type):
+        return "tail is not an entity name"
+    return ""
+
+
 def _build_relation(
     head: str,
     label: str,
@@ -492,27 +537,31 @@ def _build_relation(
     head_type: str = "",
     tail_type: str = "",
     speakers: frozenset[str] = frozenset(),
-) -> dict[str, Any] | None:
-    """One relation dict, or None when the argument pair is unusable."""
+) -> tuple[dict[str, Any] | None, str]:
+    """(relation dict, "") or (None, reason) when the argument pair is unusable."""
     # Same cleaning as the entity pass: these strings become ENTITY merge
     # keys via write_relation, so a quoted surface here corrupts the graph
     # exactly as it does there — and a speaker-glued surface here is what
     # attached 42.5% of REL edges to malformed hub names.
-    head = _reduce_speaker_span(_clean_surface(head), speakers)
-    tail = _reduce_speaker_span(_clean_surface(tail), speakers)
-    if not head or not label or not tail or head.casefold() == tail.casefold():
-        return None
-    if head.casefold() in _PRONOUNS or tail.casefold() in _PRONOUNS:
-        return None
+    # _strip_determiner for the same reason the entity path applies it, plus one:
+    # "the fair" and "fair" are one entity, and the article walked the pair past
+    # the same-entity check as `the fair -[attendee]-> fair` (measured, live).
+    head = _strip_determiner(_reduce_speaker_span(_clean_surface(head), speakers))
+    tail = _strip_determiner(_reduce_speaker_span(_clean_surface(tail), speakers))
+    head_type = head_type or _arg_type(head, entities)
+    tail_type = tail_type or _arg_type(tail, entities)
+    reason = _relation_reject(head, label, tail, head_type, tail_type)
+    if reason:
+        return None, reason
     return {
         "head": head,
-        "head_type": head_type or _arg_type(head, entities),
+        "head_type": head_type,
         "relation": label,
         "tail": tail,
-        "tail_type": tail_type or _arg_type(tail, entities),
+        "tail_type": tail_type,
         "score": score,
         "source": source,
-    }
+    }, ""
 
 
 def _relex_relations(
@@ -521,16 +570,23 @@ def _relex_relations(
     label_to_type: dict[str, str],
     speakers: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
-    """Relation dicts for the (head, predicate, tail) triples relex emitted."""
+    """Relation dicts for the (head, predicate, tail) triples relex emitted.
+
+    Drops are tallied by reason and logged: an unlogged swallow makes "the model
+    found nothing" and "the guard is eating everything" indistinguishable from
+    outside, which is how this repo has previously shipped inert layers.
+    """
     out: list[dict[str, Any]] = []
+    drops: Counter[str] = Counter()
     for rel in raw_relations or []:
         score = float(rel.get("score", 0.0) or 0.0)
         if score < _RELATION_THRESHOLD:
+            drops["below relation threshold"] += 1
             continue
         head_d, tail_d = rel.get("head") or {}, rel.get("tail") or {}
         # relex types its own arguments — richer than the NER label / WordNet
         # supersense fallback, so prefer it and only fall back when absent.
-        built = _build_relation(
+        built, reason = _build_relation(
             str(head_d.get("text") or ""),
             str(rel.get("relation") or "").strip(),
             str(tail_d.get("text") or ""),
@@ -541,42 +597,17 @@ def _relex_relations(
             tail_type=_canonical_type(str(tail_d.get("type") or ""), label_to_type),
             speakers=speakers,
         )
-        if built is not None:
-            out.append(built)
-    return out
-
-
-def _svo_structural_relations(
-    svo_triples: list[dict[str, Any]],
-    entities: list[dict[str, Any]],
-    speakers: frozenset[str] = frozenset(),
-) -> list[dict[str, Any]]:
-    """Relation dicts for mined triples kept at the fixed structural prior.
-
-    Gate: BOTH arguments named, or a copular/appositive/possessive pattern
-    with a named head.
-    """
-    named_head_patterns = ("copular", "appositive", "possessive")
-    out: list[dict[str, Any]] = []
-    for triple in svo_triples:
-        pattern = triple.get("pattern", "svo")
-        if (triple["head_named"] and triple["tail_named"]) or (
-            pattern in named_head_patterns and triple["head_named"]
-        ):
-            pass
+        if built is None:
+            drops[reason] += 1
         else:
-            continue
-        built = _build_relation(
-            triple["head"],
-            triple["relation"],
-            triple["tail"],
-            0.6,
-            "svo",
-            entities,
-            speakers=speakers,
-        )
-        if built is not None:
             out.append(built)
+    if drops:
+        log.info(
+            "relation guard dropped %d of %d relex candidates: %s",
+            sum(drops.values()),
+            len(raw_relations or []),
+            dict(drops.most_common()),
+        )
     return out
 
 
@@ -592,16 +623,6 @@ def _line_speakers(text: str) -> list[tuple[int, str]]:
         offsets.append((pos, parse_speaker(line)))
         pos += len(line) + 1  # + the '\n' consumed by split
     return offsets
-
-
-def _speaker_at(line_speakers: list[tuple[int, str]], char: int) -> str:
-    """Speaker of the turn-line containing character offset *char* ('' if none)."""
-    speaker = ""
-    for start, sp in line_speakers:
-        if start > char:
-            break
-        speaker = sp
-    return speaker
 
 
 def _mine_entity_schema(doc: Any) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
@@ -632,58 +653,12 @@ def _mine_entity_schema(doc: Any) -> tuple[dict[str, dict[str, Any]], dict[str, 
     return entity_spec, label_to_type
 
 
-def _mine_svo_schema(
-    doc: Any, speaker: str = "", known_speakers: Sequence[str] = ()
-) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """(svo_triples, relation_spec) mined from a doc's clause structure.
-
-    ``speaker`` is who uttered this chunk, when the caller knows it. Almost all
-    conversational predication is first-person ("I work as a nurse"), and such a
-    clause only becomes a relation once its subject resolves to a name — so
-    without a speaker the dominant relation shape is silently dropped.
-
-    It falls back to scraping ``"ts | Speaker: text"`` turn-lines out of the text
-    for callers that still flatten the speaker into the content. That fallback is
-    the ONLY way this used to work, which meant a caller passing clean text plus
-    structured metadata — the arrangement that keeps speakers from being minted
-    as entities — lost its relations as the price. Measured on LoCoMo conv-30:
-    57 relations with the prefix, 15 without.
-    """
-    line_speakers = _line_speakers(doc.text)
-    scraped = sorted({s for _, s in line_speakers if s})
-    speakers = sorted(
-        {*scraped, *(s for s in known_speakers if s), *([speaker] if speaker else [])}
-    )
-    svo_triples: list[dict[str, Any]] = []
-    label_verb: dict[str, tuple[str, str]] = {}
-    label_counts: Counter[str] = Counter()
-    for sent in doc.sents:
-        # A scraped turn-line wins for its own sentence — a multi-turn chunk has
-        # a different speaker per line, which the caller's single value cannot
-        # express. The caller's speaker is the fallback, not the override.
-        sent_speaker = _speaker_at(line_speakers, sent.start_char) or speaker
-        for triple in extract_relations(sent, sent_speaker, speakers):
-            svo_triples.append(triple)
-            # Only verb-SVO predicates join the GLiNER2 validation schema;
-            # rich structural triples (IS_A/HAS/prep) ride the structural
-            # keep in _map_raw and carry no verb/prep to describe.
-            if triple.get("pattern", "svo") != "svo":
-                continue
-            label = triple["relation"]
-            label_counts[label] += 1
-            label_verb.setdefault(label, (triple["verb"], triple["prep"]))
-
-    # The GLiNER2 RELATION schema IS the mined SVO predicate vocabulary —
-    # GLiNER2 looks only for the predicates the text actually stated.
-    relation_spec: dict[str, str] = {}
-    for label, _count in label_counts.most_common(_MAX_RELATION_LABELS):
-        verb, prep = label_verb[label]
-        relation_spec[label] = _svo_relation_description(verb, prep)
-    return svo_triples, relation_spec
-
-
 class _SpacySchemaMiner:
-    """Mine GLiNER2 schema labels from spaCy NER and SVO relation structure."""
+    """Mine the per-chunk ENTITY label vocabulary from spaCy NER.
+
+    Relation labels are NOT mined here — they are the ontology properties the
+    caller selected for the chunk. See the module docstring.
+    """
 
     def __init__(
         self,
@@ -736,15 +711,14 @@ class _SpacySchemaMiner:
 
     def _build_from_doc(self, doc: Any, speaker: str = "") -> _DynamicSchema:
         entity_spec, label_to_type = _mine_entity_schema(doc)
-        svo_triples, relation_spec = _mine_svo_schema(doc, speaker)
         scraped = {s.casefold() for _, s in _line_speakers(doc.text) if s}
+        surface = resolve_deixis(doc, speaker)
         return _DynamicSchema(
             entity_spec=entity_spec,
-            relation_spec=relation_spec,
             label_to_type=label_to_type,
-            svo_triples=svo_triples,
             speakers=frozenset(scraped | ({speaker.casefold()} if speaker else set())),
             verb_surfaces=_mine_verb_surfaces(doc),
+            deixis_surface="" if surface == doc.text else surface,
         )
 
 
@@ -784,9 +758,9 @@ class GLiNER2EntityExtractor:
 
             relation_verifier = build_relation_verifier(settings or GraphKnowsSettings())
         self._relation_verifier = relation_verifier
-        # Open-vocabulary relations: the per-chunk mined SVO predicate labels ARE
-        # the schema. An explicit *relation_schema* (escape hatch for
-        # taxonomy-guided extraction) is honored when passed.
+        # The relation label space is normally the per-chunk ontology properties
+        # the caller passes to extract(). An explicit *relation_schema* (escape
+        # hatch: one fixed taxonomy for every chunk) overrides them when passed.
         self._relation_schema: dict[str, str] = dict(relation_schema) if relation_schema else {}
 
     @property
@@ -840,16 +814,47 @@ class GLiNER2EntityExtractor:
         ~4 model calls per chunk. One call per chunk both simplifies the merge away
         and offsets relex being the larger model.
 
-        ``extra_entity_labels``/``extra_relation_labels`` are ontology terms
-        selected for THIS chunk. They are unioned in, never substituted: the
-        mined vocabulary keeps its precedence, so ontology injection can only add
-        candidates, never suppress an entity the text actually states.
+        ``extra_entity_labels``/``extra_relation_labels`` are the ontology terms
+        nearest THIS chunk's embedding. The two are used differently, on purpose:
+
+        * entity labels are UNIONed with the chunk's own spaCy observations and
+          the base inventory — ontology injection may add candidate types, never
+          suppress an entity the text actually states;
+        * relation labels ARE the relation spec. There is no other source since
+          the SVO miner was deleted, so an empty hint set means relex is asked
+          for entities only. That is a real outcome (no ontology property scored
+          above the candidate threshold for this chunk), not a silent nothing, so
+          it is logged: an unlogged empty result is indistinguishable from a
+          broken extractor.
+
+        TWO passes when the chunk carries first/second-person deixis: entities off
+        the ORIGINAL text, relations off the speaker-resolved surface. See
+        :func:`~..relations._lingfeatures.resolve_deixis` — a pronoun is not an
+        entity span, so on the raw text the subject of a self-stated fact simply
+        is not there. One pass otherwise, which is most non-dialogue text.
         """
         assert self._gliner is not None
-        relation_spec = dict(self._relation_schema or dynamic_schema.relation_spec)
-        if extra_relation_labels:
-            for label, description in extra_relation_labels.items():
-                relation_spec.setdefault(label, description)
+        relation_spec = dict(self._relation_schema or extra_relation_labels or {})
+        if not relation_spec:
+            # ``None`` and ``{}`` are different facts and must stay so. The ingest
+            # handler is two-pass — pass 1 passes None because the property
+            # vocabulary is selected FROM the entity types pass 1 finds — so
+            # warning on None fires once per chunk by design and drowns the case
+            # the warning exists for: the selection RAN and matched nothing.
+            if extra_relation_labels is None:
+                log.debug(
+                    "entity-only pass over this chunk (%d chars, starts %r): "
+                    "no relation label space was requested",
+                    len(text),
+                    text[:60],
+                )
+            else:
+                log.warning(
+                    "no ontology property matched this chunk (%d chars, starts %r); "
+                    "relex is asked for entities only, so it can emit no relations",
+                    len(text),
+                    text[:60],
+                )
         # Observed labels first (they carry the chunk's own evidence), then the
         # ontology's suggestions, then the base inventory — relex cannot emit a
         # type it was not given.
@@ -862,6 +867,30 @@ class GLiNER2EntityExtractor:
                 ]
             )
         )
+        # getattr: tests stub the schema with SimpleNamespace and predate the field.
+        surface: str = getattr(dynamic_schema, "deixis_surface", "")
+        if relation_spec and not surface:
+            log.debug(
+                "no speaker resolved for this chunk (%d chars, starts %r); relations are "
+                "read off the raw text, so a first-person stated fact has no subject span",
+                len(text),
+                text[:60],
+            )
+        if not (surface and relation_spec):
+            return self._infer(text, labels, relation_spec)
+        # Character offsets, alias candidates and overlap resolution all anchor on
+        # the original text, and the stored chunk text stays unmodified — so the
+        # surface is used for the relation pass ONLY. The two decouple because a
+        # relation's head/tail are matched downstream by NAME, not by offset.
+        entities, _ = self._infer(text, labels, {})
+        _, relations = self._infer(surface, labels, relation_spec)
+        return entities, relations
+
+    def _infer(
+        self, text: str, labels: list[str], relation_spec: dict[str, str]
+    ) -> tuple[list, list]:
+        """One relex forward pass. Relations only when ``relation_spec`` is non-empty."""
+        assert self._gliner is not None
         # Serialised inside the model wrapper (see gliner_model._SerialInference):
         # this model is shared across concurrently-ingesting conversations AND
         # with the frame-SRL pass, and its inference() is not reentrant.
@@ -876,9 +905,9 @@ class GLiNER2EntityExtractor:
             flat_ner=False,
         )
         # inference() returns (entities, relations) ONLY when return_relations is
-        # true; with it false it returns the entities list alone. A chunk whose
-        # SVO pass mined no predicates takes that branch, so unpacking blind
-        # raises ValueError and loses the chunk's entities too.
+        # true; with it false it returns the entities list alone. A chunk with no
+        # ontology property takes that branch, so unpacking blind raises
+        # ValueError and loses the chunk's entities too.
         entities, relations = out if isinstance(out, tuple) else (out, [])
         return (entities[0] if entities else []), (relations[0] if relations else [])
 
@@ -968,16 +997,16 @@ class GLiNER2EntityExtractor:
             results[i] = self._map_relex(text, ents, rels, dynamic_schema)
 
         final = [r if r is not None else ExtractionResult() for r in results]
-        # Guardrail: the label space is open — log its size per batch so a
-        # runaway vocabulary is visible in ingest logs.
+        # The label space is the ontology's and therefore closed, but which of
+        # its properties actually fire is the thing to watch: a batch that logs
+        # one label, or none, is the relation layer going inert.
         label_counts = Counter(rel["relation"] for res in final for rel in res.relations)
-        if label_counts:
-            log.info(
-                "open-vocab relation labels: %d distinct across %d chunks; top10=%s",
-                len(label_counts),
-                len(final),
-                label_counts.most_common(10),
-            )
+        log.info(
+            "ontology relation labels used: %d distinct across %d chunks; top10=%s",
+            len(label_counts),
+            len(final),
+            label_counts.most_common(10),
+        )
         return final
 
     def _map_relex(
@@ -990,18 +1019,9 @@ class GLiNER2EntityExtractor:
         """Map one relex (entities, relations) pair → ExtractionResult.
 
         relex extracts entities and relations JOINTLY, returning typed head/tail
-        spans — so unlike the GLiNER2 era its relations are facts in their own
-        right, not corroboration of an SVO triple. Two relation sources survive:
-
-          * ``relex`` — the model emitted (head, predicate, tail) under a
-            SVO-mined predicate label, with both arguments span-grounded and
-            typed. Kept at the model's own score.
-          * ``svo`` — a mined triple relex did NOT emit, kept at the same fixed
-            0.6 structural prior as before and under the same gates: BOTH
-            arguments named, or a copular/appositive/possessive pattern with a
-            named head. This retains the durable identity/possession facts
-            ("I'm a nurse", "Caroline's dog") that a verb-relation model has no
-            predicate label for.
+        spans, so its output IS the fact. It is the only relation source: every
+        relation here is one the model emitted under an ontology property label,
+        kept at the model's own score.
         """
         # getattr: tests stub the schema with SimpleNamespace and predate the field.
         speakers: frozenset[str] = getattr(dynamic_schema, "speakers", frozenset())
@@ -1012,14 +1032,13 @@ class GLiNER2EntityExtractor:
             getattr(dynamic_schema, "verb_surfaces", frozenset()),
         )
 
-        # relex first, then SVO: a mined triple relex already emitted is dropped
-        # here, so the model's own score wins over the structural prior.
+        # Dedupe by (head, relation, tail): relex can emit the same fact twice
+        # from two spans of one chunk, and the graph merge writes one edge.
         relations: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
-        candidates = [
-            *_relex_relations(raw_relations, entities, dynamic_schema.label_to_type, speakers),
-            *_svo_structural_relations(dynamic_schema.svo_triples, entities, speakers),
-        ]
+        candidates = _relex_relations(
+            raw_relations, entities, dynamic_schema.label_to_type, speakers
+        )
         for rel in candidates:
             key = (rel["head"].casefold(), rel["relation"], rel["tail"].casefold())
             if key in seen:

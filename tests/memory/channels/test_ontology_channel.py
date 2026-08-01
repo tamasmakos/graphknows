@@ -34,9 +34,10 @@ def _rt(rows: list[dict], chunk_total: int) -> MagicMock:
 
 
 class TestRegistration:
-    def test_absent_without_an_ontology(self) -> None:
+    def test_present_without_any_configuration(self) -> None:
+        """The bundled ontology is the default, so the channel is unconditional."""
         names = [c.name for c in default_channels(GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY=""))]
-        assert "ontology" not in names
+        assert "ontology" in names
 
     def test_present_with_an_ontology(self) -> None:
         names = [c.name for c in default_channels(GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY=ONT))]

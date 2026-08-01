@@ -87,8 +87,47 @@ class TestEmptyEnvVars:
 
 
 class TestOntologySource:
-    def test_unset_is_empty(self) -> None:
-        assert GraphKnowsSettings().ontology_source == ""
+    def test_unset_resolves_to_the_bundled_schemaorg_digest(self) -> None:
+        """Ontology injection is always on: no configuration still yields one."""
+        from pathlib import Path
+
+        source = Path(GraphKnowsSettings().ontology_source)
+        assert source.parts[-3:] == ("assets", "schemaorg", "schemaorg.json")
+        assert source.is_file()
+
+    def test_empty_env_still_yields_the_bundled_ontology(self) -> None:
+        """docker-compose spells an absent variable as "" — that must not disable it."""
+        default = GraphKnowsSettings().ontology_source
+        assert GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY="").ontology_source == default
+        assert GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY="   ").ontology_source == default
+
+    def test_relations_resolve_to_a_different_bundled_vocabulary(self) -> None:
+        """Entity typing and relation extraction do not share a vocabulary.
+
+        schema.org types entities well and supplies relation properties badly
+        (945 of them, cosine-selected, 0 relations over 60 real turns), so the
+        relation side defaults to the curated profile instead.
+        """
+        from pathlib import Path
+
+        source = Path(GraphKnowsSettings().relation_ontology_source)
+        assert source.parts[-3:] == ("assets", "profile", "personal-profile.json")
+        assert source.is_file()
+        assert str(source) != GraphKnowsSettings().ontology_source
+
+    def test_empty_relation_env_still_yields_the_bundled_profile(self) -> None:
+        default = GraphKnowsSettings().relation_ontology_source
+        assert GraphKnowsSettings(GRAPHKNOWS_RELATION_ONTOLOGY="").relation_ontology_source == (
+            default
+        )
+        assert (
+            GraphKnowsSettings(GRAPHKNOWS_RELATION_ONTOLOGY="/tmp/x.ttl").relation_ontology_source
+            == "/tmp/x.ttl"
+        )
+
+    def test_hint_floor_default(self) -> None:
+        """Measured over 20 LoCoMo turns against schema.org — see settings.py."""
+        assert GraphKnowsSettings().ontology_hint_min_sim == 0.50
 
     def test_deprecated_alias_still_honoured(self) -> None:
         s = GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY_FILE="/tmp/legacy.ttl")
