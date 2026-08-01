@@ -27,7 +27,6 @@ pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
 | --- | --- |
 | `assisted` | DSPy LLM extraction + injectable RDF/OWL ontology (`llm_assisted` mode) |
 | `langgraph` | LangGraph `BaseStore` adapter |
-| `langchain` | LangChain retriever adapter |
 
 `pip install graphknows` is batteries-included: GLiNER/GLiNER2 extraction, local
 embeddings, BM25, community detection, document parsers, and the MCP server are
@@ -131,9 +130,6 @@ episode → `flush_memory`) covers any framework — see
 [docs/integrations.md](docs/integrations.md) and
 [examples/langgraph_agent.py](examples/langgraph_agent.py).
 
-To plug a different storage backend, implement `IGraphStore` from
-[graphknows/storage/base.py](graphknows/storage/base.py) — the single-database
-contract `Memory` actually uses.
 
 ### LangGraph
 

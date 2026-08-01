@@ -14,7 +14,8 @@ runs locally:
     so the remedy they printed installed nothing.
 
 A Docker build is the integration-level check for the same class
-(`scripts/docker-smoke.sh`); these run in milliseconds.
+(`scripts/preflight.py`, plus `scripts/bake_models.py --check` as the image
+HEALTHCHECK); these run in milliseconds.
 """
 
 from __future__ import annotations

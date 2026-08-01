@@ -20,7 +20,6 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -30,9 +29,6 @@ log = logging.getLogger(__name__)
 # under the remote embedder (~0.30-0.39), so this is a permissive gate applied on
 # TOP of top-k: a frame matches when it is both top-k and above this floor.
 DEFAULT_MIN_SIM: float = 0.20
-
-# Shared, namespace-independent ArcadeDB catalog of frame definitions.
-_CATALOG_DB = "frames"
 
 _lock = threading.Lock()
 _names: list[str] | None = None
@@ -177,61 +173,3 @@ def frame_embedding(name: str) -> list[float]:
     except ValueError:
         return []
     return mat[i].tolist()
-
-
-async def ensure_frame_catalog(client: Any, db: str = _CATALOG_DB, dims: int | None = None) -> int:
-    """Build the shared, namespace-independent ``frames`` ArcadeDB catalog (idempotent).
-
-    Vertex ``FRAME_DEF(name UNIQUE, summary, embedding + LSM_VECTOR COSINE)`` populated
-    with all FrameNet frames from the in-process matrix (the same source as the disk
-    cache), so the ~1221 definitions are embedded once. This is persistent, shareable
-    reference data — it is NOT per-namespace and NOT on the ingest/query hot path
-    (ingest copies embeddings from the matrix; query vector-searches namespace-local
-    FRAME nodes). Returns the FRAME_DEF count.
-    """
-    from graphknows.storage.arcadedb.graph_store import _emb_sql
-
-    names, mat = _ensure()
-    dims = dims or int(mat.shape[1])
-    await client.create_database(db)  # idempotent
-
-    # Idempotent guard: skip the (one-time) 1221-row populate if already built.
-    try:
-        rows = await client.query(db, "SELECT count(*) AS c FROM FRAME_DEF", language="sql")
-        if rows and int(rows[0].get("c") or 0) >= len(names):
-            return int(rows[0]["c"])
-    except Exception as exc:
-        # Expected on a first run (FRAME_DEF does not exist yet) — but log it,
-        # because the same swallow hides a broken connection, and a "populate"
-        # that silently re-runs every call is indistinguishable from one that
-        # never worked.
-        log.debug("FRAME_DEF idempotency probe failed, populating: %s", exc)
-
-    ddl = [
-        "CREATE VERTEX TYPE FRAME_DEF IF NOT EXISTS",
-        "CREATE PROPERTY FRAME_DEF.name IF NOT EXISTS STRING",
-        "CREATE PROPERTY FRAME_DEF.summary IF NOT EXISTS STRING",
-        "CREATE PROPERTY FRAME_DEF.embedding IF NOT EXISTS LIST",
-        "CREATE INDEX IF NOT EXISTS ON FRAME_DEF(name) UNIQUE",
-        f"CREATE INDEX IF NOT EXISTS ON FRAME_DEF(embedding) LSM_VECTOR "
-        f"METADATA {{dimensions:{dims},distanceFunction:'COSINE'}}",
-    ]
-    for stmt in ddl:
-        try:
-            await client.command(db, stmt, language="sql")
-        except Exception as exc:
-            if "already exists" not in str(exc).lower():
-                raise
-
-    # Per-row upsert: the embedding must be an inline literal (LIST params conflict
-    # with the LSM_VECTOR index), so it cannot ride a batched UNWIND param — same
-    # constraint the golden store honours for CHUNK/ENTITY/TOPIC embeddings.
-    for i, name in enumerate(names):
-        await client.command(
-            db,
-            f"MERGE (n:FRAME_DEF {{name: $name}}) "
-            f"SET n.summary = $summary, n.embedding = {_emb_sql(mat[i].tolist())}",
-            params={"name": name, "summary": frame_summary(name)},
-        )
-    log.info("Frame catalog built: %d FRAME_DEF in db=%s", len(names), db)
-    return len(names)

@@ -35,14 +35,12 @@ VERIFIER_ENCODER = "microsoft/deberta-v3-base"
 def _model_ids() -> dict[str, str]:
     """Resolve every model id from the code that owns it — never hardcoded here."""
     from graphknows.ingestion.extraction.entities.gliner_model import _RELEX_MODEL
-    from graphknows.ranking.rerank import _CROSS_ENCODER_MODEL
     from graphknows.settings import GraphKnowsSettings
 
     s = GraphKnowsSettings()
     return {
         "relex": _RELEX_MODEL,
         "embed": s.embed_model,
-        "cross_encoder": _CROSS_ENCODER_MODEL,
         "verifier": s.relation_verifier_model,
         "verifier_encoder": VERIFIER_ENCODER,
         "spacy": s.spacy_model,
@@ -59,12 +57,6 @@ def _embed(model_id: str, local_only: bool) -> None:
     from sentence_transformers import SentenceTransformer
 
     SentenceTransformer(model_id, local_files_only=local_only)
-
-
-def _cross_encoder(model_id: str, local_only: bool) -> None:
-    from sentence_transformers import CrossEncoder
-
-    CrossEncoder(model_id, max_length=512, local_files_only=local_only)
 
 
 def _verifier(model_id: str, local_only: bool) -> None:
@@ -126,7 +118,6 @@ def _nltk_corpora(_model_id: str, local_only: bool) -> None:
 _STEPS: tuple[tuple[str, str, Callable[[str, bool], None]], ...] = (
     ("relex", "relex          ", _relex),
     ("embed", "embed          ", _embed),
-    ("cross_encoder", "cross-encoder  ", _cross_encoder),
     ("verifier", "verifier       ", _verifier),
     ("verifier_encoder", "verifier-enc   ", _verifier_encoder),
     ("spacy", "spacy          ", _spacy),

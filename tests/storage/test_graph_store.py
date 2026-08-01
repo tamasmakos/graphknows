@@ -18,7 +18,7 @@ from graphknows.storage.arcadedb.graph_store import (
     _CORE_DDL,
     GraphStore,
 )
-from graphknows.storage.namespace import db_name, namespaces_from_databases
+from graphknows.storage.namespace import db_name
 
 
 def _mock_client(query_rows: list[dict] | None = None) -> MagicMock:
@@ -44,14 +44,6 @@ def test_db_name_mapping() -> None:
     assert db_name("  ") == "mem"
     assert db_name("acme") == "mem_acme"
     assert db_name("Acme Corp!") == "mem_acme_corp"
-
-
-def test_namespaces_from_databases_recognizes_mem_prefix() -> None:
-    namespaces = namespaces_from_databases(["mem", "mem_acme", "stm_beta", "ltm_beta", "other"])
-    assert namespaces[0] == ""
-    assert "acme" in namespaces
-    assert "beta" in namespaces
-    assert "other" not in namespaces
 
 
 # ---------------------------------------------------------------------------
@@ -474,17 +466,6 @@ async def test_query_temporal_chunks_year_prefix_and_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_frame_chunks_traverses_evoked_by() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.query_frame_chunks(["Motion"], session_id="s1")
-    cypher = client.query.await_args_list[0].args[1]
-    assert "(n:FRAME)-[:EVOKED_BY]->(c:CHUNK)" in cypher
-    assert "n.frame_type IN ['Motion']" in cypher
-    assert "n.session_id = 's1'" in cypher
-
-
-@pytest.mark.asyncio
 async def test_core_ddl_frame_carries_summary_and_vector_index() -> None:
     joined = " | ".join(stmt for _, stmt in _CORE_DDL)
     assert "CREATE PROPERTY FRAME.summary" in joined
@@ -553,32 +534,6 @@ async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
     assert rows == [
         {"chunk_id": "c1", "frame_type": "Process_start", "score": pytest.approx(0.4)},
     ]
-
-
-@pytest.mark.asyncio
-async def test_entity_relation_graph_matches_only_semantic_rel_edges() -> None:
-    client = _mock_client(
-        query_rows=[
-            {
-                "src": "Melanie",
-                "type": "LIKES",
-                "dst": "Camping",
-                "weight": 0.8,
-                "is_current": True,
-            },
-        ]
-    )
-    store = GraphStore(client=client)
-    rows = await store.entity_relation_graph()
-    assert rows == [
-        {"src": "Melanie", "type": "LIKES", "dst": "Camping", "weight": 0.8, "is_current": True}
-    ]
-    cypher = client.query.await_args_list[0].args[1]
-    # Structural edges (MENTIONS/PART_OF/…) are their own types, so scoping the
-    # traversal to REL excludes them by construction — no exclusion list needed.
-    assert "(a:ENTITY)-[r:REL]->(b:ENTITY)" in cypher
-    assert "NOT type(r) IN [" not in cypher
-    assert "r.predicate AS type" in cypher
 
 
 # ---------------------------------------------------------------------------
@@ -895,52 +850,29 @@ async def test_compute_and_persist_pagerank_native_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compute_and_persist_pagerank_falls_back_to_numpy_on_native_failure() -> None:
+async def test_compute_and_persist_pagerank_soft_fails_on_native_error() -> None:
     client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        if "algo.pageRank" in cypher:
-            raise Exception("CommandSQLParsingException: algo.pageRank unsupported")
-        if "RETURN e.name_norm AS nn" in cypher:
-            return [{"nn": "melanie"}, {"nn": "caroline"}]
-        if "RETURN DISTINCT a.name_norm AS src" in cypher:
-            return [{"src": "melanie", "dst": "caroline", "w": 1.0}]
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
+    client.query = AsyncMock(
+        side_effect=Exception("CommandSQLParsingException: algo.pageRank unsupported")
+    )
     store = GraphStore(client=client)
-    updated = await store.compute_and_persist_pagerank()
-    assert updated == 2  # numpy fallback still wrote both entities
-    set_calls = [c for c in client.command.await_args_list if "SET e.pagerank = r.v" in c.args[1]]
-    assert len(set_calls) == 1
-    assert len(set_calls[0].kwargs["params"]["rows"]) == 2
+    assert await store.compute_and_persist_pagerank() == 0
+    assert not any("SET e.pagerank = r.v" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
-async def test_compute_and_persist_pagerank_falls_back_when_all_ranks_null() -> None:
+async def test_compute_and_persist_pagerank_soft_fails_when_all_ranks_null() -> None:
     """Regression guard: on a real ~190-entity ArcadeDB 26.5.1 graph,
     ``CALL algo.pageRank()`` returns rows with every ``rank`` null (verified
     live during WS4) — that must be treated as a failure, not persisted as
     meaningless zeros.
     """
-    client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        if "algo.pageRank" in cypher:
-            return [{"nn": "melanie", "rank": None}, {"nn": "caroline", "rank": None}]
-        if "RETURN e.name_norm AS nn" in cypher:
-            return [{"nn": "melanie"}, {"nn": "caroline"}]
-        if "RETURN DISTINCT a.name_norm AS src" in cypher:
-            return [{"src": "melanie", "dst": "caroline", "w": 1.0}]
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
+    client = _mock_client(
+        query_rows=[{"nn": "melanie", "rank": None}, {"nn": "caroline", "rank": None}]
+    )
     store = GraphStore(client=client)
-    updated = await store.compute_and_persist_pagerank()
-    assert updated == 2  # fell back to numpy, still wrote both entities
-    set_calls = [c for c in client.command.await_args_list if "SET e.pagerank = r.v" in c.args[1]]
-    assert len(set_calls) == 1
-    assert len(set_calls[0].kwargs["params"]["rows"]) == 2
+    assert await store.compute_and_persist_pagerank() == 0
+    assert not any("SET e.pagerank = r.v" in c.args[1] for c in client.command.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -1036,29 +968,6 @@ async def test_compute_communities_soft_fails_on_empty_result() -> None:
     assert not any("e.community_id = $cid" in c.args[1] for c in client.command.await_args_list)
 
 
-@pytest.mark.asyncio
-async def test_similar_entities_by_embedding_cosine_ranks() -> None:
-    client = _mock_client(
-        query_rows=[
-            {"nn": "melanie", "name": "Melanie", "emb": [1.0, 0.0]},
-            {"nn": "mel", "name": "Mel", "emb": [1.0, 0.0]},  # identical -> sim 1.0
-            {"nn": "camping", "name": "Camping", "emb": [0.0, 1.0]},  # orthogonal -> sim 0.0
-        ]
-    )
-    store = GraphStore(client=client)
-    out = await store.similar_entities_by_embedding("Melanie", top_k=5)
-    assert [r["name_norm"] for r in out] == ["mel", "camping"]
-    assert out[0]["similarity"] == pytest.approx(1.0)
-    assert out[1]["similarity"] == pytest.approx(0.0)
-
-
-@pytest.mark.asyncio
-async def test_similar_entities_by_embedding_empty_when_seed_missing() -> None:
-    client = _mock_client(query_rows=[{"nn": "other", "name": "Other", "emb": [1.0, 0.0]}])
-    store = GraphStore(client=client)
-    assert await store.similar_entities_by_embedding("Melanie") == []
-
-
 # ---------------------------------------------------------------------------
 # Integration (live ArcadeDB only)
 # ---------------------------------------------------------------------------
@@ -1103,7 +1012,7 @@ async def test_graph_store_round_trip_on_scratch_database() -> None:
         await store.ensure_schema(dims=8)  # idempotent second run
 
         await store.ensure_session("sess-1", started_at="2026-07-13T00:00:00Z")
-        await store.ensure_file("file-1", "sess-1", name="conv.txt", media_type="text/plain")
+        await store.ensure_file("file-1", "sess-1")
 
         emb_a = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         emb_b = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -1160,10 +1069,6 @@ async def test_graph_store_round_trip_on_scratch_database() -> None:
         # Entity traversal
         ent = await store.query_entity_chunks(["Melanie"], session_id="sess-1", top_k=5)
         assert any(r["chunk_id"] == "chunk-a" for r in ent)
-
-        # Relation graph (structural edges excluded, semantic edge present)
-        graph = await store.entity_relation_graph()
-        assert any(r["type"] == "LIKES" and r["src"] == "Melanie" for r in graph)
 
         # Evidence provenance accumulated across both writes; confidence keeps max.
         # One REL type for every predicate; LIKES is the `predicate` property.

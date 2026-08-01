@@ -70,7 +70,6 @@ class OntologyChannel(Channel):
     """Ontology-class retrieval channel (both profiles; inert without an ontology)."""
 
     name = "ontology"
-    profiles = frozenset({"llm_free", "llm_assisted"})
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Vector-search the namespace's ontology classes and rank the chunks they tag."""

@@ -29,8 +29,8 @@ class MemoryMode(StrEnum):
     """Named preset over the orthogonal capability knobs.
 
     The mode is *only* a preset: every capability it implies (topics, DSPy
-    relations, retrieval strategy) is independently overridable, and ontology
-    injection plus the FrameNet layer are mode-independent. See
+    relations) is independently overridable, and ontology injection plus the
+    FrameNet layer are mode-independent. See
     :data:`_PRESETS` for the expansion and ``docs/modes.md`` for the rationale.
 
     - ``llm_free``: no network LLM call on the ingestion or retrieval hot path.
@@ -56,38 +56,17 @@ class TopicMode(StrEnum):
     llm = "llm"
 
 
-class RetrievalStrategy(StrEnum):
-    """Which retriever answers a query.
-
-    - ``det``: deterministic hybrid channels + RRF fusion.
-
-    Independent of how the graph was ingested: nothing writes a mode marker to
-    the store, so either strategy runs over any namespace.
-    """
-
-    det = "det"
-
-
 @dataclass(frozen=True)
 class _Preset:
     """The capability knobs a :class:`MemoryMode` expands into."""
 
     topics: TopicMode
     dspy_relations: bool
-    retrieval: RetrievalStrategy
 
 
 _PRESETS: dict[MemoryMode, _Preset] = {
-    MemoryMode.llm_free: _Preset(
-        topics=TopicMode.none,
-        dspy_relations=False,
-        retrieval=RetrievalStrategy.det,
-    ),
-    MemoryMode.llm_assisted: _Preset(
-        topics=TopicMode.llm,
-        dspy_relations=True,
-        retrieval=RetrievalStrategy.det,
-    ),
+    MemoryMode.llm_free: _Preset(topics=TopicMode.none, dspy_relations=False),
+    MemoryMode.llm_assisted: _Preset(topics=TopicMode.llm, dspy_relations=True),
 }
 
 
@@ -113,16 +92,14 @@ class GraphKnowsSettings(BaseSettings):
     )
 
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
-    graphknows_port: int = Field(default=8025, alias="GRAPHKNOWS_PORT")
 
     # Named preset over the capability knobs below. Every knob it implies can be
     # overridden independently; read the resolved values through the
-    # ``topic_mode`` / ``dspy_relations`` / ``retrieval_strategy`` properties,
-    # never off these raw fields (``None`` means "take the preset's value").
+    # ``topic_mode`` / ``dspy_relations`` properties, never off these raw fields
+    # (``None`` means "take the preset's value").
     mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="GRAPHKNOWS_MODE")
     topics: TopicMode | None = Field(default=None, alias="GRAPHKNOWS_TOPICS")
     enable_dspy_relations: bool | None = Field(default=None, alias="GRAPHKNOWS_DSPY_RELATIONS")
-    retrieval: RetrievalStrategy | None = Field(default=None, alias="GRAPHKNOWS_RETRIEVAL")
 
     # ArcadeDB
     arcadedb_url: str = Field(default="http://localhost:2480", alias="GRAPHKNOWS_ARCADEDB_URL")
@@ -171,12 +148,6 @@ class GraphKnowsSettings(BaseSettings):
     # you deliberately re-size the store.
     embed_dimensions: int = Field(default=0, alias="GRAPHKNOWS_EMBED_DIMENSIONS")
 
-    # Chunking. Defaults mirror STMConfig, which is what the chunker actually
-    # applies — these were 1200/100 while the chunker used 512/64 and nothing
-    # read these fields, so setting the env vars silently did nothing.
-    chunk_size: int = Field(default=512, alias="GRAPHKNOWS_CHUNK_SIZE")
-    chunk_overlap: int = Field(default=64, alias="GRAPHKNOWS_CHUNK_OVERLAP")
-
     # Entity extraction. The relex model itself is set with GRAPHKNOWS_RELEX_MODEL
     # (see ingestion/extraction/entities/gliner_model.py).
     spacy_model: str = Field(default="en_core_web_lg", alias="GRAPHKNOWS_SPACY_MODEL")
@@ -210,16 +181,7 @@ class GraphKnowsSettings(BaseSettings):
     # GRAPHKNOWS_ENABLE_FRAMES=false.
     enable_frames: bool = Field(default=True, alias="GRAPHKNOWS_ENABLE_FRAMES")
 
-    # Structured fact-context (D8): surface query entities' typed relations +
-    # frame-instance role fills as a compact fact-sheet fed to the generator
-    # alongside the passages. ON by default; disable with
-    # GRAPHKNOWS_FACT_CONTEXT=false for the A/B baseline.
-    fact_context: bool = Field(default=True, alias="GRAPHKNOWS_FACT_CONTEXT")
-
-    # Session lifecycle
-    session_ttl_minutes: int = Field(default=60, alias="GRAPHKNOWS_SESSION_TTL_MINUTES")
-
-    @field_validator("topics", "enable_dspy_relations", "retrieval", mode="before")
+    @field_validator("topics", "enable_dspy_relations", mode="before")
     @classmethod
     def _empty_means_unset(cls, value: Any) -> Any:
         """Treat an empty env var as "not set", so it falls back to the preset.
@@ -241,15 +203,6 @@ class GraphKnowsSettings(BaseSettings):
         if self.enable_dspy_relations is not None:
             return self.enable_dspy_relations
         return _PRESETS[self.mode].dspy_relations
-
-    @property
-    def retrieval_strategy(self) -> RetrievalStrategy:
-        """Default retrieval strategy — explicit setting, else the mode's preset.
-
-        A per-call ``strategy`` argument overrides this; see
-        :func:`graphknows.retrieval.build_retriever`.
-        """
-        return self.retrieval if self.retrieval is not None else _PRESETS[self.mode].retrieval
 
     @property
     def ontology_source(self) -> str:
@@ -277,13 +230,12 @@ class GraphKnowsSettings(BaseSettings):
             raise ConfigurationError(
                 "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
             )
-        # Keyed off the resolved capabilities, not the mode: llm_free with
-        # llm_assisted with every
-        # LLM capability disabled does not.
+        # Keyed off the resolved capabilities, not the mode: llm_assisted with
+        # every LLM capability disabled needs no key.
         if self.uses_llm and not self.llm_api_key:
             raise ConfigurationError(
                 "LLM-backed capabilities (DSPy relations, LLM topics) "
-                "retrieval) in production require GRAPHKNOWS_LLM_API_KEY."
+                "in production require GRAPHKNOWS_LLM_API_KEY."
             )
 
     @model_validator(mode="after")
@@ -291,6 +243,3 @@ class GraphKnowsSettings(BaseSettings):
         """Fail fast at construction when production secrets are unsafe."""
         self.check_production_secrets()
         return self
-
-
-from graphknows._version import get_version  # noqa: F401, E402

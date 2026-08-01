@@ -73,7 +73,7 @@ class TestRemoteMemory:
         client.call_tool = AsyncMock(return_value={})
         mem = RemoteMemory(client=client)
         await mem.flush_memory("s1")
-        await mem.purge_memory(scope="stm", session_id="s1")
+        await mem.purge_memory(session_id="s1")
         assert client.call_tool.await_args_list[0].args[0] == "memory_flush"
         assert client.call_tool.await_args_list[1].args[0] == "memory_purge"
 

@@ -24,8 +24,4 @@ async def test_extract_relations_treats_empty_lm_response_as_no_relations() -> N
         )
     )
 
-    relations, nodes, audit = await extractor.extract_relations("Alice supports Bob.")
-
-    assert relations == []
-    assert nodes == []
-    assert audit["error_type"] == "empty_lm_response"
+    assert await extractor.extract_relations("Alice supports Bob.") == []

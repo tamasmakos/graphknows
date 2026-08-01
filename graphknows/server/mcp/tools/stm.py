@@ -6,7 +6,6 @@ from typing import Any
 
 from graphknows.server.mcp._app import app
 from graphknows.server.mcp._state import get_runtime
-from graphknows.server.mcp.tools.query import memory_query
 
 
 @app.tool()
@@ -18,14 +17,13 @@ async def memory_ingest(
     run_id: str = "",
     title: str = "",
     infer: bool = True,
-    memory_class: str = "raw_evidence",
     metadata: dict[str, Any] | None = None,
     text: str = "",
     namespace: str = "",
 ) -> dict[str, Any]:
     """Ingest text or a conversation thread into short-term memory.
 
-    ``namespace`` selects the tenant's isolated database pair (default: the
+    ``namespace`` selects the tenant's isolated database (default: the
     server's ``GRAPHKNOWS_NAMESPACE``).
     """
     runtime = await get_runtime(namespace)
@@ -37,34 +35,8 @@ async def memory_ingest(
         run_id=run_id,
         title=title,
         infer=infer,
-        memory_class=memory_class,
         metadata=metadata,
         text=text,
-    )
-
-
-@app.tool()
-async def memory_recall(
-    query: str,
-    session_id: str = "",
-    top_k: int = 5,
-    scope: str = "stm",
-    namespace: str = "",
-    strategy: str = "",
-) -> dict[str, Any]:
-    """Deprecated alias of ``memory_query`` — recall ranked memory hits.
-
-    Kept so existing MCP clients calling ``memory_recall`` keep working; it
-    delegates to ``memory_query`` so there is exactly one recall behaviour
-    (and one result shape). Prefer ``memory_query``.
-    """
-    return await memory_query(
-        query,
-        session_id=session_id,
-        top_k=top_k,
-        scope=scope,
-        namespace=namespace,
-        strategy=strategy,
     )
 
 

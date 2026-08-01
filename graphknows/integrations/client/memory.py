@@ -69,13 +69,11 @@ class RemoteMemory:
         session_id: str = "",
         top_k: int = 5,
         scope: str = "stm",
-        strategy: str = "",
     ) -> dict[str, Any]:
         """Recall ranked hits (MCP ``memory_query``).
 
         The default ``scope`` matches the in-process :class:`graphknows.Memory`
         so the two transports return the same tier for the same call.
-        ``strategy`` selects ``det``/``agentic`` per call.
         """
         args: dict[str, Any] = {
             "query": query,
@@ -83,24 +81,22 @@ class RemoteMemory:
             "top_k": top_k,
             "scope": scope,
         }
-        if strategy:
-            args["strategy"] = strategy
         return await self._call("memory_query", args)
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Promote a session from STM to LTM (MCP ``memory_flush``)."""
         return await self._call("memory_flush", {"session_id": session_id})
 
-    async def purge_memory(self, scope: str = "both", session_id: str = "") -> dict[str, Any]:
-        """Purge STM and/or LTM (MCP ``memory_purge``)."""
-        return await self._call("memory_purge", {"scope": scope, "session_id": session_id})
+    async def purge_memory(self, session_id: str = "") -> dict[str, Any]:
+        """Purge memory in this namespace, all or one session (MCP ``memory_purge``)."""
+        return await self._call("memory_purge", {"session_id": session_id})
 
     async def drop_namespace(self, namespace: str) -> dict[str, Any]:
         """DESTRUCTIVE: drop a tenant namespace (MCP ``memory_drop_namespace``).
 
-        Removes the ``stm_<ns>``/``ltm_<ns>`` databases outright — there is no
-        undo. Refuses the default ("") namespace; use :meth:`purge_memory` to
-        clear the shared ``stm``/``ltm``.
+        Removes the ``mem_<ns>`` database outright — there is no undo. Refuses
+        the default ("") namespace; use :meth:`purge_memory` to clear the
+        shared ``mem``.
         """
         return await self._call("memory_drop_namespace", {"namespace": namespace})
 

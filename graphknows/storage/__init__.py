@@ -1,4 +1,4 @@
-"""Persistence layer: store protocols, the ArcadeDB backend, embeddings, and namespace-aware store factories.
+"""Persistence layer: the ArcadeDB backend, embeddings, and namespace-aware store factories.
 
 The factories build unconnected stores from
 :class:`~graphknows.settings.GraphKnowsSettings`
@@ -12,8 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from graphknows.settings import GraphKnowsSettings
-from graphknows.storage.base import IEmbedder
-from graphknows.storage.namespace import db_name, db_names
+from graphknows.storage.namespace import db_name
 
 if TYPE_CHECKING:
     from graphknows.storage.arcadedb.client import ArcadeDBClient
@@ -52,7 +51,6 @@ def __getattr__(name: str) -> Any:
         "GraphStore": ("graphknows.storage.arcadedb.graph_store", "GraphStore"),
         "embed": ("graphknows.storage.embedder", "embed"),
         "embed_one": ("graphknows.storage.embedder", "embed_one"),
-        "get_embedder": ("graphknows.storage.embedder", "get_embedder"),
     }
     target = lazy.get(name)
     if target is None:
@@ -64,9 +62,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "IEmbedder",
     "build_arcadedb_client",
     "build_graph_store",
     "db_name",
-    "db_names",
 ]

@@ -3,8 +3,7 @@
 ``GraphStore`` (and the retired two-database-split stores before it) repeated
 the same block verbatim: the client/database accessors, connect/close/drop,
 the query/command pair, and a DDL loop that treats "already exists" as
-success. The vector store deliberately does not inherit from this — it spans
-two databases, so the single-``_db`` contract here would not fit it.
+success.
 """
 
 from __future__ import annotations
@@ -62,9 +61,9 @@ class ArcadeStoreBase:
     async def command(self, cypher: str, **params: Any) -> list[dict]:
         """Run a writing statement against this store's database.
 
-        Public because channels, ingestion steps, and the web server legitimately
-        need raw Cypher these classes do not wrap; they used to reach for a
-        private method, which made renaming it a silent break across five modules.
+        Public because channels and ingestion steps legitimately need raw Cypher
+        these classes do not wrap; they used to reach for a private method, which
+        made renaming it a silent break across five modules.
         """
         return await self._c.command(self._db, cypher, params=params or None)
 

@@ -21,7 +21,7 @@ from graphknows.ingestion.parsers.base import (
     search_surface,
     strip_content_heading,
 )
-from graphknows.ingestion.parsers.registry import get_parser
+from graphknows.ingestion.parsers.text import PlainTextParser
 from graphknows.ingestion.stm._entity_writer import graph_entities, is_graph_entity_name
 from graphknows.models.ingest import IngestResult
 
@@ -132,8 +132,7 @@ class _STMIngestHandler:
         infer: bool = True,
     ) -> IngestResult:
         """Ingest raw text into the GraphStore."""
-        parser = get_parser(source_hint or ".txt")
-        parsed = parser.parse(text, source_hint=source_hint, title=title)
+        parsed = PlainTextParser().parse(text, source_hint=source_hint, title=title)
         return await self._ingest_parsed(parsed, session_id, metadata or {}, infer=infer)
 
     async def ingest_parsed(
@@ -215,7 +214,6 @@ class _STMIngestHandler:
                 memory_class=seg.metadata.get("memory_class")
                 or metadata.get("memory_class")
                 or "raw_evidence",
-                atom_type=seg.metadata.get("atom_type") or "text",
                 ontology_classes=ont_classes[idx] if idx < len(ont_classes) else [],
             )
 
@@ -297,6 +295,17 @@ class _STMIngestHandler:
         metadata = metadata or {}
         clean = self._clean_text(text) or text
         if not clean.strip():
+            # Dropping the turn is fine; dropping it silently is not. From outside,
+            # "200 turns in, 0 chunks out" reads identically whether this layer made a
+            # content decision or the extractor was wedged. Name the turn so the
+            # specific gap is findable.
+            log.info(
+                "ingest_turn: dropping empty turn (session=%s seq=%s role=%s) - "
+                "no non-whitespace text after cleaning",
+                session_id,
+                seq,
+                role,
+            )
             return 0
         # The retrieval surface carries the attribution the utterance itself
         # omits: "I'm opening a dance studio" is a fact about Gina and names her
@@ -345,7 +354,6 @@ class _STMIngestHandler:
             extraction=extraction,
             temporal=temporal,
             memory_class=metadata.get("memory_class") or "raw_evidence",
-            atom_type="turn",
             ontology_classes=self._match_classes(embedding) if infer else [],
         )
 
@@ -361,12 +369,7 @@ class _STMIngestHandler:
         t0: float,
     ) -> None:
         await self._store.ensure_session(session_id, started_at=str(t0))
-        await self._store.ensure_file(
-            file_id=parsed.source_id,
-            session_id=session_id,
-            name=parsed.title,
-            media_type=parsed.parser_name,
-        )
+        await self._store.ensure_file(file_id=parsed.source_id, session_id=session_id)
 
     async def _write_extracted(
         self,
@@ -384,7 +387,6 @@ class _STMIngestHandler:
         extraction: ExtractionResult,
         temporal: list[dict[str, str]],
         memory_class: str,
-        atom_type: str,
         ontology_classes: list[tuple[str, float]] | None = None,
     ) -> int:
         """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count."""
@@ -401,8 +403,6 @@ class _STMIngestHandler:
                 "speaker": speaker,
                 "ts": ts,
                 "memory_class": memory_class,
-                "atom_type": atom_type,
-                "entity_names": [e["name"] for e in filtered],
                 "embedding": embedding,
             }
         )
@@ -488,7 +488,7 @@ class _STMIngestHandler:
                 not is_graph_entity_name(rel["tail"], rel.get("tail_type", ""))
             ):
                 continue
-            ont_property, map_score = self._map_predicate(rel["relation"], rel.get("tail_type", ""))
+            ont_property, _ = self._map_predicate(rel["relation"], rel.get("tail_type", ""))
             # A refusal is a verdict about this edge, not a lack of one, and it
             # has to outlive the chunk that made it: the same edge is written
             # once per chunk asserting it, and those chunks disagree about the
@@ -505,7 +505,6 @@ class _STMIngestHandler:
                 src_type=rel.get("head_type", ""),
                 dst_type=rel.get("tail_type", ""),
                 ontology_property=ont_property,
-                map_score=map_score,
                 verifier_score=rel.get("verifier_score"),
                 ontology_blocked=blocked,
                 speaker=speaker,
@@ -513,22 +512,23 @@ class _STMIngestHandler:
 
         # DSPy ontology-guided relations (llm_assisted mode only).
         if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            raw = await self._rel_extractor.extract_relations(text=text)
-            dspy_triplets: list[tuple[Any, ...]] = raw[0] if isinstance(raw, tuple) else []
-            for triplet in dspy_triplets:
-                subj, rel_name, obj = triplet[0], triplet[1], triplet[2]
+            for subj, rel_name, obj, props in await self._rel_extractor.extract_relations(
+                text=text
+            ):
                 if not is_graph_entity_name(str(subj)) or not is_graph_entity_name(str(obj)):
                     continue
-                props = triplet[3] if len(triplet) > 3 else {}
-                confidence = props.get("confidence", 0.5) if isinstance(props, dict) else 0.5
-                evidence = props.get("evidence", "") if isinstance(props, dict) else ""
                 await self._store.write_relation(
                     subj,
                     rel_name,
                     obj,
-                    fact=evidence or text,
+                    fact=props.get("evidence", "") or text,
                     chunk_id=chunk_id,
-                    confidence=confidence,
+                    # The DSPy path carries no per-triplet confidence: the LLM's
+                    # self-reported score was never copied into props, so this
+                    # read was the literal constant 0.5 for the layer's whole
+                    # life. Written as a constant now rather than a lookup that
+                    # looks like it varies.
+                    confidence=0.5,
                     source="dspy",
                 )
 

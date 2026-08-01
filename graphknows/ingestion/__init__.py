@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from graphknows.ingestion.parsers.base import BaseParser, ParsedFile, TextSegment
-from graphknows.ingestion.parsers.registry import get_parser
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
@@ -24,7 +23,6 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     """
     from graphknows.ingestion.extraction.entities import build_entity_extractor
     from graphknows.ingestion.extraction.relations import build_relation_extractor
-    from graphknows.ingestion.stm.config import STMConfig
     from graphknows.ingestion.stm.service import STMService
     from graphknows.ontology import load_ontology_index
     from graphknows.storage import build_graph_store
@@ -40,7 +38,6 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
         # Mode-independent: ontology injection steers extraction identically in
         # llm_free and llm_assisted. None when GRAPHKNOWS_ONTOLOGY is unset.
         ontology_index=load_ontology_index(settings.ontology_source),
-        config=STMConfig(chunk_size=settings.chunk_size, overlap=settings.chunk_overlap),
     )
 
 
@@ -49,5 +46,4 @@ __all__ = [
     "ParsedFile",
     "TextSegment",
     "build_stm_service",
-    "get_parser",
 ]

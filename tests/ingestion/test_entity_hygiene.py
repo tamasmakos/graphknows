@@ -266,20 +266,24 @@ class TestRelationGate:
         """The write path is the single choke point for relation endpoints."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from graphknows.ingestion.stm._entity_writer import write_relation_edges
+        from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
+        from graphknows.ingestion.stm.ingest import _STMIngestHandler
 
-        stm = MagicMock()
-        stm.write_relation_edge = AsyncMock()
-        await write_relation_edges(
-            stm,
-            "s1",
-            [
-                {"head": "Melanie", "relation": "plans_to", "tail": "8 May, 2023"},
-                {"head": "Melanie", "relation": "attended", "tail": "Pride fest"},
-            ],
+        store = MagicMock()
+        store.write_relation = AsyncMock()
+        handler = _STMIngestHandler(store, extractor=None, embed_fn=MagicMock())
+        await handler._write_relations(
+            ExtractionResult(
+                relations=[
+                    {"head": "Melanie", "relation": "plans_to", "tail": "8 May, 2023"},
+                    {"head": "Melanie", "relation": "attended", "tail": "Pride fest"},
+                ]
+            ),
+            chunk_id="c1",
+            text="Melanie attended Pride fest on 8 May, 2023.",
         )
-        assert stm.write_relation_edge.await_count == 1
-        assert stm.write_relation_edge.await_args.kwargs["object_name"] == "Pride fest"
+        assert store.write_relation.await_count == 1
+        assert store.write_relation.await_args.args[2] == "Pride fest"
 
 
 def test_first_person_clause_yields_a_relation_from_the_speaker_parameter() -> None:

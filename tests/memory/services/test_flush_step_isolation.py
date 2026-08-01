@@ -32,7 +32,7 @@ def _store() -> MagicMock:
 def _memory(store: MagicMock) -> Memory:
     mem = Memory(settings=MagicMock(namespace=""), namespace="")
     mem._get_retriever = AsyncMock(return_value=MagicMock())
-    mem._retriever_stores = [store]
+    mem._store = store
     # Topics are their own stage now (Memory._flush_topics -> graphknows.topics),
     # so stub the stage rather than a store method. This test is about step
     # isolation in flush_memory, not about clustering. The stage also carries

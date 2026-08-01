@@ -12,8 +12,6 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from graphknows.ingestion.stm.config import STMConfig
-
 if TYPE_CHECKING:
     from graphknows.models.ingest import IngestResult
     from graphknows.models.ingest_options import IngestOptions
@@ -34,7 +32,6 @@ class STMService:
         _embed_fn: Embedding callable (text -> list[float]).
         _rel_extractor: Optional relation extractor.
         _embed_dims: Embedding dimension for ensure_schema on connect.
-        _config: STMConfig with tuning parameters.
         _ontology_index: Optional OntologyIndex steering extraction labels.
     """
 
@@ -45,7 +42,6 @@ class STMService:
         embed_fn: Any | None = None,
         rel_extractor: Any | None = None,
         embed_dims: int = 0,
-        config: STMConfig | None = None,
         enable_frames: bool = False,
         ontology_index: Any | None = None,
     ) -> None:
@@ -53,7 +49,6 @@ class STMService:
         self._extractor = extractor
         self._rel_extractor = rel_extractor
         self._embed_dims = embed_dims
-        self._config = config or STMConfig()
         self._enable_frames = enable_frames
         self._ontology_index = ontology_index
 
@@ -150,9 +145,7 @@ class STMService:
         dialog_id = options.scope.to_dialog_id()
 
         await self._store.ensure_session(session_id, started_at=str(time.time()))
-        await self._store.ensure_file(
-            file_id=dialog_id, session_id=session_id, name="", media_type="conversation"
-        )
+        await self._store.ensure_file(file_id=dialog_id, session_id=session_id)
 
         t0 = time.perf_counter()
         total_entities = 0

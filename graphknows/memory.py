@@ -99,11 +99,9 @@ class Memory:
         # The namespace selects one physical ArcadeDB database (mem_<ns>, "" -> mem,
         # the golden layer). Explicit arg wins over the settings default.
         self.namespace = self.settings.namespace if namespace is None else namespace
-        # One retriever per strategy, all sharing the single connected store, so
-        # a caller can ask for deterministic or agentic retrieval per call
-        # without a second connection or a server restart.
-        self._retrievers: dict[str, Any] = {}
-        self._retriever_stores: list[Any] = []
+        # One retriever over one connected store, built lazily on first use.
+        self._retriever: Any = None
+        self._store: Any = None
         self._connect_lock = asyncio.Lock()
 
     async def __aenter__(self) -> Memory:
@@ -113,67 +111,51 @@ class Memory:
         await self.close()
 
     async def close(self) -> None:
-        """Close any store connections held by this runtime instance."""
-        import contextlib
+        """Close the store connection held by this runtime instance."""
+        if self._store is not None:
+            try:
+                await self._store.close()
+            except Exception as exc:
+                # Close is best-effort — a failure here must not mask the real
+                # error that is usually already unwinding. But an unlogged
+                # swallow makes a leaked pool indistinguishable from a clean
+                # shutdown from outside, so name it.
+                logger.warning("Memory.close: store close failed (non-fatal): %s", exc)
+        self._retriever = None
+        self._store = None
 
-        for store in self._retriever_stores:
-            with contextlib.suppress(Exception):
-                await store.close()
-        self._retrievers = {}
-        self._retriever_stores = []
-
-    async def connect(self) -> None:
-        """Eagerly open store connections on the caller's event loop.
-
-        Optional: recall/ingest connect lazily on first use. Call this to pay the
-        connection cost up front (e.g. at app startup) or to fail fast.
-        """
-        await self._get_retriever()
-
-    def _resolve_strategy(self, strategy: str = "") -> str:
-        """Strategy name for the cache key: explicit arg, else the configured default."""
-        from graphknows.settings import RetrievalStrategy
-
-        return (RetrievalStrategy(strategy) if strategy else self.settings.retrieval_strategy).value
-
-    async def _get_retriever(self, strategy: str = "") -> Any:
-        """Return a cached retriever, connecting the store lazily on first call.
+    async def _get_retriever(self) -> Any:
+        """Return the cached retriever, connecting the store lazily on first call.
 
         Guarded by an ``asyncio.Lock`` so concurrent first-use callers connect
-        the store exactly once. A second strategy reuses that same store.
+        the store exactly once.
         """
-        key = self._resolve_strategy(strategy)
-        if (cached := self._retrievers.get(key)) is not None:
-            return cached
+        if self._retriever is not None:
+            return self._retriever
         async with self._connect_lock:
-            if (cached := self._retrievers.get(key)) is not None:  # another coroutine won
-                return cached
-            return await self._build_retriever(key)
+            if self._retriever is not None:  # another coroutine won
+                return self._retriever
+            return await self._build_retriever()
 
-    async def _build_retriever(self, strategy: str) -> Any:
+    async def _build_retriever(self) -> Any:
         from graphknows.retrieval import build_retriever
         from graphknows.storage import build_graph_store
         from graphknows.storage.embedder import embed_dim
 
         s = self.settings
-        if self._retriever_stores:
-            store = self._retriever_stores[0]  # already connected for another strategy
-        else:
-            store = build_graph_store(s, self.namespace)
-            # Record the store before connecting so a failure during connect or
-            # ensure_schema is cleaned up by close() instead of orphaning pools.
-            self._retriever_stores = [store]
-            try:
-                await store.connect()
-                dims = s.embed_dimensions or embed_dim()
-                await store.ensure_schema(dims)
-            except Exception:
-                await self.close()
-                raise
-        # The strategy fork (deterministic vs agentic) lives in build_retriever.
-        retriever = build_retriever(s, store=store, strategy=strategy)
-        self._retrievers[strategy] = retriever
-        return retriever
+        store = build_graph_store(s, self.namespace)
+        # Record the store before connecting so a failure during connect or
+        # ensure_schema is cleaned up by close() instead of orphaning pools.
+        self._store = store
+        try:
+            await store.connect()
+            dims = s.embed_dimensions or embed_dim()
+            await store.ensure_schema(dims)
+        except Exception:
+            await self.close()
+            raise
+        self._retriever = build_retriever(s, store=store)
+        return self._retriever
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity for this runtime's namespace."""
@@ -276,7 +258,6 @@ class Memory:
         run_id: str = "",
         title: str = "",
         infer: bool = True,
-        memory_class: str = "raw_evidence",
         metadata: dict[str, Any] | None = None,
         text: str = "",
     ) -> dict[str, Any]:
@@ -322,7 +303,7 @@ class Memory:
                     "errors": [],
                 }
             await self._get_retriever()  # connects the store + ensures schema
-            store = self._retriever_stores[0]
+            store = self._store
             sid = scope.to_session_id()
             await store.ensure_session(sid)
             seq = await store.next_turn_seq(sid)
@@ -382,7 +363,6 @@ class Memory:
         session_id: str = "",
         top_k: int = 5,
         scope: str = "stm",
-        strategy: str = "",
         cross_session: bool = False,
     ) -> dict[str, Any]:
         """Recall ranked hits using the compatibility result shape.
@@ -392,9 +372,6 @@ class Memory:
         :func:`_format_stm_hits`); ``"ltm"`` searches ONLY the graph via the
         configured retriever; ``"both"`` (default for :meth:`search`) returns
         STM hits first, then graph hits, truncated to ``top_k`` total.
-
-        ``strategy`` selects ``det`` or ``agentic`` for this call; empty uses the
-        configured default. It is independent of how the graph was ingested.
 
         ``cross_session``, when True, makes the GRAPH half namespace-wide
         (``session_id=""`` to the retriever, which treats that as "no session
@@ -418,12 +395,12 @@ class Memory:
 
         if scope in ("stm", "both"):
             await self._get_retriever()  # connects the store + ensures schema
-            store = self._retriever_stores[0]
+            store = self._store
             turns = await store.list_turns(session_id, state="raw", limit=30)
             stm_hits = _format_stm_hits(turns, query, top_k, session_id)
 
         if scope in ("ltm", "both"):
-            retriever = await self._get_retriever(strategy)
+            retriever = await self._get_retriever()
             graph_session_id = "" if cross_session else session_id
             # "both" here means "no chunk-state filter" inside the retriever —
             # the raw/consolidated split is orthogonal now that it no longer
@@ -436,10 +413,6 @@ class Memory:
             facts = list(getattr(ctx, "facts", []) or [])
 
         return {"hits": (stm_hits + graph_hits)[:top_k], "facts": facts}
-
-    def _topic_summarizer(self) -> Any:
-        """The LLM summarizer for the configured topic mode."""
-        return self._topic_summarizer_for(self.settings.topic_mode)
 
     def _topic_summarizer_for(self, mode: Any) -> Any:
         """The LLM summarizer for ``mode``; ``None`` for every non-llm mode.
@@ -520,7 +493,7 @@ class Memory:
             cfg = replace(cfg, **overrides)
 
         await self._get_retriever()  # connects the store + ensures schema
-        store = self._retriever_stores[0]
+        store = self._store
         summarizer = self._topic_summarizer_for(cfg.mode)
         topic_set = await build_topics(store, cfg, summarizer, namespace=self.namespace)
 
@@ -632,7 +605,7 @@ class Memory:
 
         try:
             await self._get_retriever()  # ensures the store is connected + schema'd
-            store = self._retriever_stores[0]
+            store = self._store
         except Exception as exc:
             # Without a connected store no step below can run.
             errors.append(f"connect: {exc}")
@@ -659,7 +632,7 @@ class Memory:
             # algos below (each is skip_view_ensure=True) — rebuilding is not
             # free. A failure here is non-fatal and deliberately not recorded in
             # errors: each algo call still runs and handles its own failure
-            # (pagerank falls back to numpy; the other two soft-fail to 0), it
+            # (all three soft-fail to 0 with a log line), it
             # just retries the (already-failed) view.
             try:
                 await store._ensure_analytical_view()
@@ -735,7 +708,6 @@ class Memory:
         run_id: str = "",
         title: str = "",
         infer: bool = True,
-        memory_class: str = "raw_evidence",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Add messages (or raw text) to memory under a user/agent/run scope."""
@@ -746,7 +718,6 @@ class Memory:
             run_id=run_id,
             title=title,
             infer=infer,
-            memory_class=memory_class,
             metadata=metadata,
         )
 
@@ -760,7 +731,6 @@ class Memory:
         session_id: str = "",
         top_k: int = 5,
         scope: str = "both",
-        strategy: str = "",
     ) -> dict[str, Any]:
         """Search memory scoped to a user/agent/run (or an explicit session).
 
@@ -772,7 +742,7 @@ class Memory:
         """
         sid = self._scoped_session_id(user_id, agent_id, run_id, session_id)
         return await self.recall_memory(
-            query, session_id=sid, top_k=top_k, scope=scope, strategy=strategy, cross_session=True
+            query, session_id=sid, top_k=top_k, scope=scope, cross_session=True
         )
 
     async def flush(
@@ -793,14 +763,11 @@ class Memory:
         sid = self._scoped_session_id(user_id, agent_id, run_id, session_id)
         return await self.flush_memory(sid)
 
-    async def purge_memory(self, scope: str = "both", session_id: str = "") -> dict[str, Any]:
+    async def purge_memory(self, session_id: str = "") -> dict[str, Any]:
         """Purge memory for this namespace (golden layer, single database).
 
-        ``scope`` is retained for API/deprecation compatibility but no longer
-        selects a physical store — there is one database. ``session_id`` deletes
-        just that session's subgraph; otherwise all data is cleared (schema and
-        indexes are preserved). ``stm_deleted``/``ltm_deleted`` are kept in the
-        result for MCP-consumer compatibility and both mirror the single delete.
+        ``session_id`` deletes just that session's subgraph; otherwise all data
+        is cleared (schema and indexes are preserved).
         """
         from graphknows.storage import build_graph_store
 
@@ -820,10 +787,8 @@ class Memory:
         except Exception as exc:
             errors.append(f"arcadedb: {exc}")
         return {
-            "scope": scope,
             "session_id": session_id or "(all)",
-            "stm_deleted": deleted,
-            "ltm_deleted": deleted,
+            "deleted": deleted,
             "errors": errors,
         }
 
@@ -963,34 +928,6 @@ class Memory:
         if not rows:
             return {"error": f"Entity not found: {name}"}
         return {k: v for k, v in rows[0].items() if not k.startswith("@")}
-
-    def ltm_query(self, query: str, top_k: int = 5) -> dict[str, Any]:
-        """Return topic vector-search matches for research evaluation callers."""
-        from graphknows._async_bridge import _run as bg_run
-        from graphknows.storage import build_graph_store
-        from graphknows.storage.embedder import embed_one
-
-        k = max(1, min(top_k, 20))
-
-        async def _search() -> list[dict[str, Any]]:
-            try:
-                embedding = embed_one(query)
-            except Exception:
-                logger.debug("ltm_query: embedding failed for query=%r", query, exc_info=True)
-                return []
-            store = build_graph_store(self.settings, self.namespace)
-            await store.connect()
-            try:
-                return await store.search_topics(embedding, top_k=k)
-            finally:
-                await store.close()
-
-        try:
-            results = bg_run(_search())
-        except Exception:
-            logger.debug("ltm_query: search failed for query=%r", query, exc_info=True)
-            results = []
-        return {"results": results[:k]}
 
     async def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
         """List ENTITY nodes from the golden graph, optionally scoped to one session."""

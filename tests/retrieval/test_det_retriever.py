@@ -29,8 +29,6 @@ def _make_retriever():
     # The "when did X?" fallback: reached whenever the query states no date,
     # which is every question of that shape.
     store.query_dated_chunks_by_entities = AsyncMock(return_value=[])
-    store.search_topics = AsyncMock(return_value=[])
-    store.search_topics_with_chunks = AsyncMock(return_value=[])
     store.search_chunks_ann = AsyncMock(return_value=[])
     store.get_chunks_by_ids = AsyncMock(return_value={})
     store.neighbor_chunks = AsyncMock(return_value={})
@@ -61,7 +59,6 @@ async def test_all_collectors_contribute():
     assert "ent-c1" in chunk_ids
     assert "bm25-c1" in chunk_ids
     assert "sem-c1" in chunk_ids
-    assert not any(cid.startswith("topic:") for cid in chunk_ids)
 
 
 @pytest.mark.asyncio
@@ -112,23 +109,6 @@ async def test_multi_source_chunk_ranks_higher():
 
     by_id = {fr["chunk_id"]: fr for fr in ctx.fused_results}
     assert by_id["shared"]["rrf_score"] > by_id["solo"]["rrf_score"]
-
-
-@pytest.mark.asyncio
-async def test_no_synthetic_topic_chunks_without_topics():
-    retriever, store = _make_retriever()
-
-    store.search_chunks_ann = AsyncMock(
-        return_value=[
-            {"chunk_id": "plain-hit", "text": "climate policy", "cosine_score": 0.9},
-        ]
-    )
-
-    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
-        ctx = await retriever.retrieve("climate policy", session_id="s1", scope="stm")
-
-    assert ctx.fused_results[0]["chunk_id"] == "plain-hit"
-    assert not any(fr["chunk_id"].startswith("topic:") for fr in ctx.fused_results)
 
 
 @pytest.mark.asyncio

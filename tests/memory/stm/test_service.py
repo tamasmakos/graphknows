@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.ingestion.stm import STMConfig, STMService
+from graphknows.ingestion.stm import STMService
 
 
 def _make_store():
@@ -36,20 +36,6 @@ def _make_service(extractor=None, embed_fn=None):
 def test_stm_service_instantiates():
     svc, _, _ = _make_service()
     assert isinstance(svc, STMService)
-
-
-def test_stm_service_has_config():
-    svc, _, _ = _make_service()
-    assert isinstance(svc._config, STMConfig)
-
-
-def test_stm_service_accepts_custom_config():
-    cfg = STMConfig(chunk_size=256, entity_confidence=0.8)
-    store = _make_store()
-    embed = MagicMock(return_value=[0.0] * 10)
-    svc = STMService(store, extractor=None, embed_fn=embed, config=cfg)
-    assert svc._config.chunk_size == 256
-    assert svc._config.entity_confidence == 0.8
 
 
 @pytest.mark.asyncio

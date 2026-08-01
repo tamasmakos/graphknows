@@ -8,7 +8,7 @@ import pytest
 
 from graphknows.channels.base import Channel, ChannelContext
 from graphknows.channels.frames import FrameChannel
-from graphknows.channels.registry import default_channels as build_channels
+from graphknows.channels.registry import default_channels
 from graphknows.settings import GraphKnowsSettings, MemoryMode
 
 
@@ -16,7 +16,6 @@ def _ctx(**parse):
     ctx = ChannelContext(
         query="q",
         session_id="s",
-        scope="both",
         emb=[0.0],
         emb2=None,
         words=["a"],
@@ -28,35 +27,35 @@ def _ctx(**parse):
 
 
 class TestBuildChannels:
-    def test_default_channels_no_frames(self):
-        s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
-        names = [c.name for c in build_channels(s)]
-        # `topic` and `ppr` are GONE. topic_mode is `none` in the default preset
-        # so TOPIC count was 0 and the channel returned empty on every query;
-        # ppr had the worst gold precision of six channels measured on conv-30
-        # (367 hits, 12 gold-bearing = 3.3%) and was the only consumer of REL
-        # edges, which is why improving the relation layer never moved recall.
-        assert names == [
-            "entity",
-            "vector",
-            "bm25",
-            "temporal",
-        ]
-        assert "frame" not in names
+    """``default_channels`` returns OPTIONAL channels only.
 
-    def test_frames_appended_when_enabled(self):
-        s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=True, GRAPHKNOWS_MODE=MemoryMode.llm_free)
-        assert [c.name for c in build_channels(s)][-1] == "frame"
+    The four baseline collectors (entity, vector, bm25, temporal) are methods on
+    the retriever spine and always run — they used to be `Channel` subclasses
+    whose whole body was ``return await rt.<method>(...)``, listed in a
+    name-keyed registry behind a profile filter that never excluded anything.
+    """
 
-    def test_enabled_selects_named_subset(self):
-        s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
-        names = [c.name for c in build_channels(s, enabled=["vector", "bm25"])]
-        assert names == ["vector", "bm25"]
+    def test_nothing_enabled_yields_no_channels(self):
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_ENABLE_FRAMES=False,
+            GRAPHKNOWS_ONTOLOGY="",
+            GRAPHKNOWS_MODE=MemoryMode.llm_free,
+        )
+        assert default_channels(s) == []
 
-    def test_enabled_unknown_name_raises(self):
-        s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=False, GRAPHKNOWS_MODE=MemoryMode.llm_free)
-        with pytest.raises(KeyError):
-            build_channels(s, enabled=["does_not_exist"])
+    def test_frames_channel_added_when_enabled(self):
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_ENABLE_FRAMES=True,
+            GRAPHKNOWS_ONTOLOGY="",
+            GRAPHKNOWS_MODE=MemoryMode.llm_free,
+        )
+        assert [c.name for c in default_channels(s)] == ["frame"]
+
+    def test_frame_channel_runs_in_both_modes(self):
+        """The profile filter is gone; every channel declared both modes anyway."""
+        for mode in (MemoryMode.llm_free, MemoryMode.llm_assisted):
+            s = GraphKnowsSettings(GRAPHKNOWS_ENABLE_FRAMES=True, GRAPHKNOWS_MODE=mode)
+            assert "frame" in [c.name for c in default_channels(s)]
 
 
 class TestChannelBaseDefaults:

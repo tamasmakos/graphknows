@@ -1,4 +1,4 @@
-"""Entity extraction — GLiNER NER, canonicalization, and ontology label spaces.
+"""Entity extraction — GLiNER2 NER behind one process-wide extractor.
 
 Shared by both memory modes: entity extraction is always model-driven.
 """

@@ -18,18 +18,6 @@ class StoreError(GraphKnowsError):
     """A storage backend operation failed (connection, query, or transport)."""
 
 
-class IngestError(GraphKnowsError):
-    """Ingestion of text or messages into short-term memory failed."""
-
-
-class RetrievalError(GraphKnowsError):
-    """A recall/retrieval operation failed."""
-
-
-class ExtractionError(GraphKnowsError):
-    """Entity or relation extraction failed."""
-
-
 class MissingExtraError(GraphKnowsError, ImportError):
     """A feature was used whose optional dependency extra is not installed.
 
@@ -45,7 +33,7 @@ class MissingExtraError(GraphKnowsError, ImportError):
 
     #: Extras declared in pyproject.toml. Kept here so the test suite can assert
     #: that every call site names a real one.
-    KNOWN_EXTRAS = frozenset({"assisted", "langgraph", "langchain"})
+    KNOWN_EXTRAS = frozenset({"assisted", "langgraph"})
 
     def __init__(self, feature: str, extra: str) -> None:
         super().__init__(

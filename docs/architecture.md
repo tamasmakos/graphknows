@@ -31,7 +31,7 @@ Async methods on the facade:
 | `stats` | Node counts for the namespace, chunks split by lifecycle state. |
 | `doctor` | Backend connectivity check for the namespace database. |
 | `corpus_ingest` | Batch-ingest documents into one session, then consolidate it. |
-| `ltm_topics` / `ltm_entity` / `ltm_entities` / `ltm_query` | Read-only graph browsing helpers. |
+| `ltm_topics` / `ltm_entity` / `ltm_entities` | Read-only graph browsing helpers. |
 
 A namespace-first SDK surface (`add`, `search`, `flush`) wraps the same verbs with
 mem0-style `user_id` / `agent_id` / `run_id` scoping (`Memory._scoped_session_id`).
@@ -45,18 +45,17 @@ read from a `.env` file). Key ones: `GRAPHKNOWS_MODE`, `GRAPHKNOWS_NAMESPACE`,
 `GRAPHKNOWS_EMBED_MODEL`, `GRAPHKNOWS_EMBED_API_BASE`, `GRAPHKNOWS_ONTOLOGY_FILE`,
 `GRAPHKNOWS_ENABLE_FRAMES`, `GRAPHKNOWS_FACT_CONTEXT`.
 
-`GRAPHKNOWS_MODE` (enum `MemoryMode`) is the single switch that governs both
-extraction and retrieval. There is no separate profile object: the mode fork lives
-in exactly two factories — `build_relation_extractor`
-(`graphknows/ingestion/extraction/relations/__init__.py`) on the write path and
-`build_retriever` (`graphknows/retrieval/__init__.py`) on the read path. Channels
-additionally declare a `profiles` set and are filtered against the mode by
-`default_channels` (`graphknows/channels/registry.py`).
+`GRAPHKNOWS_MODE` (enum `MemoryMode`) governs extraction. There is no separate
+profile object: the mode fork lives in exactly one factory,
+`build_relation_extractor`
+(`graphknows/ingestion/extraction/relations/__init__.py`), on the write path.
+Retrieval does not fork — `build_retriever`
+(`graphknows/retrieval/__init__.py`) always returns `DETRetriever`.
 
 | Mode | Extra extraction | Retrieval | API keys |
 | --- | --- | --- | --- |
-| `llm_free` (default) | GLiNER2 entities + its precision-gated relations; `NullRelationExtractor` | `DETRetriever` (deterministic, channel fan-out + RRF) | none |
-| `llm_assisted` | additionally DSPy ontology-guided relation extraction (`DspyRelationExtractorAdapter`) | `AgenticRetriever` (DSPy ReAct over `DETRetriever`) | LLM + optional embed |
+| `llm_free` (default) | GLiNER2 entities + its precision-gated relations; no LLM extractor | `DETRetriever` (deterministic, channel fan-out + RRF) | none |
+| `llm_assisted` | additionally DSPy ontology-guided relation extraction | same `DETRetriever` | LLM + optional embed |
 
 Embeddings default to a local `sentence-transformers` model, so `llm_free` runs
 with zero API keys.
@@ -137,9 +136,8 @@ Both paths converge on the same write helper, which per chunk:
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 
 `OntologyPredicateMapper` (`graphknows/ingestion/extraction/relations/filter.py`)
-and the taxonomy (`graphknows/ingestion/models/taxonomy.py`) remain available for
-ontology-constrained predicate mapping, but the hot ingest path does not filter
-GLiNER2 labels through them.
+remains available for ontology-constrained predicate mapping, but the hot ingest
+path does not filter GLiNER2 labels through it.
 
 ### Flush / consolidation
 
@@ -193,7 +191,7 @@ web server's graph views; the ingest and retrieval paths use `GraphStore` only.
 ## Embeddings
 
 `graphknows/storage/embedder.py` provides `embed` / `embed_one` (LRU-cached),
-`embed_dim`, and a `get_embedder` shim. By default a local
+and `embed_dim`. By default a local
 `sentence-transformers` model (`BAAI/bge-small-en-v1.5`, 384-dim) runs in-process
 on CPU — no API key. Setting `GRAPHKNOWS_EMBED_API_BASE` routes embeddings through
 a remote OpenAI-compatible `/embeddings` endpoint instead (model and key from
@@ -202,23 +200,22 @@ embedding fallbacks — errors propagate.
 
 ## Retrieval
 
-`recall_memory` builds a retriever lazily (`Memory._get_retriever`, guarded by an
-`asyncio.Lock`), choosing by mode in `build_retriever`.
+`recall_memory` builds the retriever lazily (`Memory._get_retriever`, guarded by
+an `asyncio.Lock`).
 
 ### Channels
 
-A **channel** (`graphknows/channels/base.py`) is one memory signal owned
-end-to-end: `ingest` (write one chunk's structure), `promote` (per flush), and
-`collect(ctx, rt, top_k)` (ranked query candidates as
-`{chunk_id: (score, info)}`). Every hook has a no-op default, so a read-only
-channel implements just `collect`. `CHANNEL_REGISTRY` /
-`register` / `default_channels` (`graphknows/channels/registry.py`) are the single
-extension point; insertion order defines fusion order.
+A **channel** (`graphknows/channels/base.py`) is one memory signal exposing
+`collect(ctx, rt, top_k)` — ranked query candidates as
+`{chunk_id: (score, info)}`. `default_channels`
+(`graphknows/channels/registry.py`) returns the live set; insertion order defines
+fusion order.
 
-The default collector set (`graphknows/channels/collectors.py`,
-`DEFAULT_COLLECTOR_CHANNELS`) is one channel per signal — the old STM/LTM channel
-split collapsed with the databases, so each queries the one `GraphStore` under a
-lifecycle `state` filter instead of routing to a physical store:
+The baseline signals (entity, vector, bm25, temporal) are collected directly by
+the retriever spine, with frames and ontology added as optional channels. The old
+STM/LTM channel split collapsed with the databases, so each queries the one
+`GraphStore` under a lifecycle `state` filter instead of routing to a physical
+store:
 
 - `entity` — entity-graph traversal from query-token entity nodes
 - `vector` — dense ANN over chunk embeddings (plus a declarative query variant)
@@ -242,9 +239,9 @@ Candidates are fused by **RRF** (`graphknows/ranking/rrf.py`, `rrf_score`,
 `RRF_K = 60`), then shaped by community boost (`community_boost` over
 `GraphStore.chunk_community_weights`, derived from Louvain `community_id` on
 `MENTIONS`-linked entities) and memory-class weighting (`shape_score`) before
-sorting. A local cross-encoder **reranker** (`graphknows/ranking/rerank.py`,
-`BAAI/bge-reranker-base`, capped candidate pool) re-scores the pool off-thread; it
-is a no-op pass-through when the model or `sentence-transformers` is unavailable.
+sorting. Cosine ordering of the fused pool is the final rank: the cross-encoder
+reranker was removed after measurement (evidence_recall 0.636 → 0.692 without
+it).
 
 PageRank shaping and IDF discriminativeness were removed: the former read
 `pagerank` from CHUNK metadata while the value lives on `ENTITY`, so the
@@ -254,30 +251,20 @@ Separately from the ranked passages, `_fact_sheet` resolves the query's entities
 (`GraphStore.resolve_query_entities`) and returns their typed relations and
 frame-instance role fills (`GraphStore.entity_fact_context`) as a compact fact
 sheet on `RetrievalContext.facts`. It soft-fails and is disabled by
-`GRAPHKNOWS_FACT_CONTEXT=false`. A per-query `trace` records which collectors
-fired and how each surviving candidate scored.
+`GRAPHKNOWS_FACT_CONTEXT=false`.
 
-### AgenticRetriever (llm_assisted)
-
-`AgenticRetriever` (`graphknows/retrieval/agentic.py`) wraps a DSPy **ReAct** loop
-around the deterministic engine. The query is optionally decomposed into atomic
-sub-questions (`graphknows/retrieval/query/decompose.py`), then a ReAct agent
-bounded by `MAX_REACT_HOPS = 4` answers each, using a `DETRetriever` built over
-the same store as its single per-hop retrieval primitive — the weaker competing
-vector channel that once ran in parallel is gone. Evidence is deduplicated and
-fused across hops by `_fuse_hops`, which preserves each chunk's own deterministic
-relevance magnitude and adds positional RRF only as a tiebreak (collapsing to pure
-positional RRF made every query's hit-scores identical). Any agent error falls
-back to a plain `DETRetriever.retrieve()`.
+`DETRetriever` is the only retriever. The agentic (DSPy ReAct) retriever, its
+query decomposition, and the `GRAPHKNOWS_RETRIEVAL` strategy knob that selected
+it have all been removed.
 
 ## Transports
 
 - **MCP stdio** — `graphknows/server/mcp/stdio_server.py` (console script
   `graphknows-mcp`) over the shared FastMCP app in `graphknows/server/mcp/_app.py`.
   `graphknows/server/mcp/tools/__init__.py` is the authoritative inventory:
-  `memory_ingest`, `memory_flush`, `memory_recall`, `memory_query`, `memory_stats`,
+  `memory_ingest`, `memory_flush`, `memory_query`, `memory_stats`,
   `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
-  `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`, `ltm_query`. A thin
+  `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`. A thin
   wrapper over one `Memory` instance.
 
 ## Ingest path
@@ -306,26 +293,20 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Q[recall_memory: query] --> R{mode}
-    R -- llm_free --> DET[DETRetriever]
-    R -- llm_assisted --> AG[AgenticRetriever: DSPy ReAct]
+    Q[recall_memory: query] --> DET[DETRetriever]
 
     subgraph DETRetriever
-        CTX[ChannelContext: embed + tokenise, scope -> state]
+        CTX[ChannelContext: embed + tokenise, state]
         CTX --> C1[entity]
         CTX --> C2[vector]
         CTX --> C3[bm25]
         CTX --> C4[temporal]
-        CTX --> C5[topic]
-        CTX --> C6[ppr]
-        CTX --> C7[frame - optional]
-        C1 & C2 & C3 & C4 & C5 & C6 & C7 --> RRF[RRF fusion]
+        CTX --> C5[frame - optional]
+        CTX --> C6[ontology - optional]
+        C1 & C2 & C3 & C4 & C5 & C6 --> RRF[RRF fusion]
         RRF --> SHAPE[community boost + memory-class shaping]
-        SHAPE --> CE[cross-encoder rerank]
-        CE --> FS[+ fact sheet]
+        SHAPE --> FS[cosine order + fact sheet]
     end
 
-    AG -->|per hop delegates to| DET
     DET --> OUT[fused hits + facts]
-    AG --> OUT
 ```

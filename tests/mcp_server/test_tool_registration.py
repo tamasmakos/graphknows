@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
 
 
@@ -33,17 +31,3 @@ async def test_registered_tools_match_package_inventory() -> None:
 
     registered = {tool.name for tool in await app.list_tools()}
     assert registered == set(tools.__all__)
-
-
-@pytest.mark.asyncio
-async def test_memory_recall_delegates_to_memory_query() -> None:
-    """memory_recall is an alias: one recall behaviour, one result shape."""
-    from graphknows.server.mcp.tools import stm
-
-    result = {"hits": [], "total": 0, "query": "q", "scope": "stm", "facts": []}
-    with patch.object(stm, "memory_query", new=AsyncMock(return_value=result)) as memory_query:
-        assert await stm.memory_recall("q", session_id="s1", top_k=3, namespace="acme") is result
-
-    memory_query.assert_awaited_once_with(
-        "q", session_id="s1", top_k=3, scope="stm", namespace="acme", strategy=""
-    )

@@ -1,17 +1,8 @@
-"""Ingest request/result DTOs."""
+"""Ingest result DTO."""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-
-
-class IngestRequest(BaseModel, frozen=True):
-    """Parameters for a memory ingest operation."""
-
-    text: str
-    session_id: str
-    title: str = ""
-    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class IngestResult(BaseModel):

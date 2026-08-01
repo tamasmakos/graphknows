@@ -27,7 +27,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -103,18 +102,6 @@ def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
     return f'SELECT expand(vectorNeighbors("{index}", {_emb_sql(emb)}, {k}))'
 
 
-# A chunk reached through an entity that instantiates the matched class is
-# weaker evidence than a chunk that evoked the class directly: the entity may be
-# incidental to what the chunk is about.
-#
-# Default 0.0 (off): once the fused pool is ordered by cosine
-# (DETRetriever._cosine_rerank) the INSTANCE_OF route's contribution to the
-# ordering washes out entirely — evidence_recall on conv-26 is byte-identical at
-# 0.5 and 0.0 — so the extra graph join earns nothing. Re-enable via the env var
-# for experiments. 0.0 skips the join outright.
-_INSTANCE_OF_WEIGHT: float = float(os.environ.get("GRAPHKNOWS_ONTOLOGY_INSTANCE_WEIGHT", "0.0"))
-
-
 def _name_norm(name: str) -> str:
     """Canonical ENTITY merge key: casefolded, whitespace-collapsed name."""
     return " ".join(name.split()).casefold()
@@ -185,18 +172,14 @@ class GraphStore(ArcadeStoreBase):
             sa=started_at,
         )
 
-    async def ensure_file(
-        self, file_id: str, session_id: str, name: str = "", media_type: str = ""
-    ) -> None:
+    async def ensure_file(self, file_id: str, session_id: str) -> None:
         """Upsert a FILE vertex linked to its SESSION via FILE-[:IN_SESSION]->SESSION."""
         await self.command(
             "MERGE (f:FILE {file_id: $fid}) "
-            "SET f.name = $name, f.media_type = $mt, f.session_id = $sid "
+            "SET f.session_id = $sid "
             "WITH f MATCH (s:SESSION {session_id: $sid}) "
             "MERGE (f)-[:IN_SESSION]->(s)",
             fid=file_id,
-            name=name,
-            mt=media_type,
             sid=session_id,
         )
 
@@ -204,7 +187,7 @@ class GraphStore(ArcadeStoreBase):
         """Upsert one CHUNK vertex (state='raw') with its PART_OF edge and embedding.
 
         ``chunk`` keys: chunk_id (required), session_id, file_id, text, seq,
-        kind, speaker, ts, memory_class, atom_type, entity_names, embedding.
+        kind, speaker, ts, memory_class, embedding.
         """
         await self.write_chunks_bulk([chunk])
 
@@ -232,8 +215,6 @@ class GraphStore(ArcadeStoreBase):
                     "speaker": c.get("speaker", "") or "",
                     "ts": c.get("ts", "") or "",
                     "mc": c.get("memory_class", "") or "",
-                    "at": c.get("atom_type", "") or "",
-                    "en": list(c.get("entity_names") or []),
                 }
                 for c in batch
             ]
@@ -243,8 +224,7 @@ class GraphStore(ArcadeStoreBase):
                 "SET c.session_id = row.sid, c.text = row.text, c.seq = row.seq, "
                 "    c.search_text = row.stext, "
                 "    c.kind = row.kind, c.speaker = row.speaker, c.ts = row.ts, "
-                "    c.memory_class = row.mc, c.atom_type = row.at, "
-                "    c.entity_names = row.en, "
+                "    c.memory_class = row.mc, "
                 "    c.state = coalesce(c.state, 'raw'), "
                 "    c.created_at = coalesce(c.created_at, $now)",
                 rows=rows,
@@ -472,7 +452,6 @@ class GraphStore(ArcadeStoreBase):
         src_type: str = "",
         dst_type: str = "",
         ontology_property: str = "",
-        map_score: float = 0.0,
         verifier_score: float | None = None,
         ontology_blocked: bool = False,
         speaker: str = "",
@@ -489,9 +468,11 @@ class GraphStore(ArcadeStoreBase):
         Without them the endpoints of a relation are created untyped, which is how
         the great majority of ENTITY vertices ended up with no type at all.
 
-        ``ontology_property``/``map_score`` annotate the edge with the ontology
-        property its predicate mapped onto, when an ontology is configured. They
-        are annotations only — an unmapped predicate is written unchanged.
+        ``ontology_property`` annotates the edge with the ontology property its
+        predicate mapped onto, when an ontology is configured. It is an
+        annotation only — an unmapped predicate is written unchanged. (The
+        companion ``map_score`` was removed: it was written on every edge and
+        read by nothing.)
 
         ``ontology_blocked`` records that a caller's range gate REFUSED to
         annotate this edge, and once true it is sticky: no later write can
@@ -563,9 +544,6 @@ class GraphStore(ArcadeStoreBase):
             f"    r.ontology_property = CASE "
             f"        WHEN coalesce(r.ontology_blocked, false) OR $ont_blocked THEN null "
             f"        ELSE coalesce(r.ontology_property, $ont_prop) END, "
-            f"    r.map_score = CASE "
-            f"        WHEN coalesce(r.ontology_blocked, false) OR $ont_blocked THEN null "
-            f"        ELSE coalesce(r.map_score, $map_score) END, "
             f"    {verifier_set}"
             f"    r.created_at = coalesce(r.created_at, $now)",
             src_nn=src_norm,
@@ -580,7 +558,6 @@ class GraphStore(ArcadeStoreBase):
             src_type=src_type or None,
             dst_type=dst_type or None,
             ont_prop=ontology_property or None,
-            map_score=float(map_score) or None,
             ont_blocked=bool(ontology_blocked),
             vscore=None if verifier_score is None else float(verifier_score),
             now=now,
@@ -708,53 +685,23 @@ class GraphStore(ArcadeStoreBase):
             src=source,
             n=len(terms),
         )
-        for kind, vtype in (("class", "ONTOLOGY_CLASS"), ("property", "ONTOLOGY_PROPERTY")):
-            rows = [
-                {
-                    "uri": t.uri,
-                    "label": t.label,
-                    "definition": t.definition,
-                    "domain": t.domain,
-                    "range": t.range,
-                }
-                for t in terms
-                if t.kind == kind
-            ]
-            if not rows:
-                continue
-            extra = (
-                ", n.domain = r.domain, n.range = r.range" if vtype == "ONTOLOGY_PROPERTY" else ""
-            )
+        # Only classes are persisted: ONTOLOGY_CLASS is what search_ontology_classes
+        # reads. The ONTOLOGY_PROPERTY vertices, the DECLARES edges and the
+        # SUBCLASS_OF hierarchy were written here and read by nothing.
+        class_terms = [t for t in terms if t.kind == "class"]
+        rows = [{"uri": t.uri, "label": t.label, "definition": t.definition} for t in class_terms]
+        if rows:
             await self.command(
-                f"UNWIND $rows AS r MERGE (n:{vtype} {{uri: r.uri}}) "
-                f"SET n.label = r.label, n.definition = r.definition{extra}",
+                "UNWIND $rows AS r MERGE (n:ONTOLOGY_CLASS {uri: r.uri}) "
+                "SET n.label = r.label, n.definition = r.definition",
                 rows=rows,
-            )
-            await self.command(
-                f"UNWIND $rows AS r MATCH (o:ONTOLOGY {{id: $id}}), (n:{vtype} {{uri: r.uri}}) "
-                "MERGE (o)-[:DECLARES]->(n)",
-                rows=rows,
-                id=ont_id,
             )
         # Embeddings are per-row inline literals: LIST params conflict with the
         # LSM_VECTOR index, the same constraint CHUNK/ENTITY/FRAME honour.
-        for term in terms:
+        for term in class_terms:
             emb = index.term_embedding(term.uri)
             if emb:
-                vtype = "ONTOLOGY_CLASS" if term.kind == "class" else "ONTOLOGY_PROPERTY"
-                await self._set_embedding(vtype, "uri", term.uri, emb)
-        # Class hierarchy, resolved by label since parents are local names.
-        subclass_rows = [
-            {"child": t.uri, "parent": p} for t in terms if t.kind == "class" for p in t.parents
-        ]
-        if subclass_rows:
-            await self.command(
-                "UNWIND $rows AS r "
-                "MATCH (c:ONTOLOGY_CLASS {uri: r.child}), (p:ONTOLOGY_CLASS) "
-                "WHERE p.label = r.parent "
-                "MERGE (c)-[:SUBCLASS_OF]->(p)",
-                rows=subclass_rows,
-            )
+                await self._set_embedding("ONTOLOGY_CLASS", "uri", term.uri, emb)
         logger.info("Ontology persisted: %d terms from %s", len(terms), source)
         return len(terms)
 
@@ -775,14 +722,9 @@ class GraphStore(ArcadeStoreBase):
     async def write_instance_of(self, mappings: list[dict[str, Any]]) -> int:
         """MERGE ENTITY-[:INSTANCE_OF {score}]->ONTOLOGY_CLASS edges.
 
-        Each mapping: ``{name, uri, score}``. Also denormalises the class label
-        onto ``ENTITY.ontology_class`` so readers skip the traversal.
-
-        An entity may accumulate several INSTANCE_OF edges (different chunks
-        extract different types — legitimate multi-classing), but the
-        denormalised property is deterministic: the HIGHEST mapping score wins,
-        ties keep the incumbent, so re-running an ingest cannot flip it. Without
-        the guard it was last-write-wins and could disagree with its own edges.
+        Each mapping: ``{name, uri, score}``. An entity may accumulate several
+        INSTANCE_OF edges — different chunks extract different types, which is
+        legitimate multi-classing.
         """
         if not mappings:
             return 0
@@ -790,7 +732,6 @@ class GraphStore(ArcadeStoreBase):
             {
                 "nn": _name_norm(str(m["name"])),
                 "uri": m["uri"],
-                "label": m.get("label", ""),
                 "score": float(m.get("score", 0.0)),
             }
             for m in mappings
@@ -801,11 +742,7 @@ class GraphStore(ArcadeStoreBase):
         await self.command(
             "UNWIND $rows AS r "
             "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
-            "MERGE (e)-[i:INSTANCE_OF]->(o) SET i.score = r.score, "
-            "e.ontology_class = CASE WHEN r.score > coalesce(e.ontology_class_score, -1.0) "
-            "  THEN r.label ELSE e.ontology_class END, "
-            "e.ontology_class_score = CASE WHEN r.score > coalesce(e.ontology_class_score, -1.0) "
-            "  THEN r.score ELSE e.ontology_class_score END",
+            "MERGE (e)-[i:INSTANCE_OF]->(o) SET i.score = r.score",
             rows=rows,
         )
         return len(rows)
@@ -849,7 +786,9 @@ class GraphStore(ArcadeStoreBase):
             where += f" AND c.state = {quote(state)}"
 
         out: list[dict[str, Any]] = []
-        # Path 1 — the chunk itself evoked the class (direct, strongest).
+        # The chunk itself evoked the class (direct, strongest). A second route
+        # through ENTITY-[:INSTANCE_OF]->CLASS was measured byte-identical on
+        # conv-26 evidence_recall once the pool is cosine-reranked, and removed.
         try:
             direct = await self.query(
                 f"MATCH (c:CHUNK)-[m:MATCHES_CLASS]->(o:ONTOLOGY_CLASS) WHERE {where} "
@@ -869,36 +808,6 @@ class GraphStore(ArcadeStoreBase):
                         # chunk evoked that class in the first place.
                         "score": score.get(r["uri"], 0.0) * float(r.get("sim") or 0.0),
                         "via": "chunk",
-                    }
-                )
-        # Path 2 — the chunk mentions an ENTITY that instantiates the class.
-        # Denser than the chunk path (conv-26: 767 INSTANCE_OF vs 189
-        # MATCHES_CLASS) but inert once the pool is cosine-reranked, so it is off
-        # by default; the query is skipped entirely at weight 0.
-        if _INSTANCE_OF_WEIGHT <= 0.0:
-            return out
-        try:
-            via_entity = await self.query(
-                f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY)-[i:INSTANCE_OF]->(o:ONTOLOGY_CLASS) "
-                f"WHERE {where} "
-                "RETURN c.chunk_id AS chunk_id, o.uri AS uri, i.score AS sim"
-            )
-        except Exception as exc:
-            logger.warning("search_ontology_classes entity join failed: %s", exc)
-            via_entity = []
-        for r in via_entity:
-            if r.get("chunk_id"):
-                out.append(
-                    {
-                        "chunk_id": r["chunk_id"],
-                        "uri": r["uri"],
-                        "label": label.get(r["uri"], ""),
-                        "score": (
-                            score.get(r["uri"], 0.0)
-                            * float(r.get("sim") or 0.0)
-                            * _INSTANCE_OF_WEIGHT
-                        ),
-                        "via": "entity",
                     }
                 )
         return out
@@ -1378,104 +1287,6 @@ class GraphStore(ArcadeStoreBase):
     # Read API — topics / frames / entity graph
     # ------------------------------------------------------------------
 
-    async def search_topics(self, embedding: list[float], top_k: int = 5) -> list[dict[str, Any]]:
-        """ANN search over TOPIC.embedding."""
-        if not embedding:
-            return []
-        sql = _vec_search_sql("TOPIC[embedding]", embedding, top_k * 2)
-        try:
-            rows = await self._c.query(self._db, sql, language="sql")
-        except Exception as exc:
-            logger.debug("search_topics failed (non-fatal): %s", exc)
-            return []
-        rows = self._dedup_rows(rows)
-        results: list[dict[str, Any]] = []
-        for r in rows:
-            dist = float(r.get("distance") or 1.0)
-            results.append(
-                {
-                    "topic_id": r.get("topic_id", ""),
-                    "summary": r.get("summary", ""),
-                    "modularity": r.get("modularity"),
-                    "title": r.get("title", "") or "",
-                    "keywords": list(r.get("keywords") or []),
-                    "coherence": float(r.get("coherence") or 0.0),
-                    "confidence": max(0.0, 1.0 - dist),
-                }
-            )
-            if len(results) >= top_k:
-                break
-        return results
-
-    async def search_topics_with_chunks(
-        self,
-        embedding: list[float],
-        top_k: int,
-        session_id: str | None = None,
-        state: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """ANN over TOPIC.embedding, then join TOPIC<-[:HAS_TOPIC]-CHUNK.
-
-        Mirrors :meth:`query_frames_by_embedding` and
-        :meth:`search_ontology_classes`: match the topic centroids, then return
-        the member chunks so a topic routes to real evidence rather than only
-        contributing its summary. Returns
-        ``[{chunk_id, topic_id, title, keywords, coherence, score}]``.
-        """
-        if not embedding:
-            return []
-        sql = _vec_search_sql("TOPIC[embedding]", embedding, top_k)
-        try:
-            rows = await self._c.query(self._db, sql, language="sql")
-        except Exception as exc:
-            logger.debug("search_topics_with_chunks failed (non-fatal): %s", exc)
-            return []
-        meta: dict[str, dict[str, Any]] = {}
-        for r in self._dedup_rows(rows):
-            tid = r.get("topic_id")
-            if not tid or tid in meta:
-                continue
-            meta[tid] = {
-                "score": max(0.0, 1.0 - float(r.get("distance") or 1.0)),
-                "title": r.get("title", "") or "",
-                "keywords": list(r.get("keywords") or []),
-                "coherence": float(r.get("coherence") or 0.0),
-            }
-        if not meta:
-            return []
-        where = f"t.topic_id IN {quoted_list(list(meta))}"
-        if session_id:
-            where += f" AND c.session_id = {quote(session_id)}"
-        if state:
-            where += f" AND c.state = {quote(state)}"
-        try:
-            joined = await self.query(
-                f"MATCH (c:CHUNK)-[:HAS_TOPIC]->(t:TOPIC) WHERE {where} "
-                "RETURN c.chunk_id AS chunk_id, t.topic_id AS topic_id"
-            )
-        except Exception as exc:
-            logger.debug("search_topics_with_chunks join failed: %s", exc)
-            return []
-        out: list[dict[str, Any]] = []
-        for r in joined:
-            tid, cid = r.get("topic_id"), r.get("chunk_id")
-            if not tid or not cid:
-                continue
-            info = meta[tid]
-            out.append(
-                {
-                    "chunk_id": cid,
-                    "topic_id": tid,
-                    "title": info["title"],
-                    "keywords": info["keywords"],
-                    "coherence": info["coherence"],
-                    # A loose topic is weaker evidence that its members are on
-                    # topic, so the match is discounted by cluster tightness.
-                    "score": info["score"] * max(info["coherence"], 0.1),
-                }
-            )
-        return out
-
     async def query_frames_by_embedding(
         self,
         embedding: list[float],
@@ -1532,77 +1343,6 @@ class GraphStore(ArcadeStoreBase):
             for r in joined
             if r.get("chunk_id") and r.get("id")
         ]
-
-    async def query_frame_chunks(
-        self,
-        frame_types: list[str],
-        session_id: str | None = None,
-        state: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """FRAME rows (with evidence chunk) whose frame_type matches, via EVOKED_BY."""
-        types = [t for t in frame_types if t]
-        if not types:
-            return []
-        where = f"n.frame_type IN {quoted_list(types)}"
-        if session_id:
-            where += f" AND n.session_id = {quote(session_id)}"
-        if state:
-            where += f" AND c.state = {quote(state)}"
-        rows = await self.query(
-            f"MATCH (n:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE {where} "
-            f"RETURN c.chunk_id AS chunk_id, n.frame_type AS frame_type, "
-            f"n.speaker AS speaker, n.fillers AS fillers"
-        )
-        return [
-            {
-                "chunk_id": r.get("chunk_id"),
-                "frame_type": r.get("frame_type"),
-                "speaker": (r.get("speaker") or "").lower(),
-                "fillers": list(r.get("fillers") or []),
-            }
-            for r in rows
-            if r.get("chunk_id")
-        ]
-
-    async def entity_relation_graph(self, session_id: str | None = None) -> list[dict[str, Any]]:
-        """Semantic ENTITY->ENTITY relation rows (the REL layer).
-
-        Structural edges are distinct types, so scoping the match to ``REL``
-        excludes them by construction — no exclusion list is needed. ``type`` is
-        the ``predicate`` property, not the edge type name.
-
-        Returns rows of {src, type, dst, weight, is_current} for PPR/pagerank.
-        With ``session_id`` set, rows are restricted to entities mentioned by
-        that session's chunks.
-        """
-        rows = await self.query(
-            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
-            "WHERE a.name IS NOT NULL AND b.name IS NOT NULL AND a.name <> b.name "
-            "AND (r.is_current = true OR r.is_current IS NULL) "
-            "RETURN a.name AS src, r.predicate AS type, b.name AS dst, "
-            "coalesce(r.confidence, 1.0) AS weight, r.is_current AS is_current"
-        )
-        result = [
-            {
-                "src": r["src"],
-                "type": r.get("type", ""),
-                "dst": r["dst"],
-                "weight": float(r.get("weight") or 1.0),
-                "is_current": r.get("is_current") is not False,
-            }
-            for r in rows
-            if r.get("src") and r.get("dst")
-        ]
-        if not session_id:
-            return result
-        # Restrict both endpoints to entities mentioned by this session's chunks.
-        ent_rows = await self.query(
-            "MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) WHERE c.session_id = $sid "
-            "RETURN DISTINCT e.name AS name",
-            sid=session_id,
-        )
-        session_names = {r["name"] for r in ent_rows if r.get("name")}
-        return [r for r in result if r["src"] in session_names and r["dst"] in session_names]
 
     # ------------------------------------------------------------------
     # Read API — structured fact context (fact-sheet for the generator)
@@ -1778,8 +1518,8 @@ class GraphStore(ArcadeStoreBase):
     async def _entity_degree_map(self) -> dict[str, int]:
         """Total (in+out) semantic-relation degree per ENTITY, keyed by ``name_norm``.
 
-        Structural edge types are excluded (same policy as ``entity_relation_graph``
-        / the numpy pagerank). Two directed queries avoid relying on ArcadeDB's
+        Only ``REL`` is matched, so structural edge types are excluded by
+        construction. Two directed queries avoid relying on ArcadeDB's
         undirected Cypher pattern support.
         """
         out_rows = await self.query(
@@ -1818,11 +1558,9 @@ class GraphStore(ArcadeStoreBase):
         via ``node.name_norm IS NOT NULL`` — ``name_norm`` is ENTITY-only in
         this schema, and is the scoping filter that actually works: ArcadeDB's
         Cypher does not honour a ``node:ENTITY`` label predicate inside a
-        ``CALL ... YIELD ... WHERE`` clause, it silently matches zero rows)
-        first. **On ANY failure** (view creation, unsupported algo, timeout,
-        or empty graph) this falls back to the in-process numpy power-iteration
-        implementation (``_pagerank_numpy_fallback``) so a flush never comes up
-        empty.
+        ``CALL ... YIELD ... WHERE`` clause — it silently matches zero rows).
+        Soft-fails to 0 on any error or an empty result, the same as its
+        ``compute_communities``/``compute_graph_embeddings`` siblings.
 
         Args:
             skip_view_ensure: Skip rebuilding the analytical view (the caller
@@ -1848,15 +1586,16 @@ class GraphStore(ArcadeStoreBase):
             # is null" the same as "no rows" so we don't persist meaningless
             # zeros over a graph that never actually got ranked.
             rows = [r for r in rows if r.get("nn") and r.get("rank") is not None]
-            if not rows:
-                raise RuntimeError("native algo.pageRank returned no usable (non-null) ranks")
         except Exception as exc:
             logger.info(
-                "compute_and_persist_pagerank: native algo.pageRank unavailable (%s); "
-                "falling back to numpy",
-                exc,
+                "compute_and_persist_pagerank: native algo.pageRank unavailable (%s); skipping", exc
             )
-            return await self._pagerank_numpy_fallback()
+            return 0
+        if not rows:
+            logger.info(
+                "compute_and_persist_pagerank: no usable (non-null) ranks returned; skipping"
+            )
+            return 0
 
         updated = await self._bulk_set_entity_scalar(
             "pagerank", [{"nn": r["nn"], "v": float(r.get("rank") or 0.0)} for r in rows]
@@ -1989,119 +1728,6 @@ class GraphStore(ArcadeStoreBase):
             "community_id", [{"nn": r["nn"], "v": int(r["cid"])} for r in rows]
         )
         logger.info("compute_communities: wrote %d ENTITY community_id(s)", updated)
-        return updated
-
-    async def similar_entities_by_embedding(
-        self, name: str, top_k: int = 5
-    ) -> list[dict[str, Any]]:
-        """Entities most similar to *name* by cosine over ``graph_embedding``.
-
-        In-Python cosine over every ENTITY.graph_embedding — entity counts are
-        small (tens-hundreds per namespace), so no vector index is needed.
-        Returns rows of ``{name, name_norm, similarity}`` excluding the seed
-        itself, empty when the seed or the corpus lacks embeddings.
-        """
-        try:
-            import numpy as np
-        except ImportError:
-            return []
-        seed_nn = _name_norm(name)
-        rows = await self.query(
-            "MATCH (e:ENTITY) WHERE e.graph_embedding IS NOT NULL "
-            "RETURN e.name_norm AS nn, e.name AS name, e.graph_embedding AS emb"
-        )
-        seed_emb: list[float] | None = None
-        candidates: list[tuple[str, str, list[float]]] = []
-        for r in rows:
-            emb = r.get("emb")
-            nn = r.get("nn")
-            if not emb or not nn:
-                continue
-            if nn == seed_nn:
-                seed_emb = emb
-            else:
-                candidates.append((nn, r.get("name") or nn, emb))
-        if seed_emb is None or not candidates:
-            return []
-        seed = np.asarray(seed_emb, dtype=float)
-        seed = seed / (np.linalg.norm(seed) + 1e-9)
-        scored: list[tuple[float, str, str]] = []
-        for nn, disp_name, emb in candidates:
-            v = np.asarray(emb, dtype=float)
-            v = v / (np.linalg.norm(v) + 1e-9)
-            scored.append((float(seed @ v), nn, disp_name))
-        scored.sort(key=lambda x: -x[0])
-        return [
-            {"name_norm": nn, "name": disp_name, "similarity": sim}
-            for sim, nn, disp_name in scored[:top_k]
-        ]
-
-    async def _pagerank_numpy_fallback(self) -> int:
-        """In-process PageRank over the entity-relation graph (numpy power iteration).
-
-        The pre-WS4 implementation, kept as the safety net for
-        ``compute_and_persist_pagerank`` when ArcadeDB's native
-        ``CALL algo.pageRank()`` is unavailable or fails. Persists ``pagerank``
-        on ENTITY nodes. Returns the number of ENTITY nodes updated. Soft-fails
-        to 0 when numpy is unavailable or the graph is empty.
-        """
-        try:
-            import numpy as np
-        except ImportError:
-            logger.info("_pagerank_numpy_fallback: numpy unavailable, skipping")
-            return 0
-
-        try:
-            entity_rows = await self.query(
-                "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL RETURN e.name_norm AS nn"
-            )
-            edge_rows = await self.query(
-                "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
-                "WHERE (r.is_current = true OR r.is_current IS NULL) "
-                "RETURN DISTINCT a.name_norm AS src, b.name_norm AS dst, "
-                "coalesce(r.confidence, 1.0) AS w"
-            )
-        except Exception as exc:
-            logger.warning("_pagerank_numpy_fallback: graph query failed: %s", exc)
-            return 0
-
-        names = [r["nn"] for r in entity_rows if r.get("nn")]
-        if not names:
-            return 0
-        name_idx = {n: i for i, n in enumerate(names)}
-        n = len(names)
-
-        adj = np.zeros((n, n), dtype=float)
-        for row in edge_rows:
-            src, dst = row.get("src"), row.get("dst")
-            w = float(row.get("w") or 1.0)
-            si, ti = name_idx.get(src), name_idx.get(dst)  # type: ignore[arg-type]
-            if si is not None and ti is not None and si != ti:
-                adj[si][ti] += w
-
-        # Column-normalise (dangling nodes get uniform 1/n).
-        col_sum = adj.sum(axis=0)
-        dangling = col_sum == 0
-        col_sum[dangling] = 1.0
-        adj = adj / col_sum
-
-        # Power iteration (damping=0.85, max 50 iters).
-        damping = 0.85
-        rank = np.full(n, 1.0 / n)
-        dangling_nodes = np.where(adj.sum(axis=0) == 0)[0]
-        new_rank = rank
-        for _ in range(50):
-            dangling_sum = rank[dangling_nodes].sum() / n if len(dangling_nodes) else 0.0
-            new_rank = (1 - damping) / n + damping * (adj @ rank + dangling_sum)
-            if np.linalg.norm(new_rank - rank, 1) < 1e-6:
-                break
-            rank = new_rank
-        rank = new_rank
-
-        updated = await self._bulk_set_entity_scalar(
-            "pagerank", [{"nn": nn, "v": float(rank[i])} for i, nn in enumerate(names)]
-        )
-        logger.info("_pagerank_numpy_fallback: updated %d ENTITY nodes", updated)
         return updated
 
     # ------------------------------------------------------------------

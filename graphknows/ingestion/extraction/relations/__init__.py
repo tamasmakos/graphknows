@@ -2,8 +2,8 @@
 
 ``build_relation_extractor(settings)`` is the single place the LLM relation
 strategy is selected: with ``settings.dspy_relations`` it returns the
-DSPy/ontology adapter (lazily imported so ``dspy``/``rdflib`` load only then),
-otherwise :class:`NullRelationExtractor`.
+DSPy/ontology extractor (lazily imported so ``dspy``/``rdflib`` load only then),
+otherwise ``None``.
 
 This is *additive* — the deterministic relex/SVO relation pass runs in both
 modes regardless, so what this factory gates is the LLM layer on top.
@@ -14,26 +14,20 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from graphknows.ingestion.extraction.relations.base import (
-    IRelationExtractor,
-    NullRelationExtractor,
-)
-
 if TYPE_CHECKING:
+    from graphknows.ingestion.extraction.relations.llm_assisted.dspy import DSPyExtractor
     from graphknows.settings import GraphKnowsSettings
 
 
-def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor:
-    """Return the LLM relation extractor when enabled, else the null object."""
+def build_relation_extractor(settings: GraphKnowsSettings) -> DSPyExtractor | None:
+    """Return the LLM relation extractor when enabled, else ``None``."""
     if not settings.dspy_relations:
-        return NullRelationExtractor()
+        return None
 
-    from graphknows.ingestion.extraction.relations.llm_assisted.adapter import (
-        DspyRelationExtractorAdapter,
-    )
+    from graphknows.ingestion.extraction.relations.llm_assisted.dspy import DSPyExtractor
 
     ontology_file = settings.ontology_source or os.environ.get("GRAPHKNOWS_ONTOLOGY_FILE", "")
-    return DspyRelationExtractorAdapter(
+    return DSPyExtractor(
         config={
             "llm": {
                 "model": settings.extraction_model or settings.llm_model,
@@ -50,4 +44,4 @@ def build_relation_extractor(settings: GraphKnowsSettings) -> IRelationExtractor
     )
 
 
-__all__ = ["IRelationExtractor", "NullRelationExtractor", "build_relation_extractor"]
+__all__ = ["build_relation_extractor"]

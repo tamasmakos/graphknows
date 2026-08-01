@@ -40,7 +40,6 @@ dependencies = [
     # directly (a naive Python agglomerative is O(N^3) and unusable at ~1e3
     # entities).
     "scipy>=1.11.0",
-    "pyyaml>=6.0",
     "dateparser>=1.2.0",
     # extraction (llm_free) + embeddings
     # `gliner` (not just gliner2) is required: entities/gliner_model.py loads
@@ -51,7 +50,7 @@ dependencies = [
     "gliner2>=0.1.0",
     "spacy>=3.7.0",
     "sentence-transformers>=3.0.0",
-    # Imported DIRECTLY by embedder.py, rerank.py, gliner_model.py and
+    # Imported DIRECTLY by embedder.py, gliner_model.py and
     # _gliner2_verifier.py — not merely pulled in by sentence-transformers.
     # Relying on the transitive edge means a sentence-transformers release that
     # drops or re-pins any of them silently breaks us. The Dockerfile also
@@ -69,8 +68,6 @@ dependencies = [
     # eval-only — those call sites guard LookupError (missing *corpus*), which
     # does not catch the ModuleNotFoundError raised by a missing *package*.
     "nltk>=3.8",
-    # document parsers
-    "python-docx>=1.1.0",
     # plug-and-play MCP server
     "mcp>=1.0.0",
 ]
@@ -80,10 +77,12 @@ dependencies = [
 # The one extra: `pip install 'graphknows[assisted]'`. Lazily imported and guarded
 # by MissingExtraError, so the base install never pulls dspy/rdflib.
 assisted = ["dspy>=2.5.0", "rdflib>=7.0.0"]
-# Framework adapters. Genuinely optional — nothing in the core paths imports
-# them, and both are lazily imported behind a MissingExtraError guard.
+# Framework adapter. Genuinely optional — nothing in the core paths imports it,
+# and it is lazily imported behind a MissingExtraError guard. The `langchain`
+# extra was removed with its adapter: `GraphKnowsRetriever` had zero importers
+# (no test, example, eval, or docs page) and raised a bare ImportError, so the
+# extra it named guarded nothing.
 langgraph = ["langgraph>=0.2.0"]
-langchain = ["langchain-core>=0.3.0"]
 
 # Every extra named by a MissingExtraError call site MUST appear above;
 # `MissingExtraError.KNOWN_EXTRAS` and tests/test_extras.py enforce it. For a

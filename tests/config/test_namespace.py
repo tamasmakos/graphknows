@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graphknows.storage.namespace import db_names, namespaces_from_databases, sanitize
+from graphknows.storage.namespace import sanitize
 
 
 class TestSanitize:
@@ -23,36 +23,3 @@ class TestSanitize:
         b = sanitize("y" * 200)
         assert len(a) <= 48 and len(b) <= 48
         assert a != b  # distinct inputs stay distinct
-
-
-class TestDbNames:
-    def test_default_namespace_is_backward_compatible(self) -> None:
-        assert db_names("") == ("stm", "ltm")
-        assert db_names("   ") == ("stm", "ltm")
-
-    def test_namespaced(self) -> None:
-        assert db_names("acme") == ("stm_acme", "ltm_acme")
-        assert db_names("eval_locomo") == ("stm_eval_locomo", "ltm_eval_locomo")
-
-    def test_sanitizes_before_naming(self) -> None:
-        assert db_names("ACME Corp!") == ("stm_acme_corp", "ltm_acme_corp")
-
-
-class TestNamespacesFromDatabases:
-    def test_empty(self) -> None:
-        assert namespaces_from_databases([]) == [""]
-
-    def test_default_pair_yields_default_namespace(self) -> None:
-        assert namespaces_from_databases(["stm", "ltm"]) == [""]
-
-    def test_derives_and_sorts_with_default_first(self) -> None:
-        dbs = ["ltm", "stm_acme", "ltm_acme", "ltm_beta", "unrelated"]
-        assert namespaces_from_databases(dbs) == ["", "acme", "beta"]
-
-    def test_single_half_of_a_pair_still_counts(self) -> None:
-        # Only the LTM half exists — the namespace is still reported.
-        assert namespaces_from_databases(["ltm_itest_a"]) == ["", "itest_a"]
-
-    def test_ignores_bare_prefixes(self) -> None:
-        # "stm_"/"ltm_" with nothing after the underscore is not a namespace.
-        assert namespaces_from_databases(["stm_", "ltm_"]) == [""]

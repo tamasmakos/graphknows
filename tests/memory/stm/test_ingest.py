@@ -169,3 +169,34 @@ async def test_ingest_turn_embeds_the_surface_but_stores_text_verbatim():
     chunk = store.write_chunk.await_args.args[0]
     assert chunk["text"] == "I'm opening a dance studio."
     assert chunk["search_text"] == "Gina: I'm opening a dance studio."
+
+
+async def test_ingest_turn_logs_when_it_drops_an_empty_turn(caplog):
+    """A dropped turn must leave a trace, or "not configured yet" and "broken" look alike.
+
+    ``ingest_turn`` returns 0 for whitespace-only text. That is a defensible policy —
+    what is not defensible is doing it silently: from outside, a caller that submitted
+    200 turns and got 0 chunks cannot tell a content decision from a wedged extractor.
+    CLAUDE.md prohibits the unlogged swallow by name ("If a soft-fail is right, log it").
+
+    Asserts on the VALUE: the message must name the session and the sequence number, so
+    the specific dropped turn is identifiable — a bare "skipped" counter would not have
+    let anyone find which turn went missing.
+    """
+    import logging
+
+    handler, store, _ = _make_handler(extractor=None)
+
+    with caplog.at_level(logging.INFO, logger="graphknows.ingestion.stm.ingest"):
+        written = await handler.ingest_turn("s-42", "f1", 7, "user", "   \n\t  ", speaker="Gina")
+
+    assert written == 0
+    store.write_chunk.assert_not_awaited()
+
+    records = [r for r in caplog.records if "empty" in r.getMessage().lower()]
+    assert records, (
+        f"empty turn dropped with no log; saw {[r.getMessage() for r in caplog.records]}"
+    )
+    msg = records[0].getMessage()
+    assert "s-42" in msg
+    assert "7" in msg

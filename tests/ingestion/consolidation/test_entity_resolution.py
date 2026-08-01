@@ -84,16 +84,6 @@ class FakeStore:
                 n += 1
         return n
 
-    async def rename_entity(self, old_norm: str, new_name: str) -> bool:
-        new_norm = " ".join(new_name.split()).casefold()
-        if old_norm not in self.entities or new_norm in self.entities or old_norm == new_norm:
-            return False
-        e = self.entities.pop(old_norm)
-        e.setdefault("aliases", []).append(e["name"])
-        e["name"], e["name_norm"] = new_name, new_norm
-        self.entities[new_norm] = e
-        return True
-
     async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
         if winner_norm == loser_norm:
             return False
@@ -210,106 +200,6 @@ async def test_persons_not_singularized_in_standardization_layer() -> None:
     # "chris" must not be singularized to "chri" and merged.
     assert "chris" in store.entities
     assert result["merged"] == 0
-
-
-# ---------------------------------------------------------------------------
-# Layers 4 + 5 — speaker-prefix merge and temporal drop (existing-graph repair)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_speaker_prefixed_entity_merges_into_the_speaker() -> None:
-    """ "Caroline: Thanks, Melanie" heals into "Caroline" at flush.
-
-    Repairs graphs ingested before the mint-point fix; on conv-26 these 27
-    names carried 42.5% of REL edges.
-    """
-    store = FakeStore(
-        entities=[
-            {"name_norm": "caroline", "name": "Caroline", "type": "PERSON", "mention_count": 38},
-            {
-                "name_norm": "caroline: thanks, melanie",
-                "name": "Caroline: Thanks, Melanie",
-                "type": "PERSON",
-                "mention_count": 3,
-            },
-        ],
-        speakers=["caroline"],
-    )
-    await resolve_entities(store, "s1")
-    assert "caroline: thanks, melanie" not in store.entities
-    assert ("caroline", "caroline: thanks, melanie") in store.merges
-
-
-@pytest.mark.asyncio
-async def test_glued_group_without_a_clean_node_is_promoted() -> None:
-    """When the glued span swallowed EVERY mention, the dominant member becomes X.
-
-    The real conv-26 case: "Caroline" existed only as "Caroline: Thanks,
-    Melanie" (63 mentions) plus untyped variants — no clean node to merge into.
-    """
-    store = FakeStore(
-        entities=[
-            {
-                "name_norm": "caroline: thanks, melanie",
-                "name": "Caroline: Thanks, Melanie",
-                "type": "PERSON",
-                "mention_count": 63,
-            },
-            {
-                "name_norm": "caroline: nah, i",
-                "name": "Caroline: Nah, I",
-                "type": "",
-                "mention_count": 0,
-            },
-            {"name_norm": "caroline:", "name": "Caroline:", "type": "", "mention_count": 0},
-        ],
-        speakers=[],
-    )
-    await resolve_entities(store, "s1")
-    assert set(store.entities) == {"caroline"}
-    winner = store.entities["caroline"]
-    assert winner["name"] == "Caroline"
-    assert winner["mention_count"] == 63
-    assert "Caroline: Thanks, Melanie" in winner["aliases"]
-
-
-@pytest.mark.asyncio
-async def test_colon_name_without_a_person_anchor_is_kept() -> None:
-    """ "Charlotte's Web: A Review" has no person anchor — never merged."""
-    store = FakeStore(
-        entities=[
-            {
-                "name_norm": "charlotte's web: a review",
-                "name": "Charlotte's Web: A Review",
-                "type": "WORK_OF_ART",
-                "mention_count": 2,
-            },
-        ],
-        speakers=["caroline"],
-    )
-    await resolve_entities(store, "s1")
-    assert "charlotte's web: a review" in store.entities
-    assert store.merges == []
-
-
-@pytest.mark.asyncio
-async def test_temporal_entities_from_old_ingests_are_dropped() -> None:
-    """Date names that entered via the (formerly unfiltered) relation path go."""
-    store = FakeStore(
-        entities=[
-            {"name_norm": "caroline", "name": "Caroline", "type": "PERSON", "mention_count": 38},
-            {"name_norm": "8 may, 2023", "name": "8 May, 2023", "type": "", "mention_count": 2},
-            {"name_norm": "last saturday", "name": "last Saturday", "type": "", "mention_count": 1},
-            # Month-named person survives — the digit gate protects her.
-            {"name_norm": "may", "name": "May", "type": "PERSON", "mention_count": 4},
-        ],
-        speakers=["caroline"],
-    )
-    await resolve_entities(store, "s1")
-    assert "8 may, 2023" not in store.entities
-    assert "last saturday" not in store.entities
-    assert "may" in store.entities
 
 
 @pytest.mark.asyncio

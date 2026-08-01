@@ -1,30 +1,10 @@
-"""Deterministic entity-traversal + vector hybrid RAG with RRF fusion.
+"""Deterministic hybrid RAG: four baseline collectors, RRF fusion, one ranking.
 
-Collectors run concurrently over a single per-namespace ``GraphStore``, each
-filtered by a lifecycle ``state`` derived from the query scope (raw /
-consolidated / both): entity traversal, dense vector ANN, BM25, temporal, and
-topic match. The spine is channel-blind — it fuses and ranks only.
-
-Topic nodes are LLM-assisted enrichment artifacts; deterministic retrieval
-returns them as synthetic topic-summary hits fused alongside chunk candidates
-like any other channel.
-
-The cross-encoder is the sole ranker: channels only decide pool MEMBERSHIP
-(via RRF fusion), ``_shape_and_rank`` sorts the fused pool by that base score
-purely for deterministic ordering
-re-scores the ENTIRE pool — nothing is cut before it sees every candidate.
-
-WS-2 additions
---------------
-* BM25 sparse channel — replaces the homegrown two-pass full-text with a proper
-  BM25 ranking (``rank_bm25.BM25Okapi``) over chunk texts, feeding one RRF
-  source.
-* PageRank boost and IDF discriminativeness were never wired: the former read
-  ``pagerank`` from CHUNK metadata while the value lives on ENTITY nodes (so the
-  multiplier was always 1.0), and nothing ever called the latter. Both have been
-  removed.
-* Temporal recency boost — relation-edge ``_temporal_score`` from
-  ``filter_by_validity_window`` is folded into temporal-traversal candidates.
+The four collectors below (entity traversal, dense vector ANN, BM25, temporal)
+run concurrently over one per-namespace ``GraphStore``, each filtered by a
+lifecycle ``state`` derived from the query scope, alongside whatever optional
+channels ``channels.registry.default_channels`` turned on. The spine is
+signal-blind: it merges the candidates, sorts by fused score, and cuts to top_k.
 """
 
 from __future__ import annotations
@@ -183,15 +163,10 @@ class DETRetriever(BaseGraphRetriever):
     ) -> None:
         self.store = store
         self.embed_model = embed_model
-        # Channels provide ranked candidates; this spine fuses+ranks them and is
-        # channel-blind. Defaults to the seven built-in collectors (behaviour
-        # identical to the original hardcoded gather); callers pass a richer set
-        # (e.g. + frames) built from settings via channels.registry.
-        if channels is None:
-            from graphknows.channels.collectors import DEFAULT_COLLECTOR_CHANNELS
-
-            channels = [cls() for cls in DEFAULT_COLLECTOR_CHANNELS]
-        self._channels = channels
+        # OPTIONAL channels only (frames, ontology) — the four baseline
+        # collectors are methods on this class and always run. This spine fuses
+        # + ranks whatever they return and is otherwise signal-blind.
+        self._channels = channels or []
 
     async def retrieve(
         self,
@@ -211,19 +186,26 @@ class DETRetriever(BaseGraphRetriever):
 
         ctx = await self._build_channel_context(query, session_id, scope)
 
-        # Channels run concurrently; a failure in ANY of them raises loudly
-        # (no return_exceptions swallow) so a broken channel surfaces immediately
+        # Collectors run concurrently; a failure in ANY of them raises loudly
+        # (no return_exceptions swallow) so a broken signal surfaces immediately
         # rather than silently degrading recall. Each returns chunk_id -> (score,
-        # info); the spine below is channel-blind (fuses + ranks only).
-        # Over-fetch: channels are asked for a POOL, not for the caller's page.
-        # Fusion can only rank what it was handed, and asking each channel for
-        # exactly top_k made the pool the same size as the answer, so a chunk no
-        # single channel ranked in its own top-25 could never be recovered by
-        # agreement between channels. Measured on conv-30, evidence_recall@25:
+        # info); the spine below is signal-blind (fuses + ranks only).
+        # Over-fetch: they are asked for a POOL, not for the caller's page.
+        # Fusion can only rank what it was handed, and asking each for exactly
+        # top_k made the pool the same size as the answer, so a chunk no single
+        # collector ranked in its own top-25 could never be recovered by
+        # agreement between them. Measured on conv-30, evidence_recall@25:
         # pool=25 0.589, pool=100 0.692.
         pool_k = max(top_k * _POOL_FACTOR, _MIN_POOL)
-        sources = await asyncio.gather(*(c.collect(ctx, self, pool_k) for c in self._channels))
-        collectors_fired = {c.name: len(s) for c, s in zip(self._channels, sources, strict=False)}
+        sources = await asyncio.gather(
+            self.entity_boost(ctx.words_graph, session_id, ctx.state, pool_k),
+            self.semantic_ann(ctx.emb, session_id, ctx.state, pool_k, emb2=ctx.emb2),
+            self.bm25(ctx.words, session_id, ctx.state, pool_k),
+            # words_graph so a "when did X happen" query — which states no date
+            # for the date-keyed path to match — still finds dated chunks about X.
+            self.temporal_traversal(query, session_id, ctx.state, pool_k, ctx.words_graph),
+            *(c.collect(ctx, self, pool_k) for c in self._channels),
+        )
 
         combined: dict[str, tuple[float, dict[str, Any]]] = {}
         for src in sources:
@@ -244,7 +226,6 @@ class DETRetriever(BaseGraphRetriever):
             session_id=session_id,
             fused_results=fused,
             search_type="DET",
-            trace=_build_trace(query, session_id, collectors_fired, fused),
             facts=await self._fact_sheet(ctx.words_graph),
         )
 
@@ -310,7 +291,6 @@ class DETRetriever(BaseGraphRetriever):
         return ChannelContext(
             query=query,
             session_id=session_id,
-            scope=scope,
             emb=emb_array[0].tolist(),
             emb2=emb2,
             words=[w for w in words_graph if len(w) > 3],
@@ -576,40 +556,6 @@ class DETRetriever(BaseGraphRetriever):
             )
         return result
 
-    async def topic_match(
-        self,
-        emb: list[float],
-        session_id: str,
-        state: str | None,
-        top_k: int,
-    ) -> dict[str, tuple[float, dict[str, Any]]]:
-        """Semantic topic match -> inject the topic summary as a synthetic passage.
-
-        Topics are pre-aggregated community summaries written at consolidation
-        (llm_assisted only). No-op when no topics exist, so it never regresses
-        the base pipeline.
-        """
-        result: dict[str, tuple[float, dict[str, Any]]] = {}
-        topics = await self.store.search_topics(emb, top_k=2)
-        for t_rank, topic in enumerate(topics):
-            summary = (topic.get("summary") or "").strip()
-            tid = topic.get("topic_id") or ""
-            if not summary:
-                continue
-            _add_result(
-                result,
-                f"topic:{tid}",
-                rrf_score(t_rank, boost=1.5),
-                {
-                    "text": summary,
-                    "entities": [],
-                    "sources": {"topic"},
-                    "doc_id": "",
-                    "metadata": {"is_topic_summary": True},
-                },
-            )
-        return result
-
     async def semantic_ann(
         self,
         emb: list[float],
@@ -659,31 +605,6 @@ class DETRetriever(BaseGraphRetriever):
                 },
             )
         return result
-
-
-def _build_trace(
-    query: str,
-    session_id: str,
-    collectors_fired: dict[str, int],
-    fused: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Transparency trace: which collectors fired and how each survivor scored."""
-    return {
-        "query": query,
-        "session_id": session_id,
-        "collectors_fired": collectors_fired,
-        "candidates": [
-            {
-                "rank": fc["rank"],
-                "chunk_id": fc["chunk_id"],
-                "doc_id": fc.get("doc_id", ""),
-                "sources": fc.get("sources", ""),
-                "score": fc.get("rrf_score", 0.0),
-                "text": (fc.get("text", "") or "")[:200],
-            }
-            for fc in fused
-        ],
-    }
 
 
 def _add_result(

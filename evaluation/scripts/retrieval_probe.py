@@ -292,7 +292,7 @@ async def _probe(args: argparse.Namespace) -> int:
         documents = build_documents(
             dlg_rows[0], max_documents=args.max_documents, max_chars=args.max_chars
         )
-        await runtime.purge_memory(session_id=session_id, scope="both")
+        await runtime.purge_memory(session_id=session_id)
         print(f"[{dlg}] ingesting {len(documents)} docs …", flush=True)
         for idx, doc in enumerate(documents):
             await runtime.ingest_memory(

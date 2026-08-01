@@ -4,20 +4,15 @@ Covers the subset of endpoints needed by graphknows:
 - Database lifecycle (create / drop / exists)
 - Read-only queries  (POST /api/v1/query/{db})
 - Read-write commands (POST /api/v1/command/{db})
-- Explicit transactions (begin / commit / rollback)
 
 Authentication uses HTTP Basic Auth (root + server password).
-Transaction state is passed via the ``arcadedb-session-id`` header.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import httpx
-
-logger = logging.getLogger(__name__)
 
 
 def _raise_for_status(r: httpx.Response) -> None:
@@ -58,11 +53,6 @@ class ArcadeDBClient:
         self._base = base_url.rstrip("/")
         self._auth = (user, password)
         self._client: httpx.AsyncClient | None = None
-
-    @property
-    def connected(self) -> bool:
-        """True when the underlying httpx pool is open."""
-        return self._client is not None
 
     async def connect(self) -> None:
         """Open the underlying httpx connection pool.
@@ -124,12 +114,6 @@ class ArcadeDBClient:
             return bool(r.json().get("result", False))
         return False
 
-    async def list_databases(self) -> list[str]:
-        """Return the names of all databases on the ArcadeDB server."""
-        r = await self._c().get(f"{self._base}/api/v1/databases")
-        _raise_for_status(r)
-        return list(r.json().get("result", []))
-
     # ------------------------------------------------------------------
     # Query / command
     # ------------------------------------------------------------------
@@ -140,7 +124,6 @@ class ArcadeDBClient:
         command: str,
         language: str = "cypher",
         params: dict[str, Any] | None = None,
-        session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a read-write command and return the result list.
 
@@ -149,19 +132,11 @@ class ArcadeDBClient:
             command: Cypher or SQL command string.
             language: ``"cypher"`` (default) or ``"sql"``.
             params: Named parameters referenced with ``$name`` in the command.
-            session_id: Active transaction session ID (from :meth:`begin`).
         """
-        headers: dict[str, str] = {}
-        if session_id:
-            headers["arcadedb-session-id"] = session_id
         body: dict[str, Any] = {"language": language, "command": command}
         if params:
             body["params"] = params
-        r = await self._c().post(
-            f"{self._base}/api/v1/command/{db}",
-            json=body,
-            headers=headers,
-        )
+        r = await self._c().post(f"{self._base}/api/v1/command/{db}", json=body)
         _raise_for_status(r)
         return r.json().get("result", [])
 
@@ -189,30 +164,3 @@ class ArcadeDBClient:
         )
         _raise_for_status(r)
         return r.json().get("result", [])
-
-    # ------------------------------------------------------------------
-    # Transactions
-    # ------------------------------------------------------------------
-
-    async def begin(self, db: str) -> str:
-        """Begin a transaction and return the ``arcadedb-session-id`` token."""
-        r = await self._c().post(f"{self._base}/api/v1/begin/{db}")
-        _raise_for_status(r)
-        return r.headers["arcadedb-session-id"]
-
-    async def commit(self, db: str, session_id: str) -> None:
-        """Commit a transaction."""
-        r = await self._c().post(
-            f"{self._base}/api/v1/commit/{db}",
-            headers={"arcadedb-session-id": session_id},
-        )
-        _raise_for_status(r)
-
-    async def rollback(self, db: str, session_id: str) -> None:
-        """Rollback a transaction (best-effort)."""
-        r = await self._c().post(
-            f"{self._base}/api/v1/rollback/{db}",
-            headers={"arcadedb-session-id": session_id},
-        )
-        if r.status_code not in (200, 204):
-            logger.warning("ArcadeDB rollback returned HTTP %s", r.status_code)

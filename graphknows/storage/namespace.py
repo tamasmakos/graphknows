@@ -1,24 +1,24 @@
 """Namespace → physical ArcadeDB database-name resolution.
 
-A *namespace* is the hard multi-tenant isolation boundary: each namespace maps to
-its own pair of ArcadeDB databases (``stm_<ns>`` / ``ltm_<ns>``), so a query in one
-namespace physically cannot see another's data. The empty namespace resolves to the
-original ``stm`` / ``ltm`` databases, keeping existing single-tenant deployments and
-their data unchanged.
+A *namespace* is the hard multi-tenant isolation boundary: each namespace maps to its
+own physical ArcadeDB database, so a query in one namespace physically cannot see
+another's data.
 
-This is the single place the naming rule lives — every store, builder, and runtime
-derives its database names from :func:`db_names`.
+The golden layer is SINGLE-database: :func:`db_name` maps a namespace to one database
+(``mem_<ns>``, or ``mem`` for the default namespace), and that is what every in-package
+caller uses — ``memory.py`` and ``storage/__init__.py``. Short-term and long-term memory
+are not separate databases; they are the ``state`` lifecycle (``raw`` -> ``consolidated``)
+on one graph, flipped in place by ``GraphStore.consolidate_session``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable
 from typing import Any
 
 # ArcadeDB database names are filesystem directory names; keep them to a safe
-# character set and a conservative length. The suffix we add is ``stm_``/``ltm_``.
+# character set and a conservative length. The prefix we add is ``mem_``.
 _ALLOWED = re.compile(r"[^a-z0-9_]+")
 _MAX_NS_LEN = 48
 
@@ -29,7 +29,7 @@ def sanitize(namespace: str) -> str:
     Lowercases, replaces any character outside ``[a-z0-9_]`` with ``_``, and — when
     the result would be too long for a stable database name — replaces the tail with
     a short hash so distinct inputs stay distinct. The empty/blank namespace maps to
-    ``""`` (the default ``stm``/``ltm`` databases).
+    ``""`` (the default ``mem`` database).
     """
     ns = (namespace or "").strip().lower()
     if not ns:
@@ -60,32 +60,3 @@ def db_name(namespace: str) -> str:
     if not ns:
         return "mem"
     return f"mem_{ns}"
-
-
-def db_names(namespace: str) -> tuple[str, str]:
-    """Return the ``(stm_db, ltm_db)`` database names for a namespace.
-
-    ``""`` → ``("stm", "ltm")`` (backward compatible); ``"acme"`` →
-    ``("stm_acme", "ltm_acme")``.
-    """
-    ns = sanitize(namespace)
-    if not ns:
-        return ("stm", "ltm")
-    return (f"stm_{ns}", f"ltm_{ns}")
-
-
-def namespaces_from_databases(databases: Iterable[str]) -> list[str]:
-    """Derive the available namespaces from a list of ArcadeDB database names.
-
-    Inverse of :func:`db_names` / :func:`db_name`. ``stm_<ns>``/``ltm_<ns>``
-    (legacy pair) and ``mem_<ns>`` (single golden-layer database) all map to
-    ``<ns>``; a namespace is reported when any of its databases exists. The
-    default (``""``) namespace — ``stm``/``ltm``/``mem`` — is always included
-    and sorts first, so a browser can always select it.
-    """
-    found: set[str] = set()
-    for db in set(databases):
-        for prefix in ("stm_", "ltm_", "mem_"):
-            if db.startswith(prefix) and len(db) > len(prefix):
-                found.add(db[len(prefix) :])
-    return ["", *sorted(found)]

@@ -221,15 +221,3 @@ def _embed_one_cached(text: str, model_name: str) -> tuple[float, ...]:
 def embed_one(text: str, model_name: str = "") -> list[float]:
     """Embed a single string (LRU-cached) and return a plain float list."""
     return list(_embed_one_cached(text, model_name))
-
-
-def get_embedder(model_name: str = "") -> Any:
-    """Return a minimal ``encode``-compatible embedder shim for legacy callers."""
-
-    class _Shim:
-        def encode(self, texts: list[str] | str) -> np.ndarray:
-            if isinstance(texts, str):
-                texts = [texts]
-            return embed(texts, model_name)
-
-    return _Shim()

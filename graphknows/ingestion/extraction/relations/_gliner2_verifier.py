@@ -86,6 +86,12 @@ class RelationVerifier:
         model = GLiNER2.from_pretrained("fastino/gliner2-base-v1")
         results = model.extract_relations(text, ["works_for", "founded"])
         verified = verifier.verify(text, results["relation_extraction"])
+
+    Trimmed against the one call site (``verifier.RelationVerifierGate``): it
+    reaches ``from_pretrained`` and ``verify`` and nothing else, so the vendored
+    ``from_checkpoint``/``verify_single``/``set_threshold`` entry points, the two
+    unused span-pooling helpers, and ``verify``'s tuple-instance branch (this
+    caller always passes dicts) were unreachable and are gone.
     """
 
     def __init__(
@@ -158,13 +164,6 @@ class RelationVerifier:
 
         return cls(model, encoder, tokenizer, config, device)
 
-    @classmethod
-    def from_checkpoint(
-        cls, checkpoint_path: str, threshold: float = 0.55, device: str | None = None
-    ) -> RelationVerifier:
-        """Load verifier from local checkpoint file."""
-        return cls.from_pretrained(checkpoint_path, threshold=threshold, device=device)
-
     def _get_token_embeddings(self, text: str) -> tuple[torch.Tensor, torch.Tensor]:
         """Get token embeddings for *text*, paired with its char→token offset map."""
         inputs = self.tokenizer(
@@ -201,25 +200,6 @@ class RelationVerifier:
             token_end = len(offset_mapping) - 1
 
         return token_start, token_end
-
-    def _get_span_embedding(
-        self, embeddings: torch.Tensor, token_start: int, token_end: int
-    ) -> torch.Tensor:
-        """Get mean pooled embedding for span."""
-        if token_start >= token_end:
-            token_end = token_start + 1
-        if token_end > len(embeddings):
-            token_end = len(embeddings)
-        return embeddings[token_start:token_end].mean(dim=0)
-
-    def _get_between_embedding(
-        self, embeddings: torch.Tensor, head_end: int, tail_start: int
-    ) -> torch.Tensor:
-        """Get embedding for tokens between head and tail."""
-        if head_end >= tail_start:
-            # Entities overlap or adjacent - use mean of both
-            return embeddings.mean(dim=0)
-        return embeddings[head_end:tail_start].mean(dim=0)
 
     def _bucket_distance(self, distance: int) -> int:
         """Convert token distance to bucket index."""
@@ -283,27 +263,6 @@ class RelationVerifier:
         features = torch.cat([head_emb, tail_emb, between_emb, rel_emb, dist_emb, order])
         return features
 
-    def verify_single(self, text: str, head: dict, tail: dict, relation: str) -> tuple[bool, float]:
-        """Verify a single relation instance.
-
-        Args:
-            text: Source text
-            head: Head entity dict with 'text', 'start', 'end'
-            tail: Tail entity dict with 'text', 'start', 'end'
-            relation: Relation type name
-
-        Returns:
-            (is_valid, score) tuple
-        """
-        embeddings, offset_mapping = self._get_token_embeddings(text)
-        features = self._build_features(text, head, tail, relation, embeddings, offset_mapping)
-
-        with torch.no_grad():
-            logit = self.model(features.unsqueeze(0))
-            score = torch.sigmoid(logit).item()
-
-        return score >= self.config.threshold, score
-
     def verify(
         self, text: str, relations: dict[str, list], return_scores: bool = True
     ) -> dict[str, list]:
@@ -337,22 +296,8 @@ class RelationVerifier:
             rel_emb = rel_embeddings[rel_type]
 
             for instance in instances:
-                # Handle both tuple and dict formats
-                if isinstance(instance, tuple):
-                    head, tail = instance
-                    head = {
-                        "text": head,
-                        "start": text.find(head),
-                        "end": text.find(head) + len(head),
-                    }
-                    tail = {
-                        "text": tail,
-                        "start": text.find(tail),
-                        "end": text.find(tail) + len(tail),
-                    }
-                else:
-                    head = instance.get("head", {})
-                    tail = instance.get("tail", {})
+                head = instance.get("head", {})
+                tail = instance.get("tail", {})
 
                 # Skip if missing position info
                 if "start" not in head or "start" not in tail:
@@ -369,15 +314,7 @@ class RelationVerifier:
 
                 if score >= self.config.threshold:
                     if return_scores:
-                        if isinstance(instance, dict):
-                            instance = instance.copy()
-                            instance["verifier_score"] = score
-                        else:
-                            instance = {"head": head, "tail": tail, "verifier_score": score}
+                        instance = {**instance, "verifier_score": score}
                     verified[rel_type].append(instance)
 
         return verified
-
-    def set_threshold(self, threshold: float) -> None:
-        """Update verification threshold."""
-        self.config.threshold = threshold

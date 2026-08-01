@@ -13,8 +13,7 @@ entrypoint for all memory operations::
 
 The same class backs the MCP stdio server, so every transport sees identical
 behaviour. For out-of-process use over MCP, see
-:mod:`graphknows.integrations.client`; to implement a custom storage backend,
-see :mod:`graphknows.storage.base`.
+:mod:`graphknows.integrations.client`.
 """
 
 from __future__ import annotations
@@ -24,11 +23,8 @@ import logging
 from graphknows._version import __version__
 from graphknows.exceptions import (
     ConfigurationError,
-    ExtractionError,
     GraphKnowsError,
-    IngestError,
     MissingExtraError,
-    RetrievalError,
     StoreError,
 )
 from graphknows.memory import Memory
@@ -41,7 +37,6 @@ from graphknows.models import (
 from graphknows.settings import (
     GraphKnowsSettings,
     MemoryMode,
-    RetrievalStrategy,
     TopicMode,
 )
 
@@ -51,18 +46,14 @@ logging.getLogger("graphknows").addHandler(logging.NullHandler())
 
 __all__ = [
     "ConfigurationError",
-    "ExtractionError",
     "GraphKnowsError",
     "GraphKnowsSettings",
-    "IngestError",
     "IngestResult",
     "Memory",
     "MemoryMode",
     "MemoryScope",
     "Message",
     "MissingExtraError",
-    "RetrievalError",
-    "RetrievalStrategy",
     "StoreError",
     "TopicMode",
     "__version__",

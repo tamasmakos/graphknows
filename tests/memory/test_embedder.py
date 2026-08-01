@@ -120,28 +120,3 @@ class TestEmbedOne:
 
         assert isinstance(result, list)
         assert result == pytest.approx([0.1, 0.2, 0.3], abs=1e-6)
-
-
-class TestGetEmbedder:
-    def test_shim_encode_calls_embed(self):
-        from graphknows.storage import embedder
-
-        with patch.object(
-            embedder, "embed", return_value=np.array([[0.2, 0.3]], dtype=np.float32)
-        ) as mock_embed:
-            shim = embedder.get_embedder()
-            result = shim.encode(["test text"])
-
-        mock_embed.assert_called_once_with(["test text"], "")
-        assert result.shape == (1, 2)
-
-    def test_shim_wraps_string_in_list(self):
-        from graphknows.storage import embedder
-
-        with patch.object(
-            embedder, "embed", return_value=np.array([[0.1]], dtype=np.float32)
-        ) as mock_embed:
-            shim = embedder.get_embedder()
-            shim.encode("single string")
-
-        assert mock_embed.call_args[0][0] == ["single string"]

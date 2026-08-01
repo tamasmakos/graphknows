@@ -23,13 +23,6 @@ async def ltm_entity(name: str, namespace: str = "") -> dict[str, Any]:
 
 
 @app.tool()
-async def ltm_query(query: str, top_k: int = 5, namespace: str = "") -> dict[str, Any]:
-    """Search LTM topics by query text and member entities."""
-    runtime = await get_runtime(namespace)
-    return runtime.ltm_query(query=query, top_k=top_k)
-
-
-@app.tool()
 async def ltm_entities(
     session_id: str = "", limit: int = 200, namespace: str = ""
 ) -> dict[str, Any]:

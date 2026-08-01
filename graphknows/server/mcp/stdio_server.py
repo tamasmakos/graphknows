@@ -4,33 +4,7 @@ Exposes tools over JSON-RPC 2.0 via stdin/stdout so any MCP-aware client
 (Claude Desktop, Cursor, Zed, Hermes, OpenCode) can use graphknows memory
 without requiring the full agent service.
 
-Tools
------
-STM tools:
-  memory_ingest         — ingest text into STM (ArcadeDB)
-  memory_flush          — promote STM session → ArcadeDB LTM
-  memory_recall         — deprecated alias of memory_query
-
-LTM tools:
-  ltm_topics            — list topics by entity threshold
-  ltm_entity            — one entity with its neighbourhood
-  ltm_entities          — list entities
-  ltm_query             — entity-scoped LTM lookup
-
-Retrieval:
-  memory_query          — unified retrieval; strategy=det|agentic per call
-
-Analysis:
-  memory_topics         — rebuild the topic layer at new settings (no re-ingest)
-
-Admin:
-  memory_doctor         — connectivity check: ArcadeDB STM, LTM, vector
-  memory_stats          — STM and LTM node/chunk counts
-  memory_purge          — purge STM and/or LTM within one namespace
-  memory_drop_namespace — DESTRUCTIVE: drop a tenant's whole database pair
-
-Corpus:
-  corpus_ingest         — batch document ingestion into LTM knowledge graph
+``graphknows.server.mcp.tools.__all__`` is the authoritative tool inventory.
 
 Usage (stdio probe)::
 

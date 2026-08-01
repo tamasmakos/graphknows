@@ -1,14 +1,14 @@
-"""Shared helpers for writing entity nodes + edges + relation edges to the STM store.
+"""The junk gate every ENTITY-minting path shares.
 
-_STMIngestHandler supplies the write pattern; the edge_writer callable is the
-seam — callers supply a lambda that calls the appropriate edge method for the
-edge type they need (chunk vs. turn).
+``is_graph_entity_name`` is the single predicate deciding whether a span belongs
+in the ENTITY graph; ``graph_entities`` applies it to an extraction's entity
+list. Both are used by ``_STMIngestHandler`` (entity/MENTIONS path, relation
+endpoints, frame role fillers) and by the flush-time entity resolver.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 # spaCy NER labels that are numeric/temporal noise as graph entities. Dates and
@@ -252,60 +252,3 @@ def graph_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     common case where the extractor leaves a date/time/number untyped.
     """
     return [e for e in entities if is_graph_entity_name(e.get("name", ""), e.get("type") or "")]
-
-
-async def write_entity_nodes_and_edges(
-    stm: Any,
-    session_id: str,
-    entities: list[dict[str, Any]],
-    edge_writer: Callable[[dict[str, Any]], Awaitable[Any]],
-) -> int:
-    """Write entity nodes and their source edge. Returns the entity count.
-
-    Args:
-        stm: GraphStore for graph writes.
-        session_id: Session namespace.
-        entities: List of entity dicts with "name", optional "type" and "score".
-        edge_writer: Async callable(ent_dict) that writes the edge linking the
-            entity to its source node (chunk or turn).  Callers supply this to
-            avoid coupling the helper to a specific edge method.
-    """
-    entity_count = 0
-    for ent in graph_entities(entities):
-        await stm.write_entity_node(
-            session_id=session_id,
-            entity_name=ent["name"],
-            entity_type=ent.get("type", "ENTITY"),
-            confidence=ent.get("score", 1.0),
-        )
-        await edge_writer(ent)
-        entity_count += 1
-    return entity_count
-
-
-async def write_relation_edges(
-    stm: Any,
-    session_id: str,
-    relations: list[dict[str, Any]],
-) -> None:
-    """Write relation edges from extraction results.
-
-    Args:
-        stm: GraphStore for graph writes.
-        session_id: Session namespace.
-        relations: List of relation dicts with "head", "relation", "tail", optional "score".
-    """
-    for rel in relations:
-        # Same junk gate the golden write path applies: a temporal endpoint
-        # would mint an unfiltered ENTITY node.
-        if not is_graph_entity_name(rel["head"], rel.get("head_type", "")) or (
-            not is_graph_entity_name(rel["tail"], rel.get("tail_type", ""))
-        ):
-            continue
-        await stm.write_relation_edge(
-            session_id=session_id,
-            subject_name=rel["head"],
-            relation_name=rel["relation"],
-            object_name=rel["tail"],
-            confidence=rel.get("score", 0.5),
-        )

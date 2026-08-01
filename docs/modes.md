@@ -8,11 +8,14 @@ table lives in [`graphknows/settings.py`](../graphknows/settings.py) (`_PRESETS`
 |---|---|---|---|
 | Topic layer | `GRAPHKNOWS_TOPICS` | `none` | `llm` |
 | LLM relation extraction | `GRAPHKNOWS_DSPY_RELATIONS` | `false` | `true` |
-| Retrieval strategy | `GRAPHKNOWS_RETRIEVAL` | `det` | `agentic` |
 
-Read the resolved values through `settings.topic_mode`, `settings.dspy_relations`
-and `settings.retrieval_strategy` — never off the raw fields, which are `None`
-when unset.
+Read the resolved values through `settings.topic_mode` and
+`settings.dspy_relations` — never off the raw fields, which are `None` when
+unset.
+
+There is one retrieval engine and it is deterministic. The agentic (ReAct)
+retriever and the `GRAPHKNOWS_RETRIEVAL` knob that selected it have been
+removed.
 
 ## What the mode does *not* control
 
@@ -26,45 +29,26 @@ These are mode-independent and behave identically in both:
 | Ontology injection | `GRAPHKNOWS_ONTOLOGY` — steers labels and links entities in both modes ([ontology.md](ontology.md)) |
 | Embeddings | local sentence-transformers by default |
 
-So the residual difference the preset names is: **DSPy relation extraction, LLM
-topic summaries, and agentic retrieval.**
+So the residual difference the preset names is: **DSPy relation extraction and
+LLM topic summaries.**
 
 ## Mixing knobs
 
 The combinations the preset table alone cannot express are the useful ones.
 
 ```bash
-# Deterministic ingest, but let a ReAct loop answer hard queries.
-GRAPHKNOWS_MODE=llm_free GRAPHKNOWS_RETRIEVAL=agentic
-
 # Topic layer without any network call: titles from PageRank, summaries from
 # the member chunk nearest the community centroid.
 GRAPHKNOWS_MODE=llm_free GRAPHKNOWS_TOPICS=extractive
 
-# LLM relations, but deterministic retrieval — isolates which half of
+# LLM relations without the LLM topic layer — isolates which half of
 # llm_assisted a result came from.
-GRAPHKNOWS_MODE=llm_assisted GRAPHKNOWS_RETRIEVAL=det
+GRAPHKNOWS_MODE=llm_assisted GRAPHKNOWS_TOPICS=none
 ```
 
-An API key is required by *capability*, not by mode name: `llm_free` with
-`GRAPHKNOWS_RETRIEVAL=agentic` needs `GRAPHKNOWS_LLM_API_KEY`, and
-`llm_assisted` with every LLM capability switched off does not. See
+An API key is required by *capability*, not by mode name: `llm_assisted` with
+every LLM capability switched off does not need one. See
 `GraphKnowsSettings.uses_llm`.
-
-## Retrieval strategy is also per call
-
-Retrieval strategy is not welded to how the graph was ingested — nothing writes
-a mode marker to the store, and the agentic retriever wraps the deterministic
-one over the same store. So one server can answer both ways:
-
-```python
-await memory.recall_memory("...", session_id="s1", strategy="det")
-await memory.recall_memory("...", session_id="s1", strategy="agentic")
-```
-
-The MCP `memory_query` tool takes the same `strategy` argument and returns
-`search_type` so callers can confirm which retriever answered. Omit it to use
-`GRAPHKNOWS_RETRIEVAL`.
 
 ## llm_free
 

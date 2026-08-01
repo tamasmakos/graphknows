@@ -133,7 +133,6 @@ _FORWARDED_ENV = (
     "GRAPHKNOWS_ONTOLOGY_FILE",  # deprecated alias
     "GRAPHKNOWS_TOPICS",
     "GRAPHKNOWS_DSPY_RELATIONS",
-    "GRAPHKNOWS_RETRIEVAL",
     "GRAPHKNOWS_NEIGHBOR_RADIUS",  # long-document seq-neighbor expansion (BEAM)
 )
 

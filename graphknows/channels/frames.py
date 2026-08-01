@@ -4,12 +4,10 @@ Chunks are frame-tagged at ingest by cosine-matching their embedding to the
 FrameNet frame-definition index (see ``_frame_index``); each evoked FRAME node
 carries the frame's definition embedding, so this channel matches the query with a
 namespace-local graph vector search over those embeddings:
-- collect(): ANN-search the query embedding against the FRAME.embedding of frames
-  evoked in this namespace (GraphStore.query_frames_by_embedding), which joins
-  FRAME-[:EVOKED_BY]->CHUNK, rank the chunks by their frame's match score, and emit
-  RRF candidates.
-- promote(): dormant LU-based extraction path (frames are now written at ingest,
-  so it is no longer invoked on the live flush shim); retained for reference.
+collect() ANN-searches the query embedding against the FRAME.embedding of frames
+evoked in this namespace (GraphStore.query_frames_by_embedding), which joins
+FRAME-[:EVOKED_BY]->CHUNK, ranks the chunks by their frame's match score, and
+emits RRF candidates.
 
 Frames give abstract/general questions ("what did they start?") a route to
 concrete chunks by the frame they evoke, complementing the lexical/vector
@@ -22,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections import defaultdict
 from typing import Any
 
@@ -30,8 +27,6 @@ from graphknows.channels.base import Channel, ChannelContext, CollectResult
 from graphknows.ranking.rrf import rrf_score
 
 log = logging.getLogger(__name__)
-
-_SPEAKER_LINE = re.compile(r"^.*?\|\s*(\w+):")
 
 # A frame evoked in more than this fraction of a session's chunks is saturated:
 # like the conversation participants (see the entity-saturation drop), a generic
@@ -80,21 +75,10 @@ async def _session_chunk_count(rt: Any, session_id: str, state: str | None) -> i
     return int(rows[0]["c"]) if rows else 0
 
 
-def _session_speakers(chunk_texts: list[str]) -> list[str]:
-    seen: list[str] = []
-    for text in chunk_texts:
-        for line in text.split("\n"):
-            m = _SPEAKER_LINE.match(line.strip())
-            if m and m.group(1) not in seen:
-                seen.append(m.group(1))
-    return seen
-
-
 class FrameChannel(Channel):
     """Deterministic FrameNet semantic-frame retrieval channel (both profiles)."""
 
     name = "frame"
-    profiles = frozenset({"llm_free", "llm_assisted"})
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
         """Vector-search the namespace-local FRAME summaries and rank the chunks they evoke."""

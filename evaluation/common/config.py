@@ -41,10 +41,6 @@ class BaseEvalConfig(BaseModel):
     )
     probe_k: int = 50  # gold-reachability probe depth (diagnostic only; not fed to LLM)
     recall_scope: str = "both"  # stm | ltm | both
-    # Retrieval strategy override: "" (server default), "det", or "agentic".
-    # Independent of GRAPHKNOWS_MODE, so an A/B can hold ingestion fixed and
-    # vary only the retriever -- previously impossible without a second ingest.
-    retrieval_strategy: str = ""
     promote_to_ltm: bool = True
 
     # ── Generation / judging ─────────────────────────────────────────────────

@@ -6,21 +6,13 @@ expressions ("last Saturday", "two weeks ago") resolve against an anchor
 datetime when one is supplied; absolute expressions ("2022", "25 May 2023")
 resolve standalone.  No domain constants — the resolution is fully library
 driven (``dateparser``), so it generalises across locales and corpora.
-
-Bi-temporal helpers (WS-5)
----------------------------
-``filter_by_validity_window`` — given a list of relation-edge dicts (each with
-optional ``valid_at``, ``invalid_at``, ``created_at`` ISO strings) and an
-optional ``as_of`` anchor, returns only those edges whose valid-time window
-covers the anchor, boosted by recency.  This is the public surface consumed by
-wave-2 workstreams (deterministic rerank + agentic retrieval).
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -123,137 +115,6 @@ def _parse_one(parser: Any, text: str) -> Any:
     except Exception as exc:  # dateparser can raise on odd locale input
         log.debug("temporal parse failed for %r: %s", text, exc)
         return None
-
-
-def _iso_to_datetime(iso: str | None) -> datetime | None:
-    """Parse an ISO-8601 string to an aware or naive datetime, return None on failure."""
-    if not iso:
-        return None
-    raw = str(iso).strip()
-    try:
-        # Normalise to UTC-aware if tzinfo present, else treat as naive.
-        dt = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    else:
-        return dt
-
-
-# ---------------------------------------------------------------------------
-# Bi-temporal window filter (WS-5 public API)
-# ---------------------------------------------------------------------------
-
-
-def filter_by_validity_window(
-    edges: list[dict[str, Any]],
-    as_of: Any = None,
-    *,
-    include_open: bool = True,
-) -> list[dict[str, Any]]:
-    """Filter relation edges by their valid-time window and attach a recency score.
-
-    Public signature for wave-2 workstreams (deterministic rerank + agentic retrieval).
-
-    Each edge dict may carry the following temporal properties (all optional ISO-8601
-    strings):
-
-    - ``valid_at``   — the start of the period when the fact holds in the world.
-                       Aliases ``valid_from`` for backward compat with STM edges.
-    - ``invalid_at`` — the exclusive end of the valid period (``None`` / absent means
-                       the fact is still current).  Aliases ``valid_to``.
-    - ``created_at`` — transaction time; when the fact was ingested (tie-break for
-                       recency scoring).
-
-    Args:
-        edges: List of edge property dicts to filter.
-        as_of: Optional anchor point for "as of <date>" matching.  Accepts the
-               same types as ``_anchor_to_datetime`` (datetime, unix ts, ISO str).
-               When ``None`` only open (still-current) edges are retained by default,
-               unless ``include_open`` is False.
-        include_open: When ``True`` (default) edges with no ``invalid_at`` (i.e.
-                      still current) always pass the window check, regardless of
-                      whether *as_of* is set.  Set to ``False`` to require an explicit
-                      ``valid_at`` value.
-
-    Returns:
-        A filtered and sorted list of edge dicts, each augmented with:
-        - ``_temporal_score`` (float 0-1): recency signal; higher = more recent.
-          Edges with no valid_at receive 0.5 (neutral).  Can be used as a
-          multiplicative boost in RRF scoring.
-        - ``_is_current`` (bool): True when ``invalid_at`` is absent/None (fact is
-          still asserted as of the as_of point or right now).
-    """
-    anchor_dt: datetime | None = _anchor_to_datetime(as_of)
-    now_dt: datetime = datetime.now(UTC)
-    # Use now if no anchor specified (matches "current state" queries).
-    ref_dt: datetime = anchor_dt if anchor_dt is not None else now_dt
-
-    results: list[dict[str, Any]] = []
-    for edge in edges:
-        # Resolve property aliases.
-        raw_valid_at = edge.get("valid_at") or edge.get("valid_from")
-        raw_invalid_at = edge.get("invalid_at") or edge.get("valid_to")
-
-        valid_at_dt = _iso_to_datetime(str(raw_valid_at)) if raw_valid_at else None
-        invalid_at_dt = _iso_to_datetime(str(raw_invalid_at)) if raw_invalid_at else None
-        is_current = invalid_at_dt is None
-
-        # Make comparison timestamps timezone-consistent.
-        def _norm(dt: datetime | None) -> datetime | None:
-            if dt is None:
-                return None
-            if dt.tzinfo is None:
-                return dt.replace(tzinfo=UTC)
-            return dt
-
-        valid_at_dt = _norm(valid_at_dt)
-        invalid_at_dt = _norm(invalid_at_dt)
-        ref_norm = _norm(ref_dt)
-
-        # Window check — every edge must pass ALL applicable constraints:
-        # 1. If valid_at is set, the reference point must be >= valid_at
-        #    (the fact must have started by the reference point).
-        # 2. If invalid_at is set (tombstoned), the reference point must be
-        #    strictly before invalid_at (the fact hasn't been superseded yet).
-        # 3. An edge with no valid_at and no invalid_at (undated, still current)
-        #    passes when include_open=True (the default for "current state" queries).
-        passes = True
-
-        # Constraint 1: has the fact started yet?
-        if valid_at_dt is not None and ref_norm is not None and ref_norm < valid_at_dt:
-            passes = False  # fact hasn't started yet at the reference point
-
-        # Constraint 2: has the fact been superseded already?
-        if invalid_at_dt is not None and ref_norm is not None and ref_norm >= invalid_at_dt:
-            passes = False  # fact was tombstoned before the reference point
-
-        if not passes:
-            # Skip — either the fact hasn't started yet, or was superseded by ref.
-            continue
-
-        if is_current and not include_open and valid_at_dt is None:
-            # Caller wants only explicitly time-stamped edges.
-            continue
-
-        # Recency score: normalise valid_at relative to a 5-year window.
-        # Edges with no valid_at get 0.5 (neutral); edges at or after ref get 1.0.
-        window_secs = 5 * 365.25 * 86_400  # 5 years in seconds
-        if valid_at_dt is None:
-            score = 0.5
-        else:
-            age_secs = (ref_norm - valid_at_dt).total_seconds() if ref_norm else 0.0
-            score = max(0.0, min(1.0, 1.0 - age_secs / window_secs))
-
-        enriched = dict(edge)
-        enriched["_temporal_score"] = round(score, 4)
-        enriched["_is_current"] = is_current
-        results.append(enriched)
-
-    # Drop None sentinels left from tombstoned edges.
-    out = [e for e in results if e is not None]
-    # Sort: current edges first, then by descending temporal score.
-    out.sort(key=lambda e: (not e["_is_current"], -e["_temporal_score"]))
-    return out
 
 
 def resolve_temporal(

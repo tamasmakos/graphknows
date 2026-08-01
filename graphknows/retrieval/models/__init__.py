@@ -1,5 +1,5 @@
 """Retrieval result models."""
 
-from graphknows.retrieval.models.context import ChunkMatch, EntityMatch, RetrievalContext
+from graphknows.retrieval.models.context import RetrievalContext
 
-__all__ = ["ChunkMatch", "EntityMatch", "RetrievalContext"]
+__all__ = ["RetrievalContext"]

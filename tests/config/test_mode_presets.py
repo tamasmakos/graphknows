@@ -11,7 +11,6 @@ import pytest
 from graphknows.settings import (
     GraphKnowsSettings,
     MemoryMode,
-    RetrievalStrategy,
     TopicMode,
 )
 
@@ -21,15 +20,12 @@ class TestPresetExpansion:
         s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_free)
         assert s.topic_mode is TopicMode.none
         assert s.dspy_relations is False
-        assert s.retrieval_strategy is RetrievalStrategy.det
         assert s.uses_llm is False
 
     def test_llm_assisted_preset(self) -> None:
         s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_assisted)
         assert s.topic_mode is TopicMode.llm
         assert s.dspy_relations is True
-        # agentic retrieval is gone; every mode resolves to the one strategy.
-        assert s.retrieval_strategy is RetrievalStrategy.det
         assert s.uses_llm is True
 
     def test_default_matches_llm_free(self) -> None:
@@ -38,7 +34,6 @@ class TestPresetExpansion:
         assert s.mode is MemoryMode.llm_free
         assert s.topic_mode is TopicMode.none
         assert s.dspy_relations is False
-        assert s.retrieval_strategy is RetrievalStrategy.det
 
 
 class TestKnobOverrides:
@@ -50,7 +45,6 @@ class TestKnobOverrides:
         )
         assert s.topic_mode is TopicMode.extractive
         assert s.dspy_relations is False  # untouched by the override
-        assert s.retrieval_strategy is RetrievalStrategy.det
         assert s.uses_llm is False  # extractive topics make no network call
 
     def test_dspy_disabled_under_llm_assisted(self) -> None:
@@ -66,7 +60,6 @@ class TestKnobOverrides:
             GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
             GRAPHKNOWS_TOPICS=TopicMode.none,
             GRAPHKNOWS_DSPY_RELATIONS=False,
-            GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.det,
         )
         assert s.uses_llm is False
 
@@ -83,7 +76,6 @@ class TestEmptyEnvVars:
         "kwargs",
         [
             {"GRAPHKNOWS_TOPICS": ""},
-            {"GRAPHKNOWS_RETRIEVAL": ""},
             {"GRAPHKNOWS_DSPY_RELATIONS": ""},
             {"GRAPHKNOWS_TOPICS": "   "},
         ],
@@ -91,7 +83,6 @@ class TestEmptyEnvVars:
     def test_empty_falls_back_to_the_preset(self, kwargs: dict[str, str]) -> None:
         s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_free, **kwargs)
         assert s.topic_mode is TopicMode.none
-        assert s.retrieval_strategy is RetrievalStrategy.det
         assert s.dspy_relations is False
 
 
@@ -138,5 +129,4 @@ class TestProductionGuard:
             GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
             GRAPHKNOWS_TOPICS=TopicMode.none,
             GRAPHKNOWS_DSPY_RELATIONS=False,
-            GRAPHKNOWS_RETRIEVAL=RetrievalStrategy.det,
         )  # must not raise

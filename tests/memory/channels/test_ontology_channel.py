@@ -18,7 +18,6 @@ def _ctx(session_id: str = "s1") -> ChannelContext:
     return ChannelContext(
         query="where did they go",
         session_id=session_id,
-        scope="both",
         emb=[0.1] * 384,
         emb2=None,
         words=[],
@@ -42,9 +41,6 @@ class TestRegistration:
     def test_present_with_an_ontology(self) -> None:
         names = [c.name for c in default_channels(GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY=ONT))]
         assert "ontology" in names
-
-    def test_runs_in_both_profiles(self) -> None:
-        assert OntologyChannel.profiles == frozenset({"llm_free", "llm_assisted"})
 
 
 class TestCollect:

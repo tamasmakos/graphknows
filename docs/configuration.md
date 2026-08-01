@@ -43,15 +43,11 @@ rt = GraphKnowsRuntime(settings)
 | **Capability knobs** (each overrides the `GRAPHKNOWS_MODE` preset) | | |
 | `GRAPHKNOWS_TOPICS` | _(preset)_ | `none` \| `extractive` \| `llm`. `extractive` is deterministic, so it is valid in `llm_free`. See [modes.md](modes.md). |
 | `GRAPHKNOWS_DSPY_RELATIONS` | _(preset)_ | Run the DSPy/LLM relation extractor on top of the deterministic pass. |
-| `GRAPHKNOWS_RETRIEVAL` | _(preset)_ | `det` \| `agentic`. Independent of how the graph was ingested; also settable per call. |
 | `GRAPHKNOWS_ONTOLOGY` | _(empty)_ | RDF/OWL ontology **file or folder** to inject. Mode-independent. See [ontology.md](ontology.md). |
 | `GRAPHKNOWS_ONTOLOGY_FILE` | _(empty)_ | Deprecated alias for `GRAPHKNOWS_ONTOLOGY` (single file only). |
 | **Extraction / chunking** | | |
 | `GRAPHKNOWS_RELEX_MODEL` | `knowledgator/gliner-relex-large-v1.0` | Joint entity+relation extraction model (HuggingFace id). |
 | `GRAPHKNOWS_SPACY_MODEL` | `en_core_web_lg` | spaCy model for relation mining. |
-| `GRAPHKNOWS_CHUNK_SIZE` | `512` | Chunk size (characters). |
-| `GRAPHKNOWS_CHUNK_OVERLAP` | `64` | Chunk overlap (characters). |
-| `GRAPHKNOWS_SESSION_TTL_MINUTES` | `60` | Session inactivity before auto-merge. |
 
 ## Model downloads
 

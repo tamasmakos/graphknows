@@ -101,3 +101,5 @@ graphknows/utils/
 .sonar
 .mcp.json
 docs\agents
+
+graphify-out

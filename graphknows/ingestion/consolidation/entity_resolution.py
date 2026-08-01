@@ -10,15 +10,15 @@ so a later layer sees earlier layers' effects:
    *non-person* entities onto one node (paths->path, dance competitions->dance
    competition). Persons are skipped here so proper names ending in ``s``
    (Chris, James) are never singularized into a false collision.
-3. **Speaker-prefix merge** — collapse ``"X: utterance"`` spans into the person
-   ``X`` (repairs graphs ingested before the mint-point fix). Runs before the
-   nickname layer, which would otherwise mistake the malformed superstring for
-   a nickname anchor and swallow the real person node.
-4. **Person-nickname merge** — collapse a short name into its person superstring
+3. **Person-nickname merge** — collapse a short name into its person superstring
    (Mel -> Melanie), gated on the anchor being a known person (spaCy PERSON type
    or a session speaker) and the short being a single-token alphabetic prefix.
-5. **Temporal drop** — delete date/time-shaped entities that entered via the
-   (formerly unfiltered) relation-endpoint path.
+
+Two further layers — a speaker-prefix merge for ``"X: utterance"`` spans and a
+temporal/junk drop over the whole entity set — were deleted: both existed only
+to repair graphs written before the mint-point gates landed, and every write
+now passes ``extractor._reduce_speaker_span`` and ``is_graph_entity_name``
+before an ENTITY node exists at all.
 
 Embedding / graph-similarity thresholds are deliberately NOT used as the primary
 mechanism: on conv-26 a true nickname pair (Mel~Melanie: emb 0.528) scores BELOW
@@ -280,84 +280,6 @@ def _co_occurs(a: dict[str, Any], b: dict[str, Any], speakers: set[str]) -> bool
     return present(a) and present(b)
 
 
-async def _merge_speaker_prefixed(store: Any) -> int:
-    """Layer 3 — collapse ``"X: utterance"`` entities into the entity ``X``.
-
-    Model spans that ran across a turn-line's ``Speaker:`` colon used to be
-    minted verbatim ("Caroline: Thanks, Melanie" as a PERSON distinct from
-    "Caroline") — on conv-26, 27 such names carried 42.5% of all REL edges,
-    fragmenting the real person node. New ingests reduce these at the mint
-    point (see ``extractor._reduce_speaker_span``); this layer repairs graphs
-    ingested before that fix, so an existing namespace heals on its next flush
-    without a re-ingest.
-
-    Two cases per colon-head group:
-
-    - ``X`` exists as a person anchor (PERSON entity or session speaker):
-      every ``"X: ..."`` member merges into it.
-    - ``X`` does not exist at all — the frequent case, because the glued span
-      swallowed EVERY mention and no clean node was ever minted (on conv-26,
-      "Caroline" existed only as "Caroline: Thanks, Melanie", 63 mentions).
-      When the group carries person evidence (a PERSON-typed member), the
-      dominant member is RENAMED to ``X`` and the rest merge into it.
-
-    A lone non-person colon name ("Charlotte's Web: A Review") has neither an
-    anchor nor person evidence and is never touched.
-    """
-    entities = await store.list_entities()
-    speakers = set(await store.distinct_speakers())
-    anchor_norms = {e["name_norm"] for e in entities if _is_person(e, speakers)} | speakers
-
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for e in entities:
-        norm = e["name_norm"]
-        if ":" not in norm:
-            continue
-        head = norm.split(":", 1)[0].strip()
-        if head and head != norm:
-            groups.setdefault(head, []).append(e)
-
-    merged = 0
-    for head, members in groups.items():
-        if head not in anchor_norms:
-            if not any((m.get("type") or "").upper() == "PERSON" for m in members):
-                continue  # no person evidence — not a speaker-glued group
-            # Promote the dominant member to be the person node itself.
-            winner = max(members, key=lambda m: m.get("mention_count", 0))
-            head_cased = str(winner["name"]).split(":", 1)[0].strip() or head
-            if not await store.rename_entity(winner["name_norm"], head_cased):
-                continue
-            members = [m for m in members if m["name_norm"] != winner["name_norm"]]
-        for m in members:
-            if await store.merge_entities(head, m["name_norm"]):
-                merged += 1
-    return merged
-
-
-async def _drop_temporal(store: Any) -> int:
-    """Layer 5 — delete entities the graph-entity gate now rejects.
-
-    Covers what an older ingest let in: temporal/numeric shapes, stopwords,
-    code/markup, over-long clauses, and 1-2 char fragments.
-
-    Relation endpoints used to bypass ``graph_entities`` entirely, minting
-    "8 May, 2023" / "last Saturday" ENTITY nodes that then received a
-    community_id and fragmented the topic layer; the same path (and GLiNER's
-    over-generation on technical text) minted code fragments and stopwords. New
-    writes are gated (see ``is_graph_entity_name``); this drops the survivors
-    from older ingests so existing namespaces heal on their next flush.
-    """
-    from graphknows.ingestion.stm._entity_writer import is_graph_entity_name
-
-    entities = await store.list_entities()
-    junk = [
-        e["name_norm"]
-        for e in entities
-        if not is_graph_entity_name(e.get("name") or e["name_norm"], e.get("type") or "")
-    ]
-    return await store.drop_entities(junk) if junk else 0
-
-
 async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
     """Run the layered resolver over the namespace ENTITY graph.
 
@@ -374,22 +296,13 @@ async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
     """
     dropped = await _drop_junk(store)
     merged_morph = await _merge_standardized(store)
-    # Speaker-prefix repair runs BEFORE nicknames: a malformed
-    # "caroline: thanks" superstring would otherwise look like a nickname
-    # anchor for "caroline" and swallow the real person node.
-    merged_speaker = await _merge_speaker_prefixed(store)
     merged_nick = await _merge_nicknames(store)
-    dropped_temporal = await _drop_temporal(store)
-    dropped += dropped_temporal
-    merged = merged_morph + merged_nick + merged_speaker
+    merged = merged_morph + merged_nick
     log.info(
-        "resolve_entities: dropped=%d merged=%d "
-        "(morphological=%d nickname=%d speaker_prefixed=%d temporal_dropped=%d)",
+        "resolve_entities: dropped=%d merged=%d (morphological=%d nickname=%d)",
         dropped,
         merged,
         merged_morph,
         merged_nick,
-        merged_speaker,
-        dropped_temporal,
     )
     return {"dropped": dropped, "merged": merged}

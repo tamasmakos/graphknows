@@ -3,9 +3,7 @@
 Merges the former ``extractors.py`` and ``dspy_module.py`` into one module.
 
 Public symbols:
-- :class:`BaseExtractor` — abstract relation-extractor interface.
 - :class:`DSPyExtractor` — DSPy + OpenRouter implementation.
-- :func:`get_extractor` — factory that returns a ``DSPyExtractor``.
 - :class:`GraphExtractorModule` — DSPy module for triple extraction.
 
 Extract-then-map
@@ -24,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
@@ -158,12 +155,7 @@ class Triplet(BaseModel):
     relation: str = Field(description="The relationship between source and target")
     target: str = Field(description="The target entity")
     target_type: str = Field(description="The ontology class of the target entity")
-    confidence: float = Field(description="Confidence score (0.0-1.0) of this extraction")
     evidence: str = Field(description="Verbatim text snippet that supports this relation")
-    reasoning: str = Field(
-        default="",
-        description="Short explanation of how the evidence supports this relation.",
-    )
 
 
 class EntityRelation(dspy.Signature):  # type: ignore[misc]
@@ -177,7 +169,6 @@ class EntityRelation(dspy.Signature):  # type: ignore[misc]
       ontology_classes.  Use the domain/range annotations in ontology_context to
       choose correct types (e.g. friend_of: domain=Person, range=Person).
     - Be generous: include all plausible relations clearly supported by the text.
-    - Set confidence >= 0.5 for relations directly evidenced by the text.
     """
 
     text: str = dspy.InputField(desc="Input text to analyse.")
@@ -260,25 +251,6 @@ def _is_empty_lm_response_error(exc: Exception) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Abstract interface
-# ---------------------------------------------------------------------------
-
-
-class BaseExtractor(ABC):
-    """Abstract base for graph relation extractors."""
-
-    @abstractmethod
-    async def extract_relations(
-        self,
-        text: str,
-    ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
-        """Extract (source, relation, target, props) triplets from *text*."""
-
-    async def close(self) -> None:  # noqa: B027 - optional hook, not every extractor holds resources
-        """Clean up resources. Concrete by design: subclasses override only if needed."""
-
-
-# ---------------------------------------------------------------------------
 # DSPy implementation
 # ---------------------------------------------------------------------------
 
@@ -341,7 +313,7 @@ _OPEN_DOMAIN_RELATION_TYPES = [
 ]
 
 
-class DSPyExtractor(BaseExtractor):
+class DSPyExtractor:
     """DSPy + OpenRouter relation extractor."""
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -486,9 +458,7 @@ class DSPyExtractor(BaseExtractor):
             )
         return mapped, None
 
-    def _normalize_triplet(
-        self, raw: dict[str, Any]
-    ) -> tuple[str, str, str, str, str, dict[str, Any]]:
+    def _normalize_triplet(self, raw: dict[str, Any]) -> tuple[str, str, str, dict[str, Any]]:
         """Standardize labels and build the props dict for a valid triplet.
 
         Entity names (source/target) preserve original casing so they match
@@ -498,20 +468,18 @@ class DSPyExtractor(BaseExtractor):
         source = (raw["source"] or "").strip()
         relation = standardize_label(raw["relation"])
         target = (raw["target"] or "").strip()
-        source_type = standardize_label(raw.get("source_type") or "") or "ENTITY"
-        target_type = standardize_label(raw.get("target_type") or "") or "ENTITY"
         props = {
             "evidence": raw.get("evidence", ""),
-            "source_type": source_type,
-            "target_type": target_type,
+            "source_type": standardize_label(raw.get("source_type") or "") or "ENTITY",
+            "target_type": standardize_label(raw.get("target_type") or "") or "ENTITY",
         }
-        return source, relation, target, source_type, target_type, props
+        return source, relation, target, props
 
     async def extract_relations(
         self,
         text: str,
-    ) -> tuple[list[tuple[str, str, str, dict[str, Any]]], list[dict[str, Any]], dict[str, Any]]:
-        """Extract relations using DSPy."""
+    ) -> list[tuple[str, str, str, dict[str, Any]]]:
+        """Extract ``(source, relation, target, props)`` triplets using DSPy."""
         ontology_classes = self._ontology_classes
         ontology_relation_types = self._ontology_relation_types
 
@@ -538,10 +506,6 @@ class DSPyExtractor(BaseExtractor):
             triplets = _coerce_triplets(prediction)
 
             relations: list[tuple[str, str, str, dict[str, Any]]] = []
-            nodes_data: list[dict[str, Any]] = []
-            seen_nodes: set[str] = set()
-            raw_triplets: list[dict[str, Any]] = []
-            triplet_decisions: list[dict[str, Any]] = []
             allowed_norm = set(ontology_relation_types)
 
             for triplet in triplets:
@@ -549,15 +513,11 @@ class DSPyExtractor(BaseExtractor):
                     raw = self._extract_triplet_fields(triplet)
                 except Exception as item_exc:
                     log.debug("Skipping malformed triplet item: %s", item_exc)
-                    triplet_decisions.append({"kept": False, "drop_reason": "malformed_item"})
                     continue
-                raw_triplets.append(raw)
 
                 # --- Step 1: require source, relation, target fields ----------
                 if not (raw.get("source") and raw.get("relation") and raw.get("target")):
-                    triplet_decisions.append(
-                        {**raw, "kept": False, "drop_reason": "missing_triplet_field"}
-                    )
+                    log.debug("Dropping triplet with a missing field: %s", raw)
                     continue
 
                 # --- Step 2: extract-then-map --------------------------------
@@ -565,13 +525,7 @@ class DSPyExtractor(BaseExtractor):
                 # vocabulary property.  If unmappable, drop the triple.
                 mapped_raw, map_drop_reason = self._apply_extract_then_map(raw)
                 if mapped_raw is None:
-                    triplet_decisions.append(
-                        {
-                            **raw,
-                            "kept": False,
-                            "drop_reason": map_drop_reason or "extract_then_map_failed",
-                        }
-                    )
+                    log.debug("Dropping triplet (%s): %s", map_drop_reason, raw)
                     continue
 
                 # --- Step 3: final ontology membership check -----------------
@@ -579,15 +533,10 @@ class DSPyExtractor(BaseExtractor):
                 # allowed_norm, but we verify to guard against edge cases.
                 valid, drop_reason = self._triplet_is_valid(mapped_raw, allowed_norm)
                 if not valid:
-                    triplet_decisions.append(
-                        {**mapped_raw, "kept": False, "drop_reason": drop_reason}
-                    )
+                    log.debug("Dropping triplet (%s): %s", drop_reason, mapped_raw)
                     continue
 
-                triplet_decisions.append({**mapped_raw, "kept": True, "drop_reason": None})
-                source, relation, target, source_type, target_type, props = self._normalize_triplet(
-                    mapped_raw
-                )
+                source, relation, target, props = self._normalize_triplet(mapped_raw)
                 # Surface the mapping metadata in edge properties when the
                 # predicate was remapped from a free-form LLM label.
                 if "_mapped_from" in mapped_raw:
@@ -595,23 +544,7 @@ class DSPyExtractor(BaseExtractor):
                     props["_map_score"] = mapped_raw.get("_map_score")
                 relations.append((source, relation, target, props))
 
-                if source not in seen_nodes:
-                    nodes_data.append({"id": source, "type": source_type, "properties": {}})
-                    seen_nodes.add(source)
-                if target not in seen_nodes:
-                    nodes_data.append({"id": target, "type": target_type, "properties": {}})
-                    seen_nodes.add(target)
-
-            return (  # noqa: TRY300 - the whole extraction is the guarded body
-                relations,
-                nodes_data,
-                {
-                    "raw_triplets": raw_triplets,
-                    "triplet_decisions": triplet_decisions,
-                    "ontology_classes": ontology_classes,
-                    "ontology_relation_types": ontology_relation_types,
-                },
-            )
+            return relations  # noqa: TRY300 - the whole extraction is the guarded body
 
         except Exception as e:
             if _is_empty_lm_response_error(e):
@@ -620,18 +553,7 @@ class DSPyExtractor(BaseExtractor):
                     "treating chunk as having no assisted relations: %s",
                     e,
                 )
-                return (
-                    [],
-                    [],
-                    {
-                        "raw_triplets": [],
-                        "triplet_decisions": [],
-                        "ontology_classes": ontology_classes,
-                        "ontology_relation_types": ontology_relation_types,
-                        "error_type": "empty_lm_response",
-                        "error": str(e),
-                    },
-                )
+                return []
             # Pydantic ValidationError during DSPy list parsing: one or more
             # triplets were malformed.  Log and return empty so the chunk is not
             # lost entirely from the ingest pipeline.  Individual malformed items
@@ -644,23 +566,7 @@ class DSPyExtractor(BaseExtractor):
                         "DSPy pydantic validation error — skipping malformed triplets: %s",
                         e,
                     )
-                    return (
-                        [],
-                        [],
-                        {
-                            "raw_triplets": [],
-                            "triplet_decisions": [],
-                            "ontology_classes": ontology_classes,
-                            "ontology_relation_types": ontology_relation_types,
-                            "error_type": "validation_error",
-                            "error": str(e),
-                        },
-                    )
+                    return []
             except ImportError:
                 pass
             raise RuntimeError(f"DSPy relation extraction failed: {e}") from e
-
-
-def get_extractor(config: dict[str, Any]) -> BaseExtractor:
-    """Return the sole supported extractor: DSPy."""
-    return DSPyExtractor(config)

@@ -6,6 +6,59 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+Dead-code sweep (Tiers 1–2 of a whole-repo over-engineering audit): ~6,200 lines
+deleted, no behaviour change intended. Everything below had **zero production
+callers** at the time of removal, verified by grep; where a claim turned out to be
+wrong the code was kept (`IN_TOPIC` is written by `topics/persist.py` and read by
+`Memory.ltm_topics`, so it stays).
+
+**BREAKING — documented public surface** (see `docs/versioning.md`). These went
+without a deprecation window; the package version is unchanged at `2.0.0`, so
+that decision is still open:
+
+- `graphknows.storage.base` — the `IGraphStore` / `IEmbedder` Protocols. One
+  implementation existed (`GraphStore`) and `IEmbedder` had none at all. Custom
+  backends should target `GraphStore` directly.
+- `graphknows.integrations.langchain` (`GraphKnowsRetriever`) and the
+  `langchain` extra. Zero importers; it raised a bare `ImportError` rather than
+  `MissingExtraError`, so the extra it named guarded nothing.
+- `IngestError`, `RetrievalError`, `ExtractionError` from `graphknows.__all__` —
+  never raised, never caught. `StoreError` / `ConfigurationError` /
+  `BrokenInstallError` / `MissingExtraError` are unaffected.
+- MCP tool contract: the `memory_recall` alias (a pure re-forward to
+  `memory_query`) and the `ltm_query` tool. The `strategy` argument is gone from
+  `memory_query` — it accepted `"agentic"` and then raised `ValueError`
+  downstream, since that retriever no longer exists.
+- `Memory`: `connect()`, the `memory_class` parameter (accepted and silently
+  dropped — it never reached `STMService`), and `purge_memory(scope=...)`, which
+  the docstring already admitted "no longer selects a physical store". It now
+  returns a single `deleted` count.
+
+**Configuration.** `GRAPHKNOWS_RETRIEVAL` (a one-member enum since the agentic
+retriever was deleted), `GRAPHKNOWS_CHUNK_SIZE` and `GRAPHKNOWS_CHUNK_OVERLAP`
+(inert — chunking reads module constants, not settings), `GRAPHKNOWS_PORT` (no
+readers since the web server was removed), and `GRAPHKNOWS_SESSION_TTL_MINUTES`
+(no readers, though it was documented as live).
+
+**Internal.** The conversational taxonomy subsystem and the GLiNER2 label-space
+helpers; the `code`/`docx` parsers and their registry, with the `python-docx` and
+`pyyaml` dependencies (`PlainTextParser` is the only parser any caller reached);
+the `RetrievalContext` XML/dict wire format, whose `graph_matches` and
+`semantic_matches` sections were permanently `count="0"`; the per-query retrieval
+`trace`, which had no readers; `filter_by_validity_window`, which nothing could
+wire because no ingest path writes `REL.valid_at`; the `IRelationExtractor`
+Protocol, `NullRelationExtractor` and the DSPy adapter passthrough
+(`build_relation_extractor` now returns `DSPyExtractor | None`); a second
+NumPy PageRank kept as a fallback (it now soft-fails to 0 with a log line, like
+its two sibling algorithms); the channel registry's `register()`, profile filter
+and four delegating collector subclasses; and write-only graph properties
+(`REL.map_score`, `CHUNK.atom_type`, `CHUNK.entity_names`, `FILE.name`,
+`FILE.media_type`, `SESSION.label`, the ONTOLOGY_PROPERTY / DECLARES /
+SUBCLASS_OF layer, and an `ENTITY.embedding` vector index built over a property
+nothing ever wrote).
+
 ### Fixed
 - **A model's declared `suffix` was never applied, inverting ontology class
   matching.** sentence-transformers applies `prompts`, which are *prefixes

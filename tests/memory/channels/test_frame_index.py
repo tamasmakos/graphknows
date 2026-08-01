@@ -5,8 +5,6 @@ Uses a tiny in-process matrix so no embedder/FrameNet is touched.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import numpy as np
 import pytest
 
@@ -57,40 +55,6 @@ def test_frame_embedding_returns_matrix_row():
 def test_frame_summary_reads_definition(monkeypatch):
     monkeypatch.setattr("graphknows.channels._framenet._frame_def", lambda name: f"def of {name}")
     assert fi.frame_summary("Motion") == "def of Motion"
-
-
-@pytest.mark.asyncio
-async def test_ensure_frame_catalog_builds_vector_db(monkeypatch):
-    fi._names, fi._matrix = _tiny_index()
-    monkeypatch.setattr("graphknows.channels._framenet._frame_def", lambda name: f"def of {name}")
-    client = MagicMock()
-    client.create_database = AsyncMock()
-    client.query = AsyncMock(return_value=[])  # FRAME_DEF empty -> populate
-    client.command = AsyncMock(return_value=[])
-
-    n = await fi.ensure_frame_catalog(client, db="frames")
-    assert n == 3
-    client.create_database.assert_awaited_once_with("frames")
-    cmds = [c.args[1] for c in client.command.await_args_list]
-    # schema: FRAME_DEF vertex + name UNIQUE + an LSM_VECTOR index on the embedding
-    assert any("CREATE VERTEX TYPE FRAME_DEF" in s for s in cmds)
-    assert any("FRAME_DEF(embedding) LSM_VECTOR" in s for s in cmds)
-    # one MERGE per frame, embedding written as an inline literal
-    merges = [s for s in cmds if "MERGE (n:FRAME_DEF" in s]
-    assert len(merges) == 3
-    assert "n.embedding = [" in merges[0]
-
-
-@pytest.mark.asyncio
-async def test_ensure_frame_catalog_idempotent_skips_populate():
-    fi._names, fi._matrix = _tiny_index()
-    client = MagicMock()
-    client.create_database = AsyncMock()
-    client.query = AsyncMock(return_value=[{"c": 3}])  # already fully populated
-    client.command = AsyncMock(return_value=[])
-    n = await fi.ensure_frame_catalog(client, db="frames")
-    assert n == 3
-    client.command.assert_not_awaited()  # no DDL, no populate
 
 
 def test_zero_vector_skips_build_and_returns_empty(monkeypatch):

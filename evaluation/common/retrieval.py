@@ -49,8 +49,6 @@ class Retriever:
             "scope": self._config.recall_scope,
             "namespace": namespace,
         }
-        if getattr(self._config, "retrieval_strategy", ""):
-            args["strategy"] = self._config.retrieval_strategy
         result = await self._client.call_tool("memory_query", args)
         facts_raw = result.get("facts", []) if isinstance(result, dict) else []
         facts = [str(f) for f in facts_raw if f]

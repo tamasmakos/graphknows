@@ -14,25 +14,18 @@ async def test_memory_purge_delegates_to_runtime() -> None:
 
     runtime = MagicMock()
     runtime.purge_memory = AsyncMock(
-        return_value={
-            "scope": "both",
-            "session_id": "sess-1",
-            "stm_deleted": True,
-            "ltm_deleted": True,
-            "errors": [],
-        }
+        return_value={"session_id": "sess-1", "deleted": True, "errors": []}
     )
 
     with patch(
         "graphknows.server.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
     ) as get_runtime:
-        result = await memory_purge(scope="both", session_id="sess-1")
+        result = await memory_purge(session_id="sess-1")
 
     get_runtime.assert_awaited_once_with("")
-    runtime.purge_memory.assert_awaited_once_with(scope="both", session_id="sess-1")
+    runtime.purge_memory.assert_awaited_once_with(session_id="sess-1")
     assert result["errors"] == []
-    assert result["stm_deleted"] is True
-    assert result["ltm_deleted"] is True
+    assert result["deleted"] is True
 
 
 @pytest.mark.asyncio
@@ -46,7 +39,7 @@ async def test_memory_purge_routes_by_namespace() -> None:
     with patch(
         "graphknows.server.mcp.tools.admin.get_runtime", new=AsyncMock(return_value=runtime)
     ) as get_runtime:
-        await memory_purge(scope="stm", session_id="s", namespace="acme")
+        await memory_purge(session_id="s", namespace="acme")
 
     get_runtime.assert_awaited_once_with("acme")
 
