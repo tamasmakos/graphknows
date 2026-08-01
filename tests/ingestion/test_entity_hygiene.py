@@ -220,6 +220,67 @@ class TestStructuralJunk:
         """
         assert not is_graph_entity_name(name)
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # Internal sentence punctuation: the span crosses a sentence
+            # boundary, so it cannot be one noun phrase.
+            "Gina! I",
+            "Gina! I won't",
+            "Wow! Jon",
+            "Really? Gina",
+            # Vocative address: a greeting or thanks plus the person addressed.
+            "Thanks, Gina",
+            "Thank you, Gina",
+            "Hey, Jon",
+            "Hey Jon",
+            "Hi Gina",
+            "Congrats, Gina",
+            "Sorry, Jon",
+        ],
+    )
+    def test_vocatives_and_split_sentences_are_not_entities(self, name: str) -> None:
+        """``Gina! I`` was minted PERSON on LoCoMo conv-30 and carried 11 of the
+        graph's 43 relation edges (26%).
+
+        Source text: ``"Thanks, Gina! I won't quit."`` spoken by **Jon** — a
+        vocative glued to the following pronoun. The node is neither speaker,
+        yet it absorbed every first-person possession Gina uttered. The old
+        sentence-punctuation rule only looked at the LAST character, so an
+        internal ``!`` walked straight through, as did the bare comma-vocative.
+        """
+        assert not is_graph_entity_name(name)
+
+    def test_the_conv30_span_is_gated_out_of_the_extraction(self) -> None:
+        """The measured spans for ``"Thanks, Gina! I won't quit."`` — Jon speaking.
+
+        ``graph_entities`` is the list-level gate every minting path shares, so
+        the whole extraction is asserted by VALUE: the real person survives, the
+        vocative-glued fragments do not, and no surviving name carries a ``!``.
+        """
+        extracted = [
+            {"name": "Thanks, Gina! I", "type": "PERSON"},
+            {"name": "Gina! I", "type": "PERSON"},
+            {"name": "Thanks, Gina", "type": "PERSON"},
+            {"name": "Gina", "type": "PERSON"},
+        ]
+        assert [e["name"] for e in graph_entities(extracted)] == ["Gina"]
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Washington, D.C.",  # comma name whose head segment is no backchannel
+            "Charlotte's Web: A Review",
+            "Cool Runnings",  # backchannel word, but a title — whole-name rule only
+            "Great Expectations",
+            "Gina",
+            "Jon",
+            "dance studio",
+        ],
+    )
+    def test_vocative_rules_do_not_touch_real_names(self, name: str) -> None:
+        assert is_graph_entity_name(name)
+
     @pytest.mark.xfail(
         reason=(
             "Known defect, measured not fixed: _MAX_ENTITY_WORDS=8 still admits "

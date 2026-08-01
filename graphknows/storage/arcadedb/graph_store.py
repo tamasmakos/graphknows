@@ -369,11 +369,18 @@ class GraphStore(ArcadeStoreBase):
             if not name:
                 continue
             conf = e.get("confidence", e.get("score", 1.0))
+            # Alias candidates are the surfaces overlap resolution discarded
+            # ("offers"/"new" folded into "new offers"). They are the only record
+            # the shorter surface was ever seen, since resolution stops it
+            # reaching this writer as an entity of its own — drop them here and a
+            # later chunk saying just "offers" can never match this node.
+            aliases = [str(a).strip() for a in (e.get("aliases") or []) if str(a).strip()]
             row = {
                 "nn": _name_norm(name),
                 "name": name,
                 "etype": e.get("type") or "ENTITY",
                 "conf": float(conf) if isinstance(conf, int | float) else 1.0,
+                "aliases": [a for a in dict.fromkeys(aliases) if a != name],
             }
             key = str(row["nn"])
             prev = by_key.get(key)
@@ -394,10 +401,18 @@ class GraphStore(ArcadeStoreBase):
             "        WHEN row.conf > coalesce(e.confidence, 0) THEN row.conf "
             "        ELSE e.confidence "
             "    END, "
+            # Two alias sources union in here: a different surface arriving under
+            # the same name_norm (row.name), and the overlap-resolution candidates
+            # the extractor folded into this row (row.aliases). The comprehension
+            # is what makes the union idempotent — the same chunk re-ingested must
+            # not grow the list, and ArcadeDB has no set type. Verified on 26.5.1:
+            # three writes of overlapping candidate sets yield exactly the union.
             "    e.aliases = CASE "
             "        WHEN row.name <> e.name AND NOT row.name IN coalesce(e.aliases, []) "
             "        THEN coalesce(e.aliases, []) + [row.name] "
+            "             + [a IN row.aliases WHERE NOT a IN coalesce(e.aliases, [])] "
             "        ELSE coalesce(e.aliases, []) "
+            "             + [a IN row.aliases WHERE NOT a IN coalesce(e.aliases, [])] "
             "    END",
             rows=rows,
         )

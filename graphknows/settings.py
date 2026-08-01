@@ -169,8 +169,10 @@ class GraphKnowsSettings(BaseSettings):
 
     # Ontology injection — an RDF/OWL file OR a folder of them. Mode-independent:
     # when set, ontology class labels steer entity extraction and property labels
-    # steer relation extraction in BOTH modes, and the terms are persisted as
-    # ONTOLOGY_CLASS/ONTOLOGY_PROPERTY nodes. Read via ``ontology_source``.
+    # steer relation extraction in BOTH modes. Classes are persisted as
+    # ONTOLOGY_CLASS nodes; properties are NOT persisted — domain/range
+    # validation reads the in-memory OntologyTerm from the loader, so
+    # ONTOLOGY_PROPERTY vertices would be write-only. Read via ``ontology_source``.
     ontology: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY")
     # Deprecated alias kept so existing GRAPHKNOWS_ONTOLOGY_FILE setups (and the
     # eval CLIs) keep working; ``ontology`` wins when both are set.

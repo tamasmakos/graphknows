@@ -101,9 +101,11 @@ class _STMIngestHandler:
         self._property_mapper: Any = None
         self._uri_by_label: dict[str, str] = {}
         self._type_cache: dict[str, tuple[str, str, float]] = {}
-        # rdfs:range per property label, and each class's parent chain — the two
-        # halves of the range gate in _range_admits. Both are already parsed by
-        # the loader; the mapper is a pure string matcher and never sees them.
+        # rdfs:domain / rdfs:range per property label, and each class's parent
+        # chain — the ingredients of the conformance gate (_domain_admits and
+        # _range_admits). All three are already parsed by the loader; the mapper
+        # is a pure string matcher and never sees them.
+        self._domain_by_property: dict[str, str] = {}
         self._range_by_property: dict[str, str] = {}
         self._parents_by_class: dict[str, tuple[str, ...]] = {}
         if ontology_index is not None:
@@ -111,6 +113,9 @@ class _STMIngestHandler:
 
             self._property_mapper = OntologyPredicateMapper(ontology_index.property_labels)
             self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
+            self._domain_by_property = {
+                t.label.casefold(): t.domain for t in ontology_index.properties if t.domain
+            }
             self._range_by_property = {
                 t.label.casefold(): t.range for t in ontology_index.properties if t.range
             }
@@ -469,7 +474,7 @@ class _STMIngestHandler:
 
     async def _write_relations(
         self, extraction: ExtractionResult, chunk_id: str, text: str, speaker: str = ""
-    ) -> None:
+    ) -> dict[str, float]:
         """Write the chunk's relation edges — deterministic pass, then DSPy.
 
         The ontology ANNOTATES rather than filters: a predicate that maps to an
@@ -482,18 +487,50 @@ class _STMIngestHandler:
         became ENTITY vertices with community_ids and fragmented the topic
         layer. Both loops share the same endpoint gate; the date signal is not
         lost — it lives on the chunk's MENTIONS_DATE/TEMPORAL link.
+
+        Returns the chunk's conformance report (see :meth:`_report`), which is
+        also logged — a gate nobody counts is indistinguishable from a gate that
+        never fires, which is how this layer sat at zero unnoticed.
         """
+        counts = dict.fromkeys(
+            ("blocked_domain", "blocked_range", "unsupported", "pruned_endpoint"), 0
+        )
+        # "Unsupported by the text" per the spec: an endpoint that corresponds to
+        # no extracted span. Counted over every extracted relation, including the
+        # ones the endpoint gate drops, so the rates describe what the extractor
+        # produced rather than what survived. COUNTED, NOT PRUNED — pruning on
+        # this would be a retrieval-affecting change needing its own A/B.
+        # The resolved SPEAKER counts as a supported endpoint. SVO rewrites a
+        # first-person subject to the speaker's name, so "My collection has
+        # twenty pieces" spoken by Gina yields head "Gina" — by design a name
+        # that appears in no span of that chunk. Judging it against spans alone
+        # made the rate read 1.000 on every conversational chunk regardless of
+        # quality, i.e. a metric that measures nothing.
+        spans = {str(e.get("name", "")).casefold() for e in extraction.entities}
+        if speaker.strip():
+            spans.add(speaker.strip().casefold())
         for rel in extraction.relations:
+            if spans and not (
+                str(rel["head"]).casefold() in spans and str(rel["tail"]).casefold() in spans
+            ):
+                counts["unsupported"] += 1
             if not is_graph_entity_name(rel["head"], rel.get("head_type", "")) or (
                 not is_graph_entity_name(rel["tail"], rel.get("tail_type", ""))
             ):
+                counts["pruned_endpoint"] += 1
                 continue
-            ont_property, _ = self._map_predicate(rel["relation"], rel.get("tail_type", ""))
+            ont_property, _ = self._map_predicate(
+                rel["relation"], rel.get("tail_type", ""), rel.get("head_type", "")
+            )
             # A refusal is a verdict about this edge, not a lack of one, and it
             # has to outlive the chunk that made it: the same edge is written
             # once per chunk asserting it, and those chunks disagree about the
-            # object's type. See write_relation's ontology_blocked.
-            blocked = self._range_blocked(rel["relation"], rel.get("tail_type", ""))
+            # endpoints' types. See write_relation's ontology_blocked.
+            domain_blocked = self._domain_blocked(rel["relation"], rel.get("head_type", ""))
+            range_blocked = self._range_blocked(rel["relation"], rel.get("tail_type", ""))
+            counts["blocked_domain"] += domain_blocked
+            counts["blocked_range"] += range_blocked
+            blocked = domain_blocked or range_blocked
             await self._store.write_relation(
                 rel["head"],
                 rel["relation"],
@@ -531,6 +568,48 @@ class _STMIngestHandler:
                     confidence=0.5,
                     source="dspy",
                 )
+
+        return self._report(chunk_id, len(extraction.relations), counts)
+
+    @staticmethod
+    def _report(chunk_id: str, total: int, counts: dict[str, int]) -> dict[str, float]:
+        """Per-chunk ontology conformance report, logged and returned.
+
+        ``conformance`` is the share of extracted relations no domain/range
+        refusal touched; ``hallucination`` the share with an endpoint that
+        matches no extracted span. A chunk with no relations violated nothing, so
+        it reports 1.0/0.0 rather than a division by zero.
+
+        Logged at INFO only when a rate is imperfect: on a clean corpus this
+        would otherwise be one line per chunk saying nothing, and the DEBUG line
+        still distinguishes "gate ran, found nothing" from "gate never ran".
+        """
+        report: dict[str, float] = {"relations": total, **counts}
+        report["conformance"] = (
+            1.0
+            if not total
+            else (total - counts["blocked_domain"] - counts["blocked_range"]) / total
+        )
+        report["hallucination"] = 0.0 if not total else counts["unsupported"] / total
+        line = (
+            "ontology conformance chunk=%s relations=%d conformance=%.3f hallucination=%.3f "
+            "blocked_domain=%d blocked_range=%d unsupported=%d pruned_endpoint=%d"
+        )
+        args = (
+            chunk_id,
+            total,
+            report["conformance"],
+            report["hallucination"],
+            counts["blocked_domain"],
+            counts["blocked_range"],
+            counts["unsupported"],
+            counts["pruned_endpoint"],
+        )
+        if report["conformance"] < 1.0 or report["hallucination"] > 0.0:
+            log.info(line, *args)
+        else:
+            log.debug(line, *args)
+        return report
 
     def _precompute_embeddings(self, texts: list[str]) -> tuple[bool, list[list[float]]]:
         """Embed every chunk up front when possible. Returns ``(precomputed, embeddings)``.
@@ -643,21 +722,72 @@ class _STMIngestHandler:
         if mappings:
             await self._store.write_instance_of(mappings)
 
-    def _map_predicate(self, predicate: str, object_type: str = "") -> tuple[str, float]:
+    def _map_predicate(
+        self, predicate: str, object_type: str = "", subject_type: str = ""
+    ) -> tuple[str, float]:
         """Map a relation predicate onto an ontology property label.
 
-        Gated by the property's declared ``rdfs:range``: the surface-alias table
-        maps the bare predicate "has" onto ``owns``, which is right for a
-        possession and wrong for a person, and the mapper is a pure string
-        matcher that never sees the object. The ontology already carries what
-        settles it, so the range decides rather than a special case per alias.
+        Gated by the property's declared ``rdfs:domain`` and ``rdfs:range``: the
+        surface-alias table maps the bare predicate "has" onto ``owns``, which is
+        right for a possession and wrong for a person, and the mapper is a pure
+        string matcher that never sees either endpoint. The ontology already
+        carries what settles it, so domain and range decide rather than a special
+        case per alias.
         """
         if self._property_mapper is None or not predicate:
             return "", 0.0
         label, score = self._property_mapper.map_predicate(predicate)
-        if label and not self._range_admits(label, object_type):
+        if label and not (
+            self._domain_admits(label, subject_type) and self._range_admits(label, object_type)
+        ):
             return "", 0.0
         return (label or ""), score
+
+    def _domain_blocked(self, predicate: str, subject_type: str) -> bool:
+        """Did the domain gate REFUSE to annotate this predicate for this subject?
+
+        Same contract as :meth:`_range_blocked`: a refusal is a verdict that has
+        to survive later writes of the same edge from chunks that typed the
+        subject differently, whereas an unmappable predicate is mere silence.
+        """
+        if self._property_mapper is None or not predicate:
+            return False
+        label, _score = self._property_mapper.map_predicate(predicate)
+        return bool(label) and not self._domain_admits(label, subject_type)
+
+    def _domain_admits(self, property_label: str, subject_type: str) -> bool:
+        """Can a subject of ``subject_type`` satisfy the property's ``rdfs:domain``?
+
+        The subject-side mirror of :meth:`_range_admits`, and enrichment in the
+        same way: an undeclared domain or an unmappable subject type ADMITS, and
+        a refusal drops only the ``ontology_property`` annotation.
+
+        Enforced only for ``rdfs:domain :Person`` — the same narrowing the range
+        gate carries, for the same reason: every other domain miss is the
+        ontology being narrower than the data, and personal.ttl declares a Person
+        domain on 11 of its 13 properties. "London works_as Analytical Engine" is
+        the defect shape: a property that requires a human subject, asserted by a
+        place.
+
+        Unlike the range gate this needs NO confidence floor. That gate concludes
+        "the object IS a person", so a wrong ``-> Person`` mapping (``PRODUCT``
+        scores 0.580) would delete a correct edge. This one concludes "the
+        subject is NOT a person", which every non-person class supports equally —
+        whether ``GPE`` landed on ``Event`` (0.494) or ``Place`` does not change
+        the verdict. Censused against personal.ttl with the baked embedder, no
+        type denoting a person maps to a non-person class: PERSON 1.000 and
+        noun.person 0.840 both reach Person, while LOCATION (Place, 0.653),
+        noun.location (Place, 0.843), OCCUPATION (Activity, 0.613) and
+        ORGANIZATION (1.000) are all correctly not people. ``_map_to_class``
+        already refuses to return a class below ``_ONT_CLASS_MIN_SIM``.
+        """
+        declared = self._domain_by_property.get(property_label.casefold(), "")
+        if declared.casefold() != _PERSON_CLASS:
+            return True
+        _uri, subj_label, _score = self._map_to_class(subject_type)
+        if not subj_label:
+            return True  # nothing to judge the subject by — leave it alone
+        return _PERSON_CLASS in self._class_ancestors(subj_label)
 
     def _range_blocked(self, predicate: str, object_type: str) -> bool:
         """Did the range gate REFUSE to annotate this predicate for this object?

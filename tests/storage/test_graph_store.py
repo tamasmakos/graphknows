@@ -176,6 +176,55 @@ async def test_write_entities_bulk_casefolds_name_norm() -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_entities_bulk_persists_alias_candidates() -> None:
+    """Overlap resolution's discarded surfaces must reach ENTITY.aliases.
+
+    The extractor resolves overlapping spans to one entity and records the
+    surfaces it dropped ("offers", "new" for "new offers") as alias candidates.
+    Those are the ONLY record that the shorter surface was ever seen, because
+    resolution stops them reaching the writer as entities in their own right —
+    so if the write drops them, a later chunk saying just "offers" can never
+    match the node. Computed-then-discarded is the failure mode CLAUDE.md names.
+
+    Asserts on the VALUE reaching the query, not that a write happened.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_entities_bulk(
+        session_id="s1",
+        chunk_id="c1",
+        entities=[
+            {
+                "name": "new offers",
+                "type": "PRODUCT",
+                "confidence": 0.8,
+                "aliases": ["offers", "new"],
+            },
+        ],
+    )
+    node_call = client.command.await_args_list[0]
+    rows = node_call.kwargs["params"]["rows"]
+    assert rows[0]["aliases"] == ["offers", "new"], rows[0]
+    # The MERGE must union the incoming candidates in, not just the surface form,
+    # and must be idempotent: re-ingesting a chunk cannot grow the alias list.
+    query = node_call.args[1]
+    assert "row.aliases" in query
+    assert "[a IN row.aliases WHERE NOT a IN coalesce(e.aliases, [])]" in query
+
+
+@pytest.mark.asyncio
+async def test_write_entities_bulk_alias_candidates_default_empty() -> None:
+    """An entity with no discarded overlap carries no aliases — not a None."""
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store.write_entities_bulk(
+        session_id="s1", chunk_id="c1", entities=[{"name": "Gina", "type": "PERSON"}]
+    )
+    rows = client.command.await_args_list[0].kwargs["params"]["rows"]
+    assert rows[0]["aliases"] == []
+
+
+@pytest.mark.asyncio
 async def test_write_entities_bulk_noop_on_empty() -> None:
     client = _mock_client()
     store = GraphStore(client=client)

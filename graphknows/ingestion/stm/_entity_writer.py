@@ -155,6 +155,19 @@ _CLAUSE_OPENERS = frozenset(
 )
 
 
+# Greetings and thanks, the subset of the backchannel vocabulary that takes a
+# vocative: "Hey Jon", "Thanks Gina". Kept separate from _BACKCHANNEL_NAMES
+# because most of that set is adjectival ("cool", "great", "nice") and heads
+# real titles — "Cool Runnings", "Great Expectations" — which a first-token rule
+# over the full set would delete.
+_VOCATIVE_OPENERS = frozenset(
+    """
+    hey hi hello bye goodbye
+    thanks thank cheers sorry congrats congratulations
+    """.split()
+)
+
+
 def _is_backchannel(name: str) -> bool:
     """A greeting, discourse marker or fixed formula standing alone as a name."""
     stripped = name.strip().strip("!?.,").casefold()
@@ -163,18 +176,44 @@ def _is_backchannel(name: str) -> bool:
     return " " not in stripped and stripped.replace("'", "") in _BACKCHANNEL_NAMES
 
 
+def _is_vocative_address(name: str) -> bool:
+    """A form of address — a greeting plus the person addressed — not an entity.
+
+    Dialogue opens and closes on these, and the extractor swallows the name with
+    the greeting: "Thanks, Gina" / "Hey Jon". Two shapes, because the comma is
+    optional in speech:
+
+    * comma-separated, where the head segment is any backchannel — this reuses
+      the whole-name rule, so "Washington, D.C." (head segment "Washington")
+      is untouched;
+    * space-separated, where the first token must be a greeting proper
+      (``_VOCATIVE_OPENERS``), which is what keeps titles like "Cool Runnings"
+      out of scope.
+    """
+    head, comma, rest = name.strip().partition(",")
+    if comma and rest.strip():
+        return _is_backchannel(head)
+    tokens = head.split()
+    return len(tokens) >= 2 and tokens[0].casefold().strip("!?.'\"") in _VOCATIVE_OPENERS
+
+
 def _is_clause_fragment(name: str) -> bool:
     """A multi-word span that opens like a clause, or ends like a sentence.
 
     Two independent signals, both grammatical rather than heuristic:
 
-    * a name ending in ``!`` or ``?`` is an utterance, never a noun phrase;
+    * a name containing ``!`` or ``?`` is an utterance, never a noun phrase.
+      Terminally it ends one ("Hey Gina!"); INTERNALLY it spans a sentence
+      boundary, so the span is two fragments and not a phrase at all. Measured
+      on LoCoMo conv-30: "Gina! I", from "Thanks, Gina! I won't quit." spoken
+      by Jon, was minted PERSON and carried 11 of the graph's 43 relation edges
+      — a node that is neither speaker absorbing Gina's first-person clauses;
     * a multi-word name whose first token is a pronoun, auxiliary or
       subordinator is a clause fragment — the extractor caught a predicate and
       called it a thing.
     """
     stripped = name.strip()
-    if stripped.endswith(("!", "?")):
+    if "!" in stripped or "?" in stripped:
         return True
     tokens = stripped.split()
     if not tokens:
@@ -234,7 +273,7 @@ def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
         return False
     if _is_stopword_name(stripped):
         return False
-    if _is_backchannel(stripped):
+    if _is_backchannel(stripped) or _is_vocative_address(stripped):
         return False
     if _is_clause_fragment(stripped):
         return False

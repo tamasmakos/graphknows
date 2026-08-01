@@ -363,45 +363,123 @@ def _mine_verb_surfaces(doc: Any) -> frozenset[str]:
     return frozenset(verbal - nominal)
 
 
+def _overlaps(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two resolved spans share any character of the chunk.
+
+    A span with no offsets (``start < 0``) overlaps nothing: relex always emits
+    them, but callers that stub the model do not, and a missing offset is not
+    evidence of overlap.
+    """
+    if a["start"] < 0 or b["start"] < 0:
+        return False
+    return a["start"] < b["end"] and b["start"] < a["end"]
+
+
+def _resolve_overlaps(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entity per group of overlapping spans; the discards become aliases.
+
+    relex runs with ``flat_ner=False``, so nested spans are its DESIGN, not a
+    defect: "Customers love new offers and promotions." comes back with 'new',
+    'new offers' and 'offers' all typed PRODUCT — three ENTITY nodes for one
+    thing, and (measured on 60 real chunks) 5.95 entities per chunk against 0.48
+    relations. In the live conv-30 graph the same mechanism minted the pairs
+    'best'/'best moves', 'brand'/'brand identity', 'biz'/'biz plan' and duplicate
+    REL edges whose tails differed only by a suffix.
+
+    Retention rule, from the spec: the LONGER span wins, higher confidence breaks
+    a tie. Type is deliberately not consulted — two spans covering the same
+    characters are one mention of one thing whatever labels the model hung on
+    them ("Becoming Nicole" as both work_of_art and person).
+    """
+    kept: list[dict[str, Any]] = []
+    for cand in sorted(candidates, key=lambda c: (c["start"] - c["end"], -c["score"])):
+        winner = next((k for k in kept if _overlaps(k, cand)), None)
+        if winner is None:
+            kept.append(cand)
+        else:
+            winner.setdefault("aliases", []).append(cand["name"])
+    return kept
+
+
 def _dedupe_entities(
     raw_entities: list[dict[str, Any]],
     label_to_type: dict[str, str],
     speakers: frozenset[str] = frozenset(),
     verb_surfaces: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
-    """Score-ranked, merge-key-deduped entity dicts from one relex span list.
+    """Score-ranked, overlap- and merge-key-deduped dicts from one relex span list.
 
-    Dedupe by the graph's OWN merge key. ENTITY.name_norm is UNIQUE-indexed
-    and written with a batched UNWIND+MERGE, so the same name twice in one
-    chunk's list is not a harmless repeat — ArcadeDB raises
+    Two passes. First :func:`_resolve_overlaps` collapses spans that cover the
+    same characters. Then dedupe by the graph's OWN merge key: ENTITY.name_norm
+    is UNIQUE-indexed and written with a batched UNWIND+MERGE, so the same name
+    twice in one chunk's list is not a harmless repeat — ArcadeDB raises
     DuplicatedKeyException and the whole DOCUMENT's ingest dies, silently
-    removing every chunk in it from the graph. relex runs with
-    flat_ner=False and therefore returns OVERLAPPING spans: one surface can
-    come back several times under different labels ("Becoming Nicole" as
-    both work_of_art and person). Highest score wins the type.
+    removing every chunk in it from the graph. Two occurrences of one name in a
+    chunk do NOT overlap, so the key pass is still what catches them. Highest
+    score wins the type.
+
+    Surface forms lost to either pass are carried on ``aliases`` (absent when
+    empty, so an entity with no discarded variant keeps its three-key shape).
     """
-    best: dict[str, dict[str, Any]] = {}
+    candidates: list[dict[str, Any]] = []
     for span in raw_entities or []:
         conf = float(span.get("score", 0.0) or 0.0)
         if conf < _BASE_THRESHOLD:
             continue
-        name = _strip_determiner(
-            _reduce_speaker_span(_clean_surface(str(span.get("text") or "")), speakers)
-        )
+        raw = str(span.get("text") or "")
+        name = _strip_determiner(_reduce_speaker_span(_clean_surface(raw), speakers))
         label = str(span.get("label") or "").strip()
         if not name or not label or name.casefold() in _PRONOUNS:
             continue
         # A span this chunk only ever uses as a verb is a predicate, not a thing.
         if name.casefold() in verb_surfaces:
             continue
-        # relex echoes the schema key it was given (lowercased spaCy label);
-        # map back to the canonical NER type the graph stores.
-        canonical = _canonical_type(label, label_to_type)
-        key = " ".join(name.split()).casefold()  # mirrors graph_store._name_norm
+        # `or -1` would be wrong here: offset 0 is the first span of every chunk.
+        start = int(span["start"]) if span.get("start") is not None else -1
+        end = int(span["end"]) if span.get("end") is not None else -1
+        # Cleaning TRIMS the surface ("Caroline: Thanks, Melanie" -> "Caroline",
+        # "a banker" -> "banker"), so re-anchor the span on the substring that
+        # survived. A span still covering discarded text would swallow the real
+        # entities inside it — "Melanie" would become an alias of "Caroline".
+        if start >= 0 and (offset := raw.find(name)) >= 0:
+            start += offset
+            end = start + len(name)
+        candidates.append(
+            # relex echoes the schema key it was given (lowercased spaCy label);
+            # map back to the canonical NER type the graph stores.
+            {
+                "name": name,
+                "type": _canonical_type(label, label_to_type),
+                "score": conf,
+                "start": start,
+                "end": end,
+            }
+        )
+
+    best: dict[str, dict[str, Any]] = {}
+    for cand in _resolve_overlaps(candidates):
+        key = " ".join(cand["name"].split()).casefold()  # mirrors graph_store._name_norm
         prev = best.get(key)
-        if prev is None or conf > prev["score"]:
-            best[key] = {"name": name, "type": canonical, "score": conf}
-    return list(best.values())
+        if prev is None:
+            best[key] = cand
+            continue
+        loser, winner = (prev, cand) if cand["score"] > prev["score"] else (cand, prev)
+        winner.setdefault("aliases", []).extend([loser["name"], *loser.get("aliases", ())])
+        best[key] = winner
+
+    out: list[dict[str, Any]] = []
+    for entity in best.values():
+        aliases = [
+            alias
+            for alias in dict.fromkeys(entity.pop("aliases", ()))
+            if alias.casefold() != entity["name"].casefold()
+        ]
+        entity.pop("start")
+        entity.pop("end")
+        if aliases:
+            entity["aliases"] = aliases
+        out.append(entity)
+    return out
 
 
 def _build_relation(
