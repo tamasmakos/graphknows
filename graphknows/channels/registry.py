@@ -28,19 +28,27 @@ if TYPE_CHECKING:
 def default_channels(settings: GraphKnowsSettings) -> list[Channel]:
     """Instantiate the optional channels this configuration turns on.
 
-    Frames are opt-in via ``settings.enable_frames``. Ontology is
-    unconditional: ``ontology_source`` always resolves to an ontology (the
-    bundled schema.org digest when nothing is configured), so the old
-    data-gating check could never be false.
+    Both are settings-gated. Frames default ON (``enable_frames``); ontology
+    defaults OFF (``enable_ontology_channel``) because it has never been
+    measured on its own. It used to be gated on ``settings.ontology_source``,
+    which cannot be false — that property always resolves to an ontology — so
+    making injection always-on silently put a sixth leg into the RRF fusion. The
+    next full conv-30 run fused ontology 838 alongside semantic 1875, text 1588,
+    entity 1498, frame 1312, temporal 625 and scored accuracy 0.766 -> 0.722
+    (judge noise ±0.02) with retrieval misses 8 -> 13. That run carried
+    extraction changes as well, so the channel is a suspect, not a convict: this
+    restores the five-channel set the 0.766 was measured on so the next A/B
+    varies one thing. See ``GraphKnowsSettings.enable_ontology_channel``.
     """
-    from graphknows.channels.ontology import OntologyChannel
-
     channels: list[Channel] = []
     if settings.enable_frames:
         from graphknows.channels.frames import FrameChannel
 
         channels.append(FrameChannel())
-    channels.append(OntologyChannel())
+    if settings.enable_ontology_channel:
+        from graphknows.channels.ontology import OntologyChannel
+
+        channels.append(OntologyChannel())
     return channels
 
 

@@ -233,6 +233,17 @@ class GraphKnowsSettings(BaseSettings):
     # Frames (deterministic FrameNet layer) are ON by default; disable with
     # GRAPHKNOWS_ENABLE_FRAMES=false.
     enable_frames: bool = Field(default=True, alias="GRAPHKNOWS_ENABLE_FRAMES")
+    # The ontology retrieval channel is OPT-IN and defaults OFF: it has never
+    # been measured on its own. It went live as a side effect of making ontology
+    # INJECTION always-on (its `if settings.ontology_source:` gate could not be
+    # false once that property always resolves), and the next full conv-30 run
+    # fused six channels instead of five — semantic 1875, text 1588, entity 1498,
+    # frame 1312, temporal 625, plus ontology 838 — and scored accuracy 0.766 ->
+    # 0.722 with "NOT RETRIEVED" failures 8 -> 13. That run changed the
+    # extraction layer too, so this is a suspect and not a verdict; the point of
+    # the switch is to restore the measured channel set so the next A/B isolates
+    # one change. Turn it on to measure it, and record the number here.
+    enable_ontology_channel: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL")
 
     @field_validator("topics", "enable_dspy_relations", mode="before")
     @classmethod

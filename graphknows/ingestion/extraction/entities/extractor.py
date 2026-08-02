@@ -277,17 +277,59 @@ def _arg_type(arg: str, entities: list[dict[str, Any]]) -> str:
 
 
 def _canonical_type(raw_label: str, label_to_type: dict[str, str]) -> str:
-    """Relex label -> the canonical type the graph stores.
+    """Relex label -> the type of a RELATION ENDPOINT.
 
-    An OBSERVED label maps back to its spaCy tag (person -> PERSON); a
-    base-inventory label spaCy has no tag for (occupation, activity) has
-    no mapping and stands on its own, upper-cased. Returning "" here would
-    silently demote relex's own typing to the WordNet-supersense fallback.
+    An OBSERVED label maps back to its spaCy tag (person -> PERSON); any other
+    label — base inventory, or an ontology class the hint pass offered — stands
+    on its own, upper-cased. Returning "" here would silently demote relex's own
+    typing to the WordNet-supersense fallback, and the endpoint type is a gate
+    input (``ingest._domain_admits``/``_range_admits``) that wants the richest
+    label there is.
+
+    ENTITY.type is a different question with a different answer — see
+    :func:`_entity_type`.
     """
     raw_label = raw_label.strip()
     if not raw_label:
         return ""
     return label_to_type.get(_schema_label(raw_label), raw_label.upper())
+
+
+_TAXONOMY_LABELS: frozenset[str] = frozenset(_BASE_ENTITY_LABELS)
+
+
+def _entity_type(raw_label: str, label_to_type: dict[str, str]) -> str:
+    """ENTITY.type for a span — the graph's OWN taxonomy, or "" (untyped).
+
+    relex is handed three label sources (the chunk's spaCy observations, the
+    ontology class hints, the base inventory) and echoes back whichever it
+    picked. Only the first and third name types the rest of the graph speaks;
+    the ontology's class names are steering for the EXTRACTOR, not a vocabulary
+    for this column, and storing them was minting a type space nothing could
+    query. Censused on the full conv-30 ingest (369 turns): 1256 entities over
+    41 distinct types against a 763/10 baseline, led by EMOTION 275, ACTIVITY
+    202, RELATIONSHIP 113, POSSESSION 106, GOAL 96 — all class labels of the
+    ontology that run configured, all MENTIONS-linked (so minted here, not as
+    relation endpoints). The schema.org default leaks the same way at a smaller
+    scale: BANKACCOUNT, HOWTO, WHOLESALESTORE on dance-studio dialogue.
+
+    The span itself is kept: the ontology hint is what made relex find it, and
+    ENTITY.type is written with ``coalesce``, so "" leaves room for a later
+    NER-labelled mention to type the same node. A wrong type does not.
+
+    Relation ENDPOINT types deliberately do NOT come through here (see
+    ``_canonical_type``): there the type is a gate input, feeding
+    ``ingest._range_admits``, which needs the richest label available.
+
+    This gate does not reach the WordNet supersense fallback either — that one
+    lives in ``_arg_type``, on the relation-endpoint path only. Measured over
+    both conv-30 graphs, endpoint-only ENTITY nodes number ZERO: every endpoint
+    is also an extracted span, so the supersense loses the ``coalesce`` race.
+    """
+    key = _schema_label(raw_label)
+    if key in label_to_type:  # a label spaCy actually observed in this chunk
+        return label_to_type[key]
+    return key.upper() if key in _TAXONOMY_LABELS else ""
 
 
 def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
@@ -462,11 +504,12 @@ def _dedupe_entities(
             start += offset
             end = start + len(name)
         candidates.append(
-            # relex echoes the schema key it was given (lowercased spaCy label);
-            # map back to the canonical NER type the graph stores.
+            # relex echoes the schema key it was given (lowercased spaCy label,
+            # base-inventory label, or ontology class name); map back to the
+            # canonical NER type the graph stores, or leave it untyped.
             {
                 "name": name,
-                "type": _canonical_type(label, label_to_type),
+                "type": _entity_type(label, label_to_type),
                 "score": conf,
                 "start": start,
                 "end": end,

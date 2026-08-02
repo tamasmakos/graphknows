@@ -70,8 +70,18 @@ def _local(uri: str) -> str:
     return uri.rsplit("/", 1)[-1].rsplit("#", 1)[-1]
 
 
-def build(source: Path) -> dict[str, Any]:
-    """Parse *source* into ``{"classes": [...], "properties": [...]}``."""
+def build(source: Path, namespace: str = "https://schema.org/") -> dict[str, Any]:
+    """Parse *source* into ``{"classes": [...], "properties": [...]}``.
+
+    Terms are restricted to *namespace*. schema.org's Turtle carries
+    ``owl:equivalentClass`` links to other vocabularies, and those targets are
+    themselves typed ``rdfs:Class`` in the same file — so a type-only filter
+    swept in 77 foreign classes: SNOMED codes (``116154003``), LRMoo
+    (``F31_Performance``), DCMI, and an FIBO ``BankAccount``. They are not junk
+    in principle, but they are unusable as extraction labels (a bare clinical
+    code cannot be embedded meaningfully) and they were minting ENTITY types
+    like ``BANKACCOUNT`` on dialogue.
+    """
     import rdflib  # build-time only; never imported at runtime
     from rdflib import RDF, RDFS
 
@@ -92,10 +102,13 @@ def build(source: Path) -> dict[str, Any]:
     classes = [
         {"uri": str(s), "label": label(s), "definition": definition(s)}
         for s in sorted(graph.subjects(RDF.type, RDFS.Class), key=str)
+        if str(s).startswith(namespace)
     ]
 
     properties: list[dict[str, Any]] = []
     for s in sorted(graph.subjects(RDF.type, RDF.Property), key=str):
+        if not str(s).startswith(namespace):
+            continue
         ranges = [_local(str(r)) for r in graph.objects(s, sdo.rangeIncludes)]
         if not any(r not in DATATYPES for r in ranges):
             continue  # datatype-only property: an attribute, not a relation
@@ -117,6 +130,11 @@ def main() -> int:
     p.add_argument("--url", help="download the ontology from here first")
     p.add_argument("--source", type=Path, help="local RDF file (skips --url)")
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument(
+        "--namespace",
+        default="https://schema.org/",
+        help="keep only terms whose IRI starts with this (see build()'s docstring)",
+    )
     a = p.parse_args()
 
     source = a.source
@@ -129,7 +147,7 @@ def main() -> int:
         with urllib.request.urlopen(a.url) as fh, source.open("wb") as out:
             out.write(fh.read())
 
-    digest = build(source)
+    digest = build(source, a.namespace)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(digest, ensure_ascii=False, indent=1), encoding="utf-8")
     size_kb = a.out.stat().st_size / 1024

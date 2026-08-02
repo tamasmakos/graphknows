@@ -9,7 +9,7 @@ Three things are load-bearing here and each has a test that fails loudly:
 2. **Multi-valued domain/range.** schema.org declares ``domainIncludes`` /
    ``rangeIncludes`` and both repeat (``about`` has six domains). A single-string
    field silently kept one of them.
-3. **A similarity floor on the label hints.** With 979 classes the top-k is no
+3. **A similarity floor on the label hints.** With 933 classes the top-k is no
    longer "the whole ontology", so an unfloored top-12 injects twelve arbitrary
    labels into every chunk's extraction schema.
 """
@@ -64,11 +64,20 @@ class TestDigestLoads:
             [sys.executable, "-c", code], capture_output=True, text=True, check=True
         )
         result = json.loads(out.stdout.strip().splitlines()[-1])
-        assert result == {"n": 1924, "rdflib": False}
+        assert result == {"n": 1878, "rdflib": False}  # 933 classes + 945 properties
 
     def test_term_counts(self, terms: list[OntologyTerm]) -> None:
-        """979 class labels (31 duplicate labels collapse) + 945 object properties."""
-        assert len([t for t in terms if t.kind == "class"]) == 979
+        """933 class labels + 945 object properties.
+
+        933, not the 1010 rdfs:Class subjects in the Turtle: the digest is
+        namespace-filtered to https://schema.org/. schema.org links other
+        vocabularies via owl:equivalentClass and those targets are typed
+        rdfs:Class in the same file, so a type-only filter swept in 77 foreign
+        terms — SNOMED codes, LRMoo, DCMI, an FIBO BankAccount. They reached a
+        live graph (13 unece + 8 SNOMED ONTOLOGY_CLASS nodes in mem_lg30v4) and
+        minted ENTITY types like BANKACCOUNT on dialogue.
+        """
+        assert len([t for t in terms if t.kind == "class"]) == 933
         assert len([t for t in terms if t.kind == "property"]) == 945
 
     def test_definition_wins_over_a_bare_duplicate_label(self, terms: list[OntologyTerm]) -> None:
@@ -99,7 +108,7 @@ class TestDigestLoads:
     def test_label_list_view_also_avoids_rdflib(self) -> None:
         """The DSPy path loads the same digest through ``load_rdf_ontology_file``."""
         manifest = load_rdf_ontology_file(DIGEST)
-        assert len(manifest.class_labels) == 979
+        assert len(manifest.class_labels) == 933
         assert len(manifest.property_labels) == 945
         assert "Person" in manifest.class_labels
         assert "worksFor" in manifest.property_labels

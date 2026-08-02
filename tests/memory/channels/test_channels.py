@@ -35,10 +35,19 @@ class TestBuildChannels:
     name-keyed registry behind a profile filter that never excluded anything.
     """
 
-    def test_ontology_channel_survives_everything_being_switched_off(self):
-        """Ontology injection has no off switch — an empty var means "unset"."""
+    def test_ontology_channel_is_off_unless_asked_for(self):
+        """It fuses into RRF unmeasured; see ``registry.default_channels``."""
         s = GraphKnowsSettings(
             GRAPHKNOWS_ENABLE_FRAMES=False,
+            GRAPHKNOWS_ONTOLOGY="",
+            GRAPHKNOWS_MODE=MemoryMode.llm_free,
+        )
+        assert [c.name for c in default_channels(s)] == []
+
+    def test_ontology_channel_is_opt_in(self):
+        s = GraphKnowsSettings(
+            GRAPHKNOWS_ENABLE_FRAMES=False,
+            GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL=True,
             GRAPHKNOWS_ONTOLOGY="",
             GRAPHKNOWS_MODE=MemoryMode.llm_free,
         )
@@ -47,6 +56,7 @@ class TestBuildChannels:
     def test_frames_channel_added_when_enabled(self):
         s = GraphKnowsSettings(
             GRAPHKNOWS_ENABLE_FRAMES=True,
+            GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL=True,
             GRAPHKNOWS_ONTOLOGY="",
             GRAPHKNOWS_MODE=MemoryMode.llm_free,
         )

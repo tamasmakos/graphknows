@@ -188,6 +188,77 @@ def test_relex_types_its_own_arguments():
     assert r["tail_type"] == "OCCUPATION"  # base-inventory label, upper-cased
 
 
+class TestEntityTypeVocabulary:
+    """ENTITY.type is the graph's OWN taxonomy — never the ontology's class names.
+
+    Ontology class labels are offered to relex as candidate span labels, and relex
+    echoes back whichever it picked. Those echoes were being stored verbatim as
+    ENTITY.type. Censused on the full conv-30 ingest (369 turns, database
+    ``mem_lg30v4``): 1256 entities over 41 distinct types against a 763/10
+    baseline, led by EMOTION 275, ACTIVITY 202, RELATIONSHIP 113, POSSESSION 106,
+    GOAL 96 — every one of them a class label of the ontology that run configured
+    (``ONTOLOGY_CLASS`` carries ``…/ontology/personal#Emotion`` URIs), and all
+    1256 MENTIONS-linked, i.e. minted on the ENTITY path rather than as relation
+    endpoints. The schema.org default leaks the same way, more quietly:
+    BANKACCOUNT, HOWTO, WHOLESALESTORE, DISCUSSIONFORUMPOSTING.
+
+    A type nothing else in the graph speaks is worse than no type: ENTITY.type is
+    written first-write-wins, it conditions relation-property selection and the
+    ontology class matcher, and two vocabularies in one column make it
+    unqueryable. Untyped is the recoverable outcome — ``coalesce`` lets a later
+    NER write fill it in.
+    """
+
+    def test_an_ontology_class_hint_does_not_become_the_entity_type(self):
+        extractor, _schema, mock_model = _mock_extractor(
+            relex_entities=[{"text": "the studio", "label": "WholesaleStore", "score": 0.9}]
+        )
+
+        (ent,) = extractor.extract(
+            "Gina: I opened the studio.", extra_entity_labels=["WholesaleStore"]
+        ).entities
+
+        labels = mock_model.inference.call_args.kwargs["labels"]
+        assert "WholesaleStore" in labels, "the hint still steers what relex looks for"
+        assert ent["name"] == "studio", "the span it found is still an entity"
+        assert ent["type"] == "", "an ontology class name is not a graph type"
+
+    def test_an_observed_ner_label_still_types_the_entity(self):
+        extractor, _schema, _m = _mock_extractor()
+
+        (ent,) = extractor.extract("Caroline: I am here.").entities
+
+        assert ent["type"] == "PERSON"
+
+    def test_a_base_inventory_label_still_types_the_entity(self):
+        extractor, _schema, _m = _mock_extractor(
+            relex_entities=[{"text": "nurse", "label": "occupation", "score": 0.9}]
+        )
+
+        (ent,) = extractor.extract("Caroline: I work as a nurse.").entities
+
+        assert ent["type"] == "OCCUPATION"
+
+    def test_relation_endpoints_keep_the_ontology_label(self):
+        """The endpoint type is a GATE input, not a stored vocabulary decision.
+
+        ``ingest._range_admits`` maps it onto a profile class to decide whether
+        ``owns`` may range over it, so narrowing it here would switch off the one
+        violation that gate exists to catch.
+        """
+        extractor, _schema, _m = _mock_extractor(
+            relex_relations=[
+                _rel("Caroline", "owns", "the studio", 0.9, tail_type="WholesaleStore")
+            ]
+        )
+
+        r = extractor.extract(
+            "Caroline: I own the studio.", extra_relation_labels=dict(_ONTOLOGY_PROPERTIES)
+        ).relations[0]
+
+        assert r["tail_type"] == "WHOLESALESTORE"
+
+
 def test_subthreshold_relex_relation_is_dropped():
     extractor, _schema, _m = _mock_extractor(
         relex_relations=[_rel("Caroline", "worksFor", "nurse", 0.2)]

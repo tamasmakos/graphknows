@@ -34,13 +34,23 @@ def _rt(rows: list[dict], chunk_total: int) -> MagicMock:
 
 
 class TestRegistration:
-    def test_present_without_any_configuration(self) -> None:
-        """The bundled ontology is the default, so the channel is unconditional."""
+    def test_absent_by_default(self) -> None:
+        """Opt-in: an unmeasured leg does not get to sit in the fusion."""
         names = [c.name for c in default_channels(GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY=""))]
-        assert "ontology" in names
+        assert "ontology" not in names
 
-    def test_present_with_an_ontology(self) -> None:
+    def test_configuring_an_ontology_does_not_switch_it_on(self) -> None:
+        """``ontology_source`` always resolves, so it can never be the gate."""
         names = [c.name for c in default_channels(GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY=ONT))]
+        assert "ontology" not in names
+
+    def test_present_when_asked_for(self) -> None:
+        names = [
+            c.name
+            for c in default_channels(
+                GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY=ONT, GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL=True)
+            )
+        ]
         assert "ontology" in names
 
 
