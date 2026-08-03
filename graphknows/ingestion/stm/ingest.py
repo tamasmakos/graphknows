@@ -17,12 +17,12 @@ from itertools import zip_longest
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
-from graphknows.ingestion.parsers.base import (
+from graphknows.ingestion.parsers.text import (
     ParsedFile,
+    PlainTextParser,
     search_surface,
     strip_content_heading,
 )
-from graphknows.ingestion.parsers.text import PlainTextParser
 from graphknows.ingestion.stm._entity_writer import graph_entities, is_graph_entity_name
 from graphknows.models.ingest import IngestResult
 

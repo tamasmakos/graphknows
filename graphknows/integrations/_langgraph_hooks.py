@@ -1,8 +1,7 @@
 """Framework-agnostic memory node helpers.
 
-``recall`` and ``remember`` operate on a plain state ``dict`` and a
-graphknows memory (in-process :class:`graphknows.Memory` or out-of-process
-:class:`graphknows.integrations.client.RemoteMemory` — both expose the same verbs). They are
+``recall`` and ``remember`` operate on a plain state ``dict`` and an in-process
+:class:`graphknows.Memory`. They are
 used as LangGraph nodes via ``functools.partial(recall, memory=mem)`` but depend
 on nothing from langgraph, so the same helpers drop into any graph framework
 whose nodes are ``state -> partial_state`` callables.

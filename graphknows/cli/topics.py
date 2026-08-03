@@ -27,41 +27,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="extractive",
         help="extractive (no LLM) | llm | none.",
     )
-    p.add_argument(
-        "--source",
-        choices=["community", "graph_embedding"],
-        default="community",
-        help=(
-            "What to cluster. 'community' covers ~every entity but has no "
-            "granularity knob; 'graph_embedding' is tunable but only covers "
-            "entities with >=3 relation edges — check ent cov before trusting it."
-        ),
-    )
-    p.add_argument("--distance", type=float, default=0.35, help="Granularity knob (0-1).")
     p.add_argument("--min-size", type=int, default=2, help="Drop clusters below this size.")
-    p.add_argument("--n2v-walk-length", type=int, default=20)
-    p.add_argument("--n2v-walks", type=int, default=20)
-    p.add_argument("--n2v-dimensions", type=int, default=32)
-    p.add_argument(
-        "--recompute-embeddings",
-        action="store_true",
-        help="Re-run node2vec with the parameters above before clustering.",
-    )
     p.add_argument("--export", default="", help="Write a read-only JSON artifact here.")
     p.add_argument("--no-persist", action="store_true", help="Compute and report, do not write.")
     p.add_argument(
         "--sweep",
         default="",
-        help="Comma-separated values to compare, e.g. 0.2,0.3,0.4. Never persists.",
-    )
-    p.add_argument(
-        "--sweep-param",
-        choices=["distance", "min_size"],
-        default="distance",
         help=(
-            "Which knob --sweep varies. NOTE: 'distance' only has an effect with "
-            "--source graph_embedding; the community source is partitioned by "
-            "Louvain, so sweep min_size there."
+            "Comma-separated --min-size values to compare, e.g. 2,3,5,10. Never "
+            "persists. min_size is the only knob: the grouping is the Louvain "
+            "partition, whose parameters ArcadeDB ignores."
         ),
     )
     return p
@@ -84,40 +59,17 @@ async def amain(argv: list[str] | None = None) -> int:
     from graphknows.memory import Memory
 
     settings = GraphKnowsSettings()
-    base = TopicConfig(
-        source=args.source,
-        distance=args.distance,
-        min_size=args.min_size,
-        mode=TopicMode(args.mode),
-        n2v_walk_length=args.n2v_walk_length,
-        n2v_walks=args.n2v_walks,
-        n2v_dimensions=args.n2v_dimensions,
-        recompute_embeddings=args.recompute_embeddings,
-    )
+    base = TopicConfig(min_size=args.min_size, mode=TopicMode(args.mode))
 
     mem = Memory(settings, namespace=args.namespace or None)
     try:
         if args.sweep:
-            param = args.sweep_param
-            if param == "distance" and args.source == "community":
-                print(
-                    "warning: --source community is partitioned by Louvain, whose "
-                    "parameters ArcadeDB ignores, so 'distance' changes nothing. "
-                    "Sweep --sweep-param min_size instead.\n"
-                )
             raw = [x for x in args.sweep.split(",") if x.strip()]
-            print(f"{param:>10}  " + "  ".join(f"{h:>10}" for _, h in _COLUMNS))
+            print(f"{'min_size':>10}  " + "  ".join(f"{h:>10}" for _, h in _COLUMNS))
             print("-" * (12 + 12 * len(_COLUMNS)))
             for text in raw:
-                # Explicit per-knob replace(): a **{param: value} splat is
-                # untypable, and there are only two knobs.
-                value: float | int
-                if param == "distance":
-                    value = float(text)
-                    cfg = replace(base, distance=value)
-                else:
-                    value = int(text)
-                    cfg = replace(base, min_size=value)
+                value = int(text)
+                cfg = replace(base, min_size=value)
                 out = await mem.build_topics(config=cfg, persist=False)
                 print(f"{value:>10}  " + "  ".join(f"{out.get(k, 0)!s:>10}" for k, _ in _COLUMNS))
             print(

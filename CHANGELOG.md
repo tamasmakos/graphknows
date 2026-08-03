@@ -18,6 +18,18 @@ wrong the code was kept (`IN_TOPIC` is written by `topics/persist.py` and read b
 without a deprecation window; the package version is unchanged at `2.0.0`, so
 that decision is still open:
 
+- `graphknows.integrations.client.RemoteMemory` — a wrapper mirroring `Memory`'s
+  verbs over MCP. Zero importers outside its own test; `GraphKnowsMCPClient` is
+  the transport and now the whole surface. Call tools by name
+  (`memory_ingest`, `memory_query`, …) via `client.call_tool`.
+- `graphknows.retrieval.BaseGraphRetriever` — an ABC with one implementation,
+  whose docstring still promised the long-deleted `AgenticRetriever`. Use
+  `DETRetriever` (or `build_retriever`) directly.
+- `graphknows.ingestion.BaseParser` — an ABC with one implementation, and the
+  inheritance ran backwards: all the chunking logic lived in the "abstract" base
+  while `PlainTextParser` contributed only the heading split. The two modules are
+  merged into `graphknows/ingestion/parsers/text.py`; `ParsedFile`, `TextSegment`,
+  `search_surface` and `strip_content_heading` moved there with it.
 - `graphknows.storage.base` — the `IGraphStore` / `IEmbedder` Protocols. One
   implementation existed (`GraphStore`) and `IEmbedder` had none at all. Custom
   backends should target `GraphStore` directly.
@@ -58,6 +70,32 @@ and four delegating collector subclasses; and write-only graph properties
 `FILE.media_type`, `SESSION.label`, the ONTOLOGY_PROPERTY / DECLARES /
 SUBCLASS_OF layer, and an `ENTITY.embedding` vector index built over a property
 nothing ever wrote).
+
+Also removed, from a second audit pass over the same tree:
+
+- **`TOPIC.embedding`, its `LSM_VECTOR` index, and the `CHUNK-[:HAS_TOPIC]->TOPIC`
+  edge.** All three existed only for `TopicChannel`, which went with the rest of
+  the topic read path — leaving a vector index and an edge that were written on
+  every flush and read by nothing. `ENTITY-[:IN_TOPIC]->TOPIC` stays: it is the
+  clustering's actual output and `Memory.ltm_topics` reads it. The centroid is
+  still computed (it is what `coherence` is measured against), just not stored.
+- **The `graph_embedding` topic source**, with `TopicConfig.source`,
+  `distance`, the four `n2v_*` / `recompute_embeddings` fields, the matching
+  `--source`/`--distance`/`--n2v-*` CLI flags, `--sweep-param`, and the same
+  arguments on the `memory_topics` MCP tool. It clustered node2vec vectors, but
+  `compute_graph_embeddings` skips entities with fewer than 3 relation edges, so
+  on a sparse conversational graph it reached 33 of 1049 entities (LoCoMo
+  conv-26) — topics describing 3% of the corpus. The MCP tool also defaulted it
+  to `graph_embedding` while `TopicConfig` defaulted to `community`, so the two
+  entry points disagreed. `min_size` is now the only knob, which is honest:
+  ArcadeDB's Louvain ignores its parameter map. node2vec itself still runs at
+  flush — nothing reads it, which is a wiring gap, not dead code.
+- `graphknows.retrieval.query` — a package whose entire content was a docstring
+  for query decomposition that does not exist.
+- `graphknows.ingestion.models` and `graphknows.ingestion.normalization` — a
+  package re-exporting one 6-line function; `standardize_label` now lives in its
+  only caller.
+- The `python-json-logger` dependency, which nothing imported.
 
 ### Fixed
 - **A model's declared `suffix` was never applied, inverting ontology class

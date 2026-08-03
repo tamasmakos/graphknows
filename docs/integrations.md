@@ -2,8 +2,9 @@
 
 graphknows exposes one small verb set. Integrating it into any framework is a
 matter of wiring that framework's memory hooks to these verbs — in-process via
-`graphknows.Memory`, or out-of-process via `graphknows.integrations.client.RemoteMemory`
-(same method names, MCP transport).
+`graphknows.Memory`, or out-of-process via
+`graphknows.integrations.client.GraphKnowsMCPClient` (the same verbs as MCP tool
+names, over the MCP transport).
 
 ## The generic recipe
 
@@ -55,16 +56,21 @@ app = graph.compile(store=store)         # store.search → recall_memory
 
 Claude Code / the Agent SDK already speak MCP, so the cleanest integration is
 out-of-process: point them at the `graphknows-mcp` server, or drive it yourself
-with `RemoteMemory`, which mirrors the `Memory` verbs over MCP:
+with `GraphKnowsMCPClient`:
 
 ```python
-from graphknows.integrations.client import RemoteMemory
+from graphknows.integrations.client import GraphKnowsMCPClient
 
-async with RemoteMemory(command="graphknows-mcp") as mem:
-    await mem.ingest_memory(user_turn, session_id=thread_id)
-    hits = await mem.recall_memory(next_question, session_id=thread_id, top_k=5)
+async with GraphKnowsMCPClient(command="graphknows-mcp") as client:
+    await client.call_tool(
+        "memory_ingest", {"text": user_turn, "session_id": thread_id}
+    )
+    hits = await client.call_tool(
+        "memory_query",
+        {"query": next_question, "session_id": thread_id, "top_k": 5},
+    )
 ```
 
-Wrap `ingest_memory` and `recall_memory` as two tools (or a pre/post hook) and
+Wrap `memory_ingest` and `memory_query` as two tools (or a pre/post hook) and
 the agent gains persistent, graph-backed memory with no ML dependencies in its
 own process.

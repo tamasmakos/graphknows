@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without 
 from pydantic import BaseModel, Field
 
 from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
-from graphknows.ingestion.normalization import standardize_label
 from graphknows.llm import build_lm, get_openrouter_api_key
 from graphknows.ontology.loader import (
     RdfOntologyManifest,
@@ -43,6 +43,19 @@ from graphknows.ontology.loader import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def standardize_label(text: str) -> str:
+    """Standardize a label/entity name to UPPER_CASE_WITH_UNDERSCORES.
+
+    Lives here because this module is its only caller — it used to sit in
+    ``ingestion/normalization.py`` behind an ``ingestion.models`` package that
+    re-exported nothing else.
+    """
+    if not text:
+        return text
+    return re.sub(r"[^\w]+", "_", text).strip("_").upper()
+
 
 # ---------------------------------------------------------------------------
 # Ontology context enrichment

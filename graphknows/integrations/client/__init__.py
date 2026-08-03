@@ -3,14 +3,16 @@
 Stdlib-only (no ML/extraction dependencies), so it installs with the core
 package. Drive ``graphknows-mcp`` from any framework::
 
-    from graphknows.integrations.client import RemoteMemory
+    from graphknows.integrations.client import GraphKnowsMCPClient
 
-    async with RemoteMemory(command="graphknows-mcp") as mem:
-        await mem.ingest_memory("some text", session_id="s1")
-        hits = await mem.recall_memory("my query", session_id="s1")
+    async with GraphKnowsMCPClient(command="graphknows-mcp") as client:
+        await client.call_tool("memory_ingest", {"text": "some text", "session_id": "s1"})
+        hits = await client.call_tool("memory_query", {"query": "my query", "session_id": "s1"})
 
-``RemoteMemory`` mirrors the in-process :class:`graphknows.Memory` verbs;
-:class:`GraphKnowsMCPClient` is the lower-level JSON-RPC transport.
+:class:`GraphKnowsMCPClient` is the JSON-RPC transport and the whole surface. A
+``RemoteMemory`` wrapper mirroring :class:`graphknows.Memory`'s verbs used to sit
+on top of it; it had no caller outside its own test, so the second mental model
+was cost without a user.
 """
 
 from __future__ import annotations
@@ -20,11 +22,9 @@ from graphknows.integrations.client.mcp import (
     MCPClientError,
     normalize_tool_result,
 )
-from graphknows.integrations.client.memory import RemoteMemory
 
 __all__ = [
     "GraphKnowsMCPClient",
     "MCPClientError",
-    "RemoteMemory",
     "normalize_tool_result",
 ]

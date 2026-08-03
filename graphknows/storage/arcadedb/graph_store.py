@@ -939,16 +939,22 @@ class GraphStore(ArcadeStoreBase):
         return len(inst_rows)
 
     async def write_topics(self, topics: list[dict[str, Any]]) -> int:
-        """Upsert TOPIC vertices + HAS_TOPIC/IN_TOPIC edges.
+        """Upsert TOPIC vertices + IN_TOPIC membership edges.
 
-        Each ``topics`` item: ``{topic_id, summary, modularity, embedding?,
-        chunk_ids?: [str, ...], title?, keywords?: [str, ...], coherence?,
-        entities?: [(name, pagerank), ...]}``.
+        Each ``topics`` item: ``{topic_id, summary, modularity, title?,
+        keywords?: [str, ...], coherence?, entities?: [(name, pagerank), ...]}``.
 
-        ``chunk_ids`` -> ``CHUNK-[:HAS_TOPIC]->TOPIC`` (evidence, what the
-        retrieval channel traverses). ``entities`` -> ``ENTITY-[:IN_TOPIC]->TOPIC``
-        (membership, the actual output of the clustering) — matched on
-        ``name_norm`` since that is ENTITY's unique key, not ``name``.
+        ``entities`` -> ``ENTITY-[:IN_TOPIC]->TOPIC`` (membership, the actual
+        output of the clustering) — matched on ``name_norm`` since that is
+        ENTITY's unique key, not ``name``.
+
+        No ``TOPIC.embedding`` and no ``CHUNK-[:HAS_TOPIC]->TOPIC``: both were
+        write-only. The topic retrieval channel that traversed HAS_TOPIC, and
+        the vector search that would have used the embedding, were removed with
+        the rest of the topic read path (see ``channels/registry``); the only
+        reader left is ``Memory.ltm_topics``, which walks IN_TOPIC. The cluster
+        centroid is still computed — it is what ``coherence`` is measured
+        against — it is just not persisted.
         """
         written = 0
         for t in topics:
@@ -966,18 +972,6 @@ class GraphStore(ArcadeStoreBase):
                 keywords=[str(k) for k in (t.get("keywords") or [])],
                 coherence=float(t.get("coherence") or 0.0),
             )
-            if t.get("embedding"):
-                await self._set_embedding("TOPIC", "topic_id", tid, t["embedding"])
-            chunk_ids = [c for c in (t.get("chunk_ids") or []) if c]
-            if chunk_ids:
-                await self.command(
-                    "MATCH (tp:TOPIC {topic_id: $tid}) "
-                    "UNWIND $cids AS cid "
-                    "MATCH (c:CHUNK {chunk_id: cid}) "
-                    "MERGE (c)-[:HAS_TOPIC]->(tp)",
-                    tid=tid,
-                    cids=chunk_ids,
-                )
             entity_rows = [
                 {"nn": _name_norm(str(name)), "pr": float(pr or 0.0)}
                 for name, pr in (t.get("entities") or [])

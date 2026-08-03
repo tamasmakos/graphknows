@@ -1,7 +1,7 @@
 """Ingestion — the write path: parse -> preprocess -> extract -> STM.
 
-Exposes the input parsers and the settings-driven factory that assembles the
-STM service. The mode fork lives inside the injected collaborators (relation
+Exposes the parser's output types and the settings-driven factory that assembles
+the STM service. The mode fork lives inside the injected collaborators (relation
 extractor), never in this package's callers.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from graphknows.ingestion.parsers.base import BaseParser, ParsedFile, TextSegment
+from graphknows.ingestion.parsers.text import ParsedFile, PlainTextParser, TextSegment
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
@@ -44,8 +44,8 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
 
 
 __all__ = [
-    "BaseParser",
     "ParsedFile",
+    "PlainTextParser",
     "TextSegment",
     "build_stm_service",
 ]

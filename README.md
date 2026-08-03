@@ -89,14 +89,19 @@ async def main():
 asyncio.run(main())
 ```
 
-Out-of-process (no ML deps in your process), drive the MCP server with the same verbs:
+Out-of-process (no ML deps in your process), drive the MCP server directly:
 
 ```python
-from graphknows.integrations.client import RemoteMemory
+from graphknows.integrations.client import GraphKnowsMCPClient
 
-async with RemoteMemory(command="graphknows-mcp") as mem:
-    await mem.ingest_memory("Alex joined Acme as CTO in March.", session_id="s1")
-    hits = await mem.recall_memory("Where does Alex work?", session_id="s1")
+async with GraphKnowsMCPClient(command="graphknows-mcp") as client:
+    await client.call_tool(
+        "memory_ingest",
+        {"text": "Alex joined Acme as CTO in March.", "session_id": "s1"},
+    )
+    hits = await client.call_tool(
+        "memory_query", {"query": "Where does Alex work?", "session_id": "s1"}
+    )
 ```
 
 Configuration is via `GRAPHKNOWS_*` environment variables (or a `.env` file) — see
@@ -123,7 +128,7 @@ docker compose up -d            # arcadedb + mcp
 
 ## Integrating into an agent framework
 
-Wire your framework's memory hooks to the `Memory`/`RemoteMemory` verbs. The
+Wire your framework's memory hooks to the `Memory` verbs. The
 LangGraph adapter is shipped as the reference; the generic recipe (write →
 `ingest_memory`, read → `recall_memory`, thread id → `session_id`, end of
 episode → `flush_memory`) covers any framework — see

@@ -29,7 +29,6 @@ from graphknows.ranking.rrf import (
     RRF_RELATION_BOOST,
     rrf_score,
 )
-from graphknows.retrieval.base import BaseGraphRetriever
 from graphknows.retrieval.models.context import RetrievalContext
 from graphknows.storage.arcadedb.graph_store import GraphStore
 from graphknows.storage.embedder import embed
@@ -152,7 +151,7 @@ def _fact_context_enabled() -> bool:
     )
 
 
-class DETRetriever(BaseGraphRetriever):
+class DETRetriever:
     """Deterministic three-collector hybrid retriever."""
 
     def __init__(
@@ -444,9 +443,11 @@ class DETRetriever(BaseGraphRetriever):
         """BM25 sparse channel over chunks.
 
         Fetches a broad OR-pool from the store's full-text scan, then re-ranks
-        with BM25 for one clean RRF source. Uses ``rank_bm25.BM25Okapi`` when
-        importable; falls back to a normalised TF-IDF scorer so the channel is
-        always live.
+        with ``rank_bm25.BM25Okapi`` for one clean RRF source. There is no
+        fallback scorer: a missing ``rank-bm25`` raises ``BrokenInstallError`` at
+        import (see the top of this module). The TF-style fallback that used to
+        live here is exactly how this channel spent months looking live while
+        never running BM25.
         """
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         specific = [w for w in words if w not in self._FT_STOPWORDS]

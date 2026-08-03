@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 
 async def persist_topics(store: Any, topic_set: TopicSet, *, replace: bool = True) -> int:
-    """Write the topics as TOPIC vertices + HAS_TOPIC edges. Returns the count.
+    """Write the topics as TOPIC vertices + IN_TOPIC membership edges. Returns the count.
 
     ``replace`` drops the existing topic layer first, which is the default
     because a rebuild at new settings supersedes the old partition — leaving
@@ -35,8 +35,6 @@ async def persist_topics(store: Any, topic_set: TopicSet, *, replace: bool = Tru
                 "topic_id": t.topic_id,
                 "summary": t.summary,
                 "modularity": modularity,
-                "embedding": t.embedding,
-                "chunk_ids": t.chunk_ids,
                 "title": t.title,
                 "keywords": t.keywords,
                 "coherence": t.coherence,

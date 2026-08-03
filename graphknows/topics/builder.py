@@ -36,21 +36,12 @@ async def build_topics(
     if cfg.mode is TopicMode.none:
         return TopicSet(namespace=namespace, config=cfg.to_dict())
 
-    if cfg.source == "graph_embedding" and cfg.recompute_embeddings:
-        # The only reason to touch the store here: node2vec parameters are the
-        # granularity knob for this source, so a sweep must be able to move them.
-        await store.compute_graph_embeddings(
-            dimensions=cfg.n2v_dimensions,
-            walk_length=cfg.n2v_walk_length,
-            walks=cfg.n2v_walks,
-        )
-
     entities = await _load_entities(store, cfg)
     if not entities:
         log.info("build_topics: no clusterable entities; nothing to do")
         return TopicSet(namespace=namespace, config=cfg.to_dict())
 
-    labels = _cluster(entities, cfg)
+    labels = _cluster(entities)
     entity_chunks, chunk_meta = await _load_entity_chunks(store, [e["name"] for e in entities])
     topics, part = _assemble(entities, labels, entity_chunks, cfg)
     await _describe(topics, chunk_meta, cfg, summarizer)
@@ -73,40 +64,12 @@ async def build_topics(
 
 
 async def _load_entities(store: Any, cfg: TopicConfig) -> list[dict[str, Any]]:
-    """Entities with the vector (or partition) this build clusters on."""
-    if cfg.source == "community":
-        rows = await store.query(
-            "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
-            "RETURN e.name AS name, e.pagerank AS pr, e.community_id AS cid"
-        )
-        return [r for r in rows if r.get("name")]
+    """Entities carrying the Louvain partition this build clusters on."""
     rows = await store.query(
-        "MATCH (e:ENTITY) WHERE e.graph_embedding IS NOT NULL "
-        "RETURN e.name AS name, e.pagerank AS pr, e.graph_embedding AS vec"
+        "MATCH (e:ENTITY) WHERE e.community_id IS NOT NULL "
+        "RETURN e.name AS name, e.pagerank AS pr, e.community_id AS cid"
     )
-    out = [r for r in rows if r.get("name") and r.get("vec")]
-    if not out:
-        log.warning(
-            "build_topics: no ENTITY.graph_embedding found — run a flush first, "
-            "or use source='community'"
-        )
-        return out
-    # node2vec skips entities with <3 relation edges, so on a sparse graph this
-    # source can cover a small minority. Say so rather than silently producing
-    # topics that describe 3% of the corpus.
-    try:
-        total = int((await store.query("MATCH (e:ENTITY) RETURN count(e) AS c"))[0]["c"])
-    except Exception:
-        total = 0
-    if total and len(out) / total < 0.25:
-        log.warning(
-            "build_topics: source='graph_embedding' covers %d/%d entities (%.1f%%) — "
-            "node2vec skips sparsely-connected nodes. Consider source='community'.",
-            len(out),
-            total,
-            100.0 * len(out) / total,
-        )
-    return out
+    return [r for r in rows if r.get("name")]
 
 
 async def _load_entity_chunks(
@@ -169,27 +132,9 @@ async def _totals(store: Any) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-def _cluster(entities: list[dict[str, Any]], cfg: TopicConfig) -> list[int]:
-    """Assign each entity a cluster label."""
-    if cfg.source == "community":
-        return [int(e.get("cid") or 0) for e in entities]
-
-    vectors = _matrix(entities)
-    if vectors.shape[0] < 2:
-        return [0] * vectors.shape[0]
-    # Average-linkage over cosine distance. scipy's implementation is C-level;
-    # a naive Python agglomerative is O(N^3) and unusable at ~1000 entities.
-    from scipy.cluster.hierarchy import fcluster, linkage  # type: ignore[import-untyped]
-    from scipy.spatial.distance import pdist  # type: ignore[import-untyped]
-
-    distances = pdist(vectors, metric="cosine")
-    linkage_matrix = linkage(distances, method="average")
-    labels = fcluster(linkage_matrix, t=cfg.distance, criterion="distance")
-    return [int(x) for x in labels]
-
-
-def _matrix(entities: list[dict[str, Any]]) -> np.ndarray:
-    return np.asarray([list(e["vec"]) for e in entities], dtype=np.float32)
+def _cluster(entities: list[dict[str, Any]]) -> list[int]:
+    """Assign each entity a cluster label — the Louvain community it landed in."""
+    return [int(e.get("cid") or 0) for e in entities]
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +158,6 @@ def _assemble(
     for idx, label in enumerate(labels):
         grouped.setdefault(label, []).append(idx)
 
-    has_vectors = bool(entities) and "vec" in entities[0]
-    vectors = _matrix(entities) if has_vectors else np.zeros((0, 0), dtype=np.float32)
-
     topics: list[Topic] = []
     partition: dict[str, int] = {}
     for label, members in sorted(grouped.items()):
@@ -238,8 +180,6 @@ def _assemble(
                 "topic stage: dropping chunkless cluster %s (%d entities)", label, len(members)
             )
             continue
-        coh, centroid = metrics.coherence(vectors[members]) if has_vectors else (0.0, [])
-
         index = len(topics)
         for name, _ in ranked:
             partition[_norm(name)] = index
@@ -249,8 +189,6 @@ def _assemble(
                 title=" · ".join(n for n, _ in ranked[: cfg.max_title_entities]),
                 entities=ranked,
                 chunk_ids=list(chunk_ids),
-                coherence=round(coh, 4),
-                embedding=centroid,
             )
         )
     return topics, partition
@@ -264,10 +202,10 @@ async def _describe(
 ) -> None:
     """Attach the text-derived fields to each topic, in place.
 
-    Uses the chunk embeddings persisted at ingest — no embedding call. The topic
-    vector is not optional: ``TopicChannel`` vector-searches ``TOPIC.embedding``,
-    so a topic written without one is stored but unreachable, which is how a
-    topic layer ends up looking built and inert.
+    Uses the chunk embeddings persisted at ingest — no embedding call. The
+    centroid is computed but not persisted: ``coherence`` is measured against it
+    and ``lead_chunk_id`` is the member nearest it, and nothing reads a stored
+    ``TOPIC.embedding`` now that the topic retrieval channel is gone.
     """
     texts_per_topic = [[chunk_meta.get(cid, ("", []))[0] for cid in t.chunk_ids] for t in topics]
     background = metrics.token_sets(texts_per_topic)
@@ -277,8 +215,7 @@ async def _describe(
         topic.keywords = metrics.keywords(texts, others, top_k=cfg.keywords_per_topic)
 
         centroid, coh, lead_idx = _profile(topic.chunk_ids, chunk_meta)
-        # Entity-vector coherence (graph_embedding source) is kept when present;
-        # otherwise the text-derived one applies, so the metric is comparable.
+        # Text-derived coherence: mean cosine of member chunks to the centroid.
         if centroid:
             topic.embedding = centroid
             if not topic.coherence:

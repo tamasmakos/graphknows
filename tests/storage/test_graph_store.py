@@ -80,7 +80,6 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
         "IN_SESSION",
         "MENTIONS",
         "MENTIONS_DATE",
-        "HAS_TOPIC",
         "IN_TOPIC",
         "EVOKED_BY",
         "PLAYS_ROLE",
@@ -97,6 +96,11 @@ def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
     # flush(). Same name, unrelated shape.
     for vertex in ("DIALOG", "SEGMENT", "DOC", "SESSIONENTITY", "COMMUNITY"):
         assert not created("VERTEX", vertex), f"dead vertex {vertex} present"
+    # HAS_TOPIC and TOPIC.embedding were write-only once the topic read path
+    # went: nothing traversed CHUNK->TOPIC and nothing vector-searched TOPIC.
+    assert not created("EDGE", "HAS_TOPIC"), "write-only HAS_TOPIC edge recreated"
+    assert not any("TOPIC.embedding" in s for s in stmts), "write-only TOPIC.embedding recreated"
+    assert not any("ON TOPIC(embedding)" in s for s in stmts), "dead TOPIC vector index recreated"
     for edge in (
         "HAS_CHUNK",
         "HAS_TURN",
@@ -233,7 +237,7 @@ async def test_write_entities_bulk_noop_on_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Topic writes — HAS_TOPIC (chunk evidence) + IN_TOPIC (entity membership)
+# Topic writes — IN_TOPIC (entity membership) is the whole persisted layer
 # ---------------------------------------------------------------------------
 
 
@@ -248,7 +252,6 @@ async def test_write_topics_emits_in_topic_edges_with_pagerank_on_name_norm() ->
                 "summary": "summary",
                 "modularity": 0.42,
                 "title": "Melanie · Camping",
-                "chunk_ids": ["c1"],
                 "entities": [("Melanie", 0.9), ("  STRASSE  Café ", 0.3)],
             }
         ]
@@ -263,15 +266,16 @@ async def test_write_topics_emits_in_topic_edges_with_pagerank_on_name_norm() ->
     by_nn = {r["nn"]: r["pr"] for r in rows}
     # casefold (not lower) + whitespace collapse — same key write_entities_bulk uses.
     assert by_nn == {"melanie": 0.9, "strasse café": 0.3}
-    # HAS_TOPIC (chunk evidence) is untouched by this change.
-    assert any("MERGE (c)-[:HAS_TOPIC]->(tp)" in s for s in stmts)
+    # No chunk-evidence edge: HAS_TOPIC had no reader once the topic retrieval
+    # channel went, so the write was pure cost.
+    assert not any("HAS_TOPIC" in s for s in stmts)
 
 
 @pytest.mark.asyncio
 async def test_write_topics_skips_in_topic_when_no_entities() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
-    await store.write_topics([{"topic_id": "topic:abc:1", "chunk_ids": ["c1"]}])
+    await store.write_topics([{"topic_id": "topic:abc:1"}])
     assert not any("IN_TOPIC" in c.args[1] for c in client.command.await_args_list)
 
 

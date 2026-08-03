@@ -14,7 +14,7 @@ import re
 import uuid
 from typing import Any
 
-from graphknows.ingestion.parsers.base import strip_content_heading
+from graphknows.ingestion.parsers.text import strip_content_heading
 from graphknows.settings import GraphKnowsSettings
 
 logger = logging.getLogger(__name__)
@@ -479,7 +479,7 @@ class Memory:
             persist: Write the resulting TOPIC layer (replacing the previous one).
             export_path: Optional path for a read-only JSON artifact.
             **overrides: Field overrides applied to ``config`` (e.g.
-                ``distance=0.25``, ``min_size=3``, ``n2v_walk_length=40``).
+                ``min_size=3``).
 
         Returns:
             The build's metrics, plus ``persisted`` and ``export_path``.

@@ -125,9 +125,11 @@ class GraphKnowsSettings(BaseSettings):
     arcadedb_user: str = Field(default="root", alias="GRAPHKNOWS_ARCADEDB_USER")
     arcadedb_password: str = Field(default="changeme", alias="GRAPHKNOWS_ARCADEDB_PASSWORD")
 
-    # Multi-tenant isolation boundary. Each namespace maps to its own physical
-    # ArcadeDB database pair (stm_<ns>/ltm_<ns>); "" keeps the original stm/ltm
-    # databases. Used as the default when an MCP call omits an explicit namespace.
+    # Multi-tenant isolation boundary. Each namespace maps to ONE physical
+    # ArcadeDB database (``mem_<ns>``; "" -> ``mem``) — see storage/namespace.py.
+    # Short- and long-term memory are not separate databases, they are the
+    # ``state`` lifecycle (raw -> consolidated) on that one graph. Used as the
+    # default when an MCP call omits an explicit namespace.
     namespace: str = Field(default="", alias="GRAPHKNOWS_NAMESPACE")
 
     # LLM (provider-neutral; litellm model strings)

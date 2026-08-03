@@ -73,17 +73,19 @@ into community detection.
 Per topic: `title` (top entities by PageRank), `summary`, `keywords` (TF-IDF
 against the other topics — the terms that *separate* this topic), `entities`
 with their PageRank, `chunk_ids`, `lead_chunk_id` (member chunk nearest the
-centroid), `coherence`, and the centroid `embedding`.
+centroid), and `coherence`.
 
-The embedding is not optional: `TopicChannel` vector-searches `TOPIC.embedding`,
-so a topic written without one is stored but unreachable.
+Persistence writes one edge: `ENTITY-[:IN_TOPIC]->TOPIC` carrying `pagerank`,
+the cluster membership itself — the `entities` field is the actual output of the
+clustering, not a byproduct. `modularity` on every `TOPIC` row is the build's
+real Newman modularity (`newman_modularity`), shared across all topics from the
+same build.
 
-Persistence writes two distinct edges: `CHUNK-[:HAS_TOPIC]->TOPIC` for the
-evidence chunks (what `TopicChannel` traverses), and `ENTITY-[:IN_TOPIC]->TOPIC`
-carrying `pagerank` for the cluster membership itself — the `entities` field is
-the actual output of the clustering, not a byproduct. `modularity` on every
-`TOPIC` row is the build's real Newman modularity (`newman_modularity`), shared
-across all topics from the same build.
+The centroid embedding and the `CHUNK-[:HAS_TOPIC]->TOPIC` evidence edge are
+**not** persisted. Both existed only for `TopicChannel`, and that channel is
+gone (see below), which made them write-only. The centroid is still computed in
+the builder — `coherence` is the mean cosine of members to it — it is simply not
+stored.
 
 Global metrics — the numbers a sweep compares:
 
@@ -110,33 +112,22 @@ that matches your use, rather than by eye.
 
 ## How topics reach retrieval
 
-`TopicChannel` (`graphknows/channels/topics.py`) is what makes the layer more
-than bookkeeping. It does two things per query:
+**They do not.** `TopicChannel` — which vector-matched the query against topic
+centroids, traversed `CHUNK-[:HAS_TOPIC]->TOPIC` to their evidence chunks, and
+injected one summary as a synthetic passage — has been removed. Nothing on the
+read path consumes what this stage writes.
 
-1. **Routes to evidence.** ANN-matches the query against the topic centroids,
-   then traverses `CHUNK-[:HAS_TOPIC]->TOPIC` to the chunks each matched topic
-   was built from. Chunk scores accumulate across matched topics and are
-   discounted by each topic's `coherence` — a loose cluster is weaker evidence
-   that its members are on-topic. Where the vector channel matches a query to
-   individual chunks, this matches it to a *theme* and pulls in members a
-   single-chunk match misses.
-2. **Injects one summary** as a synthetic passage carrying the topic's keywords
-   — the only abstractive context the deterministic pipeline produces. It
-   survives independently of the routed chunks.
+The layer is therefore reporting and analysis only: `Memory.ltm_topics` walks
+`ENTITY-[:IN_TOPIC]->TOPIC` to show what the corpus clustered into, and
+`newman_modularity` grades the partition for a sweep. Retrieval is unaffected by
+whether topics are built.
 
-Both are additive to the RRF fusion, never a re-rank: re-ranking a fused list on
-a graph signal has regressed retrieval in this codebase before, whereas
-contributing candidates cannot displace a strong hit.
-
-**The saturation guard is not optional here.** Topics are coarse — on conv-26
-the mean topic spans 17 of 63 chunks — so a broad topic that matches the query
-would return most of the conversation. Any topic covering more than
-`GRAPHKNOWS_TOPIC_SATURATION_RATIO` (default 0.5) of the session's chunks is
-dropped, the same remedy applied to saturated speaker entities, generic frames
-and the ubiquitous `Person` ontology class.
-
-The channel is data-gated: with no topic layer built it returns nothing, so
-`GRAPHKNOWS_TOPICS=none` leaves retrieval exactly as it was.
+Re-adding a read path means re-adding the centroid embedding and the evidence
+edge alongside it — and measuring the channel before trusting it, because a
+topic is coarse (on conv-26 the mean topic spanned 17 of 63 chunks), so a broad
+topic matching the query returns most of the conversation. The saturation guard
+that made the old channel survivable dropped any topic covering more than half a
+session's chunks.
 
 ## Modes
 

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
-from graphknows.ingestion.parsers.base import ParsedFile, TextSegment
+from graphknows.ingestion.parsers.text import ParsedFile, TextSegment
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
 from graphknows.models.ingest import IngestResult
 
@@ -143,7 +143,7 @@ def test_search_surface_carries_the_speaker_but_never_doubles_it():
     surface buys that reach without putting the name into the extractor's input,
     which is what mints speakers as ENTITY nodes.
     """
-    from graphknows.ingestion.parsers.base import search_surface
+    from graphknows.ingestion.parsers.text import search_surface
 
     assert search_surface("I'm opening a dance studio.", "Gina") == (
         "Gina: I'm opening a dance studio."

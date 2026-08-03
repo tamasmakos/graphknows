@@ -83,13 +83,14 @@ The DDL is a pure ordered statement list, `_CORE_DDL`
 `GraphStore.ensure_schema(dims)` — `dims` is substituted into the vector indexes so
 they match the configured embedder.
 
-- Vertices: `SESSION`, `FILE`, `CHUNK`, `ENTITY` (keyed on `name_norm`),
+- Vertices: `SESSION`, `TURN`, `FILE`, `CHUNK`, `ENTITY` (keyed on `name_norm`),
   `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME`, `FRAME_INSTANCE`,
-  `COMMUNITY`.
+  `ONTOLOGY`, `ONTOLOGY_CLASS`.
 - Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
-  (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL), `HAS_TOPIC` (CHUNK→TOPIC,
-  the evidence edge retrieval traverses), `IN_TOPIC` (ENTITY→TOPIC, with a
-  `pagerank` property — the cluster membership itself), `EVOKED_BY`
+  (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL),
+  `IN_TOPIC` (ENTITY→TOPIC, with a
+  `pagerank` property — the cluster membership itself, and the only persisted
+  topic edge), `EVOKED_BY`
   (FRAME→CHUNK), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK), `PLAYS_ROLE`
   (FRAME_INSTANCE→ENTITY, with a `role` property), and `REL`.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`

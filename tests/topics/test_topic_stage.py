@@ -122,17 +122,17 @@ class TestSummarizeMetrics:
 
 class TestConfig:
     def test_fingerprint_is_stable_and_parameter_sensitive(self) -> None:
-        a = TopicConfig(distance=0.3)
-        assert a.fingerprint() == TopicConfig(distance=0.3).fingerprint()
-        assert a.fingerprint() != TopicConfig(distance=0.4).fingerprint()
+        a = TopicConfig(min_size=3)
+        assert a.fingerprint() == TopicConfig(min_size=3).fingerprint()
+        assert a.fingerprint() != TopicConfig(min_size=4).fingerprint()
 
     def test_label_does_not_change_the_fingerprint(self) -> None:
         """The label is provenance, not a parameter."""
         assert TopicConfig(label="x").fingerprint() == TopicConfig(label="y").fingerprint()
 
-    def test_default_source_is_the_high_coverage_one(self) -> None:
-        """graph_embedding covers ~3% of a sparse conversational graph."""
-        assert TopicConfig().source == "community"
+    def test_no_source_switch(self) -> None:
+        """The graph_embedding source is gone — it covered ~3% of a sparse graph."""
+        assert not hasattr(TopicConfig(), "source")
 
     def test_to_dict_is_json_serialisable(self) -> None:
         json.dumps(TopicConfig(mode=TopicMode.llm).to_dict())
@@ -257,7 +257,7 @@ class TestAssembleAndDescribe:
 
         topic = Topic(topic_id="t1", title="x", chunk_ids=["c1"])
         await _describe([topic], {"c1": ("kayaking trip", [])}, TopicConfig(), None)
-        assert topic.embedding == []  # honest: unreachable, not fabricated
+        assert topic.embedding == []  # honest: no centroid, not a fabricated one
         assert "kayaking" in topic.keywords
 
 
@@ -273,7 +273,13 @@ class TestPersist:
         await persist_topics(store, ts)
 
         assert "DETACH DELETE" in store.command.await_args[0][0]
-        assert store.write_topics.await_args[0][0][0]["topic_id"] == "t1"
+        row = store.write_topics.await_args[0][0][0]
+        assert row["topic_id"] == "t1"
+        # The centroid and the chunk-evidence list are computed but NOT sent to
+        # the store: TOPIC.embedding and CHUNK-[:HAS_TOPIC]->TOPIC had no reader
+        # once the topic retrieval channel went.
+        assert "embedding" not in row
+        assert "chunk_ids" not in row
 
     @pytest.mark.asyncio
     async def test_replace_false_keeps_the_old_layer(self) -> None:

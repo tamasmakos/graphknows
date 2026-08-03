@@ -93,18 +93,16 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TOPIC.topic_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TOPIC.summary IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TOPIC.modularity IF NOT EXISTS DOUBLE"),
-    ("sql", "CREATE PROPERTY TOPIC.embedding IF NOT EXISTS LIST"),
     # Topic-stage outputs: a human-readable title, the distinctive terms that
     # separate this topic from the others, and how tight the cluster is.
+    # No `embedding` and no vector index: the topic read path (a retrieval
+    # channel that matched topics by vector, then traversed into their chunks)
+    # was removed, so both were write-only. The centroid is still computed in
+    # the builder — `coherence` is measured against it — just not stored.
     ("sql", "CREATE PROPERTY TOPIC.title IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY TOPIC.keywords IF NOT EXISTS LIST"),
     ("sql", "CREATE PROPERTY TOPIC.coherence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE INDEX ON TOPIC(topic_id) UNIQUE"),
-    (
-        "sql",
-        f"CREATE INDEX IF NOT EXISTS ON TOPIC(embedding) LSM_VECTOR "
-        f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
-    ),
     # Semantic-frame instances (deterministic FrameNet layer). Evidence is the
     # EVOKED_BY edge to the CHUNK — no chunk_id string property.
     ("sql", "CREATE VERTEX TYPE FRAME IF NOT EXISTS"),
@@ -172,7 +170,6 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE MENTIONS IF NOT EXISTS"),  # CHUNK -> ENTITY
     ("sql", "CREATE PROPERTY MENTIONS.confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE MENTIONS_DATE IF NOT EXISTS"),  # CHUNK -> TEMPORAL
-    ("sql", "CREATE EDGE TYPE HAS_TOPIC IF NOT EXISTS"),  # CHUNK -> TOPIC
     ("sql", "CREATE EDGE TYPE IN_TOPIC IF NOT EXISTS"),  # ENTITY -> TOPIC
     ("sql", "CREATE PROPERTY IN_TOPIC.pagerank IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK

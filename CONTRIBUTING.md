@@ -43,31 +43,15 @@ Services:
 
 ## Adding a Document Parser
 
-1. Create `services/graphgen/src/kg/parser/<format>.py`
-2. Subclass `BaseParser` and declare the file extensions:
+There is one parser — `PlainTextParser` in
+`graphknows/ingestion/parsers/text.py` — and it handles plain text and Markdown,
+which is what the ingest path feeds it. It is a plain class, not a registered
+plugin: there is no `BaseParser` ABC, no extension registry and no auto-discovery,
+because one implementation never needed them.
 
-```python
-from kg.parser import BaseParser, ParsedDocument
-from pathlib import Path
-
-class MyFormatParser(BaseParser):
-    extensions = ("xyz",)          # auto-registers on import
-
-    def parse(self, path: Path) -> ParsedDocument:
-        doc = ParsedDocument.from_path(path, "application/x-myformat")
-        raw = path.read_text()
-        # ... split into chunks ...
-        doc.chunks = list(self._chunk(doc.doc_id, raw))
-        return doc
-```
-
-3. Register the parser by adding it to `kg/parser/registry.py`:
-
-```python
-from kg.parser.myformat import MyFormatParser  # noqa: F401
-```
-
-4. Add any new dependencies to `services/graphgen/pyproject.toml`.
+To support another format, add a function to that module that turns the source
+into `TextSegment`s and call it from `parse()`. Reach for a second class only
+once a second format actually exists.
 
 ---
 

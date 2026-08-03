@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from graphknows.retrieval.base import BaseGraphRetriever
 from graphknows.retrieval.models.context import RetrievalContext
 
 if TYPE_CHECKING:
@@ -53,7 +52,6 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "BaseGraphRetriever",
     "RetrievalContext",
     "build_retriever",
 ]

@@ -280,12 +280,6 @@ class TestDspyExtractorExtractThenMap:
         _loader_mod()
         _filter_mod()
 
-        # Load utils module the extractor depends on
-        _load_module(
-            "graphknows.ingestion.normalization",
-            REPO_ROOT / "graphknows" / "ingestion" / "normalization.py",
-        )
-
         with (
             patch("dspy.LM", return_value=MagicMock()),
             patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
