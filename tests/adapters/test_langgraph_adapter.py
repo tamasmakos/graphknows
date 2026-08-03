@@ -62,6 +62,30 @@ async def test_recall_extracts_text_from_multimodal_content() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recall_says_so_when_a_result_is_not_a_hit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only Memory mints hits, so a non-Hit is broken wiring, not a variation.
+
+    Dropped silently it renders as "nothing recalled" — indistinguishable from
+    an empty memory, which is the failure mode this repo keeps paying for.
+    """
+
+    class _WrongShape(_FakeMemory):
+        async def recall_memory(self, query: str, **kw: object) -> dict:
+            return {"hits": [{"text": "a dict, not a Hit"}], "facts": []}
+
+    mem = _WrongShape()
+    with caplog.at_level("WARNING", logger="graphknows.integrations._langgraph_hooks"):
+        update = await recall(
+            {"messages": [{"role": "user", "content": "q"}]}, memory=mem, session_id="s1"
+        )
+
+    assert update["memories"] == []
+    assert "not Hit objects" in caplog.text or "were not Hit" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_recall_empty_messages_is_noop() -> None:
     mem = _FakeMemory()
     assert await recall({}, memory=mem, session_id="s1") == {

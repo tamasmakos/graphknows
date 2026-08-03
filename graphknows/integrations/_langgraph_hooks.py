@@ -9,9 +9,12 @@ whose nodes are ``state -> partial_state`` callables.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol
 
 from graphknows.models.hit import Hit
+
+logger = logging.getLogger(__name__)
 
 
 class _Memory(Protocol):
@@ -152,6 +155,15 @@ async def recall(
     )
     raw_hits = result.get("hits", []) if isinstance(result, dict) else []
     hits = [h for h in raw_hits if isinstance(h, Hit)]
+    if len(hits) != len(raw_hits):
+        # Only Memory mints hits, so a non-Hit here is broken wiring, not a
+        # tolerable variation. Dropping it silently renders as "nothing
+        # recalled" — indistinguishable from an empty memory from outside.
+        logger.warning(
+            "recall: dropped %d recall result(s) that were not Hit objects; "
+            "the memory passed in is not returning the documented shape.",
+            len(raw_hits) - len(hits),
+        )
     return {
         out_key: [h.text for h in hits],
         sources_key: [h.sources for h in hits],

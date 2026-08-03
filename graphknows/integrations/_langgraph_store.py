@@ -13,11 +13,14 @@ by ``examples/langgraph_agent.py`` against a live ArcadeDB.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
 from graphknows.models.hit import Hit
+
+logger = logging.getLogger(__name__)
 
 try:
     from langgraph.store.base import (
@@ -108,6 +111,13 @@ class GraphKnowsStore(BaseStore):  # type: ignore[misc]
         items: list[SearchItem] = []
         for i, hit in enumerate(hits):
             if not isinstance(hit, Hit):
+                # Broken wiring, not a variation worth tolerating quietly: a
+                # silent skip is indistinguishable from an empty store.
+                logger.warning(
+                    "GraphKnowsStore.search: skipped a recall result of type %s; "
+                    "the memory is not returning Hit objects.",
+                    type(hit).__name__,
+                )
                 continue
             # created_at/updated_at are REQUIRED positional fields on SearchItem;
             # omitting them raised TypeError on every search() call. It went

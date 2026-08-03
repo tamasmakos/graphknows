@@ -355,7 +355,7 @@ class Memory:
         *,
         session_id: str = "",
         top_k: int = 5,
-        scope: str = "stm",
+        scope: str = "both",
         cross_session: bool = False,
     ) -> dict[str, Any]:
         """Recall ranked hits: ``{"hits": list[Hit], "facts": [...]}``.
@@ -366,11 +366,17 @@ class Memory:
         :func:`~graphknows.models.hit.render_memories`; transports that cannot
         carry the type call :meth:`~graphknows.models.hit.Hit.to_dict`.
 
-        ``scope`` now has real meaning: ``"stm"`` searches ONLY the session's
+        ``scope`` has real meaning: ``"stm"`` searches ONLY the session's
         buffered ``TURN`` rows (cheap word-overlap, no embeddings — see
         :func:`_format_stm_hits`); ``"ltm"`` searches ONLY the graph via the
-        configured retriever; ``"both"`` (default for :meth:`search`) returns
-        STM hits first, then graph hits, truncated to ``top_k`` total.
+        configured retriever; ``"both"`` returns STM hits first, then graph
+        hits, truncated to ``top_k`` total.
+
+        It defaults to ``"both"`` — the same default as :meth:`search`, the
+        LangGraph nodes and the MCP tool. It used to default to ``"stm"`` here
+        alone, which means a caller who omitted it searched only the unflushed
+        buffer: empty immediately after a flush, and empty for every session
+        that ingested through any other one. Four surfaces, one default.
 
         ``cross_session``, when True, makes the GRAPH half namespace-wide
         (``session_id=""`` to the retriever, which treats that as "no session

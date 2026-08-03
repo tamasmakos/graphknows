@@ -4,7 +4,13 @@ Used by ingestion, retrieval and every endpoint. Layer-neutral: these depend on
 nothing else in the package.
 """
 
-from graphknows.models.hit import Hit, RenderedMemories, render_memories
+from graphknows.models.hit import (
+    MAX_CONTEXT_CHARS,
+    Hit,
+    RenderedMemories,
+    date_in,
+    render_memories,
+)
 from graphknows.models.ingest import IngestResult
 from graphknows.models.ingest_options import IngestOptions
 from graphknows.models.memory_class import MemoryClass
@@ -12,6 +18,7 @@ from graphknows.models.message import Message, MessageInput, Role, normalize_mes
 from graphknows.models.scope import MemoryScope
 
 __all__ = [
+    "MAX_CONTEXT_CHARS",
     "Hit",
     "IngestOptions",
     "IngestResult",
@@ -21,6 +28,7 @@ __all__ = [
     "MessageInput",
     "RenderedMemories",
     "Role",
+    "date_in",
     "normalize_messages",
     "render_memories",
 ]

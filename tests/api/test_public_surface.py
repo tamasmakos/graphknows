@@ -12,6 +12,7 @@ from __future__ import annotations
 import graphknows
 
 EXPECTED_PUBLIC_API = {
+    "MAX_CONTEXT_CHARS",
     "ConfigurationError",
     "GraphKnowsError",
     "GraphKnowsSettings",
@@ -31,6 +32,7 @@ EXPECTED_PUBLIC_API = {
     "StoreError",
     "TopicMode",
     "__version__",
+    "date_in",
     "normalize_messages",
     "render_memories",
 }

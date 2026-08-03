@@ -9,41 +9,23 @@ are appended after the dated ones.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 
-from dateparser import parse as _parse_date
-
 from evaluation.common.datamodels import RetrievedPassage
+from graphknows import MAX_CONTEXT_CHARS, date_in
 
-# Character budget for the rendered memory block. ~4 chars/token, so 72k chars is
-# ~18k tokens — roughly 14% of llama-3.3-70b's 128k window, and enough to hold all
-# 50 retrieved LoCoMo passages (~1.3k chars each) without dropping any. The old
-# 24k ceiling capped the generator at ~17 passages no matter what gen_context_k
-# said, and measured prompts sat at a flat ~7.8k tokens — the cap, not the content,
-# was setting the context size.
-MAX_CONTEXT_CHARS = 72_000
-
-# Date shapes that survive graphknows chunking: "8 May, 2023" (LoCoMo message
-# prefixes), "May 8, 2023", "2023/05/01" or ISO (session headers we prefix
-# onto each turn at ingest time).
-_DATE_RES = (
-    re.compile(r"\b\d{1,2} [A-Z][a-z]+,? \d{4}\b"),
-    re.compile(r"\b[A-Z][a-z]+ \d{1,2},? \d{4}\b"),
-    re.compile(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b"),
-)
+# The date shapes and the character budget are the library's, imported rather
+# than restated: they were duplicated here verbatim — same three regexes, same
+# 72k — and a duplicated constant is one that drifts. What stays local is the
+# one thing that genuinely differs: these passages arrive from the MCP wire
+# without a ``ts`` field, so their date has to be scraped back out of the text
+# and PREFIXED, where a typed Hit carries its own and renders it directly.
+__all__ = ["MAX_CONTEXT_CHARS", "extract_date", "format_memories"]
 
 
 def extract_date(text: str) -> datetime | None:
     """First parseable calendar date in *text* (scans a bounded prefix)."""
-    head = text[:400]
-    for pattern in _DATE_RES:
-        match = pattern.search(head)
-        if match:
-            parsed = _parse_date(match.group(0))
-            if parsed is not None:
-                return parsed.replace(tzinfo=None)
-    return None
+    return date_in(text)
 
 
 def format_memories(passages: list[RetrievedPassage], *, max_chars: int = MAX_CONTEXT_CHARS) -> str:

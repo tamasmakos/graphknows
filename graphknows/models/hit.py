@@ -35,10 +35,13 @@ from typing import Any
 # dateparser import in this package (see graphknows/channels/temporal.py).
 from dateparser import parse as _parse_date  # type: ignore[import-untyped]
 
-# ~4 chars/token, so 72k chars is ~18k tokens — roughly 14% of a 128k window,
-# and enough to hold every passage of a large recall without dropping one. The
-# older 24k ceiling capped the answerer at ~17 passages no matter how many it
-# was given: the cap, not the content, was setting the context size.
+# Default ceiling on the rendered block, in characters (~4 per token, so ~18k
+# tokens). A budget belongs here only as a DEFAULT — it is a per-call argument,
+# so an application sizes it to its own model. The value is a safe fraction of a
+# small-context model's window: large enough that a big recall is not silently
+# clipped, which is the failure a low ceiling causes — it caps the answerer at a
+# fixed number of memories no matter how many it was given, so the cap rather
+# than the content ends up setting the context size.
 MAX_CONTEXT_CHARS = 72_000
 
 # Date shapes that survive chunking, for hits whose date is written into the
@@ -125,22 +128,6 @@ class Hit:
             "metadata": self.metadata,
         }
 
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Hit:
-        """Rebuild a hit from its wire shape (the inverse of :meth:`to_dict`)."""
-        return cls(
-            text=str(raw.get("text", "") or ""),
-            speaker=str(raw.get("speaker", "") or ""),
-            ts=str(raw.get("ts", "") or ""),
-            score=float(raw.get("score", 0.0) or 0.0),
-            sources=str(raw.get("sources", "") or ""),
-            session_id=str(raw.get("session_id", "") or ""),
-            chunk_id=str(raw.get("chunk_id", "") or ""),
-            doc_id=str(raw.get("doc_id", "") or ""),
-            entities=list(raw.get("entities", []) or []),
-            metadata=dict(raw.get("metadata", {}) or {}),
-        )
-
 
 @dataclass(frozen=True)
 class RenderedMemories:
@@ -154,9 +141,6 @@ class RenderedMemories:
     text: str
     dated: int
     undated: int
-
-    def __str__(self) -> str:
-        return self.text
 
     def __bool__(self) -> bool:
         return bool(self.text)
@@ -201,3 +185,5 @@ def render_memories(hits: list[Hit], *, max_chars: int = MAX_CONTEXT_CHARS) -> R
 
 
 __all__ = ["MAX_CONTEXT_CHARS", "Hit", "RenderedMemories", "date_in", "render_memories"]
+# No `from_dict`: `to_dict` exists because MCP and the langgraph store have to
+# put a hit on a wire, and nothing in or out of this package reads one back.

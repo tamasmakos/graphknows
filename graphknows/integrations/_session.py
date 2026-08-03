@@ -19,6 +19,7 @@ import logging
 from typing import Any
 
 from graphknows.exceptions import ConfigurationError
+from graphknows.integrations._langgraph_hooks import _last_text
 from graphknows.integrations._langgraph_hooks import recall as _recall
 from graphknows.integrations._langgraph_hooks import remember as _remember
 from graphknows.memory import Memory
@@ -173,7 +174,12 @@ class GraphKnowsMemory:
             session_id=self._session_id,
             messages_key=self._messages_key,
         )
-        self._unflushed += 1
+        # The hook is a no-op on a turn with no text, so counting node calls
+        # instead of stored turns would warn "N unflushed turns" over an empty
+        # buffer — a false alarm on exactly the signal this counter exists for.
+        # Asking the hook's own predicate keeps the two from drifting apart.
+        if _last_text(state, self._messages_key):
+            self._unflushed += 1
         return update
 
     async def flush(self) -> dict[str, Any]:

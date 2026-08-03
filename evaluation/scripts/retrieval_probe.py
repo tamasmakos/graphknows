@@ -252,8 +252,8 @@ async def _classify(
         "in_db": in_db,
         "gold_query_finds": gold_query_finds,
         "failure": failure,
-        "top3_scores": [round(h.get("score", 0), 4) for h in hits20[:3]],
-        "top3_sources": [h.get("sources") or h.get("type", "") for h in hits20[:3]],
+        "top3_scores": [round(h.score, 4) for h in hits20[:3]],
+        "top3_sources": [h.sources for h in hits20[:3]],
     }
 
 

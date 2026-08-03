@@ -115,3 +115,22 @@ class TestUnflushedWarning:
                 await gm.flush()
 
         assert caplog.text == ""
+
+    @pytest.mark.asyncio
+    async def test_a_turn_that_buffered_nothing_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``remember`` is a no-op on a turn with no text — so it must not count.
+
+        Counting node calls rather than stored turns warns "1 unflushed turn"
+        over an empty buffer, which is a false alarm on the one signal that
+        exists to catch a genuinely unflushed session.
+        """
+        mem = _FakeMemory()
+        with caplog.at_level("WARNING", logger="graphknows.integrations._session"):
+            async with GraphKnowsMemory("s1", memory=mem) as gm:
+                await gm.remember({"messages": [{"role": "user", "content": ""}]})
+                await gm.add("   ")
+
+        assert mem.ingested == []
+        assert caplog.text == ""

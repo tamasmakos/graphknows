@@ -29,11 +29,13 @@ from graphknows.exceptions import (
 )
 from graphknows.memory import Memory
 from graphknows.models import (
+    MAX_CONTEXT_CHARS,
     Hit,
     IngestResult,
     MemoryScope,
     Message,
     RenderedMemories,
+    date_in,
     normalize_messages,
     render_memories,
 )
@@ -48,6 +50,7 @@ from graphknows.settings import (
 logging.getLogger("graphknows").addHandler(logging.NullHandler())
 
 __all__ = [
+    "MAX_CONTEXT_CHARS",
     "ConfigurationError",
     "GraphKnowsError",
     "GraphKnowsSettings",
@@ -62,6 +65,7 @@ __all__ = [
     "StoreError",
     "TopicMode",
     "__version__",
+    "date_in",
     "normalize_messages",
     "render_memories",
 ]
