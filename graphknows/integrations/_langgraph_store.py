@@ -17,6 +17,8 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
+from graphknows.models.hit import Hit
+
 try:
     from langgraph.store.base import (
         BaseStore,
@@ -105,7 +107,7 @@ class GraphKnowsStore(BaseStore):  # type: ignore[misc]
         hits = result.get("hits", []) if isinstance(result, dict) else []
         items: list[SearchItem] = []
         for i, hit in enumerate(hits):
-            if not isinstance(hit, dict):
+            if not isinstance(hit, Hit):
                 continue
             # created_at/updated_at are REQUIRED positional fields on SearchItem;
             # omitting them raised TypeError on every search() call. It went
@@ -118,11 +120,14 @@ class GraphKnowsStore(BaseStore):  # type: ignore[misc]
             items.append(
                 SearchItem(
                     namespace=op.namespace_prefix,
-                    key=str(hit.get("metadata", {}).get("langgraph_key") or i),
-                    value={"text": hit.get("text", ""), "sources": hit.get("sources", "")},
+                    key=str(hit.metadata.get("langgraph_key") or i),
+                    # The whole hit, not a two-field excerpt: dropping speaker
+                    # and ts here left a langgraph agent unable to date or
+                    # attribute anything it read back out of the store.
+                    value=hit.to_dict(),
                     created_at=now,
                     updated_at=now,
-                    score=float(hit.get("score", 0.0) or 0.0),
+                    score=hit.score,
                 )
             )
         return items

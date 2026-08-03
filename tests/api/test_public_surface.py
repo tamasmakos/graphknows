@@ -15,16 +15,24 @@ EXPECTED_PUBLIC_API = {
     "ConfigurationError",
     "GraphKnowsError",
     "GraphKnowsSettings",
+    # The recall result type and its renderer. Public because every caller of
+    # Memory.recall_memory needs them: the hits it returns ARE Hit objects, and
+    # rendering them (dating, attributing, deduping, budgeting) is the library's
+    # job — four adapters re-derived it from an untyped dict before, and
+    # disagreed.
+    "Hit",
     "IngestResult",
     "Memory",
     "MemoryMode",
     "MemoryScope",
     "Message",
     "MissingExtraError",
+    "RenderedMemories",
     "StoreError",
     "TopicMode",
     "__version__",
     "normalize_messages",
+    "render_memories",
 }
 
 

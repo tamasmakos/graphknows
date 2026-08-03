@@ -90,8 +90,8 @@ async def test_search_stm_finds_buffered_turn_before_flush(mem: object) -> None:
     out = await mem.search("quokka festival", run_id="s3", scope="stm")
 
     assert len(out["hits"]) == 1
-    assert out["hits"][0]["sources"] == "stm"
-    assert "quokka" in out["hits"][0]["text"].lower()
+    assert out["hits"][0].sources == "stm"
+    assert "quokka" in out["hits"][0].text.lower()
 
 
 async def test_search_ltm_is_empty_before_flush(mem: object) -> None:
@@ -120,7 +120,7 @@ async def test_flush_drains_buffer_into_the_graph(mem: object) -> None:
 
     ltm_out = await mem.search("quokka festival", run_id="s5", scope="ltm")
     assert len(ltm_out["hits"]) >= 1
-    assert any("quokka" in h["text"].lower() for h in ltm_out["hits"])
+    assert any("quokka" in h.text.lower() for h in ltm_out["hits"])
 
 
 async def test_stats_raw_turn_count_grows_per_add(mem: object) -> None:

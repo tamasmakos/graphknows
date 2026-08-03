@@ -36,6 +36,7 @@ from typing import Any
 
 from evaluation.locomo.dataset import build_documents, first_string, read_rows
 from graphknows.memory import Memory as GraphKnowsRuntime
+from graphknows.models.hit import Hit
 from graphknows.settings import GraphKnowsSettings
 
 # ---------------------------------------------------------------------------
@@ -148,10 +149,10 @@ def _gold_tokens(gold: str) -> set[str]:
     return {t for t in tokens if len(t) >= 3 and t not in _STOPWORDS}
 
 
-def _hits_contain_gold(hits: list[dict], gold_toks: set[str], min_match: int = 1) -> bool:
+def _hits_contain_gold(hits: list[Hit], gold_toks: set[str], min_match: int = 1) -> bool:
     if not gold_toks:
         return False
-    combined = " ".join(str(h.get("text", "")).lower() for h in hits)
+    combined = " ".join(h.text.lower() for h in hits)
     return sum(1 for t in gold_toks if t in combined) >= min_match
 
 

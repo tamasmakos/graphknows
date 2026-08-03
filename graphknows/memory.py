@@ -15,27 +15,26 @@ import uuid
 from typing import Any
 
 from graphknows.ingestion.parsers.text import strip_content_heading
+from graphknows.models.hit import Hit
 from graphknows.settings import GraphKnowsSettings
 
 logger = logging.getLogger(__name__)
 
 
-def _format_fused_hits(
-    fused_results: list[dict[str, Any]], session_id: str
-) -> list[dict[str, Any]]:
+def _format_fused_hits(fused_results: list[dict[str, Any]], session_id: str) -> list[Hit]:
     return [
-        {
-            "score": r.get("rrf_score", 0.0),
-            "cosine_score": r.get("rrf_score", 0.0),
-            "type": r.get("sources", ""),
-            "sources": r.get("sources", ""),
-            "text": strip_content_heading(r.get("text", "")),
-            "session_id": session_id,
-            "speaker": r.get("speaker", ""),
-            "ts": r.get("ts", ""),
-            "entities": r.get("entities", []),
-            "metadata": r.get("metadata", {}),
-        }
+        Hit(
+            text=strip_content_heading(r.get("text", "")),
+            speaker=str(r.get("speaker", "") or ""),
+            ts=str(r.get("ts", "") or ""),
+            score=float(r.get("rrf_score", 0.0) or 0.0),
+            sources=str(r.get("sources", "") or ""),
+            session_id=session_id,
+            chunk_id=str(r.get("chunk_id", "") or ""),
+            doc_id=str(r.get("doc_id", "") or ""),
+            entities=list(r.get("entities", []) or []),
+            metadata=dict(r.get("metadata", {}) or {}),
+        )
         for r in fused_results
     ]
 
@@ -45,7 +44,7 @@ _WORD_RE = re.compile(r"[a-z0-9']+")
 
 def _format_stm_hits(
     turns: list[dict[str, Any]], query: str, top_k: int, session_id: str
-) -> list[dict[str, Any]]:
+) -> list[Hit]:
     """Rank buffered TURN rows by cheap word-overlap against ``query``.
 
     Deliberately no embeddings: the STM buffer is meant to stay free (no
@@ -64,22 +63,16 @@ def _format_stm_hits(
             scored.append((overlap, int(t.get("seq", 0) or 0), t))
     scored.sort(key=lambda x: (-x[0], -x[1]))
     return [
-        {
-            "score": float(overlap),
-            "cosine_score": float(overlap),
-            "type": "stm",
-            "sources": "stm",
-            "text": strip_content_heading(str(t.get("text", ""))),
-            "session_id": session_id,
-            "speaker": str(t.get("speaker", "") or ""),
-            "ts": str(t.get("ts", "") or ""),
-            "entities": [],
-            "metadata": {
-                "turn_id": t.get("turn_id", ""),
-                "role": t.get("role", ""),
-                "seq": t.get("seq", 0),
-            },
-        }
+        Hit(
+            text=strip_content_heading(str(t.get("text", ""))),
+            speaker=str(t.get("speaker", "") or ""),
+            ts=str(t.get("ts", "") or ""),
+            score=float(overlap),
+            sources="stm",
+            session_id=session_id,
+            chunk_id=str(t.get("turn_id", "") or ""),
+            metadata={"role": t.get("role", ""), "seq": t.get("seq", 0)},
+        )
         for overlap, _seq, t in scored[:top_k]
     ]
 
@@ -365,7 +358,13 @@ class Memory:
         scope: str = "stm",
         cross_session: bool = False,
     ) -> dict[str, Any]:
-        """Recall ranked hits using the compatibility result shape.
+        """Recall ranked hits: ``{"hits": list[Hit], "facts": [...]}``.
+
+        Hits are :class:`~graphknows.models.hit.Hit` objects, not dicts — one
+        shape for every caller, carrying the speaker and timestamp an answerer
+        needs to attribute and date a memory. Render them with
+        :func:`~graphknows.models.hit.render_memories`; transports that cannot
+        carry the type call :meth:`~graphknows.models.hit.Hit.to_dict`.
 
         ``scope`` now has real meaning: ``"stm"`` searches ONLY the session's
         buffered ``TURN`` rows (cheap word-overlap, no embeddings — see
@@ -389,8 +388,8 @@ class Memory:
         if scope not in {"stm", "ltm", "both"}:
             scope = "both"
 
-        stm_hits: list[dict[str, Any]] = []
-        graph_hits: list[dict[str, Any]] = []
+        stm_hits: list[Hit] = []
+        graph_hits: list[Hit] = []
         facts: list[Any] = []
 
         if scope in ("stm", "both"):

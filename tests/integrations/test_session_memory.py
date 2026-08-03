@@ -14,47 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from graphknows.integrations._session import GraphKnowsMemory
-
-
-class _FakeMemory:
-    def __init__(self) -> None:
-        self.ingested: list[tuple[str, object]] = []
-        self.recall_calls: list[dict] = []
-        self.close = AsyncMock()
-
-    async def ingest_memory(self, messages: object, *, session_id: str, **kw: object) -> dict:
-        self.ingested.append((session_id, messages))
-        return {"chunks": 1}
-
-    async def recall_memory(
-        self, query: str, *, session_id: str, top_k: int, scope: str, cross_session: bool = False
-    ) -> dict:
-        self.recall_calls.append(
-            {
-                "query": query,
-                "session_id": session_id,
-                "top_k": top_k,
-                "scope": scope,
-                "cross_session": cross_session,
-            }
-        )
-        return {
-            "hits": [
-                {
-                    "text": "Mochi is a ragdoll",
-                    "sources": "stm",
-                    "speaker": "Gina",
-                    "ts": "2023-01-20",
-                },
-                {
-                    "text": "Dr. Nagy is in Budapest",
-                    "sources": "vector",
-                    "speaker": "Jon",
-                    "ts": "2023-02-01",
-                },
-            ],
-            "facts": ["Mochi -[IS_A]-> ragdoll"],
-        }
+from tests.fixtures.memory import FakeMemory as _FakeMemory
 
 
 @pytest.mark.asyncio
@@ -151,9 +111,9 @@ async def test_recall_returns_texts_and_sources() -> None:
     assert update["memories"] == ["Mochi is a ragdoll", "Dr. Nagy is in Budapest"]
     assert update["memories_sources"] == ["stm", "vector"]
     # The attribution an agent needs to date and credit a memory reaches state.
-    assert [(h["speaker"], h["ts"]) for h in update["memories_hits"]] == [
-        ("Gina", "2023-01-20"),
-        ("Jon", "2023-02-01"),
+    assert [(h.speaker, h.ts) for h in update["memories_hits"]] == [
+        ("Gina", "20 January, 2023"),
+        ("Jon", "1 February, 2023"),
     ]
     assert update["memories_facts"] == ["Mochi -[IS_A]-> ragdoll"]
 

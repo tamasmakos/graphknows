@@ -29,10 +29,13 @@ from graphknows.exceptions import (
 )
 from graphknows.memory import Memory
 from graphknows.models import (
+    Hit,
     IngestResult,
     MemoryScope,
     Message,
+    RenderedMemories,
     normalize_messages,
+    render_memories,
 )
 from graphknows.settings import (
     GraphKnowsSettings,
@@ -48,14 +51,17 @@ __all__ = [
     "ConfigurationError",
     "GraphKnowsError",
     "GraphKnowsSettings",
+    "Hit",
     "IngestResult",
     "Memory",
     "MemoryMode",
     "MemoryScope",
     "Message",
     "MissingExtraError",
+    "RenderedMemories",
     "StoreError",
     "TopicMode",
     "__version__",
     "normalize_messages",
+    "render_memories",
 ]

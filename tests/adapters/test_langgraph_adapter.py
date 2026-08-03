@@ -13,43 +13,9 @@ import pytest
 
 from graphknows.exceptions import MissingExtraError
 from graphknows.integrations.langgraph import recall, remember
+from tests.fixtures.memory import FakeMemory as _FakeMemory
 
 _HAS_LANGGRAPH = importlib.util.find_spec("langgraph") is not None
-
-
-class _FakeMemory:
-    def __init__(self) -> None:
-        self.ingested: list[tuple[str, object]] = []
-        self.recall_calls: list[dict] = []
-
-    async def ingest_memory(self, messages: object, *, session_id: str, **kw: object) -> dict:
-        self.ingested.append((session_id, messages))
-        return {"chunks": 1}
-
-    async def recall_memory(
-        self, query: str, *, session_id: str, top_k: int, scope: str, cross_session: bool = False
-    ) -> dict:
-        self.recall_calls.append(
-            {
-                "query": query,
-                "session_id": session_id,
-                "top_k": top_k,
-                "scope": scope,
-                "cross_session": cross_session,
-            }
-        )
-        return {
-            "hits": [
-                {
-                    "text": "Mochi is a cat",
-                    "sources": "vector",
-                    "speaker": "Gina",
-                    "ts": "2023-01-20",
-                },
-                {"text": "unrelated", "sources": "stm", "speaker": "Jon", "ts": "2023-02-01"},
-            ],
-            "facts": ["Mochi -[IS_A]-> cat"],
-        }
 
 
 @pytest.mark.asyncio
@@ -57,17 +23,17 @@ async def test_recall_reads_last_message_and_returns_memories() -> None:
     mem = _FakeMemory()
     state = {"messages": [{"role": "user", "content": "what is my cat?"}]}
     update = await recall(state, memory=mem, session_id="s1", top_k=3)
-    assert update["memories"] == ["Mochi is a cat", "unrelated"]
-    assert update["memories_sources"] == ["vector", "stm"]
+    assert update["memories"] == ["Mochi is a ragdoll", "Dr. Nagy is in Budapest"]
+    assert update["memories_sources"] == ["stm", "vector"]
     # Measured 27 Jul 2026: the node returned only the two lists above, so an
     # agent could not tell who said a memory or when — LoCoMo temporal accuracy
     # fell 0.808 -> 0.058 on exactly that loss — and the fact-sheet (40 facts on
     # conv-30) was computed and thrown away. Assert on VALUES, not key presence.
-    assert [(h["speaker"], h["ts"]) for h in update["memories_hits"]] == [
-        ("Gina", "2023-01-20"),
-        ("Jon", "2023-02-01"),
+    assert [(h.speaker, h.ts) for h in update["memories_hits"]] == [
+        ("Gina", "20 January, 2023"),
+        ("Jon", "1 February, 2023"),
     ]
-    assert update["memories_facts"] == ["Mochi -[IS_A]-> cat"]
+    assert update["memories_facts"] == ["Mochi -[IS_A]-> ragdoll"]
     assert mem.recall_calls[0] == {
         "query": "what is my cat?",
         "session_id": "s1",
@@ -134,8 +100,14 @@ async def test_store_search_returns_constructible_search_items() -> None:
     store = GraphKnowsStore(_FakeMemory())
     items = await store._search(SearchOp(namespace_prefix=("s1",), query="cat", limit=5))
 
-    assert [i.value["text"] for i in items] == ["Mochi is a cat", "unrelated"]
+    assert [i.value["text"] for i in items] == ["Mochi is a ragdoll", "Dr. Nagy is in Budapest"]
     assert all(i.created_at is not None and i.updated_at is not None for i in items)
+    # The whole hit reaches the store item: a two-field excerpt left a langgraph
+    # agent unable to date or attribute anything it read back out.
+    assert [(i.value["speaker"], i.value["ts"]) for i in items] == [
+        ("Gina", "20 January, 2023"),
+        ("Jon", "1 February, 2023"),
+    ]
 
 
 @pytest.mark.skipif(_HAS_LANGGRAPH, reason="langgraph installed — guard not exercised")

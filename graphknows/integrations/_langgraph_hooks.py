@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from graphknows.models.hit import Hit
+
 
 class _Memory(Protocol):
     async def ingest_memory(
@@ -18,6 +20,7 @@ class _Memory(Protocol):
         messages: str | list[dict[str, Any]] | dict[str, Any] = ...,
         *,
         session_id: str = ...,
+        infer: bool = ...,
     ) -> dict[str, Any]: ...
     async def recall_memory(
         self,
@@ -119,11 +122,13 @@ async def recall(
     so a caller can see honestly which channel answered. Returns only the
     partial update.
 
-    Two more keys carry what the flat text list cannot: ``_hits`` holds the full
-    hit dicts (``speaker``, ``ts``, ``score``, ``metadata`` …) so a caller can
-    attribute and date a memory, and ``_facts`` holds the structured fact-sheet.
-    Both were previously computed and discarded here, leaving every agent built
-    on this node to answer from undated, unattributed sentences.
+    Two more keys carry what the flat text list cannot: ``_hits`` holds the
+    :class:`~graphknows.models.hit.Hit` objects (``speaker``, ``ts``, ``score``,
+    ``metadata`` …) so a caller can attribute and date a memory — hand them to
+    :func:`~graphknows.models.hit.render_memories` — and ``_facts`` holds the
+    structured fact-sheet. Both were previously computed and discarded here,
+    leaving every agent built on this node to answer from undated, unattributed
+    sentences.
 
     ``cross_session`` defaults to True — an agent's memory is expected to span
     the conversations it has already had, so the graph half of the search is
@@ -146,10 +151,10 @@ async def recall(
         cross_session=cross_session,
     )
     raw_hits = result.get("hits", []) if isinstance(result, dict) else []
-    hits = [h for h in raw_hits if isinstance(h, dict)]
+    hits = [h for h in raw_hits if isinstance(h, Hit)]
     return {
-        out_key: [h.get("text", "") for h in hits],
-        sources_key: [h.get("sources", "") for h in hits],
+        out_key: [h.text for h in hits],
+        sources_key: [h.sources for h in hits],
         hits_key: hits,
         facts_key: list(result.get("facts", []) or []) if isinstance(result, dict) else [],
     }

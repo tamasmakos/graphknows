@@ -36,7 +36,6 @@ import json
 import os
 import re
 import time
-from datetime import datetime
 from typing import Any, TypedDict
 
 from dateparser import parse as _parse_date
@@ -44,8 +43,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
 from evaluation.common.llm import extract_answer
-from evaluation.common.memories import extract_date
 from evaluation.locomo.prompts import ANSWER_PROMPT
+from graphknows import Hit, render_memories
 from graphknows.integrations.langgraph import GraphKnowsMemory
 
 DATA = "evaluation/data/locomo/questions.jsonl"
@@ -134,7 +133,7 @@ class QAState(TypedDict, total=False):
     messages: list[dict[str, str]]
     memories: list[str]
     memories_sources: list[str]
-    memories_hits: list[dict[str, Any]]
+    memories_hits: list[Hit]
     memories_facts: list[str]
     dated: int
     undated: int
@@ -173,69 +172,6 @@ def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter
     return g.compile()
 
 
-MAX_CONTEXT_CHARS = 72_000
-
-
-def render_hit(hit: dict[str, Any]) -> tuple[str, datetime | None]:
-    """One hit -> ``("(January 20, 2023) Gina: text", when)``.
-
-    ``ANSWER_PROMPT`` Stage 5 does date arithmetic keyed on a literal
-    ``(Month DD, YYYY)`` prefix, and tells the model never to carry a clock time
-    into an answer — so the raw ``ts`` ("4:04 pm on 20 January, 2023") is parsed
-    down to the day. The speaker is kept because Stage 2 checks attribution; the
-    prefixed baseline got that for free with ``Gina:`` inline in the text.
-
-    NO ``ts`` -> the text is passed through untouched. That is the ``--prefix``
-    arm, whose text already carries its own date and speaker inline; prefixing
-    it again would double the date, and dropping it would render a whole arm
-    undated against a prompt that promises dates. Both paths end at the same
-    information, which is what makes the two arms comparable.
-    """
-    text = str(hit.get("text") or "").strip()
-    raw_ts = str(hit.get("ts") or "").strip()
-    when = _parse_date(raw_ts) if raw_ts else None
-    if when is None:
-        return text, extract_date(text)
-    when = when.replace(tzinfo=None)
-    who = str(hit.get("speaker") or "").strip()
-    lead = f"({when.strftime('%B %d, %Y')})"
-    return (f"{lead} {who}: {text}" if who else f"{lead} {text}"), when
-
-
-def render(hits: list[dict[str, Any]]) -> tuple[str, int, int]:
-    """Hits -> the memory block, plus ``(dated, undated)`` counts.
-
-    Dedup and the character budget run in RELEVANCE order (dropping whole
-    memories, never truncating one mid-sentence); only the survivors are then
-    sorted chronologically, because the prompt reads the timeline oldest-first
-    while the choice of what to keep must follow the ranking. Same contract as
-    ``evaluation.common.memories.format_memories`` — reimplemented here rather
-    than imported because that one sources its date by regex-scraping the
-    passage text, which returns nothing once the date is no longer prefixed
-    into it. Every LoCoMo-specific decision stays in this file.
-
-    The counts are returned so a run reports how many memories rendered dated.
-    A clean arm silently falling back to the undated branch is the failure this
-    whole change exists to prevent; it should be visible, not inferred.
-    """
-    seen: set[str] = set()
-    dated: list[tuple[datetime, str]] = []
-    undated: list[str] = []
-    used = 0
-    for hit in hits:
-        block, when = render_hit(hit)
-        if not block or block in seen:
-            continue
-        seen.add(block)
-        cost = len(block) + (2 if used else 0)
-        if used + cost > MAX_CONTEXT_CHARS:
-            continue  # a shorter, lower-ranked memory may still fit
-        used += cost
-        (dated.append((when, block)) if when else undated.append(block))
-    dated.sort(key=lambda pair: pair[0])
-    return "\n\n".join([b for _, b in dated] + undated), len(dated), len(undated)
-
-
 def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI, reference_date: str) -> Any:
     """recall -> answer. One question per invocation.
 
@@ -243,10 +179,18 @@ def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI, reference_date: str) ->
     on dated, attributed memories and a structured fact-sheet; the three-line
     prompt it replaces threw both away, which is half of why the clean-parse arm
     read as a regression.
+
+    Rendering those memories is ``graphknows.render_memories``, not something
+    this file does: dating, attributing, deduping and budgeting a ranked hit
+    list is the library's job on either arm, and the ~60 lines that used to do
+    it here disagreed with the harness's own renderer about where a date comes
+    from. Both arms still work — a hit with a ``ts`` renders dated and
+    attributed, one without (the ``--prefix`` arm) passes through carrying its
+    own inline date — because that distinction lives in :class:`Hit`.
     """
 
     async def answer(state: QAState) -> dict[str, Any]:
-        body, n_dated, n_undated = render(state.get("memories_hits", []))
+        memories = render_memories(state.get("memories_hits", []))
         facts = state.get("memories_facts", [])
         prompt = ANSWER_PROMPT.format(
             reference_date=reference_date or "2023",
@@ -257,7 +201,7 @@ def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI, reference_date: str) ->
                 if facts
                 else ""
             ),
-            memories=body or "(nothing recalled)",
+            memories=memories.text or "(nothing recalled)",
             question=state["messages"][-1]["content"],
         )
         r = await llm.ainvoke(prompt)
@@ -266,8 +210,8 @@ def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI, reference_date: str) ->
                 *state["messages"],
                 {"role": "assistant", "content": extract_answer(str(r.content)) or "Unknown"},
             ],
-            "dated": n_dated,
-            "undated": n_undated,
+            "dated": memories.dated,
+            "undated": memories.undated,
         }
 
     g = StateGraph(QAState)
