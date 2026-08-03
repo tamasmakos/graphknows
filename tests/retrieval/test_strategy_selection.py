@@ -25,11 +25,20 @@ from graphknows.retrieval import build_retriever
 pytestmark = pytest.mark.unit
 
 
-def test_build_retriever_takes_settings_and_store_only() -> None:
-    """No `strategy` parameter: there is nothing to select between."""
+def test_build_retriever_selects_between_nothing() -> None:
+    """No `strategy` parameter: there is nothing to select between.
+
+    ``extra_channels`` is not a selector — it appends caller-supplied channels
+    to the settings-gated defaults, which is how an application reads its own
+    graph structure (the ``collect`` half of ``Channel``) without editing the
+    registry. The list is still pinned, so an actual fork cannot reappear
+    quietly; it just has to be added here deliberately.
+    """
     params = inspect.signature(build_retriever).parameters
-    assert list(params) == ["settings", "store"]
+    assert list(params) == ["settings", "store", "extra_channels"]
     assert params["store"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["extra_channels"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert not any("strateg" in p.lower() or "mode" in p.lower() for p in params)
 
 
 def test_settings_exposes_no_retrieval_strategy() -> None:
