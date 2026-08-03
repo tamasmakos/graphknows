@@ -71,9 +71,15 @@ class TestBuildChannels:
 
 class TestChannelBaseDefaults:
     async def test_defaults_are_noops(self):
+        """Both halves of the seam default to doing nothing.
+
+        ``populate`` replaced a per-chunk ``ingest`` hook that nothing ever
+        called — see tests/channels/test_channel_seam.py, which covers the
+        write half properly.
+        """
         ch = Channel()
         assert await ch.collect(_ctx(), MagicMock(), 5) == {}
-        assert await ch.ingest(MagicMock(), "s", "c", "t", None) is None
+        assert await ch.populate(MagicMock(), "s") is None
 
 
 class TestFrameChannelCollect:

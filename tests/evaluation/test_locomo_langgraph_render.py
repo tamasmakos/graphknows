@@ -11,15 +11,6 @@ What stays LoCoMo's own is how a dataset message becomes a turn.
 
 from __future__ import annotations
 
-import pytest
-
-# The agent imports langchain/langgraph at module scope, and both live in an
-# optional extra that the gate environment does not install. Without this the
-# ImportError aborts COLLECTION — taking the whole suite down, not just this
-# module — which is how it went unnoticed that this file never ran here.
-pytest.importorskip("langchain_openai", reason="requires the langgraph extra")
-pytest.importorskip("langgraph", reason="requires the langgraph extra")
-
 from evaluation.scripts.locomo_langgraph import parse_turn
 
 

@@ -39,13 +39,19 @@ import time
 from typing import Any, TypedDict
 
 from dateparser import parse as _parse_date
-from langchain_openai import ChatOpenAI
-from langgraph.graph import END, START, StateGraph
 
+# langchain/langgraph are imported INSIDE the functions that need them. They
+# live in an optional extra the gate environment does not install, and at module
+# scope the ImportError aborted pytest COLLECTION — so every test of this file's
+# LoCoMo logic silently never ran. Deferring them keeps the schema layer below
+# importable, and therefore testable, without the extra.
 from evaluation.common.llm import extract_answer
 from evaluation.locomo.prompts import ANSWER_PROMPT
 from graphknows import Hit, render_memories
+from graphknows.channels.base import Channel
+from graphknows.channels.temporal import query_date_candidates
 from graphknows.integrations.langgraph import GraphKnowsMemory
+from graphknows.ranking.rrf import rrf_score
 
 DATA = "evaluation/data/locomo/questions.jsonl"
 
@@ -122,6 +128,141 @@ def should_extract(text: str, nlp: Any) -> tuple[bool, str]:
     return False, "clause subject is a bare pronoun with no content noun"
 
 
+# ------------------------------------------------------- custom schema ----
+def session_dates(sessions: list[dict[str, Any]]) -> dict[str, str]:
+    """``{"conv-30-s1": "2023-01-20", ...}`` — one date per session.
+
+    A LoCoMo session is a single conversation-day: all 28 messages of
+    ``conv-30-s1`` carry the identical ``"4:04 pm on 20 January, 2023"``, and 19
+    sessions yield exactly 19 distinct timestamps. That is a property of THIS
+    dataset, not of conversation memory in general — a support thread can span
+    weeks — which is why the session-date layer is built here and not in the
+    library.
+    """
+    out: dict[str, str] = {}
+    for s in sessions:
+        for m in s["messages"]:
+            if (raw := str(m.get("timestamp") or "").strip()) and (when := _parse_date(raw)):
+                out[s["session_id"]] = when.strftime("%Y-%m-%d")
+                break
+    return out
+
+
+class LoCoMoSessionSchema(Channel):
+    """The LoCoMo-shaped graph layer, and the retrieval path it exists for.
+
+    One object holds both halves of the custom schema, which is the point of
+    the seam: ``populate`` writes structure during flush, ``collect`` reads it
+    during recall. A schema that is written but never read is the failure this
+    repo keeps paying for, and keeping both in one class makes that visible.
+
+    What it adds on top of the universal graph:
+
+    ``SESSION-[:ON_DATE]->TEMPORAL``   the conversation-day, as a real node
+    ``CHUNK-[:SAID_BY]->ENTITY``       attribution as an edge, not a string
+    ``CHUNK.ts`` backfill              every chunk inherits its session's date
+
+    The backfill is the measurable one. 26 of conv-30's 81 questions ask *when*
+    something happened and expect a date as the ANSWER, so what decides them is
+    not whether retrieval finds the chunk — entity/semantic/BM25 already do —
+    but whether the answerer knows that chunk's date. A chunk whose own ``ts``
+    came back empty renders undated and the answer is unanswerable from the
+    context. Every chunk belongs to a session, and every LoCoMo session has
+    exactly one date, so the session is a guaranteed fallback. Watch the
+    ``dated=`` percentage in the run report.
+
+    ``SAID_BY`` is deliberately NOT a ``MENTIONS`` edge. Commit c891e7b removed
+    the speaker's MENTIONS link to its own chunk because speaker entities appear
+    in ~half of all chunks and flooded the entity channel — ``_discriminative_
+    entities`` drops anything over 50%. A separate edge type keeps attribution
+    traversable without putting Gina and Jon back into that filter's way.
+    """
+
+    name = "locomo_session"
+
+    def __init__(self, dates: dict[str, str]) -> None:
+        self._dates = dates
+
+    async def populate(self, store: Any, session_id: str) -> None:
+        """Write this session's schema layer. Runs once per flush, after chunks exist."""
+        iso = self._dates.get(session_id, "")
+        # Idempotent DDL, declared by the layer that uses it. ArcadeDB needs an
+        # edge type to exist before an edge of it can be created, and these two
+        # are ours, not the library's.
+        for ddl in (
+            "CREATE EDGE TYPE SAID_BY IF NOT EXISTS",
+            "CREATE EDGE TYPE ON_DATE IF NOT EXISTS",
+        ):
+            await store.client.command(store.database, ddl, language="sql")
+
+        if iso:
+            # The session's own date, as a first-class TEMPORAL node the same
+            # way an in-text date mention is one — so a query can reach a
+            # conversation-day without that day being written in any utterance.
+            await store.command(
+                "MATCH (s:SESSION {session_id: $sid}) "
+                "MERGE (d:TEMPORAL {date: $iso}) "
+                "MERGE (s)-[:ON_DATE]->(d) "
+                "SET s.started_at = $iso",
+                sid=session_id,
+                iso=iso,
+            )
+            # Backfill only where the chunk has no date of its own: the turn's
+            # own timestamp is more precise when present, and overwriting it
+            # would flatten every chunk in a session onto one moment.
+            await store.command(
+                "MATCH (c:CHUNK {session_id: $sid}) "
+                "WHERE c.ts IS NULL OR c.ts = '' "
+                "SET c.ts = $iso",
+                sid=session_id,
+                iso=iso,
+            )
+
+        # Attribution: the chunk's speaker string, resolved to the ENTITY that
+        # already carries that identity. name_norm is the library's merge key
+        # (casefolded, whitespace-collapsed) — matching it is what keeps this
+        # pointing at the real person node instead of minting a second one.
+        await store.command(
+            "MATCH (c:CHUNK {session_id: $sid}) "
+            "WHERE c.speaker IS NOT NULL AND c.speaker <> '' "
+            "MATCH (e:ENTITY) WHERE e.name_norm = toLower(c.speaker) "
+            "MERGE (c)-[:SAID_BY]->(e)",
+            sid=session_id,
+        )
+
+    async def collect(self, ctx: Any, rt: Any, top_k: int) -> dict[str, Any]:
+        """Chunks belonging to a session whose DATE the query names.
+
+        The complement of the built-in temporal channel, which walks
+        ``CHUNK-[:MENTIONS_DATE]->TEMPORAL`` and therefore only finds chunks
+        that SAY the date. "What did Gina find for her clothing store on 1
+        February, 2023?" is answered by a turn that never writes the date down;
+        only its session knows it.
+
+        Small by construction: 2 of conv-30's 81 questions name a date. It is
+        here because it is the honest read half of this schema, not because it
+        is where the accuracy is.
+        """
+        candidates = query_date_candidates(ctx.query)
+        if not candidates:
+            return {}
+        rows = await rt.store.query(
+            "MATCH (d:TEMPORAL)<-[:ON_DATE]-(s:SESSION)<-[:IN_SESSION]-(c:CHUNK) "
+            "WHERE d.date IN $dates "
+            "RETURN c.chunk_id AS chunk_id LIMIT $limit",
+            dates=candidates,
+            limit=top_k,
+        )
+        return {
+            str(r["chunk_id"]): (
+                rrf_score(rank),
+                {"text": "", "entities": [], "sources": {self.name}, "doc_id": "", "metadata": {}},
+            )
+            for rank, r in enumerate(rows)
+            if r.get("chunk_id")
+        }
+
+
 # ------------------------------------------------------------- workflow ----
 class IngestState(TypedDict, total=False):
     turn: dict[str, str]
@@ -141,6 +282,7 @@ class QAState(TypedDict, total=False):
 
 def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter[str]) -> Any:
     """parse -> classify -> store. One turn per invocation."""
+    from langgraph.graph import END, START, StateGraph
 
     def classify(state: IngestState) -> dict[str, Any]:
         ok, why = should_extract(state["turn"]["text"], nlp)
@@ -166,7 +308,7 @@ def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter
     return g.compile()
 
 
-def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI, reference_date: str) -> Any:
+def build_qa_app(mem: GraphKnowsMemory, llm: Any, reference_date: str) -> Any:
     """recall -> answer. One question per invocation.
 
     The answerer is the harness's staged ``ANSWER_PROMPT`` verbatim. It is built
@@ -182,6 +324,7 @@ def build_qa_app(mem: GraphKnowsMemory, llm: ChatOpenAI, reference_date: str) ->
     attributed, one without (the ``--prefix`` arm) passes through carrying its
     own inline date — because that distinction lives in :class:`Hit`.
     """
+    from langgraph.graph import END, START, StateGraph
 
     async def answer(state: QAState) -> dict[str, Any]:
         memories = render_memories(state.get("memories_hits", []))
@@ -222,10 +365,14 @@ async def ingest(
     sessions: list[dict[str, Any]], ns: str, nlp: Any, prefix: bool = False
 ) -> collections.Counter[str]:
     stats: collections.Counter[str] = collections.Counter()
+    # The prefixed baseline sets no metadata fields at all, so it must not get
+    # the session-date layer either — an arm that dates its chunks from the
+    # session while the other dates them from the turn is a two-variable test.
+    schema = [] if prefix else [LoCoMoSessionSchema(session_dates(sessions))]
     for s in sessions:
         sid = s["session_id"]
         t0 = time.monotonic()
-        async with GraphKnowsMemory(sid, namespace=ns) as mem:
+        async with GraphKnowsMemory(sid, namespace=ns, channels=schema) as mem:
             app = build_ingest_app(mem, nlp, stats)
             for msg in s["messages"]:
                 turn = parse_turn(msg, prefix=prefix)
@@ -302,7 +449,10 @@ async def answer_questions(
     reference_date: str,
     sessions: list[dict[str, Any]],
     top_k: int = 25,
+    prefix: bool = False,
 ) -> list[dict[str, Any]]:
+    from langchain_openai import ChatOpenAI
+
     from evaluation.common.dspy_judge import DSPyJudge
 
     judge = DSPyJudge(os.environ.get("LLM_MODEL", "meta-llama/llama-3.3-70b-instruct"))
@@ -315,7 +465,14 @@ async def answer_questions(
         max_retries=2,
     )
     out: list[dict[str, Any]] = []
-    async with GraphKnowsMemory(f"{conv}-qa", namespace=ns, top_k=top_k) as mem:
+    # The same channel object on the read side: its `collect` is the half that
+    # reaches a conversation-day no utterance writes down. It needs no dates of
+    # its own here — `populate` already put them in the graph. The prefixed
+    # baseline never ran `populate`, so it must not carry the channel either:
+    # a sixth leg in the fusion is a second variable even when it returns
+    # nothing, and this comparison is only worth running at one.
+    schema = [] if prefix else [LoCoMoSessionSchema({})]
+    async with GraphKnowsMemory(f"{conv}-qa", namespace=ns, top_k=top_k, channels=schema) as mem:
         app = build_qa_app(mem, llm, reference_date)
         for i, q in enumerate(questions[:limit], start=1):
             state = {"messages": [{"role": "user", "content": q["question"]}]}
@@ -433,7 +590,14 @@ def report(stats: collections.Counter[str], qa: list[dict[str, Any]]) -> None:
 async def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--conv", default="conv-30")
-    p.add_argument("--namespace", default="lg30")
+    p.add_argument(
+        "--namespace",
+        default="",
+        help="physical database to use; defaults to one per conversation "
+        "(conv-30 -> mem_conv_30). Conversations share no entities, so a "
+        "shared namespace merges two Jons into one node and lets one "
+        "conversation's graph answer another's questions.",
+    )
     p.add_argument("--phase", choices=["ingest", "qa", "both"], default="both")
     p.add_argument("--limit", type=int, default=1000)
     p.add_argument("--top-k", type=int, default=25, help="memories recalled per question")
@@ -451,15 +615,24 @@ async def main() -> None:
 
     sessions, questions = load(a.conv)
     nlp = spacy.load(GraphKnowsSettings().spacy_model)
+    ns = a.namespace or a.conv
 
     stats: collections.Counter[str] = collections.Counter()
     qa: list[dict[str, Any]] = []
     print(f"arm: {'PREFIXED (baseline replication)' if a.prefix else 'CLEAN (metadata fields)'}")
+    print(f"conv={a.conv}  namespace={ns}  sessions={len(sessions)}  questions={len(questions)}")
     if a.phase in ("ingest", "both"):
-        stats = await ingest(sessions, a.namespace, nlp, a.prefix)
+        stats = await ingest(sessions, ns, nlp, a.prefix)
     if a.phase in ("qa", "both"):
         qa = await answer_questions(
-            questions, a.namespace, a.conv, a.limit, reference_date_of(sessions), sessions, a.top_k
+            questions,
+            ns,
+            a.conv,
+            a.limit,
+            reference_date_of(sessions),
+            sessions,
+            a.top_k,
+            a.prefix,
         )
     report(stats, qa)
 
