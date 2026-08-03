@@ -18,9 +18,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from graphknows.exceptions import ConfigurationError
 from graphknows.integrations._langgraph_hooks import recall as _recall
 from graphknows.integrations._langgraph_hooks import remember as _remember
 from graphknows.memory import Memory
+from graphknows.settings import GraphKnowsSettings
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +30,11 @@ logger = logging.getLogger(__name__)
 class GraphKnowsMemory:
     """Session-bound memory with ready-to-use LangGraph node callables.
 
-    Builds its own :class:`Memory` when none is supplied, and only closes
-    that self-built instance on ``__aexit__`` — closing a caller-supplied
-    ``Memory`` on exit would be a surprise for a caller who wants to reuse it
-    across sessions::
+    Builds its own :class:`Memory` from ``namespace``/``settings`` when none is
+    supplied, and only closes that self-built instance on ``__aexit__`` —
+    closing a caller-supplied ``Memory`` on exit would be a surprise for a
+    caller who wants to reuse it across sessions. Configuring an integration is
+    therefore one argument, not a construction ritual::
 
         async with GraphKnowsMemory("s1", namespace="demo") as mem:
             await mem.add("Mochi is a ragdoll", speaker="Gina")
@@ -44,6 +47,7 @@ class GraphKnowsMemory:
         *,
         memory: Memory | None = None,
         namespace: str | None = None,
+        settings: GraphKnowsSettings | None = None,
         top_k: int = 5,
         messages_key: str = "messages",
         out_key: str = "memories",
@@ -54,13 +58,22 @@ class GraphKnowsMemory:
         # would have nothing left to do — and a parameter that is accepted and
         # then ignored is indistinguishable from one that works. Isolation
         # between users is the namespace.
+        if memory is not None and (namespace is not None or settings is not None):
+            # These configure the Memory this class would build. Handed one
+            # already built, they have nothing to configure — and silently
+            # dropping them sent a caller's turns to the default namespace with
+            # no error, which reads as "memory is empty" three steps later.
+            raise ConfigurationError(
+                "GraphKnowsMemory: pass either memory=, or namespace=/settings= — not both. "
+                "A supplied Memory already carries its own namespace and settings."
+            )
         self._session_id = session_id
         self._cross_session = cross_session
         self._top_k = top_k
         self._messages_key = messages_key
         self._out_key = out_key
         self._owns_memory = memory is None
-        self._memory = memory if memory is not None else Memory(namespace=namespace)
+        self._memory = memory if memory is not None else Memory(settings, namespace=namespace)
         # Turns buffered since the last flush. A buffered turn mints nothing
         # until flush drains it, so exiting with a non-zero count is a silently
         # empty graph — see __aexit__.
