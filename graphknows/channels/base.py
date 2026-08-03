@@ -89,10 +89,22 @@ class Channel:
 
     name: str = "channel"
 
-    async def ingest(
-        self, rt: Any, session_id: str, chunk_id: str, text: str, extraction: Any
-    ) -> None:
-        """Derive + write this channel's STM structure for one chunk. No-op by default."""
+    async def populate(self, store: Any, session_id: str) -> None:
+        """Write this channel's graph structure for one flushed session. No-op by default.
+
+        Called once per :meth:`graphknows.Memory.flush_memory`, AFTER the
+        session's buffered turns have been drained into CHUNK vertices and
+        before the analytics stages — the one moment custom edges to those
+        chunks can actually land on something. ``store`` is the connected
+        per-namespace GraphStore; its public ``command``/``query`` take raw
+        Cypher, so a channel can declare its own types (idempotent DDL) and
+        write set-based MERGEs in a handful of statements.
+
+        This replaces the per-chunk ``ingest`` hook, which was declared,
+        documented, and never called by anything — and whose shape was wrong
+        anyway: session-level structure (one edge per session) written per
+        chunk is N redundant round-trips for one write.
+        """
         return None
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:

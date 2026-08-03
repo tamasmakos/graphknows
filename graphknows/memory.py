@@ -86,12 +86,21 @@ class Memory:
     """
 
     def __init__(
-        self, settings: GraphKnowsSettings | None = None, namespace: str | None = None
+        self,
+        settings: GraphKnowsSettings | None = None,
+        namespace: str | None = None,
+        channels: list[Any] | None = None,
     ) -> None:
         self.settings = settings or GraphKnowsSettings()
         # The namespace selects one physical ArcadeDB database (mem_<ns>, "" -> mem,
         # the golden layer). Explicit arg wins over the settings default.
         self.namespace = self.settings.namespace if namespace is None else namespace
+        # Caller-supplied channels: the extension seam for an application that
+        # wants its own structure in the graph. One object carries both halves —
+        # `populate` writes it during flush, `collect` reads it during recall —
+        # so a custom schema cannot end up written but unread, or read but
+        # never written. Appended after the settings-gated defaults.
+        self._channels: list[Any] = list(channels or [])
         # One retriever over one connected store, built lazily on first use.
         self._retriever: Any = None
         self._store: Any = None
@@ -147,7 +156,7 @@ class Memory:
         except Exception:
             await self.close()
             raise
-        self._retriever = build_retriever(s, store=store)
+        self._retriever = build_retriever(s, store=store, extra_channels=self._channels)
         return self._retriever
 
     async def doctor(self) -> dict[str, Any]:
@@ -632,6 +641,19 @@ class Memory:
                 turns_ingested = drained["turns"]
                 turn_chunks = drained["chunks"]
             await step("mark_turns_consolidated", store.mark_turns_consolidated(session_id), 0)
+
+            # Caller-supplied structure goes in HERE: the buffer has drained, so
+            # this session's CHUNK vertices exist and custom edges have
+            # something to attach to; the analytics below have not run, so
+            # entity resolution and the topic build see the finished graph.
+            # Each channel soft-fails under its own name — one broken extension
+            # must not cost the consolidation the rest of the flush does.
+            for channel in self._channels:
+                await step(
+                    f"populate:{getattr(channel, 'name', type(channel).__name__)}",
+                    channel.populate(store, session_id),
+                    None,
+                )
 
             resolution = await step(
                 "resolve_entities", resolve_entities(store, session_id), resolution

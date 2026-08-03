@@ -17,12 +17,19 @@ if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
 
 
-def build_retriever(settings: GraphKnowsSettings, *, store: Any) -> Any:
+def build_retriever(
+    settings: GraphKnowsSettings, *, store: Any, extra_channels: list[Any] | None = None
+) -> Any:
     """Return the deterministic retriever (connected store injected).
 
     Args:
         settings: Runtime configuration.
         store: A connected per-namespace GraphStore.
+        extra_channels: Caller-supplied channels, appended after the
+            settings-gated defaults. This is how an application adds a signal
+            over its own graph structure without editing the registry: the same
+            objects whose ``populate`` wrote that structure at flush time are
+            the ones whose ``collect`` reads it back here.
     """
     from graphknows.channels.registry import default_channels
     from graphknows.retrieval.retriever import DETRetriever
@@ -30,7 +37,7 @@ def build_retriever(settings: GraphKnowsSettings, *, store: Any) -> Any:
     return DETRetriever(
         store=store,
         embed_model=settings.embed_model,
-        channels=default_channels(settings),
+        channels=[*default_channels(settings), *(extra_channels or [])],
     )
 
 

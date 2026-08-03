@@ -25,7 +25,19 @@ def test_settings_reach_the_memory_it_builds() -> None:
     assert gm.memory.namespace == "demo"
 
 
-@pytest.mark.parametrize("conflict", [{"namespace": "demo"}, {"settings": None}])
+def test_channels_reach_the_memory_it_builds() -> None:
+    """The extension seam has to be reachable from the integration, not only
+    from ``Memory`` — an agent framework is exactly the caller that wants it."""
+    from graphknows.channels.base import Channel
+
+    channel = Channel()
+
+    gm = GraphKnowsMemory("s1", namespace="demo", channels=[channel])
+
+    assert gm.memory._channels == [channel]
+
+
+@pytest.mark.parametrize("conflict", [{"namespace": "demo"}, {"settings": None}, {"channels": []}])
 def test_configuring_a_supplied_memory_is_refused(conflict: dict) -> None:
     """Silently dropping namespace= sent a caller's turns to the wrong database.
 

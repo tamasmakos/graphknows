@@ -238,6 +238,22 @@ class GraphStore(ArcadeStoreBase):
                     "MERGE (c)-[:PART_OF]->(f)",
                     rows=edge_rows,
                 )
+            # CHUNK-[:IN_SESSION]->SESSION, from the session_id already on the
+            # row. TURN has carried this edge since the buffer landed; without
+            # it a chunk reached its session only via PART_OF->FILE->IN_SESSION,
+            # which does not exist for a chunk written with no file_id. MATCH,
+            # not MERGE, on the SESSION: the caller creates it (ensure_session),
+            # and merging here would mint an empty-id vertex for any chunk that
+            # legitimately has no session.
+            session_rows = [r for r in rows if r["sid"]]
+            if session_rows:
+                await self.command(
+                    "UNWIND $rows AS row "
+                    "MATCH (c:CHUNK {chunk_id: row.cid}) "
+                    "MATCH (s:SESSION {session_id: row.sid}) "
+                    "MERGE (c)-[:IN_SESSION]->(s)",
+                    rows=session_rows,
+                )
             for c in batch:
                 if c.get("embedding"):
                     await self._set_embedding("CHUNK", "chunk_id", c["chunk_id"], c["embedding"])

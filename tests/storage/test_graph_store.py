@@ -718,6 +718,34 @@ async def test_write_chunks_bulk_batches_at_cap() -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_chunks_bulk_links_each_chunk_to_its_session() -> None:
+    """CHUNK-[:IN_SESSION]->SESSION, from the session_id already on every row.
+
+    TURN has carried this edge since the buffer landed; CHUNK never did, so a
+    chunk reached its session only through CHUNK-[:PART_OF]->FILE-[:IN_SESSION]
+    ->SESSION — which does not exist at all for a chunk written with no
+    file_id. Every traversal that wanted 'the session this memory came from'
+    had to fall back to matching on the string property instead.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client)
+
+    await store.write_chunks_bulk(
+        [
+            {"chunk_id": "c1", "session_id": "s1", "text": "t1"},  # no file_id
+            {"chunk_id": "c2", "session_id": "", "text": "t2"},  # no session either
+        ]
+    )
+
+    session_edges = [c for c in client.command.await_args_list if "IN_SESSION" in c.args[1]]
+    assert len(session_edges) == 1
+    # Only the chunk that HAS a session is linked; a sessionless chunk must not
+    # MERGE a SESSION vertex with an empty id into existence.
+    assert [r["cid"] for r in session_edges[0].kwargs["params"]["rows"]] == ["c1"]
+    assert "MATCH (s:SESSION {session_id: row.sid})" in session_edges[0].args[1]
+
+
+@pytest.mark.asyncio
 async def test_write_chunk_embedding_is_inline_literal() -> None:
     client = _mock_client()
     store = GraphStore(client=client)

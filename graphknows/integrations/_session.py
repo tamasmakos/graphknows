@@ -49,6 +49,7 @@ class GraphKnowsMemory:
         memory: Memory | None = None,
         namespace: str | None = None,
         settings: GraphKnowsSettings | None = None,
+        channels: list[Any] | None = None,
         top_k: int = 5,
         messages_key: str = "messages",
         out_key: str = "memories",
@@ -59,14 +60,17 @@ class GraphKnowsMemory:
         # would have nothing left to do — and a parameter that is accepted and
         # then ignored is indistinguishable from one that works. Isolation
         # between users is the namespace.
-        if memory is not None and (namespace is not None or settings is not None):
+        if memory is not None and (
+            namespace is not None or settings is not None or channels is not None
+        ):
             # These configure the Memory this class would build. Handed one
             # already built, they have nothing to configure — and silently
             # dropping them sent a caller's turns to the default namespace with
             # no error, which reads as "memory is empty" three steps later.
             raise ConfigurationError(
-                "GraphKnowsMemory: pass either memory=, or namespace=/settings= — not both. "
-                "A supplied Memory already carries its own namespace and settings."
+                "GraphKnowsMemory: pass either memory=, or namespace=/settings=/channels= "
+                "— not both. A supplied Memory already carries its own namespace, "
+                "settings and channels."
             )
         self._session_id = session_id
         self._cross_session = cross_session
@@ -74,7 +78,11 @@ class GraphKnowsMemory:
         self._messages_key = messages_key
         self._out_key = out_key
         self._owns_memory = memory is None
-        self._memory = memory if memory is not None else Memory(settings, namespace=namespace)
+        self._memory = (
+            memory
+            if memory is not None
+            else Memory(settings, namespace=namespace, channels=channels)
+        )
         # Turns buffered since the last flush. A buffered turn mints nothing
         # until flush drains it, so exiting with a non-zero count is a silently
         # empty graph — see __aexit__.
