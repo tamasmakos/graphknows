@@ -1,3 +1,6 @@
+# ALWAYS COMMIT WITH EXTREMELY SHORT COMMIT MESSAGES AND NEVER ADD CLAUDE AS AUTHOR
+
+
 # graphknows — agent contract
 
 Agentic memory: knowledge-graph ingestion + hybrid retrieval. Package in
