@@ -149,16 +149,10 @@ def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter
 
     async def store(state: IngestState) -> dict[str, Any]:
         t = state["turn"]
-        await mem.memory.add(
-            [
-                {
-                    "role": "user",
-                    "name": t["speaker"],  # -> CHUNK.speaker
-                    "content": t["text"],  # clean utterance, no prefix
-                    "timestamp": t["timestamp"],  # -> relative-date anchor
-                }
-            ],
-            run_id=mem.session_id,
+        await mem.add(
+            t["text"],  # clean utterance, no prefix
+            speaker=t["speaker"],  # -> CHUNK.speaker
+            timestamp=t["timestamp"],  # -> relative-date anchor
             infer=state["infer"],
         )
         return {}

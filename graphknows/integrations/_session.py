@@ -15,11 +15,14 @@ it wraps.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from graphknows.integrations._langgraph_hooks import recall as _recall
 from graphknows.integrations._langgraph_hooks import remember as _remember
 from graphknows.memory import Memory
+
+logger = logging.getLogger(__name__)
 
 
 class GraphKnowsMemory:
@@ -28,7 +31,11 @@ class GraphKnowsMemory:
     Builds its own :class:`Memory` when none is supplied, and only closes
     that self-built instance on ``__aexit__`` — closing a caller-supplied
     ``Memory`` on exit would be a surprise for a caller who wants to reuse it
-    across sessions.
+    across sessions::
+
+        async with GraphKnowsMemory("s1", namespace="demo") as mem:
+            await mem.add("Mochi is a ragdoll", speaker="Gina")
+            await mem.flush()
     """
 
     def __init__(
@@ -54,6 +61,10 @@ class GraphKnowsMemory:
         self._out_key = out_key
         self._owns_memory = memory is None
         self._memory = memory if memory is not None else Memory(namespace=namespace)
+        # Turns buffered since the last flush. A buffered turn mints nothing
+        # until flush drains it, so exiting with a non-zero count is a silently
+        # empty graph — see __aexit__.
+        self._unflushed = 0
 
     @property
     def memory(self) -> Memory:
@@ -69,10 +80,60 @@ class GraphKnowsMemory:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        # Exiting without flushing is not an error — a caller may deliberately
+        # leave the buffer for a later session to drain — but it is
+        # indistinguishable from a broken install unless it is said out loud:
+        # buffered turns are retrievable only via scope="stm", mint no entities,
+        # and answer nothing from the graph.
+        if self._unflushed:
+            logger.warning(
+                "GraphKnowsMemory(%r) closed with %d unflushed turn(s): they mint no "
+                "entities and are invisible to graph recall until flush() runs.",
+                self._session_id,
+                self._unflushed,
+            )
         # Only close a Memory this object built — a caller-supplied Memory
         # may be shared across sessions and outlives this context.
         if self._owns_memory:
             await self._memory.close()
+
+    async def add(
+        self,
+        text: str,
+        *,
+        speaker: str = "",
+        timestamp: str = "",
+        role: str = "user",
+        infer: bool = True,
+    ) -> dict[str, Any]:
+        """Buffer one turn into this session's short-term memory.
+
+        The direct write, for a caller that already has a structured turn —
+        ``remember`` is the same operation reading a framework's message state.
+        Each field goes where it belongs instead of being flattened into the
+        text: ``speaker`` becomes the turn's name (and the chunk's speaker),
+        ``timestamp`` becomes the anchor its relative dates resolve against.
+        Flattening either one into ``text`` is what mints greetings like
+        "Hey Jon" as entities and dates a 2023 conversation to ingestion time.
+
+        ``infer`` is the caller's extraction decision, per turn: a turn stored
+        with ``infer=False`` is still written, embedded and retrievable as text
+        — it just mints no entities. The library has no opinion on which turns
+        are worth extracting from; only the caller knows.
+
+        Buffered turns reach the graph on :meth:`flush`, not here.
+        """
+        body = text.strip()
+        if not body:
+            return {"turns": 0}
+        turn: dict[str, Any] = {"role": role, "content": body}
+        if speaker:
+            turn["name"] = speaker
+        if timestamp:
+            turn["timestamp"] = timestamp
+        result = await self._memory.ingest_memory([turn], session_id=self._session_id, infer=infer)
+        self._unflushed += 1
+        return result
 
     async def recall(self, state: dict[str, Any]) -> dict[str, Any]:
         """LangGraph node: recall memories for the latest turn.
@@ -93,16 +154,20 @@ class GraphKnowsMemory:
 
     async def remember(self, state: dict[str, Any]) -> dict[str, Any]:
         """LangGraph node: buffer the latest turn into short-term memory."""
-        return await _remember(
+        update = await _remember(
             state,
             memory=self._memory,
             session_id=self._session_id,
             messages_key=self._messages_key,
         )
+        self._unflushed += 1
+        return update
 
     async def flush(self) -> dict[str, Any]:
         """Ingest this session's buffered turns and consolidate the graph."""
-        return await self._memory.flush(session_id=self._session_id)
+        result = await self._memory.flush(session_id=self._session_id)
+        self._unflushed = 0
+        return result
 
     async def stats(self) -> dict[str, Any]:
         """This session's memory statistics (turns/chunks/entities/topics)."""
