@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from graphknows.server.mcp._app import app
-from graphknows.server.mcp._state import get_or_init_retriever
+from graphknows.server.mcp._state import get_runtime
 
 
 @app.tool()
@@ -16,52 +16,42 @@ async def memory_query(
     scope: str = "both",
     namespace: str = "",
 ) -> dict[str, Any]:
-    """Retrieve the most relevant memory chunks for a query.
+    """Retrieve the most relevant memories for a query.
 
-    Searches short-term memory (STM), long-term memory (LTM), or both,
-    using dense vector search with optional entity-graph boosting when
-    the LTM entity index is populated.
+    A thin adapter over :meth:`graphknows.Memory.recall_memory` — the same call
+    an in-process caller makes, so this transport cannot drift from it. Driving
+    the retriever directly here is what left the MCP hit shape without a speaker
+    or a timestamp, capped ``top_k`` where the facade had deliberately removed
+    its ceiling, and gave ``scope="stm"`` a different meaning over MCP than in
+    process.
 
     Args:
         query: Natural-language question or search phrase.
-        session_id: Session namespace for STM scoping (used when scope
-            includes ``"stm"``).
-        top_k: Maximum hits to return (1-100, default 10).
-        scope: Which memory tier to search — ``"stm"`` (session chunks),
-            ``"ltm"`` (promoted long-term chunks), or ``"both"`` (default).
+        session_id: Session to scope the search to.
+        top_k: Maximum hits to return. Uncapped: the caller decides how much
+            memory it wants and pays the context for it.
+        scope: Which memory tier to search — ``"stm"`` (this session's buffered,
+            unflushed turns), ``"ltm"`` (the graph), or ``"both"`` (default).
         namespace: Tenant isolation boundary (default: the server's
             ``GRAPHKNOWS_NAMESPACE``).
 
     Returns:
-        Dict with a ``hits`` list, each hit containing ``text``, ``score``,
-        ``chunk_id``, ``doc_id``, ``sources``, ``entities``, and ``metadata``
-        (resolved temporal dates, memory_class, community).
+        Dict with a ``hits`` list — each hit the wire form of
+        :class:`~graphknows.models.hit.Hit` (``text``, ``speaker``, ``ts``,
+        ``score``, ``sources``, ``session_id``, ``chunk_id``, ``doc_id``,
+        ``entities``, ``metadata``) — plus ``total``, ``query``, ``scope`` and
+        the structured ``facts`` sheet.
     """
-    top_k = max(1, min(top_k, 100))
-    if scope not in ("stm", "ltm", "both"):
-        scope = "both"
-
-    retriever = await get_or_init_retriever(namespace)
-    ctx = await retriever.retrieve(query, session_id, top_k=top_k, scope=scope)
-
-    hits = [
-        {
-            "text": fc["text"],
-            "score": fc["rrf_score"],
-            "chunk_id": fc["chunk_id"],
-            "doc_id": fc["doc_id"],
-            "sources": fc.get("sources", ""),
-            "entities": fc.get("entities", []),
-            "metadata": fc.get("metadata", {}),
-        }
-        for fc in ctx.fused_results
-    ]
-    facts = list(getattr(ctx, "facts", []) or [])
+    runtime = await get_runtime(namespace)
+    result = await runtime.recall_memory(query, session_id=session_id, top_k=top_k, scope=scope)
+    hits = result.get("hits", [])
     return {
-        "hits": hits,
+        "hits": [h.to_dict() for h in hits],
         "total": len(hits),
         "query": query,
-        "scope": scope,
-        "facts": facts,
-        "search_type": getattr(ctx, "search_type", ""),
+        # What the facade actually searched, as it reports it — an unknown
+        # scope falls back there, and duplicating that rule here is how the two
+        # came to disagree in the first place.
+        "scope": result.get("scope", scope),
+        "facts": list(result.get("facts", []) or []),
     }

@@ -411,7 +411,10 @@ class Memory:
             graph_hits = _format_fused_hits(ctx.fused_results, session_id)
             facts = list(getattr(ctx, "facts", []) or [])
 
-        return {"hits": (stm_hits + graph_hits)[:top_k], "facts": facts}
+        # ``scope`` is echoed back POST-normalisation so a caller reports what
+        # was actually searched rather than what it asked for — and so no
+        # transport has to reimplement the fallback rule to say so.
+        return {"hits": (stm_hits + graph_hits)[:top_k], "facts": facts, "scope": scope}
 
     def _topic_summarizer_for(self, mode: Any) -> Any:
         """The LLM summarizer for ``mode``; ``None`` for every non-llm mode.
