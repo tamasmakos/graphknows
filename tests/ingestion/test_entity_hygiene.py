@@ -594,3 +594,44 @@ class TestRelationEndpointProvenance:
 
         await _Store().write_relation("Maria", "HAS", "lease", speaker="Gina")
         assert self._norms_written(calls) is None
+
+
+class TestUtteranceBoundarySpans:
+    """A span running across a sentence or a speaker line is two fragments, not a name.
+
+    Introduced by multi-turn extraction (``GRAPHKNOWS_EXTRACT_WINDOW``): with a
+    window of consecutive turns the model can open a span in one turn and close
+    it in the next. Measured on conv-30 — 2/733 such names (0%) when turns were
+    extracted alone, 10/282 (4%) with a 5-turn window — and they arrive through
+    RELATION ENDPOINTS as well as the entity path, which is why the rule lives
+    in ``is_graph_entity_name`` where both routes pass through it.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "business. Gina: Sorry about your job Jon",  # the measured case
+            "Jon. Hang in there and Jon",
+            "Gina: Sorry about your job",  # speaker colon alone
+            "I lost my job. Starting a business",  # sentence break alone
+            "dance studio\nGina",  # the window's own newline join
+        ],
+    )
+    def test_a_span_crossing_a_boundary_is_refused(self, name: str) -> None:
+        assert is_graph_entity_name(name) is False
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Dr. Nagy",  # title abbreviation
+            "U.S. Army",  # initialism
+            "J. R. Ewing",  # initials
+            "St. Louis",
+            "Mochi",
+            "dance studio",
+            "Door Dash",
+        ],
+    )
+    def test_a_real_name_with_periods_survives(self, name: str) -> None:
+        """The rule must key on SENTENCE-ending periods, not on any period at all."""
+        assert is_graph_entity_name(name) is True

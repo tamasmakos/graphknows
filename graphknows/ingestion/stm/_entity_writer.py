@@ -85,6 +85,16 @@ _STOPWORD_NAMES = frozenset(
 # Code, markup, URLs: GLiNER on technical text mints spans like
 # "http://localhost:5000" or "Flask application: ```python from flask import".
 _CODE_MARKUP_RE = re.compile(r"```|https?://|www\.|://|[{}<>=|]|::|\(\)|\[\]")
+# A sentence ending INSIDE a span: three or more letters, a period, then a new
+# capitalised word. Abbreviations ("Dr. Nagy", "U.S. Army", "J. R. Ewing") have
+# one or two letters before the period and are deliberately not matched.
+_SENTENCE_BREAK_RE = re.compile(r"[A-Za-z]{3,}\.\s+[A-Z]")
+# The dialogue window's own attribution shape, where the span OPENS on it:
+# "Gina: Sorry about your job". Anchored, because an unanchored colon rule also
+# matches a subtitle ("Charlotte's Web: A Review") and those are real names. A
+# speaker colon appearing mid-span is preceded by the end of the previous
+# sentence, which _SENTENCE_BREAK_RE already catches.
+_SPEAKER_COLON_RE = re.compile(r"^[A-Z][\w'-]{1,20}:\s")
 # A proper entity is a noun phrase, not a sentence or a heading — cap the words.
 #
 # KNOWN TOO PERMISSIVE, deliberately unchanged. Measured on LoCoMo conv-30 (369
@@ -228,6 +238,29 @@ def _is_clause_fragment(name: str) -> bool:
     return "'" in tokens[0] and (stem in _CLAUSE_OPENERS or stem == "")
 
 
+def _spans_an_utterance_boundary(name: str) -> bool:
+    """A span running across a sentence or a speaker line — two fragments, not a name.
+
+    The sibling of ``_is_clause_fragment``'s ``!``/``?`` rule, for the two
+    boundaries that rule cannot see. Both are minted by multi-turn extraction:
+    with a window of consecutive turns the model can open a span in one turn and
+    close it in the next, producing
+    ``"business. Gina: Sorry about your job Jon"`` — a single ENTITY carrying two
+    speakers and two sentences. Measured on conv-30: 0/733 such names when
+    turns were extracted alone, 10/282 with a 5-turn window.
+
+    A bare ``.`` is NOT enough, because real names carry them ("Dr. Nagy",
+    "U.S. Army", "J. R. Ewing"). The signal is a sentence-ending period — a word
+    of three or more letters, then ``.``, then whitespace and a capital — which
+    no abbreviation produces. The speaker colon is matched on the same shape the
+    dialogue window itself writes: ``Name: ``.
+    """
+    stripped = name.strip()
+    if "\n" in stripped:
+        return True
+    return bool(_SENTENCE_BREAK_RE.search(stripped) or _SPEAKER_COLON_RE.search(stripped))
+
+
 def _is_stopword_name(name: str) -> bool:
     stripped = name.strip()
     # Acronym-shaped tokens (all-caps, 2-3 chars) collide with function words
@@ -275,7 +308,7 @@ def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
         return False
     if _is_backchannel(stripped) or _is_vocative_address(stripped):
         return False
-    if _is_clause_fragment(stripped):
+    if _is_clause_fragment(stripped) or _spans_an_utterance_boundary(stripped):
         return False
     if _is_degenerate_name(stripped):
         return False
