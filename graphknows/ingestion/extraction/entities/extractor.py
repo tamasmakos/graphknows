@@ -10,7 +10,8 @@ handed, so an empty spaCy observation is not an empty schema.
 RELATION labels are the ontology's. ``extra_relation_labels`` is
 ``{property label -> definition}`` for the ontology properties nearest THIS
 chunk's embedding, selected by the caller (``stm/ingest.py::_label_hints``), and
-it IS the relation spec — relex is asked for schema.org's ``worksFor``/``knows``,
+it IS the relation spec — relex is asked for CCO's ``is supervised by``/``has
+brother``,
 nothing else.
 
 That used to be an SVO miner's open-vocabulary predicates, unioned with the
@@ -310,7 +311,7 @@ def _entity_type(raw_label: str, label_to_type: dict[str, str]) -> str:
     41 distinct types against a 763/10 baseline, led by EMOTION 275, ACTIVITY
     202, RELATIONSHIP 113, POSSESSION 106, GOAL 96 — all class labels of the
     ontology that run configured, all MENTIONS-linked (so minted here, not as
-    relation endpoints). The schema.org default leaks the same way at a smaller
+    relation endpoints). The bundled default leaks the same way at a smaller
     scale: BANKACCOUNT, HOWTO, WHOLESALESTORE on dance-studio dialogue.
 
     The span itself is kept: the ontology hint is what made relex find it, and

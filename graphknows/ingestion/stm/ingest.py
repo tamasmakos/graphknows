@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import time
+from collections import deque
 from itertools import zip_longest
 from typing import Any
 
@@ -76,6 +77,24 @@ _PERSON_CLASS = "person"
 _RANGE_GATE_MIN_CLASS_SIM = 0.7
 
 
+def _entities_from(entities: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
+    """Entities lying in the current turn, with spans rebased onto it.
+
+    Spans before ``offset`` belong to the window's earlier turns, which already
+    minted them against their own chunks. An entity carrying no offsets at all
+    (``start < 0``) is kept: it cannot be attributed to an earlier turn any more
+    than to this one, and dropping a real extraction is the worse error.
+    """
+    kept = []
+    for ent in entities:
+        start = int(ent.get("start", -1))
+        if start < 0:
+            kept.append(ent)
+        elif start >= offset:
+            kept.append({**ent, "start": start - offset, "end": int(ent.get("end", 0)) - offset})
+    return kept
+
+
 class _STMIngestHandler:
     """Ingest parsed text into the golden GraphStore (state='raw').
 
@@ -86,15 +105,14 @@ class _STMIngestHandler:
         _rel_extractor: Optional relation extractor (llm_assisted).
         _ontology: Optional OntologyIndex (ctor arg ``ontology_index``); its
             CLASSES are the per-chunk entity label hints, the chunk
-            MATCHES_CLASS tags and the entity INSTANCE_OF edges. schema.org by
-            default, which does that job well.
+            MATCHES_CLASS tags and the entity INSTANCE_OF edges. The bundled
+            CCO digest by default.
         _relations: Optional OntologyIndex (ctor arg ``relation_index``); its
             PROPERTIES are the relation vocabulary offered to the extractor and
-            the domain/range gate over what comes back. A SEPARATE index,
-            because schema.org's 945 object properties are measurably the wrong
-            relation vocabulary; defaults to the bundled profile
-            (``settings.relation_ontology_source``), resolved here rather than
-            injected so no composition root has to know there are two.
+            the domain/range gate over what comes back. Defaults to the same
+            bundled digest (``settings.relation_ontology_source``) but stays a
+            separate index, so a deployment can point relations at a curated
+            vocabulary without replacing the classes that type entities.
     """
 
     def __init__(
@@ -123,19 +141,30 @@ class _STMIngestHandler:
         self._uri_by_label: dict[str, str] = {}
         self._type_cache: dict[str, tuple[str, str, float]] = {}
         # Entity type -> RELATION-profile class, memoised the same way and kept
-        # separate: the two vocabularies answer differently on purpose ("STORE"
-        # is schema.org's own ``Store`` for typing, and a ``Place`` for deciding
-        # which properties its presence evokes).
+        # separate: the two vocabularies are the same file by default but need
+        # not be, and a type resolves against each independently.
         self._profile_class_cache: dict[str, tuple[str, float]] = {}
+        # Recent speaker-attributed turns per session, for the extraction window
+        # (see ingest_turn). Bounded by ``extract_window``; a session that ends
+        # leaves at most that many strings behind. Read here rather than beside
+        # the ontology settings below, because the window is independent of
+        # whether an ontology is configured.
+        from graphknows.settings import GraphKnowsSettings as _Settings
+
+        self._extract_window: int = _Settings().extract_window
+        self._recent_turns: dict[str, deque[str]] = {}
         # rdfs:domain / rdfs:range per property label (both multi-valued), and
         # each class's parent chain. These are the ingredients of BOTH halves of
         # the ontology's job now: selecting which properties a chunk is offered
         # (_relation_labels) and gating which of the extracted ones get annotated
         # (_domain_admits / _range_admits). All three are already parsed by the
         # loader; the predicate mapper is a pure string matcher and never sees
-        # them. They come from the RELATION profile, which declares its own
-        # subClassOf — the schema.org digest carries none, so _class_ancestors
-        # degenerated to the class itself while the gate read that vocabulary.
+        # them. They come from the RELATION vocabulary. The parent chain is
+        # load-bearing and was inert until CCO: the schema.org digest declared
+        # no subClassOf at all, so _class_ancestors degenerated to the class
+        # itself and a property declared on a supertype was never evoked by a
+        # subtype. CCO ships the hierarchy (Person -> Animal -> ...), so the
+        # walk now reaches those properties.
         self._domain_by_property: dict[str, tuple[str, ...]] = {}
         self._range_by_property: dict[str, tuple[str, ...]] = {}
         self._parents_by_class: dict[str, tuple[str, ...]] = {}
@@ -428,10 +457,24 @@ class _STMIngestHandler:
         # selects the candidate entity labels, so no extra embedding call.
         ent_hints = self._label_hints([embedding])
         entity_labels = ent_hints[0] if ent_hints else None
+        # The extraction WINDOW. A turn read alone loses what the turns before it
+        # established: "She said yes" asserts something only if the previous turn
+        # named her. The window prepends the recent speaker-attributed turns so
+        # the extractor resolves across the turn boundary, while ``clean`` — this
+        # turn alone — remains what is stored, embedded and retrieved.
+        #
+        # ``offset`` is where this turn starts inside that text, and it is what
+        # keeps provenance honest: only spans at or past it become this chunk's
+        # entities. Without that filter every turn would re-mint the previous
+        # four turns' entities and hang MENTIONS edges for them on the wrong
+        # chunk. Relations are deliberately NOT filtered — a triplet whose head
+        # came from an earlier turn is the entire point, and its endpoints merge
+        # by name onto the ENTITY nodes those turns already created.
+        window_text, offset = self._extraction_window(session_id, clean, speaker or role)
         extraction = (
             await asyncio.to_thread(
                 self._extract,
-                clean,
+                window_text,
                 entity_labels,
                 # Pass 1: entities only. The relation vocabulary is selected from
                 # the types this pass finds, so it cannot precede it.
@@ -449,7 +492,7 @@ class _STMIngestHandler:
         if infer and (rel_labels := self._relation_labels(extraction.entities)):
             t_rel = time.monotonic()
             extraction = await asyncio.to_thread(
-                self._extract, clean, entity_labels, rel_labels, speaker or role
+                self._extract, window_text, entity_labels, rel_labels, speaker or role
             )
             log.debug(
                 "relation pass on turn seq=%s: %d properties offered, %.0f ms",
@@ -457,6 +500,8 @@ class _STMIngestHandler:
                 len(rel_labels),
                 1000 * (time.monotonic() - t_rel),
             )
+        if infer and offset:
+            extraction.entities = _entities_from(extraction.entities, offset)
         anchor = metadata.get("timestamp") or metadata.get("anchor_date")
         temporal = self._resolve_temporal_entities(extraction.entities, anchor)
         chunk_id = hashlib.sha256(f"{session_id}:{file_id}:{seq}:{clean}".encode()).hexdigest()[:16]
@@ -483,6 +528,36 @@ class _STMIngestHandler:
     # ------------------------------------------------------------------
     # Private step methods
     # ------------------------------------------------------------------
+
+    def _extraction_window(self, session_id: str, clean: str, speaker: str) -> tuple[str, int]:
+        """``(text to extract from, where this turn starts in it)``.
+
+        The turn is always the tail of the window, so a zero offset means the
+        window is off (``extract_window <= 1``) or this is the session's first
+        turn — and in both cases the returned text IS ``clean``, byte for byte,
+        which is what makes ``extract_window=1`` an exact replay of the
+        pre-window behaviour rather than an approximation of it.
+
+        Earlier turns are attributed inline ("Gina: ...") because that is the
+        only way the extractor can tell who said what across the boundary; this
+        turn's own text stays bare, with its speaker passed as a parameter, so
+        the deixis handling that anchors first-person clauses is unchanged. The
+        speaker-as-entity risk the inline form carries is contained by the
+        offset filter: spans in the attributed prefix never become this chunk's
+        entities.
+
+        Every turn joins the buffer, including ones the caller declined to
+        extract from: a greeting asserts nothing itself but still establishes
+        who is being addressed, which is what a later turn's pronoun needs.
+        """
+        window = self._extract_window
+        recent = self._recent_turns.setdefault(session_id, deque(maxlen=max(window - 1, 0)))
+        prefix = "\n".join(recent)
+        recent.append(f"{speaker}: {clean}" if speaker else clean)
+        if window <= 1 or not prefix:
+            return clean, 0
+        text = f"{prefix}\n{clean}"
+        return text, len(prefix) + 1
 
     async def _ensure_session_and_file(
         self,
@@ -778,7 +853,7 @@ class _STMIngestHandler:
 
         Gated by top-k AND a cosine floor (``ontology_hint_min_sim``). Top-k
         alone was enough while the bundled ontology had 11 classes; against
-        schema.org's 979 it hands twelve arbitrary labels to a chunk that says
+        CCO's 1401 it hands twelve arbitrary labels to a chunk that says
         "Thanks, Gina!". A chunk with nothing above the floor gets an EMPTY hint
         list — a distinct, counted outcome, not twelve bad guesses — and the
         extractor falls back to its base inventory for that chunk.
@@ -865,8 +940,8 @@ class _STMIngestHandler:
 
         Same two stages as :meth:`_map_to_class` — exact label first ("PERSON" ->
         ``Person``), then the type string embedded against the class definitions
-        — but over the profile's nine classes rather than schema.org's 979, which
-        is the vocabulary the properties' domain and range are written in.
+        — but over the RELATION vocabulary's classes, which is where the
+        properties' declared domain and range are written.
 
         ``("", 0.0)`` means the type names nothing the profile can type a
         relation endpoint with, and contributes no property to the offer.

@@ -29,19 +29,22 @@ from graphknows.exceptions import ConfigurationError
 # from ``graphknows.ontology``: settings sits BELOW ontology in the layering
 # (see CLAUDE.md), so the dependency may only point the other way.
 _BUNDLED_ONTOLOGY = str(
-    Path(__file__).resolve().parent / "ontology" / "assets" / "schemaorg" / "schemaorg.json"
+    Path(__file__).resolve().parent / "ontology" / "assets" / "cco" / "cco.json"
 )
 
-# The relation vocabulary, which is a DIFFERENT file from the ontology above and
-# deliberately so. schema.org types entities well (a real ingest produced 180
-# correct INSTANCE_OF edges) and supplies relation properties badly: selecting
-# among its 945 object properties by whole-chunk cosine returns topically-close,
-# relationally-irrelevant terms on dialogue and produced ZERO relations over 60
-# real turns. The bundled profile is 25 properties, each declaring a domain and
-# a range, which is what the selection now keys on.
-_BUNDLED_RELATION_PROFILE = str(
-    Path(__file__).resolve().parent / "ontology" / "assets" / "profile" / "personal-profile.json"
-)
+# The relation vocabulary. This used to be a DIFFERENT file from the ontology
+# above: schema.org typed entities well and supplied relation properties badly
+# (selecting among its 945 object properties by whole-chunk cosine returned
+# topically-close, relationally-irrelevant terms and produced ZERO relations
+# over 60 real turns), so a hand-curated 25-property profile carried relations.
+#
+# The Common Core Ontologies serve both jobs, so the split is gone: 1401 classes
+# to type entities, and 224 object properties of which 112 declare the domain
+# and range that property selection keys on — including the 86 familial
+# relations that are the conversational vocabulary the profile was invented to
+# supply. Both names remain so that pointing GRAPHKNOWS_RELATION_ONTOLOGY at a
+# separate curated vocabulary is still a supported override.
+_BUNDLED_RELATION_PROFILE = _BUNDLED_ONTOLOGY
 
 
 class MemoryMode(StrEnum):
@@ -195,10 +198,13 @@ class GraphKnowsSettings(BaseSettings):
     # in-memory OntologyTerm from the loader, so ONTOLOGY_PROPERTY vertices
     # would be write-only. Read via ``ontology_source``.
     #
-    # The default is the bundled schema.org digest: a pre-parsed JSON of 979
-    # classes and 945 object properties that loads WITHOUT rdflib (which ships
-    # only in the ``assisted`` extra), so a bare `pip install graphknows` gets
-    # the same ontology the container does. GRAPHKNOWS_ONTOLOGY overrides it
+    # The default is the bundled Common Core Ontologies digest: a pre-parsed
+    # JSON of 1401 classes and 224 object properties that loads WITHOUT rdflib
+    # (which ships only in the ``assisted`` extra), so a bare `pip install
+    # graphknows` gets the same ontology the container does, and both memory
+    # modes load it through one identical code path.
+    # ``scripts/build_ontology_digest.py`` regenerates it from the TTL sources
+    # under ``ontology/assets/cco-*``. GRAPHKNOWS_ONTOLOGY overrides it
     # with any other RDF/OWL/TTL file, digest, or folder of them — an override,
     # not an on/off switch: an EMPTY value means "unset" (which is how
     # docker-compose spells an absent variable,
@@ -210,20 +216,42 @@ class GraphKnowsSettings(BaseSettings):
     # eval CLIs) keep working; ``ontology`` wins when both are set.
     ontology_file: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_FILE")
 
-    # Cosine floor for the per-chunk ontology label hints. Measured over 20 real
-    # LoCoMo conv-30 turns against the bundled schema.org digest with bge-small:
-    # the whole 979-class space spans 0.218-0.721 with median 0.454, while the
-    # weakest genuine top-1 is 0.537 (class) / 0.495 (property). 0.50 therefore
-    # sits above the ontology's average term — a hint has to beat the mean to be
-    # offered — and below the weakest real match, so no contentful chunk loses
-    # its best candidate. Raising it starves the relation vocabulary fast: at
-    # 0.58, 4/20 chunks get NO property hint at all.
+    # Cosine floor for the per-chunk ontology CLASS hints (properties are chosen
+    # structurally by domain/range, not by this floor). Re-measured over 20 real
+    # LoCoMo conv-30 turns against the bundled CCO digest with bge-small — the
+    # schema.org numbers this replaces do not transfer, because CCO's
+    # genus-differentia definitions sit in a tighter band: the whole 1401-class
+    # space spans 0.168-0.683 with median 0.409 and p95 0.493, and the weakest
+    # genuine per-turn top-1 is 0.497.
     #
-    # This bounds hint VOLUME, not quality: absolute cosines against schema.org
-    # are not calibrated enough to separate a right term from a wrong one (a
-    # job-loss turn matches ``AutoPartsStore`` at 0.721, while ``Person`` ranks
-    # 327/979 on the same turn). Re-census before retuning.
-    ontology_hint_min_sim: float = Field(default=0.50, alias="GRAPHKNOWS_ONTOLOGY_HINT_MIN_SIM")
+    # 0.46 therefore sits above the ontology's average term — a hint has to beat
+    # the mean to be offered — and below every turn's best match, so 0/20 turns
+    # lose their top candidate. Raising it starves fast on this distribution:
+    # 0.54 leaves 3/20 turns with no class hint at all.
+    #
+    # This bounds hint VOLUME, not quality: absolute cosines are not calibrated
+    # enough to separate a right term from a wrong one (a shopping turn's top-3
+    # is ``Grocery Store``/``Shop``/``Warehouse`` at 0.68-0.63, which is good,
+    # but a thank-you turn tops out at ``Artifact History`` 0.545, which is not).
+    # Re-census before retuning.
+    ontology_hint_min_sim: float = Field(default=0.46, alias="GRAPHKNOWS_ONTOLOGY_HINT_MIN_SIM")
+
+    # How many consecutive turns the extractor reads at once. A turn extracted
+    # alone loses everything the turns before it established — "She said yes"
+    # asserts nothing extractable unless the previous turn named her — so the
+    # window prepends the recent speaker-attributed turns to the one being
+    # ingested. Only the current turn is stored, embedded and retrieved; the
+    # window widens what the EXTRACTOR sees, never what memory holds.
+    #
+    # The same triplet is then found by several overlapping windows, which is
+    # intended and costs nothing: ``write_relation`` MERGEs on
+    # (head, predicate, tail), appending each asserting chunk to the edge's
+    # evidence list and keeping the max confidence and verifier score.
+    #
+    # 1 disables the window and is an exact replay of the pre-window behaviour,
+    # which is what makes it the control arm of an A/B rather than an
+    # approximation of one.
+    extract_window: int = Field(default=5, ge=1, alias="GRAPHKNOWS_EXTRACT_WINDOW")
 
     # The relation vocabulary. Same override semantics as ``ontology`` (empty
     # means unset, not off) and read via ``relation_ontology_source``. Point it
@@ -275,7 +303,7 @@ class GraphKnowsSettings(BaseSettings):
         """The ontology file or folder to load, honouring the deprecated alias.
 
         Never empty: an unset or empty ``GRAPHKNOWS_ONTOLOGY`` falls back to the
-        bundled schema.org digest. There is no "no ontology" state — a caller
+        bundled CCO digest. There is no "no ontology" state — a caller
         that hands ``load_ontology_index`` an empty string bypassed settings,
         and that function logs the fact.
         """
@@ -285,9 +313,10 @@ class GraphKnowsSettings(BaseSettings):
     def relation_ontology_source(self) -> str:
         """The vocabulary relation properties are drawn from — never empty.
 
-        Separate from :attr:`ontology_source` because the two vocabularies do
-        different jobs: classes type entities, properties type relations, and
-        the vocabulary that is best at one is measurably bad at the other.
+        Defaults to the same bundled digest as :attr:`ontology_source` — CCO
+        supplies both vocabularies — but stays a separate knob so a deployment
+        can point relations at a curated domain profile without replacing the
+        class vocabulary that types entities.
         """
         return self.relation_ontology.strip() or _BUNDLED_RELATION_PROFILE
 

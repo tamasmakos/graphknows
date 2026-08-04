@@ -17,9 +17,12 @@ Two measured failures are what this file locks down.
    turns produced ``colleague``/``owns``/``follows``. So the profile has to be
    big enough to hold near misses, and the per-chunk offer lands in 8-15.
 
-The split this file also pins: schema.org keeps typing ENTITIES (it produced 180
-correct INSTANCE_OF edges on a real ingest), while the profile supplies the
-RELATION properties. Two indexes, two jobs.
+What this file pins is the SELECTION MACHINERY, not the bundled vocabulary. The
+bundle is now a single ontology — the CCO digest serves both jobs, and its own
+shape is asserted in ``test_cco_digest.py`` — so the curated profile lives on
+here as a test fixture: 25 properties with a hand-checked domain/range table is
+what these assertions need, and re-deriving them against CCO's 1401 classes
+would test the ontology rather than the code.
 """
 
 from __future__ import annotations
@@ -37,9 +40,8 @@ from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.stm.ingest import _RELATION_LABEL_CAP, _STMIngestHandler
 from graphknows.ontology.catalog import load_ontology_index
 from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
-from graphknows.settings import GraphKnowsSettings
 
-PROFILE = Path(GraphKnowsSettings().relation_ontology_source)
+PROFILE = Path(__file__).resolve().parents[1] / "fixtures" / "ontology" / "personal-profile.json"
 
 # The three terms the research note invents because no surveyed vocabulary has
 # an equivalent (schema.org has no like/dislike/plan property on Person, and

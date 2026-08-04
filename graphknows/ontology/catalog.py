@@ -16,9 +16,10 @@ It differs from the frame index in two ways that matter:
 
 Absolute cosines are NOT calibrated, and the floors below are volume controls,
 not decision thresholds. Measured over 20 real LoCoMo turns against the bundled
-schema.org digest with bge-small, the whole 979-class space spans 0.218-0.721
-(median 0.454) and the top-1 is frequently wrong at the top of that range — a
-job-loss turn matches ``AutoPartsStore`` at 0.721 while ``Person`` ranks 327/979.
+CCO digest with bge-small, the whole 1401-class space spans 0.168-0.683 (median
+0.409, p95 0.493) and a high cosine is not a correctness signal — a thank-you
+turn's best class is ``Artifact History`` at 0.545, above the median that a
+correctly-matched shopping turn's third-best (``Warehouse``, 0.628) also clears.
 Rank top-k, keep the floor above the space's own median, and do not read a high
 cosine as a correct term.
 """
@@ -42,23 +43,22 @@ log = logging.getLogger(__name__)
 # Fallback floor for direct ``match_*`` callers. The label-hint path passes
 # ``settings.ontology_hint_min_sim`` explicitly and that setting carries the
 # measurement; the two are pinned equal by
-# ``tests/ontology/test_schemaorg_digest.py``.
+# ``tests/ontology/test_cco_digest.py``.
 #
 # This used to be 0.0 — "gated by top-k alone" — which was harmless while the
 # only bundled ontology had 11 classes, so top-12 WAS the whole ontology. The
-# default ontology is now schema.org's 979 classes, where an unfloored top-12
-# hands twelve arbitrary labels to every chunk, including "Thanks, Gina!".
-DEFAULT_MIN_SIM: float = 0.50
+# default ontology is now CCO's 1401 classes, where an unfloored top-12 hands
+# twelve arbitrary labels to every chunk, including "Thanks, Gina!".
+DEFAULT_MIN_SIM: float = 0.46
 
 # Persisted CHUNK->ONTOLOGY_CLASS tags are a different matter: they are stored
 # signal that a retrieval channel later trusts, so they take a stricter floor
-# than the hints. 0.20 was that floor while the ontology had 11 classes; against
-# schema.org it is below the class space's own MEDIAN similarity (0.454 over 20
-# real LoCoMo turns), i.e. no floor at all — every chunk was tagged with three
-# classes regardless of match. 0.60 sits above the space's p95 (0.568), so a tag
-# has to be an outlier match rather than an average one; measured cost is 2/20
-# chunks losing every tag and mean tags/chunk 3.00 -> 2.60.
-TAG_MIN_SIM: float = 0.60
+# than the hints. It must sit above the class space's own p95, or it is not a
+# floor at all — at CCO's median (0.409) every chunk is tagged regardless of
+# match. 0.52 clears the measured p95 (0.493 over 20 real LoCoMo conv-30 turns
+# with bge-small), so a tag has to be an outlier match rather than an average
+# one; measured cost is 1/20 chunks losing every tag.
+TAG_MIN_SIM: float = 0.52
 
 # Ontology terms offered to the extractor per chunk. GLiNER's practical label
 # ceiling is ~24 including the mined + base inventory, so the ontology gets a

@@ -44,14 +44,7 @@ from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
 from graphknows.ontology.catalog import load_ontology_index
 
-PERSONAL_TTL = (
-    Path(__file__).resolve().parents[2]
-    / "graphknows"
-    / "ontology"
-    / "assets"
-    / "personal"
-    / "personal.ttl"
-)
+PERSONAL_TTL = Path(__file__).resolve().parents[1] / "fixtures" / "ontology" / "personal.ttl"
 
 
 @pytest.fixture(scope="module")

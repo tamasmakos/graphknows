@@ -87,12 +87,12 @@ class TestEmptyEnvVars:
 
 
 class TestOntologySource:
-    def test_unset_resolves_to_the_bundled_schemaorg_digest(self) -> None:
+    def test_unset_resolves_to_the_bundled_cco_digest(self) -> None:
         """Ontology injection is always on: no configuration still yields one."""
         from pathlib import Path
 
         source = Path(GraphKnowsSettings().ontology_source)
-        assert source.parts[-3:] == ("assets", "schemaorg", "schemaorg.json")
+        assert source.parts[-3:] == ("assets", "cco", "cco.json")
         assert source.is_file()
 
     def test_empty_env_still_yields_the_bundled_ontology(self) -> None:
@@ -101,19 +101,22 @@ class TestOntologySource:
         assert GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY="").ontology_source == default
         assert GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY="   ").ontology_source == default
 
-    def test_relations_resolve_to_a_different_bundled_vocabulary(self) -> None:
-        """Entity typing and relation extraction do not share a vocabulary.
+    def test_relations_resolve_to_the_same_bundled_vocabulary(self) -> None:
+        """One ontology now serves both jobs, but the knob stays separate.
 
-        schema.org types entities well and supplies relation properties badly
-        (945 of them, cosine-selected, 0 relations over 60 real turns), so the
-        relation side defaults to the curated profile instead.
+        Entity typing and relation extraction used to need different files:
+        schema.org typed entities well and supplied relation properties badly
+        (945 of them, cosine-selected, 0 relations over 60 real turns), so a
+        curated profile carried relations. CCO supplies both — 1401 classes and
+        112 domain/range-typed properties — so the default is shared, while the
+        override remains so a deployment can still split them.
         """
         from pathlib import Path
 
         source = Path(GraphKnowsSettings().relation_ontology_source)
-        assert source.parts[-3:] == ("assets", "profile", "personal-profile.json")
+        assert source.parts[-3:] == ("assets", "cco", "cco.json")
         assert source.is_file()
-        assert str(source) != GraphKnowsSettings().ontology_source
+        assert str(source) == GraphKnowsSettings().ontology_source
 
     def test_empty_relation_env_still_yields_the_bundled_profile(self) -> None:
         default = GraphKnowsSettings().relation_ontology_source
@@ -126,8 +129,8 @@ class TestOntologySource:
         )
 
     def test_hint_floor_default(self) -> None:
-        """Measured over 20 LoCoMo turns against schema.org — see settings.py."""
-        assert GraphKnowsSettings().ontology_hint_min_sim == 0.50
+        """Measured over 20 LoCoMo turns against the CCO digest — see settings.py."""
+        assert GraphKnowsSettings().ontology_hint_min_sim == 0.46
 
     def test_deprecated_alias_still_honoured(self) -> None:
         s = GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY_FILE="/tmp/legacy.ttl")

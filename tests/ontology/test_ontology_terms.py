@@ -15,8 +15,8 @@ import pytest
 from graphknows.ontology.catalog import OntologyIndex, load_ontology_index, reset_ontology_indexes
 from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
 
-ASSETS = Path(__file__).resolve().parents[2] / "graphknows" / "ontology" / "assets"
-PERSONAL_TTL = ASSETS / "personal" / "personal.ttl"
+ASSETS = Path(__file__).resolve().parents[1] / "fixtures" / "ontology"
+PERSONAL_TTL = ASSETS / "personal.ttl"
 
 
 class TestLoadOntologyTerms:
@@ -44,14 +44,20 @@ class TestLoadOntologyTerms:
         assert attended.range == ("Event",)
 
     def test_folder_loads_every_ontology_beneath_it(self) -> None:
+        """Pointing at a folder must reach every ontology in it, not just the first.
+
+        Asserted as "more terms, from more than one file" rather than an exact
+        count: the fixture folder mixes a TTL, its JSON-LD digest and a relation
+        profile precisely so the mixed-format folder path is exercised.
+        """
         one = load_ontology_terms(PERSONAL_TTL)
         several = load_ontology_terms(ASSETS)
-        assert len(several) > len(one) * 5  # the bundle spans 6 ontologies
-        assert {t.source for t in several} != {str(PERSONAL_TTL)}
+        assert len(several) > len(one)
+        assert len({t.source for t in several}) > 1
 
     def test_folder_dedupes_by_label_not_uri(self) -> None:
         """personal/ holds the TTL and its JSON-LD digest; labels must not double."""
-        terms = load_ontology_terms(ASSETS / "personal")
+        terms = load_ontology_terms(ASSETS)
         keys = [(t.kind, t.label.casefold()) for t in terms]
         assert len(keys) == len(set(keys))
 

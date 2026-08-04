@@ -720,11 +720,27 @@ class GraphStore(ArcadeStoreBase):
         # reads. The ONTOLOGY_PROPERTY vertices, the DECLARES edges and the
         # SUBCLASS_OF hierarchy were written here and read by nothing.
         class_terms = [t for t in terms if t.kind == "class"]
-        rows = [{"uri": t.uri, "label": t.label, "definition": t.definition} for t in class_terms]
+        # ``module`` is the sub-ontology the term is curated in ("AgentOntology")
+        # and ``parents`` its declared superclasses, as labels. Both are
+        # descriptive metadata on the node, not a second hierarchy: nothing
+        # selects on them, they make a match traceable to what supplied it. CCO's
+        # IRIs are opaque (``ont00001774``), so without the module a persisted
+        # tag cannot be attributed to a source at all.
+        rows = [
+            {
+                "uri": t.uri,
+                "label": t.label,
+                "definition": t.definition,
+                "module": t.module,
+                "parents": ", ".join(t.parents),
+            }
+            for t in class_terms
+        ]
         if rows:
             await self.command(
                 "UNWIND $rows AS r MERGE (n:ONTOLOGY_CLASS {uri: r.uri}) "
-                "SET n.label = r.label, n.definition = r.definition",
+                "SET n.label = r.label, n.definition = r.definition, "
+                "n.module = r.module, n.parents = r.parents",
                 rows=rows,
             )
         # Embeddings are per-row inline literals: LIST params conflict with the

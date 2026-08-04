@@ -37,7 +37,7 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
         enable_frames=settings.enable_frames,
         # Mode-independent and always on: ontology injection steers extraction
         # identically in llm_free and llm_assisted, and ``ontology_source``
-        # falls back to the bundled schema.org digest. ``None`` here therefore
+        # falls back to the bundled CCO digest. ``None`` here therefore
         # means the load FAILED, which load_ontology_index logs.
         ontology_index=load_ontology_index(settings.ontology_source),
     )

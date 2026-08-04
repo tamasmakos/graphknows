@@ -25,9 +25,9 @@ import pytest
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-ASSETS_ROOT = REPO_ROOT / "graphknows" / "ontology" / "assets"
-PERSONAL_TTL = ASSETS_ROOT / "personal" / "personal.ttl"
-PERSONAL_SUMMARY = ASSETS_ROOT / "personal" / "personal-summary.jsonld"
+ASSETS_ROOT = REPO_ROOT / "tests" / "fixtures" / "ontology"
+PERSONAL_TTL = ASSETS_ROOT / "personal.ttl"
+PERSONAL_SUMMARY = ASSETS_ROOT / "personal-summary.jsonld"
 
 _ONTOLOGY_PKG = REPO_ROOT / "graphknows" / "ontology"
 _RELATIONS_PKG = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations"

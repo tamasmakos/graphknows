@@ -1,17 +1,25 @@
-"""The bundled schema.org digest: the always-on default ontology.
+"""The bundled Common Core Ontologies digest: the always-on default ontology.
 
-Three things are load-bearing here and each has a test that fails loudly:
+Four things are load-bearing here and each has a test that fails loudly:
 
 1. **No rdflib.** ``rdflib`` ships in the ``assisted`` extra, but the ontology
-   layer now runs in the default ``llm_free`` mode a bare ``pip install
-   graphknows`` gives. Loading the digest must therefore be pure ``json`` —
-   asserted by loading it in a fresh interpreter and checking ``sys.modules``.
-2. **Multi-valued domain/range.** schema.org declares ``domainIncludes`` /
-   ``rangeIncludes`` and both repeat (``about`` has six domains). A single-string
-   field silently kept one of them.
-3. **A similarity floor on the label hints.** With 933 classes the top-k is no
-   longer "the whole ontology", so an unfloored top-12 injects twelve arbitrary
-   labels into every chunk's extraction schema.
+   layer runs in the default ``llm_free`` mode a bare ``pip install graphknows``
+   gives. Loading the digest must therefore be pure ``json`` — asserted by
+   loading it in a fresh interpreter and checking ``sys.modules``. This is also
+   what makes the two memory modes load the ontology identically.
+2. **Offerable relations.** Property selection is gated on domain and range, so
+   a property declaring neither can never be offered to the extractor. CCO's 86
+   familial relations declare neither, and none is inheritable — the whole chain
+   up to "has familial relationship to" is empty — so the digest asserts
+   Person->Person for that module. Lose that and the conversational relation
+   vocabulary silently disappears while everything still passes.
+3. **Multi-value-capable domain/range.** CCO happens to declare one domain per
+   property, but the field stays a tuple: the any-match conformance below is
+   written against multi-valued declarations and a single-string field would
+   silently keep one of them.
+4. **A similarity floor on the label hints.** With 1401 classes the top-k is not
+   "the whole ontology", so an unfloored top-12 injects twelve arbitrary labels
+   into every chunk's extraction schema.
 """
 
 from __future__ import annotations
@@ -29,12 +37,7 @@ from graphknows.ingestion.stm.ingest import _STMIngestHandler
 from graphknows.ontology.loader import OntologyTerm, load_ontology_terms, load_rdf_ontology_file
 
 DIGEST = (
-    Path(__file__).resolve().parents[2]
-    / "graphknows"
-    / "ontology"
-    / "assets"
-    / "schemaorg"
-    / "schemaorg.json"
+    Path(__file__).resolve().parents[2] / "graphknows" / "ontology" / "assets" / "cco" / "cco.json"
 )
 
 
@@ -64,54 +67,63 @@ class TestDigestLoads:
             [sys.executable, "-c", code], capture_output=True, text=True, check=True
         )
         result = json.loads(out.stdout.strip().splitlines()[-1])
-        assert result == {"n": 1878, "rdflib": False}  # 933 classes + 945 properties
+        assert result == {"n": 1625, "rdflib": False}  # 1401 classes + 224 properties
 
     def test_term_counts(self, terms: list[OntologyTerm]) -> None:
-        """933 class labels + 945 object properties.
+        """1401 classes + 224 object properties, from 11 CCO modules + familial.
 
-        933, not the 1010 rdfs:Class subjects in the Turtle: the digest is
-        namespace-filtered to https://schema.org/. schema.org links other
-        vocabularies via owl:equivalentClass and those targets are typed
-        rdfs:Class in the same file, so a type-only filter swept in 77 foreign
-        terms — SNOMED codes, LRMoo, DCMI, an FIBO BankAccount. They reached a
-        live graph (13 unece + 8 SNOMED ONTOLOGY_CLASS nodes in mem_lg30v4) and
-        minted ENTITY types like BANKACCOUNT on dialogue.
+        Object properties only: an ``owl:DatatypeProperty`` describes a literal
+        attribute, not a link between two entities, so it can never be an
+        ENTITY->ENTITY relation and would only dilute the label space.
         """
-        assert len([t for t in terms if t.kind == "class"]) == 933
-        assert len([t for t in terms if t.kind == "property"]) == 945
+        assert len([t for t in terms if t.kind == "class"]) == 1401
+        assert len([t for t in terms if t.kind == "property"]) == 224
 
-    def test_definition_wins_over_a_bare_duplicate_label(self, terms: list[OntologyTerm]) -> None:
-        """foaf:Person and schema:Person share a label; the defined one must win."""
+    def test_a_class_carries_its_definition_and_module(self, terms: list[OntologyTerm]) -> None:
+        """The definition is what gets embedded; the module is what makes a match traceable.
+
+        CCO IRIs are opaque (``ont00001262``), so without the module a persisted
+        tag cannot be attributed to a source ontology at all.
+        """
         person = _term(terms, "class", "Person")
-        assert person.uri == "https://schema.org/Person"
-        assert person.definition == "A person (alive, dead, undead, or fictional)."
+        assert person.uri == "https://www.commoncoreontologies.org/ont00001262"
+        assert person.definition == "An Animal that is a member of the species Homo sapiens."
+        assert person.module == "AgentOntology"
+        assert person.parents == ("Animal",)
 
-    def test_single_valued_domain_and_range(self, terms: list[OntologyTerm]) -> None:
-        works_for = _term(terms, "property", "worksFor")
-        assert works_for.domain == ("Person",)
-        assert works_for.range == ("Organization",)
-        assert works_for.definition == "Organizations that the person works for."
+    def test_declared_domain_and_range_survive_as_tuples(self, terms: list[OntologyTerm]) -> None:
+        supervised = _term(terms, "property", "is supervised by")
+        assert supervised.domain == ("Person",)
+        assert supervised.range == ("Person",)
 
-    def test_multi_valued_domain_keeps_every_declaration(self, terms: list[OntologyTerm]) -> None:
-        """``schema:about`` declares six domains; none of them may be dropped."""
-        about = _term(terms, "property", "about")
-        assert about.domain == (
-            "Certification",
-            "CommunicateAction",
-            "CreativeWork",
-            "DefinedTerm",
-            "DefinedTermSet",
-            "Event",
-        )
-        assert about.range == ("Thing",)
+    def test_familial_relations_are_offerable(self, terms: list[OntologyTerm]) -> None:
+        """The 86 familial properties declare no domain/range, and the gate needs one.
+
+        CCO states none anywhere on the chain ("has brother" -> "is sibling of"
+        -> "has familial relationship to" are all empty), so the digest asserts
+        Person->Person for the module — true of it by construction. Without
+        this every familial relation is unofferable and the conversational
+        relation vocabulary is silently empty.
+        """
+        brother = _term(terms, "property", "has brother")
+        assert brother.module == "FamilialRelationsOntology"
+        assert (brother.domain, brother.range) == (("Person",), ("Person",))
+
+    def test_the_relation_vocabulary_is_not_mostly_unofferable(
+        self, terms: list[OntologyTerm]
+    ) -> None:
+        """Half the properties must be selectable, or the swap regressed relations."""
+        properties = [t for t in terms if t.kind == "property"]
+        offerable = [t for t in properties if t.domain and t.range]
+        assert len(offerable) == 112
 
     def test_label_list_view_also_avoids_rdflib(self) -> None:
         """The DSPy path loads the same digest through ``load_rdf_ontology_file``."""
         manifest = load_rdf_ontology_file(DIGEST)
-        assert len(manifest.class_labels) == 933
-        assert len(manifest.property_labels) == 945
+        assert len(manifest.class_labels) == 1401
+        assert len(manifest.property_labels) == 224
         assert "Person" in manifest.class_labels
-        assert "worksFor" in manifest.property_labels
+        assert "has brother" in manifest.property_labels
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +258,7 @@ class TestHintFloor:
         from graphknows.ontology.catalog import DEFAULT_MIN_SIM
         from graphknows.settings import GraphKnowsSettings
 
-        assert DEFAULT_MIN_SIM == GraphKnowsSettings().ontology_hint_min_sim == 0.50
+        assert DEFAULT_MIN_SIM == GraphKnowsSettings().ontology_hint_min_sim == 0.46
 
     def test_hints_are_floored_not_just_top_k(self) -> None:
         """Only terms above the floor are hinted — top-k alone injects noise.
@@ -254,7 +266,7 @@ class TestHintFloor:
         Classes only: property hints are no longer selected by cosine at all
         (see ``_relation_labels`` and ``tests/ontology/test_relation_profile``).
         """
-        index = _FloorIndex([0.70, 0.60, 0.40, 0.10])  # floor is 0.50
+        index = _FloorIndex([0.70, 0.60, 0.40, 0.10])  # floor is 0.46
         handler = _handler_for(index)
         assert handler._label_hints([[0.1] * 4]) == [["C0", "C1"]]
         assert index.seen_min_sim == [handler._hint_min_sim]

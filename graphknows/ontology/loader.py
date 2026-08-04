@@ -13,7 +13,7 @@ Both take a path the caller supplies. Bundled ontologies under ``assets/`` are
 addressed the same way as any other file or folder.
 
 Three input shapes are recognised, in this order: our pre-built **digest** JSON
-(``assets/schemaorg/schemaorg.json``, the always-on default), then RDF/OWL/TTL,
+(``assets/cco/cco.json``, the always-on default), then RDF/OWL/TTL,
 then the legacy ``*-summary.jsonld`` label lists. The digest is first because it
 is the only shape parsed with the standard library alone — ``rdflib`` lives in
 the ``assisted`` extra, and the default ``llm_free`` install does not have it.
@@ -65,14 +65,18 @@ class OntologyTerm:
     label: str
     definition: str
     kind: str  # "class" | "property"
-    # Multi-valued, because schema.org's ``domainIncludes``/``rangeIncludes``
-    # are: ``about`` declares six domains. Conformance is any-match — a relation
+    # Multi-valued because a vocabulary may declare several: schema.org's
+    # ``about`` declared six domains. Conformance is any-match — a relation
     # conforms when its subject satisfies ANY declared domain (see
     # ``_domain_admits``). Tuples, not lists: this dataclass is frozen and hashed.
     domain: tuple[str, ...] = ()
     range: tuple[str, ...] = ()
     parents: tuple[str, ...] = ()
     source: str = ""
+    # The sub-ontology a term is curated in ("AgentOntology"), when the source
+    # says so. Carried onto the ONTOLOGY_CLASS node so a match can be traced to
+    # the module that supplied it; never used for selection.
+    module: str = ""
 
     @property
     def index_text(self) -> str:
@@ -189,7 +193,7 @@ def _digest_payload(path: Path) -> dict[str, Any] | None:
 
     A digest is our own pre-parsed shape (``scripts/build_ontology_digest.py``):
     ``{"classes": [{"uri", "label", "definition"}], "properties": [...]}``. It is
-    recognised BEFORE any RDF path so the bundled schema.org ontology — the
+    recognised BEFORE any RDF path so the bundled CCO ontology — the
     default in every mode — never needs ``rdflib``, which ships only in the
     ``assisted`` extra. rdflib would in fact "parse" this file as JSON-LD and
     return nothing, so the ordering is what makes the default path work at all.
@@ -227,6 +231,7 @@ def _terms_from_digest(path: Path) -> list[OntologyTerm]:
             range=tuple(entry.get("range") or ()),
             parents=tuple(entry.get("parents") or ()),
             source=source,
+            module=str(entry.get("module") or ""),
         )
         for kind, key in (("class", "classes"), ("property", "properties"))
         for entry in data.get(key) or []
@@ -349,7 +354,7 @@ def load_rdf_ontology_file(path: str | Path) -> RdfOntologyManifest:
     callers must provide an RDF/OWL file, and missing labels are errors rather
     than reasons to fall back to taxonomy YAML or generated defaults.
 
-    A pre-built digest (the bundled schema.org default) is accepted here too and
+    A pre-built digest (the bundled CCO default) is accepted here too and
     handled without rdflib: this is the path ``build_relation_extractor`` hands
     ``settings.ontology_source``, which now defaults to that digest.
     """
