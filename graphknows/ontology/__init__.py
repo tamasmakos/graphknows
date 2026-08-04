@@ -27,22 +27,42 @@ from graphknows.ontology.catalog import (
     load_ontology_index,
     reset_ontology_indexes,
 )
+from graphknows.ontology.labels import COARSE, entity_labels, relation_labels
+from graphknows.ontology.lexical import document_frequency, evoked, usable_index
 from graphknows.ontology.loader import (
     OntologyTerm,
     RdfOntologyManifest,
     load_ontology_terms,
     load_rdf_ontology_file,
 )
+from graphknows.ontology.skos import (
+    Concept,
+    ancestors,
+    build_scheme,
+    extend_scheme,
+    lexical_index,
+)
 
 __all__ = [
+    "COARSE",
     "DEFAULT_MIN_SIM",
     "DEFAULT_TOP_K",
     "TAG_MIN_SIM",
+    "Concept",
     "OntologyIndex",
     "OntologyTerm",
     "RdfOntologyManifest",
+    "ancestors",
+    "build_scheme",
+    "document_frequency",
+    "entity_labels",
+    "evoked",
+    "extend_scheme",
+    "lexical_index",
     "load_ontology_index",
     "load_ontology_terms",
     "load_rdf_ontology_file",
+    "relation_labels",
     "reset_ontology_indexes",
+    "usable_index",
 ]

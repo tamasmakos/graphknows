@@ -23,51 +23,59 @@ def _handler(window: int) -> _STMIngestHandler:
     return handler
 
 
+def _window(handler: _STMIngestHandler, session: str, text: str, speaker: str) -> tuple[str, int]:
+    """``(text, offset)`` — the per-turn spans are exercised in test_lexical_labels."""
+    rendered, offset, _spans = handler._extraction_window(session, text, speaker)
+    return rendered, offset
+
+
 def test_first_turn_is_its_own_window() -> None:
     """Nothing precedes it, so the text is the turn verbatim and the offset is 0."""
-    text, offset = _handler(5)._extraction_window("s1", "I adopted a dog.", "Gina")
+    text, offset = _window(_handler(5), "s1", "I adopted a dog.", "Gina")
     assert (text, offset) == ("I adopted a dog.", 0)
 
 
 def test_window_of_one_is_an_exact_replay() -> None:
     """The control arm must be byte-identical, not merely similar."""
     handler = _handler(1)
-    handler._extraction_window("s1", "I adopted a dog.", "Gina")
-    text, offset = handler._extraction_window("s1", "What did you name her?", "Jon")
+    _window(handler, "s1", "I adopted a dog.", "Gina")
+    text, offset = _window(handler, "s1", "What did you name her?", "Jon")
     assert (text, offset) == ("What did you name her?", 0)
 
 
 def test_later_turn_carries_the_attributed_prefix() -> None:
     handler = _handler(5)
-    handler._extraction_window("s1", "I adopted a dog.", "Gina")
-    text, offset = handler._extraction_window("s1", "What did you name her?", "Jon")
+    _window(handler, "s1", "I adopted a dog.", "Gina")
+    text, offset = _window(handler, "s1", "What did you name her?", "Jon")
 
-    assert text == "Gina: I adopted a dog.\nWhat did you name her?"
+    # Every line is speaker-attributed now, including the current turn — deixis
+    # rewrites that line too, so it needs the same attribution the prefix has.
+    assert text == "Gina: Gina adopted a dog.\nJon: What did Gina name her?"
     # The offset must land exactly on the current turn, or the entity filter
     # silently keeps or drops the wrong spans.
-    assert text[offset:] == "What did you name her?"
+    assert text[offset:] == "What did Gina name her?"
 
 
 def test_window_holds_at_most_the_configured_turns() -> None:
     handler = _handler(3)
     for i in range(5):
-        text, _ = handler._extraction_window("s1", f"turn {i}", "Gina")
+        text, _ = _window(handler, "s1", f"turn {i}", "Gina")
     # window=3 means this turn plus the 2 before it.
-    assert text == "Gina: turn 2\nGina: turn 3\nturn 4"
+    assert text == "Gina: turn 2\nGina: turn 3\nGina: turn 4"
 
 
 def test_sessions_do_not_bleed_into_each_other() -> None:
     handler = _handler(5)
-    handler._extraction_window("s1", "I adopted a dog.", "Gina")
-    text, offset = handler._extraction_window("s2", "Different conversation.", "Jon")
+    _window(handler, "s1", "I adopted a dog.", "Gina")
+    text, offset = _window(handler, "s2", "Different conversation.", "Jon")
     assert (text, offset) == ("Different conversation.", 0)
 
 
 def test_unextracted_turns_still_provide_context() -> None:
     """A greeting mints nothing but still establishes who is being addressed."""
     handler = _handler(5)
-    handler._extraction_window("s1", "Hey Jon!", "Gina")
-    text, _ = handler._extraction_window("s1", "How is the studio?", "Jon")
+    _window(handler, "s1", "Hey Jon!", "Gina")
+    text, _ = _window(handler, "s1", "How is the studio?", "Jon")
     assert text.startswith("Gina: Hey Jon!")
 
 

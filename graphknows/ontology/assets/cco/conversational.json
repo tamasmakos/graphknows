@@ -1,0 +1,357 @@
+{
+  "_comment": "An INPUT SKOS concept scheme layered over CCO. This is the shape a user supplies: concepts with a prefLabel, altLabels (the lexical surface CCO lacks), a broader link into CCO's hierarchy, and domain/range in CCO's own class vocabulary. Nothing here is a hardcoded predicate in the code — it is data, and swapping this file swaps the vocabulary. CCO supplies the upper structure and the entity classes; this supplies the everyday relations a conversation actually asserts, which CCO does not model as binary predicates because BFO treats them as processes.",
+  "classes": [
+    {
+      "uri": "gk:DanceStudio",
+      "label": "Dance Studio",
+      "definition": "A facility where dance is taught, rehearsed or performed.",
+      "parents": [
+        "Facility"
+      ],
+      "altLabels": [
+        "studio",
+        "dance studio",
+        "dance school"
+      ]
+    },
+    {
+      "uri": "gk:Store",
+      "label": "Store",
+      "definition": "A facility where goods are sold to the public.",
+      "parents": [
+        "Facility",
+        "Organization"
+      ],
+      "altLabels": [
+        "store",
+        "shop",
+        "boutique",
+        "storefront"
+      ]
+    },
+    {
+      "uri": "gk:Hobby",
+      "label": "Hobby",
+      "definition": "An activity pursued regularly for pleasure rather than payment.",
+      "parents": [
+        "Act"
+      ],
+      "altLabels": [
+        "hobby",
+        "passion",
+        "pastime",
+        "interest"
+      ]
+    },
+    {
+      "uri": "gk:Pet",
+      "label": "Pet",
+      "definition": "An animal kept for companionship.",
+      "parents": [
+        "Animal"
+      ],
+      "altLabels": [
+        "pet",
+        "dog",
+        "cat",
+        "puppy",
+        "kitten"
+      ]
+    },
+    {
+      "uri": "gk:Illness",
+      "label": "Illness",
+      "definition": "A condition of poor health affecting a person.",
+      "parents": [
+        "Act"
+      ],
+      "altLabels": [
+        "illness",
+        "sickness",
+        "injury",
+        "surgery",
+        "diagnosis"
+      ]
+    },
+    {
+      "uri": "gk:Trip",
+      "label": "Trip",
+      "definition": "A journey to a place and back.",
+      "parents": [
+        "Act of Travel"
+      ],
+      "altLabels": [
+        "trip",
+        "journey",
+        "vacation",
+        "holiday",
+        "visit"
+      ]
+    }
+  ],
+  "properties": [
+    {
+      "uri": "gk:worksFor",
+      "label": "works for",
+      "definition": "The person is employed by the organization.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Organization",
+        "Facility"
+      ],
+      "altLabels": [
+        "work",
+        "job",
+        "employ",
+        "hire",
+        "career"
+      ]
+    },
+    {
+      "uri": "gk:formerlyWorkedFor",
+      "label": "formerly worked for",
+      "definition": "The person was employed by the organization in the past and no longer is.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Organization",
+        "Facility"
+      ],
+      "altLabels": [
+        "lost",
+        "quit",
+        "laid off",
+        "fired",
+        "former",
+        "used to work",
+        "redundant"
+      ]
+    },
+    {
+      "uri": "gk:worksAt",
+      "label": "works at",
+      "definition": "The person is employed at the facility.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Facility"
+      ],
+      "altLabels": [
+        "work",
+        "job",
+        "shift"
+      ]
+    },
+    {
+      "uri": "gk:hasOccupation",
+      "label": "has occupation",
+      "definition": "The role the person is employed in.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Occupation Role"
+      ],
+      "altLabels": [
+        "occupation",
+        "profession",
+        "job",
+        "career",
+        "trade"
+      ]
+    },
+    {
+      "uri": "gk:owns",
+      "label": "owns",
+      "definition": "The person owns the thing.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Facility",
+        "Artifact",
+        "Animal"
+      ],
+      "altLabels": [
+        "own",
+        "owner",
+        "buy",
+        "purchase",
+        "bought"
+      ]
+    },
+    {
+      "uri": "gk:likes",
+      "label": "likes",
+      "definition": "The person enjoys or is enthusiastic about the thing.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Act",
+        "Artifact",
+        "Animal",
+        "Facility",
+        "Organization"
+      ],
+      "altLabels": [
+        "like",
+        "love",
+        "enjoy",
+        "favourite",
+        "favorite",
+        "passionate"
+      ]
+    },
+    {
+      "uri": "gk:plansTo",
+      "label": "plans to",
+      "definition": "The person intends to bring the act about.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Act",
+        "Facility",
+        "Organization",
+        "Artifact"
+      ],
+      "altLabels": [
+        "plan",
+        "intend",
+        "want",
+        "hope",
+        "plans",
+        "gonna",
+        "start"
+      ]
+    },
+    {
+      "uri": "gk:livesIn",
+      "label": "lives in",
+      "definition": "The person resides in the place.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Facility"
+      ],
+      "altLabels": [
+        "live",
+        "reside",
+        "moved",
+        "home",
+        "apartment"
+      ]
+    },
+    {
+      "uri": "gk:attended",
+      "label": "attended",
+      "definition": "The person took part in the event.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Act",
+        "Facility"
+      ],
+      "altLabels": [
+        "attend",
+        "went",
+        "competition",
+        "show",
+        "festival",
+        "class"
+      ]
+    },
+    {
+      "uri": "gk:friendOf",
+      "label": "friend of",
+      "definition": "A mutual social relationship, not family and not work.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Person"
+      ],
+      "altLabels": [
+        "friend",
+        "buddy",
+        "mate",
+        "pal"
+      ]
+    },
+    {
+      "uri": "gk:caresFor",
+      "label": "cares for",
+      "definition": "The person looks after the animal or person.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Animal",
+        "Person"
+      ],
+      "altLabels": [
+        "adopt",
+        "rescue",
+        "care",
+        "look after",
+        "raise"
+      ]
+    },
+    {
+      "uri": "gk:studiedAt",
+      "label": "studied at",
+      "definition": "The person was educated at the organization.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Organization",
+        "Facility"
+      ],
+      "altLabels": [
+        "study",
+        "school",
+        "college",
+        "university",
+        "graduate"
+      ]
+    },
+    {
+      "uri": "gk:teaches",
+      "label": "teaches",
+      "definition": "The person instructs others in the subject or act.",
+      "domain": [
+        "Person"
+      ],
+      "range": [
+        "Act",
+        "Person"
+      ],
+      "altLabels": [
+        "teach",
+        "coach",
+        "instruct",
+        "train",
+        "lesson"
+      ]
+    }
+  ],
+  "coarseAliases": {
+    "_comment": "The extractor's generic labels, mapped to the CCO class each one MEANS. Without this the graph carries 'person' as a bare string while properties declare domain 'Person', so every assertion reads as a type violation and no inference fires. Data, not code.",
+    "person": "Person",
+    "organization": "Organization",
+    "facility": "Facility",
+    "occupation": "Occupation Role",
+    "event": "Act",
+    "animal": "Animal",
+    "product": "Artifact",
+    "entity": ""
+  }
+}

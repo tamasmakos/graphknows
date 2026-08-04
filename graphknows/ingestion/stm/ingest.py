@@ -55,6 +55,12 @@ _ONT_CLASS_MIN_SIM = 0.45
 # too. 15 sits in the measured band.
 _RELATION_LABEL_CAP = 15
 
+# Turns to accumulate before the lexical index is frozen. Document frequency is
+# what separates a discriminating altLabel ("dance") from a ubiquitous one
+# ("about"), and a handful of turns is not enough to tell them apart; 40 is,
+# and waiting longer only delays every chunk before it.
+_LEXICAL_WARMUP = 40
+
 # The one class the range gate enforces against (see _range_admits). Asserting a
 # non-person-ranged property over a person is the whole observed defect; every
 # other range mismatch is the ontology being narrower than the data.
@@ -92,6 +98,34 @@ def _entities_from(entities: list[dict[str, Any]], offset: int) -> list[dict[str
             kept.append(ent)
         elif start >= offset:
             kept.append({**ent, "start": start - offset, "end": int(ent.get("end", 0)) - offset})
+    return kept
+
+
+def _attributed(
+    relations: list[dict[str, Any]],
+    text: str,
+    spans: list[tuple[int, int, str]],
+    speakers: set[str],
+) -> list[dict[str, Any]]:
+    """Relations whose SUBJECT the asserting turn actually supports.
+
+    Resolving deixis per turn fixes pronouns but not crossed subjects: when two
+    people assert parallel facts in one window ("Jon: lost my job as a banker" /
+    "Gina: I also lost my job at Door Dash") the extractor links both names to
+    both objects. The guard locates the object's turn and keeps only the nearest
+    person named in it — presence alone is not enough, precisely because deixis
+    resolution writes the addressee's name into the line.
+    """
+    from graphknows.ingestion.stm._attribution import admits
+
+    kept = [r for r in relations if admits(str(r["head"]), str(r["tail"]), text, spans, speakers)]
+    if len(kept) != len(relations):
+        log.info(
+            "attribution guard dropped %d of %d relations (subject not supported by the "
+            "asserting turn)",
+            len(relations) - len(kept),
+            len(relations),
+        )
     return kept
 
 
@@ -151,8 +185,21 @@ class _STMIngestHandler:
         # whether an ontology is configured.
         from graphknows.settings import GraphKnowsSettings as _Settings
 
-        self._extract_window: int = _Settings().extract_window
-        self._recent_turns: dict[str, deque[str]] = {}
+        _cfg = _Settings()
+        self._extract_window: int = _cfg.extract_window
+        self._window_overlap: int = _cfg.extract_overlap
+        # Turn dicts, not strings: the deixis resolver and the attribution guard
+        # both need each turn's speaker, and flattening them loses exactly that.
+        self._recent_turns: dict[str, deque[dict[str, str]]] = {}
+        # Lexical label selection over the SKOS scheme. Replaces embedding the
+        # chunk against class definitions, which measured 11% of tags sharing a
+        # word with their own chunk. Built lazily: the lexical index needs the
+        # corpus's document frequencies, which only exist once turns arrive.
+        self._lexical: bool = _cfg.lexical_labels
+        self._scheme: Any = None
+        self._lex_index: Any = None
+        self._corpus_seen: list[str] = []
+        self._lex_frozen: bool = False
         # rdfs:domain / rdfs:range per property label (both multi-valued), and
         # each class's parent chain. These are the ingredients of BOTH halves of
         # the ontology's job now: selecting which properties a chunk is offered
@@ -452,6 +499,11 @@ class _STMIngestHandler:
         # `clean` — putting the name in its input is what minted speakers as
         # ENTITY nodes — and CHUNK.text stays verbatim.
         surface = search_surface(clean, speaker or role)
+        # One document per TURN for the lexical index's document frequencies.
+        # Windows overlap, so counting them instead reports every content word as
+        # ubiquitous and the filter empties the whole vocabulary.
+        if self._lexical and not self._lex_frozen:
+            self._corpus_seen.append(clean)
         embedding = self._embed_fn(surface)
         # Same ontology steering as the chunk path — the turn's own embedding
         # selects the candidate entity labels, so no extra embedding call.
@@ -470,7 +522,13 @@ class _STMIngestHandler:
         # chunk. Relations are deliberately NOT filtered — a triplet whose head
         # came from an earlier turn is the entire point, and its endpoints merge
         # by name onto the ENTITY nodes those turns already created.
-        window_text, offset = self._extraction_window(session_id, clean, speaker or role)
+        window_text, offset, spans = self._extraction_window(session_id, clean, speaker or role)
+        # Lexical selection over the SKOS scheme, when it is warm. It sees the
+        # WINDOW, not the turn: the labels a chunk needs are evoked by the whole
+        # passage the extractor reads.
+        lex_ents, lex_rels = self._lexical_labels(window_text)
+        if lex_ents:
+            entity_labels = lex_ents
         extraction = (
             await asyncio.to_thread(
                 self._extract,
@@ -489,7 +547,9 @@ class _STMIngestHandler:
             if infer
             else ExtractionResult()
         )
-        if infer and (rel_labels := self._relation_labels(extraction.entities)):
+        # Lexically-evoked properties win over the domain/range-only selection:
+        # a property whose own name is spoken is the strongest evidence there is.
+        if infer and (rel_labels := lex_rels or self._relation_labels(extraction.entities)):
             t_rel = time.monotonic()
             extraction = await asyncio.to_thread(
                 self._extract, window_text, entity_labels, rel_labels, speaker or role
@@ -502,6 +562,10 @@ class _STMIngestHandler:
             )
         if infer and offset:
             extraction.entities = _entities_from(extraction.entities, offset)
+        if infer and spans:
+            extraction.relations = _attributed(
+                extraction.relations, window_text, spans, {t[2] for t in spans if t[2]}
+            )
         anchor = metadata.get("timestamp") or metadata.get("anchor_date")
         temporal = self._resolve_temporal_entities(extraction.entities, anchor)
         chunk_id = hashlib.sha256(f"{session_id}:{file_id}:{seq}:{clean}".encode()).hexdigest()[:16]
@@ -529,35 +593,107 @@ class _STMIngestHandler:
     # Private step methods
     # ------------------------------------------------------------------
 
-    def _extraction_window(self, session_id: str, clean: str, speaker: str) -> tuple[str, int]:
-        """``(text to extract from, where this turn starts in it)``.
+    def _ensure_scheme(self) -> bool:
+        """Build the SKOS scheme and this corpus's lexical index, once.
+
+        The index needs document frequencies, and those need text, so it cannot
+        be built at construction. It is rebuilt while the corpus is still small
+        and then frozen — a frequency estimated from 40 turns is already stable
+        enough to tell "dance" from "the", which is all it has to do.
+        """
+        if not self._lexical:
+            return False
+        # Lexical selection needs a parser for lemmas and POS. A caller that
+        # injected a bare extractor (tests, and any embedding-only composition)
+        # simply keeps the previous behaviour instead of failing.
+        if getattr(self._extractor, "nlp", None) is None:
+            self._lexical = False
+            log.info("Lexical label selection off: the extractor exposes no spaCy pipeline")
+            return False
+        if self._scheme is None:
+            from graphknows.ontology.scheme import load_scheme
+            from graphknows.settings import GraphKnowsSettings
+
+            cfg = GraphKnowsSettings()
+            self._scheme = load_scheme(cfg.ontology_source, cfg.overlay_source)
+        # Built EAGERLY from whatever text has arrived, then rebuilt once at the
+        # warmup mark. Waiting for the full warmup would leave every corpus's
+        # first turns with no lexical selection at all, and a short session with
+        # none ever — which is how this first ran and produced zero relations.
+        # `usable_index` needs the document count to know when a frequency is
+        # meaningful, so a small corpus simply filters nothing.
+        if self._corpus_seen and (self._lex_index is None or not self._lex_frozen):
+            from graphknows.ontology.scheme import build_index
+
+            self._lex_index = build_index(self._scheme, self._corpus_seen, self._extractor.nlp)
+            self._lex_frozen = len(self._corpus_seen) >= _LEXICAL_WARMUP
+        return self._lex_index is not None
+
+    def _lexical_labels(self, text: str) -> tuple[list[str] | None, dict[str, str] | None]:
+        """``(entity labels, relation labels)`` for one window, lexically selected."""
+        if not self._ensure_scheme():
+            return None, None
+        from graphknows.ontology import entity_labels, relation_labels
+
+        doc = self._extractor.nlp(text)
+        ents = entity_labels(doc, self._scheme, self._lex_index)
+        rels = relation_labels(doc, set(ents), self._scheme, self._lex_index)
+        # relex takes {label: definition}; the definition is what it reads.
+        spec = {r: (self._scheme[r].definition or r) for r in rels if r in self._scheme}
+        return ents, spec or None
+
+    def _extraction_window(
+        self, session_id: str, clean: str, speaker: str
+    ) -> tuple[str, int, list[tuple[int, int, str]]]:
+        """``(text to extract from, where this turn starts, per-turn spans)``.
 
         The turn is always the tail of the window, so a zero offset means the
         window is off (``extract_window <= 1``) or this is the session's first
         turn — and in both cases the returned text IS ``clean``, byte for byte,
-        which is what makes ``extract_window=1`` an exact replay of the
-        pre-window behaviour rather than an approximation of it.
+        which makes ``extract_window=1`` an exact replay of the pre-window
+        behaviour rather than an approximation of it.
 
-        Earlier turns are attributed inline ("Gina: ...") because that is the
-        only way the extractor can tell who said what across the boundary; this
-        turn's own text stays bare, with its speaker passed as a parameter, so
-        the deixis handling that anchors first-person clauses is unchanged. The
-        speaker-as-entity risk the inline form carries is contained by the
-        offset filter: spans in the attributed prefix never become this chunk's
-        entities.
+        **Deixis is resolved per turn** before the lines are joined. A window has
+        many speakers and one text, so "I" in one line and "I" in the next are
+        different people; leaving them unresolved is what put
+        ``Jon -[works for]-> Door Dash`` in the graph when GINA lost that job.
+        First person becomes the line's own speaker, second person the
+        addressee — skipped entirely above two participants, where the addressee
+        is a guess and a wrong name is worse than a pronoun.
+
+        The returned SPANS are what lets :meth:`_write_relations` tell which turn
+        asserted what; without them the attribution guard cannot locate anything.
 
         Every turn joins the buffer, including ones the caller declined to
-        extract from: a greeting asserts nothing itself but still establishes
-        who is being addressed, which is what a later turn's pronoun needs.
+        extract from: a greeting asserts nothing itself but still establishes who
+        is being addressed, which is what a later turn's pronoun needs.
         """
+        from graphknows.ingestion.stm._attribution import turn_spans
+        from graphknows.ingestion.stm._deixis import resolve_line
+
         window = self._extract_window
+        # Overlap is expressed as the buffer's depth: keeping `window - 1` prior
+        # turns means consecutive windows share that many turns, so no pair of
+        # adjacent turns ever falls across a boundary unseen. Measured at equal
+        # coverage: 2 turns of overlap yields +35% distinct edges.
         recent = self._recent_turns.setdefault(session_id, deque(maxlen=max(window - 1, 0)))
-        prefix = "\n".join(recent)
-        recent.append(f"{speaker}: {clean}" if speaker else clean)
-        if window <= 1 or not prefix:
-            return clean, 0
-        text = f"{prefix}\n{clean}"
-        return text, len(prefix) + 1
+        turns = [*recent, {"speaker": speaker, "text": clean}]
+        speakers = list(dict.fromkeys(t["speaker"] for t in turns if t["speaker"]))
+        for turn in turns:
+            others = [s for s in speakers if s != turn["speaker"]]
+            turn["resolved"] = resolve_line(
+                turn["text"], turn["speaker"], others[0] if len(others) == 1 else ""
+            )
+        recent.append({"speaker": speaker, "text": clean})
+
+        if window <= 1 or len(turns) == 1:
+            return clean, 0, []
+        lines = [
+            f"{t['speaker']}: {t['resolved']}" if t["speaker"] else t["resolved"] for t in turns
+        ]
+        text = "\n".join(lines)
+        offset = len(text) - len(lines[-1]) + (len(speaker) + 2 if speaker else 0)
+        return text, offset, turn_spans(turns, text)
 
     async def _ensure_session_and_file(
         self,

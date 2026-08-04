@@ -46,6 +46,14 @@ _BUNDLED_ONTOLOGY = str(
 # separate curated vocabulary is still a supported override.
 _BUNDLED_RELATION_PROFILE = _BUNDLED_ONTOLOGY
 
+# The INPUT SKOS overlay: the everyday concepts CCO does not model as binary
+# predicates (works for, plans to, likes, cares for), each carrying the
+# altLabels that make it lexically reachable and domain/range in CCO's own class
+# vocabulary. Data, not code — point this elsewhere to change the vocabulary.
+_BUNDLED_OVERLAY = str(
+    Path(__file__).resolve().parent / "ontology" / "assets" / "cco" / "conversational.json"
+)
+
 
 class MemoryMode(StrEnum):
     """Named preset over the orthogonal capability knobs.
@@ -252,6 +260,24 @@ class GraphKnowsSettings(BaseSettings):
     # which is what makes it the control arm of an A/B rather than an
     # approximation of one.
     extract_window: int = Field(default=5, ge=1, alias="GRAPHKNOWS_EXTRACT_WINDOW")
+    # How many turns consecutive windows SHARE. A relation whose endpoints
+    # straddle a window boundary is invisible to every window, so with no
+    # overlap each boundary is a permanent blind spot. Measured at equal turn
+    # coverage: 2 turns of overlap yields +35% distinct edges, and the duplicate
+    # triples cost nothing because write_relation MERGEs on
+    # (head, predicate, tail) and accumulates evidence.
+    extract_overlap: int = Field(default=2, ge=0, alias="GRAPHKNOWS_EXTRACT_OVERLAP")
+
+    # Label selection by LEXICAL evidence over the SKOS scheme rather than by
+    # embedding the chunk against class definitions. Measured on conv-30: the
+    # embedding path put 11% of tags in a chunk sharing even one word with it
+    # ("Lost my job as a banker" -> Grocery Store), while lexical selection
+    # tripled relation richness and 2-4x'd distinct predicates. Kept switchable
+    # because it is a large behaviour change, not because the old path is a
+    # supported alternative.
+    lexical_labels: bool = Field(default=True, alias="GRAPHKNOWS_LEXICAL_LABELS")
+    # SKOS overlay layered over the base ontology; empty disables it.
+    ontology_overlay: str = Field(default="", alias="GRAPHKNOWS_ONTOLOGY_OVERLAY")
 
     # The relation vocabulary. Same override semantics as ``ontology`` (empty
     # means unset, not off) and read via ``relation_ontology_source``. Point it
@@ -308,6 +334,14 @@ class GraphKnowsSettings(BaseSettings):
         and that function logs the fact.
         """
         return self.ontology.strip() or self.ontology_file.strip() or _BUNDLED_ONTOLOGY
+
+    @property
+    def overlay_source(self) -> str:
+        """The SKOS overlay path — bundled unless overridden; "-" disables it."""
+        value = self.ontology_overlay.strip()
+        if value == "-":
+            return ""
+        return value or _BUNDLED_OVERLAY
 
     @property
     def relation_ontology_source(self) -> str:
