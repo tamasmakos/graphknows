@@ -11,8 +11,9 @@ Why a digest rather than the raw ``.ttl``:
 * **Startup cost.** Parsing 3 MB of Turtle across 12 modules costs seconds;
   reading the digest costs milliseconds.
 
-The bundled ontology is the Common Core Ontologies: the 11 CCO modules plus the
-Familial Relations extension. Two CCO properties matter for how this parses:
+The bundled ontology is the Common Core Ontologies: the 11 CCO modules, the
+Familial Relations extension, and **BFO**, which is not optional. Four things
+about CCO decide how this parses:
 
 * **Opaque IRIs.** CCO names every term ``ont00001774``, so a URI's local name
   is not a label. ``domain``/``range``/``parents`` are therefore resolved
@@ -20,6 +21,22 @@ Familial Relations extension. Two CCO properties matter for how this parses:
   emitted — a per-file parse would leave every cross-module reference as an
   ont-number, which is unreadable to an embedder and useless to the relation
   conformance check.
+* **CCO types its relations against BFO.** ``rdfs:domain obo:BFO_0000015``
+  (process), ``obo:BFO_0000004`` (independent continuant). BFO is an *import*
+  — CCO's own ``catalog-v001.xml`` resolves it to ``../cco-imports/bfo-core.ttl``
+  — so a map built from the CCO modules alone resolves every one of those
+  references to nothing and DROPS the constraint. That single omission made
+  199 of 224 properties look untyped, and since property selection is gated on
+  domain and range, it silently emptied the relation vocabulary. Parsing BFO
+  alongside takes typed properties from 25 to 173. BFO's own classes are
+  emitted too: they are what the ``parents`` chain terminates in, and without
+  them subsumption stops at the CCO boundary instead of reaching
+  ``material entity`` / ``independent continuant``.
+* **Domain and range hide inside class expressions.** A range is frequently an
+  anonymous ``owl:unionOf`` / ``owl:intersectionOf`` node rather than a named
+  class. Those are unwrapped to the set of named classes they mention; an
+  ``owl:complementOf`` ("not a spatial region") carries no positive label and is
+  skipped rather than inverted.
 * **Definitions live in ``skos:definition``.** ``rdfs:comment`` in CCO is an
   editorial note ("This class was added at the request of..."), so it is only a
   fallback. ``skos:scopeNote`` carries usage guidance written in the same
@@ -37,6 +54,7 @@ Usage::
     python scripts/build_ontology_digest.py \\
         --source graphknows/ontology/assets/cco-modules \\
         --source graphknows/ontology/assets/cco-extensions/FamilialRelationsOntology.ttl \\
+        --source graphknows/ontology/assets/cco-imports/bfo-core.ttl \\
         --out graphknows/ontology/assets/cco/cco.json
 """
 
@@ -99,11 +117,97 @@ def _files(sources: list[Path]) -> list[Path]:
     return out
 
 
+class _Reader:
+    """Term-level readers over one parsed graph.
+
+    A class rather than nested closures so each rule is separately readable:
+    every method below encodes one thing CCO does that a naive parse gets wrong.
+    """
+
+    def __init__(self, graph: Any, labels: dict[str, str]) -> None:
+        import rdflib
+
+        self.g = graph
+        self.labels = labels
+        self.curated_in = rdflib.URIRef(_CURATED_IN)
+
+    def label(self, subject: Any) -> str:
+        return self.labels.get(str(subject), "")
+
+    def definition(self, subject: Any) -> str:
+        """``skos:definition``, falling back to ``rdfs:comment``, plus the scope note."""
+        from rdflib import RDFS
+        from rdflib.namespace import SKOS
+
+        text = self.g.value(subject, SKOS.definition) or self.g.value(subject, RDFS.comment) or ""
+        note = self.g.value(subject, SKOS.scopeNote) or ""
+        # URLs are embedded verbatim otherwise, and several scopeNotes are bare
+        # pointers ("please refer to https://github.com/..."), which is noise in
+        # the vector the whole match is decided on.
+        return " ".join(re.sub(r"https?://\S+", "", f"{text} {note}").split())
+
+    def named(self, node: Any, depth: int = 0) -> set[str]:
+        """Class labels ``node`` denotes, unwrapping anonymous class expressions.
+
+        A blank node here is an ``owl:unionOf`` / ``owl:intersectionOf`` /
+        ``owl:Restriction``, not an addressable term. ``unionOf`` means "any of
+        these", which is exactly a set of acceptable labels. ``intersectionOf``
+        is strictly narrower than the set, but reading it as the set is the
+        permissive direction and this gate enriches rather than filters.
+        ``complementOf`` carries no positive label and is skipped rather than
+        inverted. Depth-bounded: BFO nests these a few levels.
+        """
+        import rdflib
+        from rdflib import OWL
+
+        if depth > 4:
+            return set()
+        if not str(node).startswith("_:"):
+            return {lbl} if (lbl := self.label(node)) else set()
+        out: set[str] = set()
+        for pred in (OWL.unionOf, OWL.intersectionOf):
+            for collection in self.g.objects(node, pred):
+                for member in rdflib.collection.Collection(self.g, collection):
+                    out |= self.named(member, depth + 1)
+        return out
+
+    def refs(self, subject: Any, predicate: Any) -> list[str]:
+        """Labels of ``subject predicate ?o``, through class expressions."""
+        out: set[str] = set()
+        for obj in self.g.objects(subject, predicate):
+            out |= self.named(obj)
+        return sorted(out)
+
+    def constraint(
+        self, prop: Any, predicate: Any, seen: frozenset[str] = frozenset()
+    ) -> list[str]:
+        """Domain/range for ``prop``, inherited from superproperties when absent.
+
+        CCO declares a constraint once on the general property and leaves the
+        specialisations to inherit it: ``has process part`` states no domain of
+        its own and takes BFO's. Reading only the direct triple drops those.
+        """
+        from rdflib import RDFS
+
+        if str(prop) in seen:
+            return []
+        if direct := self.refs(prop, predicate):
+            return direct
+        inherited: set[str] = set()
+        for parent in self.g.objects(prop, RDFS.subPropertyOf):
+            inherited.update(self.constraint(parent, predicate, seen | {str(prop)}))
+        return sorted(inherited)
+
+    def module(self, subject: Any) -> str:
+        """The CCO module this term is curated in, by its own annotation."""
+        value = self.g.value(subject, self.curated_in)
+        return str(value).rstrip("/").rsplit("/", 1)[-1] if value else ""
+
+
 def build(sources: list[Path]) -> dict[str, Any]:
     """Parse *sources* into ``{"classes": [...], "properties": [...]}``."""
     import rdflib  # build-time only; never imported at runtime
     from rdflib import OWL, RDF, RDFS
-    from rdflib.namespace import SKOS
 
     graph = rdflib.Graph()
     paths = _files(sources)
@@ -111,65 +215,40 @@ def build(sources: list[Path]) -> dict[str, Any]:
         graph.parse(str(path), format="turtle")
 
     # URI -> label across every input, so a cross-module domain/range resolves.
+    # BFO is one of those inputs, and CCO types its relations against it.
     labels: dict[str, str] = {
         str(s): str(o) for s, o in graph.subject_objects(RDFS.label) if str(o).strip()
     }
-
-    def label(subject: Any) -> str:
-        return labels.get(str(subject), "")
-
-    def definition(subject: Any) -> str:
-        text = graph.value(subject, SKOS.definition) or graph.value(subject, RDFS.comment) or ""
-        note = graph.value(subject, SKOS.scopeNote) or ""
-        # URLs are embedded verbatim otherwise, and several scopeNotes are bare
-        # pointers ("please refer to https://github.com/..."), which is noise in
-        # the vector the whole match is decided on.
-        return " ".join(re.sub(r"https?://\S+", "", f"{text} {note}").split())
-
-    def refs(subject: Any, predicate: Any) -> list[str]:
-        """Labels of ``subject predicate ?o``, skipping blank-node restrictions.
-
-        An anonymous ``owl:Restriction``/union is not an addressable term, and a
-        term outside these inputs has no label to resolve to; both are dropped
-        rather than emitted as an ont-number.
-        """
-        return sorted({lbl for o in graph.objects(subject, predicate) if (lbl := label(o))})
-
-    curated_in = rdflib.URIRef(_CURATED_IN)
-
-    def module(subject: Any) -> str:
-        """The CCO module this term is curated in, by its own annotation."""
-        value = graph.value(subject, curated_in)
-        return str(value).rstrip("/").rsplit("/", 1)[-1] if value else ""
+    r = _Reader(graph, labels)
 
     classes = [
         {
             "uri": str(s),
             "label": lbl,
-            "definition": definition(s),
-            "parents": refs(s, RDFS.subClassOf),
-            "module": module(s),
+            "definition": r.definition(s),
+            "parents": r.refs(s, RDFS.subClassOf),
+            "module": r.module(s),
         }
         for s in sorted(graph.subjects(RDF.type, OWL.Class), key=str)
-        if (lbl := label(s))
+        if (lbl := r.label(s))
     ]
 
     properties = []
     for s in sorted(graph.subjects(RDF.type, OWL.ObjectProperty), key=str):
-        if not (lbl := label(s)):
+        if not (lbl := r.label(s)):
             continue
-        mod = module(s)
-        domain, rng = refs(s, RDFS.domain), refs(s, RDFS.range)
+        mod = r.module(s)
+        domain, rng = r.constraint(s, RDFS.domain), r.constraint(s, RDFS.range)
         if not domain and not rng and (fallback := _DEFAULT_DOMAIN_RANGE.get(mod)):
             domain, rng = [fallback[0]], [fallback[1]]
         properties.append(
             {
                 "uri": str(s),
                 "label": lbl,
-                "definition": definition(s),
+                "definition": r.definition(s),
                 "domain": domain,
                 "range": rng,
-                "parents": refs(s, RDFS.subPropertyOf),
+                "parents": r.refs(s, RDFS.subPropertyOf),
                 "module": mod,
             }
         )

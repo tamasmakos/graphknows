@@ -67,17 +67,17 @@ class TestDigestLoads:
             [sys.executable, "-c", code], capture_output=True, text=True, check=True
         )
         result = json.loads(out.stdout.strip().splitlines()[-1])
-        assert result == {"n": 1625, "rdflib": False}  # 1401 classes + 224 properties
+        assert result == {"n": 1701, "rdflib": False}  # 1437 classes + 264 properties
 
     def test_term_counts(self, terms: list[OntologyTerm]) -> None:
-        """1401 classes + 224 object properties, from 11 CCO modules + familial.
+        """1437 classes + 264 object properties, from 11 CCO modules + familial + BFO.
 
         Object properties only: an ``owl:DatatypeProperty`` describes a literal
         attribute, not a link between two entities, so it can never be an
         ENTITY->ENTITY relation and would only dilute the label space.
         """
-        assert len([t for t in terms if t.kind == "class"]) == 1401
-        assert len([t for t in terms if t.kind == "property"]) == 224
+        assert len([t for t in terms if t.kind == "class"]) == 1437
+        assert len([t for t in terms if t.kind == "property"]) == 264
 
     def test_a_class_carries_its_definition_and_module(self, terms: list[OntologyTerm]) -> None:
         """The definition is what gets embedded; the module is what makes a match traceable.
@@ -112,16 +112,60 @@ class TestDigestLoads:
     def test_the_relation_vocabulary_is_not_mostly_unofferable(
         self, terms: list[OntologyTerm]
     ) -> None:
-        """Half the properties must be selectable, or the swap regressed relations."""
+        """Most properties must be selectable, or the BFO resolution regressed."""
         properties = [t for t in terms if t.kind == "property"]
         offerable = [t for t in properties if t.domain and t.range]
-        assert len(offerable) == 112
+        assert len(offerable) == 234
+
+    def test_a_bfo_typed_constraint_resolves_to_a_label(self, terms: list[OntologyTerm]) -> None:
+        """CCO types its relations against BFO, which is an IMPORT.
+
+        ``has process part`` declares ``rdfs:domain obo:BFO_0000015``. Parsing
+        the CCO modules without ``cco-imports/bfo-core.ttl`` resolves that IRI to
+        nothing and DROPS the constraint — which is how 199 of 224 properties
+        came to look untyped, silently emptying a relation vocabulary that is
+        gated on domain and range.
+        """
+        part_of = _term(terms, "property", "has process part")
+        assert (part_of.domain, part_of.range) == (("process",), ("process",))
+
+    def test_a_constraint_is_inherited_from_a_superproperty(
+        self, terms: list[OntologyTerm]
+    ) -> None:
+        """CCO states a constraint once on the general property and specialises below."""
+        supervises = _term(terms, "property", "supervises")
+        assert supervises.domain and supervises.range
+
+    def test_the_subclass_chain_reaches_bfo(self, terms: list[OntologyTerm]) -> None:
+        """Subsumption must not stop at the CCO boundary.
+
+        A property whose domain is ``material entity`` is satisfiable by a
+        Person only if Person's parent chain actually reaches it. Emitting BFO's
+        classes is what closes that walk; without them ``_class_ancestors``
+        degenerates part-way up and the property is never offered.
+        """
+        by_label = {t.label: t for t in terms if t.kind == "class"}
+        chain, current = ["Person"], "Person"
+        while parents := by_label.get(current, OntologyTerm("", "", "", "class")).parents:
+            current = parents[0]
+            chain.append(current)
+
+        assert chain == [
+            "Person",
+            "Animal",
+            "Organism",
+            "object",
+            "material entity",
+            "independent continuant",
+            "continuant",
+            "entity",
+        ]
 
     def test_label_list_view_also_avoids_rdflib(self) -> None:
         """The DSPy path loads the same digest through ``load_rdf_ontology_file``."""
         manifest = load_rdf_ontology_file(DIGEST)
-        assert len(manifest.class_labels) == 1401
-        assert len(manifest.property_labels) == 224
+        assert len(manifest.class_labels) == 1437
+        assert len(manifest.property_labels) == 264
         assert "Person" in manifest.class_labels
         assert "has brother" in manifest.property_labels
 

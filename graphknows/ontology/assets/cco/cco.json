@@ -1,12 +1,336 @@
 {
- "source": "AgentOntology.ttl, ArtifactOntology.ttl, CurrencyUnitOntology.ttl, EventOntology.ttl, ExtendedRelationOntology.ttl, FacilityOntology.ttl, GeospatialOntology.ttl, InformationEntityOntology.ttl, QualityOntology.ttl, TimeOntology.ttl, UnitsOfMeasureOntology.ttl, FamilialRelationsOntology.ttl",
+ "source": "AgentOntology.ttl, ArtifactOntology.ttl, CurrencyUnitOntology.ttl, EventOntology.ttl, ExtendedRelationOntology.ttl, FacilityOntology.ttl, GeospatialOntology.ttl, InformationEntityOntology.ttl, QualityOntology.ttl, TimeOntology.ttl, UnitsOfMeasureOntology.ttl, FamilialRelationsOntology.ttl, bfo-core.ttl",
  "classes": [
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000001",
+   "label": "entity",
+   "definition": "(Elucidation) An entity is anything that exists or has existed or will exist",
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000002",
+   "label": "continuant",
+   "definition": "(Elucidation) A continuant is an entity that persists, endures, or continues to exist through time while maintaining its identity",
+   "parents": [
+    "entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000003",
+   "label": "occurrent",
+   "definition": "(Elucidation) An occurrent is an entity that unfolds itself in time or it is the start or end of such an entity or it is a temporal or spatiotemporal region",
+   "parents": [
+    "entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000004",
+   "label": "independent continuant",
+   "definition": "b is an independent continuant =Def b is a continuant & there is no c such that b specifically depends on c or b generically depends on c",
+   "parents": [
+    "continuant"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000006",
+   "label": "spatial region",
+   "definition": "(Elucidation) A spatial region is a continuant entity that is a continuant part of the spatial projection of a portion of spacetime at a given time",
+   "parents": [
+    "immaterial entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000008",
+   "label": "temporal region",
+   "definition": "(Elucidation) A temporal region is an occurrent over which processes can unfold",
+   "parents": [
+    "occurrent"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000009",
+   "label": "two-dimensional spatial region",
+   "definition": "(Elucidation) A two-dimensional spatial region is a spatial region that is a whole consisting of a surface together with zero or more surfaces which may have spatial regions of lower dimension as parts",
+   "parents": [
+    "spatial region"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000011",
+   "label": "spatiotemporal region",
+   "definition": "(Elucidation) A spatiotemporal region is an occurrent that is an occurrent part of spacetime 'Spacetime' here refers to the maximal instance of the universal spatiotemporal region.",
+   "parents": [
+    "occurrent"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000015",
+   "label": "process",
+   "definition": "(Elucidation) p is a process means p is an occurrent that has some temporal proper part and for some time t, p has some material entity as participant",
+   "parents": [
+    "occurrent"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000016",
+   "label": "disposition",
+   "definition": "(Elucidation) A disposition b is a realizable entity such that if b ceases to exist then its bearer is physically changed & b's realization occurs when and because this bearer is in some special physical circumstances & this realization occurs in virtue of the bearer's physical make-up",
+   "parents": [
+    "realizable entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000017",
+   "label": "realizable entity",
+   "definition": "(Elucidation) A realizable entity is a specifically dependent continuant that inheres in some independent continuant which is not a spatial region & which is of a type some instances of which are realized in processes of a correlated type",
+   "parents": [
+    "specifically dependent continuant"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000018",
+   "label": "zero-dimensional spatial region",
+   "definition": "(Elucidation) A zero-dimensional spatial region is one or a collection of more than one spatially disjoint points in space",
+   "parents": [
+    "spatial region"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000019",
+   "label": "quality",
+   "definition": "(Elucidation) A quality is a specifically dependent continuant that, in contrast to roles and dispositions, does not require any further process in order to be realized",
+   "parents": [
+    "specifically dependent continuant"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000020",
+   "label": "specifically dependent continuant",
+   "definition": "b is a specifically dependent continuant =Def b is a continuant & there is some independent continuant c which is not a spatial region & which is such that b specifically depends on c",
+   "parents": [
+    "continuant"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000023",
+   "label": "role",
+   "definition": "(Elucidation) A role b is a realizable entity such that b exists because there is some single bearer that is in some special physical, social, or institutional set of circumstances in which this bearer does not have to be & b is not such that, if it ceases to exist, then the physical make-up of the bearer is thereby changed",
+   "parents": [
+    "realizable entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000024",
+   "label": "fiat object part",
+   "definition": "(Elucidation) A fiat object part b is a material entity & such that if b exists then it is continuant part of some object c & demarcated from the remainder of c by one or more fiat surfaces",
+   "parents": [
+    "material entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000026",
+   "label": "one-dimensional spatial region",
+   "definition": "(Elucidation) A one-dimensional spatial region is a whole consisting of a line together with zero or more lines which may have points as parts",
+   "parents": [
+    "spatial region"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000027",
+   "label": "object aggregate",
+   "definition": "(Elucidation) An object aggregate is a material entity consisting exactly of a plurality (≥1) of objects as member parts which together form a unit 'Exactly' means that there are no parts of the object aggregate other than its member parts.",
+   "parents": [
+    "material entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000028",
+   "label": "three-dimensional spatial region",
+   "definition": "(Elucidation) A three-dimensional spatial region is a whole consisting of a spatial volume together with zero or more spatial volumes which may have spatial regions of lower dimension as parts",
+   "parents": [
+    "spatial region"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000029",
+   "label": "site",
+   "definition": "(Elucidation) A site is a three-dimensional immaterial entity whose boundaries either (partially or wholly) coincide with the boundaries of one or more material entities or have locations determined in relation to some material entity",
+   "parents": [
+    "immaterial entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000030",
+   "label": "object",
+   "definition": "(Elucidation) An object is a material entity which manifests causal unity & is of a type instances of which are maximal relative to the sort of causal unity manifested A description of three primary sorts of causal unity is provided in Basic Formal Ontology 2.0. Specification and User Guide",
+   "parents": [
+    "material entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000031",
+   "label": "generically dependent continuant",
+   "definition": "(Elucidation) A generically dependent continuant is an entity that exists in virtue of the fact that there is at least one of what may be multiple copies which is the content or the pattern that multiple copies would share",
+   "parents": [
+    "continuant"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000034",
+   "label": "function",
+   "definition": "(Elucidation) A function is a disposition that exists in virtue of its bearer's physical make-up & this physical make-up is something the bearer possesses because it came into being either through evolution (in the case of natural biological entities) or through intentional design (in the case of artefacts) in order to realize processes of a certain sort",
+   "parents": [
+    "disposition"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000035",
+   "label": "process boundary",
+   "definition": "p is a process boundary =Def p is a temporal part of a process & p has no proper temporal parts",
+   "parents": [
+    "occurrent"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000038",
+   "label": "one-dimensional temporal region",
+   "definition": "(Elucidation) A one-dimensional temporal region is a temporal region that is a whole that has a temporal interval and zero or more temporal intervals and temporal instants as parts",
+   "parents": [
+    "temporal region"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000040",
+   "label": "material entity",
+   "definition": "(Elucidation) A material entity is an independent continuant has some portion of matter as continuant part",
+   "parents": [
+    "independent continuant"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000140",
+   "label": "continuant fiat boundary",
+   "definition": "(Elucidation) A continuant fiat boundary b is an immaterial entity that is of zero, one or two dimensions & such that there is no time t when b has a spatial region as continuant part & whose location is determined in relation to some material entity",
+   "parents": [
+    "immaterial entity"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000141",
+   "label": "immaterial entity",
+   "definition": "b is an immaterial entity =Def b is an independent continuant which is such that there is no time t when it has a material entity as continuant part",
+   "parents": [
+    "independent continuant"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000142",
+   "label": "fiat line",
+   "definition": "(Elucidation) A fiat line is a one-dimensional continuant fiat boundary that is continuous",
+   "parents": [
+    "continuant fiat boundary"
+   ],
+   "module": ""
+  },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000144",
    "label": "Process Profile",
    "definition": "An occurrent that is an occurrent part of some process by virtue of the rate, or pattern, or magnitude of change in an attribute of one or more participants of said process. b process_profile_of c holds when b proper_occurrent_part_of c& there is some proper_occurrent_part d of c which has no parts in common with b & is mutually dependent on b& is such that b, c and d occupy the same temporal region (axiom label in BFO2 Reference: [094-005])",
-   "parents": [],
+   "parents": [
+    "occurrent"
+   ],
    "module": "EventOntology"
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000145",
+   "label": "relational quality",
+   "definition": "b is a relational quality =Def b is a quality & there exists c and d such that c and d are not identical & b specifically depends on c & b specifically depends on d",
+   "parents": [
+    "quality"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000146",
+   "label": "fiat surface",
+   "definition": "(Elucidation) A fiat surface is a two-dimensional continuant fiat boundary that is self-connected",
+   "parents": [
+    "continuant fiat boundary"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000147",
+   "label": "fiat point",
+   "definition": "(Elucidation) A fiat point is a zero-dimensional continuant fiat boundary that consists of a single point",
+   "parents": [
+    "continuant fiat boundary"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000148",
+   "label": "zero-dimensional temporal region",
+   "definition": "(Elucidation) A zero-dimensional temporal region is a temporal region that is a whole consisting of one or more separated temporal instants as parts",
+   "parents": [
+    "temporal region"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000182",
+   "label": "history",
+   "definition": "(Elucidation) A history is a process that is the sum of the totality of processes taking place in the spatiotemporal region occupied by the material part of a material entity",
+   "parents": [
+    "process"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000202",
+   "label": "temporal interval",
+   "definition": "(Elucidation) A temporal interval is a one-dimensional temporal region that is continuous, thus without gaps or breaks A one-dimensional temporal region can include as parts not only temporal intervals but also temporal instants separated from other parts by gaps.",
+   "parents": [
+    "one-dimensional temporal region"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000203",
+   "label": "temporal instant",
+   "definition": "(Elucidation) A temporal instant is a zero-dimensional temporal region that has no proper temporal part",
+   "parents": [
+    "zero-dimensional temporal region"
+   ],
+   "module": ""
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000001",
@@ -39,14 +363,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000004",
    "label": "Change",
    "definition": "A Process in which some independent continuant endures and 1) one or more of the dependent entities it bears increase or decrease in intensity, 2) the entity begins to bear some dependent entity or 3) the entity ceases to bear some dependent entity.",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "EventOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000005",
    "label": "Act",
    "definition": "A Process in which at least one Agent plays a causative role.",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "EventOntology"
   },
   {
@@ -62,7 +390,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000007",
    "label": "Natural Process",
    "definition": "A Process existing in or produced by nature; rather than by the intent of human beings.",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "EventOntology"
   },
   {
@@ -78,7 +408,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000009",
    "label": "Mass Density",
    "definition": "A Quality that inheres in a bearer in virtue of that bearer's mass per unit volume.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -139,7 +471,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000017",
    "label": "Minor Axis",
    "definition": "A One-Dimensional Spatial Region that is the longest line segment perpendicular to the Major Axis that connects two points on the edge of an Ellipse.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -173,7 +507,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000021",
    "label": "Sensor Platform",
    "definition": "A Material Entity that bears a Sensor Platform Artifact Function or Sensor Platform Role.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -216,7 +552,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000026",
    "label": "Hair Color",
    "definition": "A Quality inhering in a portion of Hair by virtue of its color.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -322,7 +660,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000038",
    "label": "System Role",
    "definition": "A Role that inheres in an entity in virtue of its parts or elements being arranged in such a way that they together exhibit behavior or meaning that they do not exhibit individually.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -374,7 +714,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000044",
    "label": "Eye Color",
    "definition": "A Quality inhering in an Eye by virtue of the color of the Eye's Iris.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -543,7 +885,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000063",
    "label": "Multi-Hour Temporal Interval",
    "definition": "A one-dimensional temporal region that is measured in Hours and spans at least one Hour. This is a defined class.",
-   "parents": [],
+   "parents": [
+    "one-dimensional temporal region"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -586,7 +930,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000068",
    "label": "Three-Dimensional Path",
    "definition": "A Three-Dimensional Spatial Region that encompasses the spatial region through which some Object travels.",
-   "parents": [],
+   "parents": [
+    "three-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -602,7 +948,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000070",
    "label": "Ground Track Point",
    "definition": "A Zero-Dimensional Spatial Region that is an idealized point located on the surface of an Astronomical Body directly below an Object Track Point.",
-   "parents": [],
+   "parents": [
+    "zero-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -717,21 +1065,27 @@
    "uri": "https://www.commoncoreontologies.org/ont00000083",
    "label": "Process Ending",
    "definition": "A Process Boundary that occupies a Zero-Dimensional Temporal Region that is the ending instant of the One-Dimensional Temporal Region that the Process, of which the Process Boundary is a part, occupies.",
-   "parents": [],
+   "parents": [
+    "process boundary"
+   ],
    "module": "EventOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000084",
    "label": "Bodily Component",
    "definition": "A Fiat Object Part located within or on the surface of an Agent.",
-   "parents": [],
+   "parents": [
+    "fiat object part"
+   ],
    "module": "AgentOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000085",
    "label": "Minute",
    "definition": "A Temporal Interval that is equal to sixty consecutive Seconds.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -882,7 +1236,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000102",
    "label": "Skin Type",
    "definition": "A Quality inhering in a portion of skin by virtue of its color and natural tendency to respond to ultraviolet light. Skin Type is classified according to a reference system such as the Fitzpatrick scale:",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -952,7 +1308,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000110",
    "label": "Mechanical Process",
    "definition": "A Process that is the realization of some Disposition of a Material Artifact",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "EventOntology"
   },
   {
@@ -986,7 +1344,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000114",
    "label": "Unix Temporal Instant",
    "definition": "A Temporal Instant as specified by the number of Seconds that have elapsed since the specified Epoch Time as described by an implementation of Unix Time.",
-   "parents": [],
+   "parents": [
+    "temporal instant"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -1029,7 +1389,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000119",
    "label": "Spatial Orientation",
    "definition": "A Relational Quality that is the angle of Rotation of an Object relative to one or more Plane of Reference or Axis of Rotation.",
-   "parents": [],
+   "parents": [
+    "relational quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -1405,7 +1767,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000161",
    "label": "Coordinate System Axis",
    "definition": "A One-Dimensional Spatial Region defined by a Coordinate System for the purpose of identifying the position of entities along one dimension of the Coordinate System's spatial framework.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -1484,7 +1848,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000170",
    "label": "Object Track Point",
    "definition": "A Zero-Dimensional Spatial Region that is an idealized point where an Object is or was located during some motion.",
-   "parents": [],
+   "parents": [
+    "zero-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -1509,7 +1875,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000173",
    "label": "Civilian Role",
    "definition": "A Role that inheres in an Agent or Group of Agents by virtue of that Agent or Group of Agents not being part of either an Armed Force or police force.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -1525,7 +1893,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000175",
    "label": "Organization Member Role",
    "definition": "A Role that inheres in an Agent in virtue of the responsibilities that Agent is expected to fulfill as a member of some Organization.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -1541,7 +1911,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000177",
    "label": "Affordance",
    "definition": "A Realizable Entity of an Independent Continuant that creates an opportunity for an Agent to realize some Agent Capability or Disposition in some Act.",
-   "parents": [],
+   "parents": [
+    "realizable entity"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -1602,7 +1974,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000184",
    "label": "Axial Rotation Period",
    "definition": "A Temporal Interval that is equal to the length of time required for a spinning Object to complete one rotation around its Axis of Rotation.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -1627,14 +2001,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000187",
    "label": "Authority Role",
    "definition": "A Role that is realized by Processes which create, modify, transfer, or eliminate Process Regulations or other Authority Roles, and inheres in an Agent in virtue of collective acceptance of that Agent's ability to issue binding directives. Authority Roles are externally grounded in a social group's collective acceptance of the binding force of the agent's directives. This acceptance can be direct or indirect (e.g., by accepting a procedure for deputizing authority). Such collective acceptance need not be explicit or cognized; rather, collective acceptance can be expressed in the dispositions and attitudes of people toward that agent's directives. In many cases, the directives issued by Authority Roles are backed by threats of punishment or sanction for failure to comply, but the issuing of a directive plus a threat is not sufficient for authority. Rather, an agent's authority must be accepted either directly or indirectly through the acceptance of a procedure for bestowing authority (e.g., elections).",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000188",
    "label": "Ground Track",
    "definition": "A One-Dimensional Spatial Region defined by the line formed on the surface of an Astronomical Body by projecting an imaginary line from the center of the tracked Object to the center of the Astronomical Body as the Object travels above the surface. The Ground Track is the line on the surface of the Earth or other Astronomical Body that is located directly below the Object Track.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -1713,7 +2091,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000197",
    "label": "Process Beginning",
    "definition": "A Process Boundary that occupies a Zero-Dimensional Temporal Region that is the starting instant of the One-Dimensional Temporal Region that the Process, of which the Process Boundary is a part, occupies.",
-   "parents": [],
+   "parents": [
+    "process boundary"
+   ],
    "module": "EventOntology"
   },
   {
@@ -1783,7 +2163,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000205",
    "label": "Object Track",
    "definition": "A One-Dimensional Spatial Region that consists of the idealized line along which an Object has traversed during some motion. The exact line of the Object Track may be drawn based on the Center of Mass of the Object or another reference point, such as the location of a transponder beacon or the center of a radar cross-section, depending on the Object being tracked.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -1799,7 +2181,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000207",
    "label": "One-Dimensional Geospatial Boundary",
    "definition": "A Fiat Line that is a boundary of some Geospatial Region.",
-   "parents": [],
+   "parents": [
+    "fiat line"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -1833,7 +2217,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000211",
    "label": "Multi-Day Temporal Interval",
    "definition": "A one-dimensional temporal region that is measured in Days and spans at least one Day. This is a defined class.",
-   "parents": [],
+   "parents": [
+    "one-dimensional temporal region"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -1894,7 +2280,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000218",
    "label": "Major Axis",
    "definition": "A One-Dimensional Spatial Region that is the longest line segment that connects two points on the edge of an Ellipse.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -1919,7 +2307,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000221",
    "label": "Semi-Minor Axis",
    "definition": "A One-Dimensional Spatial Region that is equal to half the length of the Minor Axis of an Ellipse.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -1935,7 +2325,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000223",
    "label": "Time of Day",
    "definition": "A Temporal Instant that is part of a Day.",
-   "parents": [],
+   "parents": [
+    "temporal instant"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -1951,7 +2343,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000225",
    "label": "Month",
    "definition": "A Temporal Interval that is based on the approximate length of time required for a Natural Satellite to complete one cycle of its rotational motion around its Primary Body. Unless otherwise specified, it is assumed that a Month is specified relative to the Rotational Motion of the Moon around the Earth. Earth Months are approximately equal to four consecutive Weeks or 30 consecutive Days.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -2183,7 +2577,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000253",
    "label": "Information Bearing Entity",
    "definition": "An Object upon which an Information Content Entity generically depends. This class continues to use the word ‘bearing’ in its rdfslabel because of potential confusion with the acronym ‘ICE’, which is widely used for information content entity.",
-   "parents": [],
+   "parents": [
+    "object"
+   ],
    "module": "InformationEntityOntology"
   },
   {
@@ -2451,7 +2847,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000284",
    "label": "Strength",
    "definition": "A Realizable Entity that is realized when its bearer exerts or resists some power, influence, or force. Strength is intended to be understood broadly here. Physical strength is only one type of Strength. Other subtypes of Strength may include military strength, psychological strength, emotional strength, political strength, technological strength, and so on.",
-   "parents": [],
+   "parents": [
+    "realizable entity"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -2548,7 +2946,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000295",
    "label": "Wetness",
    "definition": "A Quality that inheres in a bearer in virtue of the degree to which the bearer is covered by a liquid, typically on a continuum of dry to wet.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -2564,7 +2964,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000297",
    "label": "Portion of Hydrosphere",
    "definition": "A fiat object part of the combined mass of water found on, under, and above the surface of a natural satellite",
-   "parents": [],
+   "parents": [
+    "fiat object part"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -2589,7 +2991,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000300",
    "label": "Group of Agents",
    "definition": "An Object Aggregate that has only Agents as member parts.",
-   "parents": [],
+   "parents": [
+    "object aggregate"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -2713,7 +3117,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000314",
    "label": "Information Quality Entity",
    "definition": "A Quality that concretizes some Information Content Entity. Typically, an IQE will be a complex pattern made up of multiple qualities joined together spatially.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "InformationEntityOntology"
   },
   {
@@ -2747,7 +3153,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000318",
    "label": "Disease",
    "definition": "A Disposition to undergo pathological processes that exists in an organism because of one or more disorders in that organism.",
-   "parents": [],
+   "parents": [
+    "disposition"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -2790,7 +3198,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000323",
    "label": "Artifact Function",
    "definition": "A Function that inheres in some Material Artifact in virtue of that Material Artifact being designed to be used in processes that require that Function to be realized.",
-   "parents": [],
+   "parents": [
+    "function"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -2815,7 +3225,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000327",
    "label": "Texture",
    "definition": "A Quality that inheres in a bearer in virtue of the size, shape, and distribution of features on its surface, typically on a continuum from smooth to rough.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -2831,7 +3243,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000329",
    "label": "Multi-Month Temporal Interval",
    "definition": "A one-dimensional temporal region that is measured in Months and spans at least one Month. This is a defined class.",
-   "parents": [],
+   "parents": [
+    "one-dimensional temporal region"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -3225,7 +3639,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000373",
    "label": "Geospatial Position",
    "definition": "A Fiat Point that is at or near the surface of the Earth and fixed according to some Geospatial Coordinate Reference System.",
-   "parents": [],
+   "parents": [
+    "fiat point"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -3259,7 +3675,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000377",
    "label": "Disability",
    "definition": "A Quality inhering in an Agent by virtue a physical or mental condition that limits the Agent's movements, senses, or activities.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -3347,7 +3765,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000387",
    "label": "Axis of Rotation",
    "definition": "A One-Dimensional Spatial Region defined by the line around which a spinning body rotates.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -3390,7 +3810,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000392",
    "label": "Allegiance Role",
    "definition": "A Role that inheres in an Agent by virtue of the support it has committed to provide to another Agent when that Agent is involved in a conflict.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -3820,14 +4242,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000441",
    "label": "Temperature",
    "definition": "A Quality that inheres in a bearer in virtue of its thermal energy.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000442",
    "label": "Radioactive",
    "definition": "A Quality that inheres in a bearer in virtue of that bearer exhibiting or being caused by radioactivity.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -4086,7 +4512,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000472",
    "label": "Geospatial Region",
    "definition": "A Site that is at or near the surface of the Earth.",
-   "parents": [],
+   "parents": [
+    "site"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -4201,7 +4629,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000485",
    "label": "Commercial Role",
    "definition": "A Role that inheres in an Organization by virtue of its establishment as a for-profit business.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -4379,7 +4809,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000506",
    "label": "Contractor Role",
    "definition": "A Role that inheres in an Agent or Group of Agents by virtue of that Agent or Group of Agents entering into a Contract to provide materials or labor to perform a service or complete a task. A Contractor Role differs from an Occupation Role in at least two ways. First, the Contract that binds the two parties together is not one of employment. Second, a Contractor Role is occupationally neutral in that an Agent can be contracted to perform any number of Occupational Roles.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -4719,7 +5151,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000544",
    "label": "Target",
    "definition": "A Material Entity that is the object of an Act of Targeting. Although people speak of targeting a process, say, a parade, what in fact are being targeted are the material participants of that process. The disruption or ceasing of the process is the objective of some plan, but not technically a target. Only material things can be targeted for action. Even if some dependent entity is described as being the target, the material thing for which that dependent entity depends is the object of a targeting process.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "EventOntology"
   },
   {
@@ -4771,14 +5205,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000550",
    "label": "Morning",
    "definition": "A Temporal Interval that consists of the temporal regions between when the sun dawns (approximately 6:00am) and reaches its apex (approximately 12:00pm).",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000551",
    "label": "Organism",
    "definition": "An Object that is an Animal or Plant.",
-   "parents": [],
+   "parents": [
+    "object"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -4821,7 +5259,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000556",
    "label": "Payload",
    "definition": "A Material Entity that is transported by a Vehicle during an Act of Location Change for the purpose of being delivered to or performing one or more functions at a predefined location. Depending on the nature of the Flight or Mission, the Payload of a Vehicle may include cargo, passengers, flight crew, munitions, scientific instruments or experiments, or other equipment. Extra fuel, when optionally carried, is also considered part of the payload.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -4927,7 +5367,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000569",
    "label": "Sensor",
    "definition": "A Material Entity that bears a Sensor Function or Sensor Role.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -4970,7 +5412,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000574",
    "label": "Environmental Feature",
    "definition": "A Material Entity that is either a natural or man-made feature of the environment.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -5112,7 +5556,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000591",
    "label": "Artifact Location",
    "definition": "A Site that is the location of some Material Artifact.",
-   "parents": [],
+   "parents": [
+    "site"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -5173,7 +5619,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000599",
    "label": "Interpersonal Relationship Role",
    "definition": "A Role that inheres in a Person in virtue of the obligations, expectations, or social norms that govern that Person's Intentional Acts within the context of a relationship with another Person.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -5243,7 +5691,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000608",
    "label": "Financial Value",
    "definition": "A quality that inheres in an independent continuant to the degree that that independent continuant can serve as a medium of exchange in an economic system at a particular time.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -5295,7 +5745,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000614",
    "label": "Mass",
    "definition": "A Quality that inheres in a bearer in virtue of the amount of matter in that bearer. 'Matter' here can also refer to the inertial energy of an object.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -5338,7 +5790,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000619",
    "label": "Week",
    "definition": "A Temporal Interval that is equal to seven consecutive Days.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -5408,14 +5862,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000627",
    "label": "Infrastructure Element",
    "definition": "A Material Entity that bears an Infrastructure Role.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "ArtifactOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000628",
    "label": "Disposition to Interact with Electromagnetic Radiation",
    "definition": "A Disposition that inheres in a bearer in virtue of how that bearer interacts with electromagnetic radiation.",
-   "parents": [],
+   "parents": [
+    "disposition"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -5449,14 +5907,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000632",
    "label": "Magnetism",
    "definition": "A Disposition that is realized when its bearer exerts a magnetic force on another entity.",
-   "parents": [],
+   "parents": [
+    "disposition"
+   ],
    "module": "QualityOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000633",
    "label": "Weight",
    "definition": "A Quality that inheres in some material entity with a mass in virtue of its location in some gravitational field. When an object is \"weighed\", in the typical case, it is done so by taking into account the local force of gravity to determine the object's mass, whose standard of measure is the kilogram. The actual unit of measure of weight is the newton.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -5697,7 +6159,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000660",
    "label": "Effect",
    "definition": "A Process that follows and is caused by some previous Process.",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "EventOntology"
   },
   {
@@ -6046,7 +6510,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000699",
    "label": "Afternoon",
    "definition": "A Temporal Interval that consists of the temporal regions between when the sun is at its apex (approximately 12:00pm) and when it sets (approximately 6:00pm).",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -6251,7 +6717,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000722",
    "label": "Sea Level",
    "definition": "A Fiat Surface that divides the spheroid composed of Earth and its atmosphere at some point that corresponds to the mean level of calm water in the Earth’s oceans.",
-   "parents": [],
+   "parents": [
+    "fiat surface"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -6411,7 +6879,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000740",
    "label": "Resource",
    "definition": "A Continuant that is owned by, in the possession of, or is otherwise controlled by an Agent such that it could be used by that Agent. Resources are Resources for some Agent. If no instance of Agent existed, no instance of Resource would exist either. It is not a requirement that something be valuable in order for it to be a Resource. Thus the value of something can drastically change without altering whether that thing is a Resource.",
-   "parents": [],
+   "parents": [
+    "continuant"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -6544,7 +7014,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000755",
    "label": "Zenith",
    "definition": "A One-Dimensional Spatial Region that extends from a given location upward along the local vertical direction pointing in the direction opposite the apparent Gravitational Force at that location.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -6569,7 +7041,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000758",
    "label": "Component Role",
    "definition": "A Role that inheres in an entity having a discrete structure in virtue of that entity being part of a system considered at a particular level of analysis.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -6639,7 +7113,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000766",
    "label": "Hardness",
    "definition": "A Quality that inheres in a bearer in virtue of the degree to which it can be turned, bowed, or twisted without breaking.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -6655,7 +7131,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000768",
    "label": "Amount",
    "definition": "A Quality that inheres in a bearer in virtue of the total, aggregate or sum of a number of discrete items or material the entity contains as parts.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -6752,14 +7230,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000779",
    "label": "Portion of Cryosphere",
    "definition": "A fiat object part of the frozen part of a natural satellite's hydosphere",
-   "parents": [],
+   "parents": [
+    "fiat object part"
+   ],
    "module": "GeospatialOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000780",
    "label": "Ethnicity",
    "definition": "A Quality that inheres in its bearers by virtue of a common heritage, often consisting of a common language, a common culture (often including a shared religion) and an ideology that stresses common ancestry or endogamy.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -6937,7 +7419,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000800",
    "label": "Day",
    "definition": "A Temporal Interval that is equal to the approximate length of time required for an Astronomical Body to complete one rotation around its Rotational Axis as specified relative to a particular Temporal Reference System. Unless otherwise specified, a Day is assumed to be relative to the rotational motion of the Earth and is approximately equal to a twenty-four hour temporal region for which the start and end times are specified by the Temporal Reference System used.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -7025,7 +7509,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000810",
    "label": "Multi-Week Temporal Interval",
    "definition": "A one-dimensional temporal region that is measured in Weeks and spans at least one Week. This is a defined class.",
-   "parents": [],
+   "parents": [
+    "one-dimensional temporal region"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -7104,7 +7590,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000819",
    "label": "Stasis",
    "definition": "A Process in which one or more Independent Continuants endure in an unchanging condition.",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "EventOntology"
   },
   {
@@ -7219,7 +7707,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000832",
    "label": "Year",
    "definition": "A Temporal Interval that is equal to the approximate length of time required for an Astronomical Body to complete one Orbital Revolution around its Primary Body as specified relative to a particular Temporal Reference System. Unless otherwise specified, a Year is assumed to be relative to the Orbiting of the Earth around the Sun and is approximately equal to 12 Months or 365 Days.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -7433,7 +7923,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000856",
    "label": "Artifact History",
    "definition": "A History of a Material Artifact.",
-   "parents": [],
+   "parents": [
+    "history"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -7557,7 +8049,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000870",
    "label": "Infrastructure System",
    "definition": "A Material Entity that is composed of elements bearing Infrastructure Roles and is by itself sufficient to provide a planned service or benefit to some organization that maintains its elements.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -7807,7 +8301,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000898",
    "label": "Geopolitical Power Role",
    "definition": "A Role had by an Organization, that is perceived by an International Community as capable of performing influential acts in that community, and which would be realized in performing such acts.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -7913,7 +8409,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000911",
    "label": "Semi-Major Axis",
    "definition": "A One-Dimensional Spatial Region that is equal to half the length of the Major Axis of an Ellipse.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -7965,7 +8463,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000917",
    "label": "Permanent Resident Role",
    "definition": "A role inhering in a Person by virtue of that Person being recognized as having legal resident status in a Government Domain in which that person is not a citizen but where they have the right to reside on a permanent basis.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -8071,7 +8571,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000929",
    "label": "Part Role",
    "definition": "A Role that inheres in an entity in virtue of it being part of some other entity without being subject to further subdivision or disassembly without destruction of its designated use.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -8321,7 +8823,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000958",
    "label": "Information Content Entity",
    "definition": "A Generically Dependent Continuant that generically depends on some Information Bearing Entity and stands in relation of aboutness to some Entity. Information Content Entity is here intended to be a class of Entities whose instances are the informational content of Information Bearing Entities. For example, three instances of information bearers -- such as a bar chart, color-coded map, and a written report -- each of which lists the GDP of Countries for the year 2010 are each different carriers of the same information content. It is this content that is generically dependent upon its carrier. This treatment of Informational Content Entity (cf. the Information Artifact Ontology) leads to a principle of subtyping based upon the relationship that ICE's have with the Entity they are about rather than characteristics such as format, language, measurement scale, or media. The latter are treated here as being Qualities of bearers.",
-   "parents": [],
+   "parents": [
+    "generically dependent continuant"
+   ],
    "module": "InformationEntityOntology"
   },
   {
@@ -8481,14 +8985,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00000978",
    "label": "Cause",
    "definition": "A Process that is the cause of or one of the causes of some other Process.",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "EventOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000979",
    "label": "Closure",
    "definition": "A Quality that inheres in a bearer in virtue of the degree to which that bearer affords passage or sightline through it via an opening, aperture, orifice, or vent.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -8531,7 +9039,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000984",
    "label": "Occupation Role",
    "definition": "A Role that inheres in an Agent in virtue of the responsibilities that Agent is expected to fulfill within the context of some Act of Employment.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -8556,7 +9066,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000987",
    "label": "Citizen Role",
    "definition": "A Role that inheres in a Person by virtue of that Person being legally recognized as a member of a particular state, with associated rights and obligations.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -8599,7 +9111,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000992",
    "label": "Second",
    "definition": "A Temporal Interval that is equal to the duration of 9,192,631,770 periods of the radiation corresponding to the transition between the two hyperfine levels of the ground state of the cesium 133 atom. The Second is used as the basic SI unit of time.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -8624,7 +9138,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000995",
    "label": "Material Artifact",
    "definition": "A Material Entity that was designed by some Agent to realize a certain Function.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -8640,7 +9156,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00000997",
    "label": "Disrupting Disposition",
    "definition": "A disposition the realization of which would disrupt a process some entity has an interest in.",
-   "parents": [],
+   "parents": [
+    "disposition"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -8719,7 +9237,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001006",
    "label": "Operator Role",
    "definition": "A Role that inheres in an Agent by virtue of that Agent's responsibilities to operate or control some Material Artifact.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -8798,14 +9318,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00001016",
    "label": "Portion of Lithosphere",
    "definition": "A fiat object part of the rigid, outermost rocky shell of a natural satellite.",
-   "parents": [],
+   "parents": [
+    "fiat object part"
+   ],
    "module": "GeospatialOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001017",
    "label": "Agent",
    "definition": "A Material Entity that bears an Agent Capability.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -8947,7 +9471,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001033",
    "label": "Biological Sex",
    "definition": "A Quality inhering in a bearer by virtue of the bearer's ability to undergo sexual reproduction in order to differentiate the individuals or types involved.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -9008,7 +9534,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001040",
    "label": "Nadir",
    "definition": "A One-Dimensional Spatial Region that extends from a given location downward along the local vertical direction pointing in the direction of the apparent Gravitational Force at that location.",
-   "parents": [],
+   "parents": [
+    "one-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -9168,14 +9696,18 @@
    "uri": "https://www.commoncoreontologies.org/ont00001058",
    "label": "Hour",
    "definition": "A Temporal Interval that is equal to sixty consecutive Minutes.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001059",
    "label": "Shape Quality",
    "definition": "A Quality that inheres in a bearer in virtue of the ratios between dimensions of external features of that bearer.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -9434,7 +9966,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001088",
    "label": "Decade",
    "definition": "A Temporal Interval that is equal to a period of ten consecutive Years.",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -9630,7 +10164,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001110",
    "label": "Evening",
    "definition": "A Temporal Interval that consists of the temporal regions between when the sun sets (approximately 6:00pm) and when people typically retire to sleep (approximately 9:00pm).",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -9682,7 +10218,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001116",
    "label": "Reference Time",
    "definition": "A Temporal Instant specified as the origin for which other Temporal Regions are measured or identified.",
-   "parents": [],
+   "parents": [
+    "temporal instant"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -9698,7 +10236,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001118",
    "label": "Surface Tension",
    "definition": "A Disposition that inheres in a liquid and is realized when the cohesive forces of the molecules in the bearer at the surface are greater than the adhesive forces of the molecules in the surrounding air.",
-   "parents": [],
+   "parents": [
+    "disposition"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -9894,7 +10434,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001141",
    "label": "Infrastructure Role",
    "definition": "A Role that inheres in the bearer of a Disposition and has been assigned to an Infrastructure System such that the realization of that Disposition is sometimes part of the functioning of the Infrastructure System. The disposition will typically be a function of an artifact, which is often designed to be part of some Infrastructure system. But not always. In some cases an entity may be repurposed to be an element of some Infrastructure. In those cases it is a capability of that entity that supports the functioning of the system.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -10009,7 +10551,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001154",
    "label": "Multi-Second Temporal Interval",
    "definition": "A one-dimensional temporal region that is measured in Seconds and spans at least one Second. This is a defined class.",
-   "parents": [],
+   "parents": [
+    "one-dimensional temporal region"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -10115,7 +10659,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001166",
    "label": "Multi-Minute Temporal Interval",
    "definition": "A one-dimensional temporal region that is measured in Minutes and spans at least one Minute. This is a defined class.",
-   "parents": [],
+   "parents": [
+    "one-dimensional temporal region"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -10131,7 +10677,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001168",
    "label": "Reaction Mass",
    "definition": "A Material Entity against which a Propulsion System operates in order to produce Acceleration.",
-   "parents": [],
+   "parents": [
+    "material entity"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -10255,7 +10803,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001182",
    "label": "Phase Angle",
    "definition": "A Relational Quality that is the angle between the light incident onto an observed Object and the light reflected from the Object.",
-   "parents": [],
+   "parents": [
+    "relational quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -10352,7 +10902,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001193",
    "label": "Fatigability",
    "definition": "A Realizable Entity that is realized when its bearer loses strength and tires quickly.",
-   "parents": [],
+   "parents": [
+    "realizable entity"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -10431,7 +10983,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001202",
    "label": "Size Quality",
    "definition": "A Quality that inheres in a bearer in virtue of the bearer's extension in one or more dimensions.",
-   "parents": [],
+   "parents": [
+    "quality"
+   ],
    "module": "QualityOntology"
   },
   {
@@ -10447,7 +11001,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001204",
    "label": "Night",
    "definition": "A Temporal Interval that consists of the temporal regions between when people typically retire to sleep (approximately 9:00pm) and when the sun dawns (approximately 6:00am).",
-   "parents": [],
+   "parents": [
+    "temporal interval"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -10463,7 +11019,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001206",
    "label": "Multi-Year Temporal Interval",
    "definition": "A one-dimensional temporal region that is measured in Years and spans at least one Year. This is a defined class.",
-   "parents": [],
+   "parents": [
+    "one-dimensional temporal region"
+   ],
    "module": "TimeOntology"
   },
   {
@@ -10767,7 +11325,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001241",
    "label": "Sensor Function",
    "definition": "A Function that is realized in processes wherein an attribute of its bearer is a proxy for some aspect of its sensing environment. A proxy in the sense used here is a stand-in used in place of something else, often because the original is unavailable or not directly accessible.",
-   "parents": [],
+   "parents": [
+    "function"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -10918,7 +11478,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001259",
    "label": "Portion of Atmosphere",
    "definition": "A fiat object part of the layer of gas or layers of gases that envelop a natural satellite.",
-   "parents": [],
+   "parents": [
+    "fiat object part"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -11618,7 +12180,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001341",
    "label": "Portion of Geosphere",
    "definition": "A fiat object part that is composed of one or more portions of the atmosphere, cryosphere, hydrosphere, or lithosphere",
-   "parents": [],
+   "parents": [
+    "fiat object part"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -11679,7 +12243,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001348",
    "label": "Three-Dimensional Position",
    "definition": "A Three-Dimensional Spatial Region that encompasses the (minimal) spatial region in which some object is located at a particular time. For an object in motion, its Three-Dimensional Position is part of its Three-Dimensional Path.",
-   "parents": [],
+   "parents": [
+    "three-dimensional spatial region"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -11956,7 +12522,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001379",
    "label": "Agent Capability",
    "definition": "A Realizable Entity that inheres in a Material Entity in virtue of that Material Entity's capacity to realize it in some Planned Act.",
-   "parents": [],
+   "parents": [
+    "realizable entity"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -12017,7 +12585,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00002000",
    "label": "Center of Mass",
    "definition": "A Fiat Point that is where the weighted position vectors of the distributed Mass of a Material Entity relative to this point sum to zero.",
-   "parents": [],
+   "parents": [
+    "fiat point"
+   ],
    "module": "GeospatialOntology"
   },
   {
@@ -12285,21 +12855,27 @@
    "uri": "https://www.commoncoreontologies.org/ont00002073",
    "label": "Sensor Role",
    "definition": "A Role that inheres in an entity in virtue of it being used in a process wherein an attribute of its bearer acts as a proxy for some aspect of its sensing environment.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "ArtifactOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002074",
    "label": "Sensor Platform Role",
    "definition": "A Role that inheres in an entity in virtue of it being used to support or convey a Sensor during its deployment and functioning.",
-   "parents": [],
+   "parents": [
+    "role"
+   ],
    "module": "ArtifactOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002075",
    "label": "Sensing Process",
    "definition": "A Process that realizes a Sensor Function or Sensor Role.",
-   "parents": [],
+   "parents": [
+    "process"
+   ],
    "module": "ArtifactOntology"
   },
   {
@@ -12359,6 +12935,496 @@
  ],
  "properties": [
   {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000054",
+   "label": "has realization",
+   "definition": "b has realization c =Def c realizes b",
+   "domain": [
+    "realizable entity"
+   ],
+   "range": [
+    "process"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000055",
+   "label": "realizes",
+   "definition": "(Elucidation) realizes is a relation between a process b and realizable entity c such that c inheres in some d & for all t, if b has participant d then c exists & the type instantiated by b is correlated with the type instantiated by c Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "realizable entity"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000056",
+   "label": "participates in",
+   "definition": "(Elucidation) participates in holds between some b that is either a specifically dependent continuant or generically dependent continuant or independent continuant that is not a spatial region & some process p such that b participates in p some way Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [],
+   "range": [
+    "process"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000057",
+   "label": "has participant",
+   "definition": "p has participant c =Def c participates in p Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "process"
+   ],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000058",
+   "label": "is concretized by",
+   "definition": "c is concretized by b =Def b concretizes c Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "generically dependent continuant"
+   ],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000059",
+   "label": "concretizes",
+   "definition": "b concretizes c =Def b is a process or a specifically dependent continuant & c is a generically dependent continuant & there is some time t such that c is the pattern or content which b shares at t with actual or potential copies Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [],
+   "range": [
+    "generically dependent continuant"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000062",
+   "label": "preceded by",
+   "definition": "b preceded by c =Def b precedes c",
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000063",
+   "label": "precedes",
+   "definition": "(Elucidation) precedes is a relation between occurrents o, o' such that if t is the temporal extent of o & t' is the temporal extent of o' then either the last instant of o is before the first instant of o' or the last instant of o is the first instant of o' & neither o nor o' are temporal instants Each temporal region is its own temporal extent. The temporal extent of a spatiotemporal region is the temporal region it temporally projects onto. The temporal extent of a process or process boundary that occupies temporal region t is t.",
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000066",
+   "label": "occurs in",
+   "definition": "b occurs in c =Def b is a process or a process boundary & c is a material entity or site & there exists a spatiotemporal region r & b occupies spatiotemporal region r & for all time t, if b exists at t then c exists at t & there exist spatial regions s and s' where b spatially projects onto s at t & c occupies spatial region s' at t & s is a continuant part of s' at t",
+   "domain": [],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000084",
+   "label": "generically depends on",
+   "definition": "b generically depends on c =Def b is a generically dependent continuant & c is an independent continuant that is not a spatial region & at some time t there inheres in c a specifically dependent continuant which concretizes b at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "generically dependent continuant"
+   ],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000101",
+   "label": "is carrier of",
+   "definition": "b is carrier of c =Def there is some time t such that c generically depends on b at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [],
+   "range": [
+    "generically dependent continuant"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000108",
+   "label": "exists at",
+   "definition": "(Elucidation) exists at is a relation between a particular and some temporal region at which the particular exists",
+   "domain": [
+    "entity"
+   ],
+   "range": [
+    "temporal region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000115",
+   "label": "has member part",
+   "definition": "b has member part c =Def c member part of b Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "material entity"
+   ],
+   "range": [
+    "material entity"
+   ],
+   "parents": [
+    "has continuant part"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000117",
+   "label": "has occurrent part",
+   "definition": "b has occurrent part c =Def c occurrent part of b",
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000121",
+   "label": "has temporal part",
+   "definition": "b has temporal part c =Def c temporal part of b",
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
+   "parents": [
+    "has occurrent part"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000124",
+   "label": "location of",
+   "definition": "b location of c =Def c located in b Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000127",
+   "label": "material basis of",
+   "definition": "b material basis of c =Def c has material basis b Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "material entity"
+   ],
+   "range": [
+    "disposition"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000129",
+   "label": "member part of",
+   "definition": "b member part of c =Def b is an object & c is a material entity & there is some time t such that b continuant part of c at t & there is a mutually exhaustive and pairwise disjoint partition of c into objects x1, ..., xn (for some n ≠ 1) with b = xi (for some 1 <= i <= n) Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "material entity"
+   ],
+   "range": [
+    "material entity"
+   ],
+   "parents": [
+    "continuant part of"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000132",
+   "label": "occurrent part of",
+   "definition": "(Elucidation) occurrent part of is a relation between occurrents b and c when b is part of c",
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000139",
+   "label": "temporal part of",
+   "definition": "b temporal part of c =Def b occurrent part of c & (b and c are temporal regions) or (b and c are spatiotemporal regions & b temporally projects onto an occurrent part of the temporal region that c temporally projects onto) or (b and c are processes or process boundaries & b occupies a temporal region that is an occurrent part of the temporal region that c occupies)",
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
+   "parents": [
+    "occurrent part of"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000153",
+   "label": "temporally projects onto",
+   "definition": "(Elucidation) temporally projects onto is a relation between a spatiotemporal region s and some temporal region which is the temporal extent of s",
+   "domain": [
+    "spatiotemporal region"
+   ],
+   "range": [
+    "temporal region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000171",
+   "label": "located in",
+   "definition": "b located in c =Def b is an independent continuant & c is an independent & neither is a spatial region & there is some time t such that the spatial region which b occupies at t is continuant part of the spatial region which c occupies at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000176",
+   "label": "continuant part of",
+   "definition": "b continuant part of c =Def b and c are continuants & there is some time t such that b and c exist at t & b continuant part of c at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "continuant"
+   ],
+   "range": [
+    "continuant"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000178",
+   "label": "has continuant part",
+   "definition": "b has continuant part c =Def c continuant part of b Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "continuant"
+   ],
+   "range": [
+    "continuant"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000183",
+   "label": "environs",
+   "definition": "b environs c =Def c occurs in b",
+   "domain": [],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000184",
+   "label": "history of",
+   "definition": "(Elucidation) history of is a relation between history b and material entity c such that b is the unique history of c",
+   "domain": [
+    "history"
+   ],
+   "range": [
+    "material entity"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000185",
+   "label": "has history",
+   "definition": "b has history c =Def c history of b",
+   "domain": [
+    "material entity"
+   ],
+   "range": [
+    "history"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000194",
+   "label": "specifically depended on by",
+   "definition": "b specifically depended on by c =Def c specifically depends on b",
+   "domain": [],
+   "range": [
+    "specifically dependent continuant"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000195",
+   "label": "specifically depends on",
+   "definition": "(Elucidation) specifically depends on is a relation between a specifically dependent continuant b and specifically dependent continuant or independent continuant that is not a spatial region c such that b and c share no parts in common & b is of a nature such that at all times t it cannot exist unless c exists & b is not a boundary of c The analogue of specifically depends on for occurrents is has participant.",
+   "domain": [
+    "specifically dependent continuant"
+   ],
+   "range": [],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000196",
+   "label": "bearer of",
+   "definition": "b bearer of c =Def c inheres in b",
+   "domain": [],
+   "range": [
+    "specifically dependent continuant"
+   ],
+   "parents": [
+    "specifically depended on by"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000197",
+   "label": "inheres in",
+   "definition": "b inheres in c =Def b is a specifically dependent continuant & c is an independent continuant that is not a spatial region & b specifically depends on c",
+   "domain": [
+    "specifically dependent continuant"
+   ],
+   "range": [],
+   "parents": [
+    "specifically depends on"
+   ],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000199",
+   "label": "occupies temporal region",
+   "definition": "p occupies temporal region t =Def p is a process or process boundary & the spatiotemporal region occupied by p temporally projects onto t",
+   "domain": [],
+   "range": [
+    "temporal region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000200",
+   "label": "occupies spatiotemporal region",
+   "definition": "(Elucidation) occupies spatiotemporal region is a relation between a process or process boundary p and the spatiotemporal region s which is its spatiotemporal extent",
+   "domain": [],
+   "range": [
+    "spatiotemporal region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000210",
+   "label": "occupies spatial region",
+   "definition": "b occupies spatial region r =Def b is an independent continuant that is not a spatial region & r is a spatial region & there is some time t such that every continuant part of b occupies some continuant part of r at t and no continuant part of b occupies any spatial region that is not a continuant part of r at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [],
+   "range": [
+    "spatial region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000216",
+   "label": "spatially projects onto",
+   "definition": "(Elucidation) spatially projects onto is a relation between some spatiotemporal region b and spatial region c such that at some time t, c is the spatial extent of b at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "spatiotemporal region"
+   ],
+   "range": [
+    "spatial region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000218",
+   "label": "has material basis",
+   "definition": "b has material basis c =Def b is a disposition & c is a material entity & there is some d bearer of b & there is some time t such that c is a continuant part of d at t & d has disposition b because c is a continuant part of d at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
+   "domain": [
+    "disposition"
+   ],
+   "range": [
+    "material entity"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000221",
+   "label": "first instant of",
+   "definition": "t first instant of t' =Def t is a temporal instant & t' is a temporal region t' & t precedes all temporal parts of t' other than t",
+   "domain": [
+    "temporal instant"
+   ],
+   "range": [
+    "temporal region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000222",
+   "label": "has first instant",
+   "definition": "t has first instant t' =Def t' first instant of t",
+   "domain": [
+    "temporal region"
+   ],
+   "range": [
+    "temporal instant"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000223",
+   "label": "last instant of",
+   "definition": "t last instant of t' =Def t is a temporal instant & t' is a temporal region & all temporal parts of t' other than t precede t",
+   "domain": [
+    "temporal instant"
+   ],
+   "range": [
+    "temporal region"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
+   "uri": "http://purl.obolibrary.org/obo/BFO_0000224",
+   "label": "has last instant",
+   "definition": "t has last instant t' =Def t' last instant of t",
+   "domain": [
+    "temporal region"
+   ],
+   "range": [
+    "temporal instant"
+   ],
+   "parents": [],
+   "module": ""
+  },
+  {
    "uri": "https://www.commoncoreontologies.org/ont00001774",
    "label": "has brother",
    "definition": "",
@@ -12377,8 +13443,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001775",
    "label": "is successor of",
    "definition": "x is successor of y =Def y is predecessor of x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "independent continuant"
+   ],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -12401,26 +13471,40 @@
    "uri": "https://www.commoncoreontologies.org/ont00001777",
    "label": "has process part",
    "definition": "x has process part y =Def y is part of process x",
-   "domain": [],
-   "range": [],
-   "parents": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "has occurrent part"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001778",
    "label": "has object",
    "definition": "x has object y =Def y is object of x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001779",
    "label": "has inside instant",
    "definition": "x has_inside_instant y iff x is an instance of One Dimensional Temporal Region and y is an instance of Temporal Instant and y is_inside_instant_of x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "one-dimensional temporal region"
+   ],
+   "range": [
+    "temporal instant"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -12458,7 +13542,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001782",
    "label": "has all members located in",
    "definition": "x has all members located in y iff x is an instance of Object Aggregate and y is an instance of independent continuant but not a spatial region, and every member of x is located in y.",
-   "domain": [],
+   "domain": [
+    "object aggregate"
+   ],
    "range": [],
    "parents": [
     "has some member located in"
@@ -12532,8 +13618,12 @@
    "domain": [
     "Agent"
    ],
-   "range": [],
-   "parents": [],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "participates in"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -12585,8 +13675,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001791",
    "label": "coincides with",
    "definition": "x coincides_with y iff x and y are both instances of Immaterial Entity and x is a spatial part of y and y is a spatial part of x. Given a stronger temporal interpretation, this property may be transitive and symmetric. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
     "connected with"
    ],
@@ -12641,8 +13735,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001795",
    "label": "has inside interval",
    "definition": "x has inside interval y =Def y interval during x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval contains"
    ],
@@ -12652,8 +13750,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001796",
    "label": "tangential part of",
    "definition": "x tangential_part_of y iff x and y are both instances of Immaterial Entity and x is a spatial part of y and there exists an instance of Immaterial Entity z such that z externally connects with x and z externally connects with y. Given a stronger temporal interpretation, this property may be transitive. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
     "spatial part of"
    ],
@@ -12663,8 +13765,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001797",
    "label": "partially overlaps with",
    "definition": "x partially overlaps with y iff x and y are both instances of Immaterial Entity and x overlaps with y and x is not a spatial part of y and y is not a spatial part of x. Given a stronger temporal interpretation, this property may be symmetric. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
     "connected with"
    ],
@@ -12689,8 +13795,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001799",
    "label": "role of aggregate",
    "definition": "x role_of_aggregate y iff y is an instance of Object Aggregate and x is an instance of Role, and x inheres_in_aggregate y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "role"
+   ],
+   "range": [
+    "object aggregate"
+   ],
    "parents": [
     "inheres in aggregate"
    ],
@@ -12703,7 +13813,9 @@
    "domain": [
     "Process Regulation"
    ],
-   "range": [],
+   "range": [
+    "process"
+   ],
    "parents": [
     "prescribes"
    ],
@@ -12713,7 +13825,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001801",
    "label": "is subject of",
    "definition": "x is subject of y =Def y is about x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Information Content Entity"
    ],
@@ -12739,8 +13853,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001803",
    "label": "is cause of",
    "definition": "x is_cause_of y iff x and y are instances of Process, and y is a consequence of x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -12763,8 +13881,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001805",
    "label": "is disrupted by",
    "definition": "x is disrupted by y =Def y disrupts x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -12787,7 +13909,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001807",
    "label": "is required by",
    "definition": "x is required by y =Def y requires x Given a stronger temporal interpretation, this property may be asymmetric and irreflexive. For more info please refer to",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [
     "Process Regulation"
    ],
@@ -12803,7 +13927,9 @@
    "domain": [
     "Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [],
    "module": "InformationEntityOntology"
   },
@@ -12812,7 +13938,9 @@
    "label": "inheres in aggregate",
    "definition": "x inheres_in_aggregate y iff x is an instance of Specifically Dependent Continuant or Generically Dependent Continuant and y is an instance of Object Aggregate and y aggregate_bearer_of x.",
    "domain": [],
-   "range": [],
+   "range": [
+    "object aggregate"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -12820,8 +13948,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001810",
    "label": "connected with",
    "definition": "x is_connected_with y iff x and y are both instances of Immaterial Entity and there exists an instance of Immaterial Entity z that is part of both x and y. Given a stronger temporal interpretation, this property may be symmetric. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [],
    "module": "GeospatialOntology"
   },
@@ -12832,7 +13964,9 @@
    "domain": [
     "Ordinal Measurement Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is a measurement of"
    ],
@@ -12860,7 +13994,9 @@
    "domain": [
     "Agent"
    ],
-   "range": [],
+   "range": [
+    "material entity"
+   ],
    "parents": [],
    "module": "AgentOntology"
   },
@@ -12868,8 +14004,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001814",
    "label": "interval finishes",
    "definition": "x interval_finishes y iff x and y are both instances of Temporal Interval and there exist instances of Temporal Instant v, w, and z such that v is the starting instant of x, w is the ending instant of both x and y, z is the starting instant of y, and z is before v.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval contained by"
    ],
@@ -12895,15 +14035,21 @@
    "label": "is output of",
    "definition": "x is output of y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and the presence of x at the end of y is a necessary condition for the completion of y.",
    "domain": [],
-   "range": [],
-   "parents": [],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "participates in"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001817",
    "label": "is prohibited by",
    "definition": "x is prohibited by y =Def y prohibits x Given a stronger temporal interpretation, this property may be asymmetric and irreflexive. For more info please refer to",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [
     "Process Regulation"
    ],
@@ -12931,8 +14077,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001819",
    "label": "caused by",
    "definition": "x caused by y =Def y is cause of x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -12955,8 +14105,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001821",
    "label": "interval finished by",
    "definition": "x interval finished by y =Def y interval finishes x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval contains"
    ],
@@ -12966,8 +14120,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001822",
    "label": "interval equals",
    "definition": "x interval_equals y iff x and y are both instances of Temporal Interval and there exist instances of Temporal Instant w and z such that w is the starting instant of both x and y and z is the ending instant of both x and y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -13003,8 +14161,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001825",
    "label": "interval overlaps",
    "definition": "x interval overlaps y =Def y interval overlapped by x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -13027,8 +14189,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001827",
    "label": "nontangential part of",
    "definition": "x nontangential_part_of y iff x and y are both instances of Immaterial Entity and x is a spatial part of y and there does not exist an instance of Immaterial Entity z such that z externally connects with x and z externally connects with y. Given a stronger temporal interpretation, this property may be transitive. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
     "spatial part of"
    ],
@@ -13053,8 +14219,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001829",
    "label": "disposition of aggregate",
    "definition": "x disposition_of_aggregate y iff y is an instance of Object Aggregate and x is an instance of Disposition, and x inheres_in_aggregate y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "disposition"
+   ],
+   "range": [
+    "object aggregate"
+   ],
    "parents": [
     "inheres in aggregate"
    ],
@@ -13064,19 +14234,27 @@
    "uri": "https://www.commoncoreontologies.org/ont00001830",
    "label": "has accomplice",
    "definition": "x has accomplice y =Def y accomplice in x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [
     "Agent"
    ],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "AgentOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001831",
    "label": "is subordinate role to",
    "definition": "For all x,y,t: y is subordinate role to x at t iff: x is an instance of Role at time t, and y is an instance of Role at time t, and there is some z such that x is realized by z and z is an instance of Process which creates, modifies, transfers, or eliminates some u such that u is a Process Regulation at time t, and u is addressed to the bearer of y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "role"
+   ],
+   "range": [
+    "role"
+   ],
    "parents": [],
    "module": "AgentOntology"
   },
@@ -13084,7 +14262,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001832",
    "label": "has some member located in",
    "definition": "x has some member located in y iff x is an instance of Object Aggregate and y is an instance of independent continuant but not a spatial region, and at least one member of x is located in y.",
-   "domain": [],
+   "domain": [
+    "object aggregate"
+   ],
    "range": [],
    "parents": [],
    "module": "ExtendedRelationOntology"
@@ -13093,20 +14273,28 @@
    "uri": "https://www.commoncoreontologies.org/ont00001833",
    "label": "has agent",
    "definition": "x has agent y =Def y agent in x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [
     "Agent"
    ],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "AgentOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001834",
    "label": "affects",
    "definition": "x affects y =Def y is affected by x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -13128,7 +14316,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001836",
    "label": "aggregate bearer of",
    "definition": "x aggregate bearer of y =Def y inheres in aggregate x",
-   "domain": [],
+   "domain": [
+    "object aggregate"
+   ],
    "range": [],
    "parents": [],
    "module": "ExtendedRelationOntology"
@@ -13143,15 +14333,21 @@
    "range": [
     "Information Bearing Entity"
    ],
-   "parents": [],
+   "parents": [
+    "generically depends on"
+   ],
    "module": "InformationEntityOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001838",
    "label": "disconnected with",
    "definition": "x disconnected_with y iff x and y are both instances of Immaterial Entity and there does not exist some immaterial entity z that is part of both x and y. Given a stronger temporal interpretation, this property may be symmetric. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [],
    "module": "GeospatialOntology"
   },
@@ -13190,8 +14386,12 @@
    "label": "is input of",
    "definition": "x is input of y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and the presence of x at the beginning of y is a necessary condition for the start of y.",
    "domain": [],
-   "range": [],
-   "parents": [],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "participates in"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -13234,16 +14434,24 @@
    "range": [
     "Agent"
    ],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "AgentOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001845",
    "label": "is site of",
    "definition": "x is site of y =Def y occurs at x",
-   "domain": [],
-   "range": [],
-   "parents": [],
+   "domain": [
+    "site"
+   ],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "environs"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -13253,7 +14461,9 @@
    "domain": [
     "Organization"
    ],
-   "range": [],
+   "range": [
+    "role"
+   ],
    "parents": [],
    "module": "AgentOntology"
   },
@@ -13261,8 +14471,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001847",
    "label": "interval is after",
    "definition": "x interval is after y =Def y interval is before x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval disjoint"
    ],
@@ -13272,8 +14486,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001848",
    "label": "is inside instant of",
    "definition": "x is_inside_instant of y iff x is an instance of Temporal Instant and y is an instance of One-Dimensional Temporal Region and there are instances of Temporal Instant w and z that are part of y and non-identical to x such that w precedes x and z is preceded by x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal instant"
+   ],
+   "range": [
+    "one-dimensional temporal region"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -13329,8 +14547,12 @@
    "domain": [
     "Agent"
    ],
-   "range": [],
-   "parents": [],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "participates in"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -13367,10 +14589,15 @@
    "uri": "https://www.commoncoreontologies.org/ont00001855",
    "label": "has spatial part",
    "definition": "x has spatial part y =Def y spatial part of x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
-    "connected with"
+    "connected with",
+    "has continuant part"
    ],
    "module": "GeospatialOntology"
   },
@@ -13393,9 +14620,15 @@
    "uri": "https://www.commoncoreontologies.org/ont00001857",
    "label": "is part of process",
    "definition": "x is part of process y iff x is occurrent part of y, x and y are Processes, and x occupies a temporal region that is a proper occurrent part of the temporal interval of y.",
-   "domain": [],
-   "range": [],
-   "parents": [],
+   "domain": [
+    "occurrent"
+   ],
+   "range": [
+    "occurrent"
+   ],
+   "parents": [
+    "occurrent part of"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -13445,8 +14678,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001862",
    "label": "interval disjoint",
    "definition": "x interval_disjoint y iff x and y are both instances of Temporal Interval and have no parts in common.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -13460,7 +14697,9 @@
    "range": [
     "Measurement Unit"
    ],
-   "parents": [],
+   "parents": [
+    "is carrier of"
+   ],
    "module": "InformationEntityOntology"
   },
   {
@@ -13493,7 +14732,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001866",
    "label": "is interest of",
    "definition": "x is interest of y =Def y has interest in x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [
     "Agent"
    ],
@@ -13522,7 +14763,9 @@
    "domain": [
     "Nominal Measurement Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is a measurement of"
    ],
@@ -13532,8 +14775,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001869",
    "label": "interval during",
    "definition": "x interval_during y iff x and y are both instances of Temporal Interval and there exist instances of Temporal Instant u, v, w, and z such that u is the starting instant of x, v is the ending instant of x, w is the starting instant of y, z is the ending instant of y, w is before u, and v is before z.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval contained by"
    ],
@@ -13543,8 +14790,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001870",
    "label": "interval overlapped by",
    "definition": "x is_overlapped_by y iff x and y are both instances of Temporal Interval and y interval_overlaps x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -13582,7 +14833,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001873",
    "label": "represented by",
    "definition": "x represented by y =Def y represents x See notes for inverse property.",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Representational Information Content Entity"
    ],
@@ -13595,7 +14848,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001874",
    "label": "is temporal region of",
    "definition": "x is temporal region of y =Def y occupies temporal region x",
-   "domain": [],
+   "domain": [
+    "temporal region"
+   ],
    "range": [],
    "parents": [],
    "module": "ExtendedRelationOntology"
@@ -13604,8 +14859,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001875",
    "label": "interval started by",
    "definition": "x interval started by y =Def y interval starts x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval contains"
    ],
@@ -13633,7 +14892,9 @@
    "domain": [
     "Interval Measurement Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is a measurement of"
    ],
@@ -13646,7 +14907,9 @@
    "domain": [
     "Information Bearing Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [],
    "module": "InformationEntityOntology"
   },
@@ -13654,7 +14917,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001879",
    "label": "designated by",
    "definition": "x designated by y =Def y designates x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Designative Information Content Entity"
    ],
@@ -13670,7 +14935,9 @@
    "domain": [
     "Agent Capability"
    ],
-   "range": [],
+   "range": [
+    "object aggregate"
+   ],
    "parents": [
     "inheres in aggregate"
    ],
@@ -13725,7 +14992,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001884",
    "label": "condition described by",
    "definition": "x condition described by y =Def y describes condition x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Performance Specification"
    ],
@@ -13754,8 +15023,12 @@
    "label": "is affected by",
    "definition": "x is affected by y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and y influences x in some manner, most often by producing a change in x.",
    "domain": [],
-   "range": [],
-   "parents": [],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "participates in"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -13777,8 +15050,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001888",
    "label": "disrupts",
    "definition": "A relation where one process disrupts another process from occurring as it would have. A process can disrupt another process from occurring as it would have by 1) preventing a disposition or role from being realized by that process, 2) lowering the grade of the process, or 3) stopping the process from continuing to occur.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -13792,7 +15069,9 @@
    "range": [
     "Agent"
    ],
-   "parents": [],
+   "parents": [
+    "inheres in"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -13844,8 +15123,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001893",
    "label": "instant is after",
    "definition": "x instant_is_after y iff x and y are both instances of Temporal Instant and there exists some instance of Temporal Interval z such that y is the starting instant of z and x is the ending instant of z. 'instant is after' is a primitive relationship. Informally, a temporal instant x is after some temporal instant y iff y precedes x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal instant"
+   ],
+   "range": [
+    "temporal instant"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -13871,16 +15154,24 @@
    "domain": [
     "Agent"
    ],
-   "range": [],
-   "parents": [],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "participates in"
+   ],
    "module": "AgentOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001896",
    "label": "interval meets",
    "definition": "x interval meets y =Def y interval met by x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval disjoint"
    ],
@@ -13905,7 +15196,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001898",
    "label": "aggregate has capability",
    "definition": "x aggregate has capability y =Def y capability of aggregate x",
-   "domain": [],
+   "domain": [
+    "object aggregate"
+   ],
    "range": [
     "Agent Capability"
    ],
@@ -13948,8 +15241,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001901",
    "label": "aggregate has role",
    "definition": "x aggregate_has_role y iff x is an instance of Object Aggregate and y is an instance of Role, such that x aggregate_bearer_of y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "object aggregate"
+   ],
+   "range": [
+    "role"
+   ],
    "parents": [
     "aggregate bearer of"
    ],
@@ -13989,7 +15286,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001904",
    "label": "is measured by",
    "definition": "x is measured by y =Def y is a measurement of x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Measurement Information Content Entity"
    ],
@@ -14032,8 +15331,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001907",
    "label": "aggregate has quality",
    "definition": "x aggregate_has_quality y iff x is an instance of Object Aggregate and y is an instance of Quality, such that x aggregate_bearer_of y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "object aggregate"
+   ],
+   "range": [
+    "quality"
+   ],
    "parents": [
     "aggregate bearer of"
    ],
@@ -14049,15 +15352,21 @@
    "range": [
     "Time Zone Identifier"
    ],
-   "parents": [],
+   "parents": [
+    "is carrier of"
+   ],
    "module": "InformationEntityOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001909",
    "label": "has tangential part",
    "definition": "x has tangential part y =Def y tangential part of x Given a stronger temporal interpretation, this property may be transitive. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
     "has spatial part"
    ],
@@ -14070,7 +15379,9 @@
    "domain": [
     "Process Regulation"
    ],
-   "range": [],
+   "range": [
+    "process"
+   ],
    "parents": [
     "prescribes"
    ],
@@ -14101,7 +15412,9 @@
    "range": [
     "Reference System"
    ],
-   "parents": [],
+   "parents": [
+    "is carrier of"
+   ],
    "module": "InformationEntityOntology"
   },
   {
@@ -14123,7 +15436,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001914",
    "label": "is measured by nominal",
    "definition": "x is measured by nominal y =Def y is a nominal measurement of x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Nominal Measurement Information Content Entity"
    ],
@@ -14136,8 +15451,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001915",
    "label": "interval met by",
    "definition": "x interval_met_by y iff x and y are both instances of Temporal Interval and y interval_meets x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval disjoint"
    ],
@@ -14150,7 +15469,9 @@
    "domain": [
     "Designative Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is about"
    ],
@@ -14160,7 +15481,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001917",
    "label": "described by",
    "definition": "x described by y =Def y describes x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Descriptive Information Content Entity"
    ],
@@ -14173,16 +15496,24 @@
    "uri": "https://www.commoncoreontologies.org/ont00001918",
    "label": "occurs at",
    "definition": "x occurs_at y iff x is an instance of Process and y is an instance of Site, such that x occurs in y.",
-   "domain": [],
-   "range": [],
-   "parents": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "site"
+   ],
+   "parents": [
+    "occurs in"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001919",
    "label": "is mentioned by",
    "definition": "x is_mentioned_by y iff y is an instance of Information Bearing Entity and x is an instance of Entity, such that y is used as a reference to x.",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Information Bearing Entity"
    ],
@@ -14193,7 +15524,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001920",
    "label": "prescribed by",
    "definition": "x prescribed by y =Def y prescribes x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Prescriptive Information Content Entity"
    ],
@@ -14206,9 +15539,13 @@
    "uri": "https://www.commoncoreontologies.org/ont00001921",
    "label": "has input",
    "definition": "x has input y =Def y is input of x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -14221,15 +15558,21 @@
    "range": [
     "Agent"
    ],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "AgentOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001923",
    "label": "interval starts",
    "definition": "x interval_starts y iff x and y are both instances of Temporal Interval and there exist instances of Temporal Instant v, w, and z such that v is the starting instant of both x and y, w is the ending instant of x, z is the ending instant of y and w is before z.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval contained by"
    ],
@@ -14239,8 +15582,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001924",
    "label": "interval contains",
    "definition": "x interval contains y =Def y interval contained by x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -14248,7 +15595,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001925",
    "label": "is used by",
    "definition": "x is used by y =Def y uses x",
-   "domain": [],
+   "domain": [
+    "material entity"
+   ],
    "range": [
     "Agent"
    ],
@@ -14289,8 +15638,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001928",
    "label": "is predecessor of",
    "definition": "x is_predecessor_of y iff x and y are both instances of Independent Continuant and there is some process p and x is an input to p and y is an output of p. More informally, x is_predecessor_of y iff y follows or replaces x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "independent continuant"
+   ],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -14328,8 +15681,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001931",
    "label": "externally connects with",
    "definition": "x externally_connects_with y iff x and y are both instances of Immaterial Entity and x connects with y and x does not overlap y. Given a stronger temporal interpretation, this property may be symmetric. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
     "connected with"
    ],
@@ -14354,8 +15711,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001933",
    "label": "process starts",
    "definition": "x process_starts y iff x and y are instances of processes, and x is_cause_of y, and i is an instance of a temporal instant, and r is an instance of a temporal interval, and y has starting instance i, and x occupies temporal region r, and r has inside instant i. A process x starts another process y when x causes y while x is still occurring.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
    "parents": [
     "is cause of"
    ],
@@ -14396,8 +15757,12 @@
    "label": "is object of",
    "definition": "x is object of y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and y is performed by Agent z and x is part of the projected state that z intends to achieve by performing y.",
    "domain": [],
-   "range": [],
-   "parents": [],
+   "range": [
+    "process"
+   ],
+   "parents": [
+    "participates in"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -14422,7 +15787,9 @@
    "domain": [
     "Representational Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is about"
    ],
@@ -14445,8 +15812,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001940",
    "label": "interval is before",
    "definition": "x interval_is_before y iff x and y are both instances of Temporal Interval and there exist instances of Temporal Instant w, z such that w is the ending instant of x and z is the starting instant of y and w is before z.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [
     "interval disjoint"
    ],
@@ -14474,7 +15845,9 @@
    "domain": [
     "Prescriptive Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is about"
    ],
@@ -14499,10 +15872,15 @@
    "uri": "https://www.commoncoreontologies.org/ont00001944",
    "label": "spatial part of",
    "definition": "x spatial_part_of y iff x, y, z, and q are instances of Immaterial Entity, such that for any z connected with x, z is also connected with y, and q is connected with y but not connected with x. in the sense used here, spatial part of is elsewhere referred to as proper spatial part of",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
-    "connected with"
+    "connected with",
+    "continuant part of"
    ],
    "module": "GeospatialOntology"
   },
@@ -14540,8 +15918,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001947",
    "label": "quality of aggregate",
    "definition": "x quality_of_aggregate y iff y is an instance of Object Aggregate and x is an instance of Quality, and x inheres_in_aggregate y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "quality"
+   ],
+   "range": [
+    "object aggregate"
+   ],
    "parents": [
     "inheres in aggregate"
    ],
@@ -14566,11 +15948,15 @@
    "uri": "https://www.commoncoreontologies.org/ont00001949",
    "label": "has accessory",
    "definition": "x has accessory y =Def y accessory in x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [
     "Agent"
    ],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -14592,8 +15978,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001951",
    "label": "has subordinate role",
    "definition": "x has subordinate role y =Def y is subordinate role to x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "role"
+   ],
+   "range": [
+    "role"
+   ],
    "parents": [],
    "module": "AgentOntology"
   },
@@ -14622,7 +16012,9 @@
    "range": [
     "Agent Capability"
    ],
-   "parents": [],
+   "parents": [
+    "bearer of"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -14644,8 +16036,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001956",
    "label": "aggregate has disposition",
    "definition": "x aggregate has disposition y =Def y disposition of aggregate x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "object aggregate"
+   ],
+   "range": [
+    "disposition"
+   ],
    "parents": [
     "aggregate bearer of"
    ],
@@ -14685,8 +16081,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001959",
    "label": "inhibits",
    "definition": "x inhibits y =Def y is inhibited by x",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -14715,15 +16115,21 @@
    "range": [
     "Information Bearing Entity"
    ],
-   "parents": [],
+   "parents": [
+    "generically depends on"
+   ],
    "module": "InformationEntityOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001962",
    "label": "process started by",
    "definition": "x process started by y =Def y process starts x A process x is started by another process y when y causes x while y is still occurring.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
    "parents": [
     "caused by"
    ],
@@ -14733,7 +16139,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001963",
    "label": "is measured by ordinal",
    "definition": "x is measured by ordinal y =Def y is a ordinal measurement of x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Ordinal Measurement Information Content Entity"
    ],
@@ -14746,7 +16154,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001964",
    "label": "is measured by interval",
    "definition": "x is measured by interval y =Def y is a interval measurement of x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Interval Measurement Information Content Entity"
    ],
@@ -14759,7 +16169,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001965",
    "label": "is measured by ratio",
    "definition": "x is measured by ratio y =Def y is a ratio measurement of x",
-   "domain": [],
+   "domain": [
+    "entity"
+   ],
    "range": [
     "Ratio Measurement Information Content Entity"
    ],
@@ -14775,7 +16187,9 @@
    "domain": [
     "Measurement Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "describes"
    ],
@@ -14830,8 +16244,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001970",
    "label": "inhibited by",
    "definition": "y inhibited_by x iff x and y are non-identical Processes, d is a Decrease of Realizable Entity, and x is_cause_of d, and r is a Realizable Entity, and d has_participant r, and r realized_in y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "process"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -14839,8 +16257,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001971",
    "label": "interval contained by",
    "definition": "x interval_contained_by y iff x and y are both instances of Temporal Interval and y interval_contains x.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal interval"
+   ],
+   "range": [
+    "temporal interval"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -14881,7 +16303,9 @@
    "domain": [
     "Process Regulation"
    ],
-   "range": [],
+   "range": [
+    "process"
+   ],
    "parents": [
     "prescribes"
    ],
@@ -14940,7 +16364,9 @@
    "range": [
     "Act of Communication"
    ],
-   "parents": [],
+   "parents": [
+    "participates in"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -14965,7 +16391,9 @@
    "domain": [
     "Performance Specification"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is about"
    ],
@@ -14993,7 +16421,9 @@
    "domain": [
     "Descriptive Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is about"
    ],
@@ -15006,7 +16436,9 @@
    "domain": [
     "Ratio Measurement Information Content Entity"
    ],
-   "range": [],
+   "range": [
+    "entity"
+   ],
    "parents": [
     "is a measurement of"
    ],
@@ -15019,7 +16451,9 @@
    "domain": [
     "Agent"
    ],
-   "range": [],
+   "range": [
+    "process"
+   ],
    "parents": [],
    "module": "AgentOntology"
   },
@@ -15042,9 +16476,13 @@
    "uri": "https://www.commoncoreontologies.org/ont00001986",
    "label": "has output",
    "definition": "x has output y =Def y is output of x",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [],
-   "parents": [],
+   "parents": [
+    "has participant"
+   ],
    "module": "ExtendedRelationOntology"
   },
   {
@@ -15081,8 +16519,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001989",
    "label": "has nontangential part",
    "definition": "x has nontangential part y =Def y nontangential part of x Given a stronger temporal interpretation, this property may be transitive. For more info please refer to",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "immaterial entity"
+   ],
+   "range": [
+    "immaterial entity"
+   ],
    "parents": [
     "has spatial part"
    ],
@@ -15092,8 +16534,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00001990",
    "label": "instant is before",
    "definition": "x instant_is_before y iff x and y are both instances of Zero Dimensional Temporal Region and there exists some instance of Temporal Interval z such that x is the starting instant of z and y is the ending instant of z. 'instant is before' is a primitive relationship. Informally, a temporal instant x is before some temporal instant y iff x precedes y.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "temporal instant"
+   ],
+   "range": [
+    "temporal instant"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -15101,7 +16547,9 @@
    "uri": "https://www.commoncoreontologies.org/ont00001992",
    "label": "has organizational context",
    "definition": "x has organizational context y =Def y is organizational context of x",
-   "domain": [],
+   "domain": [
+    "role"
+   ],
    "range": [
     "Organization"
    ],
@@ -15118,7 +16566,9 @@
    "range": [
     "Act of Communication"
    ],
-   "parents": [],
+   "parents": [
+    "participates in"
+   ],
    "module": "AgentOntology"
   },
   {
@@ -15176,14 +16626,18 @@
    "range": [
     "Information Bearing Entity"
    ],
-   "parents": [],
+   "parents": [
+    "generically depends on"
+   ],
    "module": "InformationEntityOntology"
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001998",
    "label": "is permitted by",
    "definition": "x is permitted by y =Def y permits x Given a stronger temporal interpretation, this property may be asymmetric and irreflexive. For more info please refer to",
-   "domain": [],
+   "domain": [
+    "process"
+   ],
    "range": [
     "Process Regulation"
    ],
@@ -15196,8 +16650,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00002080",
    "label": "process has first instant",
    "definition": "x process_has_first_instant y Def= x is a Process, y is a Temporal Instant, and there is some Temporal Region z such that y is first_instant_of z, and x occupies_temporal_region z",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "temporal instant"
+   ],
    "parents": [],
    "module": "TimeOntology"
   },
@@ -15205,8 +16663,12 @@
    "uri": "https://www.commoncoreontologies.org/ont00002081",
    "label": "process has last instant",
    "definition": "x process_has_last_instant y Def= x is a Process, y is a Temporal Instant, and there is some Temporal Region z such that y is last_instant_of z, and x occupies_temporal_region z.",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process"
+   ],
+   "range": [
+    "temporal instant"
+   ],
    "parents": [],
    "module": "TimeOntology"
   }
