@@ -213,6 +213,95 @@ async def _merge_standardized(store: Any) -> int:
     return merged
 
 
+_NLP: Any = None
+
+
+def _parser() -> Any:
+    """The shared spaCy pipeline, loaded once. ``None`` when unavailable."""
+    global _NLP
+    if _NLP is None:
+        import spacy
+
+        from graphknows.settings import GraphKnowsSettings
+
+        _NLP = spacy.load(GraphKnowsSettings().spacy_model)
+    return _NLP
+
+
+def _head_key(name: str, nlp: Any) -> str:
+    """The mention reduced to its NAMING core — head noun plus compounds.
+
+    Determiners, adjectives and trailing prepositional phrases describe a
+    mention; the head and its compound modifiers name it. So::
+
+        "the ideal dance studio by the water" -> "dance studio"
+        "Jon's new store"                     -> "store"
+
+    ``_standard_key`` above cannot reach these: it strips a leading determiner
+    and singularizes, which leaves "ideal dance studio" and "dance studio" as
+    two nodes. Measured on a conv-30 run, one dance studio was split across six
+    surfaces, and the duplicates produced self-referential edges that look like
+    structure and carry nothing.
+
+    Returns "" when reduction is unsafe — a proper-noun HEAD ("Door Dash") names
+    a thing and must survive whole, whereas a proper noun in MODIFIER position
+    is a possessor whose claim belongs in a relation, not in the node's name.
+    """
+    doc = nlp(" ".join(name.split()))
+    head = next((t for t in doc if t.dep_ == "ROOT"), None)
+    if head is None or head.pos_ != "NOUN":
+        return ""
+    # Compared by INDEX: spaCy rebuilds Token objects per access, so `is`
+    # identity never holds and the reduction silently returns nothing.
+    parts = [t for t in doc if t.i == head.i or (t.head.i == head.i and t.dep_ == "compound")]
+    reduced = " ".join(t.lemma_.lower() for t in sorted(parts, key=lambda t: t.i))
+    return reduced.strip()
+
+
+async def _head_groups(store: Any, nlp: Any) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Non-person, non-proper entities grouped by (syntactic head, type).
+
+    Type is part of the key: a Facility "store" and an Organization "store" are
+    genuinely different nodes even when spelled alike.
+    """
+    entities = await store.list_entities()
+    speakers = set(await store.distinct_speakers())
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for e in entities:
+        if _is_person(e, speakers) or _is_proper(e):
+            continue
+        if key := _head_key(str(e["name"]), nlp):
+            groups.setdefault((key, str(e.get("type") or "")), []).append(e)
+    return groups
+
+
+async def _merge_syntactic_heads(store: Any) -> int:
+    """Layer 3 — collapse mentions sharing a syntactic head and a type."""
+    try:
+        nlp = _parser()
+    except Exception as exc:  # a missing model must not take the flush down
+        log.warning("Syntactic entity merge skipped: spaCy unavailable (%s)", exc)
+        return 0
+
+    groups = await _head_groups(store, nlp)
+    merged = 0
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        # The shortest surface wins: it carries the fewest of one mention's
+        # incidental modifiers, so it reads as the thing rather than an instance
+        # of describing it.
+        winner = min(members, key=lambda m: (len(str(m["name"])), str(m["name"])))
+        for m in members:
+            if m["name_norm"] == winner["name_norm"]:
+                continue
+            if await store.merge_entities(winner["name_norm"], m["name_norm"]):
+                merged += 1
+    if merged:
+        log.info("syntactic head merge collapsed %d duplicate mentions", merged)
+    return merged
+
+
 # Multi-anchor disambiguation: when a short prefix matches several person
 # superstrings, merge into the top only if it dominates the runner-up by this
 # factor (else the anchors are genuinely different people -> skip). This lets
@@ -296,13 +385,15 @@ async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
     """
     dropped = await _drop_junk(store)
     merged_morph = await _merge_standardized(store)
+    merged_head = await _merge_syntactic_heads(store)
     merged_nick = await _merge_nicknames(store)
-    merged = merged_morph + merged_nick
+    merged = merged_morph + merged_head + merged_nick
     log.info(
-        "resolve_entities: dropped=%d merged=%d (morphological=%d nickname=%d)",
+        "resolve_entities: dropped=%d merged=%d (morphological=%d syntactic=%d nickname=%d)",
         dropped,
         merged,
         merged_morph,
+        merged_head,
         merged_nick,
     )
     return {"dropped": dropped, "merged": merged}

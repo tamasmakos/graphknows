@@ -107,6 +107,12 @@ def _name_norm(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
+# How much a chunk tagged with a SUBCLASS of the matched class is worth. Below
+# 1.0 so an exact match always wins; well above 0 because inheritance is real
+# evidence, not a tiebreak — a Dance Studio genuinely is a Facility.
+_SUBCLASS_DISCOUNT = 0.6
+
+
 class GraphStore(ArcadeStoreBase):
     """Single-database ArcadeDB store for one namespace (golden layer).
 
@@ -826,6 +832,7 @@ class GraphStore(ArcadeStoreBase):
             label[uri] = r.get("label", "")
         if not score:
             return []
+        score |= await self._subclass_scores(score, label)
         where = f"o.uri IN {quoted_list(list(score))}"
         if session_id:
             where += f" AND c.session_id = {quote(session_id)}"
@@ -857,6 +864,48 @@ class GraphStore(ArcadeStoreBase):
                         "via": "chunk",
                     }
                 )
+        return out
+
+    async def _subclass_scores(
+        self, matched: dict[str, float], label: dict[str, str]
+    ) -> dict[str, float]:
+        """Descendant classes of the matched ones, at a discount.
+
+        A query that matches ``Facility`` should reach a chunk tagged
+        ``Dance Studio``: the chunk is about a facility, it just never used the
+        word. That generalisation is the whole reason the ontology carries a
+        hierarchy, and without this the channel can only ever return chunks
+        whose tag the query matched head-on.
+
+        One level, because ``parents`` is stored per node and each extra level
+        costs another round trip for rapidly thinning evidence. Scored at
+        ``_SUBCLASS_DISCOUNT`` of the parent's match, so a direct hit always
+        outranks an inherited one.
+        """
+        names = {lbl for lbl in label.values() if lbl}
+        if not names:
+            return {}
+        try:
+            rows = await self.query(
+                "MATCH (o:ONTOLOGY_CLASS) WHERE o.parents IS NOT NULL AND o.parents <> '' "
+                "RETURN o.uri AS uri, o.label AS label, o.parents AS parents"
+            )
+        except Exception as exc:
+            logger.warning("subclass expansion failed: %s", exc)
+            return {}
+        by_label = {v: k for k, v in label.items()}
+        out: dict[str, float] = {}
+        for r in rows:
+            uri = str(r.get("uri") or "")
+            if not uri or uri in matched:
+                continue
+            parents = {p.strip() for p in str(r.get("parents") or "").split(",")}
+            if hit := (parents & names):
+                parent_uri = by_label.get(next(iter(hit)), "")
+                out[uri] = matched.get(parent_uri, 0.0) * _SUBCLASS_DISCOUNT
+                label[uri] = str(r.get("label") or "")
+        if out:
+            logger.debug("ontology query expanded to %d subclasses", len(out))
         return out
 
     async def write_frame_instances(
