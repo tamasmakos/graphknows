@@ -67,8 +67,13 @@ dependencies = [
     # Core, not eval-only — those call sites guard LookupError (missing *corpus*),
     # which does not catch the ModuleNotFoundError raised by a missing *package*.
     "nltk>=3.8",
-    # plug-and-play MCP server
-    "mcp>=1.0.0",
+    # plug-and-play MCP server. Capped below 2.0: that release removed
+    # `mcp.server.fastmcp`, which graphknows.server.mcp imports, so the server
+    # raises BrokenInstallError on import. The cap is here rather than in the
+    # lock because the image installs with `uv pip install ".[assisted]"` — it
+    # resolves from THESE constraints and never reads uv.lock, so a lock pin is
+    # silently ignored on every rebuild.
+    "mcp>=1.0.0,<2",
 ]
 
 [project.optional-dependencies]
