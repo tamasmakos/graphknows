@@ -272,10 +272,12 @@ async def test_fused_hits_carry_speaker_and_ts_even_for_channels_that_set_metada
         }
     )
 
+    # A "when" question, so the entity-keyed temporal fallback actually runs —
+    # it is now gated on the query asking for a date (see
+    # tests/retrieval/test_temporal_gating.py). This test is about attribution
+    # surviving fusion, so it needs a query that reaches the temporal channel.
     with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
-        ctx = await retriever.retrieve(
-            "What did Gina find that weekend?", session_id="s1", scope="both"
-        )
+        ctx = await retriever.retrieve("When did Gina find that?", session_id="s1", scope="both")
 
     by_id = {fr["chunk_id"]: fr for fr in ctx.fused_results}
     assert by_id["sem-c1"]["speaker"] == "Gina"

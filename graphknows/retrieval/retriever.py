@@ -23,7 +23,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broke
     raise BrokenInstallError("The BM25 retrieval channel", "rank-bm25") from exc
 
 from graphknows.channels.base import ChannelContext
-from graphknows.channels.temporal import query_date_candidates
+from graphknows.channels.temporal import asks_for_a_date, query_date_candidates
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
@@ -500,10 +500,22 @@ class DETRetriever:
           2 of 81 queries, both of which happened to quote a literal date.
           Here the ENTITY is the key and the date is the answer, so we ask for
           date-bearing chunks about the query's entities instead.
+
+        The second shape is gated on the query actually ASKING for a date. It
+        used to run whenever the query merely lacked one, which is nearly every
+        query: measured on conv-30, 78 of 79 date-free queries collected
+        temporal votes while only 56 of 369 chunks carry a MENTIONS_DATE edge.
+        Because RRF sums across channels, that handed 15% of the corpus a free
+        extra vote on almost every query and let breadth beat relevance — 84.4%
+        of the top-25 pool went to chunks in 4-5 channels while 38.7% of the
+        gold evidence sat in only 2-3, pushing gold to ranks 42-94 under a
+        top_k of 25.
         """
         result: dict[str, tuple[float, dict[str, Any]]] = {}
         candidates = query_date_candidates(query)
         if not candidates:
+            if not asks_for_a_date(query):
+                return result
             return await self._dated_chunks_for_query_entities(
                 words or [], session_id, state, top_k
             )

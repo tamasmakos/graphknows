@@ -78,6 +78,29 @@ def _anchor_to_datetime(anchor: Any) -> datetime | None:
     return None
 
 
+# Interrogatives that mean "the answer I want is a date/duration". Used to gate
+# the entity-keyed fallback in temporal_traversal: without it that fallback ran
+# on every query that merely LACKED a date, which is nearly all of them.
+# Measured coverage of the LoCoMo temporal category: 26/26 on conv-30, 275/321
+# across all ten conversations. A miss costs the fallback, not the query — the
+# other four channels still run.
+_ASKS_FOR_A_DATE = re.compile(
+    r"\b(when|what date|which date|what year|which year|what month|which month"
+    r"|what time|how long|how old|how often|how many (?:days|weeks|months|years))\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_a_date(query: str) -> bool:
+    """Whether *query* is asking for a date, duration or frequency as its ANSWER.
+
+    Distinct from :func:`query_date_candidates`, which asks whether the query
+    STATES a date. "When did Gina lose her job" states none and asks for one;
+    "what happened on 1 February 2023" states one and asks for something else.
+    """
+    return bool(_ASKS_FOR_A_DATE.search(query or ""))
+
+
 def query_date_candidates(query: str) -> list[str]:
     """Extract ISO date candidates from a query for temporal graph matching.
 
