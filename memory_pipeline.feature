@@ -254,36 +254,78 @@ Feature: Ontology- and frame-driven agentic memory
   # ===========================================================================
 
   @ontology @schema
-  Rule: Two ontologies do two different jobs
+  Rule: One ontology, lexicalized as a SKOS scheme, plus an input overlay
 
-    The vocabulary that is best at typing entities is measurably bad at naming
-    relations. schema.org's 945 object properties rank `liveBlogUpdate` above
-    every property a dance-studio conversation actually asserts, so relation
-    predicates come from a small hand-written profile instead.
+    The bundled vocabulary is the Common Core Ontologies, and it serves both
+    jobs. The previous split — schema.org for entity types, a hand-written
+    profile for relations — is gone.
 
-    Scenario: The entity ontology is the bundled schema.org digest
+    CCO alone is not sufficient, and the reason is structural rather than a
+    tuning failure: BFO models everyday assertions as PROCESSES WITH
+    PARTICIPANTS, so CCO has no binary predicate for "works for" or "plans to".
+    An INPUT SKOS OVERLAY supplies exactly those, as data.
+
+    Scenario: The bundled ontology is the CCO digest
       When the entity ontology is loaded with its default source
-      Then it is "assets/schemaorg/schemaorg.json"
-      And it yields 933 classes and 945 object properties
-      And every term's URI is inside the namespace "https://schema.org/"
-      And properties whose ranges are all datatypes were excluded at build time
-      # test: tests/ontology/test_schemaorg_digest.py
+      Then it is "assets/cco/cco.json"
+      And it yields 1437 classes and 264 object properties
+      And 234 of those properties declare both a domain and a range
+      And its classes declare subClassOf parents reaching BFO
+      # test: tests/ontology/test_cco_digest.py
 
-    Scenario: The relation ontology is the bundled personal profile
+    Scenario: The relation vocabulary defaults to the same digest
       When the relation ontology is loaded with its default source
-      Then it is "assets/profile/personal-profile.json"
-      And it yields 9 classes and 25 properties
-      And every property declares both a domain and a range
-      And its classes declare subClassOf parents
-      # test: tests/ontology/test_relation_profile.py
+      Then it is the same file as the entity ontology
+      And the setting remains separate, so a deployment can still split them
+      # test: tests/config/test_mode_presets.py
 
-    Scenario: Both are pre-parsed JSON digests and neither needs rdflib
-      When either ontology is loaded
+    Scenario: CCO types its relations against BFO, which is an import
+      Given the digest builder is given the CCO modules alone
+      Then 199 of 224 properties resolve no domain or range
+      And the domain/range gate can therefore offer almost nothing
+      When "cco-imports/bfo-core.ttl" is parsed alongside
+      Then those constraints resolve and typed properties rise to 234
+      # BFO is where CCO's relation types actually live; omitting the import
+      # empties the relation vocabulary silently.
+      # test: tests/ontology/test_cco_digest.py::test_a_bfo_typed_constraint_resolves_to_a_label
+
+    Scenario: The subclass chain reaches BFO, so subsumption is usable
+      When a Person's ancestors are computed
+      Then the chain is Animal, Organism, object, material entity,
+        independent continuant, continuant, entity
+      And a property declared over any of those is satisfiable by a Person
+      # Under the old schema.org digest the chain degenerated to the class
+      # itself, so every gate reading it was inert.
+      # test: tests/ontology/test_cco_digest.py::test_the_subclass_chain_reaches_bfo
+
+    Scenario: The input overlay supplies what BFO does not model as a predicate
+      When the SKOS scheme is built with its default overlay
+      Then the overlay is "assets/cco/conversational.json"
+      And it contributes properties including "works for", "plans to", "likes",
+        "attended", "teaches" and "formerly worked for"
+      And each carries authored altLabels, a broader link into CCO, and
+        a domain and range written in CCO's own class vocabulary
+      And setting GRAPHKNOWS_ONTOLOGY_OVERLAY to "-" disables it
+      # Data, not code: swapping the file swaps the vocabulary.
+      # test: tests/ingestion/test_lexical_labels.py::TestOverlay
+
+    Scenario: Authored altLabels are lemmatised on load
+      Given an overlay property authored with the altLabel "lost"
+      When the scheme is built
+      Then both "lost" and "lose" are altLabels of that concept
+      # Matching is on spaCy lemmas, so a surface form authored in the past
+      # tense matches NOTHING. This read as a model failure and was a string
+      # normalisation bug.
+      # test: tests/ingestion/test_lexical_labels.py::test_authored_alt_labels_are_lemmatised
+
+    Scenario: The digest is pre-parsed JSON and needs no rdflib
+      When the ontology is loaded
       Then the digest shape is recognised before any RDF parser is tried
       And no rdflib import occurs
       # rdflib ships only in the `assisted` extra, so the default llm_free
       # install must reach its ontology through the standard library alone.
-      # test: tests/ontology/test_schemaorg_digest.py::test_load_does_not_import_rdflib
+      # This is also what makes both memory modes load it identically.
+      # test: tests/ontology/test_cco_digest.py::test_load_does_not_import_rdflib
 
     Scenario: Ontology injection is always on
       Given no ontology environment variable is set
@@ -292,15 +334,26 @@ Feature: Ontology- and frame-driven agentic memory
       And an empty environment value also resolves to the bundled digest
       And there is no configuration that turns ontology injection off
 
-    Scenario: The schema.org digest declares no class parents
-      When a schema.org class's ancestors are computed
-      Then the set contains only the class itself
-      And the ancestor walk is meaningful only over the relation profile
-      # This is why the domain/range gates read the profile vocabulary, not
-      # schema.org: over schema.org the ancestor chain degenerates.
-
   @ontology @model
-  Rule: Ontology terms are matched by embedding their definitions
+  Rule: Definition embeddings survive only as the pre-lexical fallback
+
+    Per-chunk label selection is LEXICAL (see Section C). Definition embeddings
+    remain for the chunk MATCHES_CLASS tags, the entity INSTANCE_OF mapping and
+    the optional ontology retrieval channel — never for choosing which labels a
+    chunk is offered.
+
+    @measured
+    Scenario: Embedding a chunk against class definitions does not discriminate
+      Given chunk-to-class matching by cosine over the class definitions
+      When 40 real conversation turns are tagged
+      Then only 11% of the tags share even one content word with their chunk
+      And "Lost my job as a banker" tags "Grocery Store"
+      And the three most common tags corpus-wide are
+        "Act of Thanking", "Grocery Store" and "Shop"
+      # Four independent attempts failed the same way: content-word queries,
+      # label-only indexes, a lexical gate, and entity-mention pooling. The
+      # registers differ — casual speech against genus-differentia prose — and
+      # no ranking fixes that. Do not re-try it for LABEL SELECTION.
 
     Scenario: Class embeddings are built from label and definition
       When the ontology index is built
@@ -436,6 +489,66 @@ Feature: Ontology- and frame-driven agentic memory
       Then 30 chunks are re-extracted and 70 are not
       And the log reports 30 of 100 with the elapsed time per chunk
 
+  @extract @ingest @measured
+  Rule: The extraction window is overlapping, per-turn attributed, and guarded
+
+    One turn read alone loses what the turns before it established. The window
+    widens what the EXTRACTOR sees; only the current turn is stored, embedded
+    and retrieved.
+
+    Scenario: Windows overlap so no turn boundary is a blind spot
+      When turns are ingested with the default settings
+      Then each window is 5 turns and advances by 3
+      And every adjacent pair of turns co-occurs in some window
+      # A relation whose endpoints straddle a boundary is invisible to every
+      # window. Measured at equal turn coverage: 2 turns of overlap yields +35%
+      # distinct edges. The duplicates cost nothing, because write_relation
+      # MERGEs on (head, predicate, tail) and accumulates evidence.
+
+    Scenario: Deixis is resolved PER TURN before the lines are joined
+      Given a window in which Jon says "Lost my job as a banker"
+        and Gina says "I also lost my job at Door Dash"
+      When the window text is built
+      Then Jon's line reads "Lost Jon's job as a banker"
+      And Gina's line reads "Gina also lost Gina's job at Door Dash"
+      # A window has many speakers and ONE text. Left unresolved, the extractor
+      # attributed Gina's job to Jon.
+      # test: tests/ingestion/test_lexical_labels.py::TestDeixis
+
+    Scenario: Second person resolves to the addressee, and only when unambiguous
+      Given a two-party window
+      Then "your" resolves to the other participant
+      Given a window with three or more speakers
+      Then second person is left untouched
+      # Above two participants the addressee is a guess, and a wrong name is
+      # worse than a pronoun.
+
+    Scenario: Contractions are expanded before the pronoun rules run
+      Given a turn by "Gina" reading "I'm starting a studio"
+      When the window text is built
+      Then it reads "Gina is starting a studio"
+      And no name is ever emitted glued to a contraction tail
+      # An apostrophe is a word boundary, so a bare pronoun rule rewrote "I'm"
+      # to "Gina'm" — a SECOND person node that took all of that speaker's
+      # relations with it.
+      # test: tests/ingestion/test_lexical_labels.py::TestContractions
+
+    Scenario: Only the current turn's spans become this chunk's entities
+      When entities are extracted from a window
+      Then spans lying before the current turn's offset are discarded
+      And relations are NOT filtered that way
+      # Earlier turns already minted their entities against their own chunks;
+      # a cross-turn TRIPLE is the entire point of the window.
+
+    Scenario: A relation's subject must be supported by the asserting turn
+      Given a window where two people each report losing a job
+      When relations are extracted
+      Then only the nearest person named in the object's own turn may head it
+      # Deixis fixes pronouns, not crossed subjects. Presence in the turn is not
+      # enough — deixis itself writes the addressee's name into the line — so
+      # the guard keys on PROXIMITY.
+      # test: tests/ingestion/test_lexical_labels.py::TestAttributionGuard
+
   @ingest @extract @model
   Rule: First-person deixis is resolved for the relation pass only
 
@@ -518,6 +631,9 @@ Feature: Ontology- and frame-driven agentic memory
         then the ontology class hints,
         then the base inventory,
         de-duplicated in that order
+      # The ontology hints are LEXICALLY selected when a parser is available —
+      # see "Labels are selected by lexical evidence" below. Without one the
+      # embedding hints are used and the behaviour is unchanged.
 
     @measured
     Scenario: An empty spaCy observation is not an empty schema
@@ -555,6 +671,62 @@ Feature: Ontology- and frame-driven agentic memory
       Then there is one forward pass over the whole text, not sub-windows
       # The old 128-token windows cost ~4 model calls per chunk and existed
       # because the previous model attended poorly to long spans.
+
+  @extract @ontology @model
+  Rule: Labels are selected by lexical evidence over a SKOS scheme
+
+    Selection asks which concepts the chunk's WORDS evoke, matching spaCy lemmas
+    against altLabels. Nothing is embedded. This replaced definition-embedding
+    selection, which could not discriminate (see Section B).
+
+    Scenario: A concept is evoked by a lemma, part-of-speech gated
+      Given a turn containing "I lost my job at Door Dash"
+      When the relation labels are selected
+      Then "formerly worked for" is among them
+      And a class concept may only be evoked by a NOUN
+      And a property concept may be evoked by a NOUN or a VERB
+      # CCO names relations as relational nouns ("has brother"), so a verb-only
+      # gate would never fire on the cases this corpus is full of.
+      # test: tests/ingestion/test_lexical_labels.py::TestLexicalSelection
+
+    @measured
+    Scenario: A multi-word label needs every content word present
+      Given a turn containing "take a shot at" and "this month"
+      When class labels are selected
+      Then "Round Shot" is NOT evoked
+      And "Calendar Month" is NOT evoked
+      # A single token of a multi-word label is not evidence for the term. The
+      # document-frequency filter cannot catch these: "shot" is genuinely rare.
+
+    @measured
+    Scenario: Ubiquitous lemmas are dropped, but only once there is text to judge
+      When the lexical index is built over a corpus
+      Then a lemma appearing in more than 15% of documents is dropped
+      And that rule applies only once the lemma appears in at least 3 documents
+      # Without the absolute floor a 5-document corpus discards every content
+      # word — one occurrence is already 20% — and the vocabulary empties. The
+      # document frequency is measured over TURNS, never over windows: windows
+      # overlap, so every word looks ubiquitous.
+
+    @measured
+    Scenario: The offer stays small because the score depends on its size
+      When labels are offered to the extractor
+      Then at most 14 entity labels and 10 relation labels are offered
+      # Measured: the same correct triple scores 0.98 with 4 labels offered and
+      # 0.67 with 39. relex's confidence is RELATIVE to the offered set, so a
+      # selector that returns everything it matched destroys the signal it feeds.
+
+    Scenario: The coarse types are always offered
+      When entity labels are selected for any chunk
+      Then "person", "organization" and "facility" are among them
+      # They are the measured-best types AND are CCO classes verbatim, so they
+      # cost nothing ontologically and the offer is never empty.
+
+    Scenario: Selection degrades rather than fails without a parser
+      Given an extractor exposing no spaCy pipeline
+      When labels are selected
+      Then lexical selection is switched off and the fact is logged
+      And the previous embedding-hint behaviour is used
 
   @ingest @extract @model
   Rule: Relation properties are selected by domain and range, not by cosine
@@ -769,9 +941,10 @@ Feature: Ontology- and frame-driven agentic memory
       Then the span is kept and the type is left empty
       # Censused on a 369-turn ingest: 1256 entities over 41 distinct types
       # against a 763/10 baseline, led by EMOTION 275, ACTIVITY 202,
-      # RELATIONSHIP 113 — all class labels of the configured ontology. The
-      # schema.org default leaks the same way at a smaller scale: BANKACCOUNT,
-      # HOWTO, WHOLESALESTORE on dance-studio dialogue.
+      # RELATIONSHIP 113 — all class labels of the configured ontology. Any
+      # ontology default leaks the same way at a smaller scale; under CCO the
+      # residue is BFO plumbing (`permits`, `requires`, `is required by`) at
+      # roughly 16% of edges.
 
     Scenario: An empty type leaves room for a later mention to fill it
       Given ENTITY.type is written first-write-wins
@@ -855,13 +1028,18 @@ Feature: Ontology- and frame-driven agentic memory
       And the extractor falls back to its base inventory for that chunk
       # Top-k alone was enough while the bundled ontology had 11 classes; against
       # 933 it hands twelve arbitrary labels to a chunk that asserts nothing.
-      # test: tests/ontology/test_schemaorg_digest.py
+      # test: tests/ontology/test_cco_digest.py
 
     Scenario: The hint floor bounds volume, not quality
-      Then absolute cosines against schema.org are not calibrated enough to
+      Then absolute cosines against the class space are not calibrated enough to
         separate a right term from a wrong one
-      # A job-loss turn matches `AutoPartsStore` at 0.721 while `Person` ranks
-      # 327th of 933 on the same turn. Re-census before retuning the floor.
+      # Re-measured against CCO over 20 real turns with bge-small: the 1401-class
+      # space spans 0.168-0.683, median 0.409, p95 0.493, weakest genuine
+      # per-turn top-1 0.497. The hint floor is 0.46 and the persisted-tag floor
+      # 0.52. A high cosine is not a correctness signal — a thank-you turn's best
+      # class is `Artifact History` at 0.545. Re-census before retuning.
+      # This floor governs the MATCHES_CLASS tags, not label selection, which is
+      # lexical.
 
     Scenario: An entity is linked to the class it maps onto
       Given an entity typed "PERSON"
@@ -941,9 +1119,9 @@ Feature: Ontology- and frame-driven agentic memory
       Given a property declaring the domains Organization, Person and Event
       When a Person subject is checked
       Then it conforms
-      # schema.org's domainIncludes/rangeIncludes are multi-valued; satisfying
+      # Declared domain/range may be multi-valued; satisfying
       # one of them is conformance.
-      # test: tests/ontology/test_schemaorg_digest.py
+      # test: tests/ontology/test_cco_digest.py
 
     Scenario: Any-match also means an unmappable endpoint admits
       Given an object type that maps to no profile class
@@ -1204,7 +1382,7 @@ Feature: Ontology- and frame-driven agentic memory
         and the elapsed time
 
   @flush
-  Rule: Entity resolution is three ordered layers, most confident first
+  Rule: Entity resolution is four ordered layers, most confident first
 
     Each layer re-reads the shrinking entity set, so a later layer sees the
     earlier layers' effects.
@@ -1238,7 +1416,24 @@ Feature: Ontology- and frame-driven agentic memory
       # chunk text — `downs` x8, `dreams` x7 — because the surviving node was
       # named for a form that chunk never used.
 
-    Scenario: Layer 3 merges a short person name into its person superstring
+    Scenario: Layer 3 collapses mentions sharing a syntactic head
+      Given the entities "dance studio", "ideal dance studio" and
+        "Jon's ideal dance studio by the water"
+      When resolution runs
+      Then all three merge onto "dance studio"
+      And "Door Dash" is untouched, because its HEAD is a proper noun
+      And "Jon's new store" reduces to "store", because a proper noun in
+        MODIFIER position is a possessor whose claim belongs in a relation
+      And the shortest surviving surface is elected
+      And two mentions merge only when their TYPE also agrees
+      # Layer 2 strips a determiner and singularizes, which cannot reach
+      # variants differing by an adjective or a trailing prepositional phrase.
+      # Measured: one dance studio was split across six surfaces, and the
+      # duplicates produced self-referential edges that read as structure while
+      # carrying nothing.
+      # test: tests/ingestion/consolidation/test_syntactic_merge.py
+
+    Scenario: Layer 4 merges a short person name into its person superstring
       Given "Mel" and "Melanie" are both person-like
       And "Mel" is a single alphabetic token of at least 3 characters
       And "Mel" is a strict case-insensitive prefix of "Melanie"
@@ -1353,6 +1548,20 @@ Feature: Ontology- and frame-driven agentic memory
     The retriever spine is signal-blind: it merges what the collectors return,
     sorts by fused score and cuts to top_k. There is no query router, no intent
     classifier and no per-intent leg selection.
+
+    @measured
+    Scenario: No collector or channel reads REL edges
+      When the channels that fired on a full conversation are censused
+      Then they are semantic, text, frame, entity and temporal
+      And no leg traverses a relation edge
+      # This is why extraction quality does not move accuracy. Measured on
+      # conv-30: an ingest producing 283 REL edges over 452 entities (40.3%
+      # density, 31 distinct predicates) scored 0.791 against a baseline of
+      # 0.807 with 55 edges over 719 entities (7.0% density, 13 predicates) —
+      # flat, inside the +-0.02 judge-noise floor. Of 16 failures, 11 were
+      # retrieval-bound. The relation layer is WRITTEN AND NEVER READ, which is
+      # the severance this pipeline has carried since the graph-architecture
+      # audit. Enriching extraction cannot fix it; a traversal leg would.
 
     Scenario: The baseline collectors are methods, not registered channels
       When retrieval runs
@@ -1519,6 +1728,22 @@ Feature: Ontology- and frame-driven agentic memory
       And a class matching more than half a session's chunks is dropped as saturated
       # The indirect path is much denser: on one conversation, 767 INSTANCE_OF
       # edges against 189 MATCHES_CLASS.
+
+    Scenario: A matched class also reaches its subclasses
+      Given a query matching "Facility"
+      When the ontology channel runs
+      Then chunks tagged "Dance Studio" are also collected
+      And they score at 0.6 of a direct hit, so an exact match always wins
+      And the expansion is one level, read from the class's persisted parents
+      # Generalisation is what the hierarchy is FOR: the chunk is about a
+      # facility, it just never used the word. Without this the channel can only
+      # return chunks whose tag the query matched head-on.
+
+    @measured
+    Scenario: The ontology channel remains OFF by default
+      Then GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL defaults to 0
+      # It has never been measured on its own. The subclass expansion above only
+      # has an effect once it is switched on.
 
     Scenario: Channels contribute candidates rather than re-ranking
       Then a channel adds to the fusion and cannot displace a strong hit
