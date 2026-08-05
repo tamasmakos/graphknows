@@ -333,7 +333,13 @@ def _entity_type(raw_label: str, label_to_type: dict[str, str]) -> str:
     return key.upper() if key in _TAXONOMY_LABELS else ""
 
 
-def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
+def _speaker_token(token: str, speakers: frozenset[str]) -> str:
+    """The speaker this token names, stripped of punctuation/genitive — else ""."""
+    bare = token.strip(".,;:!?()[]\"'").removesuffix("'s").removesuffix("'")
+    return bare if bare.casefold() in speakers else ""
+
+
+def _reduce_speaker_span(name: str, speakers: frozenset[str], ent_type: str = "") -> str:
     """``"Caroline: Thanks, Melanie"`` -> ``"Caroline"`` when Caroline spoke.
 
     Chunk text embeds literal ``"[ts |] Speaker: utterance"`` turn-lines, and
@@ -353,6 +359,24 @@ def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
     is entirely capitalised is a proper-name sequence ("Gina Torres") and is left
     alone; anything lowercase in it means the span stopped being a name.
 
+    Three further shapes, all minted by the per-turn deixis rewrite, which
+    replaces every "I"/"my" with the speaker's name and so puts that name two or
+    three times into one line. Measured on conv-30/skos_v1, where the pieces
+    below carried 215 of the graph's 283 REL edges while the plain ``Jon`` and
+    ``Gina`` nodes carried NONE:
+
+    * every token is a speaker ("Jon Jon", "Gina, Gina", "Jon, Gina") — the span
+      is nothing but repeated deixis output, so it is that speaker;
+    * the span ENDS in ", <Speaker>" after a clause ("Gina's hard work and
+      effort, Gina") — the mirror of the speaker-first rule below, and the shape
+      a trailing resolved pronoun leaves;
+    * a PERSON-typed genitive of a speaker ("Jon's students", 123 edges — 43% of
+      the graph — typed PERSON and holding Jon's own facts: ``owns Jon's
+      studio``, ``has occupation``, ``lives in place``). The TYPE is what makes
+      this safe: "Jon's studio" is typed ENTITY and keeps its owner, exactly as
+      the whole-span genitive rule below intends. Without a type the two shapes
+      are indistinguishable, so an untyped span is left alone.
+
     Keys strictly on *known speakers of this chunk*: a colon alone never fires,
     so titles like "Charlotte's Web: A Review" pass through, and non-dialogue
     text (empty ``speakers``) makes this the identity function.
@@ -364,7 +388,26 @@ def _reduce_speaker_span(name: str, speakers: frozenset[str]) -> str:
         if " ".join(head.split()).casefold() in speakers:
             return head.strip()
         return name
-    first, *rest = name.split() or [""]
+    tokens = name.split()
+    # Nothing but repeated deixis output — collapse onto the first speaker named.
+    if tokens and all(_speaker_token(t, speakers) for t in tokens):
+        return _speaker_token(tokens[0], speakers)
+    # "<clause>, <Speaker>" — a trailing resolved pronoun, referent is the speaker.
+    if (
+        len(tokens) > 1
+        and tokens[-2].endswith(",")
+        and (sp := _speaker_token(tokens[-1], speakers))
+    ):
+        return sp
+    # "<Speaker>'s <noun>" typed PERSON — the person named is the speaker.
+    if (
+        len(tokens) > 1
+        and ent_type.upper() == "PERSON"
+        and tokens[0].endswith(("'s", "'"))
+        and (sp := _speaker_token(tokens[0], speakers))
+    ):
+        return sp
+    first, *rest = tokens or [""]
     # A bare genitive of a speaker is that speaker. Measured live it forked the
     # node ("Jon's owns biz" beside "Jon owns biz") and hid a self-relation
     # outright — "Jon's -[spouse]-> Jon" walked past the head != tail check.
@@ -487,8 +530,13 @@ def _dedupe_entities(
         if conf < _BASE_THRESHOLD:
             continue
         raw = str(span.get("text") or "")
-        name = _strip_determiner(_reduce_speaker_span(_clean_surface(raw), speakers))
         label = str(span.get("label") or "").strip()
+        # Typed BEFORE the span is reduced: the PERSON rule in
+        # _reduce_speaker_span is what separates "Jon's students" (the speaker)
+        # from "Jon's studio" (a place), and the type is the only signal that
+        # tells them apart. _entity_type reads the label only, never the name.
+        ent_type = _entity_type(label, label_to_type)
+        name = _strip_determiner(_reduce_speaker_span(_clean_surface(raw), speakers, ent_type))
         if not name or not label or name.casefold() in _PRONOUNS:
             continue
         # A span this chunk only ever uses as a verb is a predicate, not a thing.
@@ -510,7 +558,7 @@ def _dedupe_entities(
             # canonical NER type the graph stores, or leave it untyped.
             {
                 "name": name,
-                "type": _entity_type(label, label_to_type),
+                "type": ent_type,
                 "score": conf,
                 "start": start,
                 "end": end,
@@ -590,8 +638,11 @@ def _build_relation(
     # _strip_determiner for the same reason the entity path applies it, plus one:
     # "the fair" and "fair" are one entity, and the article walked the pair past
     # the same-entity check as `the fair -[attendee]-> fair` (measured, live).
-    head = _strip_determiner(_reduce_speaker_span(_clean_surface(head), speakers))
-    tail = _strip_determiner(_reduce_speaker_span(_clean_surface(tail), speakers))
+    # The caller's type (when it has one) gates the PERSON-genitive rule; an
+    # endpoint typed only by _arg_type is typed FROM the entity list, which the
+    # entity pass already reduced, so the name arriving here is already folded.
+    head = _strip_determiner(_reduce_speaker_span(_clean_surface(head), speakers, head_type))
+    tail = _strip_determiner(_reduce_speaker_span(_clean_surface(tail), speakers, tail_type))
     head_type = head_type or _arg_type(head, entities)
     tail_type = tail_type or _arg_type(tail, entities)
     reason = _relation_reject(head, label, tail, head_type, tail_type)
