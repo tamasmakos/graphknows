@@ -88,6 +88,64 @@ _STRUCTURAL = frozenset(
 # Labels too generic to be worth matching on even as a whole.
 _TOO_GENERIC = frozenset({"entity", "continuant", "occurrent", "object", "quality", "process"})
 
+# BFO's upper-level universals. A property typed against one of these is
+# upper-ontology plumbing: it relates categories of being, not the things people
+# talk about. Its LABEL is still a legitimate handle ("permits" in the text), but
+# its WordNet synonyms are not — see _upper_ontology_property.
+_BFO_ABSTRACT = frozenset(
+    {
+        "entity",
+        "continuant",
+        "occurrent",
+        "independent continuant",
+        "specifically dependent continuant",
+        "generically dependent continuant",
+        "material entity",
+        "immaterial entity",
+        "object",
+        "object aggregate",
+        "fiat object part",
+        "process",
+        "process boundary",
+        "process regulation",
+        "temporal region",
+        "spatial region",
+        "spatiotemporal region",
+        "quality",
+        "realizable entity",
+        "role",
+        "disposition",
+        "function",
+        "history",
+    }
+)
+
+
+def _upper_ontology_property(concept: Concept) -> bool:
+    """Whether this property relates BFO categories rather than everyday things.
+
+    Synonym expansion is precision-destroying for exactly these. The dominant
+    WordNet synset of an upper-ontology property's label is a COMMON ENGLISH
+    VERB, so the property acquires triggers that fire on ordinary conversation
+    while carrying none of its declared meaning:
+
+        permits   (Process Regulation -> process)  <- permit, countenance, allow, let
+        requires  (Process Regulation -> process)  <- postulate, demand, need
+        realizes  (process -> realizable entity)   <- realise, recognize, agnize
+
+    Measured on conv-30, those three plus their siblings produced 64 of 286 REL
+    edges (22%) — `Gina permits fashion` from the word "let", `Jon realizes
+    dreams` from "realize" — none of which anyone asserted. This is the module's
+    own rule applied to its own output: an altLabel that fires on the wrong chunk
+    is worse than one that never fires.
+
+    The prefLabel and the label's own content words are KEPT: text that actually
+    says "permits" is asserting the property, and should still match.
+    """
+    if concept.kind != "property":
+        return False
+    return any(t.casefold() in _BFO_ABSTRACT for t in (*concept.domain, *concept.range))
+
 
 @dataclass
 class Concept:
@@ -134,7 +192,7 @@ def lexicalize(concept: Concept, synonyms: bool = True) -> Concept:
         # -> organization); the leading ones stay as separate handles.
         alts.update(tokens)
         alts.add(" ".join(tokens))
-        if synonyms:
+        if synonyms and not _upper_ontology_property(concept):
             for token in tokens:
                 alts |= _wordnet_synonyms(token, concept.kind)
     concept.alt_labels = {a for a in alts if a not in _TOO_GENERIC and len(a) > 2}
