@@ -669,7 +669,7 @@ async def test_entity_fact_context_soft_fails_on_error() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_query_entities_matches_word_boundary() -> None:
-    client = _mock_client(query_rows=[{"name": "Jon"}, {"name": "Gina"}])
+    client = _mock_client(query_rows=[{"name": "Jon", "nn": "jon"}, {"name": "Gina", "nn": "gina"}])
     store = GraphStore(client=client)
     names = await store.resolve_query_entities(["jon", "studio", "of"])  # "of" too short
     assert names == ["Jon", "Gina"]
@@ -682,7 +682,37 @@ async def test_resolve_query_entities_matches_word_boundary() -> None:
     assert "e.name_norm CONTAINS ' studio '" in cypher
     assert "CONTAINS 'studio'" not in cypher  # never a bare intra-word substring
     assert "'of'" not in cypher  # < 3 chars filtered out
-    assert "LIMIT 6" in cypher
+    # The cap is applied AFTER ranking, so the query must not pre-truncate.
+    assert "LIMIT" not in cypher
+
+
+@pytest.mark.asyncio
+async def test_resolve_query_entities_ranks_before_the_cap() -> None:
+    """The cap binds on every real query, so WHICH entities survive it is the
+
+    whole behaviour. Storage order used to decide; exact-then-shortest decides
+    now. Rows are given worst-first so a pass-through would fail.
+    """
+    client = _mock_client(
+        query_rows=[
+            {
+                "name": "Gina's hard work and effort, Gina",
+                "nn": "gina's hard work and effort, gina",
+            },
+            {"name": "dance studio", "nn": "dance studio"},
+            {"name": "Gina, Gina", "nn": "gina, gina"},
+            {"name": "Gina", "nn": "gina"},
+            {"name": "studio", "nn": "studio"},
+        ]
+    )
+    store = GraphStore(client=client)
+    names = await store.resolve_query_entities(["gina", "studio"], cap=3)
+    # Exact token matches lead; the rest fall back to shortest-first.
+    assert names == ["Gina", "studio", "Gina, Gina"]
+    # What actually matters: the canonical name outranks its corrupted variants,
+    # which is what the unordered LIMIT could not guarantee.
+    assert names.index("Gina") < names.index("Gina, Gina")
+    assert "Gina's hard work and effort, Gina" not in names
 
 
 # ---------------------------------------------------------------------------

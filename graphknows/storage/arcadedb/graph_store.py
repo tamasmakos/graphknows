@@ -1446,6 +1446,17 @@ class GraphStore(ArcadeStoreBase):
         studio"). Intra-word substrings do NOT match (so "there" never resolves
         "theresa"). Soft-fails to ``[]`` — best-effort enrichment, never a hard
         dependency of retrieval.
+
+        Matches are RANKED before the cap, because the cap binds: measured on
+        conv-30, all 81 questions hit it. The cut used to be a bare ``LIMIT``
+        with no ``ORDER BY``, so which six entities seeded the fact sheet was
+        storage order — undefined, and unrelated to the question. Only 80 of
+        452 entities were ever reachable, and 16 questions received a
+        byte-identical seed set. Ranking is exact-token first, then shortest
+        name, then alphabetical: an exact hit beats a span that merely contains
+        the token, and the shorter of two matches is the more canonical one
+        ("Gina" over "Gina's hard work and effort, Gina"). Alphabetical last so
+        the result is deterministic rather than merely better.
         """
         toks = sorted({w.strip().casefold() for w in words if w and len(w.strip()) >= 3})
         if not toks:
@@ -1461,13 +1472,20 @@ class GraphStore(ArcadeStoreBase):
 
         conds = " OR ".join(_word_boundary(t) for t in toks)
         try:
+            # No LIMIT here: the cap is applied after ranking, and the match set
+            # is bounded by the namespace's entity count.
             rows = await self.query(
-                f"MATCH (e:ENTITY) WHERE {conds} RETURN DISTINCT e.name AS name LIMIT {int(cap)}"
+                f"MATCH (e:ENTITY) WHERE {conds} RETURN DISTINCT e.name AS name, e.name_norm AS nn"
             )
         except Exception as exc:
             logger.debug("resolve_query_entities failed (soft): %s", exc)
             return []
-        return [r["name"] for r in rows if r.get("name")]
+        tokset = set(toks)
+        ranked = sorted(
+            ({"name": r["name"], "nn": r.get("nn") or ""} for r in rows if r.get("name")),
+            key=lambda r: (r["nn"] not in tokset, len(r["nn"]), r["nn"]),
+        )
+        return [r["name"] for r in ranked[: int(cap)]]
 
     async def entity_fact_context(self, entity_names: list[str], max_facts: int = 40) -> list[str]:
         """Compact structured fact-sheet for the given entities (for the generator).
