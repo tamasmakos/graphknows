@@ -268,6 +268,21 @@ class GraphKnowsSettings(BaseSettings):
     # (head, predicate, tail) and accumulates evidence.
     extract_overlap: int = Field(default=2, ge=0, alias="GRAPHKNOWS_EXTRACT_OVERLAP")
 
+    # Whether a stored CHUNK is the extraction WINDOW or the single turn.
+    #
+    # A lone turn is a poor retrieval unit: "She said yes" carries nothing an
+    # embedding can match, and the turn that named her is a different chunk.
+    # The extractor has read a 5-turn window since ``extract_window`` landed —
+    # this makes the stored, embedded, retrieved unit that same window, so what
+    # comes back carries the context extraction already depended on. Windows
+    # overlap by ``extract_overlap``, so no adjacent pair of turns is split
+    # across a boundary, and a turn appearing in two chunks is not double
+    # evidence: MENTIONS and REL both MERGE.
+    #
+    # False restores one-chunk-per-turn exactly, which is what makes it the
+    # control arm of an A/B rather than an approximation of one.
+    window_chunks: bool = Field(default=True, alias="GRAPHKNOWS_WINDOW_CHUNKS")
+
     # Label selection by LEXICAL evidence over the SKOS scheme rather than by
     # embedding the chunk against class definitions. Measured on conv-30: the
     # embedding path put 11% of tags in a chunk sharing even one word with it

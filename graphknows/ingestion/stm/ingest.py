@@ -188,9 +188,17 @@ class _STMIngestHandler:
         _cfg = _Settings()
         self._extract_window: int = _cfg.extract_window
         self._window_overlap: int = _cfg.extract_overlap
+        self._window_chunks: bool = _cfg.window_chunks
         # Turn dicts, not strings: the deixis resolver and the attribution guard
         # both need each turn's speaker, and flattening them loses exactly that.
         self._recent_turns: dict[str, deque[dict[str, str]]] = {}
+        # Turns seen since this session last emitted a chunk. With window
+        # chunking a turn does not get its own chunk; it joins the next window,
+        # which is emitted every ``_chunk_stride`` turns.
+        self._since_emit: dict[str, int] = {}
+        # Chunks actually written, so the service can report the real count
+        # instead of assuming one per message.
+        self._chunks_written: int = 0
         # Lexical label selection over the SKOS scheme. Replaces embedding the
         # chunk against class definitions, which measured 11% of tags sharing a
         # word with their own chunk. Built lazily: the lexical index needs the
@@ -462,8 +470,16 @@ class _STMIngestHandler:
         metadata: dict[str, Any] | None = None,
         infer: bool = True,
         speaker: str = "",
+        last_in_batch: bool = True,
     ) -> int:
-        """Write one conversation turn as a CHUNK(kind='turn'). Returns entity count.
+        """Ingest one conversation turn. Returns entity count.
+
+        With ``window_chunks`` on (the default) a turn does not become its own
+        CHUNK: it joins a 5-turn sliding window emitted every
+        :attr:`_chunk_stride` turns, and this returns 0 for the turns in
+        between. ``last_in_batch`` forces the pending window out so the tail of
+        a conversation is never dropped — it defaults True so a caller ingesting
+        one turn at a time still gets that turn stored.
 
         Phase-1 bridge: gives the messages path the same full extraction (ENTITY
         + MENTIONS + evidenced relations + temporal) the text/chunk path has.
@@ -504,11 +520,6 @@ class _STMIngestHandler:
         # ubiquitous and the filter empties the whole vocabulary.
         if self._lexical and not self._lex_frozen:
             self._corpus_seen.append(clean)
-        embedding = self._embed_fn(surface)
-        # Same ontology steering as the chunk path — the turn's own embedding
-        # selects the candidate entity labels, so no extra embedding call.
-        ent_hints = self._label_hints([embedding])
-        entity_labels = ent_hints[0] if ent_hints else None
         # The extraction WINDOW. A turn read alone loses what the turns before it
         # established: "She said yes" asserts something only if the previous turn
         # named her. The window prepends the recent speaker-attributed turns so
@@ -522,7 +533,37 @@ class _STMIngestHandler:
         # chunk. Relations are deliberately NOT filtered — a triplet whose head
         # came from an earlier turn is the entire point, and its endpoints merge
         # by name onto the ENTITY nodes those turns already created.
-        window_text, offset, spans = self._extraction_window(session_id, clean, speaker or role)
+        window_text, offset, spans, verbatim = self._extraction_window(
+            session_id, clean, speaker or role
+        )
+
+        # With window chunking, a turn does not get its own chunk — it joins the
+        # window that will be emitted `_chunk_stride` turns from the last one.
+        # Returning here skips this turn's embedding AND its extraction pass,
+        # which is why windowing makes ingest cheaper rather than dearer: the
+        # extractor runs once per window instead of once per turn over
+        # substantially the same text.
+        if self._window_chunks:
+            pending = self._since_emit.get(session_id, 0) + 1
+            if pending < self._chunk_stride and not last_in_batch:
+                self._since_emit[session_id] = pending
+                return 0
+            self._since_emit[session_id] = 0
+
+        # What is stored, embedded and retrieved. A multi-turn window carries
+        # the turns around this one, so a question about a fact stated two turns
+        # ago can reach the chunk that also holds the answer; its lines are
+        # already "Speaker: said", so it is its own retrieval surface. A window
+        # of one is the turn byte for byte, and still needs `surface` — the
+        # attribution the utterance itself omits is the whole reason that exists.
+        windowed = self._window_chunks and verbatim != clean
+        chunk_text = verbatim if windowed else clean
+        chunk_surface = verbatim if windowed else surface
+        embedding = self._embed_fn(chunk_surface)
+        # Same ontology steering as the chunk path — the chunk's own embedding
+        # selects the candidate entity labels, so no extra embedding call.
+        ent_hints = self._label_hints([embedding])
+        entity_labels = ent_hints[0] if ent_hints else None
         # Lexical selection over the SKOS scheme, when it is warm. It sees the
         # WINDOW, not the turn: the labels a chunk needs are evoked by the whole
         # passage the extractor reads.
@@ -560,7 +601,12 @@ class _STMIngestHandler:
                 len(rel_labels),
                 1000 * (time.monotonic() - t_rel),
             )
-        if infer and offset:
+        # The provenance filter keeps a turn-chunk from re-minting the previous
+        # four turns' entities and hanging their MENTIONS on the wrong chunk.
+        # When the chunk IS the window that reasoning inverts: every entity in
+        # the window really is mentioned by this chunk, and filtering would drop
+        # all but the last turn's.
+        if infer and offset and not self._window_chunks:
             extraction.entities = _entities_from(extraction.entities, offset)
         if infer and spans:
             extraction.relations = _attributed(
@@ -568,16 +614,19 @@ class _STMIngestHandler:
             )
         anchor = metadata.get("timestamp") or metadata.get("anchor_date")
         temporal = self._resolve_temporal_entities(extraction.entities, anchor)
-        chunk_id = hashlib.sha256(f"{session_id}:{file_id}:{seq}:{clean}".encode()).hexdigest()[:16]
+        chunk_id = hashlib.sha256(
+            f"{session_id}:{file_id}:{seq}:{chunk_text}".encode()
+        ).hexdigest()[:16]
+        self._chunks_written += 1
         return await self._write_extracted(
             session_id=session_id,
             file_id=file_id,
             chunk_id=chunk_id,
-            text=clean,
+            text=chunk_text,
             seq=seq,
             kind="turn",
             speaker=speaker or role,
-            search_text=surface,
+            search_text=chunk_surface,
             # The same anchor the relative dates resolve against is what dates
             # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
             # the column was written, indexed and selected as "" everywhere.
@@ -642,10 +691,24 @@ class _STMIngestHandler:
         spec = {r: (self._scheme[r].definition or r) for r in rels if r in self._scheme}
         return ents, spec or None
 
+    @property
+    def _chunk_stride(self) -> int:
+        """Turns between emitted window chunks — the window minus its overlap.
+
+        Window 5 / overlap 2 gives stride 3: windows cover turns 1-5, 4-8, 7-11.
+        Clamped to at least 1 so an overlap >= the window cannot emit forever.
+        """
+        return max(self._extract_window - self._window_overlap, 1)
+
     def _extraction_window(
         self, session_id: str, clean: str, speaker: str
-    ) -> tuple[str, int, list[tuple[int, int, str]]]:
-        """``(text to extract from, where this turn starts, per-turn spans)``.
+    ) -> tuple[str, int, list[tuple[int, int, str]], str]:
+        """``(text to extract from, where this turn starts, spans, verbatim window)``.
+
+        The fourth element is the same window WITHOUT deixis resolution — what
+        gets stored as the chunk when window chunking is on. Storage stays
+        verbatim on purpose: the extractor benefits from "Gina lost Gina's job",
+        a reader quoting it back does not.
 
         The turn is always the tail of the window, so a zero offset means the
         window is off (``extract_window <= 1``) or this is the session's first
@@ -686,14 +749,21 @@ class _STMIngestHandler:
             )
         recent.append({"speaker": speaker, "text": clean})
 
+        def _render(key: str) -> str:
+            return "\n".join(f"{t['speaker']}: {t[key]}" if t["speaker"] else t[key] for t in turns)
+
         if window <= 1 or len(turns) == 1:
-            return clean, 0, []
+            # A one-turn window IS the turn, stored byte for byte. Speaker
+            # prefixes appear only once there are several turns to tell apart;
+            # who said this one is on CHUNK.speaker, and the attributed form is
+            # what search_text already carries.
+            return clean, 0, [], clean
         lines = [
             f"{t['speaker']}: {t['resolved']}" if t["speaker"] else t["resolved"] for t in turns
         ]
         text = "\n".join(lines)
         offset = len(text) - len(lines[-1]) + (len(speaker) + 2 if speaker else 0)
-        return text, offset, turn_spans(turns, text)
+        return text, offset, turn_spans(turns, text), _render("text")
 
     async def _ensure_session_and_file(
         self,
