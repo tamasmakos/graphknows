@@ -61,6 +61,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drop this benchmark's namespace (both databases) for a clean re-ingest, then run.",
     )
     parser.add_argument(
+        "--turns",
+        action="store_true",
+        help=(
+            "Feed each conversation TURN BY TURN (buffered, then flushed) instead of "
+            "concatenating a session into one document. The document harness makes "
+            "every chunk a multi-turn transcript, which pins evidence_recall@probe at "
+            "1.000 on both arms of an A/B; turn-feeding restores the headroom. Sets "
+            "EVAL_TURN_FED."
+        ),
+    )
+    parser.add_argument(
         "--gen-context-k",
         type=int,
         default=None,
@@ -106,6 +117,9 @@ async def amain(argv: list[str] | None = None) -> int:
     # constructs the config inside _run_one (below). probe_k auto-covers it there.
     if args.gen_context_k is not None:
         os.environ["EVAL_GEN_CONTEXT_K"] = str(args.gen_context_k)
+    # Same seam: read by BaseEvalConfig when _run_one constructs the config.
+    if args.turns:
+        os.environ["EVAL_TURN_FED"] = "1"
 
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 

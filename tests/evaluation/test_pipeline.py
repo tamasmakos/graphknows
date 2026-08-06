@@ -59,6 +59,44 @@ async def test_ingestor_aggregates_and_flushes() -> None:
     assert all(args.get("namespace") == "eval_locomo_llm_free_conv_26" for _, args in client.calls)
 
 
+@pytest.mark.asyncio
+async def test_turn_fed_unit_sends_messages_and_still_flushes() -> None:
+    """A turn-fed unit buffers TURN rows; its graph only exists after flush.
+
+    Sending `text` here would run eager document extraction and put the harness
+    straight back on session-sized chunks — the thing turn-feeding exists to
+    avoid. `chunks` is legitimately 0 at ingest time.
+    """
+    client = FakeClient(
+        {
+            "memory_ingest": {"chunks": 0, "entities": 0, "turns": 2, "elapsed_s": 0.1},
+            "memory_flush": {"nodes": 7, "edges": 3, "chunks": 4, "elapsed_s": 1.0},
+        }
+    )
+    ingestor = Ingestor(client, BaseEvalConfig())  # type: ignore[arg-type]
+    doc = EvalDocument(
+        title="d1",
+        text="Gina: I lost my job.\nJon: Sorry.",
+        turns=[
+            {"role": "user", "content": "I lost my job.", "name": "Gina", "timestamp": "1 May"},
+            {"role": "user", "content": "Sorry.", "name": "Jon", "timestamp": "1 May"},
+        ],
+    )
+
+    result = await ingestor.ingest("s1", [doc], namespace="ns")
+
+    ingest_args = next(args for name, args in client.calls if name == "memory_ingest")
+    assert "text" not in ingest_args
+    assert [m["content"] for m in ingest_args["messages"]] == ["I lost my job.", "Sorry."]
+    assert [m["name"] for m in ingest_args["messages"]] == ["Gina", "Jon"]
+    # Buffered, not extracted — the real counts arrive from flush.
+    assert result.turns == 2
+    assert result.chunks == 0
+    assert result.flush_chunks == 4
+    assert result.ingest_error_count == 0
+    assert "memory_flush" in [name for name, _ in client.calls]
+
+
 def test_unit_namespace_is_per_conversation() -> None:
     config = BaseEvalConfig().model_copy(update={"namespace": "eval_locomo_llm_free"})
     assert unit_namespace(config, "conv-26") == "eval_locomo_llm_free_conv-26"

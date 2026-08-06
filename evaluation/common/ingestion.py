@@ -46,19 +46,21 @@ class Ingestor:
 
         async def _ingest_one(index: int, doc: EvalDocument) -> dict[str, Any]:
             title = doc.title or f"{session_id}-doc-{index}"
+            # Turn-fed units send `messages`, which buffers cheap TURN rows that
+            # the flush below drains through the real pipeline — the same
+            # lifecycle a live agent has, and the one whose chunking is the
+            # sliding window. A document sends `text` and is extracted eagerly.
+            payload: dict[str, Any] = {
+                "session_id": session_id,
+                "title": title,
+                "infer": infer,
+                "metadata": {"anchor_date": doc.anchor_date},
+                "namespace": namespace,
+            }
+            payload["messages" if doc.turns else "text"] = doc.turns or doc.text
             async with sem:
                 try:
-                    result = await self._client.call_tool(
-                        "memory_ingest",
-                        {
-                            "text": doc.text,
-                            "session_id": session_id,
-                            "title": title,
-                            "infer": infer,
-                            "metadata": {"anchor_date": doc.anchor_date},
-                            "namespace": namespace,
-                        },
-                    )
+                    result = await self._client.call_tool("memory_ingest", payload)
                 except Exception as exc:
                     log.exception("INGEST FAILED doc=%s (%s)", title, type(exc).__name__)
                     print(
@@ -86,6 +88,7 @@ class Ingestor:
             documents=len(outputs),
             chunks=sum(int(o.get("chunks", 0)) for o in outputs),
             entities=sum(int(o.get("entities", 0)) for o in outputs),
+            turns=sum(int(o.get("turns", 0)) for o in outputs),
             ingest_elapsed_s=round(sum(float(o.get("elapsed_s", 0)) for o in outputs), 3),
             ingest_error_count=sum(1 for o in outputs if "chunks" not in o),
         )

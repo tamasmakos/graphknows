@@ -282,8 +282,16 @@ async def _ingest_unit(
             f"({ingest.ingest_error_count}/{len(unit.documents)}); "
             f"scoring this run would measure a graph that was never built"
         )
+    # A turn-fed unit buffers TURN rows and mints nothing until flush, so
+    # reporting only `chunks` would print 0 on a perfectly healthy run and read
+    # as a total extraction failure.
+    written = (
+        f"turns={ingest.turns} flush_chunks={ingest.flush_chunks}"
+        if ingest.turns
+        else f"chunks={ingest.chunks}"
+    )
     print(
-        f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
+        f"[{unit.group_id}] ingest done: {written} "
         f"entities={ingest.entities} flush_nodes={ingest.flush_nodes} "
         f"errors={ingest.ingest_error_count}",
         flush=True,

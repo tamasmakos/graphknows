@@ -13,11 +13,24 @@ from pydantic import BaseModel, Field
 
 
 class EvalDocument(BaseModel):
-    """One unit of text ready to ingest into memory (usually one session)."""
+    """One unit ready to ingest into memory (usually one session).
+
+    Two ingest shapes, and which one is populated decides the harness:
+
+    * ``text`` — the session concatenated into one blob, ingested eagerly. Its
+      chunks are multi-turn transcripts, which is why a document-fed run pins
+      ``evidence_recall@probe`` at 1.000 and cannot measure retrieval.
+    * ``turns`` — the utterances kept apart, ingested as TURN rows and drained
+      by flush, exactly as a live agent does it. Chunking is then the pipeline's
+      own 5-turn sliding window, and the benchmark regains headroom.
+    """
 
     title: str
     text: str
     anchor_date: str = ""  # ISO datetime of the session, for relative-date resolution
+    # Message dicts (``role``/``content``/``name``/``timestamp``) when the unit
+    # is fed turn-by-turn. Empty for the document harness.
+    turns: list[dict[str, str]] = []
 
 
 class EvalCase(BaseModel):
@@ -65,6 +78,10 @@ class IngestResult(BaseModel):
     documents: int = 0
     chunks: int = 0
     entities: int = 0
+    # Turns buffered by a turn-fed unit. They mint no chunks or entities until
+    # flush drains them, so a turn-fed run legitimately reports chunks=0 here
+    # and its real graph size in the flush_* fields below.
+    turns: int = 0
     ingest_elapsed_s: float = 0.0
     ingest_error_count: int = 0
     # flush-to-LTM fields (zero when promote_to_ltm is False)

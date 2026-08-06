@@ -43,6 +43,17 @@ class BaseEvalConfig(BaseModel):
     recall_scope: str = "both"  # stm | ltm | both
     promote_to_ltm: bool = True
 
+    # Feed each conversation TURN BY TURN (buffered TURN rows drained by flush,
+    # the path a live agent uses) instead of concatenating a session into one
+    # document. The document harness makes every chunk a multi-turn transcript,
+    # which pins evidence_recall@probe at 1.000 on BOTH arms of an A/B and
+    # leaves no headroom for a retrieval change to register. Turn-feeding hands
+    # chunking back to the pipeline's own sliding window, so the benchmark
+    # measures the thing it claims to. Env: EVAL_TURN_FED=1.
+    turn_fed: bool = Field(
+        default_factory=lambda: os.environ.get("EVAL_TURN_FED", "") not in ("", "0", "false")
+    )
+
     # ── Generation / judging ─────────────────────────────────────────────────
     generation_model: str = ""  # → LLM_MODEL from .env (required — no hardcoded fallback)
     judge_model: str = ""  # → JUDGE_MODEL from .env, falling back to generation_model
