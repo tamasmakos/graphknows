@@ -286,3 +286,33 @@ async def test_fused_hits_carry_speaker_and_ts_even_for_channels_that_set_metada
     assert by_id["tmp-c1"]["ts"] == "2023-02-01"
     # The metadata the channel set is not clobbered by the fetch.
     assert by_id["tmp-c1"]["metadata"] == {"date": "2023-02-01"}
+
+
+@pytest.mark.asyncio
+async def test_a_hit_carries_the_chunks_timestamp():
+    """``ts`` must survive from the store row onto the hit.
+
+    ``search_chunks_ann`` already returns it and every collector dropped it when
+    hand-building the hit dict, so the answerer could only date a memory when
+    the date happened to be written inside the passage text. That is true of a
+    concatenated transcript and false of a real conversation, where the
+    timestamp is a field — which is why turn-fed temporal accuracy was 0.077
+    against 0.962 document-fed.
+    """
+    retriever, store = _make_retriever()
+    store.search_chunks_ann = AsyncMock(
+        return_value=[
+            {
+                "chunk_id": "c1",
+                "text": "Jon: Lost my job as a banker yesterday.",
+                "ts": "4:04 pm on 20 January, 2023",
+                "cosine_score": 0.9,
+            }
+        ]
+    )
+
+    with patch("graphknows.retrieval.retriever.embed", side_effect=_fake_embed):
+        ctx = await retriever.retrieve("when did Jon lose his job", session_id="s1")
+
+    hit = next(h for h in ctx.fused_results if h.get("chunk_id") == "c1")
+    assert hit["ts"] == "4:04 pm on 20 January, 2023"

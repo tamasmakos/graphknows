@@ -389,13 +389,7 @@ class DETRetriever:
                 cid,
                 # boost=2: entity hits are high-precision; outcompete pure-ANN noise.
                 rrf_score(rank, boost=2.0),
-                {
-                    "text": ec.get("text", ""),
-                    "entities": ec.get("entities", []),
-                    "sources": {"entity"},
-                    "doc_id": "",
-                    "metadata": {},
-                },
+                _hit(ec, "entity"),
             )
         return result
 
@@ -468,16 +462,7 @@ class DETRetriever:
             # arise before `rank-bm25` was declared, since the fallback scorer's
             # IDF is always positive.
             rrf = rrf_score(rank, boost=3.0) + FUSION_ALPHA * max(0.0, bm25_score)
-            result[cid] = (
-                rrf,
-                {
-                    "text": c.get("text", ""),
-                    "entities": [],
-                    "sources": {"text"},
-                    "doc_id": "",
-                    "metadata": {},
-                },
-            )
+            result[cid] = (rrf, _hit(c, "text", entities=[]))
         return result
 
     async def temporal_traversal(
@@ -525,13 +510,7 @@ class DETRetriever:
                 result,
                 row["chunk_id"],
                 rrf_score(rank, RRF_RELATION_BOOST),
-                {
-                    "text": row.get("text", ""),
-                    "entities": [],
-                    "sources": {"temporal"},
-                    "doc_id": "",
-                    "metadata": {},
-                },
+                _hit(row, "temporal", entities=[]),
             )
         return result
 
@@ -559,13 +538,7 @@ class DETRetriever:
                 result,
                 row["chunk_id"],
                 rrf_score(rank, RRF_RELATION_BOOST),
-                {
-                    "text": row.get("text", ""),
-                    "entities": [],
-                    "sources": {"temporal"},
-                    "doc_id": "",
-                    "metadata": {"date": row.get("date", "")},
-                },
+                _hit(row, "temporal", entities=[], metadata={"date": row.get("date", "")}),
             )
         return result
 
@@ -609,15 +582,35 @@ class DETRetriever:
                 result,
                 cid,
                 score,
-                {
-                    "text": row.get("text", ""),
-                    "entities": [],
-                    "sources": {"semantic"},
-                    "doc_id": "",
-                    "metadata": {},
-                },
+                _hit(row, "semantic", entities=[]),
             )
         return result
+
+
+def _hit(row: dict[str, Any], source: str, **over: Any) -> dict[str, Any]:
+    """The candidate payload for one chunk row, from ONE place.
+
+    Every collector used to hand-build this dict and each picked a different
+    subset of the row, so a field the store had already fetched was silently
+    dropped on five of six paths. ``ts`` was the expensive one: the answerer
+    could date a memory only when the date happened to be written inside the
+    passage text — true of a concatenated transcript, false of a real
+    conversation where the timestamp is a field. Turn-fed temporal accuracy was
+    0.077 against 0.962 document-fed because of it.
+
+    Carrying the row's own fields here means the next one added reaches the
+    answerer without touching six call sites.
+    """
+    return {
+        "text": row.get("text", ""),
+        "entities": row.get("entities", []),
+        "sources": {source},
+        "doc_id": "",
+        "metadata": {},
+        "speaker": row.get("speaker", "") or "",
+        "ts": row.get("ts", "") or "",
+        **over,
+    }
 
 
 def _add_result(

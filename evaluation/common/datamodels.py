@@ -60,6 +60,11 @@ class RetrievedPassage(BaseModel):
     text: str
     score: float | None = None
     sources: str = ""
+    # The chunk's own timestamp, as the retriever reports it. Without this the
+    # answerer can only learn WHEN something happened if the date happens to be
+    # written inside the passage text, which is true of a concatenated
+    # transcript and false of everything else.
+    ts: str = ""
 
     # Channels that reach a chunk through graph structure (entity/relation
     # traversal, PPR, ontology classes, topics, frames) rather than dense-vector
