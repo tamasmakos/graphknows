@@ -39,15 +39,16 @@ _FRAME_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_FRAME_SATURATI
 async def _frame_coverage(rt: Any, session_id: str, state: str | None) -> dict[str, int]:
     """How many of the session's chunks each frame_type is evoked in.
 
-    Measured over the GRAPH, not over the rows a query happened to return. The
-    distinction is the whole point: FRAME is one vertex per (chunk, frame) pair,
-    so an ANN capped at ``top_k`` vertices yields at most ``top_k`` (chunk, frame)
-    rows — counting coverage from those bounds the numerator by the sample size
-    while the denominator stays the whole session. ``ONTOLOGY_CLASS`` has one
-    vertex per class and expands to every tagged chunk, which is why the same
-    guard is sound there and had to be replaced here.
+    Measured over the GRAPH, not over the rows a query happened to return.
+    Counting coverage from the returned rows bounds the numerator by the sample
+    size while the denominator stays the whole session, so the ratio could never
+    reach the threshold and the guard never fired.
+
+    Scoped by ``c.session_id``: FRAME is canonical — one vertex per frame for
+    the whole namespace — so it carries no session of its own. The session is a
+    property of the chunk that evoked it.
     """
-    q = "MATCH (f:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE f.session_id = $sid"
+    q = "MATCH (f:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE c.session_id = $sid"
     if state:
         q += " AND c.state = $st"
     q += " RETURN f.frame_type AS ft, count(DISTINCT c.chunk_id) AS n"

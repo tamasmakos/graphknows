@@ -760,22 +760,24 @@ class _STMIngestHandler:
                 frame_summary,
                 match_frames,
             )
+            from graphknows.channels._framenet import _broader_up
 
             matches = match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
             if matches:
+                # FrameNet's own hierarchy rides along, so the frames evoked here
+                # land as a traversable taxonomy rather than isolated tags: a
+                # query matching a general frame can then walk DOWN to the
+                # specific one a chunk actually evoked. Cached in-process.
+                up = _broader_up()
                 await self._store.write_frames(
-                    session_id,
                     [
                         {
                             "frame_type": name,
                             "chunk_id": chunk_id,
-                            "lu": "",
-                            "speaker": speaker or "",
-                            "fes": [],
-                            "fillers": [],
                             "confidence": sim,
                             "summary": frame_summary(name),
                             "embedding": frame_embedding(name),
+                            "parents": sorted(up.get(name, ())),
                         }
                         for name, sim in matches
                     ],

@@ -25,7 +25,6 @@ ArcadeDB constraints honoured here:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -123,6 +122,12 @@ class GraphStore(ArcadeStoreBase):
 
     def __init__(self, client: ArcadeDBClient, db: str = _DB) -> None:
         super().__init__(client, db)
+        # Frames whose per-frame data (definition embedding, BROADER parents)
+        # this process has already written. One store is one database, and
+        # neither changes, so re-sending a ~1KB inline vector and the taxonomy
+        # on every chunk that evokes the frame is pure cost. A cold start just
+        # writes them once more — both are idempotent MERGE/SET.
+        self._frames_materialised: set[str] = set()
 
     # ------------------------------------------------------------------
     # Schema
@@ -136,6 +141,9 @@ class GraphStore(ArcadeStoreBase):
                 the configured embedder).
         """
         await self._apply_ddl(_CORE_DDL, dims=dims)
+        # This database may have been dropped and recreated under us, so nothing
+        # written by a previous life of this object can be assumed present.
+        self._frames_materialised.clear()
         logger.info("GraphStore schema ensured (db=%s, dims=%d)", self._db, dims)
 
     async def _set_embedding(
@@ -646,39 +654,42 @@ class GraphStore(ArcadeStoreBase):
             dates=dates,
         )
 
-    async def write_frames(self, session_id: str, frames: list[dict[str, Any]]) -> int:
-        """Bulk-write FRAME vertices + EVOKED_BY evidence edges to their chunks.
+    async def write_frames(self, frames: list[dict[str, Any]]) -> int:
+        """Bulk-write canonical FRAME vertices + EVOKED_BY evidence edges to their chunks.
 
-        Each ``frames`` item: ``{frame_type, chunk_id, lu, speaker,
-        fes: [[role, filler], ...], fillers: [str, ...], confidence?, summary?,
-        embedding?}``. ``id`` is deterministic per (session, chunk, index) so
-        re-runs MERGE idempotently. Evidence is the FRAME-[:EVOKED_BY]->CHUNK
-        edge — there is no ``chunk_id`` property on FRAME. Embeddings are written
-        per row as inline literals (LIST params conflict with the LSM_VECTOR index).
+        Each ``frames`` item: ``{frame_type, chunk_id, confidence?, summary?,
+        embedding?}``.
+
+        FRAME is CANONICAL: one vertex per frame type per namespace, MERGEd on
+        the frame name. It used to be one vertex per (session, chunk, rank),
+        which duplicated a frame once per chunk that evoked it — that made the
+        frame taxonomy untraversable (no stable node to hang FRAME->FRAME edges
+        off) and forced saturation coverage to be counted off the node.
+
+        Everything per-chunk therefore lives on the FRAME-[:EVOKED_BY
+        {confidence}]->CHUNK edge; there is no ``chunk_id`` property on FRAME,
+        and no session on it either — a frame spans every session that evokes
+        it, so the session filter belongs on the CHUNK side of that edge.
+
+        Embeddings are inline literals (LIST params conflict with the
+        LSM_VECTOR index) and are written once per frame per process: the
+        definition embedding is a property of the frame, not of the evocation.
         """
         if not frames:
             return 0
         rows = [
             {
-                "id": f"{session_id}:{f['chunk_id']}:{i}",
-                "sid": session_id,
-                "ft": f["frame_type"],
+                "id": f["frame_type"],
                 "cid": f["chunk_id"],
-                "lu": f.get("lu", ""),
-                "spk": f.get("speaker", "") or "",
-                "fes": json.dumps(f.get("fes", [])),
-                "fillers": [str(x).lower() for x in f.get("fillers", [])],
                 "conf": float(f.get("confidence", 1.0)),
                 "summary": f.get("summary", "") or "",
             }
-            for i, f in enumerate(frames)
+            for f in frames
         ]
         await self.command(
             "UNWIND $rows AS r "
             "MERGE (n:FRAME {id: r.id}) "
-            "SET n.session_id = r.sid, n.frame_type = r.ft, "
-            "n.lu = r.lu, n.speaker = r.spk, n.fes = r.fes, n.fillers = r.fillers, "
-            "n.summary = r.summary",
+            "SET n.frame_type = r.id, n.summary = r.summary",
             rows=rows,
         )
         await self.command(
@@ -688,10 +699,34 @@ class GraphStore(ArcadeStoreBase):
             "SET ev.confidence = r.conf",
             rows=rows,
         )
-        for i, f in enumerate(frames):
-            emb = f.get("embedding")
-            if emb:
-                await self._set_embedding("FRAME", "id", f"{session_id}:{f['chunk_id']}:{i}", emb)
+        # Everything below is a property of the FRAME, not of this evocation, so
+        # it is written once per frame per process rather than once per chunk.
+        fresh = [f for f in frames if str(f["frame_type"]) not in self._frames_materialised]
+        for f in fresh:
+            if emb := f.get("embedding"):
+                await self._set_embedding("FRAME", "id", str(f["frame_type"]), emb)
+
+        # FrameNet's own hierarchy, as SKOS-shaped BROADER edges. Parents are
+        # MERGEd bare: no summary, no embedding, no EVOKED_BY. They are not
+        # evoked by anything, they are what an evoked frame generalises to.
+        pairs = [
+            {"id": str(f["frame_type"]), "parent": str(p)}
+            for f in fresh
+            for p in f.get("parents") or ()
+            if p and str(p) != str(f["frame_type"])
+        ]
+        if pairs:
+            await self.command(
+                "UNWIND $rows AS r MERGE (p:FRAME {id: r.parent}) SET p.frame_type = r.parent",
+                rows=pairs,
+            )
+            await self.command(
+                "UNWIND $rows AS r "
+                "MATCH (n:FRAME {id: r.id}), (p:FRAME {id: r.parent}) "
+                "MERGE (n)-[:BROADER]->(p)",
+                rows=pairs,
+            )
+        self._frames_materialised.update(str(f["frame_type"]) for f in fresh)
         return len(rows)
 
     async def write_ontology(self, index: Any) -> int:
@@ -710,10 +745,16 @@ class GraphStore(ArcadeStoreBase):
         ont_id = getattr(index, "digest", "") or "default"
         source = getattr(index, "source", "")
 
+        class_terms = [t for t in terms if t.kind == "class"]
         existing = await self.query(
             "MATCH (o:ONTOLOGY {id: $id}) RETURN o.term_count AS c", id=ont_id
         )
         if existing and int(existing[0].get("c") or 0) >= len(terms):
+            # The terms are here, but BROADER may predate this feature — and the
+            # subclass expansion reads ONLY those edges. Backfilling them is the
+            # difference between an older namespace generalising and silently
+            # not; re-MERGEing the classes themselves is not needed.
+            await self._write_class_broader(class_terms)
             return len(terms)
 
         await self.command(
@@ -723,9 +764,9 @@ class GraphStore(ArcadeStoreBase):
             n=len(terms),
         )
         # Only classes are persisted: ONTOLOGY_CLASS is what search_ontology_classes
-        # reads. The ONTOLOGY_PROPERTY vertices, the DECLARES edges and the
-        # SUBCLASS_OF hierarchy were written here and read by nothing.
-        class_terms = [t for t in terms if t.kind == "class"]
+        # reads. The ONTOLOGY_PROPERTY vertices and the DECLARES edges were
+        # written here and read by nothing. The class hierarchy is back as
+        # BROADER below — this time with a reader (see _narrower_scores).
         # ``module`` is the sub-ontology the term is curated in ("AgentOntology")
         # and ``parents`` its declared superclasses, as labels. Both are
         # descriptive metadata on the node, not a second hierarchy: nothing
@@ -749,6 +790,7 @@ class GraphStore(ArcadeStoreBase):
                 "n.module = r.module, n.parents = r.parents",
                 rows=rows,
             )
+        await self._write_class_broader(class_terms)
         # Embeddings are per-row inline literals: LIST params conflict with the
         # LSM_VECTOR index, the same constraint CHUNK/ENTITY/FRAME honour.
         for term in class_terms:
@@ -757,6 +799,48 @@ class GraphStore(ArcadeStoreBase):
                 await self._set_embedding("ONTOLOGY_CLASS", "uri", term.uri, emb)
         logger.info("Ontology persisted: %d terms from %s", len(terms), source)
         return len(terms)
+
+    async def _write_class_broader(self, class_terms: list[Any]) -> int:
+        """MERGE ONTOLOGY_CLASS-[:BROADER]->ONTOLOGY_CLASS from declared parents.
+
+        The same hierarchy the ``parents`` string carries, reified so subsumption
+        is one indexed hop rather than a full scan of every class plus a string
+        split. :meth:`_narrower_scores` is the reader.
+
+        Parents are DECLARED as labels but written as URIs: ``ONTOLOGY_CLASS``
+        indexes ``label`` NOTUNIQUE, so a label-side MATCH fans the edge out
+        across every class sharing that label. Resolving here — against the
+        terms already in hand — keys the MERGE on the unique property. A parent
+        the ontology does not itself define is dropped rather than invented.
+
+        Idempotent, and count-guarded so the common case (already written) costs
+        one count query rather than a 1400-row UNWIND on every connect.
+        """
+        by_label = {t.label: t.uri for t in class_terms if t.label}
+        pairs = [
+            {"uri": t.uri, "puri": by_label[p]}
+            for t in class_terms
+            for p in t.parents
+            if p in by_label and by_label[p] != t.uri
+        ]
+        if not pairs:
+            return 0
+        try:
+            have = await self.query(
+                "MATCH (:ONTOLOGY_CLASS)-[b:BROADER]->(:ONTOLOGY_CLASS) RETURN count(b) AS c"
+            )
+        except Exception:  # type absent on a namespace that predates the edge
+            have = []
+        if have and int(have[0].get("c") or 0) >= len(pairs):
+            return len(pairs)
+        await self.command(
+            "UNWIND $rows AS r "
+            "MATCH (c:ONTOLOGY_CLASS {uri: r.uri}), (p:ONTOLOGY_CLASS {uri: r.puri}) "
+            "MERGE (c)-[:BROADER]->(p)",
+            rows=pairs,
+        )
+        logger.info("Ontology hierarchy persisted: %d BROADER edges", len(pairs))
+        return len(pairs)
 
     async def write_class_matches(self, chunk_id: str, matches: list[tuple[str, float]]) -> int:
         """MERGE CHUNK-[:MATCHES_CLASS {sim}]->ONTOLOGY_CLASS edges for one chunk."""
@@ -832,7 +916,11 @@ class GraphStore(ArcadeStoreBase):
             label[uri] = r.get("label", "")
         if not score:
             return []
-        score |= await self._subclass_scores(score, label)
+        for uri, (sub_score, sub_label) in (
+            await self._narrower_scores("ONTOLOGY_CLASS", "uri", score)
+        ).items():
+            score[uri] = sub_score
+            label[uri] = sub_label
         where = f"o.uri IN {quoted_list(list(score))}"
         if session_id:
             where += f" AND c.session_id = {quote(session_id)}"
@@ -864,48 +952,6 @@ class GraphStore(ArcadeStoreBase):
                         "via": "chunk",
                     }
                 )
-        return out
-
-    async def _subclass_scores(
-        self, matched: dict[str, float], label: dict[str, str]
-    ) -> dict[str, float]:
-        """Descendant classes of the matched ones, at a discount.
-
-        A query that matches ``Facility`` should reach a chunk tagged
-        ``Dance Studio``: the chunk is about a facility, it just never used the
-        word. That generalisation is the whole reason the ontology carries a
-        hierarchy, and without this the channel can only ever return chunks
-        whose tag the query matched head-on.
-
-        One level, because ``parents`` is stored per node and each extra level
-        costs another round trip for rapidly thinning evidence. Scored at
-        ``_SUBCLASS_DISCOUNT`` of the parent's match, so a direct hit always
-        outranks an inherited one.
-        """
-        names = {lbl for lbl in label.values() if lbl}
-        if not names:
-            return {}
-        try:
-            rows = await self.query(
-                "MATCH (o:ONTOLOGY_CLASS) WHERE o.parents IS NOT NULL AND o.parents <> '' "
-                "RETURN o.uri AS uri, o.label AS label, o.parents AS parents"
-            )
-        except Exception as exc:
-            logger.warning("subclass expansion failed: %s", exc)
-            return {}
-        by_label = {v: k for k, v in label.items()}
-        out: dict[str, float] = {}
-        for r in rows:
-            uri = str(r.get("uri") or "")
-            if not uri or uri in matched:
-                continue
-            parents = {p.strip() for p in str(r.get("parents") or "").split(",")}
-            if hit := (parents & names):
-                parent_uri = by_label.get(next(iter(hit)), "")
-                out[uri] = matched.get(parent_uri, 0.0) * _SUBCLASS_DISCOUNT
-                label[uri] = str(r.get("label") or "")
-        if out:
-            logger.debug("ontology query expanded to %d subclasses", len(out))
         return out
 
     async def write_frame_instances(
@@ -1384,13 +1430,17 @@ class GraphStore(ArcadeStoreBase):
         session_id: str | None = None,
         state: str | None = None,
     ) -> list[dict[str, Any]]:
-        """ANN over FRAME.embedding, then join FRAME-[:EVOKED_BY]->CHUNK.
+        """ANN over FRAME.embedding, widen to narrower frames, then join to chunks.
 
-        Vector-searches the frame SUMMARIES actually evoked in this namespace, then
-        returns the evoked chunks tagged with the frame match score (1 - cosine
-        distance). Namespace-local — replaces the global numpy frame lookup on the
-        query side. session/state filters apply over an over-fetched candidate set
-        (vectorNeighbors has no WHERE support).
+        Vector-searches the frame definitions evoked in this namespace, expands
+        one hop DOWN the BROADER taxonomy, and returns the evoked chunks scored
+        by ``frame match x evocation strength``. Namespace-local — replaces the
+        global numpy frame lookup on the query side.
+
+        FRAME is canonical (one vertex per frame), so neither the session nor
+        the chunk lives on it: both filters apply to the CHUNK on the far side
+        of EVOKED_BY. The over-fetch remains because vectorNeighbors has no
+        WHERE support.
         """
         if not embedding:
             return []
@@ -1401,13 +1451,11 @@ class GraphStore(ArcadeStoreBase):
         except Exception as exc:
             logger.warning("query_frames_by_embedding failed: %s", exc)
             return []
-        # Dedup by frame id + apply session filter; keep the best score per frame.
+        # Dedup by frame id; keep the best score per frame.
         score: dict[str, float] = {}
         for r in rows:
             fid = r.get("id")
             if not fid or fid in score:
-                continue
-            if session_id and r.get("session_id") != session_id:
                 continue
             dist = float(r.get("distance") or 1.0)
             score[fid] = max(0.0, 1.0 - dist)
@@ -1415,24 +1463,85 @@ class GraphStore(ArcadeStoreBase):
                 break
         if not score:
             return []
+        score.update(
+            {f: s for f, (s, _) in (await self._narrower_scores("FRAME", "id", score)).items()}
+        )
+
         where = f"n.id IN {quoted_list(list(score))}"
+        if session_id:
+            where += f" AND c.session_id = {quote(session_id)}"
         if state:
             where += f" AND c.state = {quote(state)}"
         joined = await self.query(
-            f"MATCH (n:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE {where} "
-            f"RETURN n.id AS id, n.frame_type AS frame_type, c.chunk_id AS chunk_id"
+            f"MATCH (n:FRAME)-[ev:EVOKED_BY]->(c:CHUNK) WHERE {where} "
+            f"RETURN n.id AS id, n.frame_type AS frame_type, c.chunk_id AS chunk_id, "
+            f"ev.confidence AS confidence"
         )
         # A row with no id cannot be scored: `score.get(None, 0.0)` would hand
         # back a silent 0.0 and rank a real frame chunk last. Drop it instead.
-        return [
-            {
-                "chunk_id": r["chunk_id"],
-                "frame_type": r.get("frame_type"),
-                "score": score.get(r["id"], 0.0),
-            }
-            for r in joined
-            if r.get("chunk_id") and r.get("id")
-        ]
+        out: list[dict[str, Any]] = []
+        for r in joined:
+            if not (r.get("chunk_id") and r.get("id")):
+                continue
+            conf = r.get("confidence")
+            # Weight the query-to-frame match by how strongly THIS chunk evoked
+            # the frame. Canonical frames fan out to every chunk that evoked
+            # them, so without this every one of them would rank identically.
+            # `or 1.0` is wrong here: a legitimate 0.0 must stay 0.0.
+            weight = 1.0 if conf is None else float(conf)
+            out.append(
+                {
+                    "chunk_id": r["chunk_id"],
+                    "frame_type": r.get("frame_type"),
+                    "score": score.get(r["id"], 0.0) * weight,
+                }
+            )
+        return out
+
+    async def _narrower_scores(
+        self, vertex: str, key: str, matched: dict[str, float]
+    ) -> dict[str, tuple[float, str]]:
+        """One hop DOWN the BROADER taxonomy from the matched nodes, at a discount.
+
+        A query matching ``Rewards_and_punishments`` should reach a chunk that
+        only ever evoked ``Revenge``, and one matching ``Facility`` should reach
+        a chunk tagged ``Dance Studio``: the chunk is about the general thing,
+        it just named the specific one. That generalisation is the whole reason
+        to persist a hierarchy — and it is the reader that keeps the BROADER
+        edges from being another write-only layer.
+
+        Shared by both taxonomies because both are read identically; only the
+        vertex type and its key property differ (``FRAME.id`` /
+        ``ONTOLOGY_CLASS.uri``). One level, because each extra hop costs a round
+        trip for rapidly thinning evidence, and scored at ``_SUBCLASS_DISCOUNT``
+        of the parent's match so a direct hit always outranks an inherited one.
+
+        Returns ``{key: (score, label)}`` — the label rides along because the
+        caller has no other way to name a node it never matched itself.
+        """
+        if not matched:
+            return {}
+        try:
+            rows = await self.query(
+                f"MATCH (child:{vertex})-[:BROADER]->(parent:{vertex}) "  # nosec B608
+                f"WHERE parent.{key} IN {quoted_list(list(matched))} "
+                f"RETURN child.{key} AS child, child.label AS label, parent.{key} AS parent"
+            )
+        except Exception as exc:
+            logger.warning("%s narrower expansion failed: %s", vertex, exc)
+            return {}
+        out: dict[str, tuple[float, str]] = {}
+        for r in rows:
+            child = str(r.get("child") or "")
+            # An already-matched node keeps its own, undiscounted score.
+            if not child or child in matched:
+                continue
+            inherited = matched.get(str(r.get("parent") or ""), 0.0) * _SUBCLASS_DISCOUNT
+            if inherited > out.get(child, (0.0, ""))[0]:
+                out[child] = (inherited, str(r.get("label") or ""))
+        if out:
+            logger.debug("%s query expanded to %d narrower nodes", vertex, len(out))
+        return out
 
     # ------------------------------------------------------------------
     # Read API — structured fact context (fact-sheet for the generator)
@@ -2104,10 +2213,14 @@ class GraphStore(ArcadeStoreBase):
     # ------------------------------------------------------------------
 
     async def delete_session(self, session_id: str) -> None:
-        """Delete a session's FRAME/CHUNK/FILE vertices and its SESSION node.
+        """Delete a session's FRAME_INSTANCE/CHUNK/FILE vertices and its SESSION node.
 
-        Namespace-global vertices (ENTITY, TOPIC, TEMPORAL) are untouched —
-        they may be evidenced by other sessions.
+        Namespace-global vertices (ENTITY, TOPIC, TEMPORAL and now FRAME) are
+        untouched — they may be evidenced by other sessions. FRAME joined that
+        list when it became canonical: one vertex serves every session that
+        evokes it, and it may additionally be a parent in the BROADER taxonomy
+        with no evidence of its own. Its evidence for THIS session is the
+        EVOKED_BY edge, which goes when the chunk it points at is detached.
 
         Raises:
             StoreError: If any label failed to delete for a reason other than the
@@ -2115,7 +2228,7 @@ class GraphStore(ArcadeStoreBase):
                 caller instead of claiming a clean purge over orphaned nodes.
         """
         failures: list[str] = []
-        for label in ("FRAME_INSTANCE", "FRAME", "CHUNK", "FILE", "SESSION"):
+        for label in ("FRAME_INSTANCE", "CHUNK", "FILE", "SESSION"):
             try:
                 await self.command(
                     f"MATCH (n:{label} {{session_id: $sid}}) DETACH DELETE n",
@@ -2132,6 +2245,10 @@ class GraphStore(ArcadeStoreBase):
 
     async def clear_all(self) -> None:
         """Delete every vertex (and, via DETACH, every edge) in this database."""
+        # The FRAME rows go with them, so the write-once cache must forget them:
+        # an embedding-less FRAME is invisible to the channel's vector search,
+        # so a stale cache would silently kill the layer rather than fail.
+        self._frames_materialised.clear()
         for label in _VERTEX_LABELS:
             try:
                 await self.command(f"MATCH (n:{label}) DETACH DELETE n")

@@ -84,15 +84,19 @@ The DDL is a pure ordered statement list, `_CORE_DDL`
 they match the configured embedder.
 
 - Vertices: `SESSION`, `TURN`, `FILE`, `CHUNK`, `ENTITY` (keyed on `name_norm`),
-  `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME`, `FRAME_INSTANCE`,
-  `ONTOLOGY`, `ONTOLOGY_CLASS`.
+  `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME` (canonical — one vertex
+  per frame type for the whole namespace, keyed by the frame name),
+  `FRAME_INSTANCE`, `ONTOLOGY`, `ONTOLOGY_CLASS`.
 - Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
   (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL),
   `IN_TOPIC` (ENTITY→TOPIC, with a
   `pagerank` property — the cluster membership itself, and the only persisted
   topic edge), `EVOKED_BY`
-  (FRAME→CHUNK), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK), `PLAYS_ROLE`
-  (FRAME_INSTANCE→ENTITY, with a `role` property), and `REL`.
+  (FRAME→CHUNK, with the per-chunk `confidence` — a canonical FRAME carries no
+  chunk or session of its own, so everything per-evocation lives here),
+  `BROADER` (the subsumption taxonomy, FRAME→FRAME and
+  ONTOLOGY_CLASS→ONTOLOGY_CLASS), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK),
+  `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role` property), and `REL`.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
   property, not the edge type name. The vocabulary is open and mostly single-use,
   so a type-per-predicate minted hundreds of near-empty types plus a DDL

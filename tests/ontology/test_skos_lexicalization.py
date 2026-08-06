@@ -18,7 +18,12 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.ontology.skos import Concept, _upper_ontology_property, lexicalize
+from graphknows.ontology.skos import (
+    Concept,
+    _upper_ontology_property,
+    ancestors,
+    lexicalize,
+)
 
 
 def _prop(label: str, domain: tuple[str, ...], rng: tuple[str, ...]) -> Concept:
@@ -91,3 +96,48 @@ class TestLexicalizeDropsPlumbingSynonyms:
     def test_synonyms_disabled_is_still_honoured(self) -> None:
         c = lexicalize(_prop("teaches", ("Person",), ("Person",)), synonyms=False)
         assert c.alt_labels == {"teaches"}
+
+
+def _cls(label: str, broader: tuple[str, ...] = ()) -> Concept:
+    return Concept(
+        uri=f"cco:{label}", pref_label=label, definition="", kind="class", broader=broader
+    )
+
+
+class TestAncestors:
+    """``ancestors`` closes the subsumption walk over EVERY declared parent."""
+
+    def test_walks_every_parent_not_only_the_first(self) -> None:
+        """Multiple inheritance is normal in CCO; broader[0] hides whole branches.
+
+        ``ancestors`` gates two live decisions — which evoked classes are
+        redundant in ``entity_labels``, and which properties are domain/range
+        satisfiable in ``relation_labels``. Following one parent understates
+        both, so a property declared over the branch that was skipped never
+        gets offered to the extractor.
+        """
+        scheme = {
+            "Dance Studio": _cls("Dance Studio", ("Facility", "Commercial Organization")),
+            "Facility": _cls("Facility", ("Independent Continuant",)),
+            "Commercial Organization": _cls("Commercial Organization", ("Organization",)),
+            "Independent Continuant": _cls("Independent Continuant"),
+            "Organization": _cls("Organization"),
+        }
+        assert set(ancestors(scheme, "Dance Studio")) == {
+            "Facility",
+            "Commercial Organization",
+            "Independent Continuant",
+            "Organization",
+        }
+
+    def test_terminates_on_a_cycle_without_returning_itself(self) -> None:
+        """A concept is never its own ancestor — it would prune itself as redundant."""
+        scheme = {"A": _cls("A", ("B",)), "B": _cls("B", ("A",))}
+        assert ancestors(scheme, "A") == ["B"]
+
+    def test_unknown_label_has_no_ancestors(self) -> None:
+        assert ancestors({}, "Nothing") == []
+
+    def test_depth_bounds_the_walk(self) -> None:
+        scheme = {"A": _cls("A", ("B",)), "B": _cls("B", ("C",)), "C": _cls("C")}
+        assert ancestors(scheme, "A", depth=1) == ["B"]

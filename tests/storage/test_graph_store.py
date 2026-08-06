@@ -527,11 +527,46 @@ async def test_core_ddl_frame_carries_summary_and_vector_index() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_session_leaves_canonical_frames_alone() -> None:
+    """A canonical FRAME is namespace-global, like ENTITY/TOPIC/TEMPORAL.
+
+    It carries no ``session_id``, so the old per-session clause matched nothing;
+    and it must not be deleted anyway — other sessions evoke the same frame, and
+    it may be a parent in the BROADER taxonomy. Its evidence edges go when the
+    chunks do.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    await store.delete_session("s1")
+    deletes = [c.args[1] for c in client.command.await_args_list if "DETACH DELETE" in c.args[1]]
+    assert not [d for d in deletes if "(n:FRAME " in d or "(n:FRAME{" in d]
+    # the session-scoped vertices are still purged
+    assert any("FRAME_INSTANCE" in d for d in deletes)
+    assert any("(n:CHUNK " in d for d in deletes)
+
+
+def test_core_ddl_declares_the_broader_taxonomy_edge() -> None:
+    joined = " | ".join(stmt for _, stmt in _CORE_DDL)
+    assert "CREATE EDGE TYPE BROADER" in joined
+
+
+def test_core_ddl_frame_drops_the_columns_nothing_ever_wrote() -> None:
+    """``lu``/``speaker``/``fes``/``fillers`` were written empty on every row.
+
+    The role-filled frame data that matters is reified on FRAME_INSTANCE and
+    PLAYS_ROLE, which has a live reader. ``session_id`` goes with them: a
+    canonical FRAME spans every session that evokes it.
+    """
+    joined = " | ".join(stmt for _, stmt in _CORE_DDL)
+    for dead in ("FRAME.lu", "FRAME.speaker", "FRAME.fes", "FRAME.fillers", "FRAME.session_id"):
+        assert dead not in joined, f"{dead} has no reader and no writer"
+
+
+@pytest.mark.asyncio
 async def test_write_frames_persists_summary_and_embedding() -> None:
     client = _mock_client()
     store = GraphStore(client=client, db="mem")
     await store.write_frames(
-        "s1",
         [
             {
                 "frame_type": "Process_start",
@@ -548,44 +583,312 @@ async def test_write_frames_persists_summary_and_embedding() -> None:
     assert merge.kwargs["params"]["rows"][0]["summary"] == "the beginning of a process"
     # embedding written as an inline literal via _set_embedding on FRAME(id)
     emb_stmt = next(s for s in cmds if "SET n.embedding = [" in s and "FRAME" in s)
-    assert "s1:c1:0" not in emb_stmt  # id is a bound $key param, not interpolated
+    assert "Process_start" not in emb_stmt  # id is a bound $key param, not interpolated
     emb_call = next(c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1])
-    assert emb_call.kwargs["params"]["key"] == "s1:c1:0"
+    assert emb_call.kwargs["params"]["key"] == "Process_start"
+
+
+@pytest.mark.asyncio
+async def test_write_frames_merges_one_canonical_vertex_per_frame_type() -> None:
+    """FRAME is canonical: one vertex per frame, whatever chunk or session evoked it.
+
+    Per-chunk data lives on the EVOKED_BY edge. Without this the graph holds one
+    FRAME per (chunk, frame), which is what made frame-to-frame traversal
+    impossible and forced coverage to be measured off the node.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    await store.write_frames([{"frame_type": "Process_start", "chunk_id": "c1", "confidence": 0.9}])
+    await store.write_frames([{"frame_type": "Process_start", "chunk_id": "c2", "confidence": 0.4}])
+
+    merges = [c for c in client.command.await_args_list if "MERGE (n:FRAME" in c.args[1]]
+    assert [r["id"] for c in merges for r in c.kwargs["params"]["rows"]] == [
+        "Process_start",
+        "Process_start",
+    ]
+    # The per-chunk signal is the edge, and it differs per chunk.
+    edges = [c for c in client.command.await_args_list if "EVOKED_BY" in c.args[1]]
+    assert [r["conf"] for c in edges for r in c.kwargs["params"]["rows"]] == [0.9, 0.4]
+    # Nothing per-chunk or dead is set on the canonical node.
+    node_sql = merges[0].args[1]
+    for dead in ("n.session_id", "n.lu", "n.speaker", "n.fes", "n.fillers"):
+        assert dead not in node_sql
+
+
+@pytest.mark.asyncio
+async def test_write_frames_merges_broader_parents_as_taxonomy() -> None:
+    """A frame's FrameNet parents become BROADER edges: the traversable taxonomy.
+
+    Parents are scaffolding — MERGEd as bare vertices with no evidence edge and
+    no embedding, so they never enter the ANN pool on their own account. They
+    exist to be walked down from (see the narrower expansion in
+    query_frames_by_embedding).
+    """
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    await store.write_frames(
+        [
+            {
+                "frame_type": "Revenge",
+                "chunk_id": "c1",
+                "parents": ["Rewards_and_punishments", "Response"],
+            }
+        ]
+    )
+    edge = next(c for c in client.command.await_args_list if "BROADER" in c.args[1])
+    assert "MERGE (n)-[:BROADER]->(p)" in edge.args[1]
+    assert edge.kwargs["params"]["rows"] == [
+        {"id": "Revenge", "parent": "Rewards_and_punishments"},
+        {"id": "Revenge", "parent": "Response"},
+    ]
+    # Scaffolding only: a parent gets no evidence edge and no vector.
+    parent_sql = " | ".join(
+        c.args[1] for c in client.command.await_args_list if "r.parent" in c.args[1]
+    )
+    assert "EVOKED_BY" not in parent_sql
+    assert "SET n.embedding" not in parent_sql
+
+
+@pytest.mark.asyncio
+async def test_write_frames_skips_taxonomy_when_no_parents() -> None:
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    await store.write_frames([{"frame_type": "Motion", "chunk_id": "c1"}])
+    assert not [c for c in client.command.await_args_list if "BROADER" in c.args[1]]
+
+
+@pytest.mark.asyncio
+async def test_write_frames_writes_each_frame_embedding_once() -> None:
+    """The definition embedding is a property of the frame, not of the evocation."""
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    row = {"frame_type": "Process_start", "embedding": [0.1, 0.2, 0.3]}
+    await store.write_frames([{**row, "chunk_id": "c1"}])
+    await store.write_frames([{**row, "chunk_id": "c2"}])
+    emb = [c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]]
+    assert len(emb) == 1
+
+
+@pytest.mark.asyncio
+async def test_emptying_the_database_reinstates_the_frame_writes() -> None:
+    """The write-once cache must not outlive the rows it is tracking.
+
+    ``clear_all`` deletes every FRAME. A cache that still claims they are
+    written makes the next ingest skip their embedding and their taxonomy, and
+    an embedding-less FRAME is invisible to the channel's vector search — the
+    layer goes quietly dead rather than failing.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    row = {"frame_type": "Process_start", "chunk_id": "c1", "embedding": [0.1, 0.2]}
+    await store.write_frames([row])
+    await store.clear_all()
+    await store.write_frames([row])
+    emb = [c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]]
+    assert len(emb) == 2
+
+
+@pytest.mark.asyncio
+async def test_ensure_schema_reinstates_the_frame_writes() -> None:
+    """Same hazard by the other route: the namespace was dropped and recreated."""
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    row = {"frame_type": "Process_start", "chunk_id": "c1", "embedding": [0.1, 0.2]}
+    await store.write_frames([row])
+    await store.ensure_schema(dims=2)
+    await store.write_frames([row])
+    emb = [c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]]
+    assert len(emb) == 2
 
 
 @pytest.mark.asyncio
 async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
+    """Session scoping is on the CHUNK, and the evocation strength weights the score.
+
+    FRAME is canonical, so it carries no session — filtering it there would drop
+    every frame that happened to be first evoked in another session. The chunk
+    is what belongs to a session.
+    """
     client = _mock_client()
-    # ANN pass returns two frames; join pass returns their evoked chunks.
+    # ANN pass, then the narrower-expansion pass, then the EVOKED_BY join.
     client.query = AsyncMock(
         side_effect=[
+            [{"id": "Process_start", "frame_type": "Process_start", "distance": 0.6}],
+            [],
             [
                 {
-                    "id": "s1:c1:0",
-                    "session_id": "s1",
+                    "id": "Process_start",
                     "frame_type": "Process_start",
-                    "distance": 0.6,
+                    "chunk_id": "c1",
+                    "confidence": 0.5,
                 },
                 {
-                    "id": "s1:c2:0",
-                    "session_id": "other",
-                    "frame_type": "Motion",
-                    "distance": 0.5,
-                },  # filtered out by session
+                    "id": "Process_start",
+                    "frame_type": "Process_start",
+                    "chunk_id": "c2",
+                    "confidence": 1.0,
+                },
             ],
-            [{"id": "s1:c1:0", "frame_type": "Process_start", "chunk_id": "c1"}],
         ]
     )
     store = GraphStore(client=client, db="mem")
     rows = await store.query_frames_by_embedding([0.1, 0.2], top_k=5, session_id="s1")
     ann_sql = client.query.await_args_list[0].args[1]
     assert 'vectorNeighbors("FRAME[embedding]"' in ann_sql
-    join_cypher = client.query.await_args_list[1].args[1]
-    assert "(n:FRAME)-[:EVOKED_BY]->(c:CHUNK)" in join_cypher
-    assert "s1:c1:0" in join_cypher  # only the session-matching frame id
-    assert "s1:c2:0" not in join_cypher
+    join_cypher = client.query.await_args_list[-1].args[1]
+    assert "(n:FRAME)-[ev:EVOKED_BY]->(c:CHUNK)" in join_cypher
+    assert "c.session_id = 's1'" in join_cypher
+    assert "n.session_id" not in join_cypher
+    # 1 - 0.6 = 0.4 query match, scaled by how strongly each chunk evoked it.
     assert rows == [
-        {"chunk_id": "c1", "frame_type": "Process_start", "score": pytest.approx(0.4)},
+        {"chunk_id": "c1", "frame_type": "Process_start", "score": pytest.approx(0.2)},
+        {"chunk_id": "c2", "frame_type": "Process_start", "score": pytest.approx(0.4)},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_query_frames_by_embedding_expands_to_narrower_frames() -> None:
+    """A query matching a parent frame reaches chunks that only evoked its child.
+
+    This is the reader that makes the BROADER taxonomy worth writing. Without
+    it the channel only ever returns chunks whose frame the query matched
+    head-on, and the frame hierarchy is a write-only layer.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "id": "Rewards_and_punishments",
+                    "frame_type": "Rewards_and_punishments",
+                    "distance": 0.2,
+                }
+            ],
+            [{"child": "Revenge", "parent": "Rewards_and_punishments"}],
+            [{"id": "Revenge", "frame_type": "Revenge", "chunk_id": "c9", "confidence": 1.0}],
+        ]
+    )
+    store = GraphStore(client=client, db="mem")
+    rows = await store.query_frames_by_embedding([0.1, 0.2], top_k=5)
+    narrower = client.query.await_args_list[1].args[1]
+    assert "(child:FRAME)-[:BROADER]->(parent:FRAME)" in narrower
+    assert "Rewards_and_punishments" in narrower
+    # The child joins the pool, so its chunk is reachable...
+    assert "Revenge" in client.query.await_args_list[2].args[1]
+    # ...at a discount on the parent's 0.8 match, so a direct hit always outranks it.
+    assert rows == [
+        {"chunk_id": "c9", "frame_type": "Revenge", "score": pytest.approx(0.8 * 0.6)},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Ontology taxonomy (SKOS broader)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTerm:
+    kind = "class"
+    definition = "a definition"
+    module = "AgentOntology"
+
+    def __init__(self, uri: str, label: str, parents: tuple[str, ...] = ()) -> None:
+        self.uri = uri
+        self.label = label
+        self.parents = list(parents)
+
+
+class _FakeIndex:
+    digest = "digest-1"
+    source = "cco"
+
+    def __init__(self, terms: list[_FakeTerm]) -> None:
+        self.terms = terms
+
+    def term_embedding(self, uri: str) -> list[float]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_write_ontology_persists_broader_edges_keyed_by_uri() -> None:
+    """The class hierarchy lands as edges, not only as a comma-joined string.
+
+    Parents are DECLARED as labels but resolved to URIs before the MERGE: the
+    label index is NOTUNIQUE, so matching the parent by label would fan the edge
+    out across every class sharing that label.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client, db="mem")
+    await store.write_ontology(
+        _FakeIndex(
+            [
+                _FakeTerm("u:studio", "Dance Studio", ("Facility",)),
+                _FakeTerm("u:facility", "Facility"),
+            ]
+        )
+    )
+    edge = next(c for c in client.command.await_args_list if "BROADER" in c.args[1])
+    assert "MERGE (c)-[:BROADER]->(p)" in edge.args[1]
+    assert "{uri: r.puri}" in edge.args[1]
+    assert edge.kwargs["params"]["rows"] == [{"uri": "u:studio", "puri": "u:facility"}]
+
+
+@pytest.mark.asyncio
+async def test_write_ontology_backfills_broader_on_an_existing_namespace() -> None:
+    """A namespace that already has the terms still needs the edges.
+
+    ``write_ontology`` short-circuits on a term count guard, and the subclass
+    expansion now reads ONLY BROADER. Without a backfill, every namespace
+    ingested before this feature would keep its classes and silently stop
+    generalising — no error, no log, just an empty expansion.
+    """
+    client = _mock_client()
+    # Term guard is satisfied (2 terms already present) but no BROADER edges yet.
+    client.query = AsyncMock(side_effect=[[{"c": 2}], [{"c": 0}]])
+    store = GraphStore(client=client, db="mem")
+    await store.write_ontology(
+        _FakeIndex(
+            [
+                _FakeTerm("u:studio", "Dance Studio", ("Facility",)),
+                _FakeTerm("u:facility", "Facility"),
+            ]
+        )
+    )
+    edge = next(c for c in client.command.await_args_list if "BROADER" in c.args[1])
+    assert edge.kwargs["params"]["rows"] == [{"uri": "u:studio", "puri": "u:facility"}]
+    # ...but it must NOT re-MERGE the 1401 class rows to do it.
+    assert not [c for c in client.command.await_args_list if "MERGE (n:ONTOLOGY_CLASS" in c.args[1]]
+
+
+@pytest.mark.asyncio
+async def test_search_ontology_classes_expands_to_subclasses_via_broader() -> None:
+    """A query matching ``Facility`` reaches a chunk tagged only ``Dance Studio``.
+
+    The expansion used to full-scan every ONTOLOGY_CLASS row and re-split the
+    ``parents`` string in Python. Traversing BROADER is one indexed hop, matches
+    on URI rather than on a label that two classes can share, and gives the
+    persisted hierarchy a live reader.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(
+        side_effect=[
+            [{"uri": "u:facility", "label": "Facility", "distance": 0.1}],
+            [{"child": "u:studio", "label": "Dance Studio", "parent": "u:facility"}],
+            [{"chunk_id": "c1", "uri": "u:studio", "sim": 1.0}],
+        ]
+    )
+    store = GraphStore(client=client, db="mem")
+    rows = await store.search_ontology_classes([0.1], top_k=5)
+    broader_q = client.query.await_args_list[1].args[1]
+    assert "(child:ONTOLOGY_CLASS)-[:BROADER]->(parent:ONTOLOGY_CLASS)" in broader_q
+    assert "u:facility" in broader_q
+    assert rows == [
+        {
+            "chunk_id": "c1",
+            "uri": "u:studio",
+            "label": "Dance Studio",
+            "score": pytest.approx(0.9 * 0.6),
+            "via": "chunk",
+        }
     ]
 
 

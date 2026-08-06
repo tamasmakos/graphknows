@@ -286,16 +286,43 @@ def lexical_index(scheme: dict[str, Concept]) -> dict[str, set[str]]:
 
 
 def ancestors(scheme: dict[str, Concept], label: str, depth: int = 12) -> list[str]:
-    """The ``broader`` chain — what multi-hop generalisation walks."""
+    """The transitive ``broader`` closure — what multi-hop generalisation walks.
+
+    Breadth-first over EVERY declared parent, not just the first. CCO uses
+    multiple inheritance freely (``Dance Studio`` is both a ``Facility`` and a
+    ``Commercial Organization``), and this closure gates two live decisions:
+    which evoked classes ``entity_labels`` prunes as redundant, and which
+    properties ``relation_labels`` considers domain/range satisfiable. Following
+    a single parent silently drops whole branches from both, so a property
+    declared over the skipped branch is never offered to the extractor.
+
+    The entry label is resolved case-insensitively. The scheme is keyed by
+    prefLabel (``Person``) while callers hand over extracted entity types
+    (``person``, the coarse vocabulary ``entity_labels`` emits), so an exact
+    lookup missed every coarse type and the widening this function exists for
+    contributed nothing at all. Only the entry needs it — everything reached
+    from ``broader`` is already a prefLabel.
+
+    ``depth`` bounds the number of LEVELS walked; ``seen`` makes a cyclic
+    hierarchy terminate.
+    """
+    if label not in scheme:
+        folded = label.casefold()
+        label = next((k for k in scheme if k.casefold() == folded), label)
     out: list[str] = []
-    seen: set[str] = set()
-    current = label
-    while depth > 0 and current in scheme and current not in seen:
-        seen.add(current)
-        parents = scheme[current].broader
-        if not parents:
-            break
-        out.append(parents[0])
-        current = parents[0]
+    seen: set[str] = {label}
+    frontier = [label]
+    while frontier and depth > 0:
+        nxt: list[str] = []
+        for current in frontier:
+            if current not in scheme:
+                continue
+            for parent in scheme[current].broader:
+                if parent in seen:
+                    continue
+                seen.add(parent)
+                out.append(parent)
+                nxt.append(parent)
+        frontier = nxt
         depth -= 1
     return out

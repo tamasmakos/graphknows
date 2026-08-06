@@ -24,7 +24,7 @@ protect. Rejection belongs at the score threshold instead.
 from __future__ import annotations
 
 from graphknows.ontology.lexical import evoked
-from graphknows.ontology.skos import Concept, ancestors
+from graphknows.ontology.skos import Concept, _upper_ontology_property, ancestors
 
 # The measured-good coarse types, which are also CCO class labels verbatim.
 COARSE = ["person", "organization", "facility", "occupation", "event", "animal", "product"]
@@ -62,6 +62,15 @@ def relation_labels(
     first. The remaining budget goes to properties whose declared domain and
     range are satisfied by the types actually present — the structural mechanism
     that already works, now filling a much smaller gap.
+
+    UPPER-ONTOLOGY PLUMBING IS EXCLUDED FROM THE STRUCTURAL HALF ONLY. A
+    BFO-typed property (``continuant part of``, ``is predecessor of``) is
+    satisfiable by literally anything, because the ancestor walk above climbs
+    every entity into ``material entity``/``continuant``. It would therefore win
+    budget slots on every chunk while asserting a relation between categories of
+    being that no speaker uttered — the ``permits``/``requires`` failure that
+    produced 64 of 286 REL edges on conv-30. The lexical half keeps them: text
+    that actually says "requires" IS asserting the property.
     """
     scored = evoked(doc, scheme, index, "property")
     lexical = sorted(scored, key=lambda label: -scored[label])
@@ -77,6 +86,7 @@ def relation_labels(
         if (
             concept.kind != "property"
             or concept.pref_label in lexical
+            or _upper_ontology_property(concept)
             or not (concept.domain and concept.range)
             or not ({d.casefold() for d in concept.domain} & satisfied)
             or not ({r.casefold() for r in concept.range} & satisfied)

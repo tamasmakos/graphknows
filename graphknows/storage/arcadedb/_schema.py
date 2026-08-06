@@ -103,22 +103,23 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TOPIC.keywords IF NOT EXISTS LIST"),
     ("sql", "CREATE PROPERTY TOPIC.coherence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE INDEX ON TOPIC(topic_id) UNIQUE"),
-    # Semantic-frame instances (deterministic FrameNet layer). Evidence is the
-    # EVOKED_BY edge to the CHUNK — no chunk_id string property.
+    # Semantic frames (deterministic FrameNet layer). CANONICAL: one vertex per
+    # frame type per namespace, keyed by the frame name. Everything per-evocation
+    # lives on the EVOKED_BY edge to the CHUNK — there is no chunk_id and no
+    # session_id here, because one frame is evoked by many chunks across many
+    # sessions. That stable identity is what FRAME->FRAME BROADER edges hang off.
+    #
+    # `lu`, `speaker`, `fes` and `fillers` used to be declared here and were
+    # written empty by the only writer on every single row. The role-filled frame
+    # data lives on FRAME_INSTANCE/PLAYS_ROLE below, which has a live reader.
     ("sql", "CREATE VERTEX TYPE FRAME IF NOT EXISTS"),
     ("sql", "CREATE PROPERTY FRAME.id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME.frame_type IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.lu IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.speaker IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.fes IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.fillers IF NOT EXISTS LIST"),
     # The frame's definition text + its embedding, so a chunk's evoked frames are
     # vector-matchable by meaning against a query (see query_frames_by_embedding).
     ("sql", "CREATE PROPERTY FRAME.summary IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME.embedding IF NOT EXISTS LIST"),
     ("sql", "CREATE INDEX ON FRAME(id) UNIQUE"),
-    ("sql", "CREATE INDEX ON FRAME(session_id) NOTUNIQUE"),
     ("sql", "CREATE INDEX ON FRAME(frame_type) NOTUNIQUE"),
     (
         "sql",
@@ -175,6 +176,12 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK
     ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE PLAYS_ROLE IF NOT EXISTS"),  # FRAME_INSTANCE -> ENTITY
+    # SKOS broader — the subsumption taxonomy, shared by both hierarchies:
+    # FRAME -> FRAME (FrameNet Inheritance/Using/Perspective_on) and
+    # ONTOLOGY_CLASS -> ONTOLOGY_CLASS (CCO subClassOf). One edge type because
+    # both are read the same way: one hop DOWN from a query match, at a
+    # discount, to reach the specific thing a general query asked about.
+    ("sql", "CREATE EDGE TYPE BROADER IF NOT EXISTS"),
     # Every semantic ENTITY->ENTITY fact, regardless of predicate. The predicate is
     # the `predicate` PROPERTY, not the type name: the vocabulary is open and mostly
     # single-use, so a type-per-predicate minted hundreds of near-empty types (and a

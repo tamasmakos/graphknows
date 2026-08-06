@@ -89,8 +89,10 @@ entire conversation.
 | `ONTOLOGY_CLASS` | `uri`, `label`, `definition`, `embedding` (LSM_VECTOR COSINE) |
 | `ONTOLOGY_PROPERTY` | `uri`, `label`, `definition`, `domain`, `range`, `embedding` |
 
-Edges: `DECLARES` (ontology → term), `SUBCLASS_OF`, `INSTANCE_OF` (entity →
-class, `.score`), `MATCHES_CLASS` (chunk → class, `.sim`).
+Edges: `BROADER` (class → superclass — the SKOS-shaped subsumption taxonomy,
+walked one hop DOWN at a discount by the query-side subclass expansion),
+`INSTANCE_OF` (entity → class, `.score`), `MATCHES_CLASS` (chunk → class,
+`.sim`).
 
 Written once per namespace at schema-ensure time, count-guarded so a restart is
 a no-op. The DDL is unconditional and additive, so an existing namespace gains

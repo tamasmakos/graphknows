@@ -139,9 +139,9 @@ class TestFrameChannelCollect:
 
         The regression this pins: ``_drop_saturated`` used to count coverage from
         the rows it was handed. Those rows come from an ANN capped at ``top_k``
-        FRAME nodes -- and FRAME is one node per (chunk, frame) pair -- so the
-        numerator was bounded by the sample while the denominator was the whole
-        session. The ratio could not reach 0.5 and the guard never fired.
+        frames, so the numerator was bounded by the sample while the denominator
+        was the whole session. The ratio could not reach 0.5 and the guard never
+        fired.
 
         Measured on conv-30/lgdemo before the fix: ``Activity_done_state`` is
         evoked in 19 of session s1's 28 chunks (68%), yet appeared on only 8 of
@@ -201,6 +201,25 @@ class TestFrameChannelCollect:
         rt.store.query_frames_by_embedding = AsyncMock(return_value=[])
         out = await FrameChannel().collect(_ctx(), rt, 5)
         assert out == {}
+
+    async def test_coverage_scopes_on_the_chunk_not_the_frame(self):
+        """Saturation coverage must be scoped by the CHUNK's session.
+
+        FRAME is canonical -- one vertex per frame for the whole namespace, with
+        no session on it. Scoping coverage by ``f.session_id`` therefore matches
+        nothing, every frame reads as 0% covered, and the guard silently stops
+        firing. The session lives on the chunk the frame was evoked by.
+        """
+        rt = MagicMock()
+        rt.store.query = AsyncMock(side_effect=[[{"c": 4}], [{"ft": "Activity_ongoing", "n": 3}]])
+        rt.store.query_frames_by_embedding = AsyncMock(
+            return_value=[{"chunk_id": "c1", "frame_type": "Activity_ongoing", "score": 0.35}]
+        )
+        out = await FrameChannel().collect(_ctx(), rt, 5)
+        coverage_q = rt.store.query.await_args_list[1].args[0]
+        assert "c.session_id = $sid" in coverage_q
+        assert "f.session_id" not in coverage_q
+        assert out == {}  # 3/4 coverage -> saturated, dropped
 
 
 pytestmark = pytest.mark.asyncio

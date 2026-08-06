@@ -92,6 +92,33 @@ def _lus() -> dict[tuple[str, str], set[str]]:
     return _lu_index
 
 
+@lru_cache(maxsize=1)
+def _broader_up() -> dict[str, set[str]]:
+    """Frame -> strictly more general frames, for persisting as SKOS BROADER.
+
+    Distinct from :func:`_ontology_up`, which is a query-side EXPANSION map and
+    deliberately makes ``Perspective_on`` symmetric — useful for widening a
+    search, wrong for a taxonomy. Persisting a symmetric pair as ``broader``
+    would make the narrower-expansion walk hand back siblings as if they were
+    specialisations.
+
+    FrameNet names the general frame ``superFrameName`` in all three of these
+    relations, so the hierarchy is exactly the sub -> super direction:
+    Inheritance (is-a), Using (presupposes), and Perspective_on (a
+    perspectivised frame generalises to its neutral one).
+
+    ``Subframe`` and ``Precedes`` are excluded on purpose: they are part-of and
+    temporal-order, not subsumption, and nothing reads them.
+    """
+    fn = _framenet()
+    up: dict[str, set[str]] = defaultdict(set)
+    for r in fn.frame_relations():
+        general, specific = r.get("superFrameName"), r.get("subFrameName")
+        if general and specific and r.type.name in ("Inheritance", "Using", "Perspective_on"):
+            up[specific].add(general)
+    return up
+
+
 def _ontology_up() -> dict[str, set[str]]:
     """Child -> parent expansion map (Inheritance/Using upward; Perspective_on both)."""
     global _onto_up
