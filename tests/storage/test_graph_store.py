@@ -369,6 +369,8 @@ async def test_write_relation_skips_empty_predicate() -> None:
 @pytest.mark.asyncio
 async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     client = _mock_client()
+    # All three fillers already exist as entities, so all three are persistable.
+    client.query = AsyncMock(return_value=[{"nn": "caroline"}, {"nn": "nurse"}, {"nn": "hospital"}])
     store = GraphStore(client=client)
     # A 3-role instance: Employee (agent-like) + Position + Employer. The `id` is
     # content-hashed at write time (any input id is ignored).
@@ -425,6 +427,54 @@ async def test_write_frame_instances_noop_on_empty() -> None:
     store = GraphStore(client=client)
     assert await store.write_frame_instances("s1", "c1", []) == 0
     client.command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_frame_instance_identity_ignores_fillers_that_cannot_persist() -> None:
+    """Two instances the graph cannot tell apart must be ONE node.
+
+    ``PLAYS_ROLE`` MATCHes its filler entity and never mints one, so a filler
+    with no ENTITY node is dropped. Hashing it into the id anyway made identity
+    depend on something absent from the graph: measured on conv-30, 20 nodes
+    carried 7 signatures — 13 duplicates that were indistinguishable once
+    written, each holding its own single evidence edge instead of pooling them.
+    """
+    client = _mock_client()
+    # Only Gina and Jon exist as entities; "the vibe" was never extracted.
+    client.query = AsyncMock(return_value=[{"nn": "gina"}, {"nn": "jon"}])
+    store = GraphStore(client=client)
+
+    roles_a = {"Agent": ["Gina", "Jon"], "Activity": ["the vibe"]}
+    roles_b = {"Agent": ["Gina", "Jon"]}
+    await store.write_frame_instances("s1", "c1", [{"frame": "Activity_ongoing", "roles": roles_a}])
+    await store.write_frame_instances("s1", "c2", [{"frame": "Activity_ongoing", "roles": roles_b}])
+
+    fi_calls = [
+        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
+    ]
+    ids = [r["fid"] for c in fi_calls for r in c.kwargs["params"]["rows"]]
+    assert len(ids) == 2
+    assert ids[0] == ids[1], "the unpersistable filler must not fork identity"
+
+    # And the dropped filler never reaches a role edge.
+    role_calls = [c for c in client.command.await_args_list if "PLAYS_ROLE" in c.args[1]]
+    names = {r["nn"] for c in role_calls for r in c.kwargs["params"]["rows"]}
+    assert names == {"gina", "jon"}
+
+
+@pytest.mark.asyncio
+async def test_frame_instance_with_no_persistable_filler_is_not_written() -> None:
+    """An instance whose every filler is unknown has no content to be identified by."""
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[])
+    store = GraphStore(client=client)
+
+    written = await store.write_frame_instances(
+        "s1", "c1", [{"frame": "Activity_ongoing", "roles": {"Agent": ["nobody at all"]}}]
+    )
+
+    assert written == 0
+    assert not [c for c in client.command.await_args_list if "FRAME_INSTANCE" in c.args[1]]
 
 
 # ---------------------------------------------------------------------------
@@ -1560,6 +1610,9 @@ async def test_write_frame_instances_never_creates_entity_nodes() -> None:
     edge is dropped rather than the node invented.
     """
     client = _mock_client()
+    # The filler already exists as an entity, so it is persistable and the
+    # instance is written — which is what lets this assert on the edge shape.
+    client.query = AsyncMock(return_value=[{"nn": "becoming nicole"}])
     store = GraphStore(client=client)
 
     await store.write_frame_instances(

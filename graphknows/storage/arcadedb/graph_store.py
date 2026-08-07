@@ -967,7 +967,16 @@ class GraphStore(ArcadeStoreBase):
         stated in several chunks MERGEs onto ONE node accumulating a
         FRAME_EVOKED_IN edge per evidence chunk (the same model RELATION.evidence
         uses) — instead of a duplicate node per chunk. Any ``id`` on the input is
-        ignored. Writes are batched: one UNWIND for the instances+evidence edges,
+        ignored.
+
+        Identity is computed over the fillers that CAN PERSIST, which is why the
+        entity lookup below happens before the hash rather than after it. A role
+        edge MATCHes its entity and never mints one (see batch 2), so a filler
+        the extractor never minted is dropped — and hashing it anyway made
+        identity depend on something absent from the graph. Measured on conv-30:
+        20 nodes carried 7 distinct signatures, 13 of them duplicates that were
+        indistinguishable once written, each holding its own single evidence
+        edge instead of pooling them onto one fact. Writes are batched: one UNWIND for the instances+evidence edges,
         one for all PLAYS_ROLE edges (ENTITY fillers MERGE on ``name_norm``).
 
         The reified (FRAME_INSTANCE)-[:PLAYS_ROLE {role}]->(ENTITY) form is the
@@ -983,6 +992,27 @@ class GraphStore(ArcadeStoreBase):
         """
         if not instances:
             return 0
+        # Which fillers actually exist as entities? Identity is computed over
+        # these alone, so the lookup precedes the hash. One batched query.
+        wanted = {
+            _name_norm(str(f))
+            for inst in instances
+            for fs in (inst.get("roles") or {}).values()
+            for f in (fs or [])
+            if str(f).strip()
+        }
+        known: set[str] = set()
+        if wanted:
+            try:
+                rows = await self.query(
+                    f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(sorted(wanted))} "
+                    f"RETURN e.name_norm AS nn"
+                )
+                known = {str(r["nn"]) for r in rows if r.get("nn")}
+            except Exception as exc:
+                logger.warning("frame-instance filler lookup failed: %s", exc)
+                return 0
+
         inst_rows: list[dict[str, Any]] = []
         role_rows: list[dict[str, Any]] = []
         for inst in instances:
@@ -990,13 +1020,17 @@ class GraphStore(ArcadeStoreBase):
             roles: dict[str, list[str]] = inst.get("roles") or {}
             if not frame:
                 continue
-            # Content-hash id: same (frame + role fills) -> same node across chunks.
-            sig = sorted(
-                f"{r}={_name_norm(str(f))}"
+            # Content-hash id over the PERSISTABLE fills only, de-duplicated: the
+            # same filler named twice in one role is one fact, not two.
+            persistable = {
+                (r, _name_norm(str(f)), str(f).strip())
                 for r, fs in roles.items()
                 for f in (fs or [])
-                if str(f).strip()
-            )
+                if str(f).strip() and _name_norm(str(f)) in known
+            }
+            sig = sorted(f"{r}={nn}" for r, nn, _ in persistable)
+            # Nothing that can be written is nothing to identify the fact BY, so
+            # the instance is dropped rather than written as a bare frame label.
             if not sig:
                 continue
             # Content hash for a stable frame-instance id — not a security digest.
@@ -1013,13 +1047,8 @@ class GraphStore(ArcadeStoreBase):
                     "rc": role_conf,
                 }
             )
-            for role, fillers in roles.items():
-                for filler in fillers or []:
-                    name = str(filler).strip()
-                    if name:
-                        role_rows.append(
-                            {"fid": fid, "nn": _name_norm(name), "name": name, "role": role}
-                        )
+            for role, nn, name in sorted(persistable):
+                role_rows.append({"fid": fid, "nn": nn, "name": name, "role": role})
         if not inst_rows:
             return 0
         # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).

@@ -1375,6 +1375,34 @@ Feature: Ontology- and frame-driven agentic memory
       When a role filler is not a graph entity name
       Then it is dropped before any entity node exists
 
+    @measured
+    Scenario: A frame instance is identified by the fills that can persist
+      Given two chunks each yielding "Activity_ongoing" with Agent Gina and Jon
+      And one of them also fills a role with a span no entity was minted for
+      When the instances are written
+      Then both MERGE onto ONE node, because the extra fill cannot persist
+      And that node carries a FRAME_EVOKED_IN edge per evidence chunk
+      Given an instance whose every filler is unknown
+      Then it is not written at all
+      # A role edge MATCHes its entity and never mints one, so an unrecognised
+      # filler is dropped — but it was hashed into the id anyway, which made
+      # identity depend on something absent from the graph. Measured on conv-30
+      # before the fix: 20 nodes carried 7 signatures, 13 of them duplicates
+      # indistinguishable once written, each hoarding a single evidence edge
+      # instead of pooling. After: 104 instances -> 92, duplicate signatures
+      # 7 -> 1, instances with more than one evidence chunk 3 -> 8, and
+      # FRAME_EVOKED_IN unchanged at 107 — nothing lost, only pooled.
+      # test: tests/storage/test_graph_store.py::test_frame_instance_identity_ignores_fillers_that_cannot_persist
+
+    Scenario: One residual duplicate survives, and it is an ordering artifact
+      Given entity resolution runs at FLUSH, after frame instances are written
+      When it merges or drops a filler entity that existed at write time
+      Then two instances whose hashes differed legitimately can end up
+        indistinguishable in the final graph
+      # 1 node in 92 on conv-30. Repairing it means re-hashing the layer after
+      # resolution, which is a whole post-flush pass for one node; recorded
+      # rather than built.
+
     Scenario: The frame passes reuse the already-loaded models
       When frame instances are extracted
       Then the entity extractor's spaCy pipeline and extraction model are reused
