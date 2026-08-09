@@ -93,6 +93,9 @@ async def test_recall_empty_messages_is_noop() -> None:
         "memories_sources": [],
         "memories_hits": [],
         "memories_facts": [],
+        "memories_context": "",
+        "memories_dated": 0,
+        "memories_undated": 0,
     }
     assert mem.recall_calls == []
 

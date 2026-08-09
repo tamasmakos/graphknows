@@ -86,6 +86,44 @@ class TestAdd:
         assert mem.ingested == []
 
 
+class TestInferPolicy:
+    """``infer`` may be a predicate asked per turn, set once for the session.
+
+    Without it, a caller wanting "extract from assertions, not greetings" had to
+    abandon ``remember``, drive ``ingest_memory`` by hand, and re-derive the
+    decision in its own graph node — which is exactly what the LoCoMo runner did.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_predicate_is_asked_per_turn(self) -> None:
+        mem = _FakeMemory()
+        gm = GraphKnowsMemory("s1", memory=mem, infer=lambda text: "vet" in text)
+
+        await gm.add("Hey Jon!")
+        await gm.add("Mochi's vet is Dr. Nagy")
+
+        assert [kw["infer"] for kw in mem.ingest_kwargs] == [False, True]
+
+    @pytest.mark.asyncio
+    async def test_the_predicate_also_governs_the_remember_node(self) -> None:
+        """Both write paths, one policy — or the graph node silently ignores it."""
+        mem = _FakeMemory()
+        gm = GraphKnowsMemory("s1", memory=mem, infer=lambda text: "vet" in text)
+
+        await gm.remember({"messages": [{"role": "user", "content": "Hey Jon!"}]})
+
+        assert mem.ingest_kwargs[0]["infer"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_per_turn_argument_overrides_the_session_policy(self) -> None:
+        mem = _FakeMemory()
+        gm = GraphKnowsMemory("s1", memory=mem, infer=lambda text: False)
+
+        await gm.add("Mochi is a ragdoll", infer=True)
+
+        assert mem.ingest_kwargs[0]["infer"] is True
+
+
 class TestUnflushedWarning:
     """Forgetting ``flush`` yields an empty graph and no error to notice.
 

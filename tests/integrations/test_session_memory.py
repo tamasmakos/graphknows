@@ -101,6 +101,25 @@ async def test_recall_can_be_confined_to_one_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recall_returns_a_prompt_ready_context() -> None:
+    """The rendered block, not just the parts to render.
+
+    Handing back only hits meant every integration re-assembled the prompt
+    context itself, and they disagreed about where a date comes from — the
+    ``ts``-dropping bug that cost 0.33 accuracy. The counts come with it so a
+    silent fallback to the undated branch is visible rather than mysterious.
+    """
+    mem = _FakeMemory()
+    gm = GraphKnowsMemory("s1", memory=mem)
+
+    update = await gm.recall({"messages": [{"role": "user", "content": "What breed?"}]})
+
+    assert "Mochi is a ragdoll" in update["memories_context"]
+    assert update["memories_dated"] == 2
+    assert update["memories_undated"] == 0
+
+
+@pytest.mark.asyncio
 async def test_recall_returns_texts_and_sources() -> None:
     mem = _FakeMemory()
     gm = GraphKnowsMemory("s1", memory=mem)
@@ -130,6 +149,9 @@ async def test_recall_empty_messages_is_noop() -> None:
         "memories_sources": [],
         "memories_hits": [],
         "memories_facts": [],
+        "memories_context": "",
+        "memories_dated": 0,
+        "memories_undated": 0,
     }
     assert mem.recall_calls == []
 

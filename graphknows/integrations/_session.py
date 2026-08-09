@@ -16,10 +16,11 @@ it wraps.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from graphknows.exceptions import ConfigurationError
-from graphknows.integrations._langgraph_hooks import _last_text
+from graphknows.integrations._langgraph_hooks import _last_text, resolve_infer
 from graphknows.integrations._langgraph_hooks import recall as _recall
 from graphknows.integrations._langgraph_hooks import remember as _remember
 from graphknows.memory import Memory
@@ -54,6 +55,7 @@ class GraphKnowsMemory:
         messages_key: str = "messages",
         out_key: str = "memories",
         cross_session: bool = True,
+        infer: bool | Callable[[str], bool] = True,
     ) -> None:
         # No user_id/agent_id here on purpose. Memory.add/search accept them to
         # DERIVE a session id, but this class is handed one explicitly, so they
@@ -75,6 +77,11 @@ class GraphKnowsMemory:
         self._session_id = session_id
         self._cross_session = cross_session
         self._top_k = top_k
+        # The extraction policy, asked once per turn on both write paths. A flat
+        # bool, or a predicate — `graphknows.worth_extracting` is the one that
+        # keeps greetings from minting entities. Per-turn control used to mean
+        # abandoning `remember` and driving `ingest_memory` by hand.
+        self._infer = infer
         self._messages_key = messages_key
         self._out_key = out_key
         self._owns_memory = memory is None
@@ -126,7 +133,7 @@ class GraphKnowsMemory:
         speaker: str = "",
         timestamp: str = "",
         role: str = "user",
-        infer: bool = True,
+        infer: bool | Callable[[str], bool] | None = None,
     ) -> dict[str, Any]:
         """Buffer one turn into this session's short-term memory.
 
@@ -138,10 +145,12 @@ class GraphKnowsMemory:
         Flattening either one into ``text`` is what mints greetings like
         "Hey Jon" as entities and dates a 2023 conversation to ingestion time.
 
-        ``infer`` is the caller's extraction decision, per turn: a turn stored
-        with ``infer=False`` is still written, embedded and retrievable as text
-        — it just mints no entities. The library has no opinion on which turns
-        are worth extracting from; only the caller knows.
+        ``infer`` is the extraction decision for this turn: a turn stored with
+        ``infer=False`` is still written, embedded and retrievable as text — it
+        just mints no entities. Omit it to use the session's policy (the
+        ``infer=`` given to ``__init__``, which may be a per-turn predicate such
+        as :func:`graphknows.worth_extracting`); pass a bool or a predicate to
+        override it for this turn alone.
 
         Buffered turns reach the graph on :meth:`flush`, not here.
         """
@@ -153,7 +162,11 @@ class GraphKnowsMemory:
             turn["name"] = speaker
         if timestamp:
             turn["timestamp"] = timestamp
-        result = await self._memory.ingest_memory([turn], session_id=self._session_id, infer=infer)
+        result = await self._memory.ingest_memory(
+            [turn],
+            session_id=self._session_id,
+            infer=resolve_infer(self._infer if infer is None else infer, body),
+        )
         self._unflushed += 1
         return result
 
@@ -181,6 +194,7 @@ class GraphKnowsMemory:
             memory=self._memory,
             session_id=self._session_id,
             messages_key=self._messages_key,
+            infer=self._infer,
         )
         # The hook is a no-op on a turn with no text, so counting node calls
         # instead of stored turns would warn "N unflushed turns" over an empty

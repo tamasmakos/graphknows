@@ -156,8 +156,10 @@ def _evidence_metrics(
         return {}
     return {
         "evidence_count": float(len(evidence)),
-        "evidence_recall_at_probe": round(evidence_recall(evidence, probe), 3),
-        "evidence_recall_in_context": round(evidence_recall(evidence, context), 3),
+        "evidence_recall_at_probe": round(evidence_recall(evidence, [p.text for p in probe]), 3),
+        "evidence_recall_in_context": round(
+            evidence_recall(evidence, [p.text for p in context]), 3
+        ),
     }
 
 

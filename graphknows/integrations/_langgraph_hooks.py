@@ -10,9 +10,10 @@ whose nodes are ``state -> partial_state`` callables.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any, Protocol
 
-from graphknows.models.hit import Hit
+from graphknows.models.hit import Hit, render_memories
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,16 @@ def _message_role(message: Any) -> tuple[str, str | None]:
     return "user", label
 
 
+def resolve_infer(infer: bool | Callable[[str], bool], text: str) -> bool:
+    """Apply an extraction policy to one turn's text.
+
+    ``infer`` is either a flat answer or a predicate asked per turn — e.g.
+    :func:`graphknows.worth_extracting`, which skips greetings so they mint no
+    entities. Shared by every write path so the two cannot drift.
+    """
+    return bool(infer(text)) if callable(infer) else bool(infer)
+
+
 def _last_text(state: dict[str, Any], messages_key: str) -> str:
     """Return the last message's text from a LangGraph-style messages list."""
     last = _last_message(state, messages_key)
@@ -127,11 +138,19 @@ async def recall(
 
     Two more keys carry what the flat text list cannot: ``_hits`` holds the
     :class:`~graphknows.models.hit.Hit` objects (``speaker``, ``ts``, ``score``,
-    ``metadata`` …) so a caller can attribute and date a memory — hand them to
-    :func:`~graphknows.models.hit.render_memories` — and ``_facts`` holds the
-    structured fact-sheet. Both were previously computed and discarded here,
-    leaving every agent built on this node to answer from undated, unattributed
-    sentences.
+    ``metadata`` …) so a caller can attribute and date a memory, and ``_facts``
+    holds the structured fact-sheet. Both were previously computed and discarded
+    here, leaving every agent built on this node to answer from undated,
+    unattributed sentences.
+
+    ``_context`` is the one most callers want: the hits already run through
+    :func:`~graphknows.models.hit.render_memories` — deduped, dated, attributed,
+    chronological, budgeted — as a string that drops straight into a prompt.
+    Handing back only the parts meant every integration re-assembled them, and
+    they disagreed about where a date comes from. ``_dated``/``_undated`` are
+    that render's own counts: a recall silently falling back to the undated
+    branch reads downstream as a mysteriously worse answer with nothing to
+    point at.
 
     ``cross_session`` defaults to True — an agent's memory is expected to span
     the conversations it has already had, so the graph half of the search is
@@ -144,8 +163,21 @@ async def recall(
         f"{out_key}_hits",
         f"{out_key}_facts",
     )
+    context_key, dated_key, undated_key = (
+        f"{out_key}_context",
+        f"{out_key}_dated",
+        f"{out_key}_undated",
+    )
     if not query:
-        return {out_key: [], sources_key: [], hits_key: [], facts_key: []}
+        return {
+            out_key: [],
+            sources_key: [],
+            hits_key: [],
+            facts_key: [],
+            context_key: "",
+            dated_key: 0,
+            undated_key: 0,
+        }
     result = await memory.recall_memory(
         query,
         session_id=session_id,
@@ -164,11 +196,15 @@ async def recall(
             "the memory passed in is not returning the documented shape.",
             len(raw_hits) - len(hits),
         )
+    rendered = render_memories(hits)
     return {
         out_key: [h.text for h in hits],
         sources_key: [h.sources for h in hits],
         hits_key: hits,
         facts_key: list(result.get("facts", []) or []) if isinstance(result, dict) else [],
+        context_key: rendered.text,
+        dated_key: rendered.dated,
+        undated_key: rendered.undated,
     }
 
 
@@ -178,6 +214,7 @@ async def remember(
     memory: _Memory,
     session_id: str,
     messages_key: str = "messages",
+    infer: bool | Callable[[str], bool] = True,
 ) -> dict[str, Any]:
     """Persist the latest turn into memory. Returns an empty state update.
 
@@ -185,6 +222,10 @@ async def remember(
     conversation (``[{"role": ..., "content": ...}]``), not a bare string —
     a bare string takes the immediate-extraction document path instead of the
     short-term turn buffer. A no-op when there is no message or no text.
+
+    ``infer`` may be a predicate asked per turn (see :func:`resolve_infer`).
+    Without it a caller wanting per-turn extraction control had to abandon this
+    node and drive ``ingest_memory`` itself.
     """
     last = _last_message(state, messages_key)
     if last is None:
@@ -200,5 +241,5 @@ async def remember(
         # silently dates the whole conversation to whenever it was imported.
         if (ts := _message_timestamp(last)) is not None:
             turn["timestamp"] = ts
-        await memory.ingest_memory([turn], session_id=session_id)
+        await memory.ingest_memory([turn], session_id=session_id, infer=resolve_infer(infer, text))
     return {}

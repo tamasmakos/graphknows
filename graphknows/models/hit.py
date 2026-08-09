@@ -145,6 +145,10 @@ class RenderedMemories:
     def __bool__(self) -> bool:
         return bool(self.text)
 
+    def __str__(self) -> str:
+        """The block itself — so a caller can drop this straight into a prompt."""
+        return self.text
+
     @property
     def shown(self) -> int:
         """How many memories reached the block after dedup and budgeting."""
