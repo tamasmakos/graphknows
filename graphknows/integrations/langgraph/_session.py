@@ -20,9 +20,9 @@ from collections.abc import Callable
 from typing import Any
 
 from graphknows.exceptions import ConfigurationError
-from graphknows.integrations._langgraph_hooks import _last_text, resolve_infer
-from graphknows.integrations._langgraph_hooks import recall as _recall
-from graphknows.integrations._langgraph_hooks import remember as _remember
+from graphknows.integrations.langgraph._hooks import _last_text, resolve_infer
+from graphknows.integrations.langgraph._hooks import recall as _recall
+from graphknows.integrations.langgraph._hooks import remember as _remember
 from graphknows.memory import Memory
 from graphknows.settings import GraphKnowsSettings
 

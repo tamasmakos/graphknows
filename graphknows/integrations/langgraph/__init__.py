@@ -12,14 +12,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from graphknows.integrations._langgraph_hooks import recall, remember
-from graphknows.integrations._session import GraphKnowsMemory
+from graphknows.integrations.langgraph._hooks import recall, remember
+from graphknows.integrations.langgraph._session import GraphKnowsMemory
 
 if TYPE_CHECKING:
     # Declares the name for ruff/mypy without importing langgraph at runtime —
     # `__getattr__` below is what actually resolves it. Without this the entry
     # in `__all__` is an undefined export (F822) to every static analyser.
-    from graphknows.integrations._langgraph_store import GraphKnowsStore
+    from graphknows.integrations.langgraph._store import GraphKnowsStore
 
 __all__ = ["GraphKnowsMemory", "GraphKnowsStore", "recall", "remember"]
 
@@ -27,7 +27,7 @@ __all__ = ["GraphKnowsMemory", "GraphKnowsStore", "recall", "remember"]
 def __getattr__(name: str) -> Any:
     """Lazily expose ``GraphKnowsStore`` (imports langgraph on first access)."""
     if name == "GraphKnowsStore":
-        from graphknows.integrations._langgraph_store import GraphKnowsStore
+        from graphknows.integrations.langgraph._store import GraphKnowsStore
 
         return GraphKnowsStore
     raise AttributeError(f"module 'graphknows.integrations.langgraph' has no attribute {name!r}")

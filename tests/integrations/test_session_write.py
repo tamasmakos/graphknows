@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.integrations._session import GraphKnowsMemory
+from graphknows.integrations.langgraph import GraphKnowsMemory
 from tests.fixtures.memory import FakeMemory as _FakeMemory
 
 
@@ -137,7 +137,7 @@ class TestUnflushedWarning:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         mem = _FakeMemory()
-        with caplog.at_level("WARNING", logger="graphknows.integrations._session"):
+        with caplog.at_level("WARNING", logger="graphknows.integrations.langgraph._session"):
             async with GraphKnowsMemory("s1", memory=mem) as gm:
                 await gm.add("Mochi is a ragdoll")
 
@@ -147,7 +147,7 @@ class TestUnflushedWarning:
     @pytest.mark.asyncio
     async def test_exiting_after_a_flush_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
         mem = _FakeMemory()
-        with caplog.at_level("WARNING", logger="graphknows.integrations._session"):
+        with caplog.at_level("WARNING", logger="graphknows.integrations.langgraph._session"):
             async with GraphKnowsMemory("s1", memory=mem) as gm:
                 await gm.add("Mochi is a ragdoll")
                 await gm.flush()
@@ -165,7 +165,7 @@ class TestUnflushedWarning:
         exists to catch a genuinely unflushed session.
         """
         mem = _FakeMemory()
-        with caplog.at_level("WARNING", logger="graphknows.integrations._session"):
+        with caplog.at_level("WARNING", logger="graphknows.integrations.langgraph._session"):
             async with GraphKnowsMemory("s1", memory=mem) as gm:
                 await gm.remember({"messages": [{"role": "user", "content": ""}]})
                 await gm.add("   ")

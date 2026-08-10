@@ -76,7 +76,7 @@ async def test_recall_says_so_when_a_result_is_not_a_hit(
             return {"hits": [{"text": "a dict, not a Hit"}], "facts": []}
 
     mem = _WrongShape()
-    with caplog.at_level("WARNING", logger="graphknows.integrations._langgraph_hooks"):
+    with caplog.at_level("WARNING", logger="graphknows.integrations.langgraph._hooks"):
         update = await recall(
             {"messages": [{"role": "user", "content": "q"}]}, memory=mem, session_id="s1"
         )
