@@ -211,7 +211,7 @@ class GraphKnowsSettings(BaseSettings):
     # (which ships only in the ``assisted`` extra), so a bare `pip install
     # graphknows` gets the same ontology the container does, and both memory
     # modes load it through one identical code path.
-    # ``scripts/build_ontology_digest.py`` regenerates it from the TTL sources
+    # ``python -m graphknows.ontology.digest`` regenerates it from the TTL sources
     # under ``ontology/assets/cco-*``. GRAPHKNOWS_ONTOLOGY overrides it
     # with any other RDF/OWL/TTL file, digest, or folder of them — an override,
     # not an on/off switch: an EMPTY value means "unset" (which is how

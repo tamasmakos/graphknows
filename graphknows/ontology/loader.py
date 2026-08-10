@@ -191,7 +191,7 @@ def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
 def _digest_payload(path: Path) -> dict[str, Any] | None:
     """The parsed digest, or ``None`` when ``path`` is not one.
 
-    A digest is our own pre-parsed shape (``scripts/build_ontology_digest.py``):
+    A digest is our own pre-parsed shape (``python -m graphknows.ontology.digest``):
     ``{"classes": [{"uri", "label", "definition"}], "properties": [...]}``. It is
     recognised BEFORE any RDF path so the bundled CCO ontology — the
     default in every mode — never needs ``rdflib``, which ships only in the

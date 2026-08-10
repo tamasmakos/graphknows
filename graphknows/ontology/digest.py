@@ -1,6 +1,13 @@
 #!/usr/bin/env python
 r"""Parse RDF ontologies into the pre-parsed digest graphknows ships and loads.
 
+This is how you bring your own ontology. graphknows bundles a CCO digest as the
+default, but any RDF source becomes usable by digesting it here and pointing
+``GRAPHKNOWS_ONTOLOGY`` at the result — the loader reads a digest identically
+whichever ontology produced it. It lives in the package rather than in the repo's
+``scripts/`` for exactly that reason: it is a user-facing tool, not a build step
+of ours. Needs the ``assisted`` extra (rdflib); nothing else here does.
+
 Why a digest rather than the raw ``.ttl``:
 
 * **No rdflib at runtime.** ``rdflib`` is in the ``assisted`` extra, but the
@@ -49,9 +56,14 @@ attribute, not a link between two entities, so it can never be an
 ENTITY->ENTITY relation and would only dilute the relation label space handed to
 the extractor.
 
-Usage::
+Usage — your own ontology::
 
-    python scripts/build_ontology_digest.py \\
+    python -m graphknows.ontology.digest --source my-ontology.ttl --out my.json
+    export GRAPHKNOWS_ONTOLOGY=my.json
+
+Usage — regenerating the bundled CCO digest::
+
+    python -m graphknows.ontology.digest \\
         --source graphknows/ontology/assets/cco-modules \\
         --source graphknows/ontology/assets/cco-extensions/FamilialRelationsOntology.ttl \\
         --source graphknows/ontology/assets/cco-imports/bfo-core.ttl \\
@@ -206,8 +218,16 @@ class _Reader:
 
 def build(sources: list[Path]) -> dict[str, Any]:
     """Parse *sources* into ``{"classes": [...], "properties": [...]}``."""
-    import rdflib  # build-time only; never imported at runtime
-    from rdflib import OWL, RDF, RDFS
+    # Deferred, and the only door into rdflib in this module: `_Reader` is built
+    # here and nowhere else. rdflib ships in the `assisted` extra, so a base
+    # install can import this module (and load a digest) without an RDF stack.
+    try:
+        import rdflib
+        from rdflib import OWL, RDF, RDFS
+    except ImportError as exc:
+        from graphknows.exceptions import MissingExtraError
+
+        raise MissingExtraError("Building an ontology digest", "assisted") from exc
 
     graph = rdflib.Graph()
     paths = _files(sources)
@@ -261,6 +281,7 @@ def build(sources: list[Path]) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Digest ``--source`` RDF into ``--out`` JSON, reporting what came out."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--source",
