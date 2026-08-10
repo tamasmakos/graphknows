@@ -112,7 +112,7 @@ hooks: ## Install both git hooks (once per clone)
 # Its job is the one thing no gate catches: code that is wired to nothing.
 sweep: ## Dead-code sweep (report only, run every few weeks)
 	docker exec $(CONTAINER) sh -c "cd /app && uvx vulture graphknows \
-	  --exclude 'graphknows/utils' --min-confidence 60"
+	  --min-confidence 60"
 
 eval-smoke: ## End-to-end acceptance: one LoCoMo conversation via the MCP client (needs services up)
 	python -m evaluation --limit 1

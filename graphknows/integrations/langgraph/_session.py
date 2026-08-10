@@ -1,7 +1,7 @@
 """A session-bound view over :class:`~graphknows.memory.Memory` for LangGraph.
 
-The rest of ``graphknows.integrations`` is framework-agnostic: ``recall`` and
-``remember`` in ``_langgraph_hooks.py`` are plain ``state -> partial-state``
+The rest of this adapter is framework-agnostic: ``recall`` and
+``remember`` in ``_hooks.py`` are plain ``state -> partial-state``
 callables, bound to a memory and a session via ``functools.partial``. That is
 flexible but verbose for the common case of "one session, one memory, three
 node callables". ``GraphKnowsMemory`` is that common case wrapped up — it
