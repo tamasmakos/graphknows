@@ -97,12 +97,13 @@ evaluation/results/.judge_cache/
 # describing an entirely different project.
 .sonar
 .mcp.json
-docs\agents
 
 graphify-out
 CLAUDE.md
 prototypes
 .scratch*
-graphknows\ontology\assets
-ruff.toml
-sonar-project.properties
+# Candidate ontologies under evaluation — not part of the shipped bundle.
+# Scoped to `candidates/` on purpose: hatchling drops VCS-ignored files from the
+# wheel, so a broader `assets/` rule would silently unship cco/cco.json, which
+# `GraphKnowsSettings.ontology_source` defaults to.
+graphknows/ontology/assets/cco-extensions/candidates/
