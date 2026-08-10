@@ -34,10 +34,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PKG_ROOT = REPO_ROOT / "graphknows"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
-# Vendored third-party source that is shipped inside the package but is not
-# imported by any graphknows code path we own.
-VENDORED = {"graphknows/utils/framenet-tools"}
-
 
 def _pyproject() -> dict:
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
@@ -63,7 +59,7 @@ def _declared_distributions() -> set[str]:
 
 
 def _source_files() -> list[Path]:
-    return [p for p in PKG_ROOT.rglob("*.py") if not any(v in p.as_posix() for v in VENDORED)]
+    return list(PKG_ROOT.rglob("*.py"))
 
 
 def _top_level_imports(path: Path) -> set[str]:

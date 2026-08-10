@@ -97,7 +97,7 @@ record $? "ruff format"
 
 # -- 2. Types, whole package -------------------------------------------------
 step "mypy (whole package)"
-dex "mypy graphknows --exclude 'graphknows/utils' --strict --ignore-missing-imports \
+dex "mypy graphknows --strict --ignore-missing-imports \
      --allow-untyped-decorators --no-warn-unused-ignores"
 record $? "mypy"
 
