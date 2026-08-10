@@ -125,7 +125,7 @@ def test_known_extras_constant_matches_pyproject() -> None:
         # Regression guards: each of these was imported by a default-mode code
         # path while undeclared or declared only in a dev group.
         "gliner",  # entities/gliner_model.py -> knowledgator/gliner-relex-large-v1.0
-        "nltk",  # relations/_lingfeatures.py, channels/_framenet.py
+        "nltk",  # relations/_lingfeatures.py, frames/framenet.py
         "sentence-transformers",  # storage/embedder.py, ranking/rerank.py
         "spacy",  # entities/extractor.py
     ],

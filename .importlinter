@@ -10,7 +10,7 @@ layers =
     graphknows.memory
     graphknows.ingestion | graphknows.retrieval
     graphknows.channels
-    graphknows.ontology
+    graphknows.ontology | graphknows.frames
     graphknows.ranking | graphknows.topics
     graphknows.storage
     graphknows.models | graphknows.settings | graphknows.llm

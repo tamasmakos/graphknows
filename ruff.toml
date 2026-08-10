@@ -50,13 +50,11 @@ ignore = [
 "tests/*" = ["D", "S101", "B017", "E402", "N806", "SIM102", "UP038", "TRY002"]
 "scripts/*" = ["D103"]
 "evaluation/**" = ["D", "C901", "UP038", "RUF034"]
-# Vendored third-party checkout, not first-party code.
-"graphknows/utils/**" = ["ALL"]
 # TODO(tech-debt): add docstrings and refactor complexity in the files below
 "**/rdf_parser.py" = ["C901"]
 "**/storage/arcadedb/*.py" = ["D102", "C901"]  # data-access layer — docstrings deferred
 "**/retrieval/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
-"**/channels/_framenet.py" = ["C901"]  # FE assignment is one dependency-parse pass
+"**/frames/framenet.py" = ["C901"]  # FE assignment is one dependency-parse pass
 "**/llm_assisted/dspy.py" = ["C901"]  # ontology context build is one linear pass
 # Pre-existing complexity, exempted rather than refactored under a gate-hardening
 # change: both are single linear passes over a parse tree / a section, and

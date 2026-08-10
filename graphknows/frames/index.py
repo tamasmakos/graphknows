@@ -62,7 +62,7 @@ def _cache_key() -> str:
 
 
 def _build_matrix() -> tuple[list[str], np.ndarray]:
-    from graphknows.channels._framenet import _embed_norm, _frame_def, _framenet
+    from graphknows.frames.framenet import _embed_norm, _frame_def, _framenet
 
     names = [f.name for f in _framenet().frames()]
     texts = [f"{n.replace('_', ' ')}. {_frame_def(n)}" for n in names]
@@ -149,14 +149,14 @@ def match_frames_text(
     text: str, top_k: int = 5, min_sim: float = DEFAULT_MIN_SIM
 ) -> list[tuple[str, float]]:
     """Embed ``text`` then match — convenience for the query side."""
-    from graphknows.channels._framenet import _embed_norm
+    from graphknows.frames.framenet import _embed_norm
 
     return match_frames(_embed_norm([text])[0], top_k=top_k, min_sim=min_sim)
 
 
 def frame_summary(name: str) -> str:
     """The frame's definition text — the FRAME node's ``summary``."""
-    from graphknows.channels._framenet import _frame_def
+    from graphknows.frames.framenet import _frame_def
 
     return _frame_def(name)
 

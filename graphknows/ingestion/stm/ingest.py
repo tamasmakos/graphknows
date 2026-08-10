@@ -825,12 +825,12 @@ class _STMIngestHandler:
         # embedding (copied from the catalog, not recomputed) so the query side can
         # vector-search the frames evoked in this namespace.
         if self._enable_frames:
-            from graphknows.channels._frame_index import (
+            from graphknows.frames.framenet import _broader_up
+            from graphknows.frames.index import (
                 frame_embedding,
                 frame_summary,
                 match_frames,
             )
-            from graphknows.channels._framenet import _broader_up
 
             matches = match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
             if matches:

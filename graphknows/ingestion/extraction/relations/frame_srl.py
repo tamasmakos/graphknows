@@ -45,7 +45,7 @@ def frame_ontology(name: str) -> dict[str, Any]:
     lexical_units: [(word, pos)], parents: [frame names]}``. Empty dict on lookup
     failure (unknown frame).
     """
-    from graphknows.channels._framenet import _framenet, _ontology_up
+    from graphknows.frames.framenet import _framenet, _ontology_up
 
     try:
         f = _framenet().frame(name)
@@ -107,8 +107,8 @@ def lu_candidate_frames(
     ``embedding`` (the chunk's already-computed vector) is used for the ranking so
     ingest never re-embeds the same text; only when it is None do we embed ``text``.
     """
-    from graphknows.channels._frame_index import match_frames, match_frames_text
-    from graphknows.channels._framenet import _lus
+    from graphknows.frames.framenet import _lus
+    from graphknows.frames.index import match_frames, match_frames_text
 
     doc = nlp(text)
     lui = _lus()

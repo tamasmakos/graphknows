@@ -134,7 +134,7 @@ Both paths converge on the same write helper, which per chunk:
 4. in `llm_assisted`, additionally runs the injected DSPy relation extractor and
    writes its triplets as `REL` edges with `source='dspy'`;
 5. when `enable_frames` is on, matches FrameNet frames by embedding
-   (`graphknows/channels/_frame_index.py`) into `FRAME` / `EVOKED_BY`, and
+   (`graphknows/frames/index.py`) into `FRAME` / `EVOKED_BY`, and
    role-fills `FRAME_INSTANCE` / `PLAYS_ROLE` via
    `graphknows/ingestion/extraction/relations/frame_srl.py`;
 6. resolves dates (`resolve_temporal` in `graphknows/channels/temporal.py`) into

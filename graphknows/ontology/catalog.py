@@ -1,6 +1,6 @@
 """Ontology term-definition embedding index — cosine-match text to classes/properties.
 
-Structurally the same device as ``channels/_frame_index``: embed every term once
+Structurally the same device as ``frames/index.py``: embed every term once
 as ``"Label. definition"``, L2-normalize into a matrix, cache it to disk so the
 definitions are embedded once and reused across process starts. Matching takes a
 PRE-COMPUTED embedding (a chunk's ingest embedding, or a query embedding), so

@@ -325,23 +325,6 @@ def extract_frames(text: str, speaker: str, speakers: list[str]) -> list[dict[st
     return out
 
 
-_SPEAKER_LINE = re.compile(r"^.*?\|\s*(\w+):\s*(.+)$")
-
-
-def extract_frames_from_chunk(chunk_text: str, speakers: list[str]) -> list[dict[str, Any]]:
-    """Extract frames from a multi-line dialogue chunk, resolving per-line speaker."""
-    rows: list[dict[str, Any]] = []
-    for line in chunk_text.split("\n"):
-        m = _SPEAKER_LINE.match(line.strip())
-        if m:
-            spk, utt = m.group(1), m.group(2)
-        else:
-            spk, utt = "", line.strip()
-        if utt:
-            rows.extend(extract_frames(utt, spk, speakers))
-    return rows
-
-
 def parse_query(query: str) -> dict[str, Any]:
     """Parse a question into query frames (+ontology expansion) and anchor entities."""
     nlp = _spacy()
