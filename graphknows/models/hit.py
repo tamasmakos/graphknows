@@ -32,7 +32,7 @@ from typing import Any
 
 # dateparser ships no py.typed marker and its stubs are a separate package that
 # is not a declared dependency — same ignore, same reason, as every other
-# dateparser import in this package (see graphknows/channels/temporal.py).
+# dateparser import in this package (see graphknows/temporal.py).
 from dateparser import parse as _parse_date  # type: ignore[import-untyped]
 
 # Default ceiling on the rendered block, in characters (~4 per token, so ~18k

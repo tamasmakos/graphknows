@@ -6,6 +6,11 @@ expressions ("last Saturday", "two weeks ago") resolve against an anchor
 datetime when one is supplied; absolute expressions ("2022", "25 May 2023")
 resolve standalone.  No domain constants — the resolution is fully library
 driven (``dateparser``), so it generalises across locales and corpora.
+
+A leaf utility, not a channel: it implements no ``Channel`` contract and imports
+nothing from graphknows, but both pipelines call it — ingestion to write
+``TEMPORAL`` nodes, retrieval to gate and anchor date-shaped questions — so it
+sits on the shared bottom rung alongside ``models`` and ``settings``.
 """
 
 from __future__ import annotations

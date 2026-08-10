@@ -57,9 +57,9 @@ from evaluation.locomo.adapter import render_facts
 from evaluation.locomo.prompts import ANSWER_PROMPT
 from graphknows import Hit, worth_extracting
 from graphknows.channels.base import Channel
-from graphknows.channels.temporal import query_date_candidates
 from graphknows.integrations.langgraph import GraphKnowsMemory
 from graphknows.ranking.rrf import rrf_score
+from graphknows.temporal import query_date_candidates
 
 DATA = "evaluation/data/locomo/questions.jsonl"
 

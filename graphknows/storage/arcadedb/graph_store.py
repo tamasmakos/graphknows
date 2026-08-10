@@ -1322,7 +1322,7 @@ class GraphStore(ArcadeStoreBase):
         """Date-bearing CHUNKs that also mention one of ``entity_names``.
 
         Serves the "when did X happen" shape, which
-        :func:`~graphknows.channels.temporal.query_date_candidates` cannot: such
+        :func:`~graphknows.temporal.query_date_candidates` cannot: such
         a question asks FOR a date and so contains none, leaving the date-keyed
         lookup with nothing to match. Here the entity is the key and the date is
         what we are looking for — chunks that mention the subject AND carry a

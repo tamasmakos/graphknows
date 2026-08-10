@@ -182,5 +182,6 @@ module = [
     "graphknows.ingestion.*",
     "graphknows.channels.*",
     "graphknows.frames.*",
+    "graphknows.temporal",
 ]
 disable_error_code = ["no-any-return", "type-arg"]

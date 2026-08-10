@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from graphknows.channels.temporal import query_date_candidates, resolve_temporal
+from graphknows.temporal import query_date_candidates, resolve_temporal
 
 ANCHOR = datetime(2023, 5, 25)
 

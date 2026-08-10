@@ -1466,7 +1466,7 @@ class _STMIngestHandler:
     def _resolve_temporal_entities(
         entities: list[dict[str, Any]], anchor: Any
     ) -> list[dict[str, str]]:
-        from graphknows.channels.temporal import resolve_temporal
+        from graphknows.temporal import resolve_temporal
 
         return resolve_temporal(entities, anchor)
 

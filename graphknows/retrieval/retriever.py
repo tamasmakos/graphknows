@@ -23,7 +23,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broke
     raise BrokenInstallError("The BM25 retrieval channel", "rank-bm25") from exc
 
 from graphknows.channels.base import ChannelContext
-from graphknows.channels.temporal import asks_for_a_date, query_date_candidates
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
@@ -32,6 +31,7 @@ from graphknows.ranking.rrf import (
 from graphknows.retrieval.models.context import RetrievalContext
 from graphknows.storage.arcadedb.graph_store import GraphStore
 from graphknows.storage.embedder import embed
+from graphknows.temporal import asks_for_a_date, query_date_candidates
 
 log = logging.getLogger(__name__)
 

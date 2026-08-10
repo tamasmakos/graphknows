@@ -137,7 +137,7 @@ Both paths converge on the same write helper, which per chunk:
    (`graphknows/frames/index.py`) into `FRAME` / `EVOKED_BY`, and
    role-fills `FRAME_INSTANCE` / `PLAYS_ROLE` via
    `graphknows/ingestion/extraction/relations/frame_srl.py`;
-6. resolves dates (`resolve_temporal` in `graphknows/channels/temporal.py`) into
+6. resolves dates (`resolve_temporal` in `graphknows/temporal.py`) into
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 
 `OntologyPredicateMapper` (`graphknows/ingestion/extraction/relations/filter.py`)
