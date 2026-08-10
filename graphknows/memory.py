@@ -441,7 +441,7 @@ class Memory:
 
         if mode is not TopicMode.llm:
             return None
-        from graphknows.ingestion.summarize import TopicSummarizer
+        from graphknows.topics.summarize import TopicSummarizer
 
         s = self.settings
         return TopicSummarizer(
