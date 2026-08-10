@@ -352,7 +352,12 @@ async def answer_questions(
     from langchain_openai import ChatOpenAI
 
     from evaluation.common.dspy_judge import DSPyJudge
+    from evaluation.common.tracing import tracer
 
+    # One Langfuse session per namespace: every question in a run lands on one
+    # timeline, and two runs over the same graph are directly comparable there.
+    # Off unless LANGFUSE_* is set, so this changes nothing by default.
+    trace_config, langfuse = tracer(ns, f"{conv}@{ns}", tags=[conv, "langgraph-harness"])
     judge = DSPyJudge(os.environ.get("LLM_MODEL", "meta-llama/llama-3.3-70b-instruct"))
     llm = ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
@@ -382,7 +387,9 @@ async def answer_questions(
             # these arms are compared at. A real failure still lands as 0.0.
             for attempt in (1, 2):
                 try:
-                    st = await asyncio.wait_for(app.ainvoke(state), timeout=180)
+                    st = await asyncio.wait_for(
+                        app.ainvoke(state, config=trace_config), timeout=180
+                    )
                     ans = str(st["messages"][-1]["content"])
                     score, _ = await judge.judge_two_stage(q["question"], str(q["answer"]), ans)
                     sources = st.get("memories_sources", [])
@@ -428,6 +435,10 @@ async def answer_questions(
             )
             with open(f"/tmp/locomo_lg_{conv}.json", "w", encoding="utf-8") as fh:
                 json.dump(out, fh, indent=1)
+    if langfuse is not None:
+        # The exporter ships in the background; a harness that exits on the last
+        # question loses the tail of its own run.
+        langfuse.flush()
     return out
 
 

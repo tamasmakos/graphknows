@@ -33,7 +33,7 @@ class MissingExtraError(GraphKnowsError, ImportError):
 
     #: Extras declared in pyproject.toml. Kept here so the test suite can assert
     #: that every call site names a real one.
-    KNOWN_EXTRAS = frozenset({"assisted", "langgraph"})
+    KNOWN_EXTRAS = frozenset({"assisted", "langgraph", "observability"})
 
     def __init__(self, feature: str, extra: str) -> None:
         super().__init__(

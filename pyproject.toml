@@ -87,6 +87,15 @@ assisted = ["dspy>=2.5.0", "rdflib>=7.0.0"]
 # (no test, example, eval, or docs page) and raised a bare ImportError, so the
 # extra it named guarded nothing.
 langgraph = ["langgraph>=0.2.0"]
+# Langfuse tracing for the LangGraph example. Nothing in the library imports it
+# — the example builds the callback only when LANGFUSE_* is set.
+#
+# `langfuse>=3` is not cosmetic: the 2.x SDK imports `langchain.callbacks`,
+# which langchain 1.x deleted, so 2.x cannot be used with any current langchain.
+# The `langchain` meta-package is a real requirement, not a transitive one —
+# langfuse's integration imports it directly and raises if it is absent, and
+# langchain-openai/langgraph alone pull only langchain-core.
+observability = ["langfuse>=3.0", "langchain>=1.0"]
 
 # Every extra named by a MissingExtraError call site MUST appear above;
 # `MissingExtraError.KNOWN_EXTRAS` and tests/test_extras.py enforce it. For a
