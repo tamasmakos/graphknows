@@ -225,12 +225,15 @@ store:
 - `entity` — entity-graph traversal from query-token entity nodes
 - `vector` — dense ANN over chunk embeddings (plus a declarative query variant)
 - `bm25` — lexical search (`rank_bm25` when importable, tokenised fallback otherwise)
-- `temporal` — date-anchored traversal
-- `topic` — topic-node match (populated only under `llm_assisted`)
+- `temporal` — date-anchored traversal (`graphknows/temporal.py`)
 
-`GraphPPRChannel` (`graphknows/channels/graph_ppr.py`, name `ppr`) is registered
-alongside them; `FrameChannel` (`graphknows/channels/frames.py`, name `frame`) is
-added when `settings.enable_frames`.
+Only the optional signals are `Channel`s: `FrameChannel`
+(`graphknows/channels/frames.py`, name `frame`) when `settings.enable_frames`,
+and `OntologyChannel` (`graphknows/channels/ontology.py`, name `ontology`) when
+`settings.enable_ontology_channel`. A graph-traversal channel (`ppr`) and a
+`topic` channel both existed and were removed — `ppr` returned the worst
+gold-hit ratio of six channels, and nothing on the read path consumed what the
+topic stage wrote. See the `registry.py` docstring for the measurements.
 
 ### DETRetriever (llm_free)
 

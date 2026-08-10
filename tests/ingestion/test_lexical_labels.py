@@ -56,7 +56,7 @@ class TestLexicalSelection:
 
     @pytest.fixture
     def index(self, scheme: dict) -> dict:
-        from graphknows.ontology import lexical_index
+        from graphknows.ontology.skos import lexical_index
 
         return lexical_index(scheme)
 
@@ -85,7 +85,7 @@ class TestDomainRangeSatisfaction:
 
     @pytest.fixture
     def index(self, scheme: dict) -> dict:
-        from graphknows.ontology import lexical_index
+        from graphknows.ontology.skos import lexical_index
 
         return lexical_index(scheme)
 
@@ -141,8 +141,7 @@ class TestDomainRangeSatisfaction:
         """
         import spacy
 
-        from graphknows.ontology import lexical_index
-        from graphknows.ontology.skos import Concept
+        from graphknows.ontology.skos import Concept, lexical_index
 
         scheme = {
             "requires": Concept(
