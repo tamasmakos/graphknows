@@ -43,7 +43,16 @@ MAX_DEFINITION: int = 140
 # same span.
 DEFAULT_THRESHOLD: float = 0.4
 
-_DEFAULT_MODEL = "fastino/gliner2-large-v1"
+# base, not large. Measured on eight conversational lines against the same
+# 13-label CCO schema: base is 784 ms/line to large's 2574 (3.3x), types MORE
+# surfaces (19 vs 17), and wins the two clearest semantic calls outright —
+# "charity race" as an Act (0.93) where large says Organization (0.46), and
+# "fashion internship" as an Occupation Role (0.78) where large says
+# Organization (0.42). Large is better on a couple ("dance studio" as a
+# Facility) but not enough to buy at triple the ingest cost, and the prototype's
+# 22/26 typing result was measured on base too. `GRAPHKNOWS_TYPING_MODEL`
+# switches it; both are baked into the image.
+_DEFAULT_MODEL = "fastino/gliner2-base-v1"
 
 
 def typing_enabled() -> bool:

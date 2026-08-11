@@ -1378,7 +1378,19 @@ class _STMIngestHandler:
             return {}
         if self._typing_schema is None:
             self._typing_schema = typing_model.build_schema(self._ontology, _TYPING_CLASSES)
-            log.info("definition typing schema: %d classes", len(self._typing_schema))
+            # Name the absentees. The bundled CCO digest has no bare `Artifact`
+            # class (only "... Artifact Function"), so the list silently built a
+            # 13-label schema out of 14 and paintings had nowhere to be typed.
+            # A richer ontology — one built by graphknows.ontology.rdf — supplies it.
+            if missing := [c for c in _TYPING_CLASSES if c not in self._typing_schema]:
+                log.info(
+                    "definition typing schema: %d classes (%d absent from this ontology: %s)",
+                    len(self._typing_schema),
+                    len(missing),
+                    ", ".join(missing),
+                )
+            else:
+                log.info("definition typing schema: %d classes", len(self._typing_schema))
         if not self._typing_schema:
             return {}
         return await asyncio.to_thread(
