@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -955,7 +956,11 @@ class GraphStore(ArcadeStoreBase):
         return out
 
     async def write_frame_instances(
-        self, session_id: str, chunk_id: str, instances: list[dict[str, Any]]
+        self,
+        session_id: str,
+        chunk_id: str,
+        instances: list[dict[str, Any]],
+        nesting: list[tuple[int, str, int]] | None = None,
     ) -> int:
         """MERGE role-filled FRAME_INSTANCE vertices + PLAYS_ROLE edges.
 
@@ -1015,7 +1020,10 @@ class GraphStore(ArcadeStoreBase):
 
         inst_rows: list[dict[str, Any]] = []
         role_rows: list[dict[str, Any]] = []
-        for inst in instances:
+        # Position in `instances` -> the id it was written under, so a nesting
+        # pair given by index survives the drops below (no fills, no frame).
+        fid_at: dict[int, str] = {}
+        for index, inst in enumerate(instances):
             frame = str(inst.get("frame") or "").strip()
             roles: dict[str, list[str]] = inst.get("roles") or {}
             if not frame:
@@ -1036,6 +1044,7 @@ class GraphStore(ArcadeStoreBase):
             # Content hash for a stable frame-instance id — not a security digest.
             digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
             fid = f"{frame}:{digest[:16]}"
+            fid_at[index] = fid
             role_conf = float(inst.get("role_confidence") or 0.0)
             inst_rows.append(
                 {
@@ -1091,6 +1100,23 @@ class GraphStore(ArcadeStoreBase):
                 "MATCH (e:ENTITY {name_norm: row.nn}) "
                 "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
                 rows=role_rows,
+            )
+        # Batch 3: frame-to-frame nesting, the structure a flat role list cannot
+        # hold ("...because my laptop died" as Explanation -> Causation -> Death).
+        # Both endpoints must have been written; a pair naming a dropped instance
+        # is dropped with it rather than pointing at nothing.
+        nest_rows = [
+            {"p": fid_at[p], "role": role, "c": fid_at[c]}
+            for p, role, c in (nesting or [])
+            if p in fid_at and c in fid_at and fid_at[p] != fid_at[c]
+        ]
+        if nest_rows:
+            await self.command(
+                "UNWIND $rows AS row "
+                "MATCH (p:FRAME_INSTANCE {id: row.p}) "
+                "MATCH (c:FRAME_INSTANCE {id: row.c}) "
+                "MERGE (p)-[:FRAME_NESTS {role: row.role}]->(c)",
+                rows=nest_rows,
             )
         return len(inst_rows)
 
@@ -1625,6 +1651,59 @@ class GraphStore(ArcadeStoreBase):
         )
         return [r["name"] for r in ranked[: int(cap)]]
 
+    async def query_chunks_by_frame_facts(
+        self,
+        frames: list[str],
+        entity_names: list[str],
+        top_k: int,
+        session_id: str | None = None,
+        state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Chunks reached through the FRAME_INSTANCE layer, by frame and by role filler.
+
+        The fact layer's one route back to a CHUNK. ``REL`` has none — which is
+        why every improvement to the relation layer measured flat on retrieval —
+        but a FRAME_INSTANCE carries ``FRAME_EVOKED_IN`` to the chunk it was read
+        from, so a query that names a frame ("what did she give?") or an entity
+        can land on the chunk stating that fact.
+
+        Two reads rather than one OR: matching either the instance's frame or its
+        role fillers in a single pattern makes ArcadeDB scan FRAME_INSTANCE whole.
+        Scored by how many signals a chunk's instances matched, frames and
+        fillers counting alike; the caller turns rank into an RRF contribution.
+        """
+        scope = ""
+        if session_id:
+            scope += f" AND c.session_id = {quote(session_id)}"
+        if state:
+            scope += f" AND c.state = {quote(state)}"
+
+        score: dict[str, float] = defaultdict(float)
+        if frames:
+            rows = await self.query(
+                f"MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c:CHUNK) "
+                f"WHERE fi.frame IN {quoted_list(sorted(set(frames)))}{scope} "
+                f"RETURN c.chunk_id AS chunk_id, count(fi) AS n"
+            )
+            for r in rows:
+                if cid := r.get("chunk_id"):
+                    score[str(cid)] += float(r.get("n") or 0)
+        # Names in, ``name_norm`` matched — the same contract as
+        # entity_fact_context, whose resolved names this is called with.
+        norms = sorted({_name_norm(n) for n in entity_names if n and n.strip()})
+        if norms:
+            rows = await self.query(
+                f"MATCH (e:ENTITY)<-[:PLAYS_ROLE]-(fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c:CHUNK) "
+                f"WHERE e.name_norm IN {quoted_list(norms)}{scope} "
+                f"RETURN c.chunk_id AS chunk_id, count(fi) AS n"
+            )
+            for r in rows:
+                if cid := r.get("chunk_id"):
+                    score[str(cid)] += float(r.get("n") or 0)
+
+        ranked = sorted(score.items(), key=lambda kv: (-kv[1], kv[0]))[: int(top_k)]
+        return [{"chunk_id": cid, "score": s} for cid, s in ranked]
+
     async def entity_fact_context(self, entity_names: list[str], max_facts: int = 40) -> list[str]:
         """Compact structured fact-sheet for the given entities (for the generator).
 
@@ -1683,6 +1762,25 @@ class GraphStore(ArcadeStoreBase):
             logger.debug("entity_fact_context failed (soft): %s", exc)
             return []
 
+        # One hop of frame nesting off those same instances. This is what a "why"
+        # question needs: the seed's frame states WHAT happened, the frame
+        # embedded in its Explanation/Cause role states why, and a flat role list
+        # can only hand the generator the raw span.
+        #
+        # Its OWN try: FRAME_NESTS is written by the SRL path only, so a namespace
+        # ingested before it — or without it — has no such edge type, and inside
+        # the read above that miss would take the whole fact-sheet down with it.
+        nest_rows: list[dict[str, Any]] = []
+        try:
+            nest_rows = await self.query(
+                f"MATCH (seed:ENTITY)<-[:PLAYS_ROLE]-(fi:FRAME_INSTANCE)"
+                f"-[n:FRAME_NESTS]->(inner:FRAME_INSTANCE) "
+                f"WHERE seed.name_norm IN {name_lit} "
+                f"RETURN DISTINCT fi.frame AS outer, n.role AS role, inner.frame AS inner_frame"
+            )
+        except Exception as exc:
+            logger.debug("frame-nesting fact read skipped (soft): %s", exc)
+
         # Frame instances first (highest structural signal); drop < 2 role fills.
         frame_facts: list[str] = []
         for r in frame_rows:
@@ -1691,6 +1789,18 @@ class GraphStore(ArcadeStoreBase):
             if not frame or len(roles) < 2:
                 continue
             frame_facts.append(f"{frame}: {', '.join(roles)}")
+
+        # Nesting reads as one line per embedded frame, e.g.
+        # "Commerce_buy -Explanation-> Causation". Cheap (one short line) and it
+        # is the only place the generator learns that two facts are linked rather
+        # than merely co-occurring.
+        nest_facts = [
+            f"{o} -{role}-> {inner}"
+            for r in nest_rows
+            if (o := str(r.get("outer") or "").strip())
+            and (role := str(r.get("role") or "").strip())
+            and (inner := str(r.get("inner_frame") or "").strip())
+        ]
 
         # Relations: evidenced ones outrank bare ones.
         evidenced: list[str] = []
@@ -1716,7 +1826,7 @@ class GraphStore(ArcadeStoreBase):
         # otherwise fill the whole cap with frames and starve the relation facts —
         # including the object-side and reserved-word predicates surfaced above.
         half = max(1, max_facts // 2)
-        ranked = frame_facts[:half] + evidenced + frame_facts[half:] + plain
+        ranked = frame_facts[:half] + nest_facts + evidenced + frame_facts[half:] + plain
         out: list[str] = []
         seen: set[str] = set()
         for fact in ranked:

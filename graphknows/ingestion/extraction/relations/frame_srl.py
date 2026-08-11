@@ -145,6 +145,10 @@ class FrameInstance:
     roles: dict[str, list[str]] = field(default_factory=dict)
     match_sim: float = 0.0
     role_confidence: float = 0.0
+    # Where this instance's trigger sits in the chunk (SRL path only, else -1).
+    # Carried so nesting — which is computed over trigger offsets — survives the
+    # fillability gate dropping some instances.
+    trigger_offset: int = -1
 
     @property
     def filled_core(self) -> int:
@@ -209,6 +213,55 @@ def _resolve_surface(surface: str, speaker: str, speakers: list[str]) -> str:
     return surface
 
 
+def _passes_gate(inst: FrameInstance) -> bool:
+    """The role-fillability gate: enough filled core roles, one confident fill.
+
+    The one thing standing between this layer and a graph full of ``Trendiness``
+    off "that's cool" — frame selection is unreliable on conversational filler
+    and roles do not fill there. Applies per instance whichever identifier ran.
+    """
+    return inst.filled_core >= MIN_CORE_ROLES and inst.role_confidence >= ROLE_CONF_FLOOR
+
+
+def extract_frame_instances_srl(
+    text: str,
+    speaker: str,
+    speakers: list[str],
+    gliner: Any,
+    hits: list[Any],
+) -> list[FrameInstance]:
+    """One instance per parsed trigger (see :mod:`graphknows.frames.srl`).
+
+    The difference from :func:`extract_frame_instances` is arity, not method:
+    there the whole chunk gets one frame guess and therefore at most one kept
+    instance; here every trigger the parser found is filled on its own
+    trigger-marked line, so a chunk stating five facts can contribute five.
+    Role filling, speaker resolution, and the fillability gate are shared.
+
+    ``hits`` are :class:`~graphknows.frames.srl.FrameHit` (duck-typed to keep
+    the optional extra out of this module's imports).
+    """
+    from graphknows.frames.srl import marked_line
+
+    out: list[FrameInstance] = []
+    for hit in hits:
+        # The marked line, not the whole chunk: it scopes the roles to this
+        # trigger's turn (keeping its speaker) and disambiguates two instances
+        # of one frame on one line.
+        context = marked_line(text, hit.offset, hit.trigger)
+        roles, conf = _fill_roles(context, hit.frame, gliner, speaker, speakers)
+        inst = FrameInstance(
+            frame=hit.frame,
+            roles=roles,
+            match_sim=1.0,
+            role_confidence=conf,
+            trigger_offset=int(getattr(hit, "offset", -1)),
+        )
+        if _passes_gate(inst):
+            out.append(inst)
+    return out
+
+
 def extract_frame_instances(
     text: str,
     speaker: str,
@@ -240,8 +293,4 @@ def extract_frame_instances(
         inst = FrameInstance(frame=frame, roles=roles, match_sim=sim, role_confidence=max_conf)
         if best is None or inst.filled_core > best.filled_core:
             best = inst
-    if best is None:
-        return []
-    if best.filled_core >= MIN_CORE_ROLES and best.role_confidence >= ROLE_CONF_FLOOR:
-        return [best]
-    return []
+    return [best] if best is not None and _passes_gate(best) else []

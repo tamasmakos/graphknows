@@ -174,7 +174,12 @@ class _Reader:
 
         if depth > 4:
             return set()
-        if not str(node).startswith("_:"):
+        # isinstance, NOT a "_:" prefix test: rdflib's BNode stringifies to a bare
+        # id ("ne038ab1...") with no "_:" on it, so the prefix test this used to
+        # run was False for every blank node and the whole unwrapping branch below
+        # was unreachable. Every union/intersection domain and range silently read
+        # as empty.
+        if not isinstance(node, rdflib.BNode):
             return {lbl} if (lbl := self.label(node)) else set()
         out: set[str] = set()
         for pred in (OWL.unionOf, OWL.intersectionOf):
@@ -182,6 +187,36 @@ class _Reader:
                 for member in rdflib.collection.Collection(self.g, collection):
                     out |= self.named(member, depth + 1)
         return out
+
+    def genus_parents(self, subject: Any) -> list[str]:
+        """Parents a DEFINED class states inside ``owl:equivalentClass``.
+
+        A defined class asserts no ``rdfs:subClassOf`` at all: its genus sits in
+        ``owl:equivalentClass [ owl:intersectionOf ( <genus> <restriction>... ) ]``.
+        Reading only the asserted triple leaves ~447 CCO classes parentless, and
+        a parentless class truncates every ancestor walk built on ``parents`` —
+        the relation-offer widening in ``_relation_labels`` and the BROADER hop
+        the ontology channel takes both stop short at exactly those terms.
+
+        Only ``intersectionOf`` members count, and only through
+        :meth:`named`, which returns nothing for a restriction — "assists some
+        Person" says who a guide dog helps, not what it is. ``unionOf`` members
+        are the opposite direction: ``Pet == Dog or Cat`` means Pet SUBSUMES
+        them, so reading them here would put the general term under the specific
+        ones. A NAMED equivalent class is a synonym, not a parent, and is
+        likewise skipped.
+        """
+        import rdflib
+        from rdflib import OWL
+
+        out: set[str] = set()
+        for equiv in self.g.objects(subject, OWL.equivalentClass):
+            if not isinstance(equiv, rdflib.BNode):
+                continue
+            for collection in self.g.objects(equiv, OWL.intersectionOf):
+                for member in rdflib.collection.Collection(self.g, collection):
+                    out |= self.named(member)
+        return sorted(out)
 
     def refs(self, subject: Any, predicate: Any) -> list[str]:
         """Labels of ``subject predicate ?o``, through class expressions."""
@@ -246,7 +281,7 @@ def build(sources: list[Path]) -> dict[str, Any]:
             "uri": str(s),
             "label": lbl,
             "definition": r.definition(s),
-            "parents": r.refs(s, RDFS.subClassOf),
+            "parents": sorted(set(r.refs(s, RDFS.subClassOf)) | set(r.genus_parents(s))),
             "module": r.module(s),
         }
         for s in sorted(graph.subjects(RDF.type, OWL.Class), key=str)

@@ -193,6 +193,13 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE INDEX IF NOT EXISTS ON REL (predicate) NOTUNIQUE"),
     ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
     ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK
+    # Frame nesting: a role span that embeds another frame's trigger ("...because
+    # my laptop died" fills Explanation with a Causation whose Cause is a Death).
+    # FRAME_INSTANCE -> FRAME_INSTANCE, the embedding role on the edge. Written
+    # only on the SRL identification path, which is what yields FE spans; read by
+    # entity_fact_context, so it is not another write-only layer.
+    ("sql", "CREATE EDGE TYPE FRAME_NESTS IF NOT EXISTS"),  # FRAME_INSTANCE -> FRAME_INSTANCE
+    ("sql", "CREATE PROPERTY FRAME_NESTS.role IF NOT EXISTS STRING"),
     # Ontology edges. INSTANCE_OF/MATCHES_CLASS carry the mapping score so a
     # weak match stays distinguishable from a confident one downstream.
     ("sql", "CREATE EDGE TYPE INSTANCE_OF IF NOT EXISTS"),  # ENTITY -> ONTOLOGY_CLASS

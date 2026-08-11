@@ -80,13 +80,27 @@ dependencies = [
 # llm_assisted mode: LLM-driven relation extraction + injectable RDF/OWL ontology.
 # The one extra: `pip install 'graphknows[assisted]'`. Lazily imported and guarded
 # by MissingExtraError, so the base install never pulls dspy/rdflib.
-assisted = ["dspy>=2.5.0", "rdflib>=7.0.0"]
+#
+# `networkx` joins them for graphknows.ontology.rdf: projecting a folder of RDF
+# needs a multigraph with parallel predicate-keyed edges, and the label-keyed
+# taxonomy needs cycle detection and a topological order. It is imported inside
+# functions behind the same MissingExtraError guard, so a base install never
+# pulls it either.
+assisted = ["dspy>=2.5.0", "rdflib>=7.0.0", "networkx>=3.0"]
 # Framework adapter. Genuinely optional — nothing in the core paths imports it,
 # and it is lazily imported behind a MissingExtraError guard. The `langchain`
 # extra was removed with its adapter: `GraphKnowsRetriever` had zero importers
 # (no test, example, eval, or docs page) and raised a bare ImportError, so the
 # extra it named guarded nothing.
 langgraph = ["langgraph>=0.2.0"]
+# Transformer frame identification (graphknows.frames.srl), an alternative to the
+# default LU+embedding frame guess. Lazily imported behind MissingExtraError and
+# only reached when GRAPHKNOWS_FRAME_SRL is on, so the base install never pulls
+# it. Kept an extra for two reasons beyond size: it pins `protobuf<6` where this
+# project resolves 7.x, and it drags pytorch-lightning + nlpaug in for TRAINING
+# code that inference never runs. Installing it will downgrade protobuf — check
+# nothing else in the environment needs 6+ before you do.
+srl = ["frame-semantic-transformer>=1.1.0"]
 # Langfuse tracing for the LangGraph example. Nothing in the library imports it
 # — the example builds the callback only when LANGFUSE_* is set.
 #

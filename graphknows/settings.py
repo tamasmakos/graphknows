@@ -304,6 +304,10 @@ class GraphKnowsSettings(BaseSettings):
     # Frames (deterministic FrameNet layer) are ON by default; disable with
     # GRAPHKNOWS_ENABLE_FRAMES=false.
     enable_frames: bool = Field(default=True, alias="GRAPHKNOWS_ENABLE_FRAMES")
+    # The FRAME_INSTANCE layer as a retrieval leg (channels/frame_facts.py).
+    # OFF until it is A/B'd: the fact layer has never fed retrieval, and the last
+    # channel added to the fusion tracked accuracy 0.766 -> 0.722.
+    enable_frame_facts: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FRAME_FACTS")
     # The ontology retrieval channel is OPT-IN and defaults OFF: it has never
     # been measured on its own. It went live as a side effect of making ontology
     # INJECTION always-on (its `if settings.ontology_source:` gate could not be

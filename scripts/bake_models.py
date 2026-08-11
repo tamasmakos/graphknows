@@ -35,6 +35,7 @@ VERIFIER_ENCODER = "microsoft/deberta-v3-base"
 def _model_ids() -> dict[str, str]:
     """Resolve every model id from the code that owns it — never hardcoded here."""
     from graphknows.ingestion.extraction.entities.gliner_model import _RELEX_MODEL
+    from graphknows.ingestion.extraction.entities.typing_model import model_id as _typing_model
     from graphknows.settings import GraphKnowsSettings
 
     s = GraphKnowsSettings()
@@ -44,6 +45,11 @@ def _model_ids() -> dict[str, str]:
         "verifier": s.relation_verifier_model,
         "verifier_encoder": VERIFIER_ENCODER,
         "spacy": s.spacy_model,
+        # Baked even though GRAPHKNOWS_DEFINITION_TYPING defaults off: the
+        # runtime sets HF_HUB_OFFLINE=1, so a model that is merely *available to
+        # download* is a model that fails the moment someone flips the flag —
+        # and it fails inside an ingest, not at boot where --check would catch it.
+        "typing": _typing_model(),
     }
 
 
@@ -70,6 +76,12 @@ def _verifier_encoder(model_id: str, local_only: bool) -> None:
 
     AutoTokenizer.from_pretrained(model_id, local_files_only=local_only)
     AutoModel.from_pretrained(model_id, local_files_only=local_only)
+
+
+def _typing(model_id: str, local_only: bool) -> None:
+    from gliner2 import GLiNER2
+
+    GLiNER2.from_pretrained(model_id, local_files_only=local_only)
 
 
 def _spacy(model_id: str, local_only: bool) -> None:
@@ -120,6 +132,7 @@ _STEPS: tuple[tuple[str, str, Callable[[str, bool], None]], ...] = (
     ("embed", "embed          ", _embed),
     ("verifier", "verifier       ", _verifier),
     ("verifier_encoder", "verifier-enc   ", _verifier_encoder),
+    ("typing", "typing         ", _typing),
     ("spacy", "spacy          ", _spacy),
     ("nltk", "nltk corpora   ", _nltk_corpora),
 )
