@@ -135,7 +135,16 @@ _NEIGHBOR_RADIUS: int = int(os.environ.get("GRAPHKNOWS_NEIGHBOR_RADIUS", "0"))
 # answer. Measured on conv-30 evidence_recall@25 without a reranker: pool=25
 # gives 0.589, pool=100 gives 0.692.
 _POOL_FACTOR: int = int(os.environ.get("GRAPHKNOWS_POOL_FACTOR", "4"))
+# Query frames considered by the frame re-rank, before the 1-hop expansion. The
+# query's own cosine ranking is noisy past a handful, and every extra frame
+# widens the IN-list of the pool lookup.
+_FRAME_RERANK_TOP_K: int = int(os.environ.get("GRAPHKNOWS_FRAME_RERANK_TOP_K", "8"))
 _MIN_POOL: int = int(os.environ.get("GRAPHKNOWS_MIN_POOL", "100"))
+
+
+def _max_facts() -> int:
+    """Fact-sheet size fed to the generator (default 40, the store's own cap)."""
+    return int(os.environ.get("GRAPHKNOWS_MAX_FACTS", "40"))
 
 
 def _fact_context_enabled() -> bool:
@@ -215,6 +224,13 @@ class DETRetriever:
         # this pool and was measured WORSE at every depth a caller uses
         # (evidence_recall@25 0.567 against 0.692 without it) at 3.5x the wall
         # clock; see tests/retrieval/test_no_cross_encoder.py.
+        #
+        # Frame re-ranking is not that: it reorders the pool by a signal the
+        # other channels cannot see (frame specificity + role binding) instead of
+        # re-scoring the text, it only ever promotes, and it costs three indexed
+        # reads. It exists because the measured loss is between the probe and the
+        # cut — recall 0.948 there, 0.765 here.
+        combined = await self._frame_rerank(ctx, combined)
         fused = (await self._shape_and_rank(combined))[:top_k]
         fused = await self._expand_neighbors(fused)
         for i, item in enumerate(fused):
@@ -227,6 +243,46 @@ class DETRetriever:
             search_type="DET",
             facts=await self._fact_sheet(ctx.words_graph),
         )
+
+    async def _frame_rerank(
+        self, ctx: Any, combined: dict[str, tuple[float, dict[str, Any]]]
+    ) -> dict[str, tuple[float, dict[str, Any]]]:
+        """Promote pool chunks whose frame instances match the query specifically.
+
+        Soft-fails to the unchanged pool: a ranking hint must never be able to
+        break retrieval.
+        """
+        from graphknows.ranking import frame_boost
+
+        if not frame_boost.enabled() or not combined:
+            return combined
+        try:
+            # Frames from the query EMBEDDING, which the vector channel already
+            # computed — a dot product against the cached definition matrix.
+            # NOT ctx.frame_parse(): that is spaCy plus a sentence-transformers
+            # encode of the query and every candidate frame definition, and it is
+            # lazy precisely so a non-frame run never pays it. Putting it on the
+            # ranking path made every query in the suite load and run those models.
+            #
+            # It also matches how a chunk is frame-tagged at ingest, so both sides
+            # speak one vocabulary; expand_frames is a dict walk over the
+            # hierarchy, because question and statement rarely evoke one frame.
+            from graphknows.frames.framenet import expand_frames
+            from graphknows.frames.index import match_frames
+
+            matched = {f for f, _ in match_frames(ctx.emb, top_k=_FRAME_RERANK_TOP_K)}
+            frames = sorted(expand_frames(matched, hops=1)) if matched else []
+            if not frames:
+                return combined
+            anchors = await self.store.resolve_query_entities(ctx.words_graph)
+            rows, df, total = await self.store.frame_rank_signals(
+                list(combined), frames, anchors, ctx.session_id or None, ctx.state
+            )
+            scores = frame_boost.score_chunks(rows, df, total)
+            return frame_boost.apply(combined, scores)
+        except Exception as exc:  # pragma: no cover - defensive soft-fail
+            log.debug("frame rerank skipped (soft): %s", exc)
+            return combined
 
     async def _expand_neighbors(self, fused: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Merge each result's seq-adjacent same-file chunks INTO its own text.
@@ -346,7 +402,15 @@ class DETRetriever:
             return []
         try:
             resolved = await self.store.resolve_query_entities(words_graph)
-            return await self.store.entity_fact_context(resolved) if resolved else []
+            if not resolved:
+                return []
+            # Measured on conv-41 (--no-ingest, identical graph): turning the
+            # sheet OFF scored 0.842 against 0.822 with the default 40. Frame
+            # facts are abstractions ("Create_physical_artwork: Creator=Melanie")
+            # and 35 lines of them pull the generator toward summary answers
+            # while the verbatim detail sits in the passages. The cap is a knob
+            # so the middle ground is testable without a code change.
+            return await self.store.entity_fact_context(resolved, max_facts=_max_facts())
         except Exception as exc:  # pragma: no cover - defensive soft-fail
             log.debug("fact context failed (soft): %s", exc)
             return []
