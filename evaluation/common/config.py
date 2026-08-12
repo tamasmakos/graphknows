@@ -20,7 +20,14 @@ class BaseEvalConfig(BaseModel):
 
     # ── MCP server ───────────────────────────────────────────────────────────
     command: str = "graphknows-mcp"
-    request_timeout_s: float = 3600.0
+    # One MCP request covers a WHOLE flush: the turn-fed harness buffers turns
+    # cheaply and does chunking, extraction and frame parsing in that single
+    # call. At ~1 minute per chunk a 150-chunk conversation needs ~2.5 hours, so
+    # the old 3600 silently timed out on the larger ones — and because
+    # `str(TimeoutError())` is empty, it surfaced as `flush failed for <sid>: `
+    # with nothing after the colon, and the harness then SCORED the half-built
+    # graph (conv-26: ev_probe 0.788 against 0.976 on a completed one).
+    request_timeout_s: float = 14400.0
 
     # ── Retrieval ────────────────────────────────────────────────────────────
     top_k: int = 5  # scored retrieval depth (for the avg_hit_score diagnostic)

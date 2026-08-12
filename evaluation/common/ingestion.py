@@ -105,7 +105,18 @@ class Ingestor:
             )
             flush = result if isinstance(result, dict) else {"result": result}
         except Exception as exc:
-            log.warning("flush failed for %s: %s", session_id, exc)
+            # `%s` of a TimeoutError is the EMPTY STRING, so this line used to
+            # read "flush failed for <sid>: " and looked like a truncated log
+            # rather than the timeout it was. Name the type — the run is scored
+            # either way, and a scored half-flushed graph is the worst outcome
+            # here (it looks like a real, bad number).
+            log.warning(
+                "flush failed for %s: %s: %s (the conversation will be scored on an "
+                "INCOMPLETE graph — treat its metrics as invalid)",
+                session_id,
+                type(exc).__name__,
+                exc or "<no message>",
+            )
             ingest.flush_error_count = 1
             return
 
