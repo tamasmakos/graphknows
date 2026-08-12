@@ -190,6 +190,12 @@ _CORE_DDL: list[tuple[str, str]] = [
     # reserved-word predicates had to be escaped (find -> REL_FIND).
     ("sql", "CREATE EDGE TYPE REL IF NOT EXISTS"),  # ENTITY -> ENTITY
     ("sql", "CREATE PROPERTY REL.predicate IF NOT EXISTS STRING"),
+    # Where the edge came from. 'frame' marks co-role adjacency projected from a
+    # FRAME_INSTANCE, which the fact-sheet excludes (its frame facts already
+    # state the same content, with the role names intact).
+    ("sql", "CREATE PROPERTY REL.source IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.head_role IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.tail_role IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX IF NOT EXISTS ON REL (predicate) NOTUNIQUE"),
     ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
     ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK

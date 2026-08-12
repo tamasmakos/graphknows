@@ -380,6 +380,13 @@ class _STMIngestHandler:
                 cleaned_texts, entity_hints, first_pass, batch_embeddings if use_batch else None
             )
 
+        # Frame parsing for ALL chunks in one batched pass, for the same reason
+        # the entity pass above batches: the parser is the ingest cost, and
+        # per-chunk calls hand it ~14 sentences at a time. Overlapping windows
+        # (5 turns, stride 3) also share most of their text, so this collapses
+        # the ~1.7x duplicate parses into one. Each chunk's parse then hits cache.
+        await self._prewarm_frame_srl(cleaned_texts, infer)
+
         for idx, seg in enumerate(parsed.segments):
             seg.metadata["chunk_index"] = idx
 
@@ -1570,6 +1577,23 @@ class _STMIngestHandler:
                 out.append((p, role, c))
         return out
 
+    async def _prewarm_frame_srl(self, texts: list[str], infer: bool = True) -> None:
+        """Parse every chunk's sentences once, up front. No-op unless SRL is on."""
+        if not (infer and self._enable_frames and texts):
+            return
+        from graphknows.frames.srl import prewarm, srl_enabled
+
+        if not srl_enabled():
+            return
+        start = time.monotonic()
+        parsed = await asyncio.to_thread(prewarm, texts)
+        log.info(
+            "frame SRL prewarm: %d sentences parsed for %d chunks in %.1fs",
+            parsed,
+            len(texts),
+            time.monotonic() - start,
+        )
+
     async def _srl_hits(self, text: str) -> list[Any]:
         """Parse the chunk's frame triggers once, off the event loop. ``[]`` when off."""
         if not (self._enable_frames and text.strip()):
@@ -1580,7 +1604,16 @@ class _STMIngestHandler:
             return []
         from graphknows.frames.srl import parse
 
-        return await asyncio.to_thread(parse, text)
+        try:
+            return await asyncio.to_thread(parse, text)
+        except Exception as exc:
+            # On by default now, so it must degrade rather than fail: a parser
+            # that cannot load (no model cache, no VRAM, a broken install) drops
+            # this chunk back to the LU/embedding identifier instead of losing
+            # the document. Warned, not swallowed — silent degradation is how a
+            # pipeline runs for weeks with a dead layer nobody noticed.
+            log.warning("frame SRL parse failed, falling back to LU frames: %s", exc)
+            return []
 
     def _frame_instances(
         self,

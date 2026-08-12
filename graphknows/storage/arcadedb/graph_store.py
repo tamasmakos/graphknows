@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 _DB = "mem"
 
+# Co-role REL edges written per frame instance. A 7-role instance is 21 ordered
+# pairs, and the tail of that list is co-role trivia rather than fact.
+_MAX_FRAME_REL_PAIRS = 6
+
 # Bulk CHUNK writes are capped per statement to keep statement/body size bounded
 # (embeddings are large; see plan §8 statement-size risk). Tunable.
 _CHUNK_BATCH = 20
@@ -984,14 +988,25 @@ class GraphStore(ArcadeStoreBase):
         edge instead of pooling them onto one fact. Writes are batched: one UNWIND for the instances+evidence edges,
         one for all PLAYS_ROLE edges (ENTITY fillers MERGE on ``name_norm``).
 
-        The reified (FRAME_INSTANCE)-[:PLAYS_ROLE {role}]->(ENTITY) form is the
-        ONLY representation. A flattened ENTITY->ENTITY projection (predicate
-        ``f"{FRAME}_{ROLE}"``) was written here too and has been removed: it was a
-        lossy re-encoding of these same PLAYS_ROLE edges (it only linked one
-        agent-like filler to the others, so it lost fills), it minted one edge
-        TYPE per frame/role pair, and ``entity_fact_context`` reads the reified
-        form directly — so the flat copy only re-stated the same facts in a second
-        format that the fact-sheet dedup could not match, consuming the cap twice.
+        The reified (FRAME_INSTANCE)-[:PLAYS_ROLE {role}]->(ENTITY) form remains
+        the primary representation. Alongside it, co-role fillers are also linked
+        ENTITY->ENTITY as ``REL {predicate: frame, source: 'frame'}`` — an
+        entity-adjacency projection, so a frame fact is walkable between the
+        things it relates and not only through its instance node.
+
+        An earlier flat projection was written here and REMOVED; this one is not
+        that one, and each of its three recorded defects is addressed:
+
+        - *lossy* — it linked one agent-like filler to the others and dropped the
+          rest. This writes every ordered pair, with ``head_role``/``tail_role``
+          on the edge, so no fill is lost and the roles survive the flattening.
+          Edge DIRECTION follows role name and means nothing — co-role fillers
+          are siblings of one fact; read these undirected.
+        - *one edge TYPE per frame/role pair* — REL is now a single type whose
+          predicate is a property, so no DDL is minted per frame.
+        - *consumed the fact-sheet cap twice* — these carry ``source='frame'``
+          and ``entity_fact_context`` excludes them from its REL read, because
+          its frame facts already state the same content in a better format.
 
         Idempotent (all MERGE). Returns the number of instances processed.
         """
@@ -1020,6 +1035,7 @@ class GraphStore(ArcadeStoreBase):
 
         inst_rows: list[dict[str, Any]] = []
         role_rows: list[dict[str, Any]] = []
+        rel_rows: list[dict[str, Any]] = []
         # Position in `instances` -> the id it was written under, so a nesting
         # pair given by index survives the drops below (no fills, no frame).
         fid_at: dict[int, str] = {}
@@ -1056,8 +1072,17 @@ class GraphStore(ArcadeStoreBase):
                     "rc": role_conf,
                 }
             )
-            for role, nn, name in sorted(persistable):
+            ordered = sorted(persistable)
+            for role, nn, name in ordered:
                 role_rows.append({"fid": fid, "nn": nn, "name": name, "role": role})
+            # Entity adjacency for this fact: every ordered pair of distinct
+            # fillers. Capped — a 7-role instance would otherwise be 21 edges,
+            # and the tail of that list is co-role trivia, not fact.
+            pairs = [
+                (a, b) for i, a in enumerate(ordered) for b in ordered[i + 1 :] if a[1] != b[1]
+            ][:_MAX_FRAME_REL_PAIRS]
+            for (hr, hnn, _), (tr, tnn, _) in pairs:
+                rel_rows.append({"h": hnn, "t": tnn, "p": frame, "hr": hr, "tr": tr})
         if not inst_rows:
             return 0
         # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
@@ -1100,6 +1125,18 @@ class GraphStore(ArcadeStoreBase):
                 "MATCH (e:ENTITY {name_norm: row.nn}) "
                 "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
                 rows=role_rows,
+            )
+        # Batch 2b: co-role entity adjacency (see the docstring). MATCH, never
+        # MERGE, on the endpoints — same rule as the role edges: a filler the
+        # extractor never minted does not get invented here.
+        if rel_rows:
+            await self.command(
+                "UNWIND $rows AS row "
+                "MATCH (a:ENTITY {name_norm: row.h}) "
+                "MATCH (b:ENTITY {name_norm: row.t}) "
+                "MERGE (a)-[r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr}]->(b) "
+                "SET r.source = 'frame', r.is_current = true",
+                rows=rel_rows,
             )
         # Batch 3: frame-to-frame nesting, the structure a flat role list cannot
         # hold ("...because my laptop died" as Explanation -> Causation -> Death).
@@ -1704,6 +1741,85 @@ class GraphStore(ArcadeStoreBase):
         ranked = sorted(score.items(), key=lambda kv: (-kv[1], kv[0]))[: int(top_k)]
         return [{"chunk_id": cid, "score": s} for cid, s in ranked]
 
+    async def frame_rank_signals(
+        self,
+        chunk_ids: list[str],
+        frames: list[str],
+        entity_names: list[str],
+        session_id: str | None = None,
+        state: str | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, int], int]:
+        """Inputs for frame re-ranking: pool matches, frame document-frequency, corpus size.
+
+        Returns ``(rows, df, total_chunks)`` where each row is
+        ``{chunk_id, frame, anchor_hits}`` — ``anchor_hits`` counting how many of
+        the query's own entities fill a role in that instance, which is the
+        conjunction ("Jon fills a role in a Giving here") that separates the gold
+        chunk from every chunk merely naming Jon.
+
+        Scoped to the pool: re-ranking never needs a chunk the fusion did not
+        already find, so this stays a bounded lookup rather than a layer scan.
+        Soft-fails to empty — a re-rank signal must never take retrieval down.
+        """
+        if not chunk_ids or not frames:
+            return [], {}, 0
+        pool_lit = quoted_list(sorted({c for c in chunk_ids if c}))
+        frame_lit = quoted_list(sorted(set(frames)))
+        conds: list[str] = []
+        if session_id:
+            conds.append(f"c.session_id = {quote(session_id)}")
+        if state:
+            conds.append(f"c.state = {quote(state)}")
+        scope = "".join(f" AND {c}" for c in conds)
+        chunk_where = " AND ".join(conds) if conds else "1 = 1"
+        try:
+            matches = await self.query(
+                f"MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c:CHUNK) "
+                f"WHERE c.chunk_id IN {pool_lit} AND fi.frame IN {frame_lit} "
+                f"RETURN c.chunk_id AS chunk_id, fi.frame AS frame, fi.id AS fid"
+            )
+            # Nothing in the pool carries these frames — most importantly, a
+            # namespace ingested without the frame layer at all. Stop before the
+            # three follow-up reads rather than paying them to score nothing.
+            if not matches:
+                return [], {}, 0
+            # Document frequency over the SESSION, not the pool: a frame's
+            # specificity is a property of the corpus, and measuring it on the
+            # pool would call every frame the query matched rare by construction.
+            df_rows = await self.query(
+                f"MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c:CHUNK) "
+                f"WHERE fi.frame IN {frame_lit}{scope} "
+                f"RETURN fi.frame AS frame, count(DISTINCT c.chunk_id) AS df"
+            )
+            bound: set[str] = set()
+            norms = sorted({_name_norm(n) for n in entity_names if n and n.strip()})
+            if norms:
+                rows = await self.query(
+                    f"MATCH (fi:FRAME_INSTANCE)-[:PLAYS_ROLE]->(e:ENTITY) "
+                    f"WHERE e.name_norm IN {quoted_list(norms)} "
+                    f"RETURN DISTINCT fi.id AS fid"
+                )
+                bound = {str(r["fid"]) for r in rows if r.get("fid")}
+            total_rows = await self.query(
+                f"MATCH (c:CHUNK) WHERE {chunk_where} RETURN count(c) AS n"
+            )
+        except Exception as exc:
+            logger.debug("frame rank signals failed (soft): %s", exc)
+            return [], {}, 0
+
+        out = [
+            {
+                "chunk_id": r.get("chunk_id"),
+                "frame": r.get("frame"),
+                "anchor_hits": 1 if str(r.get("fid")) in bound else 0,
+            }
+            for r in matches
+            if r.get("chunk_id") and r.get("frame")
+        ]
+        df = {str(r["frame"]): int(r.get("df") or 0) for r in df_rows if r.get("frame")}
+        total = int(total_rows[0]["n"]) if total_rows else 0
+        return out, df, total
+
     async def entity_fact_context(self, entity_names: list[str], max_facts: int = 40) -> list[str]:
         """Compact structured fact-sheet for the given entities (for the generator).
 
@@ -1745,6 +1861,11 @@ class GraphStore(ArcadeStoreBase):
                 f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
                 f"WHERE (a.name_norm IN {name_lit} OR b.name_norm IN {name_lit}) "
                 f"AND (r.is_current = true OR r.is_current IS NULL) "
+                # Frame-derived adjacency is excluded: the frame facts below
+                # already state it, in a form that keeps the role names. Letting
+                # both in spent the cap twice on one fact — the defect that got
+                # the previous flat projection removed.
+                f"AND (r.source IS NULL OR r.source <> 'frame') "
                 f"RETURN a.name AS s, r.predicate AS p, "
                 f"b.name AS o, r.evidence AS ev, r.ontology_property AS op"
             )

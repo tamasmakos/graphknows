@@ -46,13 +46,26 @@ def test_same_frame_twice_on_one_line_gets_distinct_inputs() -> None:
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("", False), ("true", True), ("fst", True), ("false", False), ("1", True)],
+    [("true", True), ("fst", True), ("false", False), ("1", True), ("0", False)],
 )
-def test_srl_enabled_reads_the_env_at_call_time(
+def test_the_env_var_overrides_either_way(
     monkeypatch: pytest.MonkeyPatch, value: str, expected: bool
 ) -> None:
     monkeypatch.setenv("GRAPHKNOWS_FRAME_SRL", value)
     assert srl_enabled() is expected
+
+
+def test_unset_follows_whether_the_extra_is_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default ON where the parser exists (measured: conv-30 0.778 -> 0.889), and
+    # a base install without the extra keeps the LU identifier rather than
+    # raising on every ingest.
+    monkeypatch.delenv("GRAPHKNOWS_FRAME_SRL", raising=False)
+    from graphknows.frames import srl
+
+    monkeypatch.setattr(srl, "installed", lambda: True)
+    assert srl.srl_enabled() is True
+    monkeypatch.setattr(srl, "installed", lambda: False)
+    assert srl.srl_enabled() is False
 
 
 class _Gliner:

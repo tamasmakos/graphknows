@@ -18,14 +18,19 @@ Optional: needs the ``srl`` extra. Nothing imports this module unless
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from graphknows.exceptions import MissingExtraError
 
 _model: Any = None
+# Sentence text -> its parse, with SENTENCE-LOCAL offsets (see _parse_sentences).
+_sentence_cache: dict[str, tuple[tuple[str, int, tuple], ...]] = {}
+_CACHE_MAX = 20_000
 
 # One sentence per parse: the parser is sentence-level, and a chat turn without
 # final punctuation must still split from the next speaker's line.
@@ -33,15 +38,28 @@ _SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 _WORD = re.compile(r"\w+")
 
 
+@lru_cache(maxsize=1)
+def installed() -> bool:
+    """Whether the ``srl`` extra is importable, without importing it."""
+    return importlib.util.find_spec("frame_semantic_transformer") is not None
+
+
 def srl_enabled() -> bool:
     """Whether transformer frame identification replaces the LU/embedding guess.
 
-    Read at call time (not import time) so an eval A/B can flip
-    ``GRAPHKNOWS_FRAME_SRL`` per subprocess, as the other ingest knobs do.
-    Default OFF: the parser is a seq2seq model run once per sentence and again
-    per detected trigger, which is a large ingest cost to take by default.
+    Defaults to ON **when the extra is installed** — measured on conv-30 (81q,
+    turn-fed): accuracy 0.778 -> 0.889, evidence_recall_in_context 0.765 ->
+    0.926, retrieval-bound failures 13 -> 3. A base install has no parser, so it
+    keeps the LU/embedding identifier and nothing breaks.
+
+    ``GRAPHKNOWS_FRAME_SRL`` overrides either way and is read at call time, so an
+    eval can still flip it per subprocess. It buys accuracy with ingest time: a
+    seq2seq call per sentence and again per detected trigger.
     """
-    return os.environ.get("GRAPHKNOWS_FRAME_SRL", "").strip().lower() in ("1", "true", "yes", "fst")
+    override = os.environ.get("GRAPHKNOWS_FRAME_SRL", "").strip().lower()
+    if override:
+        return override in ("1", "true", "yes", "fst")
+    return installed()
 
 
 @dataclass(frozen=True)
@@ -74,6 +92,10 @@ def _load() -> Any:
             os.environ.get("GRAPHKNOWS_FRAME_SRL_MODEL", "base"),
             predictions_per_sample=int(os.environ.get("GRAPHKNOWS_FRAME_SRL_BEAMS", "5")),
             use_gpu=_use_gpu(),
+            # The library batches 8 sentences per generate call, which leaves a
+            # GPU mostly idle. Ingest hands us a whole chunk at once, so a bigger
+            # batch is free throughput; lower it if VRAM is tight (6 GB fits 32).
+            batch_size=int(os.environ.get("GRAPHKNOWS_FRAME_SRL_BATCH", "32")),
         )
     return _model
 
@@ -154,23 +176,65 @@ def nested_pairs(hits: list[FrameHit]) -> list[tuple[int, str, int]]:
     return out
 
 
+def _parse_sentences(sents: list[str]) -> dict[str, tuple[tuple[str, int, tuple], ...]]:
+    """Parse the sentences that are not cached; return every one's SENTENCE-LOCAL hits.
+
+    Cached because a stored CHUNK is a 5-turn sliding window at stride 3, so
+    each turn belongs to ~1.7 chunks and would otherwise be parsed that many
+    times — ~40% of the parser's work on a conversation is re-parsing text it
+    has already seen. Offsets are kept sentence-local so a cached parse can be
+    rebased onto whichever chunk asks for it next.
+    """
+    todo = [s for s in dict.fromkeys(sents) if s not in _sentence_cache]
+    if todo:
+        for sent, result in zip(todo, _load().detect_frames_bulk(todo), strict=True):
+            local: list[tuple[str, int, tuple]] = []
+            for fr in result.frames:
+                fes = tuple(
+                    (fe.name, i, i + len(fe.text))
+                    for fe in fr.frame_elements
+                    # First occurrence: FE spans rarely repeat verbatim in one sentence.
+                    if (i := sent.find(fe.text)) >= 0
+                )
+                local.append((fr.name, fr.trigger_location, fes))
+            if len(_sentence_cache) >= _CACHE_MAX:
+                _sentence_cache.clear()  # ponytail: whole-cache drop, LRU if it ever churns
+            _sentence_cache[sent] = tuple(local)
+    return _sentence_cache
+
+
+def prewarm(texts: list[str]) -> int:
+    """Parse every sentence of *texts* in one batched pass; return how many were new.
+
+    Ingest knows all of a session's chunks before it writes any of them, so the
+    parser can see hundreds of sentences at once instead of ~14 per chunk — the
+    same batching the entity pass already does. After this, each chunk's
+    :func:`parse` is a cache hit.
+    """
+    sents = [s for t in texts for _, s in sentences(t)]
+    before = len(_sentence_cache)
+    if sents:
+        _parse_sentences(sents)
+    return len(_sentence_cache) - before
+
+
 def parse(text: str) -> list[FrameHit]:
     """Every frame-evoking trigger in *text*, with chunk-global offsets."""
     hits: list[FrameHit] = []
     pairs = sentences(text)
     if not pairs:
         return hits
-    sents = [s for _, s in pairs]
-    parsed = _load().detect_frames_bulk(sents)
-    for (offset, sent), result in zip(pairs, parsed, strict=True):
-        for fr in result.frames:
-            fes = []
-            for fe in fr.frame_elements:
-                # First occurrence: FE spans rarely repeat verbatim in one sentence.
-                i = sent.find(fe.text)
-                if i >= 0:
-                    fes.append((fe.name, offset + i, offset + i + len(fe.text)))
-            at = offset + fr.trigger_location
+    cache = _parse_sentences([s for _, s in pairs])
+    for offset, sent in pairs:
+        for frame, trigger_at, fes in cache.get(sent, ()):
+            at = offset + trigger_at
             word = m.group(0) if (m := _WORD.match(text[at:])) else ""
-            hits.append(FrameHit(frame=fr.name, trigger=word, offset=at, fes=tuple(fes)))
+            hits.append(
+                FrameHit(
+                    frame=frame,
+                    trigger=word,
+                    offset=at,
+                    fes=tuple((role, offset + s, offset + e) for role, s, e in fes),
+                )
+            )
     return hits

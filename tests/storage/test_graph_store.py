@@ -413,12 +413,20 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     assert {r["role"] for r in role_rows} == {"Employee", "Position", "Employer"}
     assert all(r["fid"] == inst_rows[0]["fid"] for r in role_rows)
 
-    # The reified PLAYS_ROLE form is the ONLY representation: no flattened
-    # ENTITY->ENTITY projection is written. The old behaviour emitted
-    # f"{FRAME}_{ROLE}" convenience edges (BEING_EMPLOYED_POSITION, ...), which
-    # minted one edge TYPE per frame/role pair and re-stated the PLAYS_ROLE facts
-    # in a second format that the fact-sheet dedup could not match.
-    assert not [s for s in stmts if "MERGE (a)-[r:" in s]
+    # Co-role adjacency IS written alongside the reified form, so a frame fact is
+    # walkable between the entities it relates. This replaces an earlier flat
+    # projection that emitted f"{FRAME}_{ROLE}" edges — one edge TYPE per
+    # frame/role pair, one agent-like filler linked to the rest, and the same
+    # facts re-stated in a format the fact-sheet dedup could not match. All three
+    # are fixed here and pinned by tests/frames/test_frame_relations.py:
+    rel_call = next(c for c in client.command.await_args_list if "r:REL" in c.args[1])
+    rel_rows = rel_call.kwargs["params"]["rows"]
+    # every pair, not just the agent's
+    assert len(rel_rows) == 3
+    # one type, frame as a property, roles preserved, marked for the fact-sheet
+    assert "r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr}" in rel_call.args[1]
+    assert "source = 'frame'" in rel_call.args[1]
+    assert not [s for s in stmts if "BEING_EMPLOYED" in s.upper()]
 
 
 @pytest.mark.asyncio
