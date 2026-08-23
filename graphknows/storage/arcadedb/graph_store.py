@@ -543,6 +543,12 @@ class GraphStore(ArcadeStoreBase):
         predicate = predicate.strip()
         if not predicate or not src_name or not dst_name:
             return
+        # Stability ladder, tiers 3-4: an ontology property IRI when relex
+        # selected one, else the bare lemma marked as unanchored. Tiers 1-2
+        # (frame, verb synset) are minted by write_frame_instances, and the
+        # coalesce below means they win when both paths reach the same edge.
+        canon = ontology_property or f"lemma:{predicate.casefold()}"
+        anchor = "ontology" if ontology_property else "none"
         src_norm = _name_norm(src_name)
         dst_norm = _name_norm(dst_name)
         now = datetime.now(UTC).isoformat()
@@ -589,6 +595,16 @@ class GraphStore(ArcadeStoreBase):
             f"    r.invalid_at = null, "
             f"    r.is_current = true, "
             f"    r.state = coalesce(r.state, 'raw'), "
+            # The STABLE identifier, which is what dedup and contradiction
+            # detection key on — as against `predicate`, which stays the most
+            # SPECIFIC label for display. No frame instance covers this edge
+            # (those are written by write_frame_instances with an `fn:` id), so
+            # the ladder falls to the ontology property, then to the lemma.
+            # `coalesce` so a frame projection that already claimed this edge
+            # keeps its `fn:` identifier: tier 1 outranks tier 3.
+            f"    r.canonical_predicate = coalesce(r.canonical_predicate, $canon), "
+            f"    r.anchor = coalesce(r.anchor, $anchor), "
+            f"    r.reified = coalesce(r.reified, false), "
             f"    r.source = coalesce(r.source, $source), "
             f"    r.ontology_blocked = coalesce(r.ontology_blocked, false) OR $ont_blocked, "
             f"    r.ontology_property = CASE "
@@ -610,6 +626,8 @@ class GraphStore(ArcadeStoreBase):
             ont_prop=ontology_property or None,
             ont_blocked=bool(ontology_blocked),
             vscore=None if verifier_score is None else float(verifier_score),
+            canon=canon,
+            anchor=anchor,
             now=now,
         )
 
@@ -1119,6 +1137,25 @@ class GraphStore(ArcadeStoreBase):
                         "hed": bool(inst.get("hedged") or False),
                     }
                 )
+        # B19 / R13: PLAYS_ROLE MATCHes ENTITY by name_norm and never MERGEs —
+        # correct policy (a filler the extractor never minted must not be
+        # invented here), but it means a filler with no ENTITY produces no edge
+        # and nothing recorded it. That is the "4% of objects reach a chunk"
+        # family of silent hole. Do not change the MATCH; make the miss visible.
+        unbound = sum(
+            1
+            for inst in instances
+            for fs in (inst.get("roles") or {}).values()
+            for f in (fs or [])
+            if str(f).strip() and _name_norm(str(f)) not in known
+        )
+        if unbound:
+            logger.info(
+                "frame role fillers unbound: %d (no ENTITY was minted for them, so they "
+                "get no PLAYS_ROLE edge) in chunk %s",
+                unbound,
+                chunk_id,
+            )
         if not inst_rows:
             return 0
         # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
