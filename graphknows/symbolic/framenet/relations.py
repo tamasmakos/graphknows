@@ -9,9 +9,10 @@ Why the other two candidates are not taxonomy:
 
 ``Using``
     The child *presupposes* the parent as background structure and binds only
-    some of its frame elements. ``Speed_description`` Uses ``Motion``; a speed
-    description is not a kind of motion. Closing over it generalises a frame to
-    background it merely refers to.
+    some of its frame elements. ``Shopping`` Uses ``Commerce_buy`` — and you can
+    shop without buying anything, so shopping is not a kind of buying. Closing
+    over it generalises a frame to background it merely refers to. 556 of the
+    corpus's relations are Using, the single largest non-taxonomic type.
 
 ``Perspective_on``
     A neutral frame viewed from one side. ``Commerce_buy`` and ``Commerce_sell``

@@ -1052,10 +1052,21 @@ class GraphStore(ArcadeStoreBase):
                 for f in (fs or [])
                 if str(f).strip() and _name_norm(str(f)) in known
             }
-            sig = sorted(f"{r}={nn}" for r, nn, _ in persistable)
+            # How the fact is asserted is PART OF the fact's identity. Without
+            # polarity/modality/epistemic in the signature, "Melanie moved to
+            # Berlin" and "Melanie did NOT move to Berlin" hash to the same id
+            # and the second silently overwrites the first.
+            assertion = (
+                f"{inst.get('polarity') or 'pos'}/"
+                f"{inst.get('modality') or 'none'}/"
+                f"{inst.get('epistemic') or 'asserted'}"
+            )
+            sig = [*sorted(f"{r}={nn}" for r, nn, _ in persistable), f"@{assertion}"]
             # Nothing that can be written is nothing to identify the fact BY, so
             # the instance is dropped rather than written as a bare frame label.
-            if not sig:
+            # Tested on `persistable`, not `sig`: sig now always carries the
+            # assertion suffix and is therefore never empty.
+            if not persistable:
                 continue
             # Content hash for a stable frame-instance id — not a security digest.
             digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
@@ -1070,6 +1081,14 @@ class GraphStore(ArcadeStoreBase):
                     "sid": session_id,
                     "ms": float(inst.get("match_sim") or 0.0),
                     "rc": role_conf,
+                    "pol": str(inst.get("polarity") or "pos"),
+                    "mod": str(inst.get("modality") or "none"),
+                    "epi": str(inst.get("epistemic") or "asserted"),
+                    "hed": bool(inst.get("hedged") or False),
+                    "voi": str(inst.get("voice") or "active"),
+                    "ten": str(inst.get("tense") or ""),
+                    "att": str(inst.get("attributed_to") or ""),
+                    "mru": str(inst.get("modality_rules") or ""),
                 }
             )
             ordered = sorted(persistable)
@@ -1082,7 +1101,24 @@ class GraphStore(ArcadeStoreBase):
                 (a, b) for i, a in enumerate(ordered) for b in ordered[i + 1 :] if a[1] != b[1]
             ][:_MAX_FRAME_REL_PAIRS]
             for (hr, hnn, _), (tr, tnn, _) in pairs:
-                rel_rows.append({"h": hnn, "t": tnn, "p": frame, "hr": hr, "tr": tr})
+                rel_rows.append(
+                    {
+                        "h": hnn,
+                        "t": tnn,
+                        "p": frame,
+                        "hr": hr,
+                        "tr": tr,
+                        # Tier 1 of the stability ladder: a frame + its two role
+                        # names is the same identifier however the surface
+                        # varies, which is what makes it safe to dedup on.
+                        "cp": f"fn:{frame}:{hr}->{tr}",
+                        "fid": fid,
+                        "pol": str(inst.get("polarity") or "pos"),
+                        "mod": str(inst.get("modality") or "none"),
+                        "epi": str(inst.get("epistemic") or "asserted"),
+                        "hed": bool(inst.get("hedged") or False),
+                    }
+                )
         if not inst_rows:
             return 0
         # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
@@ -1095,7 +1131,10 @@ class GraphStore(ArcadeStoreBase):
             "    fi.match_sim = CASE WHEN row.ms > coalesce(fi.match_sim, 0) "
             "                        THEN row.ms ELSE fi.match_sim END, "
             "    fi.role_confidence = CASE WHEN row.rc > coalesce(fi.role_confidence, 0) "
-            "                              THEN row.rc ELSE fi.role_confidence END "
+            "                              THEN row.rc ELSE fi.role_confidence END, "
+            "    fi.polarity = row.pol, fi.modality = row.mod, fi.epistemic = row.epi, "
+            "    fi.hedged = row.hed, fi.voice = row.voi, fi.tense = row.ten, "
+            "    fi.attributed_to = row.att, fi.modality_rules = row.mru "
             "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)",
             rows=inst_rows,
         )
@@ -1134,8 +1173,16 @@ class GraphStore(ArcadeStoreBase):
                 "UNWIND $rows AS row "
                 "MATCH (a:ENTITY {name_norm: row.h}) "
                 "MATCH (b:ENTITY {name_norm: row.t}) "
-                "MERGE (a)-[r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr}]->(b) "
-                "SET r.source = 'frame', r.is_current = true",
+                # polarity/modality are part of the MERGE key for the same reason
+                # they are part of the instance's content hash: without them a
+                # fact and its denial are one edge, and the later write silently
+                # wins. This is the §6.6 dedup key minus the temporal bucket.
+                "MERGE (a)-[r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr, "
+                "                  polarity: row.pol, modality: row.mod}]->(b) "
+                "SET r.source = 'frame', r.is_current = true, "
+                "    r.canonical_predicate = row.cp, r.frame = row.p, "
+                "    r.frame_instance_id = row.fid, r.reified = true, r.anchor = 'frame', "
+                "    r.epistemic = row.epi, r.hedged = row.hed",
                 rows=rel_rows,
             )
         # Batch 3: frame-to-frame nesting, the structure a flat role list cannot

@@ -1645,6 +1645,7 @@ class _STMIngestHandler:
             extract_frame_instances_srl,
             lu_candidate_frames,
         )
+        from graphknows.linguistics import analyse
 
         line_speakers = _line_speakers(text)
         speakers = sorted({s for _, s in line_speakers if s})
@@ -1654,6 +1655,10 @@ class _STMIngestHandler:
 
         nlp = extractor.nlp
         gliner = extractor.gliner
+        # Parsed ONCE for the whole chunk and shared by every instance's modality
+        # pass. lu_candidate_frames re-parses internally on the non-SRL path; that
+        # is its own cost, not one this adds.
+        doc = nlp(text)
         if srl_hits:
             # Parsed triggers instead of one embedding-ranked guess per chunk, so
             # a chunk can yield one instance per fact rather than at most one.
@@ -1684,12 +1689,18 @@ class _STMIngestHandler:
             # fact, it is a frame label with a stray span attached.
             if len(roles) < 2:
                 continue
+            # How this instance is asserted — negated, hypothesised, hedged, or
+            # put in someone else's mouth. Reuses the `doc` parsed once above:
+            # no model load, no second parse. A trigger_offset of -1 (the
+            # non-SRL path, which guesses one frame per chunk with no span)
+            # returns the defaults rather than analysing an arbitrary token.
             out.append(
                 {
                     "frame": inst.frame,
                     "match_sim": inst.match_sim,
                     "role_confidence": inst.role_confidence,
                     "roles": roles,
+                    **analyse(doc, inst.trigger_offset).as_props(),
                 }
             )
             kept_offsets.append(inst.trigger_offset)

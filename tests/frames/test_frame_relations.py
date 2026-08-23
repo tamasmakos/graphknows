@@ -1,127 +1,62 @@
-"""Co-role REL adjacency projected from frame instances.
+"""Only ``Inheritance`` may become a taxonomy edge (plan §11.7).
 
-A flat projection of frame roles was written here once and removed as lossy,
-type-minting, and cap-consuming. These pin the three fixes.
+The defect this pins: ``_broader_up`` used to persist ``Inheritance``, ``Using``
+and ``Perspective_on`` alike, so 683 of the hierarchy's 1464 edges — 47% — were
+not subsumption, and the narrower-expansion walk handed siblings and background
+frames back as specialisations.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
-from graphknows.storage.arcadedb.graph_store import GraphStore
+from graphknows.symbolic.framenet import relations
+
+pytestmark = pytest.mark.unit
 
 
-def _store(known: list[str]) -> tuple[GraphStore, MagicMock]:
-    client = MagicMock()
-    client.command = AsyncMock(return_value=[])
-    client.query = AsyncMock(return_value=[{"nn": n} for n in known])
-    return GraphStore(client=client), client
+def test_inheritance_is_the_only_taxonomic_relation() -> None:
+    assert {"Inheritance"} == relations.TAXONOMIC
+    assert not (relations.TAXONOMIC & relations.NON_TAXONOMIC)
 
 
-def _rel_call(client: MagicMock):
-    calls = [c for c in client.command.await_args_list if "r:REL" in c.args[1]]
-    return calls[0] if calls else None
+def test_using_is_not_taxonomy() -> None:
+    """Shopping Uses Commerce_buy. Shopping is not a kind of buying — you can shop
+    without buying anything, which is exactly why presupposition is not is-a."""
+    assert "Commerce_buy" not in relations.broader_pairs().get("Shopping", set())
+    assert ("Shopping", "Using", "Commerce_buy") in relations.sym_rel_triples()
 
 
-@pytest.mark.asyncio
-async def test_every_ordered_pair_is_linked_not_just_the_agent() -> None:
-    store, client = _store(["melanie", "counselor", "hospital"])
-    await store.write_frame_instances(
-        "s1",
-        "c1",
-        [
-            {
-                "frame": "Being_employed",
-                "roles": {
-                    "Employee": ["Melanie"],
-                    "Position": ["counselor"],
-                    "Employer": ["hospital"],
-                },
-            }
-        ],
-    )
-    rows = _rel_call(client).kwargs["params"]["rows"]
-    # 3 fillers -> 3 pairs, none dropped. Pair ORDER follows role name
-    # (Employee < Employer < Position) and carries no meaning: co-role fillers
-    # are siblings of one fact, not a subject and an object.
-    assert len(rows) == 3
-    assert {frozenset((r["h"], r["t"])) for r in rows} == {
-        frozenset(("melanie", "counselor")),
-        frozenset(("melanie", "hospital")),
-        frozenset(("counselor", "hospital")),
-    }
+def test_perspective_on_is_not_taxonomy() -> None:
+    """Commerce_buy perspectivises Commerce_goods-transfer — a sibling view, not a parent."""
+    assert "Commerce_goods-transfer" not in relations.broader_pairs().get("Commerce_buy", set())
+    assert (
+        "Commerce_buy",
+        "Perspective_on",
+        "Commerce_goods-transfer",
+    ) in relations.sym_rel_triples()
 
 
-@pytest.mark.asyncio
-async def test_the_roles_survive_the_flattening() -> None:
-    store, client = _store(["melanie", "counselor"])
-    await store.write_frame_instances(
-        "s1",
-        "c1",
-        [
-            {
-                "frame": "Being_employed",
-                "roles": {"Employee": ["Melanie"], "Position": ["counselor"]},
-            }
-        ],
-    )
-    row = _rel_call(client).kwargs["params"]["rows"][0]
-    assert {row["hr"], row["tr"]} == {"Employee", "Position"}
-    assert row["p"] == "Being_employed"
+def test_the_hierarchy_survives_the_narrowing() -> None:
+    """Removing the wrong parents must not empty the taxonomy."""
+    up = relations.broader_pairs()
+    assert len(up) > 500, "Inheritance alone should still cover most frames"
+    # Both fixture frames keep a genuine Inheritance parent.
+    assert relations.broader_pairs()["Speed_description"] == {"Measurable_attributes"}
+    assert "Getting" in relations.broader_pairs()["Commerce_buy"]
 
 
-@pytest.mark.asyncio
-async def test_one_edge_type_with_the_frame_as_a_property() -> None:
-    store, client = _store(["melanie", "counselor"])
-    await store.write_frame_instances(
-        "s1",
-        "c1",
-        [
-            {
-                "frame": "Being_employed",
-                "roles": {"Employee": ["Melanie"], "Position": ["counselor"]},
-            }
-        ],
-    )
-    cypher = _rel_call(client).args[1]
-    # No `Being_employed` edge type minted; predicate is a parameter.
-    assert "r:REL {predicate: row.p" in cypher
-    assert "Being_employed" not in cypher
-    assert "source = 'frame'" in cypher
+def test_every_shipped_relation_type_is_classified() -> None:
+    """A new FrameNet relation type must surface, not be swept into a default.
+
+    This guard found ``Metaphor`` on its first run — a tenth relation type absent
+    from the canonical nine-relation lists.
+    """
+    assert relations.unknown_relation_types() == set()
 
 
-@pytest.mark.asyncio
-async def test_endpoints_are_matched_never_minted() -> None:
-    # 'ghost' was never extracted, so no edge may reach it.
-    store, client = _store(["melanie"])
-    await store.write_frame_instances(
-        "s1",
-        "c1",
-        [{"frame": "Giving", "roles": {"Donor": ["Melanie"], "Theme": ["ghost"]}}],
-    )
-    assert _rel_call(client) is None  # only one persistable filler -> no pair
+def test_expansion_may_still_follow_the_non_taxonomic_relations() -> None:
+    """Widening a query is a different question from storing a claim."""
+    from graphknows.symbolic.framenet.framenet import _ontology_up
 
-
-@pytest.mark.asyncio
-async def test_pairs_are_capped_per_instance() -> None:
-    fillers = [f"e{i}" for i in range(7)]
-    store, client = _store(fillers)
-    await store.write_frame_instances(
-        "s1",
-        "c1",
-        [{"frame": "Wide", "roles": {f"R{i}": [f"e{i}"] for i in range(7)}}],
-    )
-    assert len(_rel_call(client).kwargs["params"]["rows"]) == 6
-
-
-@pytest.mark.asyncio
-async def test_fact_sheet_excludes_frame_derived_adjacency() -> None:
-    client = MagicMock()
-    client.command = AsyncMock(return_value=[])
-    client.query = AsyncMock(side_effect=[[], [], []])
-    store = GraphStore(client=client)
-    await store.entity_fact_context(["Melanie"])
-    rel_query = client.query.await_args_list[0].args[1]
-    assert "r.source <> 'frame'" in rel_query
+    assert "Commerce_buy" in _ontology_up().get("Shopping", set())

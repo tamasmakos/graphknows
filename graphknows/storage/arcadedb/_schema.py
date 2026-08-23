@@ -138,7 +138,21 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY FRAME_INSTANCE.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME_INSTANCE.match_sim IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY FRAME_INSTANCE.role_confidence IF NOT EXISTS DOUBLE"),
+    # How the instance is ASSERTED, from graphknows/linguistics.py. Without these
+    # "she said she might move" is stored as "she moved". Every default is the
+    # status quo, so a missed cue degrades to the old behaviour, never to a new
+    # wrong claim; `modality_rules` records which rules fired, because a
+    # heuristic that becomes a graph property has to be auditable.
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.polarity IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.modality IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.epistemic IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.hedged IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.voice IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.tense IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.attributed_to IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.modality_rules IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON FRAME_INSTANCE(id) UNIQUE"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON FRAME_INSTANCE(epistemic) NOTUNIQUE"),
     ("sql", "CREATE INDEX ON FRAME_INSTANCE(frame) NOTUNIQUE"),
     # Ontology layer — the loaded ontology's classes, persisted per namespace so
     # they are joinable to the data they describe (an ENTITY links to its class
@@ -221,4 +235,30 @@ _CORE_DDL: list[tuple[str, str]] = [
     # say (both arrive as NULL) and coalesce lets a single permissive write win.
     ("sql", "CREATE PROPERTY REL.ontology_blocked IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE PROPERTY REL.verifier_score IF NOT EXISTS DOUBLE"),
+    # Written by write_relation since it was added and never declared, so every
+    # one was untyped and unindexed. Bi-temporality was half-built: the values
+    # were there, nothing could query them.
+    ("sql", "CREATE PROPERTY REL.fact IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.confidence IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY REL.valid_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.invalid_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.is_current IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE PROPERTY REL.state IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.created_at IF NOT EXISTS STRING"),
+    # `canonical_predicate` is the STABLE identifier and the dedup key; `predicate`
+    # stays the most SPECIFIC label, for display and for querying in the user's
+    # own vocabulary. One field cannot do both: dedup wants stability, display
+    # wants specificity, and with a single field a relex label that varies per
+    # chunk (hasSpouse here, isMarriedTo there) splits one fact into two rows.
+    ("sql", "CREATE PROPERTY REL.canonical_predicate IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.frame IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.frame_instance_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.reified IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE PROPERTY REL.anchor IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.polarity IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.modality IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.epistemic IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.hedged IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON REL(canonical_predicate) NOTUNIQUE"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON REL(is_current) NOTUNIQUE"),
 ]

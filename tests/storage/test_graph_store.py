@@ -424,7 +424,12 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     # every pair, not just the agent's
     assert len(rel_rows) == 3
     # one type, frame as a property, roles preserved, marked for the fact-sheet
-    assert "r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr}" in rel_call.args[1]
+    # polarity/modality belong to the MERGE key: without them "X moved" and
+    # "X did not move" are one edge and the later write silently wins.
+    assert "r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr, " in rel_call.args[1]
+    assert "polarity: row.pol, modality: row.mod}" in rel_call.args[1]
+    assert "r.canonical_predicate = row.cp" in rel_call.args[1]
+    assert all(r["cp"] == f"fn:Being_employed:{r['hr']}->{r['tr']}" for r in rel_rows)
     assert "source = 'frame'" in rel_call.args[1]
     assert not [s for s in stmts if "BEING_EMPLOYED" in s.upper()]
 
@@ -1649,3 +1654,30 @@ async def test_write_frame_instances_never_creates_entity_nodes() -> None:
     # never saw simply matches nothing and the edge is not written.
     edge = next(s for s in stmts if "PLAYS_ROLE {role: row.role}" in s)
     assert "MATCH (e:ENTITY {name_norm: row.nn})" in edge
+
+
+@pytest.mark.asyncio
+async def test_a_fact_and_its_denial_are_two_instances_not_one():
+    """The content hash covers role fills AND how they are asserted.
+
+    Before polarity entered the signature, "Melanie moved to Berlin" and
+    "Melanie did not move to Berlin" hashed to the same FRAME_INSTANCE id, so
+    the second write silently overwrote the first and the graph asserted
+    whichever arrived last.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "berlin"}])
+    store = GraphStore(client=client)
+
+    roles = {"Theme": ["Melanie"], "Goal": ["Berlin"]}
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id="c1",
+        instances=[
+            {"frame": "Motion", "roles": roles, "polarity": "pos"},
+            {"frame": "Motion", "roles": roles, "polarity": "neg"},
+        ],
+    )
+    inst_rows = client.command.await_args_list[0].kwargs["params"]["rows"]
+    assert len({r["fid"] for r in inst_rows}) == 2, "denial collapsed onto the assertion"
+    assert {r["pol"] for r in inst_rows} == {"pos", "neg"}
