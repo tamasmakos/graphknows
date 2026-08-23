@@ -92,35 +92,32 @@ def _lus() -> dict[tuple[str, str], set[str]]:
     return _lu_index
 
 
-@lru_cache(maxsize=1)
 def _broader_up() -> dict[str, set[str]]:
-    """Frame -> strictly more general frames, for persisting as SKOS BROADER.
+    """Frame -> strictly more general frames, persisted as SKOS ``BROADER``.
 
-    Distinct from :func:`_ontology_up`, which is a query-side EXPANSION map and
-    deliberately makes ``Perspective_on`` symmetric — useful for widening a
-    search, wrong for a taxonomy. Persisting a symmetric pair as ``broader``
-    would make the narrower-expansion walk hand back siblings as if they were
-    specialisations.
+    ``Inheritance`` only. See :mod:`graphknows.symbolic.framenet.relations` for
+    why ``Using`` and ``Perspective_on`` are excluded — briefly: presupposing a
+    frame is not being a kind of it, and a perspective is a sibling view, not a
+    parent. Including them made 683 of the hierarchy's 1464 edges (47%)
+    non-subsumption, and the narrower-expansion walk handed those back as if
+    they were specialisations.
 
-    FrameNet names the general frame ``superFrameName`` in all three of these
-    relations, so the hierarchy is exactly the sub -> super direction:
-    Inheritance (is-a), Using (presupposes), and Perspective_on (a
-    perspectivised frame generalises to its neutral one).
-
-    ``Subframe`` and ``Precedes`` are excluded on purpose: they are part-of and
-    temporal-order, not subsumption, and nothing reads them.
+    Distinct from :func:`_ontology_up`, which is a query-side EXPANSION map.
+    Widening a search to ``Using``/``Perspective_on`` neighbours is legitimate;
+    storing them as a taxonomy is not.
     """
-    fn = _framenet()
-    up: dict[str, set[str]] = defaultdict(set)
-    for r in fn.frame_relations():
-        general, specific = r.get("superFrameName"), r.get("subFrameName")
-        if general and specific and r.type.name in ("Inheritance", "Using", "Perspective_on"):
-            up[specific].add(general)
-    return up
+    from graphknows.symbolic.framenet.relations import broader_pairs
+
+    return broader_pairs()
 
 
 def _ontology_up() -> dict[str, set[str]]:
-    """Child -> parent expansion map (Inheritance/Using upward; Perspective_on both)."""
+    """Child -> parent EXPANSION map (Inheritance/Using upward; Perspective_on both).
+
+    Deliberately wider than :func:`_broader_up`: widening a query to frames a
+    target presupposes or perspectivises finds relevant chunks, and nothing here
+    is stored as a claim. Do not reuse this for the persisted hierarchy.
+    """
     global _onto_up
     if _onto_up is None:
         fn = _framenet()
