@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.frames.srl import FrameHit, nested_pairs
 from graphknows.storage.arcadedb.graph_store import GraphStore
+from graphknows.symbolic.framenet.srl import FrameHit, nested_pairs
 
 # "Tam bought a MacBook because his old laptop died."
 #  0         10        20        30        40

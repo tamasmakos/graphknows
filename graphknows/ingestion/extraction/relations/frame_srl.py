@@ -45,7 +45,7 @@ def frame_ontology(name: str) -> dict[str, Any]:
     lexical_units: [(word, pos)], parents: [frame names]}``. Empty dict on lookup
     failure (unknown frame).
     """
-    from graphknows.frames.framenet import _framenet, _ontology_up
+    from graphknows.symbolic.framenet.framenet import _framenet, _ontology_up
 
     try:
         f = _framenet().frame(name)
@@ -107,8 +107,8 @@ def lu_candidate_frames(
     ``embedding`` (the chunk's already-computed vector) is used for the ranking so
     ingest never re-embeds the same text; only when it is None do we embed ``text``.
     """
-    from graphknows.frames.framenet import _lus
-    from graphknows.frames.index import match_frames, match_frames_text
+    from graphknows.symbolic.framenet.framenet import _lus
+    from graphknows.symbolic.framenet.index import match_frames, match_frames_text
 
     doc = nlp(text)
     lui = _lus()
@@ -230,7 +230,7 @@ def extract_frame_instances_srl(
     gliner: Any,
     hits: list[Any],
 ) -> list[FrameInstance]:
-    """One instance per parsed trigger (see :mod:`graphknows.frames.srl`).
+    """One instance per parsed trigger (see :mod:`graphknows.symbolic.framenet.srl`).
 
     The difference from :func:`extract_frame_instances` is arity, not method:
     there the whole chunk gets one frame guess and therefore at most one kept
@@ -238,10 +238,10 @@ def extract_frame_instances_srl(
     trigger-marked line, so a chunk stating five facts can contribute five.
     Role filling, speaker resolution, and the fillability gate are shared.
 
-    ``hits`` are :class:`~graphknows.frames.srl.FrameHit` (duck-typed to keep
+    ``hits`` are :class:`~graphknows.symbolic.framenet.srl.FrameHit` (duck-typed to keep
     the optional extra out of this module's imports).
     """
-    from graphknows.frames.srl import marked_line
+    from graphknows.symbolic.framenet.srl import marked_line
 
     out: list[FrameInstance] = []
     for hit in hits:

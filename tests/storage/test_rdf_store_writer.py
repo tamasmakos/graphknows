@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.ontology.rdf import store
+from graphknows.symbolic.ontology.rdf import store
 
 
 def _client(command_side_effect=None) -> MagicMock:

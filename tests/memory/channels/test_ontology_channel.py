@@ -11,7 +11,7 @@ from graphknows.channels.ontology import OntologyChannel
 from graphknows.channels.registry import default_channels
 from graphknows.settings import GraphKnowsSettings
 
-ONT = "graphknows/ontology/assets/personal/personal.ttl"
+ONT = "graphknows/symbolic/ontology/assets/personal/personal.ttl"
 
 
 def _ctx(session_id: str = "s1") -> ChannelContext:

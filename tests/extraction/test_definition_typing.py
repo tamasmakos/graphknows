@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 import pytest
 
 from graphknows.ingestion.extraction.entities import typing_model
-from graphknows.ontology.loader import OntologyTerm
+from graphknows.symbolic.ontology.loader import OntologyTerm
 
 
 class _FakeModel:

@@ -17,8 +17,8 @@ import logging
 import threading
 from pathlib import Path
 
-from graphknows.ontology.lexical import document_frequency, usable_index
-from graphknows.ontology.skos import Concept, build_scheme, extend_scheme
+from graphknows.symbolic.ontology.lexical import document_frequency, usable_index
+from graphknows.symbolic.ontology.skos import Concept, build_scheme, extend_scheme
 
 log = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 """OntologyChannel — ontology-class retrieval signal.
 
 Chunks are class-tagged at ingest by cosine-matching their embedding to the
-ontology's class DEFINITIONS (see ``graphknows.ontology.catalog``); each
+ontology's class DEFINITIONS (see ``graphknows.symbolic.ontology.catalog``); each
 ONTOLOGY_CLASS node carries that definition's embedding, so this channel matches
 the query with a namespace-local graph vector search over them, exactly as
 :class:`~graphknows.channels.frames.FrameChannel` does over FRAME nodes.

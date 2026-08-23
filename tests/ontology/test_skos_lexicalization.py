@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.ontology.skos import (
+from graphknows.symbolic.ontology.skos import (
     Concept,
     _upper_ontology_property,
     ancestors,

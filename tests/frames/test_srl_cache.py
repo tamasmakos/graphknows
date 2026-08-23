@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from graphknows.frames import srl
+from graphknows.symbolic.framenet import srl
 
 
 class _Parser:

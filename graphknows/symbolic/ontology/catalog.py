@@ -36,7 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
-from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
+from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
 
 log = logging.getLogger(__name__)
 

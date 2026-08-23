@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.ontology.rdf.prefixes import BOOTSTRAP, Prefixes, split_iri
+from graphknows.symbolic.ontology.rdf.prefixes import BOOTSTRAP, Prefixes, split_iri
 
 CCO2 = "https://www.commoncoreontologies.org/"
 MRO = "http://www.ontologylibrary.mil/CommonCore/Mid/MilitaryRanksOntology/"

@@ -23,8 +23,8 @@ protect. Rejection belongs at the score threshold instead.
 
 from __future__ import annotations
 
-from graphknows.ontology.lexical import evoked
-from graphknows.ontology.skos import Concept, _upper_ontology_property, ancestors
+from graphknows.symbolic.ontology.lexical import evoked
+from graphknows.symbolic.ontology.skos import Concept, _upper_ontology_property, ancestors
 
 # The measured-good coarse types, which are also CCO class labels verbatim.
 COARSE = ["person", "organization", "facility", "occupation", "event", "animal", "product"]

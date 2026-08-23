@@ -12,8 +12,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from graphknows.ontology.catalog import OntologyIndex, load_ontology_index, reset_ontology_indexes
-from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
+from graphknows.symbolic.ontology.catalog import (
+    OntologyIndex,
+    load_ontology_index,
+    reset_ontology_indexes,
+)
+from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
 
 ASSETS = Path(__file__).resolve().parents[1] / "fixtures" / "ontology"
 PERSONAL_TTL = ASSETS / "personal.ttl"
@@ -82,7 +86,7 @@ class TestOntologyIndex:
 
     def test_empty_source_disables_injection_loudly(self, caplog: pytest.LogCaptureFixture) -> None:
         """Injection is always on by default, so "off" must announce itself."""
-        with caplog.at_level("WARNING", logger="graphknows.ontology.catalog"):
+        with caplog.at_level("WARNING", logger="graphknows.symbolic.ontology.catalog"):
             assert load_ontology_index("") is None
         assert "Ontology injection is OFF" in caplog.text
 

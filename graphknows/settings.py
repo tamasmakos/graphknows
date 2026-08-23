@@ -26,10 +26,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from graphknows.exceptions import ConfigurationError
 
 # The always-on default ontology, resolved off this file rather than imported
-# from ``graphknows.ontology``: settings sits BELOW ontology in the layering
+# from ``graphknows.symbolic.ontology``: settings sits BELOW ontology in the layering
 # (see CLAUDE.md), so the dependency may only point the other way.
 _BUNDLED_ONTOLOGY = str(
-    Path(__file__).resolve().parent / "ontology" / "assets" / "cco" / "cco.json"
+    Path(__file__).resolve().parent / "symbolic" / "ontology" / "assets" / "cco" / "cco.json"
 )
 
 # The relation vocabulary. This used to be a DIFFERENT file from the ontology
@@ -51,7 +51,12 @@ _BUNDLED_RELATION_PROFILE = _BUNDLED_ONTOLOGY
 # altLabels that make it lexically reachable and domain/range in CCO's own class
 # vocabulary. Data, not code — point this elsewhere to change the vocabulary.
 _BUNDLED_OVERLAY = str(
-    Path(__file__).resolve().parent / "ontology" / "assets" / "cco" / "conversational.json"
+    Path(__file__).resolve().parent
+    / "symbolic"
+    / "ontology"
+    / "assets"
+    / "cco"
+    / "conversational.json"
 )
 
 
@@ -211,7 +216,7 @@ class GraphKnowsSettings(BaseSettings):
     # (which ships only in the ``assisted`` extra), so a bare `pip install
     # graphknows` gets the same ontology the container does, and both memory
     # modes load it through one identical code path.
-    # ``python -m graphknows.ontology.digest`` regenerates it from the TTL sources
+    # ``python -m graphknows.symbolic.ontology.digest`` regenerates it from the TTL sources
     # under ``ontology/assets/cco-*``. GRAPHKNOWS_ONTOLOGY overrides it
     # with any other RDF/OWL/TTL file, digest, or folder of them — an override,
     # not an on/off switch: an EMPTY value means "unset" (which is how

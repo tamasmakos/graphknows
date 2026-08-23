@@ -1,7 +1,7 @@
 """FrameChannel — FrameNet semantic-frame retrieval signal.
 
 Chunks are frame-tagged at ingest by cosine-matching their embedding to the
-FrameNet frame-definition index (see :mod:`graphknows.frames.index`); each evoked FRAME node
+FrameNet frame-definition index (see :mod:`graphknows.symbolic.framenet.index`); each evoked FRAME node
 carries the frame's definition embedding, so this channel matches the query with a
 namespace-local graph vector search over those embeddings:
 collect() ANN-searches the query embedding against the FRAME.embedding of frames

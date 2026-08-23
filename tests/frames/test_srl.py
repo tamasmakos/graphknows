@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from graphknows.frames.srl import marked_line, sentences, srl_enabled
 from graphknows.ingestion.extraction.relations.frame_srl import extract_frame_instances_srl
+from graphknows.symbolic.framenet.srl import marked_line, sentences, srl_enabled
 
 CHUNK = "Caroline: I went to a support group.\nMelanie: I gave a book and gave a pen."
 
@@ -60,7 +60,7 @@ def test_unset_follows_whether_the_extra_is_installed(monkeypatch: pytest.Monkey
     # a base install without the extra keeps the LU identifier rather than
     # raising on every ingest.
     monkeypatch.delenv("GRAPHKNOWS_FRAME_SRL", raising=False)
-    from graphknows.frames import srl
+    from graphknows.symbolic.framenet import srl
 
     monkeypatch.setattr(srl, "installed", lambda: True)
     assert srl.srl_enabled() is True

@@ -1,7 +1,7 @@
 """Export the extracted taxonomy as a standard graphknows ontology digest.
 
 The digest is the one shape the whole package reads an ontology through
-(:func:`~graphknows.ontology.loader.load_ontology_terms`), and it is plain JSON:
+(:func:`~graphknows.symbolic.ontology.loader.load_ontology_terms`), and it is plain JSON:
 no rdflib at runtime, no second loader. Emitting one here is what makes an
 arbitrary folder of RDF usable by a base install — parse once with the
 ``assisted`` extra, then point ``GRAPHKNOWS_ONTOLOGY`` at the result.
@@ -9,7 +9,7 @@ arbitrary folder of RDF usable by a base install — parse once with the
 Two things are baked in at export time rather than left to the reader.
 
 **The canonical URI is ``sorted(taxon.iris)[0]``**, exactly as
-:func:`~graphknows.ontology.rdf.store.taxon_rows` picks it. A taxon merges every
+:func:`~graphknows.symbolic.ontology.rdf.store.taxon_rows` picks it. A taxon merges every
 IRI carrying its label (two CCO releases spell ``Geospatial Region`` two ways),
 so the digest and the ``ONTOLOGY_CLASS`` row must agree on which one is the key
 or nothing can join them.
@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from graphknows.ontology.rdf.taxonomy import Taxon
+from graphknows.symbolic.ontology.rdf.taxonomy import Taxon
 
 # rdfs:domain / rdfs:range may point into a class expression. A union member and
 # an intersection genus are each an acceptable endpoint; a COMPLEMENT is a
@@ -116,7 +116,7 @@ def to_digest(
     """Build the digest dict for ``taxa``, in the shape the loader reads.
 
     Args:
-        taxonomy: The ``DiGraph`` from :func:`~graphknows.ontology.rdf.taxonomy.extract`
+        taxonomy: The ``DiGraph`` from :func:`~graphknows.symbolic.ontology.rdf.taxonomy.extract`
             (child key -> parent key).
         taxa: Its taxa, by key.
         edges: Projection edge rows, read for ``rdfs:domain`` / ``rdfs:range``.
@@ -124,8 +124,8 @@ def to_digest(
 
     Returns:
         ``{"source", "classes", "properties"}`` — the same shape
-        :func:`graphknows.ontology.digest.build` returns, loadable by
-        :func:`~graphknows.ontology.loader.load_ontology_terms`.
+        :func:`graphknows.symbolic.ontology.digest.build` returns, loadable by
+        :func:`~graphknows.symbolic.ontology.loader.load_ontology_terms`.
     """
     tables = _endpoints(taxa, edges)
     property_keys = sorted(k for k, t in taxa.items() if t.kind == "property")

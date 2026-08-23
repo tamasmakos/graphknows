@@ -34,8 +34,8 @@ from pathlib import Path
 
 import pytest
 
-from graphknows.ontology.catalog import load_ontology_index
 from graphknows.storage.embedder import embed_one
+from graphknows.symbolic.ontology.catalog import load_ontology_index
 
 PERSONAL_TTL = Path(__file__).resolve().parents[1] / "fixtures" / "ontology" / "personal.ttl"
 
@@ -140,7 +140,7 @@ def test_small_ontology_is_injected_whole_at_the_production_top_k(index):
     against a 13-property ontology it is the floor, not the budget, that decides
     what reaches the extractor.
     """
-    from graphknows.ontology.catalog import DEFAULT_MIN_SIM, DEFAULT_TOP_K
+    from graphknows.symbolic.ontology.catalog import DEFAULT_MIN_SIM, DEFAULT_TOP_K
 
     assert DEFAULT_MIN_SIM == 0.46
 

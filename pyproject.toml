@@ -81,7 +81,7 @@ dependencies = [
 # The one extra: `pip install 'graphknows[assisted]'`. Lazily imported and guarded
 # by MissingExtraError, so the base install never pulls dspy/rdflib.
 #
-# `networkx` joins them for graphknows.ontology.rdf: projecting a folder of RDF
+# `networkx` joins them for graphknows.symbolic.ontology.rdf: projecting a folder of RDF
 # needs a multigraph with parallel predicate-keyed edges, and the label-keyed
 # taxonomy needs cycle detection and a topological order. It is imported inside
 # functions behind the same MissingExtraError guard, so a base install never
@@ -93,7 +93,7 @@ assisted = ["dspy>=2.5.0", "rdflib>=7.0.0", "networkx>=3.0"]
 # (no test, example, eval, or docs page) and raised a bare ImportError, so the
 # extra it named guarded nothing.
 langgraph = ["langgraph>=0.2.0"]
-# Transformer frame identification (graphknows.frames.srl), an alternative to the
+# Transformer frame identification (graphknows.symbolic.framenet.srl), an alternative to the
 # default LU+embedding frame guess. Lazily imported behind MissingExtraError and
 # only reached when GRAPHKNOWS_FRAME_SRL is on, so the base install never pulls
 # it. Kept an extra for two reasons beyond size: it pins `protobuf<6` where this
@@ -195,7 +195,7 @@ module = [
     "graphknows.server.mcp.*",
     "graphknows.ingestion.*",
     "graphknows.channels.*",
-    "graphknows.frames.*",
+    "graphknows.symbolic.*",
     "graphknows.temporal",
 ]
 disable_error_code = ["no-any-return", "type-arg"]

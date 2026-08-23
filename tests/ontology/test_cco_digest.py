@@ -34,10 +34,20 @@ from typing import Any
 import pytest
 
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
-from graphknows.ontology.loader import OntologyTerm, load_ontology_terms, load_rdf_ontology_file
+from graphknows.symbolic.ontology.loader import (
+    OntologyTerm,
+    load_ontology_terms,
+    load_rdf_ontology_file,
+)
 
 DIGEST = (
-    Path(__file__).resolve().parents[2] / "graphknows" / "ontology" / "assets" / "cco" / "cco.json"
+    Path(__file__).resolve().parents[2]
+    / "graphknows"
+    / "symbolic"
+    / "ontology"
+    / "assets"
+    / "cco"
+    / "cco.json"
 )
 
 
@@ -59,7 +69,7 @@ class TestDigestLoads:
         """
         code = (
             "import sys, json;"
-            "from graphknows.ontology.loader import load_ontology_terms;"
+            "from graphknows.symbolic.ontology.loader import load_ontology_terms;"
             f"terms = load_ontology_terms({str(DIGEST)!r});"
             "print(json.dumps({'n': len(terms), 'rdflib': 'rdflib' in sys.modules}))"
         )
@@ -299,8 +309,8 @@ def _handler_for(index: Any) -> _STMIngestHandler:
 class TestHintFloor:
     def test_the_two_declarations_of_the_floor_agree(self) -> None:
         """``DEFAULT_MIN_SIM`` is the fallback for direct callers; settings is the knob."""
-        from graphknows.ontology.catalog import DEFAULT_MIN_SIM
         from graphknows.settings import GraphKnowsSettings
+        from graphknows.symbolic.ontology.catalog import DEFAULT_MIN_SIM
 
         assert DEFAULT_MIN_SIM == GraphKnowsSettings().ontology_hint_min_sim == 0.46
 

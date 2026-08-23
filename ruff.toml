@@ -54,12 +54,11 @@ ignore = [
 "**/rdf_parser.py" = ["C901"]
 "**/storage/arcadedb/*.py" = ["D102", "C901"]  # data-access layer — docstrings deferred
 "**/retrieval/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
-"**/frames/framenet.py" = ["C901"]  # FE assignment is one dependency-parse pass
+"**/framenet/framenet.py" = ["C901"]  # FE assignment is one dependency-parse pass
 "**/llm_assisted/dspy.py" = ["C901"]  # ontology context build is one linear pass
 # Pre-existing complexity, exempted rather than refactored under a gate-hardening
 # change: both are single linear passes over a parse tree / a section, and
 # splitting core extraction to satisfy a metric is churn with defect risk.
-"**/relations/svo.py" = ["C901"]  # extract_svo: one dependency-parse walk (16)
 "**/parsers/base.py" = ["C901"]  # _split_large_section: one section scan (15)
 # RUF059 flags unused names in tuple unpacking. Test fixtures return a fixed
 # tuple and each test binds all of it positionally while using a subset; the

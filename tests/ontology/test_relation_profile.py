@@ -38,8 +38,8 @@ import pytest
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.stm.ingest import _RELATION_LABEL_CAP, _STMIngestHandler
-from graphknows.ontology.catalog import load_ontology_index
-from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
+from graphknows.symbolic.ontology.catalog import load_ontology_index
+from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
 
 PROFILE = Path(__file__).resolve().parents[1] / "fixtures" / "ontology" / "personal-profile.json"
 
@@ -71,7 +71,7 @@ class TestProfileAsset:
         """Same contract as the schema.org digest: the base install has no rdflib."""
         code = (
             "import sys, json;"
-            "from graphknows.ontology.loader import load_ontology_terms;"
+            "from graphknows.symbolic.ontology.loader import load_ontology_terms;"
             f"terms = load_ontology_terms({str(PROFILE)!r});"
             "print(json.dumps({'n': len(terms), 'rdflib': 'rdflib' in sys.modules}))"
         )

@@ -18,10 +18,10 @@ import pytest
 
 pytest.importorskip("networkx")
 
-from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
-from graphknows.ontology.rdf.digest_export import to_digest
-from graphknows.ontology.rdf.store import taxon_rows
-from graphknows.ontology.rdf.taxonomy import extract
+from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
+from graphknows.symbolic.ontology.rdf.digest_export import to_digest
+from graphknows.symbolic.ontology.rdf.store import taxon_rows
+from graphknows.symbolic.ontology.rdf.taxonomy import extract
 
 
 def _node(iri: str, label: str, kind: str, definition: str = "") -> dict:

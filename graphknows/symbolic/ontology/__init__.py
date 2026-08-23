@@ -6,17 +6,17 @@ labels, and retrieval matches queries against the same term definitions. It is
 also mode-independent — ontology injection works identically in ``llm_free`` and
 ``llm_assisted``.
 
-The load-bearing pair is :func:`~graphknows.ontology.loader.load_ontology_terms`
+The load-bearing pair is :func:`~graphknows.symbolic.ontology.loader.load_ontology_terms`
 (classes and properties *with their definitions*, from a file or a folder) and
-:func:`~graphknows.ontology.catalog.load_ontology_index` (those definitions
+:func:`~graphknows.symbolic.ontology.catalog.load_ontology_index` (those definitions
 embedded once, disk-cached, cosine-matchable against a chunk or query embedding).
 
 An ontology is always addressed by **path** — ``GRAPHKNOWS_ONTOLOGY`` takes a
 file or a folder. Bundled ontologies live in ``assets/`` and are referenced the
 same way; there is no by-name registry.
 
-Bring your own ontology with ``python -m graphknows.ontology.digest`` (see
-:mod:`graphknows.ontology.digest`), then point ``GRAPHKNOWS_ONTOLOGY`` at the
+Bring your own ontology with ``python -m graphknows.symbolic.ontology.digest`` (see
+:mod:`graphknows.symbolic.ontology.digest`), then point ``GRAPHKNOWS_ONTOLOGY`` at the
 result.
 
 These imports stay LLM-free. DSPy-backed relation extraction lives in
@@ -27,21 +27,21 @@ else is reached through its own module, so adding a name here is a deliberate
 act of making it public.
 """
 
-from graphknows.ontology.catalog import (
+from graphknows.symbolic.ontology.catalog import (
     DEFAULT_MIN_SIM,
     TAG_MIN_SIM,
     OntologyIndex,
     load_ontology_index,
 )
-from graphknows.ontology.labels import COARSE, entity_labels, relation_labels
-from graphknows.ontology.lexical import evoked, usable_index
-from graphknows.ontology.loader import (
+from graphknows.symbolic.ontology.labels import COARSE, entity_labels, relation_labels
+from graphknows.symbolic.ontology.lexical import evoked, usable_index
+from graphknows.symbolic.ontology.loader import (
     OntologyTerm,
     RdfOntologyManifest,
     load_ontology_terms,
     load_rdf_ontology_file,
 )
-from graphknows.ontology.skos import Concept, ancestors
+from graphknows.symbolic.ontology.skos import Concept, ancestors
 
 __all__ = [
     "COARSE",

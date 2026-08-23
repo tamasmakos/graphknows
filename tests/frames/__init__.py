@@ -1,1 +1,1 @@
-"""Tests for the graphknows.frames package."""
+"""Tests for the graphknows.symbolic.framenet package."""

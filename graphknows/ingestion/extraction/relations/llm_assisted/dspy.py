@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
 from graphknows.llm import build_lm, get_openrouter_api_key
-from graphknows.ontology.loader import (
+from graphknows.symbolic.ontology.loader import (
     RdfOntologyManifest,
     load_ontology_terms,
     load_rdf_ontology_file,
@@ -90,7 +90,7 @@ def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
     """Build a SKOS-enriched context string from an RDF/OWL ontology manifest.
 
     Extends the basic ``{"classes": [...], "properties": [...]}`` context from
-    :func:`~graphknows.ontology.loader.load_rdf_ontology_file` with
+    :func:`~graphknows.symbolic.ontology.loader.load_rdf_ontology_file` with
     per-property domain/range and SKOS ``prefLabel``/``definition`` where
     available.  This gives the DSPy LLM structured signal about *what each
     relation means* and *which entity types it connects*.

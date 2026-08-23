@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("networkx")
 
-from graphknows.ontology.rdf.taxonomy import extract
+from graphknows.symbolic.ontology.rdf.taxonomy import extract
 
 
 def _node(iri: str, label: str, *, types: list[str], **kw) -> dict:

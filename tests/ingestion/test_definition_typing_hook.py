@@ -15,7 +15,7 @@ import pytest
 
 from graphknows.ingestion.extraction.entities import typing_model
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
-from graphknows.ontology.loader import OntologyTerm
+from graphknows.symbolic.ontology.loader import OntologyTerm
 
 
 class _StubIndex:

@@ -17,9 +17,9 @@ import pytest
 
 from graphknows.ingestion.stm._attribution import admits, turn_spans
 from graphknows.ingestion.stm._deixis import resolve_line, resolve_window
-from graphknows.ontology import entity_labels, relation_labels
-from graphknows.ontology.scheme import load_scheme
 from graphknows.settings import GraphKnowsSettings
+from graphknows.symbolic.ontology import entity_labels, relation_labels
+from graphknows.symbolic.ontology.scheme import load_scheme
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +56,7 @@ class TestLexicalSelection:
 
     @pytest.fixture
     def index(self, scheme: dict) -> dict:
-        from graphknows.ontology.skos import lexical_index
+        from graphknows.symbolic.ontology.skos import lexical_index
 
         return lexical_index(scheme)
 
@@ -85,7 +85,7 @@ class TestDomainRangeSatisfaction:
 
     @pytest.fixture
     def index(self, scheme: dict) -> dict:
-        from graphknows.ontology.skos import lexical_index
+        from graphknows.symbolic.ontology.skos import lexical_index
 
         return lexical_index(scheme)
 
@@ -105,7 +105,7 @@ class TestDomainRangeSatisfaction:
         so the widening contributed nothing and properties declared on
         ``Animal`` or ``material entity`` were never structurally reachable.
         """
-        from graphknows.ontology.skos import ancestors
+        from graphknows.symbolic.ontology.skos import ancestors
 
         assert ancestors(scheme, "Person"), "fixture assumption: Person has ancestors"
         assert ancestors(scheme, "person") == ancestors(scheme, "Person")
@@ -141,7 +141,7 @@ class TestDomainRangeSatisfaction:
         """
         import spacy
 
-        from graphknows.ontology.skos import Concept, lexical_index
+        from graphknows.symbolic.ontology.skos import Concept, lexical_index
 
         scheme = {
             "requires": Concept(

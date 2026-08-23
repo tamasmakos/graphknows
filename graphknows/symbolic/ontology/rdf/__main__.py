@@ -8,8 +8,8 @@ disagree and the tool works the same whether or not the namespace already exists
 
 Usage::
 
-    python -m graphknows.ontology.rdf --source ./my-ontology --ns my_rdf --reset
-    python -m graphknows.ontology.rdf --source ./my-ontology --ns my_rdf \\
+    python -m graphknows.symbolic.ontology.rdf --source ./my-ontology --ns my_rdf --reset
+    python -m graphknows.symbolic.ontology.rdf --source ./my-ontology --ns my_rdf \\
         --digest-out my.json
     export GRAPHKNOWS_ONTOLOGY=my.json
 
@@ -23,10 +23,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from graphknows.ontology.rdf import digest_export, projection, store, taxonomy
 from graphknows.settings import GraphKnowsSettings
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 from graphknows.storage.namespace import db_name
+from graphknows.symbolic.ontology.rdf import digest_export, projection, store, taxonomy
 
 
 async def _run(source: Path, ns: str, digest_out: Path | None, reset: bool) -> None:

@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
-from graphknows.ontology.loader import OntologyTerm
+from graphknows.symbolic.ontology.loader import OntologyTerm
 
 # Orthogonal unit vectors, so each property's "fit" to a chunk is unambiguous.
 _VECTORS = {

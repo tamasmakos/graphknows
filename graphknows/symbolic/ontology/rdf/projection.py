@@ -6,7 +6,7 @@ and mixed releases of the same ontology have been merged into one graph. Four
 rules, each of which exists because the naive reading loses something:
 
 1. **A literal object is metadata, keyed by the FULL predicate IRI + lang tag.**
-   CURIEs come from the shipped table in :mod:`~graphknows.ontology.rdf.prefixes`
+   CURIEs come from the shipped table in :mod:`~graphknows.symbolic.ontology.rdf.prefixes`
    and never from document bindings — those produced ``default1``..``default15``
    on the CCO corpus.
 2. **An IRI object is an edge**, keyed by predicate CURIE plus predicate IRI.
@@ -41,9 +41,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from graphknows.ontology.rdf.prefixes import Prefixes, split_iri
+from graphknows.symbolic.ontology.rdf.prefixes import Prefixes, split_iri
 
-log = logging.getLogger("graphknows.ontology.rdf.projection")
+log = logging.getLogger("graphknows.symbolic.ontology.rdf.projection")
 
 _OWL = "http://www.w3.org/2002/07/owl#"
 _RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -353,7 +353,7 @@ def _expand(
     * a restriction FILLER is a relation target -> not subsumption at all
 
     The ``via`` this puts on the edge is the only place that distinction
-    survives; :data:`~graphknows.ontology.rdf.taxonomy.HIER` reads it back.
+    survives; :data:`~graphknows.symbolic.ontology.rdf.taxonomy.HIER` reads it back.
 
     ponytail: a nested expression is classified by its OWN operator, with no
     memory of the one enclosing it, so the members of a union sitting inside an

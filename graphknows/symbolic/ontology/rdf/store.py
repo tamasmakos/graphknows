@@ -30,12 +30,12 @@ import json
 import logging
 from typing import Any
 
-from graphknows.ontology.rdf.prefixes import Prefixes
-from graphknows.ontology.rdf.projection import DOCUMENT, ROLES, NodeMeta, PredInfo
-from graphknows.ontology.rdf.taxonomy import Taxon
 from graphknows.storage.arcadedb.client import ArcadeDBClient
+from graphknows.symbolic.ontology.rdf.prefixes import Prefixes
+from graphknows.symbolic.ontology.rdf.projection import DOCUMENT, ROLES, NodeMeta, PredInfo
+from graphknows.symbolic.ontology.rdf.taxonomy import Taxon
 
-log = logging.getLogger("graphknows.ontology.rdf.store")
+log = logging.getLogger("graphknows.symbolic.ontology.rdf.store")
 
 BATCH = 500
 

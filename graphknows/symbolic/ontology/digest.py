@@ -58,16 +58,16 @@ the extractor.
 
 Usage — your own ontology::
 
-    python -m graphknows.ontology.digest --source my-ontology.ttl --out my.json
+    python -m graphknows.symbolic.ontology.digest --source my-ontology.ttl --out my.json
     export GRAPHKNOWS_ONTOLOGY=my.json
 
 Usage — regenerating the bundled CCO digest::
 
-    python -m graphknows.ontology.digest \\
-        --source graphknows/ontology/assets/cco-modules \\
-        --source graphknows/ontology/assets/cco-extensions/FamilialRelationsOntology.ttl \\
-        --source graphknows/ontology/assets/cco-imports/bfo-core.ttl \\
-        --out graphknows/ontology/assets/cco/cco.json
+    python -m graphknows.symbolic.ontology.digest \\
+        --source graphknows/symbolic/ontology/assets/cco-modules \\
+        --source graphknows/symbolic/ontology/assets/cco-extensions/FamilialRelationsOntology.ttl \\
+        --source graphknows/symbolic/ontology/assets/cco-imports/bfo-core.ttl \\
+        --out graphknows/symbolic/ontology/assets/cco/cco.json
 """
 
 from __future__ import annotations

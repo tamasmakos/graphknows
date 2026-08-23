@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from graphknows.ontology.digest import build
+from graphknows.symbolic.ontology.digest import build
 
 pytest.importorskip("rdflib")
 

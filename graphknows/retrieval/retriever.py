@@ -267,8 +267,8 @@ class DETRetriever:
             # It also matches how a chunk is frame-tagged at ingest, so both sides
             # speak one vocabulary; expand_frames is a dict walk over the
             # hierarchy, because question and statement rarely evoke one frame.
-            from graphknows.frames.framenet import expand_frames
-            from graphknows.frames.index import match_frames
+            from graphknows.symbolic.framenet.framenet import expand_frames
+            from graphknows.symbolic.framenet.index import match_frames
 
             matched = {f for f, _ in match_frames(ctx.emb, top_k=_FRAME_RERANK_TOP_K)}
             frames = sorted(expand_frames(matched, hops=1)) if matched else []

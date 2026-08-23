@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from graphknows.frames import index as fi
+from graphknows.symbolic.framenet import index as fi
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +53,9 @@ def test_frame_embedding_returns_matrix_row():
 
 
 def test_frame_summary_reads_definition(monkeypatch):
-    monkeypatch.setattr("graphknows.frames.framenet._frame_def", lambda name: f"def of {name}")
+    monkeypatch.setattr(
+        "graphknows.symbolic.framenet.framenet._frame_def", lambda name: f"def of {name}"
+    )
     assert fi.frame_summary("Motion") == "def of Motion"
 
 

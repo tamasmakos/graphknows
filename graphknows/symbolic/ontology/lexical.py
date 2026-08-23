@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict
 
-from graphknows.ontology.skos import Concept
+from graphknows.symbolic.ontology.skos import Concept
 
 # A lemma occurring in more than this fraction of chunks carries no information
 # about any individual chunk. 0.15 is deliberately aggressive: the failure being
@@ -112,7 +112,7 @@ def evoked(
     coincidence), and a rarer lemma is worth more than a common one — plain IDF,
     reusing the document frequencies already computed.
     """
-    from graphknows.ontology.skos import content_tokens
+    from graphknows.symbolic.ontology.skos import content_tokens
 
     nouns, verbs, compounds = lemma_view(doc)
     # A property matches on NOUNS as well as verbs. CCO names its relations as

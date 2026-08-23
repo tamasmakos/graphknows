@@ -277,7 +277,7 @@ class _STMIngestHandler:
             self._hint_min_sim = settings.ontology_hint_min_sim
             self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
             if self._relations is None:
-                from graphknows.ontology import load_ontology_index
+                from graphknows.symbolic.ontology import load_ontology_index
 
                 self._relations = load_ontology_index(settings.relation_ontology_source)
                 if self._relations is None:
@@ -719,8 +719,8 @@ class _STMIngestHandler:
             log.info("Lexical label selection off: the extractor exposes no spaCy pipeline")
             return False
         if self._scheme is None:
-            from graphknows.ontology.scheme import load_scheme
             from graphknows.settings import GraphKnowsSettings
+            from graphknows.symbolic.ontology.scheme import load_scheme
 
             cfg = GraphKnowsSettings()
             self._scheme = load_scheme(cfg.ontology_source, cfg.overlay_source)
@@ -731,7 +731,7 @@ class _STMIngestHandler:
         # `usable_index` needs the document count to know when a frequency is
         # meaningful, so a small corpus simply filters nothing.
         if self._corpus_seen and (self._lex_index is None or not self._lex_frozen):
-            from graphknows.ontology.scheme import build_index
+            from graphknows.symbolic.ontology.scheme import build_index
 
             self._lex_index = build_index(self._scheme, self._corpus_seen, self._extractor.nlp)
             self._lex_frozen = len(self._corpus_seen) >= _LEXICAL_WARMUP
@@ -741,7 +741,7 @@ class _STMIngestHandler:
         """``(entity labels, relation labels)`` for one window, lexically selected."""
         if not self._ensure_scheme():
             return None, None
-        from graphknows.ontology import entity_labels, relation_labels
+        from graphknows.symbolic.ontology import entity_labels, relation_labels
 
         doc = self._extractor.nlp(text)
         ents = entity_labels(doc, self._scheme, self._lex_index)
@@ -902,8 +902,8 @@ class _STMIngestHandler:
         srl_hits = await self._srl_hits(text)
 
         if self._enable_frames:
-            from graphknows.frames.framenet import _broader_up
-            from graphknows.frames.index import (
+            from graphknows.symbolic.framenet.framenet import _broader_up
+            from graphknows.symbolic.framenet.index import (
                 frame_embedding,
                 frame_summary,
                 match_frames,
@@ -1136,7 +1136,7 @@ class _STMIngestHandler:
         """
         if self._ontology is None or not embedding:
             return []
-        from graphknows.ontology.catalog import TAG_MIN_SIM
+        from graphknows.symbolic.ontology.catalog import TAG_MIN_SIM
 
         matches = self._ontology.match_classes(embedding, top_k=_ONT_TAG_TOP_K, min_sim=TAG_MIN_SIM)
         return [(term.uri, sim) for term, sim in matches]
@@ -1388,7 +1388,7 @@ class _STMIngestHandler:
             # Name the absentees. The bundled CCO digest has no bare `Artifact`
             # class (only "... Artifact Function"), so the list silently built a
             # 13-label schema out of 14 and paintings had nowhere to be typed.
-            # A richer ontology — one built by graphknows.ontology.rdf — supplies it.
+            # A richer ontology — one built by graphknows.symbolic.ontology.rdf — supplies it.
             if missing := [c for c in _TYPING_CLASSES if c not in self._typing_schema]:
                 log.info(
                     "definition typing schema: %d classes (%d absent from this ontology: %s)",
@@ -1567,7 +1567,7 @@ class _STMIngestHandler:
         """
         if not hits or len(kept_offsets) < 2:
             return []
-        from graphknows.frames.srl import nested_pairs
+        from graphknows.symbolic.framenet.srl import nested_pairs
 
         index_of = {off: i for i, off in enumerate(kept_offsets) if off >= 0}
         out = []
@@ -1581,7 +1581,7 @@ class _STMIngestHandler:
         """Parse every chunk's sentences once, up front. No-op unless SRL is on."""
         if not (infer and self._enable_frames and texts):
             return
-        from graphknows.frames.srl import prewarm, srl_enabled
+        from graphknows.symbolic.framenet.srl import prewarm, srl_enabled
 
         if not srl_enabled():
             return
@@ -1598,11 +1598,11 @@ class _STMIngestHandler:
         """Parse the chunk's frame triggers once, off the event loop. ``[]`` when off."""
         if not (self._enable_frames and text.strip()):
             return []
-        from graphknows.frames.srl import srl_enabled
+        from graphknows.symbolic.framenet.srl import srl_enabled
 
         if not srl_enabled():
             return []
-        from graphknows.frames.srl import parse
+        from graphknows.symbolic.framenet.srl import parse
 
         try:
             return await asyncio.to_thread(parse, text)
