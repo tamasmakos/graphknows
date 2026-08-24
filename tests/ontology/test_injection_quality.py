@@ -134,7 +134,7 @@ def test_small_ontology_is_injected_whole_at_the_production_top_k(index):
 
     This test used to assert ``DEFAULT_MIN_SIM == 0.0`` — injection gated by
     top-k alone — which was survivable only because personal.ttl has 11 classes,
-    so top-12 was the whole ontology. The default ontology is CCO's 1401
+    so top-12 was the whole ontology. The default ontology is CCO's 1437
     classes, so there is a floor (0.46, measured over real LoCoMo turns against
     the bundled CCO digest), and
     against a 13-property ontology it is the floor, not the budget, that decides

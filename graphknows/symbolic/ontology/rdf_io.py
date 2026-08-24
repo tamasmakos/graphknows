@@ -313,7 +313,14 @@ def load_closure(entries: Sequence[Path], search: Sequence[Path] = ()) -> Closur
             len(unresolved),
             ", ".join(sorted(unresolved)),
         )
-    return Closure(graph, tuple(sorted(seen)), versions, tuple(sorted(unresolved)))
+    # Sorted, not BFS order: `version_iris` is serialised straight into a digest,
+    # and BFS order is the order the ENTRIES were passed. Unsorted, the same
+    # corpus digested with `--source` in a different order produced a
+    # byte-different file whose terms were identical — which is enough to defeat
+    # any "is the shipped asset what its sources produce" check downstream.
+    return Closure(
+        graph, tuple(sorted(seen)), dict(sorted(versions.items())), tuple(sorted(unresolved))
+    )
 
 
 def subsumption_closure(graph: Any) -> list[tuple[str, str]]:

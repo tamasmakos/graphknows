@@ -16,7 +16,7 @@ It differs from the frame index in two ways that matter:
 
 Absolute cosines are NOT calibrated, and the floors below are volume controls,
 not decision thresholds. Measured over 20 real LoCoMo turns against the bundled
-CCO digest with bge-small, the whole 1401-class space spans 0.168-0.683 (median
+CCO digest with bge-small, the whole 1437-class space spans 0.168-0.683 (median
 0.409, p95 0.493) and a high cosine is not a correctness signal — a thank-you
 turn's best class is ``Artifact History`` at 0.545, above the median that a
 correctly-matched shopping turn's third-best (``Warehouse``, 0.628) also clears.
@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 #
 # This used to be 0.0 — "gated by top-k alone" — which was harmless while the
 # only bundled ontology had 11 classes, so top-12 WAS the whole ontology. The
-# default ontology is now CCO's 1401 classes, where an unfloored top-12 hands
+# default ontology is now CCO's 1437 classes, where an unfloored top-12 hands
 # twelve arbitrary labels to every chunk, including "Thanks, Gina!".
 DEFAULT_MIN_SIM: float = 0.46
 

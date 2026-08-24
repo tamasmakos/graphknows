@@ -32,13 +32,17 @@ about CCO decide how this parses:
   (process), ``obo:BFO_0000004`` (independent continuant). BFO is an *import*
   — CCO's own ``catalog-v001.xml`` resolves it to ``../cco-imports/bfo-core.ttl``
   — so a map built from the CCO modules alone resolves every one of those
-  references to nothing and DROPS the constraint. That single omission made
-  199 of 224 properties look untyped, and since property selection is gated on
-  domain and range, it silently emptied the relation vocabulary. Parsing BFO
-  alongside takes typed properties from 25 to 173. BFO's own classes are
-  emitted too: they are what the ``parents`` chain terminates in, and without
-  them subsumption stops at the CCO boundary instead of reaching
-  ``material entity`` / ``independent continuant``.
+  references to nothing and DROPS the constraint. Measured: the CCO modules plus
+  the familial extension alone digest to 1401 classes and 224 object properties,
+  of which only 112 declare BOTH a domain and a range — and since property
+  selection is gated on both, the other half of the relation vocabulary is
+  silently unofferable. Parsing BFO alongside gives 1437 classes and 264
+  properties, every one of them offerable. (Those two numbers are why a stale
+  "1401 classes, 224 properties" reads plausible: it is not an old bundle, it is
+  a parse with BFO missing.) BFO's own classes are emitted too: they are what
+  the ``parents`` chain terminates in, and without them subsumption stops at the
+  CCO boundary instead of reaching ``material entity`` /
+  ``independent continuant``.
 * **Domain and range hide inside class expressions.** A range is frequently an
   anonymous ``owl:unionOf`` / ``owl:intersectionOf`` node rather than a named
   class. Those are unwrapped to the set of named classes they mention; an
@@ -68,6 +72,9 @@ Usage — regenerating the bundled CCO digest::
         --source graphknows/symbolic/ontology/assets/cco-extensions/FamilialRelationsOntology.ttl \\
         --source graphknows/symbolic/ontology/assets/cco-imports/bfo-core.ttl \\
         --out graphknows/symbolic/ontology/assets/cco/cco.json
+
+Those three sources are also :data:`BUNDLED_SOURCES`, which is what the drift
+check rebuilds from — so this recipe cannot quietly disagree with the asset.
 """
 
 from __future__ import annotations
@@ -75,10 +82,24 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from graphknows.symbolic.ontology import rdf_io
+
+_ASSETS = Path(__file__).resolve().parent / "assets"
+
+# What the bundled digest is built FROM, in code rather than only in the recipe
+# above. The shipped asset went stale for months because nothing compared it
+# against its sources; the check that now does
+# (``tests/ontology/test_cco_digest.py::TestShippedDigestMatchesItsSources``)
+# reads this list, so the recipe and the check cannot drift apart.
+BUNDLED_SOURCES: tuple[Path, ...] = (
+    _ASSETS / "cco-modules",
+    _ASSETS / "cco-extensions" / "FamilialRelationsOntology.ttl",
+    _ASSETS / "cco-imports" / "bfo-core.ttl",
+)
 
 # Extensions deliberately excluded from the bundle, recorded here because "why
 # is Barcode missing" is otherwise unanswerable: ModalRelationOntology is 278
@@ -98,7 +119,7 @@ _CURATED_IN = "https://www.commoncoreontologies.org/ont00001760"
 # properties by whole-chunk cosine instead measured ZERO relations over 60 real
 # turns — so it is not something to relax.
 #
-# FamilialRelationsOntology declares no domain or range on any of its 86
+# FamilialRelationsOntology declares no domain or range on any of its 87
 # properties, and none is inheritable: the whole chain up through "is sibling
 # of" to "has familial relationship to" is empty. Left as-is, every familial
 # relation is permanently unofferable — which is precisely the conversational
@@ -106,15 +127,18 @@ _CURATED_IN = "https://www.commoncoreontologies.org/ont00001760"
 # construction (it is the ontology of relations between family members), so
 # asserting it here restores the module without weakening the gate.
 #
-# Other modules' undeclared properties (TimeOntology's "has inside instant",
-# ExtendedRelationOntology's "has object") are left unofferable on purpose: they
-# are generic BFO plumbing with no single defensible domain.
+# No other module needs an entry. Once the ``owl:unionOf`` blank nodes are
+# unwrapped (see :meth:`_Reader.named`), every other property in the bundle
+# declares or inherits both endpoints — this fallback fires for exactly the 87
+# familial properties and nothing else. Anything that once looked like a
+# candidate here ("has object", "has inside instant") was a union domain read as
+# empty, not a missing declaration.
 _DEFAULT_DOMAIN_RANGE: dict[str, tuple[str, str]] = {
     "FamilialRelationsOntology": ("Person", "Person"),
 }
 
 
-def _files(sources: list[Path]) -> list[Path]:
+def _files(sources: Sequence[Path]) -> list[Path]:
     """Every ``.ttl`` under the given files/folders, sorted for a stable order.
 
     Term order fixes the embedding matrix's row order downstream, and a cached
@@ -271,7 +295,7 @@ class _Reader:
         return str(value).rstrip("/").rsplit("/", 1)[-1] if value else ""
 
 
-def build(sources: list[Path]) -> dict[str, Any]:
+def build(sources: Sequence[Path]) -> dict[str, Any]:
     """Parse *sources* into ``{"classes": [...], "properties": [...]}``."""
     # Deferred, and the only door into rdflib in this module: `_Reader` is built
     # here and nowhere else. rdflib ships in the `assisted` extra, so a base
@@ -286,8 +310,8 @@ def build(sources: list[Path]) -> dict[str, Any]:
     paths = _files(sources)
     # rdflib loads exactly one document per parse and follows no `owl:imports`,
     # so the closure is resolved here — against LOCAL files only — before any
-    # term is read. It is the same omission that once left 199 of 224 properties
-    # untyped: an unimported BFO resolves every domain and range to nothing.
+    # term is read. It is the same omission that leaves 112 of 224 properties
+    # unofferable: an unimported BFO resolves every domain and range to nothing.
     closure = rdf_io.load_closure(
         paths, search=sorted({p if p.is_dir() else p.parent for p in map(Path, sources)})
     )

@@ -8,7 +8,9 @@ Three claims, each of which used to rest on a convention rather than on code:
   ``format=`` — and these tests hand it the things a guard has to refuse.
 * **rdflib follows no ``owl:imports``.** One ``parse`` loads one document, so a
   corpus split across files silently loses whatever the imports define. That
-  omission once left 199 of 224 CCO properties untyped.
+  omission leaves 112 of the 224 properties a CCO-modules-only parse yields
+  without a usable domain and range — half the relation vocabulary, gated on
+  exactly those.
 * **Blank node ids are re-minted on every parse.** Anything keyed on one differs
   run to run, which is why the projection's blank-node blocks carry a skolem id.
 """
@@ -106,6 +108,18 @@ class TestImportsClosure:
             BETA: f"{BETA}/2.0.0",
             GAMMA: f"{GAMMA}/3.0.0",
         }
+
+    def test_version_iris_are_sorted_not_in_traversal_order(self) -> None:
+        """Two digests of one corpus must not differ by the order the sources came in.
+
+        ``version_iris`` is serialised straight into a digest, and it used to be
+        keyed in BFS order — which starts at the ENTRIES. Starting from c.ttl
+        walks gamma -> alpha -> beta, so unsorted this file would ship keys in an
+        order no other entry point produces, and "is the shipped asset what its
+        sources digest to" could never be answered byte-wise.
+        """
+        from_gamma = rdf_io.load_closure([IMPORTS / "c.ttl"])
+        assert list(from_gamma.version_iris) == [ALPHA, BETA, GAMMA]
 
     def test_an_import_is_resolved_by_its_version_iri_too(self, closure: rdf_io.Closure) -> None:
         """beta imports gamma/3.0.0, and only the parsed catalog knows that is c.ttl."""

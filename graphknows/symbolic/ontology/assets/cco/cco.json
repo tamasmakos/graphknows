@@ -1,5 +1,21 @@
 {
- "source": "AgentOntology.ttl, ArtifactOntology.ttl, CurrencyUnitOntology.ttl, EventOntology.ttl, ExtendedRelationOntology.ttl, FacilityOntology.ttl, GeospatialOntology.ttl, InformationEntityOntology.ttl, QualityOntology.ttl, TimeOntology.ttl, UnitsOfMeasureOntology.ttl, FamilialRelationsOntology.ttl, bfo-core.ttl",
+ "source": "FamilialRelationsOntology.ttl, bfo-core.ttl, AgentOntology.ttl, ArtifactOntology.ttl, CurrencyUnitOntology.ttl, EventOntology.ttl, ExtendedRelationOntology.ttl, FacilityOntology.ttl, GeospatialOntology.ttl, InformationEntityOntology.ttl, QualityOntology.ttl, TimeOntology.ttl, UnitsOfMeasureOntology.ttl",
+ "ontologies": {
+  "http://purl.obolibrary.org/obo/bfo.owl": "http://purl.obolibrary.org/obo/bfo/2020/bfo-core.ttl",
+  "https://www.commoncoreontologies.org/AgentOntology": "https://www.commoncoreontologies.org/2026-04-04/AgentOntology",
+  "https://www.commoncoreontologies.org/ArtifactOntology": "https://www.commoncoreontologies.org/2026-04-04/ArtifactOntology",
+  "https://www.commoncoreontologies.org/CurrencyUnitOntology": "https://www.commoncoreontologies.org/2026-04-04/CurrencyUnitOntology",
+  "https://www.commoncoreontologies.org/EventOntology": "https://www.commoncoreontologies.org/2026-04-04/EventOntology",
+  "https://www.commoncoreontologies.org/ExtendedRelationOntology": "https://www.commoncoreontologies.org/2026-04-04/ExtendedRelationOntology",
+  "https://www.commoncoreontologies.org/FacilityOntology": "https://www.commoncoreontologies.org/2026-04-04/FacilityOntology",
+  "https://www.commoncoreontologies.org/FamilialRelationsOntology": "https://www.commoncoreontologies.org/2026-25-03/FamilialRelationsOntology",
+  "https://www.commoncoreontologies.org/GeospatialOntology": "https://www.commoncoreontologies.org/2026-04-04/GeospatialOntology",
+  "https://www.commoncoreontologies.org/InformationEntityOntology": "https://www.commoncoreontologies.org/2026-04-04/InformationEntityOntology",
+  "https://www.commoncoreontologies.org/QualityOntology": "https://www.commoncoreontologies.org/2026-04-04/QualityOntology",
+  "https://www.commoncoreontologies.org/TimeOntology": "https://www.commoncoreontologies.org/2026-04-04/TimeOntology",
+  "https://www.commoncoreontologies.org/UnitsOfMeasureOntology": "https://www.commoncoreontologies.org/2026-04-04/UnitsOfMeasureOntology"
+ },
+ "imports_unresolved": [],
  "classes": [
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000001",
@@ -12964,7 +12980,11 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000056",
    "label": "participates in",
    "definition": "(Elucidation) participates in holds between some b that is either a specifically dependent continuant or generically dependent continuant or independent continuant that is not a spatial region & some process p such that b participates in p some way Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
-   "domain": [],
+   "domain": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "range": [
     "process"
    ],
@@ -12978,7 +12998,11 @@
    "domain": [
     "process"
    ],
-   "range": [],
+   "range": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "parents": [],
    "module": ""
   },
@@ -12989,7 +13013,10 @@
    "domain": [
     "generically dependent continuant"
    ],
-   "range": [],
+   "range": [
+    "process",
+    "specifically dependent continuant"
+   ],
    "parents": [],
    "module": ""
   },
@@ -12997,7 +13024,10 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000059",
    "label": "concretizes",
    "definition": "b concretizes c =Def b is a process or a specifically dependent continuant & c is a generically dependent continuant & there is some time t such that c is the pattern or content which b shares at t with actual or potential copies Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
-   "domain": [],
+   "domain": [
+    "process",
+    "specifically dependent continuant"
+   ],
    "range": [
     "generically dependent continuant"
    ],
@@ -13034,8 +13064,14 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000066",
    "label": "occurs in",
    "definition": "b occurs in c =Def b is a process or a process boundary & c is a material entity or site & there exists a spatiotemporal region r & b occupies spatiotemporal region r & for all time t, if b exists at t then c exists at t & there exist spatial regions s and s' where b spatially projects onto s at t & c occupies spatial region s' at t & s is a continuant part of s' at t",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "process",
+    "process boundary"
+   ],
+   "range": [
+    "material entity",
+    "site"
+   ],
    "parents": [],
    "module": ""
   },
@@ -13046,7 +13082,9 @@
    "domain": [
     "generically dependent continuant"
    ],
-   "range": [],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [],
    "module": ""
   },
@@ -13054,7 +13092,9 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000101",
    "label": "is carrier of",
    "definition": "b is carrier of c =Def there is some time t such that c generically depends on b at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
-   "domain": [],
+   "domain": [
+    "independent continuant"
+   ],
    "range": [
     "generically dependent continuant"
    ],
@@ -13121,8 +13161,12 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000124",
    "label": "location of",
    "definition": "b location of c =Def c located in b Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "independent continuant"
+   ],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [],
    "module": ""
   },
@@ -13199,8 +13243,12 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000171",
    "label": "located in",
    "definition": "b located in c =Def b is an independent continuant & c is an independent & neither is a spatial region & there is some time t such that the spatial region which b occupies at t is continuant part of the spatial region which c occupies at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "independent continuant"
+   ],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [],
    "module": ""
   },
@@ -13234,8 +13282,14 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000183",
    "label": "environs",
    "definition": "b environs c =Def c occurs in b",
-   "domain": [],
-   "range": [],
+   "domain": [
+    "material entity",
+    "site"
+   ],
+   "range": [
+    "process",
+    "process boundary"
+   ],
    "parents": [],
    "module": ""
   },
@@ -13269,7 +13323,10 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000194",
    "label": "specifically depended on by",
    "definition": "b specifically depended on by c =Def c specifically depends on b",
-   "domain": [],
+   "domain": [
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "range": [
     "specifically dependent continuant"
    ],
@@ -13283,7 +13340,10 @@
    "domain": [
     "specifically dependent continuant"
    ],
-   "range": [],
+   "range": [
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "parents": [],
    "module": ""
   },
@@ -13291,7 +13351,9 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000196",
    "label": "bearer of",
    "definition": "b bearer of c =Def c inheres in b",
-   "domain": [],
+   "domain": [
+    "independent continuant"
+   ],
    "range": [
     "specifically dependent continuant"
    ],
@@ -13307,7 +13369,9 @@
    "domain": [
     "specifically dependent continuant"
    ],
-   "range": [],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [
     "specifically depends on"
    ],
@@ -13317,7 +13381,10 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000199",
    "label": "occupies temporal region",
    "definition": "p occupies temporal region t =Def p is a process or process boundary & the spatiotemporal region occupied by p temporally projects onto t",
-   "domain": [],
+   "domain": [
+    "process",
+    "process boundary"
+   ],
    "range": [
     "temporal region"
    ],
@@ -13328,7 +13395,10 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000200",
    "label": "occupies spatiotemporal region",
    "definition": "(Elucidation) occupies spatiotemporal region is a relation between a process or process boundary p and the spatiotemporal region s which is its spatiotemporal extent",
-   "domain": [],
+   "domain": [
+    "process",
+    "process boundary"
+   ],
    "range": [
     "spatiotemporal region"
    ],
@@ -13339,7 +13409,9 @@
    "uri": "http://purl.obolibrary.org/obo/BFO_0000210",
    "label": "occupies spatial region",
    "definition": "b occupies spatial region r =Def b is an independent continuant that is not a spatial region & r is a spatial region & there is some time t such that every continuant part of b occupies some continuant part of r at t and no continuant part of b occupies any spatial region that is not a continuant part of r at t Users that require more sophisticated representations of time are encouraged to import a temporal extension of BFO-Core provided by the BFO development team. See documentation for guidance: <Link>",
-   "domain": [],
+   "domain": [
+    "independent continuant"
+   ],
    "range": [
     "spatial region"
    ],
@@ -13489,7 +13561,11 @@
    "domain": [
     "process"
    ],
-   "range": [],
+   "range": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "parents": [
     "has participant"
    ],
@@ -13545,7 +13621,9 @@
    "domain": [
     "object aggregate"
    ],
-   "range": [],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [
     "has some member located in"
    ],
@@ -13937,7 +14015,10 @@
    "uri": "https://www.commoncoreontologies.org/ont00001809",
    "label": "inheres in aggregate",
    "definition": "x inheres_in_aggregate y iff x is an instance of Specifically Dependent Continuant or Generically Dependent Continuant and y is an instance of Object Aggregate and y aggregate_bearer_of x.",
-   "domain": [],
+   "domain": [
+    "generically dependent continuant",
+    "specifically dependent continuant"
+   ],
    "range": [
     "object aggregate"
    ],
@@ -14034,7 +14115,11 @@
    "uri": "https://www.commoncoreontologies.org/ont00001816",
    "label": "is output of",
    "definition": "x is output of y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and the presence of x at the end of y is a necessary condition for the completion of y.",
-   "domain": [],
+   "domain": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "range": [
     "process"
    ],
@@ -14265,7 +14350,9 @@
    "domain": [
     "object aggregate"
    ],
-   "range": [],
+   "range": [
+    "independent continuant"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -14291,7 +14378,11 @@
    "domain": [
     "process"
    ],
-   "range": [],
+   "range": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "parents": [
     "has participant"
    ],
@@ -14319,7 +14410,10 @@
    "domain": [
     "object aggregate"
    ],
-   "range": [],
+   "range": [
+    "generically dependent continuant",
+    "specifically dependent continuant"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -14385,7 +14479,11 @@
    "uri": "https://www.commoncoreontologies.org/ont00001841",
    "label": "is input of",
    "definition": "x is input of y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and the presence of x at the beginning of y is a necessary condition for the start of y.",
-   "domain": [],
+   "domain": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "range": [
     "process"
    ],
@@ -14621,10 +14719,10 @@
    "label": "is part of process",
    "definition": "x is part of process y iff x is occurrent part of y, x and y are Processes, and x occupies a temporal region that is a proper occurrent part of the temporal interval of y.",
    "domain": [
-    "occurrent"
+    "process"
    ],
    "range": [
-    "occurrent"
+    "process"
    ],
    "parents": [
     "occurrent part of"
@@ -14851,7 +14949,10 @@
    "domain": [
     "temporal region"
    ],
-   "range": [],
+   "range": [
+    "process",
+    "process boundary"
+   ],
    "parents": [],
    "module": "ExtendedRelationOntology"
   },
@@ -15022,7 +15123,11 @@
    "uri": "https://www.commoncoreontologies.org/ont00001886",
    "label": "is affected by",
    "definition": "x is affected by y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and y influences x in some manner, most often by producing a change in x.",
-   "domain": [],
+   "domain": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "range": [
     "process"
    ],
@@ -15542,7 +15647,11 @@
    "domain": [
     "process"
    ],
-   "range": [],
+   "range": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "parents": [
     "has participant"
    ],
@@ -15756,7 +15865,11 @@
    "uri": "https://www.commoncoreontologies.org/ont00001936",
    "label": "is object of",
    "definition": "x is object of y =Def x participates in y, x is an Independent Continuant (but not a Spatial Region), y is a Process, and y is performed by Agent z and x is part of the projected state that z intends to achieve by performing y.",
-   "domain": [],
+   "domain": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "range": [
     "process"
    ],
@@ -15783,7 +15896,7 @@
   {
    "uri": "https://www.commoncoreontologies.org/ont00001938",
    "label": "represents",
-   "definition": "x represents y iff x is an instance of Representational Information Content Entity, y is an instance of Entity, and z is carrier of x, such that x is about y in virtue of there existing an isomorphism between characteristics of z and y. Isomorphism between the carrier of x and the represented entity can be via a direct similarity relation, e.g., grooves in a vinyl record corresponding to sound waves, or linguistic convention, e.g., a court stenographer's transcription of spoken words, as well as others, such as encoding processes for images.",
+   "definition": "x represents y iff x is an instance of Representational Information Content Entity, y is an instance of Entity, and z is carrier of x, such that x is about y in virtue of there existing an isomorphism between characteristics of z and y. Given a stronger temporal interpretation, this property may be functional. For more info please refer to",
    "domain": [
     "Representational Information Content Entity"
    ],
@@ -16183,7 +16296,7 @@
   {
    "uri": "https://www.commoncoreontologies.org/ont00001966",
    "label": "is a measurement of",
-   "definition": "x is_a_measurement_of y iff x is an instance of Measurement Information Content Entity and y is an instance of Entity, such that x describes some attribute of y relative to some scale or classification scheme. This object property, as well as all of its children are typified as functional properties. This means that for instances x, y, and z if x is a measurement of y and x is a measurement of z, then y = z.",
+   "definition": "x is_a_measurement_of y iff x is an instance of Measurement Information Content Entity and y is an instance of Entity, such that x describes some attribute of y relative to some scale or classification scheme. Given a stronger temporal interpretation, this property may be functional. For more info please refer to",
    "domain": [
     "Measurement Information Content Entity"
    ],
@@ -16479,7 +16592,11 @@
    "domain": [
     "process"
    ],
-   "range": [],
+   "range": [
+    "generically dependent continuant",
+    "independent continuant",
+    "specifically dependent continuant"
+   ],
    "parents": [
     "has participant"
    ],

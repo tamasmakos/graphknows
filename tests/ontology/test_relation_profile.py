@@ -21,7 +21,7 @@ What this file pins is the SELECTION MACHINERY, not the bundled vocabulary. The
 bundle is now a single ontology — the CCO digest serves both jobs, and its own
 shape is asserted in ``test_cco_digest.py`` — so the curated profile lives on
 here as a test fixture: 25 properties with a hand-checked domain/range table is
-what these assertions need, and re-deriving them against CCO's 1401 classes
+what these assertions need, and re-deriving them against CCO's 1437 classes
 would test the ontology rather than the code.
 """
 
