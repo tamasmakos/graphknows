@@ -609,6 +609,8 @@ class Memory:
         abstentions: dict[str, int] = {}
         modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0}
+        # Seconds per named stage, so the slow one is identifiable without a profiler.
+        stage_s: dict[str, float] = {}
 
         async def step(name: str, coro: Any, default: Any) -> Any:
             """Await one pipeline step, recording a named error instead of aborting.
@@ -617,13 +619,22 @@ class Memory:
             skip ``consolidate_session``, which is the state flip that makes the
             flush meaningful. The step name is kept in the error so a caller can
             tell which stage degraded.
+
+            Timed, because ``flush_elapsed_s`` covers drain, resolution, pagerank,
+            node2vec, louvain and topics together — a 50-minute flush said nothing
+            about WHICH of those took the 50 minutes, so every conversation about
+            ingest cost started by guessing. A failed step is timed too: how long
+            a stage took before it fell over is exactly what you want to know.
             """
+            started = time.monotonic()
             try:
                 return await coro
             except Exception as exc:
                 logger.warning("flush_memory: %s failed: %s", name, exc)
                 errors.append(f"{name}: {exc}")
                 return default
+            finally:
+                stage_s[name] = round(time.monotonic() - started, 2)
 
         try:
             await self._get_retriever()  # ensures the store is connected + schema'd
@@ -707,6 +718,8 @@ class Memory:
             # What the write path declined to write, per gate. Reported so an
             # empty graph can be told apart from a graph whose gates ate it.
             "abstentions": abstentions,
+            # Seconds per stage. `elapsed_s` is their sum plus the untimed glue.
+            "stage_s": stage_s,
             "topics_created": topics_created,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],

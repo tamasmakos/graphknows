@@ -107,8 +107,20 @@ USER graphknows
 
 # Fail fast and loudly if the image is missing a model, instead of surfacing it
 # as a download stall on the first customer request.
-HEALTHCHECK --interval=60s --timeout=30s --start-period=10s --retries=3 \
-    CMD python /app/scripts/bake_models.py --check || exit 1
+#
+# `--check` LOADS every model — deliberately, because a downloaded model is not
+# necessarily a usable one. That makes it expensive: measured 17.4s for the
+# embedder alone, and SentenceTransformer places it on cuda:0 when a GPU is
+# visible. At a 60s interval that was a 17s GPU load every minute for the life
+# of the container — during a 50-minute ingest, ~50 model loads competing with
+# the work for a 6GB card, which reads as 96% VRAM at 25% utilisation.
+#
+# A missing model is a BOOT condition: weights do not vanish from a running
+# container. `--start-period` plus `--retries` already catch it at startup, so
+# the steady-state probe only needs to be occasional. CUDA_VISIBLE_DEVICES=
+# keeps it off the GPU so it can never take VRAM from real work.
+HEALTHCHECK --interval=30m --timeout=120s --start-period=180s --retries=3 \
+    CMD CUDA_VISIBLE_DEVICES= python /app/scripts/bake_models.py --check || exit 1
 
 # Invoked via `sh <script>` rather than as an executable: the +x bit does not
 # survive a checkout on every host, and a non-executable entrypoint fails with an

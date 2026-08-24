@@ -50,3 +50,23 @@ def test_the_flush_contract_exposes_it() -> None:
 
     src = inspect.getsource(Memory.flush_memory)
     assert '"abstentions": abstentions' in src, "flush stopped reporting the tally"
+
+
+def test_flush_reports_per_stage_seconds() -> None:
+    """`elapsed_s` alone cannot say WHICH stage took the time.
+
+    A flush covers drain, entity resolution, pagerank, node2vec, louvain and
+    topics. When one of them takes 50 minutes, a single total means the next
+    person starts by guessing — which is how "the ingest is slow" stayed an
+    unanswered question.
+    """
+    import inspect
+
+    from graphknows.memory import Memory
+
+    src = inspect.getsource(Memory.flush_memory)
+    assert '"stage_s": stage_s' in src, "flush stopped reporting per-stage timings"
+    # Timed in a `finally`, so a stage that raised still reports how long it ran.
+    assert "finally:" in src and "stage_s[name] =" in src, (
+        "a failed stage would report no duration — which is when you most want it"
+    )
