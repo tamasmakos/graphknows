@@ -106,4 +106,8 @@ prototypes
 # Scoped to `candidates/` on purpose: hatchling drops VCS-ignored files from the
 # wheel, so a broader `assets/` rule would silently unship cco/cco.json, which
 # `GraphKnowsSettings.ontology_source` defaults to.
-graphknows/ontology/assets/cco-extensions/candidates/
+# The path moved with the package (frames/ + ontology/ -> symbolic/). A stale
+# path here fails SILENTLY: the files simply stop being ignored, get swept in
+# by `git add graphknows/`, and the large-file hook then rejects the whole
+# commit on a 4.6 MB .owl that was never meant to be committed.
+graphknows/symbolic/ontology/assets/cco-extensions/candidates/
