@@ -111,6 +111,74 @@ def _name_norm(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
+def _evidence_set(chunk_id: str) -> str:
+    """Return the ``SET`` fragment that appends *chunk_id* to ``r.evidence``.
+
+    THE provenance contract for REL edges: every writer of a REL edge appends
+    the chunk that asserted it here, deduplicated, so ``r.evidence`` is the
+    complete list of chunks a reader can cite for the edge — whichever writer
+    minted it. Both ``write_relation`` and ``write_frame_instances``' co-role
+    projection use this; do not hand-roll a second form.
+
+    The chunk id is interpolated as a quoted literal rather than bound, because
+    openCypher cannot express ``$param IN <list-property>`` reliably. Safe
+    inside an ``UNWIND`` body: the id is constant for the whole statement.
+
+    An empty *chunk_id* still initialises the list, so the property is an empty
+    list rather than NULL — but that edge is then UNSOURCED, and every caller
+    that can produce one must count it (see the residue logging in both
+    writers) instead of letting it pass silently.
+    """
+    if not chunk_id:
+        return "r.evidence = coalesce(r.evidence, []), "
+    cid = quote(chunk_id)
+    return (
+        f"r.evidence = CASE "
+        f"WHEN {cid} IN coalesce(r.evidence, []) THEN r.evidence "
+        f"ELSE coalesce(r.evidence, []) + [{cid}] END, "
+    )
+
+
+# Structural REL columns a merge repair must carry over by hand: write_relation
+# coalesces them to its own tier-3/4 defaults, which is right for a fresh relex
+# edge and wrong for a replay of an edge that already had a tier-1 identity.
+_CARRIED_REL_COLUMNS = (
+    "canonical_predicate",
+    "anchor",
+    "reified",
+    "frame",
+    "frame_instance_id",
+    "head_role",
+    "tail_role",
+    "polarity",
+    "modality",
+    "epistemic",
+    "hedged",
+    "ontology_property",
+)
+
+# The single REL projection merge_entities reads a loser edge through — BOTH
+# directions. Outgoing and incoming used to carry different column lists, and
+# the shorter one (incoming) dropped every structural column: measured on
+# conv-30, 109 REL edges came back from an entity merge as unreified `lemma:`
+# edges with no roles, no frame_instance_id and no evidence — unsourced by both
+# provenance routes. One list, so the two directions cannot drift again.
+_REL_ROW_SELECT = ", ".join(
+    f"r.{c} AS {c}"
+    for c in (
+        "predicate",
+        "fact",
+        "evidence",
+        "confidence",
+        "valid_at",
+        "source",
+        "verifier_score",
+        "ontology_blocked",
+        *_CARRIED_REL_COLUMNS,
+    )
+)
+
+
 # How much a chunk tagged with a SUBCLASS of the matched class is worth. Below
 # 1.0 so an exact match always wins; well above 0 because inheritance is real
 # evidence, not a tiebreak — a Dance Studio genuinely is a Facility.
@@ -508,6 +576,18 @@ class GraphStore(ArcadeStoreBase):
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
+        PROVENANCE CONTRACT (both REL writers, see also
+        ``write_frame_instances``): every REL edge carries the chunks that
+        asserted it in ``r.evidence``, appended through :func:`_evidence_set` and
+        deduplicated. A reader may treat an empty ``evidence`` as "no chunk
+        asserted this edge" — it is not a shorthand for "provenance lives
+        somewhere else". Frame-projected edges additionally carry
+        ``frame_instance_id``, whose FRAME_INSTANCE reaches the same chunks via
+        ``FRAME_EVOKED_IN``; that is a second route to the SAME provenance, not
+        a substitute for the first. An edge written with no ``chunk_id`` is
+        unsourced by both routes and is logged as such rather than passing
+        silently.
+
         On a duplicate (src, predicate, dst) the ``chunk_id`` is appended to the
         edge's ``evidence`` list (deduplicated) and ``confidence`` keeps the max.
         Single-valued predicates tombstone the previous current edge first.
@@ -556,16 +636,19 @@ class GraphStore(ArcadeStoreBase):
         if predicate.upper() in _SINGLE_VALUED_RELATIONS:
             await self._supersede_edge(predicate, src_norm, dst_norm, now)
 
-        # Evidence is appended via an interpolated quoted literal — openCypher
-        # cannot express "$param IN list-property" reliably.
-        cid_lit = quote(chunk_id) if chunk_id else ""
-        evidence_set = (
-            f"r.evidence = CASE "
-            f"WHEN {cid_lit} IN coalesce(r.evidence, []) THEN r.evidence "
-            f"ELSE coalesce(r.evidence, []) + [{cid_lit}] END, "
-            if chunk_id
-            else "r.evidence = coalesce(r.evidence, []), "
-        )
+        evidence_set = _evidence_set(chunk_id)
+        if not chunk_id:
+            # No chunk asserted this edge, so neither provenance route exists for
+            # it: `evidence` stays empty and there is no FRAME_INSTANCE to follow.
+            # The only in-tree caller that reaches here is _repoint_relation
+            # replaying an edge that was already unsourced.
+            logger.info(
+                "write_relation: unsourced REL edge (%s -%s-> %s) — no chunk_id, "
+                "so r.evidence stays empty",
+                src_name,
+                predicate,
+                dst_name,
+            )
         # Omitted entirely when unscored, so the property stays NULL rather than
         # collapsing "the verifier never saw this" into "the verifier hated it".
         # Floor is -1.0, not 0, so a legitimate 0.0 score still writes.
@@ -1012,6 +1095,20 @@ class GraphStore(ArcadeStoreBase):
         entity-adjacency projection, so a frame fact is walkable between the
         things it relates and not only through its instance node.
 
+        PROVENANCE CONTRACT (identical to ``write_relation``, deliberately): the
+        projected REL edges carry ``chunk_id`` in ``r.evidence`` via the shared
+        :func:`_evidence_set`, so ``REL.evidence`` means the same thing whichever
+        writer minted the edge. They ALSO carry ``frame_instance_id``, reaching
+        the same chunks through ``FRAME_INSTANCE-[:FRAME_EVOKED_IN]->CHUNK`` —
+        a second route to the same provenance, kept because the instance pools
+        evidence across chunks that the per-write append cannot see. The
+        projection used to write no evidence at all: measured on conv-30 that
+        left 2431 of 2696 current REL edges with an empty ``evidence`` list, and
+        a consumer reading that field reasonably concluded the graph was
+        unsourced. Cost of closing it, measured against ArcadeDB at the realistic
+        per-call size (18 rows): no extra round trip, no extra rows, delta inside
+        noise (-0.4ms median over 30 paired calls).
+
         An earlier flat projection was written here and REMOVED; this one is not
         that one, and each of its three recorded defects is addressed:
 
@@ -1206,6 +1303,16 @@ class GraphStore(ArcadeStoreBase):
         # MERGE, on the endpoints — same rule as the role edges: a filler the
         # extractor never minted does not get invented here.
         if rel_rows:
+            # Same evidence append as write_relation (see the contract in both
+            # docstrings). chunk_id is constant across rel_rows, so one
+            # interpolated literal covers the whole UNWIND.
+            # ponytail: forward-only, and the residue is counted at write time,
+            # not surveyed. Namespaces ingested before this keep their empty
+            # `evidence` until re-ingest (backfill is one Cypher pass:
+            # MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c), (a)-[r:REL]->(b)
+            # WHERE r.frame_instance_id = fi.id SET r.evidence = collect(c.chunk_id)),
+            # and a graph-wide "unsourced by either route" census belongs in the
+            # flush return dict, which lives outside this package.
             await self.command(
                 "UNWIND $rows AS row "
                 "MATCH (a:ENTITY {name_norm: row.h}) "
@@ -1218,10 +1325,20 @@ class GraphStore(ArcadeStoreBase):
                 "                  polarity: row.pol, modality: row.mod}]->(b) "
                 "SET r.source = 'frame', r.is_current = true, "
                 "    r.canonical_predicate = row.cp, r.frame = row.p, "
+                f"    {_evidence_set(chunk_id)}"
                 "    r.frame_instance_id = row.fid, r.reified = true, r.anchor = 'frame', "
                 "    r.epistemic = row.epi, r.hedged = row.hed",
                 rows=rel_rows,
             )
+            if not chunk_id:
+                # Residue: no chunk to cite, and batch 1's `MATCH (c:CHUNK ...)`
+                # matched nothing either, so the FRAME_INSTANCE these edges point
+                # at was never written. Unsourced by BOTH routes — count it.
+                logger.warning(
+                    "frame co-role REL edges with no recoverable provenance: %d "
+                    "(no chunk_id, so neither r.evidence nor FRAME_EVOKED_IN)",
+                    len(rel_rows),
+                )
         # Batch 3: frame-to-frame nesting, the structure a flat role list cannot
         # hold ("...because my laptop died" as Explanation -> Causation -> Death).
         # Both endpoints must have been written; a pair naming a dropped instance
@@ -2379,21 +2496,6 @@ class GraphStore(ArcadeStoreBase):
         )
         return int(rows[0].get("n") or 0) if rows else 0
 
-    _CARRIED_REL_COLUMNS = (
-        "canonical_predicate",
-        "anchor",
-        "reified",
-        "frame",
-        "frame_instance_id",
-        "head_role",
-        "tail_role",
-        "polarity",
-        "modality",
-        "epistemic",
-        "hedged",
-        "ontology_property",
-    )
-
     async def _carry_rel_columns(
         self, src_name: str, predicate: str, dst_name: str, row: dict[str, Any]
     ) -> None:
@@ -2408,8 +2510,13 @@ class GraphStore(ArcadeStoreBase):
 
         ``ontology_blocked`` is OR-ed rather than assigned: it is sticky by
         design, so a refusal recorded on either edge survives the merge.
+
+        ``evidence`` is deliberately NOT carried here: it is a list that
+        accumulates, and a blanket SET would overwrite the winner's provenance
+        with the loser's. ``_repoint_relation`` replays it chunk by chunk through
+        ``write_relation``'s dedup-append instead.
         """
-        carried = {k: row.get(k) for k in self._CARRIED_REL_COLUMNS if row.get(k) not in (None, "")}
+        carried = {k: row.get(k) for k in _CARRIED_REL_COLUMNS if row.get(k) not in (None, "")}
         blocked = bool(row.get("ontology_blocked"))
         if not carried and not blocked:
             return
@@ -2428,16 +2535,20 @@ class GraphStore(ArcadeStoreBase):
             **carried,
         )
 
-    async def _repoint_relation(self, src_name: str, dst_name: str, row: dict[str, Any]) -> None:
+    async def _repoint_relation(self, src_name: str, dst_name: str, row: dict[str, Any]) -> bool:
         """Re-create one loser relation edge on the winner via write_relation.
 
         Reuses the audited write_relation (evidence-append dedup, max confidence,
         single-valued supersede). Each evidence chunk is replayed so the winner
         edge accumulates the loser's full provenance.
+
+        Returns True when the repointed edge has provenance by NEITHER route —
+        no evidence chunk to replay and no ``frame_instance_id`` to follow — so
+        the caller can count the residue instead of losing it silently.
         """
         predicate = row.get("predicate") or ""
         if not predicate or not src_name or not dst_name:
-            return
+            return False
         conf = float(row.get("confidence") or 0.5)
         fact = row.get("fact") or ""
         valid_at = row.get("valid_at") or None
@@ -2459,7 +2570,10 @@ class GraphStore(ArcadeStoreBase):
                 verifier_score=vscore,
             )
             await self._carry_rel_columns(src_name, predicate, dst_name, row)
-            return
+            # frame_instance_id is carried above, so a frame edge is still
+            # reachable to its chunks via FRAME_EVOKED_IN. Without it, this edge
+            # is unsourced by both routes.
+            return not row.get("frame_instance_id")
         for cid in evidence:
             await self.write_relation(
                 src_name,
@@ -2473,6 +2587,7 @@ class GraphStore(ArcadeStoreBase):
                 verifier_score=vscore,
             )
         await self._carry_rel_columns(src_name, predicate, dst_name, row)
+        return False
 
     async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
         """Merge the loser ENTITY into the winner. Idempotent and self-safe.
@@ -2520,49 +2635,37 @@ class GraphStore(ArcadeStoreBase):
         )
 
         # 2. Re-point semantic RELATION edges (both directions), skip self-loops.
+        # Both directions read the SAME columns (_REL_ROW_SELECT): the structural
+        # ones are what write_relation cannot re-derive, and dropping them
+        # silently downgrades a merged endpoint's edges — a frame projection
+        # loses its roles and its `fn:` canonical_predicate and comes back as an
+        # unreified `lemma:` edge, and `ontology_blocked` (sticky by design,
+        # because "a refusal is a verdict, not an absence of one") is cleared,
+        # re-publishing exactly the edges it exists to refuse.
         out_rows = await self.query(
-            "MATCH (:ENTITY {name_norm: $loser})-[r:REL]->(b:ENTITY) "
-            "RETURN b.name AS dst, b.name_norm AS dst_nn, "
-            "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
-            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source, "
-            "r.verifier_score AS verifier_score, "
-            # Everything below was dropped by the repair, so a merged endpoint
-            # silently downgraded its edges: a frame projection lost its roles
-            # and its `fn:` canonical_predicate and came back as an unreified
-            # `lemma:` edge, and `ontology_blocked` — documented as sticky
-            # because "a refusal is a verdict, not an absence of one" — was
-            # cleared, re-publishing exactly the edges it exists to refuse.
-            "r.canonical_predicate AS canonical_predicate, r.anchor AS anchor, "
-            "r.reified AS reified, r.frame AS frame, "
-            "r.frame_instance_id AS frame_instance_id, "
-            "r.head_role AS head_role, r.tail_role AS tail_role, "
-            "r.polarity AS polarity, r.modality AS modality, "
-            "r.epistemic AS epistemic, r.hedged AS hedged, "
-            "r.ontology_property AS ontology_property, "
-            "r.ontology_blocked AS ontology_blocked",
+            f"MATCH (:ENTITY {{name_norm: $loser}})-[r:REL]->(b:ENTITY) "
+            f"RETURN b.name AS dst, b.name_norm AS dst_nn, {_REL_ROW_SELECT}",
             loser=loser_norm,
         )
         in_rows = await self.query(
-            "MATCH (a:ENTITY)-[r:REL]->(:ENTITY {name_norm: $loser}) "
-            "RETURN a.name AS src, a.name_norm AS src_nn, "
-            "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
-            "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source, "
-            "r.verifier_score AS verifier_score",
+            f"MATCH (a:ENTITY)-[r:REL]->(:ENTITY {{name_norm: $loser}}) "
+            f"RETURN a.name AS src, a.name_norm AS src_nn, {_REL_ROW_SELECT}",
             loser=loser_norm,
         )
         # An endpoint with neither a name nor a name_norm cannot be repointed:
         # passing None through would recreate the edge against a null-named
         # node, i.e. manufacture the junk entity the merge exists to remove.
+        unsourced = 0
         for row in out_rows:
             dst = row.get("dst") or row.get("dst_nn")
             if not dst or row.get("dst_nn") == winner_norm:
                 continue
-            await self._repoint_relation(winner_name, dst, row)
+            unsourced += await self._repoint_relation(winner_name, dst, row)
         for row in in_rows:
             src = row.get("src") or row.get("src_nn")
             if not src or row.get("src_nn") == winner_norm:
                 continue
-            await self._repoint_relation(src, winner_name, row)
+            unsourced += await self._repoint_relation(src, winner_name, row)
 
         # 3. Fold the loser's surface + aliases into the winner's aliases.
         for a in [loser_name, *loser_aliases]:
@@ -2578,7 +2681,13 @@ class GraphStore(ArcadeStoreBase):
         await self.command(
             "MATCH (lo:ENTITY {name_norm: $loser}) DETACH DELETE lo", loser=loser_norm
         )
-        logger.info("merge_entities: %s -> %s", loser_norm, winner_norm)
+        logger.info(
+            "merge_entities: %s -> %s (%d repointed edge(s) with no recoverable "
+            "provenance: no r.evidence and no frame_instance_id)",
+            loser_norm,
+            winner_norm,
+            unsourced,
+        )
         return True
 
     async def consolidate_session(self, session_id: str) -> int:

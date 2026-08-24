@@ -8,6 +8,7 @@ round trip on a scratch ``mem_test_<uuid>`` database.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,6 +18,7 @@ from graphknows.storage.arcadedb.graph_store import (
     _CHUNK_BATCH,
     _CORE_DDL,
     GraphStore,
+    _evidence_set,
 )
 from graphknows.storage.namespace import db_name
 
@@ -432,6 +434,161 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     assert all(r["cp"] == f"fn:Being_employed:{r['hr']}->{r['tr']}" for r in rel_rows)
     assert "source = 'frame'" in rel_call.args[1]
     assert not [s for s in stmts if "BEING_EMPLOYED" in s.upper()]
+
+
+# ---------------------------------------------------------------------------
+# REL provenance contract — both writers, and the residue neither route covers
+# ---------------------------------------------------------------------------
+
+
+async def _frame_rel_statement(client: MagicMock, chunk_id: str = "c1") -> str:
+    """Write one 2-filler frame instance and return the co-role REL statement."""
+    client.query = AsyncMock(return_value=[{"nn": "caroline"}, {"nn": "hospital"}])
+    store = GraphStore(client=client)
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id=chunk_id,
+        instances=[
+            {
+                "frame": "Being_employed",
+                "roles": {"Employee": ["Caroline"], "Employer": ["hospital"]},
+            }
+        ],
+    )
+    return next(c.args[1] for c in client.command.await_args_list if "r:REL" in c.args[1])
+
+
+@pytest.mark.asyncio
+async def test_frame_projection_appends_the_chunk_to_rel_evidence() -> None:
+    """The co-role projection is a REL writer, so it honours the REL contract.
+
+    It used to write no evidence at all: measured on conv-30, 2431 of 2696
+    current REL edges had an empty ``evidence`` list, and a consumer reading
+    that field reasonably concluded the graph was unsourced.
+    """
+    client = _mock_client()
+    stmt = await _frame_rel_statement(client, chunk_id="chunk-a")
+
+    assert "r.evidence = CASE" in stmt
+    # The chunk id is an interpolated quoted literal (openCypher cannot express
+    # "$param IN list-property"), constant for the whole UNWIND.
+    assert "'chunk-a' IN coalesce(r.evidence, [])" in stmt
+    assert "coalesce(r.evidence, []) + ['chunk-a']" in stmt
+    # The MERGE key is untouched — a fact and its denial must not merge.
+    assert "polarity: row.pol, modality: row.mod}" in stmt
+    # Route 2 survives alongside it: the same chunks via FRAME_EVOKED_IN.
+    assert "r.frame_instance_id = row.fid" in stmt
+
+
+@pytest.mark.asyncio
+async def test_both_rel_writers_share_one_evidence_append_form() -> None:
+    """One audited fragment, not two hand-rolled ones that can drift apart."""
+    frame_stmt = await _frame_rel_statement(_mock_client(), chunk_id="chunk-a")
+
+    relex_client = _mock_client()
+    await GraphStore(client=relex_client).write_relation(
+        "Caroline", "WORKS_AT", "hospital", chunk_id="chunk-a"
+    )
+    relex_stmt = next(
+        c.args[1] for c in relex_client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1]
+    )
+
+    fragment = _evidence_set("chunk-a")
+    assert fragment in " ".join(frame_stmt.split())
+    assert fragment in " ".join(relex_stmt.split())
+
+
+@pytest.mark.asyncio
+async def test_frame_projection_with_no_chunk_id_counts_the_unsourced_edges(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No chunk_id => no evidence AND no FRAME_EVOKED_IN. Count it, never drop it.
+
+    Batch 1 MATCHes the CHUNK, so with no chunk id the FRAME_INSTANCE these
+    edges point at is never written either — unsourced by both routes.
+    """
+    client = _mock_client()
+    with caplog.at_level(logging.WARNING):
+        stmt = await _frame_rel_statement(client, chunk_id="")
+
+    assert "r.evidence = coalesce(r.evidence, [])" in stmt
+    assert "'' IN coalesce" not in stmt, "an empty chunk id must not be written as evidence"
+    residue = [r for r in caplog.records if "no recoverable provenance" in r.message]
+    assert residue, "unsourced projected edges must be counted, not silent"
+    assert residue[0].args == (1,)  # the single co-role pair of the 2 fillers
+
+
+@pytest.mark.asyncio
+async def test_merge_repoint_reads_the_same_rel_columns_in_both_directions() -> None:
+    """Incoming edges used to be read with a shorter column list than outgoing.
+
+    Measured on conv-30: 109 REL edges came back from an entity merge as
+    unreified ``lemma:`` edges with no roles, no ``frame_instance_id`` and no
+    evidence — the only edges in the namespace unsourced by BOTH routes.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(
+        side_effect=[
+            [{"name": "Mel", "aliases": []}],
+            [{"name": "Melanie", "aliases": []}],
+            [],
+            [],
+        ]
+    )
+    await GraphStore(client=client).merge_entities("melanie", "mel")
+
+    out_q = next(
+        c.args[1] for c in client.query.await_args_list if "-[r:REL]->(b:ENTITY)" in c.args[1]
+    )
+    in_q = next(
+        c.args[1] for c in client.query.await_args_list if "(a:ENTITY)-[r:REL]->" in c.args[1]
+    )
+    for column in ("evidence", "frame_instance_id", "head_role", "polarity", "ontology_blocked"):
+        assert f"r.{column} AS {column}" in out_q
+        assert f"r.{column} AS {column}" in in_q, f"incoming direction drops {column}"
+
+
+@pytest.mark.asyncio
+async def test_merge_entities_counts_edges_repointed_with_no_provenance(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A repointed edge with neither evidence nor a frame instance is residue."""
+    client = _mock_client()
+    client.query = AsyncMock(
+        side_effect=[
+            [{"name": "Mel", "aliases": []}],
+            [{"name": "Melanie", "aliases": []}],
+            [  # outgoing: one sourced, one frame-only, one with neither route
+                {"dst": "Camping", "dst_nn": "camping", "predicate": "LIKES", "evidence": ["c1"]},
+                {
+                    "dst": "Banff",
+                    "dst_nn": "banff",
+                    "predicate": "Travel",
+                    "evidence": [],
+                    "frame_instance_id": "Travel:abc",
+                },
+                {"dst": "Toronto", "dst_nn": "toronto", "predicate": "Purpose", "evidence": []},
+            ],
+            [],
+        ]
+    )
+    with caplog.at_level(logging.INFO):
+        await GraphStore(client=client).merge_entities("melanie", "mel")
+
+    line = next(r for r in caplog.records if "merge_entities:" in r.message)
+    assert line.args == ("mel", "melanie", 1)
+
+
+@pytest.mark.asyncio
+async def test_write_relation_without_a_chunk_logs_the_unsourced_edge(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The relex writer's own residue: no chunk_id means no provenance at all."""
+    client = _mock_client()
+    with caplog.at_level(logging.INFO):
+        await GraphStore(client=client).write_relation("Mel", "LIKES", "Camping")
+
+    assert [r for r in caplog.records if "unsourced REL edge" in r.message]
 
 
 @pytest.mark.asyncio
@@ -1557,6 +1714,36 @@ async def test_graph_store_round_trip_on_scratch_database() -> None:
         assert set(rows[0]["evidence"]) == {"chunk-a", "chunk-b"}
         assert rows[0]["confidence"] == pytest.approx(0.9)
         assert rows[0]["fact"] == "Melanie likes camping"
+
+        # The OTHER REL writer honours the same provenance contract, against a
+        # real ArcadeDB: the co-role projection appends its chunk to `evidence`
+        # (inside an UNWIND, via an interpolated literal) and the replay of the
+        # same chunk dedups instead of appending twice.
+        instance = [
+            {
+                "frame": "Travel",
+                "match_sim": 0.8,
+                "role_confidence": 0.9,
+                "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]},
+            }
+        ]
+        await store.write_frame_instances("sess-1", "chunk-a", instance)
+        await store.write_frame_instances("sess-1", "chunk-a", instance)
+        frame_rel = await store.query(
+            # WHERE, not an inline relationship property map: inline maps are
+            # unreliable for MATCHING in ArcadeDB's Cypher.
+            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE r.source = 'frame' "
+            "RETURN r.evidence AS evidence, r.frame_instance_id AS fid"
+        )
+        assert frame_rel, "co-role REL edge not found"
+        assert frame_rel[0]["evidence"] == ["chunk-a"], "evidence missing or duplicated on replay"
+        # Route 2 still reaches the same chunk through the frame instance.
+        assert frame_rel[0]["fid"]
+        reachable = await store.query(
+            "MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c:CHUNK) "
+            "RETURN fi.id AS fid, c.chunk_id AS cid"
+        )
+        assert {r["cid"] for r in reachable if r["fid"] == frame_rel[0]["fid"]} == {"chunk-a"}
 
         # get_chunks_by_ids
         by_id = await store.get_chunks_by_ids(["chunk-a", "chunk-b"])

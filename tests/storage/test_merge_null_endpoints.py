@@ -48,8 +48,11 @@ class _FakeStore(GraphStore):
         self.commands.append(cypher)
         return None
 
-    async def _repoint_relation(self, src_name: str, dst_name: str, row: dict[str, Any]) -> None:
+    async def _repoint_relation(self, src_name: str, dst_name: str, row: dict[str, Any]) -> bool:
         self.repointed.append((src_name, dst_name))
+        # Mirrors the real signature: True == repointed with no provenance by
+        # either route, which merge_entities counts into its log line.
+        return not row.get("evidence") and not row.get("frame_instance_id")
 
 
 def _rel(**over: Any) -> dict[str, Any]:
