@@ -2217,3 +2217,65 @@ async def test_entity_merge_keeps_frame_adjacency_on_scratch_database() -> None:
             await store.drop_database()
         finally:
             await store.close()
+
+
+@pytest.mark.asyncio
+async def test_two_fillers_of_the_same_role_do_not_become_a_relation():
+    """Co-participation is not a relation.
+
+    The projection paired every two distinct fillers of an instance, including
+    two fillers of the SAME role, and emitted them as a directed REL. That
+    produced `(Gina) -Residence[Co_resident->Co_resident]-> (Jon)` and
+    `(banker) -Avoiding[Agent->Agent]-> (Gina)` — edges that read as facts and
+    assert nothing true. Measured on conv-30: 829 of 2590 reified edges, 32% of
+    the fact layer.
+
+    Both fillers stay joined by their FRAME_INSTANCE via PLAYS_ROLE, which is
+    where co-participation is correctly expressed.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "gina"}, {"nn": "jon"}, {"nn": "rome"}])
+    store = GraphStore(client=client)
+
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id="c1",
+        instances=[
+            {
+                "frame": "Residence",
+                # Two co-residents (same role) plus a location (different role).
+                "roles": {"Co_resident": ["Gina", "Jon"], "Location": ["Rome"]},
+                "match_sim": 1.0,
+                "role_confidence": 0.9,
+            }
+        ],
+    )
+    rel_call = next(c for c in client.command.await_args_list if "r:REL" in c.args[1])
+    rows = rel_call.kwargs["params"]["rows"]
+
+    same_role = [r for r in rows if r["hr"] == r["tr"]]
+    assert not same_role, f"same-role pairs were written as relations: {same_role}"
+
+    # The cross-role adjacency — the part only this projection can provide — survives.
+    assert {(r["hr"], r["tr"]) for r in rows} == {("Co_resident", "Location")}
+    assert {r["t"] for r in rows} == {"rome"}
+
+
+@pytest.mark.asyncio
+async def test_an_instance_whose_roles_all_collide_writes_no_adjacency():
+    """Every pair same-role means no cross-role adjacency exists to write.
+
+    The instance and its PLAYS_ROLE edges are still written — the fact is real,
+    it just has no entity-to-entity projection.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "gina"}, {"nn": "jon"}])
+    store = GraphStore(client=client)
+
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id="c1",
+        instances=[{"frame": "Avoiding", "roles": {"Agent": ["Gina", "Jon"]}}],
+    )
+    assert not [c for c in client.command.await_args_list if "r:REL" in c.args[1]]
+    assert [c for c in client.command.await_args_list if "PLAYS_ROLE" in c.args[1]]

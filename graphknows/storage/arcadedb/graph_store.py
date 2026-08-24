@@ -1209,6 +1209,8 @@ class GraphStore(ArcadeStoreBase):
         inst_rows: list[dict[str, Any]] = []
         role_rows: list[dict[str, Any]] = []
         rel_rows: list[dict[str, Any]] = []
+        # Same-role filler pairs refused by the projection (see below).
+        co_role_dropped = 0
         # Position in `instances` -> the id it was written under, so a nesting
         # pair given by index survives the drops below (no fills, no frame).
         fid_at: dict[int, str] = {}
@@ -1267,11 +1269,33 @@ class GraphStore(ArcadeStoreBase):
             ordered = sorted(persistable)
             for role, nn, name in ordered:
                 role_rows.append({"fid": fid, "nn": nn, "name": name, "role": role})
-            # Entity adjacency for this fact: every ordered pair of distinct
-            # fillers. Capped — a 7-role instance would otherwise be 21 edges,
-            # and the tail of that list is co-role trivia, not fact.
+            # Entity adjacency for this fact: every ordered pair of fillers of
+            # DIFFERENT roles. Capped — a 7-role instance would otherwise be 21
+            # edges, and the tail of that list is co-role trivia, not fact.
+            #
+            # ``a[0] != b[0]`` is the load-bearing half. Two fillers of the SAME
+            # role are co-participants, not a relation: emitting them produced
+            # `(Gina) -Residence[Co_resident->Co_resident]-> (Jon)` and
+            # `(banker) -Avoiding[Agent->Agent]-> (Gina)`, which read as facts and
+            # assert nothing true. Measured on conv-30 before this filter: **829
+            # of 2590 reified edges — 32% of the fact layer — related a role to
+            # itself.** Co-participation is already expressed correctly, by both
+            # fillers hanging off the same FRAME_INSTANCE via PLAYS_ROLE; the
+            # projection only ever needed to add the cross-role adjacency that
+            # walking entity-to-entity cannot otherwise reach.
+            same_role = sum(
+                1
+                for i, a in enumerate(ordered)
+                for b in ordered[i + 1 :]
+                if a[1] != b[1] and a[0] == b[0]
+            )
+            if same_role:
+                co_role_dropped += same_role
             pairs = [
-                (a, b) for i, a in enumerate(ordered) for b in ordered[i + 1 :] if a[1] != b[1]
+                (a, b)
+                for i, a in enumerate(ordered)
+                for b in ordered[i + 1 :]
+                if a[1] != b[1] and a[0] != b[0]
             ][:_MAX_FRAME_REL_PAIRS]
             for (hr, hnn, _), (tr, tnn, _) in pairs:
                 rel_rows.append(
@@ -1309,6 +1333,13 @@ class GraphStore(ArcadeStoreBase):
                 "frame role fillers unbound: %d (no ENTITY was minted for them, so they "
                 "get no PLAYS_ROLE edge) in chunk %s",
                 unbound,
+                chunk_id,
+            )
+        if co_role_dropped:
+            logger.debug(
+                "frame projection: %d same-role filler pair(s) not written as REL in chunk %s "
+                "(co-participation, not a relation — they remain joined by their instance)",
+                co_role_dropped,
                 chunk_id,
             )
         if not inst_rows:
