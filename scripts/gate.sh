@@ -33,33 +33,11 @@ fi
 # new_coverage reading is visible before it binds. Flip to 1 to arm it.
 SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-0}"
 
-# Vulnerabilities present when this gate was written (26 Jul 2026). Listed so
-# that NEW ones fail the push while known ones do not block every commit.
-# This is a debt ledger, not a dismissal — each line names its fix version.
-#
-#   click             8.3.2   -> 8.3.3      PYSEC-2026-2132
-#   cryptography     46.0.7   -> 48.0.1     GHSA-537c-gmf6-5ccf
-#   mcp              1.27.0   -> 1.28.1     PYSEC-2026-3481/3482/3483
-#   pydantic-settings 2.13.1  -> 2.14.2     GHSA-4xgf-cpjx-pc3j
-#   python-multipart 0.0.29   -> 0.0.31     PYSEC-2026-3036/3037/3040
-#   setuptools       81.0.0   -> 83.0.0     PYSEC-2026-3447
-#   starlette         1.1.0   -> 1.3.1      PYSEC-2026-248/249
-#   torch            2.12.0   -> 2.13.0     PYSEC-2025-194     (image rebuild)
-#   transformers     4.57.6   -> 5.x/none   PYSEC-2025-217, PYSEC-2026-2288/2289/2290
-#
-# The first seven are ordinary bumps. torch and transformers need an image
-# rebuild and an eval re-run, so they are deliberately deferred rather than
-# bundled into a gate change.
-KNOWN_VULNS=(
-  PYSEC-2026-2132 GHSA-537c-gmf6-5ccf
-  PYSEC-2026-3481 PYSEC-2026-3482 PYSEC-2026-3483
-  GHSA-4xgf-cpjx-pc3j
-  PYSEC-2026-3036 PYSEC-2026-3037 PYSEC-2026-3040
-  PYSEC-2026-3447
-  PYSEC-2026-248 PYSEC-2026-249
-  PYSEC-2025-194
-  PYSEC-2025-217 PYSEC-2026-2288 PYSEC-2026-2289 PYSEC-2026-2290
-)
+# The known-vulnerability ledger lives in .pip-audit-ignore, read by this gate
+# AND by .github/workflows/ci.yml. It used to be a KNOWN_VULNS array here, which
+# meant CI and the pre-push gate each carried their own copy of the same list —
+# two ledgers that drift are worse than one that is occasionally stale.
+AUDIT_IGNORE_FILE=".pip-audit-ignore"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
@@ -137,11 +115,19 @@ fi
 # enabled on this SonarCloud plan, so that command fails for a reason unrelated
 # to the code. pip-audit gives the same signal for free.
 step "dependency audit (new advisories only)"
-IGNORE_ARGS=""
-for v in "${KNOWN_VULNS[@]}"; do IGNORE_ARGS="$IGNORE_ARGS --ignore-vuln $v"; done
-dex "uv export --no-dev --no-editable --no-hashes --format requirements-txt > /tmp/req-audit.txt \
-     && uvx pip-audit -r /tmp/req-audit.txt --progress-spinner off $IGNORE_ARGS"
-record $? "dependency audit"
+# First token of each non-comment line is the advisory id; the rest is the fix
+# note. Reported like the missing publisher below rather than aborting the whole
+# gate, and never audited with an empty ignore list - that would drown the real
+# signal in known noise.
+if [ ! -f "$AUDIT_IGNORE_FILE" ]; then
+  echo "gate: $AUDIT_IGNORE_FILE is missing - the ledger cannot be read." >&2
+  FAILED+=("dependency audit (ledger missing)")
+else
+  IGNORE_ARGS="$(grep -oE '^(PYSEC|GHSA)[A-Za-z0-9-]+' "$AUDIT_IGNORE_FILE" | sed 's/^/--ignore-vuln /' | tr '\n' ' ')"
+  dex "uv export --no-dev --no-editable --no-hashes --format requirements-txt > /tmp/req-audit.txt \
+       && uvx pip-audit -r /tmp/req-audit.txt --progress-spinner off $IGNORE_ARGS"
+  record $? "dependency audit"
+fi
 
 # -- 7. SonarCloud -----------------------------------------------------------
 step "SonarCloud analysis (blocking=${SONAR_BLOCKING})"

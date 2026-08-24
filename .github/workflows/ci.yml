@@ -1,0 +1,198 @@
+# CI — the merge gate for main.
+#
+# This is scripts/gate.sh's checks, run on a clean machine instead of the
+# developer's workspace container. Same checks, same thresholds, same order:
+#   ruff -> mypy -> import-linter -> bandit -> pytest+coverage -> SonarQube Cloud
+#
+# Why not just run gate.sh? It requires the graphknows-workspace container and
+# refuses to degrade to a host run — correct for a pre-push hook on a machine
+# whose host venv cannot collect the suite, wrong for a runner that has no
+# container and a clean environment. The thresholds that matter (coverage floor
+# 65, the vulnerability ledger) are read from the SAME sources gate.sh reads,
+# so the two cannot silently disagree.
+#
+# The heavy job runs its checks with `if: !cancelled()` so ONE run reports every
+# failure. Failing fast on ruff and rediscovering mypy next run is exactly the
+# loop gate.sh was built to avoid, and here each retry re-pays the model bake.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Superseded pushes to the same PR are pointless once a newer commit exists.
+# main is NOT cancelled: its analysis sets Sonar's new-code baseline.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  # Mirrors the Dockerfile's CPU torch index. The PyPI wheel bundles ~2.5GB of
+  # CUDA kernels a runner never executes, and the runner's disk is the binding
+  # constraint here, not the download.
+  UV_TORCH_BACKEND: cpu
+  # Inside the workspace so actions/cache can address them with relative paths.
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+  NLTK_DATA: ${{ github.workspace }}/.cache/nltk_data
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    # The first run bakes several GB of models; cached runs are ~8 min.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Sonar reads git blame to decide what "new code" is. A shallow clone
+          # makes every line look new, which silently distorts new_coverage —
+          # the one condition this project's quality gate actually fails on.
+          fetch-depth: 0
+
+      - name: free disk space
+        # torch + six baked models + the uv cache do not fit alongside the
+        # runner's preinstalled toolchains. AGENT_TOOLSDIRECTORY is deliberately
+        # left alone — uv installs its own Python, but setup-uv reads that path.
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          python-version: "3.13"
+
+      - name: install
+        # --locked fails if uv.lock has drifted from pyproject.toml. That is a
+        # real quality check: the image resolves from these constraints, so a
+        # stale lock is a stale image.
+        run: uv sync --locked --extra assisted --group dev
+
+      - name: install spacy model
+        # Same pinned wheel the Dockerfile installs. `spacy download` targets the
+        # system python, which is not the venv the tests run in.
+        run: >-
+          uv pip install
+          "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+
+      - name: cache models
+        uses: actions/cache@v6
+        with:
+          path: |
+            .cache/huggingface
+            .cache/nltk_data
+          # Model ids are resolved from settings.py and the modules that own
+          # them, so those files decide what the cache holds.
+          key: models-${{ hashFiles('uv.lock', 'scripts/bake_models.py', 'graphknows/settings.py') }}
+          restore-keys: models-
+
+      - name: bake models
+        # The unit suite is NOT model-free: it loads en_core_web_lg and real
+        # GLiNER weights, and none of that is marked integration. Baking with the
+        # project's own script keeps the CI model set from drifting out of the
+        # app — a model added to the code without adding it here fails --check.
+        run: uv run python scripts/bake_models.py
+
+      - name: ruff check
+        if: ${{ !cancelled() }}
+        run: uv run ruff check --no-fix --config ruff.toml graphknows evaluation tests
+
+      - name: ruff format
+        if: ${{ !cancelled() }}
+        run: uv run ruff format --check --config ruff.toml graphknows evaluation tests
+
+      - name: mypy
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run mypy graphknows --strict --ignore-missing-imports
+          --allow-untyped-decorators --no-warn-unused-ignores
+
+      - name: import-linter
+        if: ${{ !cancelled() }}
+        run: uv run lint-imports
+
+      - name: bandit
+        if: ${{ !cancelled() }}
+        run: uv run bandit -r graphknows --skip B101,B104,B105,B110,B112
+
+      - name: pytest + coverage floor
+        if: ${{ !cancelled() }}
+        env:
+          # What the shipped image does. Every model the app can load is baked
+          # above, so a cache miss must fail loudly here rather than turn into a
+          # silent multi-GB download mid-test.
+          HF_HUB_OFFLINE: "1"
+        # 65 is scripts/gate.sh's COVERAGE_FLOOR_MIN — a ratchet against
+        # backsliding. New-code coverage is Sonar's job, one step below.
+        run: >-
+          uv run python -m pytest -q -m "not integration"
+          --cov=graphknows --cov-report=xml:coverage.xml
+          --cov-report=term:skip-covered --cov-fail-under=65
+
+      - name: SonarQube Cloud
+        # No `if:` — this needs a coverage.xml that means something. Publishing
+        # after a failed suite is how new_coverage got pinned at 0.0 before.
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          # Blocking, unlike the pre-push gate's GRAPHKNOWS_SONAR_BLOCKING=0.
+          # That default exists because no analysis had ever uploaded coverage,
+          # so the verdict was meaningless. This job uploads it, so it binds.
+          args: -Dsonar.qualitygate.wait=true
+
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: dependency audit (new advisories only)
+        # Ignore list comes from .pip-audit-ignore, the same ledger
+        # scripts/gate.sh reads. Adding an id in one place covers both.
+        run: |
+          test -f .pip-audit-ignore || { echo "::error::.pip-audit-ignore is missing"; exit 1; }
+          uv export --no-dev --no-editable --no-hashes --format requirements-txt > /tmp/req-audit.txt
+          uvx pip-audit -r /tmp/req-audit.txt --progress-spinner off \
+            $(grep -oE '^(PYSEC|GHSA)[A-Za-z0-9-]+' .pip-audit-ignore | sed 's/^/--ignore-vuln /')
+
+  wheel:
+    name: wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: build
+        run: uv build --wheel
+
+      - name: assert the wheel still ships py.typed and stays small
+        # A packaging regression is invisible to every other check here: the
+        # suite imports from the source tree, not from the wheel.
+        run: |
+          python3 - <<'PY'
+          import glob, os, zipfile
+
+          wheel = sorted(glob.glob("dist/*.whl"))[-1]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert any("py.typed" in n for n in names), "py.typed missing from the wheel"
+          kb = os.path.getsize(wheel) / 1024
+          assert kb < 1024, f"wheel too large: {kb:.0f} KB"
+          print(f"wheel OK: {os.path.basename(wheel)} ({kb:.0f} KB, py.typed present)")
+          PY
