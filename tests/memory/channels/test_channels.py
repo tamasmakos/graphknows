@@ -117,8 +117,8 @@ class TestFrameChannelCollect:
             side_effect=[
                 [{"c": 4}],  # 4 session chunks
                 [  # corpus coverage: Activity_ongoing in 3/4, Process_start in 1/4
-                    {"ft": "Activity_ongoing", "n": 3},
-                    {"ft": "Process_start", "n": 1},
+                    {"k": "Activity_ongoing", "n": 3},
+                    {"k": "Process_start", "n": 1},
                 ],
             ]
         )
@@ -156,8 +156,8 @@ class TestFrameChannelCollect:
             side_effect=[
                 [{"c": 28}],  # 28 chunks in the session
                 [
-                    {"ft": "Activity_done_state", "n": 19},  # 68% -> saturated
-                    {"ft": "Process_start", "n": 3},  # 11% -> discriminative
+                    {"k": "Activity_done_state", "n": 19},  # 68% -> saturated
+                    {"k": "Process_start", "n": 3},  # 11% -> discriminative
                 ],
             ]
         )
@@ -182,7 +182,7 @@ class TestFrameChannelCollect:
         rt.store.query = AsyncMock(
             side_effect=[
                 [{"c": 40}],
-                [{"ft": "Process_start", "n": 4}],  # 10% of the session
+                [{"k": "Process_start", "n": 4}],  # 10% of the session
             ]
         )
         rt.store.query_frames_by_embedding = AsyncMock(
@@ -211,7 +211,7 @@ class TestFrameChannelCollect:
         firing. The session lives on the chunk the frame was evoked by.
         """
         rt = MagicMock()
-        rt.store.query = AsyncMock(side_effect=[[{"c": 4}], [{"ft": "Activity_ongoing", "n": 3}]])
+        rt.store.query = AsyncMock(side_effect=[[{"c": 4}], [{"k": "Activity_ongoing", "n": 3}]])
         rt.store.query_frames_by_embedding = AsyncMock(
             return_value=[{"chunk_id": "c1", "frame_type": "Activity_ongoing", "score": 0.35}]
         )

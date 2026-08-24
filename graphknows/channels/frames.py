@@ -20,11 +20,15 @@ from __future__ import annotations
 
 import logging
 import os
-from collections import defaultdict
 from typing import Any
 
+from graphknows.channels._shared import (
+    drop_saturated,
+    rank_chunks,
+    session_chunk_count,
+    tag_coverage,
+)
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
-from graphknows.ranking.rrf import rrf_score
 
 log = logging.getLogger(__name__)
 
@@ -34,46 +38,6 @@ log = logging.getLogger(__name__)
 # chunks floods recall with the whole conversation and carries no discriminative
 # signal. Such query-frames are dropped from the join.
 _FRAME_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_FRAME_SATURATION_RATIO", "0.5"))
-
-
-async def _frame_coverage(rt: Any, session_id: str, state: str | None) -> dict[str, int]:
-    """How many of the session's chunks each frame_type is evoked in.
-
-    Measured over the GRAPH, not over the rows a query happened to return.
-    Counting coverage from the returned rows bounds the numerator by the sample
-    size while the denominator stays the whole session, so the ratio could never
-    reach the threshold and the guard never fired.
-
-    Scoped by ``c.session_id``: FRAME is canonical — one vertex per frame for
-    the whole namespace — so it carries no session of its own. The session is a
-    property of the chunk that evoked it.
-    """
-    q = "MATCH (f:FRAME)-[:EVOKED_BY]->(c:CHUNK) WHERE c.session_id = $sid"
-    if state:
-        q += " AND c.state = $st"
-    q += " RETURN f.frame_type AS ft, count(DISTINCT c.chunk_id) AS n"
-    rows = (
-        await rt.store.query(q, sid=session_id, st=state)
-        if state
-        else await rt.store.query(q, sid=session_id)
-    )
-    return {r["ft"]: int(r.get("n") or 0) for r in rows if r.get("ft")}
-
-
-async def _session_chunk_count(rt: Any, session_id: str, state: str | None) -> int:
-    """Total CHUNK count for a session (optionally filtered by lifecycle state)."""
-    if state:
-        rows = await rt.store.query(
-            "MATCH (c:CHUNK) WHERE c.session_id = $sid AND c.state = $st RETURN count(c) AS c",
-            sid=session_id,
-            st=state,
-        )
-    else:
-        rows = await rt.store.query(
-            "MATCH (c:CHUNK) WHERE c.session_id = $sid RETURN count(c) AS c",
-            sid=session_id,
-        )
-    return int(rows[0]["c"]) if rows else 0
 
 
 class FrameChannel(Channel):
@@ -97,43 +61,42 @@ class FrameChannel(Channel):
         if not rows:
             return {}
 
-        chunk_score: dict[str, float] = defaultdict(float)
-        for r in rows:
-            chunk_score[r["chunk_id"]] += r.get("score", 0.0)
-
-        ranked = sorted(chunk_score, key=lambda c: -chunk_score[c])[:top_k]
-        result: CollectResult = {}
-        for rank, cid in enumerate(ranked):
-            result[cid] = (
-                rrf_score(rank),
-                {"text": "", "entities": [], "sources": {"frame"}, "doc_id": "", "metadata": {}},
-            )
-        return result
+        return rank_chunks(rows, top_k, "frame")
 
     @staticmethod
     async def _drop_saturated(
         rows: list[dict[str, Any]], ctx: ChannelContext, rt: Any
     ) -> list[dict[str, Any]]:
-        """Drop rows whose frame is evoked in >50% of the session's chunks.
+        """Drop rows whose frame is evoked in more than half the session's chunks.
 
         Session-scoped only; without a session there is no corpus to measure
         saturation against, so the rows pass through unchanged.
 
-        Coverage comes from the graph, never from ``rows`` — see
-        :func:`_frame_coverage`. Counting the sample made this guard unable to
-        fire at all: on conv-30, ``Activity_done_state`` covers 19 of session
-        s1's 28 chunks (68%) but showed up on only 8 of any query's 25 rows
-        (29%), so it cleared the 50% test on every query and was never dropped.
+        Coverage comes from the GRAPH, never from ``rows``. Counting the sample
+        made this guard unable to fire at all: on conv-30, ``Activity_done_state``
+        covers 19 of session s1's 28 chunks (68%) but showed up on only 8 of any
+        query's 25 rows (29%), so it cleared the 50% test on every query and was
+        never dropped.
+
+        Scoped by ``c.session_id``: FRAME is canonical — one vertex per frame for
+        the whole namespace — so it carries no session of its own. The session is
+        a property of the chunk that evoked it.
         """
         if not ctx.session_id:
             return rows
-        total = await _session_chunk_count(rt, ctx.session_id, ctx.state)
-        if not total:
-            return rows
-        cover = await _frame_coverage(rt, ctx.session_id, ctx.state)
-        present = {r["frame_type"] for r in rows}
-        saturated = {ft for ft in present if cover.get(ft, 0) / total > _FRAME_SATURATION_RATIO}
-        if not saturated:
-            return rows
-        log.debug("frame channel dropping saturated frames: %s", sorted(saturated))
-        return [r for r in rows if r["frame_type"] not in saturated]
+        total = await session_chunk_count(rt, ctx.session_id, ctx.state)
+        cover = await tag_coverage(
+            rt,
+            ctx.session_id,
+            ctx.state,
+            pattern="(f:FRAME)-[:EVOKED_BY]->(c:CHUNK)",
+            key="f.frame_type",
+        )
+        return drop_saturated(
+            rows,
+            field="frame_type",
+            coverage=cover,
+            total=total,
+            ratio=_FRAME_SATURATION_RATIO,
+            label="frame",
+        )

@@ -31,11 +31,15 @@ from __future__ import annotations
 
 import logging
 import os
-from collections import defaultdict
 from typing import Any
 
+from graphknows.channels._shared import (
+    drop_saturated,
+    rank_chunks,
+    session_chunk_count,
+    tag_coverage,
+)
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
-from graphknows.ranking.rrf import rrf_score
 
 log = logging.getLogger(__name__)
 
@@ -48,22 +52,6 @@ _CLASS_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_CLASS_SATURATI
 
 # Ontology classes considered per query.
 _CLASS_TOP_K: int = 5
-
-
-async def _session_chunk_count(rt: Any, session_id: str, state: str | None) -> int:
-    """Total CHUNK count for a session (optionally filtered by lifecycle state)."""
-    if state:
-        rows = await rt.store.query(
-            "MATCH (c:CHUNK) WHERE c.session_id = $sid AND c.state = $st RETURN count(c) AS c",
-            sid=session_id,
-            st=state,
-        )
-    else:
-        rows = await rt.store.query(
-            "MATCH (c:CHUNK) WHERE c.session_id = $sid RETURN count(c) AS c",
-            sid=session_id,
-        )
-    return int(rows[0]["c"]) if rows else 0
 
 
 class OntologyChannel(Channel):
@@ -82,41 +70,38 @@ class OntologyChannel(Channel):
         rows = await self._drop_saturated(rows, ctx, rt)
         if not rows:
             return {}
-
-        chunk_score: dict[str, float] = defaultdict(float)
-        for r in rows:
-            chunk_score[r["chunk_id"]] += float(r.get("score") or 0.0)
-
-        ranked = sorted(chunk_score, key=lambda c: -chunk_score[c])[:top_k]
-        result: CollectResult = {}
-        for rank, cid in enumerate(ranked):
-            result[cid] = (
-                rrf_score(rank),
-                {"text": "", "entities": [], "sources": {"ontology"}, "doc_id": "", "metadata": {}},
-            )
-        return result
+        return rank_chunks(rows, top_k, "ontology")
 
     @staticmethod
     async def _drop_saturated(
         rows: list[dict[str, Any]], ctx: ChannelContext, rt: Any
     ) -> list[dict[str, Any]]:
-        """Drop rows whose class tags >50% of the session's chunks.
+        """Drop rows whose class tags more than half the session's chunks.
+
+        Coverage comes from the GRAPH. It used to be counted from ``rows``, which
+        is the defect the frame channel had already found and fixed: the
+        numerator is bounded by the page size while the denominator is the whole
+        session, so the ratio could not reach the threshold and this guard never
+        dropped anything.
 
         Session-scoped only; without a session there is no corpus to measure
         saturation against, so the rows pass through unchanged.
         """
         if not ctx.session_id:
             return rows
-        total = await _session_chunk_count(rt, ctx.session_id, ctx.state)
-        if not total:
-            return rows
-        cover: dict[str, set[str]] = defaultdict(set)
-        for r in rows:
-            cover[r["uri"]].add(r["chunk_id"])
-        saturated = {
-            uri for uri, chunks in cover.items() if len(chunks) / total > _CLASS_SATURATION_RATIO
-        }
-        if not saturated:
-            return rows
-        log.debug("ontology channel dropping saturated classes: %s", sorted(saturated))
-        return [r for r in rows if r["uri"] not in saturated]
+        total = await session_chunk_count(rt, ctx.session_id, ctx.state)
+        cover = await tag_coverage(
+            rt,
+            ctx.session_id,
+            ctx.state,
+            pattern="(c:CHUNK)-[:MATCHES_CLASS]->(o:ONTOLOGY_CLASS)",
+            key="o.uri",
+        )
+        return drop_saturated(
+            rows,
+            field="uri",
+            coverage=cover,
+            total=total,
+            ratio=_CLASS_SATURATION_RATIO,
+            label="ontology",
+        )

@@ -21,8 +21,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from graphknows.channels._shared import session_chunk_count
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
-from graphknows.channels.frames import _FRAME_SATURATION_RATIO, _session_chunk_count
+from graphknows.channels.frames import _FRAME_SATURATION_RATIO
 from graphknows.ranking.rrf import rrf_score
 
 log = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ async def _instance_coverage(
     """How many of the session's chunks each of ``frames`` has an INSTANCE in.
 
     The FRAME_INSTANCE layer, not the FRAME chunk-tag layer that
-    :func:`~graphknows.channels.frames._frame_coverage` measures — SRL writes one
+    :func:`~graphknows.channels._shared.tag_coverage` measures — SRL writes one
     instance per trigger, so the two layers have very different densities and a
     frame saturated in one need not be in the other.
 
@@ -110,7 +111,7 @@ class FrameFactChannel(Channel):
         """
         if not frames or not ctx.session_id:
             return frames
-        total = await _session_chunk_count(rt, ctx.session_id, ctx.state)
+        total = await session_chunk_count(rt, ctx.session_id, ctx.state)
         if not total:
             return frames
         cover = await _instance_coverage(rt, frames, ctx.session_id, ctx.state)
