@@ -2379,6 +2379,55 @@ class GraphStore(ArcadeStoreBase):
         )
         return int(rows[0].get("n") or 0) if rows else 0
 
+    _CARRIED_REL_COLUMNS = (
+        "canonical_predicate",
+        "anchor",
+        "reified",
+        "frame",
+        "frame_instance_id",
+        "head_role",
+        "tail_role",
+        "polarity",
+        "modality",
+        "epistemic",
+        "hedged",
+        "ontology_property",
+    )
+
+    async def _carry_rel_columns(
+        self, src_name: str, predicate: str, dst_name: str, row: dict[str, Any]
+    ) -> None:
+        """Re-apply the loser edge's structural columns to the repointed winner edge.
+
+        ``write_relation`` cannot express these — it coalesces
+        ``canonical_predicate``/``anchor``/``reified`` to its own tier-3/4
+        defaults, which is right for a fresh relex edge and wrong for a replay of
+        an edge that already had a tier-1 identity. Applied as a follow-up SET so
+        the repair preserves what the loser knew instead of recomputing it from a
+        predicate string.
+
+        ``ontology_blocked`` is OR-ed rather than assigned: it is sticky by
+        design, so a refusal recorded on either edge survives the merge.
+        """
+        carried = {k: row.get(k) for k in self._CARRIED_REL_COLUMNS if row.get(k) not in (None, "")}
+        blocked = bool(row.get("ontology_blocked"))
+        if not carried and not blocked:
+            return
+        assignments = ", ".join(f"r.{k} = ${k}" for k in carried)
+        if blocked:
+            assignments += (", " if assignments else "") + (
+                "r.ontology_blocked = coalesce(r.ontology_blocked, false) OR true"
+            )
+        await self.command(
+            f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
+            f"WHERE a.name_norm = $src_nn AND b.name_norm = $dst_nn AND r.predicate = $predicate "
+            f"SET {assignments}",
+            src_nn=_name_norm(src_name),
+            dst_nn=_name_norm(dst_name),
+            predicate=predicate,
+            **carried,
+        )
+
     async def _repoint_relation(self, src_name: str, dst_name: str, row: dict[str, Any]) -> None:
         """Re-create one loser relation edge on the winner via write_relation.
 
@@ -2409,6 +2458,7 @@ class GraphStore(ArcadeStoreBase):
                 source=source,
                 verifier_score=vscore,
             )
+            await self._carry_rel_columns(src_name, predicate, dst_name, row)
             return
         for cid in evidence:
             await self.write_relation(
@@ -2422,6 +2472,7 @@ class GraphStore(ArcadeStoreBase):
                 source=source,
                 verifier_score=vscore,
             )
+        await self._carry_rel_columns(src_name, predicate, dst_name, row)
 
     async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
         """Merge the loser ENTITY into the winner. Idempotent and self-safe.
@@ -2474,7 +2525,21 @@ class GraphStore(ArcadeStoreBase):
             "RETURN b.name AS dst, b.name_norm AS dst_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
             "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source, "
-            "r.verifier_score AS verifier_score",
+            "r.verifier_score AS verifier_score, "
+            # Everything below was dropped by the repair, so a merged endpoint
+            # silently downgraded its edges: a frame projection lost its roles
+            # and its `fn:` canonical_predicate and came back as an unreified
+            # `lemma:` edge, and `ontology_blocked` — documented as sticky
+            # because "a refusal is a verdict, not an absence of one" — was
+            # cleared, re-publishing exactly the edges it exists to refuse.
+            "r.canonical_predicate AS canonical_predicate, r.anchor AS anchor, "
+            "r.reified AS reified, r.frame AS frame, "
+            "r.frame_instance_id AS frame_instance_id, "
+            "r.head_role AS head_role, r.tail_role AS tail_role, "
+            "r.polarity AS polarity, r.modality AS modality, "
+            "r.epistemic AS epistemic, r.hedged AS hedged, "
+            "r.ontology_property AS ontology_property, "
+            "r.ontology_blocked AS ontology_blocked",
             loser=loser_norm,
         )
         in_rows = await self.query(

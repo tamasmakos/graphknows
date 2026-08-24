@@ -1681,3 +1681,64 @@ async def test_a_fact_and_its_denial_are_two_instances_not_one():
     inst_rows = client.command.await_args_list[0].kwargs["params"]["rows"]
     assert len({r["fid"] for r in inst_rows}) == 2, "denial collapsed onto the assertion"
     assert {r["pol"] for r in inst_rows} == {"pos", "neg"}
+
+
+@pytest.mark.asyncio
+async def test_entity_merge_keeps_a_frame_edge_s_identity():
+    """Repointing a loser edge must not downgrade it to an unanchored lemma edge.
+
+    `write_relation` coalesces canonical_predicate/anchor/reified to its own
+    tier-3/4 defaults — correct for a fresh relex edge, wrong for a replay of one
+    that already had a tier-1 frame identity. Measured on conv-30 before the fix:
+    109 edges came back as `lemma:<frame name>`, unreified, with their roles
+    gone, purely because an endpoint had been merged.
+    """
+    client = _mock_client()
+    store = GraphStore(client=client)
+    row = {
+        "predicate": "Purpose",
+        "confidence": 0.8,
+        "evidence": [],
+        "source": "frame",
+        "canonical_predicate": "fn:Purpose:Agent->Goal",
+        "anchor": "frame",
+        "reified": True,
+        "frame": "Purpose",
+        "frame_instance_id": "Purpose:abc123",
+        "head_role": "Agent",
+        "tail_role": "Goal",
+        "polarity": "neg",
+        "ontology_blocked": True,
+    }
+    await store._repoint_relation("Gina", "Mentors", row)
+
+    carried = [
+        c
+        for c in client.command.await_args_list
+        if "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)" in c.args[1]
+    ]
+    assert carried, "structural columns were not re-applied after repointing"
+    stmt, params = carried[-1].args[1], carried[-1].kwargs["params"]
+    assert params["canonical_predicate"] == "fn:Purpose:Agent->Goal"
+    assert params["reified"] is True
+    assert params["head_role"] == "Agent" and params["tail_role"] == "Goal"
+    assert params["polarity"] == "neg"
+    # Sticky by design: a refusal recorded on either edge survives the merge.
+    assert "r.ontology_blocked = coalesce(r.ontology_blocked, false) OR true" in stmt
+    # Inline relationship property maps are unreliable in ArcadeDB Cypher.
+    assert "WHERE" in stmt and "[r:REL {" not in stmt
+
+
+@pytest.mark.asyncio
+async def test_repointing_a_plain_edge_carries_nothing_extra():
+    """No structural columns on the loser means no follow-up write."""
+    client = _mock_client()
+    store = GraphStore(client=client)
+    await store._repoint_relation(
+        "A", "B", {"predicate": "knows", "evidence": [], "ontology_blocked": False}
+    )
+    assert not [
+        c
+        for c in client.command.await_args_list
+        if "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)" in c.args[1]
+    ]
