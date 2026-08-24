@@ -145,6 +145,22 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv pip install --python /opt/venv/bin/python --no-cache \
         --group dev --group eval jupyterlab
 
+# The `srl` extra: transformer frame identification, which the eval measures.
+# Kept in `dev` only — it is default-ON wherever it is importable, so putting it
+# in `runtime` would silently change what every shipped deployment extracts.
+#
+# `--no-deps` is required: it pins protobuf<6 where this project resolves 7.x,
+# and drags in pytorch-lightning + nlpaug for training code that inference never
+# runs. nlpaug is installed the same way for the same reason.
+#
+# This was previously hand-installed into a running container and existed
+# nowhere in the build. Recreating the container from the image wiped it, the
+# frame layer silently fell back to the one-guess-per-chunk path, and an eval
+# came back with 92 FRAME_INSTANCE nodes instead of 1240 — a 93% loss that
+# nothing reported, because a missing optional extra is not an error.
+RUN uv pip install --python /opt/venv/bin/python --no-cache --no-deps \
+    frame-semantic-transformer nlpaug
+
 # SonarQube CLI — code-quality/secret scanning for local development and the
 # git pre-commit hook. Installed to a system path so it is on PATH for every
 # shell (login or not). Authenticate with SONARQUBE_CLI_TOKEN + SONARQUBE_CLI_ORG;
