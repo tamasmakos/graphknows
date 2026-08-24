@@ -14,7 +14,6 @@ import logging
 import os
 import time
 from collections import deque
-from itertools import zip_longest
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
@@ -53,7 +52,11 @@ _ONT_CLASS_MIN_SIM = 0.45
 # produced colleague/owns/follows. GLiNER and GLiREL are both trained at <=25
 # labels per instance and our relex model card demos 2-5, so the ceiling is real
 # too. 15 sits in the measured band.
-_RELATION_LABEL_CAP = 15
+# 25 = the bundled personal profile's full size, so a vocabulary designed to be
+# offered WHOLE is never truncated, and the documented <=25 training budget of
+# GLiNER/GLiREL. Raised from 15 alongside the proportional allocation below: the
+# cap alone was not the defect, the flat round-robin was.
+_RELATION_LABEL_CAP = 25
 
 # Turns to accumulate before the lexical index is frozen. Document frequency is
 # what separates a discriminating altLabel ("dance") from a ubiquitous one
@@ -107,6 +110,63 @@ _TYPING_CLASSES: tuple[str, ...] = (
     "Plan",
     "Disease",
 )
+
+
+def _allocate_offer(
+    groups: dict[tuple[tuple[str, ...], tuple[str, ...]], list[Any]], cap: int
+) -> list[Any]:
+    """Choose up to *cap* properties across (domain, range) groups.
+
+    Every group keeps at least one slot, then the remainder is shared in
+    proportion to how many applicable properties each group actually holds.
+
+    The floor is the original round-robin's intent: nine interpersonal
+    Person->Person properties sit at the top of the profile and would otherwise
+    take every slot the moment a person is mentioned, deleting the event, place
+    and employment properties from the offer.
+
+    Proportionality is what a FLAT round-robin got backwards on a large
+    vocabulary. Measured on the bundled CCO digest for a person-centric chunk:
+    99 applicable properties across 7 groups, 89 of them Person->Person, and
+    zip_longest handed that group one slot per round — so **5 of 87 familial
+    predicates were offered** while ten of the fifteen slots went to BFO
+    mereology (`has member part`, `continuant part of`, `is successor of`,
+    `uses`, `is predecessor of`). A chunk about someone's family was offered
+    almost none of the vocabulary for describing families.
+
+    Within-group order is preserved, so an embedding rank applied by
+    :meth:`_rank_within_groups` still decides which members of a group are kept.
+    """
+    if not groups:
+        return []
+    ordered = sorted(groups.values(), key=len, reverse=True)
+    # Below one slot each, the biggest groups are the ones worth keeping.
+    if len(ordered) >= cap:
+        return [g[0] for g in ordered[:cap]]
+
+    total = sum(len(g) for g in ordered)
+    remaining = cap - len(ordered)
+    quota = [1] * len(ordered)
+    for i, group in enumerate(ordered):
+        # -1 because the floor already granted one.
+        quota[i] += int(remaining * (len(group) - 1) / max(total - len(ordered), 1))
+    # Integer division leaves slots unspent; hand them to the largest groups.
+    for i in range(len(ordered)):
+        if sum(quota) >= cap:
+            break
+        quota[i] += 1
+    # Emit round-robin so the interleaved ORDER survives — a caller that ranked
+    # within groups by embedding fit expects its best match to lead. The quotas
+    # decide how many each group contributes; the interleave decides when.
+    pools = [list(group[:n]) for group, n in zip(ordered, quota, strict=True)]
+    out: list[Any] = []
+    while len(out) < cap and any(pools):
+        for pool in pools:
+            if pool:
+                out.append(pool.pop(0))
+                if len(out) >= cap:
+                    break
+    return out
 
 
 def _group_ranking_enabled() -> bool:
@@ -1225,11 +1285,9 @@ class _STMIngestHandler:
         ``knows`` and ``likes`` but not ``worksFor``: with no Organization in it,
         an extractor offered ``worksFor`` could only invent the other end.
 
-        Capped at ``_RELATION_LABEL_CAP``, round-robin over the (domain, range)
-        pairs rather than in profile order — nine interpersonal Person->Person
-        properties sit at the top of the vocabulary and would otherwise take
-        every slot the moment a person is mentioned, deleting the event, place
-        and employment properties from the offer entirely.
+        Capped at ``_RELATION_LABEL_CAP`` and allocated across the (domain, range)
+        pairs by :func:`_allocate_offer` — one slot per pair as a floor, the rest
+        in proportion to how many applicable properties each pair holds.
 
         Offering nothing is a real outcome, and a logged one: an unlogged empty
         vocabulary is indistinguishable from a broken extractor downstream.
@@ -1263,10 +1321,8 @@ class _STMIngestHandler:
             groups.setdefault((prop.domain, prop.range), []).append(prop)
         if embedding and _group_ranking_enabled():
             self._rank_within_groups(groups, embedding)
-        interleaved = [p for row in zip_longest(*groups.values()) for p in row if p is not None][
-            :_RELATION_LABEL_CAP
-        ]
-        return {p.label: p.definition or p.label for p in interleaved}
+        offer = _allocate_offer(groups, _RELATION_LABEL_CAP)
+        return {p.label: p.definition or p.label for p in offer}
 
     def _map_to_profile_class(self, entity_type: str) -> tuple[str, float]:
         """Map an extracted entity type onto a RELATION-profile class: ``(label, score)``.

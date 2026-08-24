@@ -46,6 +46,30 @@ _BUNDLED_ONTOLOGY = str(
 # separate curated vocabulary is still a supported override.
 _BUNDLED_RELATION_PROFILE = _BUNDLED_ONTOLOGY
 
+# The hand-curated alternative, now shipped so the CCO-vs-profile question is an
+# A/B anyone can run rather than a fixture only the test suite can reach:
+#
+#     GRAPHKNOWS_RELATION_ONTOLOGY=personal
+#
+# 9 classes and 25 object properties, every one declaring a domain and a range,
+# sized to be offered WHOLE. It is NOT the default: the decision to unify on CCO
+# above was deliberate, and reversing it is a measurement, not an opinion.
+_BUNDLED_PERSONAL_PROFILE = str(
+    Path(__file__).resolve().parent
+    / "symbolic"
+    / "ontology"
+    / "assets"
+    / "personal"
+    / "personal-profile.json"
+)
+
+# Bare tokens accepted by GRAPHKNOWS_RELATION_ONTOLOGY in place of a path, so an
+# A/B arm is one short env var instead of a path into site-packages.
+_RELATION_VOCABULARIES = {
+    "personal": _BUNDLED_PERSONAL_PROFILE,
+    "cco": _BUNDLED_ONTOLOGY,
+}
+
 # The INPUT SKOS overlay: the everyday concepts CCO does not model as binary
 # predicates (works for, plans to, likes, cares for), each carrying the
 # altLabels that make it lexically reachable and domain/range in CCO's own class
@@ -376,7 +400,12 @@ class GraphKnowsSettings(BaseSettings):
         can point relations at a curated domain profile without replacing the
         class vocabulary that types entities.
         """
-        return self.relation_ontology.strip() or _BUNDLED_RELATION_PROFILE
+        chosen = self.relation_ontology.strip()
+        if not chosen:
+            return _BUNDLED_RELATION_PROFILE
+        # A bare vocabulary name resolves to its bundled asset; anything else is
+        # taken as a path, so an explicit file always wins over the shorthand.
+        return _RELATION_VOCABULARIES.get(chosen.casefold(), chosen)
 
     @property
     def uses_llm(self) -> bool:
