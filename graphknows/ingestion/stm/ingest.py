@@ -1147,7 +1147,15 @@ class _STMIngestHandler:
         entities: list[dict[str, Any]],
         ontology_classes: list[tuple[str, float]],
     ) -> None:
-        """Write the chunk's MATCHES_CLASS tags and its entities' INSTANCE_OF edges."""
+        """Write the chunk's MATCHES_CLASS tags and its entities' INSTANCE_OF edges.
+
+        The edge score is THIS entity's confidence in being an instance of THAT
+        class: the extractor's own confidence for the entity times the
+        type->class mapping confidence. The mapping score alone is a property of
+        the (type, class) pair and identical for every entity sharing the type,
+        so on its own it can rank nothing; with the per-entity factor two
+        entities of one class carry different scores.
+        """
         if self._ontology is None:
             return
         if ontology_classes:
@@ -1156,7 +1164,15 @@ class _STMIngestHandler:
         for ent in entities:
             uri, label, score = self._map_to_class(str(ent.get("type", "")))
             if uri:
-                mappings.append({"name": ent["name"], "uri": uri, "label": label, "score": score})
+                confidence = float(ent.get("confidence", ent.get("score", 1.0)) or 0.0)
+                mappings.append(
+                    {
+                        "name": ent["name"],
+                        "uri": uri,
+                        "label": label,
+                        "score": confidence * score,
+                    }
+                )
         if mappings:
             await self._store.write_instance_of(mappings)
 

@@ -775,9 +775,12 @@ class GraphStore(ArcadeStoreBase):
     async def write_instance_of(self, mappings: list[dict[str, Any]]) -> int:
         """MERGE ENTITY-[:INSTANCE_OF {score}]->ONTOLOGY_CLASS edges.
 
-        Each mapping: ``{name, uri, score}``. An entity may accumulate several
-        INSTANCE_OF edges — different chunks extract different types, which is
-        legitimate multi-classing.
+        Each mapping: ``{name, uri, score}``, where ``score`` is *that entity's*
+        confidence in being an instance of that class — not the class's own match
+        score. An entity may accumulate several INSTANCE_OF edges — different
+        chunks extract different types, which is legitimate multi-classing.
+        Repeated writes keep the strongest mention rather than the latest, so the
+        stored score does not depend on chunk order.
         """
         if not mappings:
             return 0
@@ -795,7 +798,11 @@ class GraphStore(ArcadeStoreBase):
         await self.command(
             "UNWIND $rows AS r "
             "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
-            "MERGE (e)-[i:INSTANCE_OF]->(o) SET i.score = r.score",
+            "MERGE (e)-[i:INSTANCE_OF]->(o) "
+            "SET i.score = CASE "
+            "    WHEN r.score > coalesce(i.score, 0) THEN r.score "
+            "    ELSE i.score "
+            "END",
             rows=rows,
         )
         return len(rows)
