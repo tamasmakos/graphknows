@@ -206,4 +206,5 @@ class STMService:
             entity_count=total_entities,
             elapsed_s=round(time.perf_counter() - t0, 3),
             errors=errors,
+            abstentions={k: v for k, v in handler._abstentions.items() if v},
         )

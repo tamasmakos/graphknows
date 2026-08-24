@@ -566,7 +566,11 @@ class Memory:
             result = await service.ingest_messages(messages, options, infer_flags=infer_flags)
         finally:
             await service.close()
-        return {"turns": len(messages), "chunks": result.chunk_count}
+        return {
+            "turns": len(messages),
+            "chunks": result.chunk_count,
+            "abstentions": result.abstentions,
+        }
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Consolidate a session in place.
@@ -602,6 +606,7 @@ class Memory:
         topics_created = 0
         turns_ingested = 0
         turn_chunks = 0
+        abstentions: dict[str, int] = {}
         modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0}
 
@@ -636,10 +641,11 @@ class Memory:
                 drained = await step(
                     "drain_turns",
                     self._ingest_buffered_turns(store, session_id, raw_turns),
-                    {"turns": 0, "chunks": 0},
+                    {"turns": 0, "chunks": 0, "abstentions": {}},
                 )
                 turns_ingested = drained["turns"]
                 turn_chunks = drained["chunks"]
+                abstentions = drained.get("abstentions") or {}
             await step("mark_turns_consolidated", store.mark_turns_consolidated(session_id), 0)
 
             # Caller-supplied structure goes in HERE: the buffer has drained, so
@@ -698,6 +704,9 @@ class Memory:
             "chunks": chunks_flipped,
             "turns": turns_ingested,
             "turn_chunks": turn_chunks,
+            # What the write path declined to write, per gate. Reported so an
+            # empty graph can be told apart from a graph whose gates ate it.
+            "abstentions": abstentions,
             "topics_created": topics_created,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],

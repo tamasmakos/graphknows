@@ -13,7 +13,7 @@ import hashlib
 import logging
 import os
 import time
-from collections import deque
+from collections import defaultdict, deque
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
@@ -303,6 +303,13 @@ class _STMIngestHandler:
         # Chunks actually written, so the service can report the real count
         # instead of assuming one per message.
         self._chunks_written: int = 0
+        # Every gate that can drop something, tallied for the session. These
+        # existed as per-chunk log lines only: `_write_relations` built a full
+        # report and the caller discarded the return value, so the numbers were
+        # computed and thrown away — the same defect as verifier_score. An
+        # abstention nobody can count is indistinguishable from an extractor
+        # that found nothing.
+        self._abstentions: dict[str, int] = defaultdict(int)
         # Lexical label selection over the SKOS scheme. Replaces embedding the
         # chunk against class definitions, which measured 11% of tags sharing a
         # word with their own chunk. Built lazily: the lexical index needs the
@@ -1014,7 +1021,10 @@ class _STMIngestHandler:
                     session_id, chunk_id, instances, nesting=nesting
                 )
 
-        await self._write_relations(extraction, chunk_id, text, speaker)
+        relation_report = await self._write_relations(extraction, chunk_id, text, speaker)
+        for gate in ("blocked_domain", "blocked_range", "unsupported", "pruned_endpoint"):
+            self._abstentions[gate] += int(relation_report.get(gate, 0))
+        self._abstentions["relations"] += int(relation_report.get("relations", 0))
 
         iso_dates = [t["iso"] for t in temporal if t.get("iso")]
         if iso_dates:
@@ -1746,6 +1756,7 @@ class _STMIngestHandler:
             # The frame's own gate: an instance under two filled roles is not a
             # fact, it is a frame label with a stray span attached.
             if len(roles) < 2:
+                self._abstentions["frame_under_two_roles"] += 1
                 continue
             # How this instance is asserted — negated, hypothesised, hedged, or
             # put in someone else's mouth. Reuses the `doc` parsed once above:
