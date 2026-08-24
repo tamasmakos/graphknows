@@ -77,6 +77,50 @@ Judge verdicts are cached on disk (`evaluation/results/.judge_cache/`) keyed by
 (question, gold, answer, prompt-version), so unchanged answers contribute
 exactly 0 noise to A/B deltas. Disable with `GRAPHKNOWS_JUDGE_CACHE=0`.
 
+## Triplet audit — graph quality without retrieval
+
+`evidence_recall` cannot see graph-quality work. A run that added an entire
+symbolic plane (1240 frame instances gaining polarity/modality/epistemic, 2735
+REL edges gaining a stable predicate id) reproduced
+`evidence_recall_at_probe=0.9759` / `evidence_recall_in_context=0.9255` —
+identical to four decimals to two prior runs. The system is generation-bound, so
+retrieval metrics are saturated and blind to precision. The audit is the
+instrument that does not go through retrieval at all:
+
+```bash
+# 1. draw a stratified sheet of REL edges (deterministic given --seed)
+python -m evaluation audit sample --namespace eval_locomo_llm_free_conv_30 -n 150 --seed 0
+
+# 2. a human fills judge_span / judge_predicate / judge_direction /
+#    judge_polarity_modality with 1 or 0 (blank = not judged), then
+python -m evaluation audit report --sheet evaluation/results/audit/<sheet>.csv
+```
+
+Evidence is joined, not assumed. A reified REL edge is an *entity-adjacency
+projection* of a frame instance and carries no `evidence` of its own — 2579 of
+2735 edges on conv-30 look evidence-less until you take the hop
+`FRAME_INSTANCE -[FRAME_EVOKED_IN]-> CHUNK`, which the sampler does. Only edges
+where both routes come up empty are marked unjudgeable and counted in the
+report's `no evidence` column.
+
+`verifier_score` coverage is **partial by construction**: `RelationVerifierGate`
+runs only in the relex write path, so the frame projection (~90% of edges) is
+never scored. The report names the covered and blind tiers in its own caveats so
+no mean is mistaken for a whole-graph health number.
+
+Stratified by `canonical_predicate` tier — `fn:` (frame projection), `wn30:`
+(WordNet; **no channel emits these yet**, so the tier reports zero rather than
+disappearing), an ontology property label/IRI, and `lemma:` (unanchored). Each
+sheet row ships with its evidence chunk text, so judging needs no queries.
+`report` writes per-tier precision on each axis with **Wilson 95% intervals**,
+plus mean/median `verifier_score` and its NULL count per tier — the continuous
+monitor between audits, since that score is computed at flush and otherwise read
+by nothing.
+
+150 edges over four tiers is ~37 per tier, where the interval is roughly ±15pp
+near p=0.5. The report says so in its own output; read the cells as directions,
+not measurements, until n is much larger.
+
 ## Generation pipeline
 
 Answer generation is a plain chat completion (httpx → OpenRouter, temp 0):
@@ -95,8 +139,10 @@ evaluation/
 ├── common/           # shared: datamodels, ChatLLM, memories, judge cache,
 │                     # lexical metrics, MCP ingestion/retrieval, pipeline, reporting
 ├── locomo/           # config, dataset, prompts, adapter, cli
+├── audit/            # stratified triplet audit: core (pure) + cli (db, csv, report)
 ├── data/locomo/      # dataset (gitignored)
 ├── results/locomo/   # JSON + CSV + Markdown reports per run (gitignored)
+├── results/audit/    # audit sheets, manifests and reports (gitignored)
 └── scripts/          # convert_locomo.py, retrieval_probe.py
 ```
 
