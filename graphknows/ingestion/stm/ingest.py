@@ -803,7 +803,7 @@ class _STMIngestHandler:
             return None, None
         from graphknows.symbolic.ontology import entity_labels, relation_labels
 
-        doc = self._extractor.nlp(text)
+        doc = self._extractor.parse(text)
         ents = entity_labels(doc, self._scheme, self._lex_index)
         rels = relation_labels(doc, set(ents), self._scheme, self._lex_index)
         # relex takes {label: definition}; the definition is what it reads.
@@ -1711,10 +1711,10 @@ class _STMIngestHandler:
 
         nlp = extractor.nlp
         gliner = extractor.gliner
-        # Parsed ONCE for the whole chunk and shared by every instance's modality
-        # pass. lu_candidate_frames re-parses internally on the non-SRL path; that
-        # is its own cost, not one this adds.
-        doc = nlp(text)
+        # Shared with lexical labelling and frame-candidate ranking — see
+        # extractor.parse(). Previously each of the three parsed the same window
+        # again.
+        doc = extractor.parse(text)
         if srl_hits:
             # Parsed triggers instead of one embedding-ranked guess per chunk, so
             # a chunk can yield one instance per fact rather than at most one.
@@ -1725,7 +1725,9 @@ class _STMIngestHandler:
                 primary,
                 speakers,
                 gliner,
-                lambda t: lu_candidate_frames(t, nlp, embedding=embedding),
+                lambda t: lu_candidate_frames(
+                    t, nlp, embedding=embedding, doc=doc if t == text else None
+                ),
             )
         # Role fillers become ENTITY nodes, so they must clear the SAME junk gate
         # every other minting path uses. This was the one path that did not call

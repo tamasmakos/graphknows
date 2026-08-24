@@ -90,7 +90,11 @@ _MAIN_VERB_DEPS = {"ROOT", "conj", "xcomp", "ccomp", "advcl", "acl", "relcl"}
 
 
 def lu_candidate_frames(
-    text: str, nlp: Any, top_k: int = 4, embedding: list[float] | None = None
+    text: str,
+    nlp: Any,
+    top_k: int = 4,
+    embedding: list[float] | None = None,
+    doc: Any | None = None,
 ) -> list[tuple[str, float]]:
     """Candidate frames = the CLAUSE MAIN VERB's LU frames, ranked by embedding fit.
 
@@ -106,11 +110,14 @@ def lu_candidate_frames(
 
     ``embedding`` (the chunk's already-computed vector) is used for the ranking so
     ingest never re-embeds the same text; only when it is None do we embed ``text``.
+    ``doc`` does the same for the parse — pass the segment's shared Doc and this
+    never runs ``en_core_web_lg`` over a window a caller has already parsed.
     """
     from graphknows.symbolic.framenet.framenet import _lus
     from graphknows.symbolic.framenet.index import match_frames, match_frames_text
 
-    doc = nlp(text)
+    if doc is None:
+        doc = nlp(text)
     lui = _lus()
     verbs = [t for t in doc if t.pos_ == "VERB" and t.dep_ in _MAIN_VERB_DEPS]
     if not verbs:

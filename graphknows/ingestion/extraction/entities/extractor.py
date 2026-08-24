@@ -842,6 +842,8 @@ class GLiNER2EntityExtractor:
             settings = GraphKnowsSettings()
             spacy_model = settings.spacy_model
         self._schema_miner = schema_miner or _SpacySchemaMiner(model_name=spacy_model)
+        # One-entry memo behind `parse()`; see its docstring.
+        self._doc_cache: tuple[str, Any] | None = None
         # Semantic gate that drops relex false positives before the graph merge.
         # Built from settings by default (enabled, threshold 0.5); tests inject a
         # null gate. See relations/verifier.py.
@@ -866,6 +868,27 @@ class GLiNER2EntityExtractor:
         never loaded.
         """
         return self._schema_miner.nlp
+
+    def parse(self, text: str) -> Any:
+        """The spaCy ``Doc`` for *text*, parsed once and shared across the segment.
+
+        Three call sites want the same chunk parsed: lexical label selection,
+        frame-candidate ranking, and the modality pass. Sharing one model
+        instance already avoids loading ``en_core_web_lg`` twice, but each call
+        still ran the pipeline again — around 20ms per five-turn window, three
+        times over.
+
+        A one-entry memo, because those calls are consecutive within a segment.
+        Under chunk concurrency (``INGEST_CHUNK_CONCURRENCY``, default 1) two
+        segments can interleave and evict each other, which degrades to
+        re-parsing — slower, never wrong.
+        """
+        cached = self._doc_cache
+        if cached is not None and cached[0] == text:
+            return cached[1]
+        doc = self.nlp(text)
+        self._doc_cache = (text, doc)
+        return doc
 
     @property
     def gliner(self) -> Any:
