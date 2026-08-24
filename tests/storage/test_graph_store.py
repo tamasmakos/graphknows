@@ -17,8 +17,10 @@ import pytest
 from graphknows.storage.arcadedb.graph_store import (
     _CHUNK_BATCH,
     _CORE_DDL,
+    _FRAME_REL_KEY,
     GraphStore,
     _evidence_set,
+    _frame_merge_key,
 )
 from graphknows.storage.namespace import db_name
 
@@ -1929,3 +1931,289 @@ async def test_repointing_a_plain_edge_carries_nothing_extra():
         for c in client.command.await_args_list
         if "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)" in c.args[1]
     ]
+
+
+# ---------------------------------------------------------------------------
+# Entity merge is frame-aware (#150): two REL writers, two MERGE keys, and a
+# repair path that must replay an edge under the key its own writer used.
+# ---------------------------------------------------------------------------
+
+
+def _frame_row(polarity: str = "pos", **over: object) -> dict:
+    """One loser REL row as merge_entities reads it: a co-role projected edge."""
+    return {
+        "dst": "Banff",
+        "dst_nn": "banff",
+        "predicate": "Travel",
+        "evidence": ["c1"],
+        "confidence": 0.8,
+        "source": "frame",
+        "canonical_predicate": "fn:Travel:Traveler->Goal",
+        "anchor": "frame",
+        "reified": True,
+        "frame": "Travel",
+        "frame_instance_id": f"Travel:{polarity}",
+        "head_role": "Traveler",
+        "tail_role": "Goal",
+        "polarity": polarity,
+        "modality": "none",
+        **over,
+    }
+
+
+def _rel_merges(client: MagicMock) -> list[tuple[str, dict]]:
+    return [
+        (c.args[1], c.kwargs.get("params") or {})
+        for c in client.command.await_args_list
+        if "MERGE (a)-[r:REL" in c.args[1]
+    ]
+
+
+def _carry_sets(client: MagicMock) -> list[tuple[str, dict]]:
+    return [
+        (c.args[1], c.kwargs.get("params") or {})
+        for c in client.command.await_args_list
+        if "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)" in c.args[1]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_entity_merge_replays_a_fact_and_its_denial_as_two_edges() -> None:
+    """DEFECT 1: the repoint used to collapse the projection's MERGE key.
+
+    The co-role projection MERGEs on {predicate, head_role, tail_role, polarity,
+    modality} precisely so "Melanie moved to Berlin" and "Melanie did NOT move to
+    Berlin" stay two edges. Replaying them through write_relation's
+    {predicate}-only key merged them into one, and merge_entities runs on EVERY
+    flush — nickname merges (Mel -> Melanie) are the normal path.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(
+        side_effect=[
+            [{"name": "Mel", "aliases": []}],
+            [{"name": "Melanie", "aliases": []}],
+            [_frame_row("pos"), _frame_row("neg")],  # differ ONLY in polarity
+            [],
+        ]
+    )
+    await GraphStore(client=client).merge_entities("melanie", "mel")
+
+    merges = _rel_merges(client)
+    assert len(merges) == 2, "the fact and its denial were not replayed separately"
+    for stmt, params in merges:
+        for column in _FRAME_REL_KEY:
+            assert f"{column}: $key_{column}" in stmt, f"{column} left out of the MERGE key"
+        assert params["key_head_role"] == "Traveler"
+        assert params["key_modality"] == "none"
+    assert {params["key_polarity"] for _, params in merges} == {"pos", "neg"}
+
+
+@pytest.mark.asyncio
+async def test_carrying_columns_targets_one_edge_not_every_shared_predicate() -> None:
+    """DEFECT 1, second half: the follow-up SET matched by predicate alone.
+
+    `MATCH ... WHERE r.predicate = $predicate` hits EVERY edge between the pair
+    with that predicate — between two frame fillers, every role and polarity
+    variant of the frame — and overwrote them all with the last loser's columns.
+    """
+    client = _mock_client()
+    await GraphStore(client=client)._repoint_relation("Melanie", "Banff", _frame_row("neg"))
+
+    stmt, params = _carry_sets(client)[-1]
+    for column in _FRAME_REL_KEY:
+        assert f"AND r.{column} = $key_{column}" in stmt, f"{column} missing from the WHERE"
+    # The carried column and the key column share a name; the parameter map must
+    # not collapse them.
+    assert params["polarity"] == "neg" and params["key_polarity"] == "neg"
+    # Inline relationship property maps stay out of MATCHing queries.
+    assert "[r:REL {" not in stmt
+
+
+@pytest.mark.asyncio
+async def test_a_repointed_frame_edge_can_re_merge_with_the_projection() -> None:
+    """DEFECT 2: the replay must land under the key the projection MERGEs on.
+
+    An edge rebuilt under {predicate} alone carries no roles/polarity/modality,
+    so the next ingest's batch 2b matches nothing and MERGEs a duplicate beside
+    it — silent frame-adjacency growth on every re-ingest.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "banff"}])
+    store = GraphStore(client=client)
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id="c1",
+        instances=[{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}],
+    )
+    projected = next(s for s, _ in _rel_merges(client) if "row.p" in s)
+
+    client.command.reset_mock()
+    await store._repoint_relation("Melanie", "Banff", _frame_row("pos"))
+    replayed, _ = _rel_merges(client)[0]
+
+    def key_columns(stmt: str) -> set[str]:
+        inner = stmt.split("MERGE (a)-[r:REL {", 1)[1].split("}", 1)[0]
+        return {part.split(":", 1)[0].strip() for part in inner.split(",")}
+
+    assert key_columns(projected) == key_columns(replayed), (
+        "the two REL writers must MERGE on the same key or a merged edge "
+        "duplicates itself on the next ingest"
+    )
+    assert key_columns(projected) == {"predicate", *_FRAME_REL_KEY}
+
+
+@pytest.mark.asyncio
+async def test_repointing_a_relex_edge_still_keys_on_the_predicate_alone() -> None:
+    """Only the projection's own edges are replayed under the wider key."""
+    client = _mock_client()
+    await GraphStore(client=client)._repoint_relation(
+        "Melanie", "Camping", {"predicate": "LIKES", "evidence": ["c1"], "reified": False}
+    )
+    stmt, params = _rel_merges(client)[0]
+    assert "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in stmt
+    assert not [k for k in params if k.startswith("key_")]
+
+
+def test_frame_merge_key_needs_a_reified_edge_with_both_roles() -> None:
+    """A frame edge written before roles existed is replayed the old way."""
+    assert _frame_merge_key(_frame_row("neg")) == {
+        "head_role": "Traveler",
+        "tail_role": "Goal",
+        "polarity": "neg",
+        "modality": "none",
+    }
+    assert _frame_merge_key({"predicate": "LIKES"}) is None
+    assert _frame_merge_key({"reified": True, "head_role": "Traveler"}) is None
+    # Defaults are the projection's own, so the rebuilt edge is the one the next
+    # ingest MERGEs onto rather than a second edge beside it.
+    key = _frame_merge_key({"reified": True, "head_role": "A", "tail_role": "B"})
+    assert key == {"head_role": "A", "tail_role": "B", "polarity": "pos", "modality": "none"}
+
+
+@pytest.mark.asyncio
+async def test_frame_instances_dropped_by_an_absent_chunk_are_counted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """DEFECT 3: batch 1's MATCH is silent, batch 2b writes its edges regardless.
+
+    With no CHUNK vertex the FRAME_INSTANCEs are never created, while the co-role
+    REL edges still carry a frame_instance_id that resolves to nothing. Only a
+    RETURNed count can see it.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "banff"}])
+    client.command = AsyncMock(return_value=[{"n": 0}])
+    store = GraphStore(client=client)
+    instances = [{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}]
+
+    with caplog.at_level(logging.WARNING):
+        await store.write_frame_instances("s1", "missing-chunk", instances)
+    dropped = [r for r in caplog.records if "frame instances dropped" in r.message]
+    assert dropped, "a batch that wrote nothing must not pass silently"
+    assert dropped[0].args == ("missing-chunk", 1)
+    assert any("RETURN count(fi) AS n" in s for s in _command_strings(client))
+
+    caplog.clear()
+    client.command = AsyncMock(return_value=[{"n": 1}])
+    with caplog.at_level(logging.WARNING):
+        await store.write_frame_instances("s1", "chunk-a", instances)
+    assert not [r for r in caplog.records if "frame instances dropped" in r.message]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_entity_merge_keeps_frame_adjacency_on_scratch_database() -> None:
+    """The whole of #150 against a real ArcadeDB: merge, then re-ingest.
+
+    Two frame edges differing only in polarity must survive the merge as two
+    edges, and the re-ingest that follows must MERGE onto them instead of
+    duplicating the adjacency.
+    """
+    if not _arcadedb_reachable():
+        pytest.skip("ArcadeDB not reachable")
+
+    from graphknows.settings import GraphKnowsSettings
+    from graphknows.storage import build_arcadedb_client
+
+    s = GraphKnowsSettings()
+    client = build_arcadedb_client(s)
+    db = f"mem_test_{uuid.uuid4().hex[:8]}"
+    store = GraphStore(client=client, db=db)
+    await store.connect()
+    try:
+        await store.ensure_schema(dims=8)
+        await store.ensure_session("sess-1", started_at="2026-07-13T00:00:00Z")
+        await store.ensure_file("file-1", "sess-1")
+        await store.write_chunks_bulk(
+            [
+                {
+                    "chunk_id": cid,
+                    "session_id": "sess-1",
+                    "file_id": "file-1",
+                    "text": "Mel travelled to Banff. Mel did not travel to Banff.",
+                    "seq": seq,
+                    "embedding": [1.0] + [0.0] * 7,
+                }
+                for seq, cid in enumerate(("chunk-a", "chunk-b"))
+            ]
+        )
+        await store.write_entities_bulk(
+            "sess-1",
+            "chunk-a",
+            [
+                {"name": "Mel", "type": "PERSON", "confidence": 0.9},
+                {"name": "Melanie", "type": "PERSON", "confidence": 0.9},
+                {"name": "Banff", "type": "PLACE", "confidence": 0.8},
+            ],
+        )
+        roles = {"Traveler": ["Mel"], "Goal": ["Banff"]}
+        await store.write_frame_instances(
+            "sess-1",
+            "chunk-a",
+            [
+                {"frame": "Travel", "roles": roles, "polarity": "pos"},
+                {"frame": "Travel", "roles": roles, "polarity": "neg"},
+            ],
+        )
+
+        async def frame_edges(name_norm: str) -> list[dict]:
+            # Either endpoint: co-role fillers are siblings of one fact and edge
+            # DIRECTION follows the role name (Goal < Traveler), so these are
+            # read undirected. WHERE, never an inline relationship property map:
+            # inline maps are unreliable for MATCHING in ArcadeDB's Cypher.
+            return await store.query(
+                "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE r.source = 'frame' "
+                "AND (a.name_norm = $nn OR b.name_norm = $nn) "
+                "RETURN r.polarity AS polarity, r.head_role AS head_role, "
+                "r.canonical_predicate AS cp, r.evidence AS evidence, "
+                "r.reified AS reified",
+                nn=name_norm,
+            )
+
+        assert len(await frame_edges("mel")) == 2, "the denial did not survive the write"
+
+        assert await store.merge_entities("melanie", "mel")
+        merged = await frame_edges("melanie")
+        assert len(merged) == 2, "the fact and its denial collapsed into one edge on merge"
+        assert {e["polarity"] for e in merged} == {"pos", "neg"}
+        assert {e["head_role"] for e in merged} == {"Goal"}
+        assert {e["cp"] for e in merged} == {"fn:Travel:Goal->Traveler"}
+        assert all(e["reified"] for e in merged)
+        assert all(e["evidence"] == ["chunk-a"] for e in merged)
+
+        # Re-ingest: the same fact, now naming the winner, from a second chunk.
+        # It must MERGE onto the repointed edge, not beside it.
+        await store.write_frame_instances(
+            "sess-1",
+            "chunk-b",
+            [{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}],
+        )
+        after = await frame_edges("melanie")
+        assert len(after) == 2, "the re-ingest duplicated the frame adjacency"
+        positive = next(e for e in after if e["polarity"] == "pos")
+        assert set(positive["evidence"]) == {"chunk-a", "chunk-b"}
+    finally:
+        try:
+            await store.drop_database()
+        finally:
+            await store.close()

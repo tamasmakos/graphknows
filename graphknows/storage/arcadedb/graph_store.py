@@ -157,6 +157,49 @@ _CARRIED_REL_COLUMNS = (
     "ontology_property",
 )
 
+# The co-role frame projection's MERGE key beyond `predicate`: REL column -> the
+# UNWIND row field that fills it (write_frame_instances, batch 2b). `polarity`
+# and `modality` are in it deliberately — without them a fact and its denial are
+# ONE edge and the later write silently wins.
+#
+# It lives here, next to the repair path, because there are two REL writers with
+# two different MERGE keys and the repair must rebuild an edge under the key its
+# own writer used. Replaying a frame edge through write_relation's
+# `{predicate}`-only key merged every edge between the pair that shared a
+# predicate — collapsing role and polarity variants into one — and the survivor,
+# lacking those properties, then matched no future projection MERGE, so the next
+# ingest wrote a duplicate beside it.
+_FRAME_REL_KEY: dict[str, str] = {
+    "head_role": "row.hr",
+    "tail_role": "row.tr",
+    "polarity": "row.pol",
+    "modality": "row.mod",
+}
+
+
+def _frame_merge_key(row: dict[str, Any]) -> dict[str, str] | None:
+    """Rebuild the projection's MERGE key from a REL row, or None if it is not one.
+
+    Only a reified edge that kept both role names can be re-created under the
+    projection's key; anything else (a relex edge, or a frame edge written before
+    roles existed) is replayed under ``{predicate}`` alone as before.
+    ``polarity``/``modality`` fall back to the projection's OWN defaults, so the
+    rebuilt edge is the one the next ingest MERGEs onto rather than a second edge
+    beside it.
+    """
+    if not row.get("reified"):
+        return None
+    head, tail = str(row.get("head_role") or ""), str(row.get("tail_role") or "")
+    if not head or not tail:
+        return None
+    return {
+        "head_role": head,
+        "tail_role": tail,
+        "polarity": str(row.get("polarity") or "pos"),
+        "modality": str(row.get("modality") or "none"),
+    }
+
+
 # The single REL projection merge_entities reads a loser edge through — BOTH
 # directions. Outgoing and incoming used to carry different column lists, and
 # the shorter one (incoming) dropped every structural column: measured on
@@ -573,6 +616,7 @@ class GraphStore(ArcadeStoreBase):
         verifier_score: float | None = None,
         ontology_blocked: bool = False,
         speaker: str = "",
+        merge_key: dict[str, str] | None = None,
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
@@ -619,6 +663,15 @@ class GraphStore(ArcadeStoreBase):
         (gate disabled, or a surface it could not locate and so passed through),
         so "unscored" stays distinguishable from "scored 0.0". It annotates
         only; ``confidence`` is unchanged by it.
+
+        ``merge_key`` widens the edge's MERGE key beyond ``predicate``, as
+        ``{column: value}``. The OTHER REL writer — ``write_frame_instances``'
+        co-role projection — keys on :data:`_FRAME_REL_KEY` as well as the
+        predicate, and a replay of one of ITS edges (the entity-merge repair)
+        must use the same key or two edges differing only in role or polarity
+        collapse into one, losing exactly the fact/denial distinction the wider
+        key exists to protect. Only the repair path passes it; everything else
+        keeps the one-edge-per-predicate semantics described above.
         """
         predicate = predicate.strip()
         if not predicate or not src_name or not dst_name:
@@ -659,6 +712,10 @@ class GraphStore(ArcadeStoreBase):
             if verifier_score is not None
             else ""
         )
+        # Inline property maps are used for MERGE deliberately (they are only
+        # unreliable for MATCHING); the values stay bound parameters.
+        key_sql = "".join(f", {column}: $key_{column}" for column in (merge_key or {}))
+        key_params = {f"key_{column}": value for column, value in (merge_key or {}).items()}
         await self.command(
             f"MERGE (a:ENTITY {{name_norm: $src_nn}}) "
             f"SET a.name = coalesce(a.name, $src), a.state = coalesce(a.state, 'raw'), "
@@ -666,7 +723,7 @@ class GraphStore(ArcadeStoreBase):
             f"MERGE (b:ENTITY {{name_norm: $dst_nn}}) "
             f"SET b.name = coalesce(b.name, $dst), b.state = coalesce(b.state, 'raw'), "
             f"    b.type = coalesce(b.type, $dst_type) "
-            f"MERGE (a)-[r:REL {{predicate: $predicate}}]->(b) "
+            f"MERGE (a)-[r:REL {{predicate: $predicate{key_sql}}}]->(b) "
             f"SET r.predicate = $predicate, "
             f"    r.fact = coalesce(r.fact, $fact), "
             f"    {evidence_set}"
@@ -712,6 +769,7 @@ class GraphStore(ArcadeStoreBase):
             canon=canon,
             anchor=anchor,
             now=now,
+            **key_params,
         )
 
         # Provenance for the endpoints this call just MERGEd. Without it an
@@ -1256,7 +1314,10 @@ class GraphStore(ArcadeStoreBase):
         if not inst_rows:
             return 0
         # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
-        await self.command(
+        # RETURNs its count because the leading MATCH is SILENT when the CHUNK is
+        # absent: this batch then writes nothing at all while batch 2b still
+        # writes REL edges carrying a frame_instance_id that was never created.
+        written = await self.command(
             "UNWIND $rows AS row "
             "MATCH (c:CHUNK {chunk_id: row.cid}) "
             "MERGE (fi:FRAME_INSTANCE {id: row.fid}) "
@@ -1269,9 +1330,21 @@ class GraphStore(ArcadeStoreBase):
             "    fi.polarity = row.pol, fi.modality = row.mod, fi.epistemic = row.epi, "
             "    fi.hedged = row.hed, fi.voice = row.voi, fi.tense = row.ten, "
             "    fi.attributed_to = row.att, fi.modality_rules = row.mru "
-            "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)",
+            "MERGE (fi)-[:FRAME_EVOKED_IN]->(c) "
+            "RETURN count(fi) AS n",
             rows=inst_rows,
         )
+        # Only a count we actually read can say "nothing was written" — no result
+        # row at all is an unknown, not a zero, and must not raise a false alarm.
+        # (ArcadeDB returns [{'n': 0}] for the miss; verified against a live db.)
+        if chunk_id and written and not int(written[0].get("n") or 0):
+            logger.warning(
+                "frame instances dropped: chunk %s has no CHUNK vertex, so %d "
+                "FRAME_INSTANCE(s) were not written — the co-role REL edges below "
+                "still carry their frame_instance_id and it resolves to nothing",
+                chunk_id,
+                len(inst_rows),
+            )
         # Batch 2a: MERGE the distinct filler ENTITIES first, on their own.
         # role_rows is keyed (fid, nn, role), so ONE entity filling TWO roles of a
         # frame repeats its name_norm — and MERGEing the entity inside the same
@@ -1313,6 +1386,9 @@ class GraphStore(ArcadeStoreBase):
             # WHERE r.frame_instance_id = fi.id SET r.evidence = collect(c.chunk_id)),
             # and a graph-wide "unsourced by either route" census belongs in the
             # flush return dict, which lives outside this package.
+            frame_key_sql = ", ".join(
+                f"{column}: {field}" for column, field in _FRAME_REL_KEY.items()
+            )
             await self.command(
                 "UNWIND $rows AS row "
                 "MATCH (a:ENTITY {name_norm: row.h}) "
@@ -1321,8 +1397,9 @@ class GraphStore(ArcadeStoreBase):
                 # they are part of the instance's content hash: without them a
                 # fact and its denial are one edge, and the later write silently
                 # wins. This is the §6.6 dedup key minus the temporal bucket.
-                "MERGE (a)-[r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr, "
-                "                  polarity: row.pol, modality: row.mod}]->(b) "
+                # Built from _FRAME_REL_KEY so the entity-merge repair replays a
+                # projected edge under the very key written here.
+                f"MERGE (a)-[r:REL {{predicate: row.p, {frame_key_sql}}}]->(b) "
                 "SET r.source = 'frame', r.is_current = true, "
                 "    r.canonical_predicate = row.cp, r.frame = row.p, "
                 f"    {_evidence_set(chunk_id)}"
@@ -2497,7 +2574,12 @@ class GraphStore(ArcadeStoreBase):
         return int(rows[0].get("n") or 0) if rows else 0
 
     async def _carry_rel_columns(
-        self, src_name: str, predicate: str, dst_name: str, row: dict[str, Any]
+        self,
+        src_name: str,
+        predicate: str,
+        dst_name: str,
+        row: dict[str, Any],
+        merge_key: dict[str, str] | None = None,
     ) -> None:
         """Re-apply the loser edge's structural columns to the repointed winner edge.
 
@@ -2515,6 +2597,12 @@ class GraphStore(ArcadeStoreBase):
         accumulates, and a blanket SET would overwrite the winner's provenance
         with the loser's. ``_repoint_relation`` replays it chunk by chunk through
         ``write_relation``'s dedup-append instead.
+
+        ``merge_key`` is the SAME key the replay MERGEd on. It is added to the
+        WHERE so this SET lands on exactly the one edge that was just written:
+        predicate alone matches EVERY edge between the pair sharing it, and
+        between two frame fillers that is every role and polarity variant of the
+        frame — each one overwritten with the last loser's columns.
         """
         carried = {k: row.get(k) for k in _CARRIED_REL_COLUMNS if row.get(k) not in (None, "")}
         blocked = bool(row.get("ontology_blocked"))
@@ -2525,22 +2613,36 @@ class GraphStore(ArcadeStoreBase):
             assignments += (", " if assignments else "") + (
                 "r.ontology_blocked = coalesce(r.ontology_blocked, false) OR true"
             )
+        # `key_` prefixed so a key column that is also a carried column (roles,
+        # polarity and modality all are) does not collide in the parameter map.
+        key_where = "".join(f" AND r.{column} = $key_{column}" for column in (merge_key or {}))
+        key_params = {f"key_{column}": value for column, value in (merge_key or {}).items()}
         await self.command(
             f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
-            f"WHERE a.name_norm = $src_nn AND b.name_norm = $dst_nn AND r.predicate = $predicate "
+            f"WHERE a.name_norm = $src_nn AND b.name_norm = $dst_nn "
+            f"AND r.predicate = $predicate{key_where} "
             f"SET {assignments}",
             src_nn=_name_norm(src_name),
             dst_nn=_name_norm(dst_name),
             predicate=predicate,
             **carried,
+            **key_params,
         )
 
     async def _repoint_relation(self, src_name: str, dst_name: str, row: dict[str, Any]) -> bool:
         """Re-create one loser relation edge on the winner via write_relation.
 
         Reuses the audited write_relation (evidence-append dedup, max confidence,
-        single-valued supersede). Each evidence chunk is replayed so the winner
-        edge accumulates the loser's full provenance.
+        single-valued supersede, sticky ontology_blocked, NULL-vs-0.0
+        verifier_score). Each evidence chunk is replayed so the winner edge
+        accumulates the loser's full provenance.
+
+        A projected frame edge is replayed under the key ITS writer used
+        (:func:`_frame_merge_key`), not under ``predicate`` alone — otherwise the
+        repair is lossy in both directions: role and polarity variants of one
+        frame between the same pair collapse onto a single edge here, and the
+        survivor, lacking those properties, matches no future projection MERGE,
+        so every later ingest adds a duplicate beside it.
 
         Returns True when the repointed edge has provenance by NEITHER route —
         no evidence chunk to replay and no ``frame_instance_id`` to follow — so
@@ -2557,24 +2659,11 @@ class GraphStore(ArcadeStoreBase):
         # dropping this would wipe the verifier's judgment to NULL — which means
         # "never scored" — on every edge the entity repair touches.
         vscore = row.get("verifier_score")
+        key = _frame_merge_key(row)
         evidence = [e for e in (row.get("evidence") or []) if e]
-        if not evidence:
-            await self.write_relation(
-                src_name,
-                predicate,
-                dst_name,
-                fact=fact,
-                confidence=conf,
-                valid_at=valid_at,
-                source=source,
-                verifier_score=vscore,
-            )
-            await self._carry_rel_columns(src_name, predicate, dst_name, row)
-            # frame_instance_id is carried above, so a frame edge is still
-            # reachable to its chunks via FRAME_EVOKED_IN. Without it, this edge
-            # is unsourced by both routes.
-            return not row.get("frame_instance_id")
-        for cid in evidence:
+        # An edge with no evidence is still written once, with no chunk_id: the
+        # replay must not drop an edge for arriving unsourced.
+        for cid in evidence or [""]:
             await self.write_relation(
                 src_name,
                 predicate,
@@ -2585,9 +2674,13 @@ class GraphStore(ArcadeStoreBase):
                 valid_at=valid_at,
                 source=source,
                 verifier_score=vscore,
+                merge_key=key,
             )
-        await self._carry_rel_columns(src_name, predicate, dst_name, row)
-        return False
+        await self._carry_rel_columns(src_name, predicate, dst_name, row, merge_key=key)
+        # frame_instance_id is carried above, so a frame edge with no evidence is
+        # still reachable to its chunks via FRAME_EVOKED_IN. Without either, this
+        # edge is unsourced by both routes.
+        return not evidence and not row.get("frame_instance_id")
 
     async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
         """Merge the loser ENTITY into the winner. Idempotent and self-safe.
@@ -2642,6 +2735,10 @@ class GraphStore(ArcadeStoreBase):
         # unreified `lemma:` edge, and `ontology_blocked` (sticky by design,
         # because "a refusal is a verdict, not an absence of one") is cleared,
         # re-publishing exactly the edges it exists to refuse.
+        # Reading the columns is half of it: the replay also has to re-use the
+        # MERGE KEY of whichever writer minted the edge (see _repoint_relation),
+        # or two frame edges between the same pair that differ only in role or
+        # polarity are merged into one on the way back.
         out_rows = await self.query(
             f"MATCH (:ENTITY {{name_norm: $loser}})-[r:REL]->(b:ENTITY) "
             f"RETURN b.name AS dst, b.name_norm AS dst_nn, {_REL_ROW_SELECT}",
