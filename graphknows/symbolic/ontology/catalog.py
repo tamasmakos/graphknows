@@ -27,15 +27,12 @@ cosine as a correct term.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-import os
-import re
 import threading
-from pathlib import Path
 
 import numpy as np
 
+from graphknows.symbolic.index import cache_key, cached_matrix
 from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
 
 log = logging.getLogger(__name__)
@@ -70,11 +67,6 @@ _lock = threading.Lock()
 _indexes: dict[str, OntologyIndex] = {}
 
 
-def _cache_dir() -> Path:
-    base = os.environ.get("GRAPHKNOWS_CACHE_DIR")
-    return Path(base) if base else Path.home() / ".cache" / "graphknows"
-
-
 def _source_digest(terms: list[OntologyTerm]) -> str:
     """Content hash of the loaded terms — changing an ontology invalidates the cache."""
     payload = "\n".join(sorted(f"{t.kind}\t{t.uri}\t{t.label}\t{t.definition}" for t in terms))
@@ -82,24 +74,16 @@ def _source_digest(terms: list[OntologyTerm]) -> str:
 
 
 def _cache_key(digest: str) -> str:
-    """Invalidation key: embed model + dimension + encoding + ontology content.
+    """Invalidation key: the embedder's identity plus the ontology's content.
 
-    The encoding component is not cosmetic. The key previously captured only
-    *which* model and *what* content, never *how* the text was encoded — so when
-    the declared model suffix started being applied (see
-    ``graphknows.storage.embedder._model_suffix``), the key was unchanged and a
-    matrix built by the old encoding was silently reused against vectors from the
-    new one. Every score was then meaningless while looking perfectly plausible.
+    The encoding component (in :func:`~graphknows.symbolic.index.cache_key`) is
+    not cosmetic. The key once captured only *which* model and *what* content,
+    never *how* the text was encoded — so when the declared model suffix started
+    being applied, the key was unchanged and a matrix built by the old encoding
+    was silently reused against vectors from the new one. Every score was then
+    meaningless while looking perfectly plausible.
     """
-    from graphknows.settings import GraphKnowsSettings
-    from graphknows.storage.embedder import _model_suffix, embed_dim
-
-    s = GraphKnowsSettings()
-    model = re.sub(r"[^A-Za-z0-9._-]", "_", s.embed_model or "local")
-    dim = s.embed_dimensions or embed_dim()
-    suffix = _model_suffix(s.embed_model or "")
-    enc = hashlib.sha256(suffix.encode("utf-8")).hexdigest()[:8] if suffix else "plain"
-    return f"ontology_{model}_{dim}_{enc}_{digest}"
+    return cache_key("ontology", digest)
 
 
 def _embed_norm(texts: list[str]) -> np.ndarray:
@@ -111,48 +95,6 @@ def _embed_norm(texts: list[str]) -> np.ndarray:
     norms[norms == 0.0] = 1.0
     normalized: np.ndarray = mat / norms
     return normalized
-
-
-def _load_from_disk(key: str, uris: list[str]) -> np.ndarray | None:
-    """Load a cached matrix, but only if its rows describe exactly ``uris``.
-
-    The sidecar URI list is not optional bookkeeping: row *i* of the matrix is
-    meaningful only against the term list it was built from, so validating the
-    row count alone will happily pair a cached matrix with a differently-ordered
-    term list and return confident matches for the wrong term.
-    """
-    d = _cache_dir()
-    npy, js = d / f"{key}.npy", d / f"{key}.json"
-    if not (npy.exists() and js.exists()):
-        return None
-    try:
-        cached_uris = json.loads(js.read_text(encoding="utf-8"))
-        if cached_uris != uris:
-            log.info("Ontology index cache term order changed; rebuilding %s", key)
-            return None
-        mat: np.ndarray = np.load(npy).astype(np.float32)
-        if mat.shape[0] == len(uris):
-            log.info("Loaded ontology index from cache: %s", npy)
-            return mat
-    except Exception as exc:
-        log.warning("Ontology index cache load failed (%s); rebuilding", exc)
-    return None
-
-
-def _save_to_disk(key: str, uris: list[str], mat: np.ndarray) -> None:
-    d = _cache_dir()
-    try:
-        d.mkdir(parents=True, exist_ok=True)
-        npy, js = d / f"{key}.npy", d / f"{key}.json"
-        tmp_npy, tmp_js = d / f"{key}.npy.tmp", d / f"{key}.json.tmp"
-        with open(tmp_npy, "wb") as fh:  # file handle: np.save won't append ".npy"
-            np.save(fh, mat)
-        tmp_js.write_text(json.dumps(uris), encoding="utf-8")
-        os.replace(tmp_npy, npy)  # atomic: readers never see a partial matrix
-        os.replace(tmp_js, js)
-        log.info("Cached ontology index to %s", npy)
-    except OSError as exc:
-        log.warning("Ontology index cache write failed (%s); in-process only", exc)
 
 
 def _top_k(
@@ -198,13 +140,14 @@ class OntologyIndex:
             return np.zeros((0, 0), dtype=np.float32)
         key = f"{_cache_key(self.digest)}_{kind}"
         uris = [t.uri for t in terms]
-        cached = _load_from_disk(key, uris)
-        if cached is not None:
-            return cached
-        log.info("Building ontology index: embedding %d %s from %s", len(terms), kind, self.source)
-        mat = _embed_norm([t.index_text for t in terms])
-        _save_to_disk(key, uris, mat)
-        return mat
+
+        def _build() -> np.ndarray:
+            log.info(
+                "Building ontology index: embedding %d %s from %s", len(terms), kind, self.source
+            )
+            return _embed_norm([t.index_text for t in terms])
+
+        return cached_matrix(key, uris, _build)
 
     def match_classes(
         self,

@@ -14,14 +14,12 @@ an absolute threshold.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
 import threading
-from pathlib import Path
 
 import numpy as np
+
+from graphknows.symbolic.index import cache_key, load_matrix, match, save_matrix
 
 log = logging.getLogger(__name__)
 
@@ -35,90 +33,51 @@ _names: list[str] | None = None
 _matrix: np.ndarray | None = None  # (N, dim) float32, L2-normalized rows
 
 
-def _cache_dir() -> Path:
-    base = os.environ.get("GRAPHKNOWS_CACHE_DIR")
-    return Path(base) if base else Path.home() / ".cache" / "graphknows"
-
-
 def _cache_key() -> str:
-    """Invalidation key: embed model + dimension + encoding (a change rebuilds).
+    return cache_key("frames")
 
-    The encoding component mirrors the ontology catalog's: the key must change
-    when the *way* text is encoded changes, not only when the model does, or a
-    matrix built under the old encoding is reused against new vectors. See
-    ``graphknows.storage.embedder._model_suffix``.
+
+def _frame_names() -> list[str]:
+    """The vocabulary, without embedding anything.
+
+    Split from the build deliberately: the cache is keyed on this list, so it
+    has to be obtainable BEFORE deciding whether to embed. Fetching it after
+    would mean embedding 1200-odd definitions to discover the cache was warm.
     """
-    import hashlib
+    from graphknows.symbolic.framenet.framenet import _framenet
 
-    from graphknows.settings import GraphKnowsSettings
-    from graphknows.storage.embedder import _model_suffix, embed_dim
-
-    s = GraphKnowsSettings()
-    model = re.sub(r"[^A-Za-z0-9._-]", "_", s.embed_model or "local")
-    dim = s.embed_dimensions or embed_dim()
-    suffix = _model_suffix(s.embed_model or "")
-    enc = hashlib.sha256(suffix.encode("utf-8")).hexdigest()[:8] if suffix else "plain"
-    return f"frames_{model}_{dim}_{enc}"
+    return [f.name for f in _framenet().frames()]
 
 
-def _build_matrix() -> tuple[list[str], np.ndarray]:
-    from graphknows.symbolic.framenet.framenet import _embed_norm, _frame_def, _framenet
+def _embed_frames(names: list[str]) -> np.ndarray:
+    from graphknows.symbolic.framenet.framenet import _embed_norm, _frame_def
 
-    names = [f.name for f in _framenet().frames()]
     texts = [f"{n.replace('_', ' ')}. {_frame_def(n)}" for n in names]
     log.info("Building frame-definition index: embedding %d frames", len(texts))
-    mat = _embed_norm(texts)  # (N, dim) float32, already L2-normalized
-    return names, mat
-
-
-def _load_from_disk(key: str) -> tuple[list[str], np.ndarray] | None:
-    d = _cache_dir()
-    npy, js = d / f"{key}.npy", d / f"{key}.json"
-    if not (npy.exists() and js.exists()):
-        return None
-    try:
-        mat = np.load(npy).astype(np.float32)
-        names = json.loads(js.read_text(encoding="utf-8"))
-        if len(names) == mat.shape[0]:
-            log.info("Loaded frame-definition index from cache: %s", npy)
-            return names, mat
-    except Exception as exc:  # corrupt/partial cache -> rebuild
-        log.warning("Frame index cache load failed (%s); rebuilding", exc)
-    return None
-
-
-def _save_to_disk(key: str, names: list[str], mat: np.ndarray) -> None:
-    d = _cache_dir()
-    try:
-        d.mkdir(parents=True, exist_ok=True)
-        npy, js = d / f"{key}.npy", d / f"{key}.json"
-        tmp_npy, tmp_js = d / f"{key}.npy.tmp", d / f"{key}.json.tmp"
-        with open(tmp_npy, "wb") as fh:  # file handle: np.save won't append ".npy"
-            np.save(fh, mat)
-        tmp_js.write_text(json.dumps(names), encoding="utf-8")
-        os.replace(tmp_npy, npy)  # atomic: readers never see a partial matrix
-        os.replace(tmp_js, js)
-        log.info("Cached frame-definition index to %s", npy)
-    except OSError as exc:
-        log.warning("Frame index cache write failed (%s); in-process only", exc)
+    return _embed_norm(texts)  # (N, dim) float32, already L2-normalized
 
 
 def _ensure(force: bool = False) -> tuple[list[str], np.ndarray]:
+    """The frame names and their definition matrix, built or loaded once.
+
+    Process-global: there is one FrameNet per process, so the matrix outlives
+    any single namespace. ``force`` skips the disk cache — used when the
+    embedder's dimension no longer matches what the cache holds.
+    """
     global _names, _matrix
     if _matrix is not None and not force:
         return _names, _matrix  # type: ignore[return-value]
     with _lock:
         if _matrix is not None and not force:
             return _names, _matrix  # type: ignore[return-value]
+        names = _frame_names()
         key = _cache_key()
-        loaded = None if force else _load_from_disk(key)
-        if loaded is None:
-            names, mat = _build_matrix()
-            _save_to_disk(key, names, mat)
-        else:
-            names, mat = loaded
+        mat = None if force else load_matrix(key, names)
+        if mat is None:
+            mat = _embed_frames(names)
+            save_matrix(key, names, mat)
         _names, _matrix = names, mat
-        return names, mat
+    return names, mat
 
 
 def match_frames(
@@ -130,19 +89,15 @@ def match_frames(
     with at most ``top_k`` entries and cosine >= ``min_sim``.
     """
     v = np.asarray(embedding, dtype=np.float32).ravel()
-    n = float(np.linalg.norm(v))
-    if v.size == 0 or n == 0.0:  # degenerate vector — skip the index build entirely
+    if v.size == 0 or float(np.linalg.norm(v)) == 0.0:
+        # Degenerate vector — answer before touching the index, so a bad query
+        # never pays for embedding the whole frame vocabulary.
         return []
     names, mat = _ensure()
-    if v.shape[0] != mat.shape[1]:  # embed dims changed under this key -> rebuild
+    if mat.size and v.shape[0] != mat.shape[1]:
+        # Embedding dims changed under this cache key — rebuild before giving up.
         names, mat = _ensure(force=True)
-        if v.shape[0] != mat.shape[1]:
-            return []
-    sims = mat @ (v / n)
-    k = min(top_k, len(names))
-    top = np.argpartition(-sims, k - 1)[:k]
-    top = top[np.argsort(-sims[top])]
-    return [(names[i], float(sims[i])) for i in top if sims[i] >= min_sim]
+    return match(v, names, mat, top_k, min_sim)
 
 
 def match_frames_text(

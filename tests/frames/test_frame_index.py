@@ -73,11 +73,14 @@ def test_cache_round_trip(monkeypatch, tmp_path):
     monkeypatch.setattr(fi, "_cache_key", lambda: "test_frames")
     build_calls = {"n": 0}
 
-    def _fake_build() -> tuple[list[str], np.ndarray]:
+    # The vocabulary is now fetched WITHOUT embedding, so the cache can be
+    # consulted before paying for a build. Patch the two halves separately.
+    def _fake_embed(_names: list[str]) -> np.ndarray:
         build_calls["n"] += 1
-        return names, mat
+        return mat
 
-    monkeypatch.setattr(fi, "_build_matrix", _fake_build)
+    monkeypatch.setattr(fi, "_frame_names", lambda: names)
+    monkeypatch.setattr(fi, "_embed_frames", _fake_embed)
 
     # First _ensure builds + writes the disk cache.
     fi._ensure()
@@ -94,3 +97,64 @@ def test_cache_round_trip(monkeypatch, tmp_path):
 
     # Matches computed off the disk-loaded matrix are identical.
     assert fi.match_frames([1.0, 0.0], top_k=1)[0][0] == "East"
+
+
+def test_a_warm_cache_never_embeds(monkeypatch, tmp_path):
+    """The cache is keyed on the vocabulary, so the vocabulary must be obtainable
+    without embedding it.
+
+    The bug this pins: fetching the names from the *build* means embedding all
+    1200-odd frame definitions in order to discover the cache was already warm —
+    a cache that costs exactly what it was meant to save.
+    """
+    names, mat = _tiny_index()
+    monkeypatch.setenv("GRAPHKNOWS_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(fi, "_cache_key", lambda: "warm_frames")
+    monkeypatch.setattr(fi, "_frame_names", lambda: names)
+
+    embeds = {"n": 0}
+
+    def _counting_embed(_names: list[str]) -> np.ndarray:
+        embeds["n"] += 1
+        return mat
+
+    monkeypatch.setattr(fi, "_embed_frames", _counting_embed)
+
+    fi._names, fi._matrix = None, None
+    fi._ensure()
+    assert embeds["n"] == 1, "cold cache should embed exactly once"
+
+    fi._names, fi._matrix = None, None
+    fi._ensure()
+    assert embeds["n"] == 1, "warm cache embedded anyway — the cache is doing nothing"
+
+
+def test_a_reordered_vocabulary_invalidates_the_cache(monkeypatch, tmp_path):
+    """Row i is meaningful only against the id list it was built from.
+
+    Validating the row COUNT alone happily pairs a cached matrix with a
+    differently-ordered vocabulary and returns confident matches for the wrong
+    frame. The shared index validates the list itself.
+    """
+    names, mat = _tiny_index()
+    monkeypatch.setenv("GRAPHKNOWS_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(fi, "_cache_key", lambda: "reordered_frames")
+    monkeypatch.setattr(fi, "_frame_names", lambda: names)
+    monkeypatch.setattr(fi, "_embed_frames", lambda _n: mat)
+
+    fi._names, fi._matrix = None, None
+    fi._ensure()
+
+    # Same length, different order — must NOT be served from the cache.
+    reversed_names = list(reversed(names))
+    monkeypatch.setattr(fi, "_frame_names", lambda: reversed_names)
+    rebuilt = {"n": 0}
+
+    def _rebuild(_names: list[str]) -> np.ndarray:
+        rebuilt["n"] += 1
+        return mat
+
+    monkeypatch.setattr(fi, "_embed_frames", _rebuild)
+    fi._names, fi._matrix = None, None
+    fi._ensure()
+    assert rebuilt["n"] == 1, "a reordered vocabulary was served a stale matrix"
