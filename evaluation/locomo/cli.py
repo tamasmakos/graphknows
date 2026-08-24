@@ -80,15 +80,34 @@ def build_parser() -> argparse.ArgumentParser:
             "probe_k auto-raises to cover it. Capped at 100 (MCP memory_query limit)."
         ),
     )
+    parser.add_argument(
+        "--namespace",
+        default="",
+        help=(
+            "Namespace prefix for this run's databases (default: eval_locomo). "
+            "Give each run its own so a --reset never drops the graph a previous "
+            "run is the baseline for: the graphs are the only record of what a "
+            "code change did to the graph, and the results JSON does not contain "
+            "them. Sanitised to [a-z0-9_] and prefixed `mem_` by the store."
+        ),
+    )
     return parser
 
 
 async def _run_one(
-    mode: str, limit: int, offset: int, ts: str, *, reuse_ingest: bool = False
+    mode: str,
+    limit: int,
+    offset: int,
+    ts: str,
+    *,
+    reuse_ingest: bool = False,
+    namespace: str = "",
 ) -> tuple[RunReport, ReportPaths]:
     """Run a single mode and return (RunReport, ReportPaths)."""
     os.environ["GRAPHKNOWS_MODE"] = mode
     config = LocomoConfig()
+    if namespace:
+        config = config.model_copy(update={"namespace": namespace})
     # Per-mode namespace: llm_free and llm_assisted get physically separate
     # database pairs so ingesting one never contaminates the other's graph.
     config = config.model_copy(update={"namespace": f"{config.namespace}_{mode}"})
@@ -124,7 +143,12 @@ async def amain(argv: list[str] | None = None) -> int:
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
 
     if args.reset:
+        # Built from the SAME namespace the run will write to. Without this,
+        # `--reset --namespace foo` drops the default namespace's databases —
+        # someone else's baseline — and leaves `foo` untouched.
         base = LocomoConfig()
+        if args.namespace:
+            base = base.model_copy(update={"namespace": args.namespace})
         modes = ["llm_free", "llm_assisted"] if args.compare else [args.mode]
         for m in modes:
             cfg = base.model_copy(update={"namespace": f"{base.namespace}_{m}"})
@@ -139,10 +163,20 @@ async def amain(argv: list[str] | None = None) -> int:
             f"limit={args.limit} offset={args.offset}"
         )
         run_free, paths_free = await _run_one(
-            "llm_free", args.limit, args.offset, ts, reuse_ingest=args.no_ingest
+            "llm_free",
+            args.limit,
+            args.offset,
+            ts,
+            reuse_ingest=args.no_ingest,
+            namespace=args.namespace,
         )
         run_asst, paths_asst = await _run_one(
-            "llm_assisted", args.limit, args.offset, ts, reuse_ingest=args.no_ingest
+            "llm_assisted",
+            args.limit,
+            args.offset,
+            ts,
+            reuse_ingest=args.no_ingest,
+            namespace=args.namespace,
         )
 
         table = compare_modes(run_free.cases, run_asst.cases)
@@ -165,7 +199,14 @@ async def amain(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"[eval] benchmark=locomo mode={args.mode}")
-    run, paths = await _run_one(args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest)
+    run, paths = await _run_one(
+        args.mode,
+        args.limit,
+        args.offset,
+        ts,
+        reuse_ingest=args.no_ingest,
+        namespace=args.namespace,
+    )
 
     print(
         f"\nAccuracy (LLM judge): {run.summary.get('accuracy', 0.0):.3f}  "
