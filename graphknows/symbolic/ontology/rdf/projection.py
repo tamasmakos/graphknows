@@ -13,7 +13,9 @@ rules, each of which exists because the naive reading loses something:
 3. **A blank node is never a vertex.** OWL restrictions / unions / intersections
    collapse to direct edges ``S -onProperty-> filler``; literals stranded on a
    blank node (reified ``owl:Axiom``, cardinality restrictions) are re-anchored
-   on the IRI they describe rather than dropped.
+   on the IRI they describe rather than dropped, keyed by a SKOLEM id
+   (:func:`~graphknows.symbolic.ontology.rdf_io.skolem_ids`) because an rdflib
+   ``BNode`` id is different on every parse of the same file.
 4. **Every literal predicate is kept, but sorted.** :data:`STRUCTURAL` plumbing
    is dropped (it is already modelled as edges or flags), roles are promoted to
    flat fields, and the rest is kept with a human name resolved from the graph's
@@ -41,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from graphknows.symbolic.ontology import rdf_io
 from graphknows.symbolic.ontology.rdf.prefixes import Prefixes, split_iri
 
 log = logging.getLogger("graphknows.symbolic.ontology.rdf.projection")
@@ -142,9 +145,6 @@ DOCUMENT: frozenset[str] = frozenset(
 # property a restriction is about says nothing the node's own fields do not.
 BORING: frozenset[str] = frozenset({_RDF + "type", _OWL + "onProperty"})
 
-# OASIS import catalogs parse as RDF and carry no ontology content.
-SKIP_NAMES: tuple[str, ...] = ("catalog-",)
-
 _ANY_URI = "http://www.w3.org/2001/XMLSchema#anyURI"
 
 
@@ -229,26 +229,23 @@ def load_dir(root: Path) -> tuple[Any, list[tuple[str, str, int, str]]]:
     ``(path, format, triples added, status)`` is what makes "the ontology looks
     empty" answerable.
     """
-    try:
-        from rdflib import Graph
-        from rdflib.util import guess_format
-    except ImportError as exc:
-        from graphknows.exceptions import MissingExtraError
-
-        raise MissingExtraError("Parsing an RDF ontology folder", "assisted") from exc
-
-    graph = Graph()
+    root = rdf_io.local_path(root)
+    graph = rdf_io.new_graph()
     report: list[tuple[str, str, int, str]] = []
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
-        rel, fmt = str(path.relative_to(root)), guess_format(str(path))
-        if path.name.startswith(SKIP_NAMES):
+        # The format comes from our own suffix table, never from rdflib's
+        # `guess_format`: `parse_file` requires an explicit one, which is what
+        # stops a mislabelled document from arriving as a parser error about the
+        # wrong syntax — and keeps a URL from ever reaching a parser at all.
+        rel, fmt = str(path.relative_to(root)), rdf_io.RDF_FORMATS.get(path.suffix.lower())
+        if path.name.startswith(rdf_io.SKIP_NAMES):
             report.append((rel, fmt or "-", 0, "skipped (import catalog)"))
         elif fmt is None:
             report.append((rel, "-", 0, "not rdf (unknown suffix)"))
         else:
             before = len(graph)
             try:
-                graph.parse(str(path), format=fmt)
+                rdf_io.parse_file(path, graph)
             except Exception as exc:
                 report.append((rel, fmt, 0, f"parse failed: {type(exc).__name__}"))
                 continue
@@ -476,6 +473,12 @@ def _anchor_bnode_literals(graph: Any, meta: dict[str, NodeMeta], pfx: Prefixes)
     addressable — it does not say its content is worthless — so each block is
     anchored on the nearest IRI above it, walking up because restrictions nest
     inside unions.
+
+    Each block carries ``@id``, a SKOLEM id derived from what the blank node
+    says. rdflib mints a fresh ``BNode`` id on every parse and iterates them in
+    set order, so without one, re-importing an unchanged file produced blocks in
+    a different order — a row that churns on every run and no way to say whether
+    two runs found the same axiom.
     """
     from rdflib import BNode, Literal, URIRef
     from rdflib.namespace import OWL
@@ -493,6 +496,7 @@ def _anchor_bnode_literals(graph: Any, meta: dict[str, NodeMeta], pfx: Prefixes)
             cur = parent.get(cur)
         return str(cur) if isinstance(cur, URIRef) else None
 
+    skolem = rdf_io.skolem_ids(graph)
     for bnode in set(graph.subjects()):
         if not isinstance(bnode, BNode):
             continue
@@ -502,8 +506,13 @@ def _anchor_bnode_literals(graph: Any, meta: dict[str, NodeMeta], pfx: Prefixes)
         anchor = str(source) if isinstance(source, URIRef) else anchor_of(bnode)
         if anchor in meta:
             meta[anchor].bnode_meta.append(
-                {pfx.curie(p): str(o) for p, o in graph.predicate_objects(bnode)}
+                {
+                    "@id": skolem[str(bnode)],
+                    **{pfx.curie(p): str(o) for p, o in graph.predicate_objects(bnode)},
+                }
             )
+    for node in meta.values():
+        node.bnode_meta.sort(key=lambda block: block["@id"])
 
 
 def project(graph: Any) -> tuple[Any, dict[str, NodeMeta], Prefixes, dict[str, PredInfo]]:

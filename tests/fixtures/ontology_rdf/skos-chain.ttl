@@ -1,0 +1,41 @@
+# A real SKOS concept scheme: `skos:broader`, NOT `skos:broaderTransitive`.
+#
+# Java broader Island broader Landform is the W3C's own example of why
+# `skos:broader` is not transitive — a walk that composes it concludes "Java is
+# a Landform", which the scheme never says. `skos:related` (disjoint with
+# `skos:broaderTransitive`) and a reified `owl:Axiom` carrying a literal on a
+# blank node are here for the same reason: each is a shape the projection has to
+# get right and nothing else in the fixtures exercises.
+
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <https://graphknows.io/fixtures/places#> .
+
+<https://graphknows.io/fixtures/places>
+    a owl:Ontology ;
+    owl:versionIRI <https://graphknows.io/fixtures/places/1.2.0> ;
+    rdfs:label "Places (SKOS)" .
+
+ex:Landform a skos:Concept ;
+    skos:prefLabel "Landform" ;
+    skos:definition "A natural feature of the earth's surface." .
+
+ex:Island a skos:Concept ;
+    skos:prefLabel "Island" ;
+    skos:broader ex:Landform .
+
+ex:Java a skos:Concept ;
+    skos:prefLabel "Java" ;
+    skos:broader ex:Island ;
+    skos:related ex:Coffee .
+
+ex:Coffee a skos:Concept ;
+    skos:prefLabel "Coffee" .
+
+# Metadata on a node that can never be a vertex — the skolem-id case.
+[] a owl:Axiom ;
+    owl:annotatedSource ex:Java ;
+    owl:annotatedProperty skos:broader ;
+    owl:annotatedTarget ex:Island ;
+    rdfs:comment "the island, not the language" .

@@ -78,6 +78,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from graphknows.symbolic.ontology import rdf_io
+
 # Extensions deliberately excluded from the bundle, recorded here because "why
 # is Barcode missing" is otherwise unanswerable: ModalRelationOntology is 278
 # modal-logic properties with ZERO definitions, BarcodeOntology is 44 barcode
@@ -119,7 +121,7 @@ def _files(sources: list[Path]) -> list[Path]:
     matrix is only meaningful against the term list that built it.
     """
     out: list[Path] = []
-    for src in sources:
+    for src in (rdf_io.local_path(s) for s in sources):
         if src.is_dir():
             out.extend(sorted(src.rglob("*.ttl")))
         elif src.is_file():
@@ -146,13 +148,26 @@ class _Reader:
     def label(self, subject: Any) -> str:
         return self.labels.get(str(subject), "")
 
+    def _first(self, subject: Any, predicate: Any) -> str:
+        """The lexically first value, so a multi-valued annotation is not a coin toss.
+
+        ``Graph.value`` returns an ARBITRARY member when a predicate has several
+        (CCO gives ``Act of Estimation`` three ``skos:scopeNote``s), so which one
+        reached the digest depended on the order triples happened to be inserted
+        — a build from the same corpus in a different file order silently changed
+        the text that gets embedded. Sorting makes the pick stable; which of the
+        three is picked matters far less than picking the same one every time.
+        """
+        values = sorted(str(v) for v in self.g.objects(subject, predicate))
+        return values[0] if values else ""
+
     def definition(self, subject: Any) -> str:
         """``skos:definition``, falling back to ``rdfs:comment``, plus the scope note."""
         from rdflib import RDFS
         from rdflib.namespace import SKOS
 
-        text = self.g.value(subject, SKOS.definition) or self.g.value(subject, RDFS.comment) or ""
-        note = self.g.value(subject, SKOS.scopeNote) or ""
+        text = self._first(subject, SKOS.definition) or self._first(subject, RDFS.comment)
+        note = self._first(subject, SKOS.scopeNote)
         # URLs are embedded verbatim otherwise, and several scopeNotes are bare
         # pointers ("please refer to https://github.com/..."), which is noise in
         # the vector the whole match is decided on.
@@ -225,12 +240,17 @@ class _Reader:
             out |= self.named(obj)
         return sorted(out)
 
-    def constraint(
-        self, prop: Any, predicate: Any, seen: frozenset[str] = frozenset()
-    ) -> list[str]:
+    def endpoints(self, prop: Any, predicate: Any, seen: frozenset[str] = frozenset()) -> list[str]:
         """Domain/range for ``prop``, inherited from superproperties when absent.
 
-        CCO declares a constraint once on the general property and leaves the
+        ``rdfs:domain``/``rdfs:range`` are inference-LICENSING axioms, not
+        constraints: they say what may be concluded about whatever appears at
+        either end, never what is forbidden there. Reading them as an offer gate
+        downstream is a deliberate heuristic — the vocabulary handed to an
+        extractor should be the one the ontology talks about — and it is not
+        validation of anything.
+
+        CCO declares an endpoint once on the general property and leaves the
         specialisations to inherit it: ``has process part`` states no domain of
         its own and takes BFO's. Reading only the direct triple drops those.
         """
@@ -242,7 +262,7 @@ class _Reader:
             return direct
         inherited: set[str] = set()
         for parent in self.g.objects(prop, RDFS.subPropertyOf):
-            inherited.update(self.constraint(parent, predicate, seen | {str(prop)}))
+            inherited.update(self.endpoints(parent, predicate, seen | {str(prop)}))
         return sorted(inherited)
 
     def module(self, subject: Any) -> str:
@@ -257,17 +277,22 @@ def build(sources: list[Path]) -> dict[str, Any]:
     # here and nowhere else. rdflib ships in the `assisted` extra, so a base
     # install can import this module (and load a digest) without an RDF stack.
     try:
-        import rdflib
         from rdflib import OWL, RDF, RDFS
     except ImportError as exc:
         from graphknows.exceptions import MissingExtraError
 
         raise MissingExtraError("Building an ontology digest", "assisted") from exc
 
-    graph = rdflib.Graph()
     paths = _files(sources)
-    for path in paths:
-        graph.parse(str(path), format="turtle")
+    # rdflib loads exactly one document per parse and follows no `owl:imports`,
+    # so the closure is resolved here — against LOCAL files only — before any
+    # term is read. It is the same omission that once left 199 of 224 properties
+    # untyped: an unimported BFO resolves every domain and range to nothing.
+    closure = rdf_io.load_closure(
+        paths, search=sorted({p if p.is_dir() else p.parent for p in map(Path, sources)})
+    )
+    graph = closure.graph
+    paths = list(closure.files)
 
     # URI -> label across every input, so a cross-module domain/range resolves.
     # BFO is one of those inputs, and CCO types its relations against it.
@@ -293,7 +318,7 @@ def build(sources: list[Path]) -> dict[str, Any]:
         if not (lbl := r.label(s)):
             continue
         mod = r.module(s)
-        domain, rng = r.constraint(s, RDFS.domain), r.constraint(s, RDFS.range)
+        domain, rng = r.endpoints(s, RDFS.domain), r.endpoints(s, RDFS.range)
         if not domain and not rng and (fallback := _DEFAULT_DOMAIN_RANGE.get(mod)):
             domain, rng = [fallback[0]], [fallback[1]]
         properties.append(
@@ -310,6 +335,11 @@ def build(sources: list[Path]) -> dict[str, Any]:
 
     return {
         "source": ", ".join(p.name for p in paths),
+        # The closure's identity, recorded first: which ontology (and which
+        # RELEASE of it) a digest came from is a property of the closure, not of
+        # any one file, and it is unanswerable once the terms are flattened.
+        "ontologies": closure.version_iris,
+        "imports_unresolved": list(closure.unresolved),
         "classes": classes,
         "properties": properties,
     }
@@ -342,6 +372,10 @@ def main() -> int:
         f"({offerable} offerable: domain+range declared), "
         f"{undefined} without a definition, {a.out.stat().st_size / 1024:.0f} KB"
     )
+    versions = digest["ontologies"]
+    print(f"   closure: {len(versions)} ontologies " + ", ".join(sorted(versions)))
+    if unresolved := digest["imports_unresolved"]:
+        print(f"   !! owl:imports not found locally: {', '.join(unresolved)}")
     return 0
 
 

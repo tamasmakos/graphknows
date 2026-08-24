@@ -14,6 +14,13 @@ IRI carrying its label (two CCO releases spell ``Geospatial Region`` two ways),
 so the digest and the ``ONTOLOGY_CLASS`` row must agree on which one is the key
 or nothing can join them.
 
+**A parent that may not be composed is stamped.** ``skos:broader`` is not
+transitive (SKOS keeps ``skos:broaderTransitive`` separate for that), so a digest
+that only lists parents leaves a reader unable to tell a chain it may climb from
+one it may not. Those parents are listed a second time under
+``parents_nontransitive``, and
+:func:`~graphknows.symbolic.ontology.skos.ancestors` stops its walk at them.
+
 **Domain and range are inherited down the property hierarchy.** Property
 selection is GATED on both (``ingestion/stm/ingest.py::_relation_labels``): a
 property declaring neither is never offered to the extractor. 217 of the CCO
@@ -40,14 +47,25 @@ _ENDPOINT_PREDICATE = {"rdfs:domain": "domain", "rdfs:range": "range"}
 
 
 def _ancestors(taxonomy: Any, key: str, depth: int = 12) -> set[str]:
-    """``key`` plus every BROADER ancestor, bounded.
+    """``key`` plus every BROADER ancestor reachable over TRANSITIVE edges, bounded.
 
     Keys are casefolded labels throughout — a case mismatch here once made
     domain/range widening inert while every count still looked plausible.
+
+    A non-transitive parent (``skos:broader``) is still an ancestor at one hop
+    and is returned, but the walk stops there: ``A broader B broader C`` does not
+    assert that A is a C, so inheriting C's domain onto A would be inventing an
+    endpoint the source never declared.
     """
     out, frontier = {key}, {key}
     for _ in range(depth):
-        frontier = {p for k in frontier if k in taxonomy for p in taxonomy.successors(k)} - out
+        frontier = {
+            parent
+            for child in frontier
+            if child in taxonomy
+            for parent in taxonomy.successors(child)
+            if taxonomy[child][parent].get("transitive", True)
+        } - out
         if not frontier:
             break
         out |= frontier
@@ -131,18 +149,35 @@ def to_digest(
     property_keys = sorted(k for k, t in taxa.items() if t.kind == "property")
     _inherit_endpoints(taxonomy, property_keys, tables)
 
-    def parents_of(key: str) -> list[str]:
-        return _labels(taxa, set(taxonomy.successors(key)) if key in taxonomy else set())
+    def parents_of(key: str, *, transitive: bool | None = None) -> list[str]:
+        if key not in taxonomy:
+            return []
+        return _labels(
+            taxa,
+            {
+                parent
+                for parent in taxonomy.successors(key)
+                if transitive is None or taxonomy[key][parent]["transitive"] is transitive
+            },
+        )
 
     def entry(key: str) -> dict[str, Any]:
         taxon = taxa[key]
-        return {
+        row: dict[str, Any] = {
             "uri": sorted(taxon.iris)[0],
             "label": taxon.label,
             "definition": taxon.definition,
             "parents": parents_of(key),
             "module": _module(taxon),
         }
+        # Stamped only when there is something to stamp, so a digest built from
+        # an OWL source is byte-identical to before. Its ABSENCE means every
+        # parent came from a transitive predicate (`rdfs:subClassOf`, a defined
+        # class's genus, `skos:broaderTransitive`) and may be composed; a name
+        # listed here came from `skos:broader`, which may not.
+        if nontransitive := parents_of(key, transitive=False):
+            row["parents_nontransitive"] = nontransitive
+        return row
 
     # Everything that is not a property is a class: `concept` (SKOS) and the
     # untyped remainder are subsumable terms with definitions, and the loader has

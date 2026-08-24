@@ -17,6 +17,12 @@ Three input shapes are recognised, in this order: our pre-built **digest** JSON
 then the legacy ``*-summary.jsonld`` label lists. The digest is first because it
 is the only shape parsed with the standard library alone — ``rdflib`` lives in
 the ``assisted`` extra, and the default ``llm_free`` install does not have it.
+
+Every RDF document is opened through
+:func:`~graphknows.symbolic.ontology.rdf_io.parse_file`, which is what keeps this
+loader offline: it takes a ``Path``, opens it, and hands rdflib a file object and
+an explicit format, so no source string ever reaches a parser that would resolve
+it over the network.
 """
 
 from __future__ import annotations
@@ -28,17 +34,6 @@ from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("graphknows.symbolic.ontology.loader")
-
-# Suffix -> rdflib format. ".owl" is RDF/XML but rdflib does not infer it.
-_RDF_FORMATS: dict[str, str] = {
-    ".ttl": "turtle",
-    ".owl": "xml",
-    ".rdf": "xml",
-    ".xml": "xml",
-    ".jsonld": "json-ld",
-    ".nt": "nt",
-    ".n3": "n3",
-}
 
 
 @dataclass(frozen=True)
@@ -82,20 +77,6 @@ class OntologyTerm:
     def index_text(self) -> str:
         """The string that represents this term in the embedding catalog."""
         return f"{self.label}. {self.definition}".strip().rstrip(".")
-
-
-def _rdf_label(graph: object, node: object) -> str:
-    from rdflib import RDFS  # type: ignore
-
-    label = graph.value(node, RDFS.label)  # type: ignore[attr-defined]
-    if label:
-        return str(label)
-    text = str(node)
-    if "#" in text:
-        return text.rsplit("#", 1)[-1]
-    if "/" in text:
-        return text.rstrip("/").rsplit("/", 1)[-1]
-    return text
 
 
 def _text_value(graph: Any, node: Any, *predicates: Any) -> str:
@@ -156,18 +137,9 @@ def _collect_terms(graph: Any, subjects: Any, kind: str, source: str) -> list[On
     return terms
 
 
-def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
-    """Parse one RDF/OWL/TTL/JSON-LD file into terms. Empty if it will not parse."""
-    import rdflib  # type: ignore
+def _rdf_terms(graph: Any, source: str) -> list[OntologyTerm]:
+    """Every class and property term in an already-parsed graph."""
     from rdflib import OWL, RDF, RDFS  # type: ignore
-
-    graph = rdflib.Graph()
-    fmt = _RDF_FORMATS.get(path.suffix.lower())
-    try:
-        graph.parse(str(path), format=fmt) if fmt else graph.parse(str(path))
-    except Exception as exc:
-        log.debug("Not parseable as RDF (%s): %s", path.name, exc)
-        return []
 
     class_nodes = set(graph.subjects(RDF.type, OWL.Class)) | set(
         graph.subjects(RDF.type, RDFS.Class)
@@ -177,7 +149,6 @@ def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
         | set(graph.subjects(RDF.type, OWL.DatatypeProperty))
         | set(graph.subjects(RDF.type, RDF.Property))
     )
-    source = str(path)
     # Sorted, not set-ordered: term order determines the embedding matrix's row
     # order, and rdflib subject sets iterate differently between processes
     # (randomized string hashing). An unstable order silently pairs a cached
@@ -186,6 +157,30 @@ def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
         *_collect_terms(graph, sorted(class_nodes, key=str), "class", source),
         *_collect_terms(graph, sorted(property_nodes, key=str), "property", source),
     ]
+
+
+def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
+    """Parse one local RDF file into terms. Empty when it will not parse.
+
+    Permissive about CONTENT — this is the folder-walking path, where a source
+    directory legitimately mixes ontologies with digests and junk, and one bad
+    file must not cost the other forty.
+
+    Not permissive about FORMAT. A suffix rdflib has no parser for reaches here
+    only when the caller named that file explicitly (the folder walk filters on
+    the same table), and answering "no terms found" would hide the one fact that
+    fixes it: it needs converting first.
+    """
+    from graphknows.symbolic.ontology import rdf_io
+
+    try:
+        graph = rdf_io.parse_file(path)
+    except ValueError:
+        raise
+    except Exception as exc:
+        log.debug("Not parseable as RDF (%s): %s", path.name, exc)
+        return []
+    return _rdf_terms(graph, str(path))
 
 
 def _digest_payload(path: Path) -> dict[str, Any] | None:
@@ -273,8 +268,10 @@ def _ontology_files(source: Path) -> list[Path]:
     """Every candidate ontology file under ``source`` (a file or a folder)."""
     if source.is_file():
         return [source]
+    from graphknows.symbolic.ontology import rdf_io
+
     return sorted(
-        p for p in source.rglob("*") if p.suffix.lower() in (*_RDF_FORMATS, ".json") and p.is_file()
+        p for p in source.rglob("*") if p.suffix.lower() in rdf_io.RDF_FORMATS and p.is_file()
     )
 
 
@@ -300,9 +297,11 @@ def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
 
     Raises:
         FileNotFoundError: When ``source`` does not exist.
-        ValueError: When nothing in ``source`` yielded a single term.
+        ValueError: When ``source`` is a URL, or nothing in it yielded a term.
     """
-    resolved = Path(source)
+    from graphknows.symbolic.ontology import rdf_io
+
+    resolved = rdf_io.local_path(source)
     if not resolved.exists():
         raise FileNotFoundError(f"Ontology source not found: {resolved}")
 
@@ -336,7 +335,7 @@ def _manifest_from_terms(path: Path, terms: list[OntologyTerm]) -> RdfOntologyMa
     classes = sorted({t.label for t in terms if t.kind == "class"})
     properties = sorted({t.label for t in terms if t.kind == "property"})
     if not classes or not properties:
-        raise ValueError(f"Ontology digest has no classes or no properties: {path}")
+        raise ValueError(f"Ontology has no classes or no properties: {path}")
     return RdfOntologyManifest(
         file_path=str(path),
         class_labels=classes,
@@ -357,8 +356,16 @@ def load_rdf_ontology_file(path: str | Path) -> RdfOntologyManifest:
     A pre-built digest (the bundled CCO default) is accepted here too and
     handled without rdflib: this is the path ``build_relation_extractor`` hands
     ``settings.ontology_source``, which now defaults to that digest.
+
+    Raises:
+        FileNotFoundError: When ``path`` does not exist.
+        ValueError: When ``path`` is a URL, is not a file, names no RDF syntax,
+            or declares no classes or no properties. A parse failure raises too:
+            unlike the folder walk, one explicitly named file is never skipped.
     """
-    resolved = Path(path)
+    from graphknows.symbolic.ontology import rdf_io
+
+    resolved = rdf_io.local_path(path)
     if not resolved.exists():
         raise FileNotFoundError(f"RDF ontology file not found: {resolved}")
     if not resolved.is_file():
@@ -366,40 +373,4 @@ def load_rdf_ontology_file(path: str | Path) -> RdfOntologyManifest:
 
     if terms := _terms_from_digest(resolved):
         return _manifest_from_terms(resolved, terms)
-
-    import rdflib  # type: ignore
-    from rdflib import OWL, RDF, RDFS  # type: ignore
-
-    graph = rdflib.Graph()
-    graph.parse(str(resolved))
-
-    class_nodes = set(graph.subjects(RDF.type, OWL.Class)) | set(
-        graph.subjects(RDF.type, RDFS.Class)
-    )
-    property_nodes = (
-        set(graph.subjects(RDF.type, OWL.ObjectProperty))
-        | set(graph.subjects(RDF.type, OWL.DatatypeProperty))
-        | set(graph.subjects(RDF.type, RDF.Property))
-    )
-
-    classes = sorted({_rdf_label(graph, node) for node in class_nodes if _rdf_label(graph, node)})
-    properties = sorted(
-        {_rdf_label(graph, node) for node in property_nodes if _rdf_label(graph, node)}
-    )
-
-    if not classes:
-        raise ValueError(f"RDF ontology file has no owl:Class/rdfs:Class labels: {resolved}")
-    if not properties:
-        raise ValueError(f"RDF ontology file has no RDF/OWL property labels: {resolved}")
-
-    context = {
-        "file": str(resolved),
-        "classes": classes,
-        "properties": properties,
-    }
-    return RdfOntologyManifest(
-        file_path=str(resolved),
-        class_labels=classes,
-        property_labels=properties,
-        context=json.dumps(context, ensure_ascii=False),
-    )
+    return _manifest_from_terms(resolved, _rdf_terms(rdf_io.parse_file(resolved), str(resolved)))

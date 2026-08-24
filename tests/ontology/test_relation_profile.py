@@ -195,14 +195,30 @@ class TestDomainRangeSelection:
         assert "nationality" in offered
         assert "homeLocation" in offered, "Country is a Place, so a Place range is satisfied"
 
-    def test_the_offer_is_capped_and_prefers_specific_ranges(self, index: Any) -> None:
-        """Everything is a Thing, so Thing-ranged properties must not crowd out the rest."""
+    def test_the_offer_keeps_specific_ranges_and_fits_the_cap(self, index: Any) -> None:
+        """Everything is a Thing, so Thing-ranged properties must not crowd out the rest.
+
+        Used to assert ``len(offered) == _RELATION_LABEL_CAP`` — a proxy for "the
+        cap binds". It no longer does: the cap is now sized to the whole profile
+        so a vocabulary designed to be offered WHOLE is never truncated, and this
+        entity set evokes fewer properties than the cap allows. The intent the
+        docstring states is unchanged and is what is asserted below.
+        """
         offered = _handler(index)._relation_labels(
             _ents("PERSON", "ORGANIZATION", "PLACE", "EVENT", "OCCUPATION")
         )
-        assert len(offered) == _RELATION_LABEL_CAP
+        assert 0 < len(offered) <= _RELATION_LABEL_CAP
         for specific in ("worksFor", "hasOccupation", "homeLocation", "attendee"):
             assert specific in offered, f"{specific} lost its slot to a Thing-ranged property"
+
+    def test_nothing_applicable_is_dropped_when_it_fits(self, index: Any) -> None:
+        """The profile's design intent: offered whole, with no selection step."""
+        types = ("PERSON", "ORGANIZATION", "PLACE", "EVENT", "OCCUPATION")
+        offered = _handler(index)._relation_labels(_ents(*types))
+        # Every interpersonal property survives — the group that flat round-robin
+        # starved, because all nine share one (domain, range) pair.
+        for interpersonal in ("spouse", "parent", "children", "sibling", "colleague"):
+            assert interpersonal in offered, f"{interpersonal} was dropped from the offer"
 
     def test_the_values_are_definitions_the_extractor_can_use(self, index: Any) -> None:
         offered = _handler(index)._relation_labels(_ents("PERSON"))

@@ -90,6 +90,12 @@ DDL: list[str] = [
     "CREATE EDGE TYPE BROADER IF NOT EXISTS",
     "CREATE PROPERTY BROADER.via IF NOT EXISTS STRING",
     "CREATE PROPERTY BROADER.bridged IF NOT EXISTS BOOLEAN",
+    # Whether this edge may be COMPOSED with the next one, and whether it was
+    # asserted or concluded. Without them a traverser cannot tell a subsumption
+    # chain it may climb (`rdfs:subClassOf`) from a `skos:broader` link it may
+    # not, and every stored hierarchy reads as if it were transitive.
+    "CREATE PROPERTY BROADER.transitive IF NOT EXISTS BOOLEAN",
+    "CREATE PROPERTY BROADER.inferred IF NOT EXISTS BOOLEAN",
 ]
 
 NODE_CYPHER = (
@@ -130,7 +136,8 @@ BROADER_CYPHER = (
     "UNWIND $rows AS row "
     "MATCH (c:ONTOLOGY_CLASS {key: row.c}), (p:ONTOLOGY_CLASS {key: row.p}) "
     "MERGE (c)-[b:BROADER]->(p) "
-    "SET b.via = row.via, b.bridged = row.bridged"
+    "SET b.via = row.via, b.bridged = row.bridged, b.transitive = row.transitive, "
+    "    b.inferred = row.inferred"
 )
 
 
@@ -205,12 +212,51 @@ def taxon_rows(taxa: dict[str, Taxon]) -> list[dict[str, Any]]:
     ]
 
 
-def broader_rows(taxonomy: Any) -> list[dict[str, Any]]:
-    """One row per BROADER edge (child key -> parent key)."""
-    return [
-        {"c": child, "p": parent, "via": data["via"], "bridged": data["bridged"]}
+def broader_rows(
+    taxonomy: Any, inferred: list[tuple[str, str]] | None = None
+) -> list[dict[str, Any]]:
+    """One row per BROADER edge (child key -> parent key), asserted then inferred.
+
+    ``transitive`` says whether the edge may be composed with the next one:
+    ``rdfs:subClassOf`` may, ``skos:broader`` may not. ``inferred`` separates
+    what the source SAID from what we concluded — the materialised closure of the
+    transitive predicates arrives here as ``inferred`` pairs, so a reader can
+    always fall back to the asserted hierarchy alone.
+
+    Args:
+        taxonomy: The DAG from :func:`~graphknows.symbolic.ontology.rdf.taxonomy.extract`.
+        inferred: ``(child key, parent key)`` closure pairs, already filtered
+            against what ``taxonomy`` asserts (see
+            :func:`~graphknows.symbolic.ontology.rdf.taxonomy.inferred_pairs`).
+
+    Returns:
+        Rows for :data:`BROADER_CYPHER`.
+    """
+    rows = [
+        {
+            "c": child,
+            "p": parent,
+            "via": data["via"],
+            "bridged": data["bridged"],
+            # Permissive default for a hand-built graph: an unmarked edge reads
+            # as transitive, which is what every OWL predicate here is.
+            "transitive": data.get("transitive", True),
+            "inferred": False,
+        }
         for child, parent, data in taxonomy.edges(data=True)
     ]
+    rows += [
+        {
+            "c": child,
+            "p": parent,
+            "via": "closure",
+            "bridged": False,
+            "transitive": True,
+            "inferred": True,
+        }
+        for child, parent in inferred or []
+    ]
+    return rows
 
 
 async def _batched(

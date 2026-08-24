@@ -157,6 +157,11 @@ class Concept:
     kind: str  # "class" | "property"
     alt_labels: set[str] = field(default_factory=set)
     broader: tuple[str, ...] = ()
+    # The subset of ``broader`` that may NOT be composed — parents the digest
+    # stamped as coming from ``skos:broader``/``skos:narrower`` rather than from
+    # ``rdfs:subClassOf`` or ``skos:broaderTransitive``. Empty for every OWL
+    # source, which is why an older digest reads correctly with no field at all.
+    broader_nontransitive: frozenset[str] = frozenset()
     domain: tuple[str, ...] = ()
     range: tuple[str, ...] = ()
     module: str = ""
@@ -211,6 +216,7 @@ def build_scheme(digest: Path, synonyms: bool = True) -> dict[str, Concept]:
                 definition=str(entry.get("definition") or ""),
                 kind=kind,
                 broader=tuple(entry.get("parents") or ()),
+                broader_nontransitive=frozenset(entry.get("parents_nontransitive") or ()),
                 domain=tuple(entry.get("domain") or ()),
                 range=tuple(entry.get("range") or ()),
                 module=str(entry.get("module") or ""),
@@ -260,6 +266,7 @@ def extend_scheme(scheme: dict[str, Concept], overlay: Path) -> dict[str, Concep
                 definition=str(entry.get("definition") or ""),
                 kind=kind,
                 broader=tuple(entry.get("parents") or ()),
+                broader_nontransitive=frozenset(entry.get("parents_nontransitive") or ()),
                 domain=tuple(entry.get("domain") or ()),
                 range=tuple(entry.get("range") or ()),
                 module="overlay",
@@ -285,8 +292,23 @@ def lexical_index(scheme: dict[str, Concept]) -> dict[str, set[str]]:
     return index
 
 
-def ancestors(scheme: dict[str, Concept], label: str, depth: int = 12) -> list[str]:
-    """The transitive ``broader`` closure — what multi-hop generalisation walks.
+def ancestors(
+    scheme: dict[str, Concept], label: str, depth: int = 12, *, transitive_only: bool = True
+) -> list[str]:
+    """The ``broader`` closure — what multi-hop generalisation walks.
+
+    ``skos:broader`` IS NOT TRANSITIVE. SKOS keeps ``skos:broaderTransitive`` as
+    its separate transitive super-property for exactly this reason: "Java broader
+    Island" and "Island broader Landform" do not license "Java broader Landform".
+    A parent reached over a non-transitive link is therefore reported — it is a
+    parent — but never expanded, which makes a three-level ``skos:broader`` chain
+    yield one ancestor rather than two. Pass ``transitive_only=False`` to get the
+    old loose walk, knowing it concludes things the scheme does not assert.
+
+    This walk was unconditionally transitive until now, and safe only by
+    accident: the bundled CCO digest derives every ``broader`` from
+    ``rdfs:subClassOf``, which IS transitive. It became wrong the moment a real
+    SKOS scheme was imported, which is what ``broader_nontransitive`` fixes.
 
     Breadth-first over EVERY declared parent, not just the first. CCO uses
     multiple inheritance freely (``Dance Studio`` is both a ``Facility`` and a
@@ -315,13 +337,16 @@ def ancestors(scheme: dict[str, Concept], label: str, depth: int = 12) -> list[s
     while frontier and depth > 0:
         nxt: list[str] = []
         for current in frontier:
-            if current not in scheme:
+            concept = scheme.get(current)
+            if concept is None:
                 continue
-            for parent in scheme[current].broader:
+            for parent in concept.broader:
                 if parent in seen:
                     continue
                 seen.add(parent)
                 out.append(parent)
+                if transitive_only and parent in concept.broader_nontransitive:
+                    continue  # a parent, but not a step the closure may take
                 nxt.append(parent)
         frontier = nxt
         depth -= 1

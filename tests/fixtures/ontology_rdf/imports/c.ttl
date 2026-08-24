@@ -1,0 +1,11 @@
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <https://graphknows.io/fixtures/gamma#> .
+
+# Imported by its VERSION IRI, and closes the cycle back onto alpha.
+<https://graphknows.io/fixtures/gamma>
+    a owl:Ontology ;
+    owl:versionIRI <https://graphknows.io/fixtures/gamma/3.0.0> ;
+    owl:imports <https://graphknows.io/fixtures/alpha> .
+
+ex:GammaThing a owl:Class ; rdfs:label "Gamma Thing" .
