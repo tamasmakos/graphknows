@@ -126,3 +126,4 @@ class Ingestor:
         ingest.flush_topics = int(flush.get("topics_created", 0))
         ingest.flush_elapsed_s = round(float(flush.get("elapsed_s", 0)), 3)
         ingest.flush_error_count = len(flush.get("errors", []))
+        ingest.flush_stage_s = {str(k): float(v) for k, v in (flush.get("stage_s") or {}).items()}

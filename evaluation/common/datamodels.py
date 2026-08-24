@@ -96,6 +96,11 @@ class IngestResult(BaseModel):
     flush_topics: int = 0
     flush_elapsed_s: float = 0.0
     flush_error_count: int = 0
+    # Seconds per named flush stage (drain, resolve, pagerank, node2vec, louvain,
+    # topics...). `flush_elapsed_s` is their sum, and on its own it cannot say
+    # WHICH stage took the time — which is how "the ingest is slow" stayed an
+    # unanswered question through several runs.
+    flush_stage_s: dict[str, float] = Field(default_factory=dict)
     # LLM usage during ingestion (llm_assisted mode only)
     ingest_prompt_tokens: int = 0
     ingest_completion_tokens: int = 0

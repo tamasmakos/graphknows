@@ -208,6 +208,9 @@ def build_case_result(
             "flush_nodes": ingest.flush_nodes,
             "flush_edges": ingest.flush_edges,
             "flush_elapsed_s": ingest.flush_elapsed_s,
+            # One metric per stage, so the slow one is named in the report
+            # rather than hidden inside the total.
+            **{f"flush_stage_{k}_s": v for k, v in ingest.flush_stage_s.items()},
             "ingest_prompt_tokens": ingest.ingest_prompt_tokens,
             "ingest_completion_tokens": ingest.ingest_completion_tokens,
             "ingest_cost_usd": ingest.ingest_cost_usd,
@@ -292,10 +295,19 @@ async def _ingest_unit(
         if ingest.turns
         else f"chunks={ingest.chunks}"
     )
+    # The three slowest flush stages, inline. `flush_elapsed_s` alone cannot say
+    # WHICH stage took the time, and waiting for the results file to find out
+    # means a 20-minute round trip on every performance question.
+    slowest = sorted(ingest.flush_stage_s.items(), key=lambda kv: -kv[1])[:3]
+    timing = (
+        "  slowest: " + ", ".join(f"{name}={secs:.0f}s" for name, secs in slowest if secs >= 1)
+        if slowest
+        else ""
+    )
     print(
         f"[{unit.group_id}] ingest done: {written} "
         f"entities={ingest.entities} flush_nodes={ingest.flush_nodes} "
-        f"errors={ingest.ingest_error_count}",
+        f"errors={ingest.ingest_error_count} flush={ingest.flush_elapsed_s:.0f}s{timing}",
         flush=True,
     )
     return ingest
