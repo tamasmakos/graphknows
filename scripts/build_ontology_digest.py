@@ -207,7 +207,7 @@ class _Reader:
 def build(sources: list[Path]) -> dict[str, Any]:
     """Parse *sources* into ``{"classes": [...], "properties": [...]}``."""
     import rdflib  # build-time only; never imported at runtime
-    from rdflib import OWL, RDF, RDFS
+    from rdflib import OWL, RDF, RDFS, SKOS
 
     graph = rdflib.Graph()
     paths = _files(sources)
@@ -227,6 +227,12 @@ def build(sources: list[Path]) -> dict[str, Any]:
             "label": lbl,
             "definition": r.definition(s),
             "parents": r.refs(s, RDFS.subClassOf),
+            # skos:broader is NOT transitive, so a consumer may report such a
+            # parent but must not climb above it: it is kept apart from
+            # ``parents`` rather than flattened into it. Emitted only where
+            # asserted — CCO asserts none, and an empty key on every term is
+            # dead weight in a file that ships in the wheel.
+            **({"parents_nontransitive": b} if (b := r.refs(s, SKOS.broader)) else {}),
             "module": r.module(s),
         }
         for s in sorted(graph.subjects(RDF.type, OWL.Class), key=str)
@@ -249,6 +255,7 @@ def build(sources: list[Path]) -> dict[str, Any]:
                 "domain": domain,
                 "range": rng,
                 "parents": r.refs(s, RDFS.subPropertyOf),
+                **({"parents_nontransitive": b} if (b := r.refs(s, SKOS.broader)) else {}),
                 "module": mod,
             }
         )

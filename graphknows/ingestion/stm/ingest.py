@@ -215,6 +215,7 @@ class _STMIngestHandler:
         self._domain_by_property: dict[str, tuple[str, ...]] = {}
         self._range_by_property: dict[str, tuple[str, ...]] = {}
         self._parents_by_class: dict[str, tuple[str, ...]] = {}
+        self._broader_by_class: dict[str, tuple[str, ...]] = {}
         # Cosine floor for the per-chunk label hints; see
         # ``GraphKnowsSettings.ontology_hint_min_sim`` for the measurement.
         self._hint_min_sim: float = 0.0
@@ -252,6 +253,9 @@ class _STMIngestHandler:
             }
             self._parents_by_class = {
                 t.label.casefold(): t.parents for t in self._relations.classes
+            }
+            self._broader_by_class = {
+                t.label.casefold(): t.parents_nontransitive for t in self._relations.classes
             }
         if embed_fn is not None:
             self._embed_fn = embed_fn
@@ -1300,7 +1304,13 @@ class _STMIngestHandler:
         return _PERSON_CLASS not in ancestors
 
     def _class_ancestors(self, label: str) -> set[str]:
-        """``label`` plus its transitive rdfs:subClassOf parents, casefolded."""
+        """``label``, its transitive rdfs:subClassOf parents, and its direct skos:broader parents.
+
+        All casefolded. The walk never continues above a skos:broader link: SKOS does not
+        license composing one, so a grandparent reached that way is not an
+        ancestor. Widening this set makes ``_relation_labels`` offer the
+        extractor properties the chunk's entity types never evoked.
+        """
         seen: set[str] = set()
         frontier = [label.casefold()]
         while frontier:
@@ -1309,7 +1319,9 @@ class _STMIngestHandler:
                 continue
             seen.add(current)
             frontier.extend(p.casefold() for p in self._parents_by_class.get(current, ()))
-        return seen
+        # Unioned after the walk, not inside it: a label reachable both ways
+        # would otherwise have its expansion suppressed depending on pop order.
+        return seen | {p.casefold() for c in seen for p in self._broader_by_class.get(c, ())}
 
     @staticmethod
     def _dedupe_nested(fills: list[str]) -> list[str]:
