@@ -1044,7 +1044,11 @@ Feature: Ontology- and frame-driven agentic memory
     Scenario: An entity is linked to the class it maps onto
       Given an entity typed "PERSON"
       When the ontology layer runs
-      Then an INSTANCE_OF edge to the class "Person" is written with score 1.0
+      Then an INSTANCE_OF edge to the class "Person" is written with score
+        = that entity's extractor confidence x the type-to-class mapping score
+      # The mapping score alone is identical for every entity of the type, so it
+      # can rank nothing; the per-entity factor is what makes two Persons
+      # comparable. Repeated writes keep the strongest mention, not the latest.
       Given an entity type with no exact label match
       Then it is embedded against the class definitions and linked only above 0.45
       And an unmapped entity is written exactly as it would have been without an ontology
