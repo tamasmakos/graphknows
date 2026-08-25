@@ -75,7 +75,9 @@ record $? "ruff format"
 
 # -- 2. Types, whole package -------------------------------------------------
 step "mypy (whole package)"
-dex "mypy graphknows --exclude 'graphknows/utils' --strict --ignore-missing-imports \
+# No --exclude: CI checks the whole package, and a path the gate skips is a path
+# that lands red on the runner instead of here.
+dex "mypy graphknows --strict --ignore-missing-imports \
      --allow-untyped-decorators --no-warn-unused-ignores"
 record $? "mypy"
 
@@ -83,6 +85,14 @@ record $? "mypy"
 step "import-linter (module boundaries)"
 dex "lint-imports"
 record $? "import-linter"
+
+# -- 3b. Static security -----------------------------------------------------
+# The pre-commit hook runs bandit on changed files only, so a finding introduced
+# before the rule existed never gets seen. CI runs the whole package; so must the
+# gate, with the identical skip list.
+step "bandit (whole package)"
+dex "bandit -r graphknows --skip B101,B104,B105,B110,B112"
+record $? "bandit"
 
 # -- 4. Tests + coverage floor -----------------------------------------------
 # The floor is a ratchet against backsliding, not a target. New-code coverage is

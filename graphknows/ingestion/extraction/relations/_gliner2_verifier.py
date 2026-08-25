@@ -142,15 +142,25 @@ class RelationVerifier:
         if os.path.isfile(model_id):
             checkpoint_path = model_id
         else:
+            # nosec B615 on the four downloads below: bandit accepts only a literal
+            # 40-char commit SHA, and both ids here come from config (verifier.py
+            # passes model_id through). Pinning belongs in the model ledger
+            # scripts/bake_models.py already owns, not inlined at each call site.
             try:
-                checkpoint_path = hf_hub_download(repo_id=model_id, filename="verifier.pt")
+                checkpoint_path = hf_hub_download(  # nosec B615
+                    repo_id=model_id, filename="verifier.pt"
+                )
             except Exception:
                 # Try .bin extension
-                checkpoint_path = hf_hub_download(repo_id=model_id, filename="pytorch_model.bin")
+                checkpoint_path = hf_hub_download(  # nosec B615
+                    repo_id=model_id, filename="pytorch_model.bin"
+                )
 
         # Load encoder
-        encoder = AutoModel.from_pretrained(config.encoder_name)
-        tokenizer = AutoTokenizer.from_pretrained(config.encoder_name)
+        encoder = AutoModel.from_pretrained(config.encoder_name)  # nosec B615
+        tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]  # nosec B615
+            config.encoder_name
+        )
 
         # Load verifier weights
         model = RelationVerifierModel(config)
