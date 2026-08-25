@@ -64,7 +64,41 @@ EOF
   exit 1
 fi
 
-dex() { docker exec -e RUFF_CACHE_DIR=/tmp/ruffcache "$CONTAINER" sh -c "cd /app && $*"; }
+# The shared container mounts ONE tree at /app. Pushing from a git worktree — one
+# per issue, which is how this repo works — used to check that mounted tree and
+# report green about code nobody was pushing. Silently validating the wrong tree
+# is worse than the "silently skipped" failure the guard above refuses.
+#
+# Detected by marker rather than by comparing paths: /app's mount source is a host
+# path in the daemon's spelling, REPO_ROOT is in the shell's, and normalising
+# between them is a portability bug waiting to happen. Asking the container
+# whether it can see a file we just created answers the real question directly.
+GATE_MARKER=".gate-tree-$$"
+: >"$REPO_ROOT/$GATE_MARKER"
+docker exec "$CONTAINER" test -f "/app/$GATE_MARKER" >/dev/null 2>&1
+CONTAINER_HAS_THIS_TREE=$?
+rm -f "$REPO_ROOT/$GATE_MARKER"
+
+if [ "$CONTAINER_HAS_THIS_TREE" -eq 0 ]; then
+  dex() { docker exec -e RUFF_CACHE_DIR=/tmp/ruffcache "$CONTAINER" sh -c "cd /app && $*"; }
+else
+  # Same image, so the baked models and the installed venv are identical; same
+  # network, so anything the suite reaches by service name still resolves.
+  GATE_IMAGE="$(docker inspect "$CONTAINER" --format '{{.Config.Image}}')"
+  GATE_NET="$(docker inspect "$CONTAINER" \
+    --format '{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}' | awk '{print $1}')"
+  # cygpath: Docker Desktop wants a Windows path, this shell speaks MSYS.
+  GATE_HOST_ROOT="$REPO_ROOT"
+  if command -v cygpath >/dev/null 2>&1; then
+    GATE_HOST_ROOT="$(cygpath -w "$REPO_ROOT")"
+  fi
+  echo "gate: '$CONTAINER' mounts a different tree - checking $REPO_ROOT instead." >&2
+  dex() {
+    MSYS_NO_PATHCONV=1 docker run --rm -e RUFF_CACHE_DIR=/tmp/ruffcache \
+      ${GATE_NET:+--network "$GATE_NET"} \
+      -v "$GATE_HOST_ROOT:/app" -w /app "$GATE_IMAGE" sh -c "cd /app && $*"
+  }
+fi
 
 # -- 1. Lint + format, whole repo --------------------------------------------
 step "ruff (check + format)"
