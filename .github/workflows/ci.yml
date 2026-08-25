@@ -143,22 +143,20 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
         with:
-          # Non-blocking, matching the pre-push gate's GRAPHKNOWS_SONAR_BLOCKING=0.
-          # Arming this in CI while gate.sh stayed unarmed made two ledgers out of
-          # one stance, and CI enforced a phase this project has not entered.
+          # Blocking, matching the pre-push gate's GRAPHKNOWS_SONAR_BLOCKING=1.
+          # These two flip together or not at all — arming one while the other
+          # stays unarmed is how this repo ended up with two ledgers and a CI
+          # enforcing a stance the local gate had not adopted. See #167.
           #
-          # It cannot bind yet regardless: main's branch-level new code definition
-          # is pinned to a deleted analysis, so EVERY analysis of main fails with
-          # "Analysis '742a0440-...' configured as manual baseline for the New Code
-          # Period no longer exists" and main's last good reading is 2026-05-26.
-          # Against that dead baseline a PR's new code is computed from a
-          # three-month-old reference, so unrelated pre-existing smells land on
-          # whoever touches the file next. The pin is unreachable: SonarQube Cloud
-          # exposes no UI control for it, the v1 new_code_periods endpoints 404,
-          # and the v2 host refuses a user token.
+          # What made it unarmable is gone: main's new code definition used to be
+          # pinned to a deleted analysis, so every analysis of main died with a
+          # 422 and its last good reading was 2026-05-26. The project has been
+          # reset and main analyses again.
           #
-          # Re-arm here and in gate.sh together, once that is repaired. See #167.
-          args: -Dsonar.qualitygate.wait=false
+          # A freshly reset project has almost no history, so `new_coverage` on
+          # early PRs is measured against a very short baseline. If that proves
+          # noisy, fix the new code definition — do not un-arm this.
+          args: -Dsonar.qualitygate.wait=true
 
   audit:
     name: audit

@@ -29,9 +29,16 @@ if [ "$COVERAGE_FLOOR" -lt "$COVERAGE_FLOOR_MIN" ] 2>/dev/null; then
   echo "      may be raised but never lowered. Using $COVERAGE_FLOOR_MIN." >&2
   COVERAGE_FLOOR=$COVERAGE_FLOOR_MIN
 fi
-# Phase 2 uploads the Sonar analysis without gating on the verdict, so the real
-# new_coverage reading is visible before it binds. Flip to 1 to arm it.
-SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-0}"
+# Armed. Phase 2 is over: it existed because no analysis had ever uploaded coverage,
+# so the verdict was meaningless, and then because main's new code definition pointed
+# at a deleted analysis and every analysis of main died with a 422. The project has
+# been reset and main analyses again, so the verdict now means something.
+#
+# Unlike COVERAGE_FLOOR above this is NOT ratcheted, so `GRAPHKNOWS_SONAR_BLOCKING=0
+# git push` is a real bypass. Deliberate: Sonar is a network dependency on someone
+# else's uptime, and a gate that cannot be passed when SonarCloud is down is a gate
+# people uninstall. A floor you own is different from a service you do not.
+SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-1}"
 
 # The known-vulnerability ledger lives in .pip-audit-ignore, read by this gate
 # AND by .github/workflows/ci.yml. It used to be a KNOWN_VULNS array here, which
