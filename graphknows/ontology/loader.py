@@ -72,6 +72,10 @@ class OntologyTerm:
     domain: tuple[str, ...] = ()
     range: tuple[str, ...] = ()
     parents: tuple[str, ...] = ()
+    # ``skos:broader`` parents, which SKOS does not define as transitive: a
+    # consumer may report such a parent but must not climb above it. ``parents``
+    # (``rdfs:subClassOf`` / ``rdfs:subPropertyOf``) is transitive and composes.
+    parents_nontransitive: tuple[str, ...] = ()
     source: str = ""
     # The sub-ontology a term is curated in ("AgentOntology"), when the source
     # says so. Carried onto the ONTOLOGY_CLASS node so a match can be traced to
@@ -149,6 +153,9 @@ def _collect_terms(graph: Any, subjects: Any, kind: str, source: str) -> list[On
                             node, RDFS.subClassOf if kind == "class" else RDFS.subPropertyOf
                         )
                     )
+                ),
+                parents_nontransitive=tuple(
+                    sorted(_local_name(p) for p in graph.objects(node, SKOS.broader))
                 ),
                 source=source,
             )
@@ -230,6 +237,7 @@ def _terms_from_digest(path: Path) -> list[OntologyTerm]:
             domain=tuple(entry.get("domain") or ()),
             range=tuple(entry.get("range") or ()),
             parents=tuple(entry.get("parents") or ()),
+            parents_nontransitive=tuple(entry.get("parents_nontransitive") or ()),
             source=source,
             module=str(entry.get("module") or ""),
         )

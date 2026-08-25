@@ -192,8 +192,17 @@ class _StubIndex:
         return [t.label for t in self.properties]
 
 
-def _cls(label: str, parents: tuple[str, ...] = ()) -> OntologyTerm:
-    return OntologyTerm(uri=f"u:{label}", label=label, definition="", kind="class", parents=parents)
+def _cls(
+    label: str, parents: tuple[str, ...] = (), *, nontransitive: tuple[str, ...] = ()
+) -> OntologyTerm:
+    return OntologyTerm(
+        uri=f"u:{label}",
+        label=label,
+        definition="",
+        kind="class",
+        parents=parents,
+        parents_nontransitive=nontransitive,
+    )
 
 
 @pytest.fixture
@@ -323,3 +332,63 @@ class TestHintFloor:
         with caplog.at_level(logging.INFO, logger="graphknows.ingestion.stm.ingest"):
             assert handler._label_hints([[0.1] * 4, [0.1] * 4]) == [[], []]
         assert "2/2" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# skos:broader is reported, never composed through
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def skos_handler() -> _STMIngestHandler:
+    classes = [
+        _cls("Person"),
+        _cls("Organization"),
+        _cls("Facility", parents=("Organization",)),
+        _cls("Dance Studio", nontransitive=("Facility",)),
+    ]
+    properties = [
+        OntologyTerm(
+            uri="u:locatedIn",
+            label="located in",
+            definition="",
+            kind="property",
+            domain=("Person",),
+            range=("Facility",),
+        ),
+        OntologyTerm(
+            uri="u:memberOf",
+            label="member of",
+            definition="",
+            kind="property",
+            domain=("Person",),
+            range=("Organization",),
+        ),
+    ]
+    stub = _StubIndex(classes, properties)
+    return _STMIngestHandler(
+        store=None,
+        extractor=None,
+        embed_fn=None,
+        ontology_index=stub,
+        relation_index=stub,
+    )
+
+
+class TestNonTransitiveParents:
+    def test_broader_parent_is_reported_but_not_climbed_past(
+        self, skos_handler: _STMIngestHandler
+    ) -> None:
+        """A skos:broader parent counts as an ancestor; its own parents do not."""
+        assert skos_handler._class_ancestors("Dance Studio") == {"dance studio", "facility"}
+
+    def test_subclass_parent_still_composes(self, skos_handler: _STMIngestHandler) -> None:
+        """Control: an ordinary rdfs:subClassOf parent still carries its ancestors."""
+        assert skos_handler._class_ancestors("Facility") == {"facility", "organization"}
+
+    def test_property_gated_on_the_grandparent_is_not_offered(
+        self, skos_handler: _STMIngestHandler
+    ) -> None:
+        """A chunk evoking only a Dance Studio is offered no Organization relation."""
+        entities = [{"type": "Person"}, {"type": "Dance Studio"}]
+        assert set(skos_handler._relation_labels(entities)) == {"located in"}
