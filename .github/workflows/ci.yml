@@ -143,10 +143,22 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
         with:
-          # Blocking, unlike the pre-push gate's GRAPHKNOWS_SONAR_BLOCKING=0.
-          # That default exists because no analysis had ever uploaded coverage,
-          # so the verdict was meaningless. This job uploads it, so it binds.
-          args: -Dsonar.qualitygate.wait=true
+          # Non-blocking, matching the pre-push gate's GRAPHKNOWS_SONAR_BLOCKING=0.
+          # Arming this in CI while gate.sh stayed unarmed made two ledgers out of
+          # one stance, and CI enforced a phase this project has not entered.
+          #
+          # It cannot bind yet regardless: main's branch-level new code definition
+          # is pinned to a deleted analysis, so EVERY analysis of main fails with
+          # "Analysis '742a0440-...' configured as manual baseline for the New Code
+          # Period no longer exists" and main's last good reading is 2026-05-26.
+          # Against that dead baseline a PR's new code is computed from a
+          # three-month-old reference, so unrelated pre-existing smells land on
+          # whoever touches the file next. The pin is unreachable: SonarQube Cloud
+          # exposes no UI control for it, the v1 new_code_periods endpoints 404,
+          # and the v2 host refuses a user token.
+          #
+          # Re-arm here and in gate.sh together, once that is repaired. See #167.
+          args: -Dsonar.qualitygate.wait=false
 
   audit:
     name: audit
