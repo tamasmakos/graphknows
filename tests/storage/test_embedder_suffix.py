@@ -24,14 +24,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from graphknows.exceptions import ConfigurationError
 from graphknows.storage import embedder
 
 
 @pytest.fixture(autouse=True)
 def _clear_caches():
     embedder._model_suffix.cache_clear()
+    embedder._local_model.cache_clear()
     yield
     embedder._model_suffix.cache_clear()
+    embedder._local_model.cache_clear()
 
 
 def _write_st_config(directory: Path, payload: dict) -> str:
@@ -96,3 +99,39 @@ class TestSuffixReachesTheEncoder:
         embedder._embed_local(["alpha"], path)
 
         assert seen == [["alpha"]]
+
+
+class TestDeclaredDimension:
+    """A module stack that exposes no dimension must name the model.
+
+    Both sentence-transformers accessors are typed ``int | None``, so the old
+    ``int(get_dim())`` raised ``TypeError: int() argument must be...`` naming
+    neither the model nor the cause — and every vector written afterwards would
+    have been sized against a dimension nobody could account for.
+    """
+
+    @staticmethod
+    def _patch_sentence_transformers(monkeypatch: pytest.MonkeyPatch, dim: int | None) -> None:
+        import sentence_transformers
+
+        class _M:
+            def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+            def get_sentence_embedding_dimension(self) -> int | None:
+                return dim
+
+        monkeypatch.setattr(sentence_transformers, "SentenceTransformer", _M)
+
+    def test_absent_dimension_names_the_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._patch_sentence_transformers(monkeypatch, None)
+
+        with pytest.raises(ConfigurationError, match="silent/model"):
+            embedder._local_model("silent/model")
+
+    def test_declared_dimension_becomes_embed_dim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(embedder, "EMBED_DIM", embedder.EMBED_DIM)  # restored on teardown
+        self._patch_sentence_transformers(monkeypatch, 384)
+
+        embedder._local_model("sized/model")
+
+        assert embedder.EMBED_DIM == 384
