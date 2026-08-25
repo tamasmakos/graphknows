@@ -380,11 +380,18 @@ async def ingest(
                     await app.ainvoke({"turn": turn})
             flush = await mem.flush()
             after = await mem.stats()
+        cov = flush.get("verifier_coverage") or {}
+        scored = sum(t["scored"] for t in cov.values())
+        edges = sum(t["edges"] for t in cov.values())
+        # Only the tiers the verifier never scored get named: a fully covered
+        # run stays one line, an unverifiable tier is impossible to miss.
+        unscored = ",".join(k for k, t in cov.items() if t["edges"] and not t["scored"])
         print(
             f"{sid:<14} turns={len(s['messages']):<3} "
             f"extract={stats['extract']:<4} store_only={stats['store_only']:<3} | "
             f"ENTITY={after['entities']:<5} REL={after['relations']:<4} "
             f"TOPIC={after['topics']:<3} {time.monotonic() - t0:.0f}s "
+            f"VS={scored}/{edges}{'(!' + unscored + ')' if unscored else ''} "
             f"err={len(flush['errors'])}",
             flush=True,
         )

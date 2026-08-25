@@ -821,6 +821,13 @@ class _STMIngestHandler:
         layer. Both loops share the same endpoint gate; the date signal is not
         lost — it lives on the chunk's MENTIONS_DATE/TEMPORAL link.
 
+        Verification is a property of an EDGE, not of the producer that minted
+        it, so both tiers route through one gate: the relex loop carries the
+        score the extractor already assigned (scored there, where its text and
+        offsets are freshest), and the DSPy loop is scored here with the same
+        gate instance before it writes. A tier bolted onto a producer could
+        only ever see that producer's candidates.
+
         Returns the chunk's conformance report (see :meth:`_report`), which is
         also logged — a gate nobody counts is indistinguishable from a gate that
         never fires, which is how this layer sat at zero unnoticed.
@@ -882,16 +889,35 @@ class _STMIngestHandler:
 
         # DSPy ontology-guided relations (llm_assisted mode only).
         if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            for subj, rel_name, obj, props in await self._rel_extractor.extract_relations(
-                text=text
-            ):
-                if not is_graph_entity_name(str(subj)) or not is_graph_entity_name(str(obj)):
-                    continue
+            dspy_rels = [
+                {
+                    "head": subj,
+                    "relation": rel_name,
+                    "tail": obj,
+                    "evidence": props.get("evidence", ""),
+                }
+                for subj, rel_name, obj, props in await self._rel_extractor.extract_relations(
+                    text=text
+                )
+                if is_graph_entity_name(str(subj)) and is_graph_entity_name(str(obj))
+            ]
+            # Score this tier with the extractor's already-loaded gate. No gate
+            # (verifier disabled, model unavailable, or no extractor at all)
+            # PASSES the relations through unscored: unverifiable is not
+            # disproven, the same rule RelationVerifierGate.filter follows for
+            # surfaces it cannot offset.
+            # Off the loop like every other model call here: the first call
+            # also loads DeBERTa, and the relex path pays that cost inside
+            # asyncio.to_thread for exactly this reason.
+            gate = getattr(self._extractor, "relation_verifier", None)
+            if gate is not None:
+                dspy_rels = await asyncio.to_thread(gate.filter, text, dspy_rels)
+            for rel in dspy_rels:
                 await self._store.write_relation(
-                    subj,
-                    rel_name,
-                    obj,
-                    fact=props.get("evidence", "") or text,
+                    rel["head"],
+                    rel["relation"],
+                    rel["tail"],
+                    fact=rel.get("evidence", "") or text,
                     chunk_id=chunk_id,
                     # The DSPy path carries no per-triplet confidence: the LLM's
                     # self-reported score was never copied into props, so this
@@ -900,6 +926,7 @@ class _STMIngestHandler:
                     # looks like it varies.
                     confidence=0.5,
                     source="dspy",
+                    verifier_score=rel.get("verifier_score"),
                 )
 
         return self._report(chunk_id, len(extraction.relations), counts)

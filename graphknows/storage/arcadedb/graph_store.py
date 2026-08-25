@@ -108,6 +108,32 @@ def _name_norm(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
+def verifier_coverage_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Fold ``{source, verifier_score}`` REL rows into per-tier coverage.
+
+    Returns ``{source: {"edges", "scored", "mean"}}``. ``mean`` averages only
+    the scored edges and is ``None`` when a tier has none — never 0.0, because
+    ``write_relation`` defines a NULL ``verifier_score`` as "the verifier never
+    judged this triple", and folding that into 0.0 would read as "the verifier
+    hated it". A row with no ``source`` buckets under ``"unknown"`` so an
+    unattributed producer is still counted rather than silently dropped.
+    """
+    coverage: dict[str, dict[str, Any]] = {}
+    totals: dict[str, float] = {}
+    for row in rows:
+        source = str(row.get("source") or "").strip() or "unknown"
+        tier = coverage.setdefault(source, {"edges": 0, "scored": 0, "mean": None})
+        tier["edges"] += 1
+        score = row.get("verifier_score")
+        if score is not None:
+            tier["scored"] += 1
+            totals[source] = totals.get(source, 0.0) + float(score)
+    for source, tier in coverage.items():
+        if tier["scored"]:
+            tier["mean"] = round(totals[source] / tier["scored"], 4)
+    return coverage
+
+
 # How much a chunk tagged with a SUBCLASS of the matched class is worth. Below
 # 1.0 so an exact match always wins; well above 0 because inheritance is real
 # evidence, not a tiebreak — a Dance Studio genuinely is a Facility.
@@ -1459,6 +1485,26 @@ class GraphStore(ArcadeStoreBase):
             for r in joined
             if r.get("chunk_id") and r.get("id")
         ]
+
+    async def verifier_coverage(self) -> dict[str, dict[str, Any]]:
+        """Per-tier audit: which relation tiers the verifier is able to score.
+
+        A gate nobody counts is indistinguishable from a gate that never fires
+        — the reason ``_STMIngestHandler._report`` records ontology conformance
+        rather than trusting it. This is the same instrument for verification:
+        a producer that bypasses the gate shows up here as a tier with edges
+        and zero scored, instead of going unnoticed.
+
+        Aggregated in Python, not in the query: ArcadeDB's Cypher subset is
+        exercised here only for grouped ``count()`` (see ``_entity_degree_map``),
+        and this needs a conditional count plus a mean over non-nulls. The REL
+        count is thousands, so the fold is cheap and provably correct.
+        """
+        rows = await self.query(
+            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
+            "RETURN r.source AS source, r.verifier_score AS verifier_score"
+        )
+        return verifier_coverage_rows(rows)
 
     # ------------------------------------------------------------------
     # Read API — structured fact context (fact-sheet for the generator)

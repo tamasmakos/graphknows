@@ -11,6 +11,24 @@ Forked behind a factory like the LLM relation extractor: enabled builds
 :class:`RelationVerifierGate`, disabled returns :class:`NullRelationVerifier`,
 so the extractor calls ``filter`` unconditionally. Load failure (offline, no
 HF access) falls back to the null object — a missing model never kills ingest.
+
+Coverage — which edges this gate is responsible for:
+
+* Applied per REL tier at the ingest WRITE FUNNEL
+  (``_STMIngestHandler._write_relations``), not at one producer: relex triples
+  are scored inside the extractor where their text and offsets are freshest,
+  DSPy triples are scored at the funnel with that same already-loaded gate. So
+  every REL edge ingest writes has passed a gate.
+* The frame layer is deliberately OUT of scope.
+  ``GraphStore.write_frame_instances`` writes reified
+  ``(FRAME_INSTANCE)-[:PLAYS_ROLE {role}]->(ENTITY)`` edges — a role filler is
+  not a (head, predicate, tail) triple, so this classifier has nothing to
+  score; those edges carry ``match_sim``/``role_confidence`` as their own
+  quality signal. The flat ENTITY→ENTITY co-role projection that WOULD have
+  been verifiable was removed (see ``write_frame_instances``' docstring), so
+  this is a labelled gap, not an oversight.
+* Coverage is reported per tier on every flush, so a future producer that
+  skips the gate shows up as a number rather than going unnoticed.
 """
 
 from __future__ import annotations

@@ -26,6 +26,7 @@ def _store() -> MagicMock:
     store.compute_graph_embeddings = AsyncMock(return_value=4)
     store.compute_communities = AsyncMock(return_value=5)
     store.consolidate_session = AsyncMock(return_value=7)
+    store.verifier_coverage = AsyncMock(return_value={})
     return store
 
 
