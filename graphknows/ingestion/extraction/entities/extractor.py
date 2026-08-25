@@ -47,12 +47,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.gliner_model import load_gliner2_model
+from graphknows.ingestion.extraction.entities.hygiene import is_graph_entity_name
 from graphknows.ingestion.extraction.relations._lingfeatures import (
     noun_supersense,
     parse_speaker,
     resolve_deixis,
 )
-from graphknows.ingestion.stm._entity_writer import is_graph_entity_name
 
 log = logging.getLogger(__name__)
 

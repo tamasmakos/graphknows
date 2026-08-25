@@ -2,8 +2,9 @@
 
 ``is_graph_entity_name`` is the single predicate deciding whether a span belongs
 in the ENTITY graph; ``graph_entities`` applies it to an extraction's entity
-list. Both are used by ``_STMIngestHandler`` (entity/MENTIONS path, relation
-endpoints, frame role fillers) and by the flush-time entity resolver.
+list. This is the extraction layer's gate, applied by ``_STMIngestHandler``
+(entity/MENTIONS path, relation endpoints, frame role fillers) and by the
+flush-time entity resolver.
 """
 
 from __future__ import annotations

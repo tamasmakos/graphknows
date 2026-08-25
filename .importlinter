@@ -23,6 +23,14 @@ modules =
     graphknows.ingestion
     graphknows.retrieval
 
+[importlinter:contract:extraction-below-stm]
+name = Extraction must not import STM
+type = forbidden
+source_modules =
+    graphknows.ingestion.extraction
+forbidden_modules =
+    graphknows.ingestion.stm
+
 [importlinter:contract:client-stdlib-only]
 name = The out-of-process client SDK stays stdlib-only
 type = forbidden

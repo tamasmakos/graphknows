@@ -14,7 +14,7 @@ from graphknows.ingestion.extraction.entities.extractor import (
     _dedupe_entities,
     _reduce_speaker_span,
 )
-from graphknows.ingestion.stm._entity_writer import (
+from graphknows.ingestion.extraction.entities.hygiene import (
     graph_entities,
     is_graph_entity_name,
 )
