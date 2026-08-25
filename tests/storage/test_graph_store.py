@@ -329,14 +329,67 @@ async def test_write_relation_single_valued_tombstones() -> None:
     )
     stmts = _command_strings(client)
     tombstone = next(s for s in stmts if "r.invalid_at = $now" in s)
-    assert "is_current: true" in tombstone
     assert "r.is_current = false" in tombstone
-    # Scoped by the predicate PROPERTY, not a per-predicate edge type.
-    assert "[r:REL {predicate: $predicate, is_current: true}]" in tombstone
+    # Scoped by the predicate PROPERTY, not a per-predicate edge type — but
+    # matched in a WHERE clause: an inline relationship property map is
+    # unreliable in ArcadeDB Cypher and can silently match nothing.
+    assert "-[r:REL]->" in tombstone
+    where = tombstone.split("WHERE", 1)[1]
+    assert "r.predicate = $predicate" in where
+    assert "r.is_current = true" in where
     tomb_call = next(
         c for c in client.command.await_args_list if "r.invalid_at = $now" in c.args[1]
     )
     assert tomb_call.kwargs["params"]["predicate"] == "LIVES_IN"
+
+
+@pytest.mark.asyncio
+async def test_merge_entities_keeps_tombstoned_relation_tombstoned() -> None:
+    """A merge re-points loser edges, it does not re-assert them.
+
+    ``merge_entities`` replays each loser edge through ``write_relation``, which
+    is an "assert this fact as of now" API. An edge already tombstoned by the
+    single-valued rule must survive the replay dead: otherwise every flush
+    resurrects it and a single-valued predicate ends up with two current edges.
+    """
+    client = _mock_client()
+    tombstoned_out_row = {
+        "dst": "Toronto",
+        "dst_nn": "toronto",
+        "predicate": "LIVES_IN",
+        "fact": "",
+        "evidence": ["chunk-1"],
+        "confidence": 0.7,
+        "valid_at": None,
+        "source": "gliner",
+        "verifier_score": None,
+        "is_current": False,
+        "invalid_at": "2026-08-01T00:00:00+00:00",
+    }
+    client.query = AsyncMock(
+        side_effect=[
+            [{"name": "Mel", "aliases": []}],  # loser lookup
+            [{"name": "Melanie", "aliases": []}],  # winner lookup
+            [tombstoned_out_row],  # outgoing loser edges
+            [],  # incoming loser edges
+        ]
+    )
+    await GraphStore(client=client).merge_entities("melanie", "mel")
+
+    stmts = _command_strings(client)
+    replay = next(s for s in stmts if "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in s)
+    assert "r.is_current = true" not in replay
+    assert "r.invalid_at = null" not in replay
+    # A dead edge asserts nothing, so it must not supersede the winner's live one.
+    assert not [s for s in stmts if "r.invalid_at = $now" in s]
+    # The death date survives the merge too, or the bi-temporal record keeps
+    # the death without its when.
+    assert "r.invalid_at = coalesce(r.invalid_at, $invalid_at)" in replay
+    replay_call = next(c for c in client.command.await_args_list if c.args[1] == replay)
+    assert replay_call.kwargs["params"]["invalid_at"] == "2026-08-01T00:00:00+00:00"
+    # The state cannot be preserved if the merge never reads it.
+    assert any("r.is_current AS is_current" in c.args[1] for c in client.query.await_args_list)
+    assert any("r.invalid_at AS invalid_at" in c.args[1] for c in client.query.await_args_list)
 
 
 @pytest.mark.asyncio

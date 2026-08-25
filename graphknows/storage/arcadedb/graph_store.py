@@ -54,9 +54,12 @@ _OLAP_VIEW = "mem_olap"
 
 # Known single-valued relation predicates — a new fact tombstones the old edge
 # (sets invalid_at / is_current=false) instead of coexisting with it.
-# The FrameNet-derived labels (RESIDENCE, BEING_EMPLOYED) map the obvious
-# open-vocabulary frame names onto the same behavior. Phase 3 consolidation
-# replaces this hardcoded set with frame-semantics-driven functional detection.
+# FrameNet frame names (RESIDENCE, BEING_EMPLOYED) are deliberately absent: they
+# are frames, not relex predicates, and the flattened frame->ENTITY projection is
+# gone (write_frame_instances is reified PLAYS_ROLE only), so they match nothing
+# today and would wrongly tombstone sibling frame edges if it ever returns.
+# Phase 3 consolidation replaces this hardcoded set with frame-semantics-driven
+# functional detection.
 _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
     {
         "WORKS_AS",
@@ -69,8 +72,6 @@ _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
         "AFFILIATED_WITH",
         "BELONGS_TO",
         "LED_BY",
-        "RESIDENCE",
-        "BEING_EMPLOYED",
     }
 )
 
@@ -461,10 +462,9 @@ class GraphStore(ArcadeStoreBase):
         """
         try:
             await self.command(
-                "MATCH (a:ENTITY {name_norm: $src})"
-                "-[r:REL {predicate: $predicate, is_current: true}]"
-                "->(b:ENTITY) "
-                "WHERE b.name_norm <> $dst "
+                "MATCH (a:ENTITY {name_norm: $src})-[r:REL]->(b:ENTITY) "
+                "WHERE r.predicate = $predicate AND r.is_current = true "
+                "AND b.name_norm <> $dst "
                 "SET r.invalid_at = $now, r.is_current = false",
                 src=src_norm,
                 dst=dst_norm,
@@ -492,6 +492,8 @@ class GraphStore(ArcadeStoreBase):
         verifier_score: float | None = None,
         ontology_blocked: bool = False,
         speaker: str = "",
+        is_current: bool = True,
+        invalid_at: str | None = None,
     ) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
 
@@ -526,6 +528,14 @@ class GraphStore(ArcadeStoreBase):
         (gate disabled, or a surface it could not locate and so passed through),
         so "unscored" stays distinguishable from "scored 0.0". It annotates
         only; ``confidence`` is unchanged by it.
+
+        ``is_current`` says whether this assertion is live. False means the
+        caller is replaying an already-tombstoned edge (see _repoint_relation),
+        so the edge must keep its tombstone: ``is_current`` is never raised to
+        true and the death date is carried over in ``invalid_at`` (which a live
+        write ignores, clearing the tombstone instead). Without the flag every
+        replay through this shared write path resurrects dead edges; without the
+        date the record keeps the death but loses its when.
         """
         predicate = predicate.strip()
         if not predicate or not src_name or not dst_name:
@@ -534,7 +544,8 @@ class GraphStore(ArcadeStoreBase):
         dst_norm = _name_norm(dst_name)
         now = datetime.now(UTC).isoformat()
 
-        if predicate.upper() in _SINGLE_VALUED_RELATIONS:
+        # A replayed dead edge must not tombstone the winner's live sibling.
+        if is_current and predicate.upper() in _SINGLE_VALUED_RELATIONS:
             await self._supersede_edge(predicate, src_norm, dst_norm, now)
 
         # Evidence is appended via an interpolated quoted literal — openCypher
@@ -557,6 +568,14 @@ class GraphStore(ArcadeStoreBase):
             if verifier_score is not None
             else ""
         )
+        # A live assertion clears any tombstone; a replay leaves invalid_at alone
+        # and cannot raise is_current, so a dead edge stays dead.
+        current_set = (
+            "r.invalid_at = null, r.is_current = true, "
+            if is_current
+            else "r.is_current = coalesce(r.is_current, false), "
+            "r.invalid_at = coalesce(r.invalid_at, $invalid_at), "
+        )
         await self.command(
             f"MERGE (a:ENTITY {{name_norm: $src_nn}}) "
             f"SET a.name = coalesce(a.name, $src), a.state = coalesce(a.state, 'raw'), "
@@ -573,8 +592,7 @@ class GraphStore(ArcadeStoreBase):
             f"        ELSE r.confidence "
             f"    END, "
             f"    r.valid_at = coalesce(r.valid_at, $valid_at), "
-            f"    r.invalid_at = null, "
-            f"    r.is_current = true, "
+            f"    {current_set}"
             f"    r.state = coalesce(r.state, 'raw'), "
             f"    r.source = coalesce(r.source, $source), "
             f"    r.ontology_blocked = coalesce(r.ontology_blocked, false) OR $ont_blocked, "
@@ -597,6 +615,7 @@ class GraphStore(ArcadeStoreBase):
             ont_prop=ontology_property or None,
             ont_blocked=bool(ontology_blocked),
             vscore=None if verifier_score is None else float(verifier_score),
+            invalid_at=invalid_at or None,
             now=now,
         )
 
@@ -1921,6 +1940,10 @@ class GraphStore(ArcadeStoreBase):
         Reuses the audited write_relation (evidence-append dedup, max confidence,
         single-valued supersede). Each evidence chunk is replayed so the winner
         edge accumulates the loser's full provenance.
+
+        The currency flag is carried, not defaulted, for the same reason
+        ``verifier_score`` is: write_relation asserts "live as of now" by
+        default, so replaying a tombstoned edge would resurrect it as current.
         """
         predicate = row.get("predicate") or ""
         if not predicate or not src_name or not dst_name:
@@ -1933,6 +1956,10 @@ class GraphStore(ArcadeStoreBase):
         # dropping this would wipe the verifier's judgment to NULL — which means
         # "never scored" — on every edge the entity repair touches.
         vscore = row.get("verifier_score")
+        # Same reason: a NULL/absent flag means current (that is how the read
+        # path's `is_current = true OR is_current IS NULL` filter reads it), but
+        # an explicit false is a tombstone the replay must not undo.
+        current = row.get("is_current") is not False
         evidence = [e for e in (row.get("evidence") or []) if e]
         if not evidence:
             await self.write_relation(
@@ -1944,6 +1971,8 @@ class GraphStore(ArcadeStoreBase):
                 valid_at=valid_at,
                 source=source,
                 verifier_score=vscore,
+                is_current=current,
+                invalid_at=row.get("invalid_at"),
             )
             return
         for cid in evidence:
@@ -1957,6 +1986,8 @@ class GraphStore(ArcadeStoreBase):
                 valid_at=valid_at,
                 source=source,
                 verifier_score=vscore,
+                is_current=current,
+                invalid_at=row.get("invalid_at"),
             )
 
     async def merge_entities(self, winner_norm: str, loser_norm: str) -> bool:
@@ -2010,7 +2041,8 @@ class GraphStore(ArcadeStoreBase):
             "RETURN b.name AS dst, b.name_norm AS dst_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
             "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source, "
-            "r.verifier_score AS verifier_score",
+            "r.verifier_score AS verifier_score, r.is_current AS is_current, "
+            "r.invalid_at AS invalid_at",
             loser=loser_norm,
         )
         in_rows = await self.query(
@@ -2018,7 +2050,8 @@ class GraphStore(ArcadeStoreBase):
             "RETURN a.name AS src, a.name_norm AS src_nn, "
             "r.predicate AS predicate, r.fact AS fact, r.evidence AS evidence, "
             "r.confidence AS confidence, r.valid_at AS valid_at, r.source AS source, "
-            "r.verifier_score AS verifier_score",
+            "r.verifier_score AS verifier_score, r.is_current AS is_current, "
+            "r.invalid_at AS invalid_at",
             loser=loser_norm,
         )
         # An endpoint with neither a name nor a name_norm cannot be repointed:
