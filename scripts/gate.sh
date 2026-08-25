@@ -29,16 +29,7 @@ if [ "$COVERAGE_FLOOR" -lt "$COVERAGE_FLOOR_MIN" ] 2>/dev/null; then
   echo "      may be raised but never lowered. Using $COVERAGE_FLOOR_MIN." >&2
   COVERAGE_FLOOR=$COVERAGE_FLOOR_MIN
 fi
-# Armed. Phase 2 is over: it existed because no analysis had ever uploaded coverage,
-# so the verdict was meaningless, and then because main's new code definition pointed
-# at a deleted analysis and every analysis of main died with a 422. The project has
-# been reset and main analyses again, so the verdict now means something.
-#
-# Unlike COVERAGE_FLOOR above this is NOT ratcheted, so `GRAPHKNOWS_SONAR_BLOCKING=0
-# git push` is a real bypass. Deliberate: Sonar is a network dependency on someone
-# else's uptime, and a gate that cannot be passed when SonarCloud is down is a gate
-# people uninstall. A floor you own is different from a service you do not.
-SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-1}"
+# SONAR_BLOCKING removed: this gate no longer runs Sonar at all. See section 7.
 
 # The known-vulnerability ledger lives in .pip-audit-ignore, read by this gate
 # AND by .github/workflows/ci.yml. It used to be a KNOWN_VULNS array here, which
@@ -181,22 +172,19 @@ else
 fi
 
 # -- 7. SonarCloud -----------------------------------------------------------
-step "SonarCloud analysis (blocking=${SONAR_BLOCKING})"
-# No `if [ -f ... ]` guard: a missing publisher used to make this stage vanish
-# with no output and no failure, which is the same silent skip the header of this
-# file forbids. An absent script is a broken gate, so it is reported as one.
-if [ ! -f scripts/sonar-publish.sh ]; then
-  echo "gate: scripts/sonar-publish.sh is missing - the Sonar stage cannot run." >&2
-  FAILED+=("SonarCloud analysis (script missing)")
-else
-  bash scripts/sonar-publish.sh
-  rc=$?
-  if [ "$SONAR_BLOCKING" = "1" ]; then
-    record $rc "SonarCloud quality gate"
-  elif [ $rc -ne 0 ]; then
-    echo "gate: Sonar analysis reported failure - NOT blocking this push yet." >&2
-  fi
-fi
+# Deliberately absent. Sonar runs on the pull request into main and nowhere else:
+# that is the point at which the verdict decides something, and CI analyses a real
+# clone, which is the only place a correct one can be produced.
+#
+# A pre-push analysis could not be correct anyway. The scanner reads git history
+# for blame, and in a linked worktree `.git` is a file naming an absolute host path
+# to the main repo; mounting only the worktree makes JGit fail with
+# "RepositoryNotFoundException". Every fix-issues lane pushes from a worktree, so a
+# blocking pre-push Sonar stage blocks the whole loop on an artefact of where the
+# checkout lives, which says nothing about the code.
+#
+# This is not the "silent skip" the header forbids: the check still runs, on the PR,
+# and its verdict still blocks. It runs once, where it is meaningful.
 
 # -- Verdict -----------------------------------------------------------------
 if [ ${#FAILED[@]} -ne 0 ]; then

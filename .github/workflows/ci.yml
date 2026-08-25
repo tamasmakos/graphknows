@@ -136,26 +136,27 @@ jobs:
           --cov-report=term:skip-covered --cov-fail-under=65
 
       - name: SonarQube Cloud
-        # No `if:` — this needs a coverage.xml that means something. Publishing
-        # after a failed suite is how new_coverage got pinned at 0.0 before.
+        # Pull requests only. Sonar's verdict decides one thing — whether this
+        # change may enter main — so it runs at that decision and nowhere else.
+        # On a push to main the merge has already happened and a red gate would
+        # only make main look broken after the fact.
+        #
+        # Note this is `if:`, not `if: !cancelled()` like the checks above: those
+        # run anyway so one CI round reports every failure, but there is nothing
+        # to report here when a suite failed, and publishing after a failed suite
+        # is how new_coverage got pinned at 0.0 before.
+        if: github.event_name == 'pull_request'
         uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
         with:
-          # Blocking, matching the pre-push gate's GRAPHKNOWS_SONAR_BLOCKING=1.
-          # These two flip together or not at all — arming one while the other
-          # stays unarmed is how this repo ended up with two ledgers and a CI
-          # enforcing a stance the local gate had not adopted. See #167.
+          # Blocking: a PR carrying Sonar findings fails this job.
           #
-          # What made it unarmable is gone: main's new code definition used to be
-          # pinned to a deleted analysis, so every analysis of main died with a
-          # 422 and its last good reading was 2026-05-26. The project has been
-          # reset and main analyses again.
-          #
-          # A freshly reset project has almost no history, so `new_coverage` on
-          # early PRs is measured against a very short baseline. If that proves
-          # noisy, fix the new code definition — do not un-arm this.
+          # For that failure to actually stop a merge, `gate` must be a required
+          # status check on main. It is not — branch protection returns 403 on a
+          # Free-plan private repo — so today this reports red without preventing
+          # the merge button. See #167.
           args: -Dsonar.qualitygate.wait=true
 
   audit:
