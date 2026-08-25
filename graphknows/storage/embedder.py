@@ -17,6 +17,8 @@ from typing import Any
 import httpx
 import numpy as np
 
+from graphknows.exceptions import ConfigurationError
+
 log = logging.getLogger(__name__)
 
 # Default output dimension, matching settings.embed_model (BAAI/bge-small-en-v1.5).
@@ -89,10 +91,15 @@ def _local_model(model_name: str) -> Any:
         )
 
     global EMBED_DIM
+    # Both spellings are typed `int | None`; int(None) would surface a module stack
+    # that exposes no dimension as a TypeError naming neither the model nor the cause.
     get_dim = (
         getattr(model, "get_embedding_dimension", None) or model.get_sentence_embedding_dimension
     )
-    EMBED_DIM = int(get_dim())
+    dim = get_dim()
+    if dim is None:
+        raise ConfigurationError(f"Embedding model {model_name!r} reports no dimension.")
+    EMBED_DIM = int(dim)
     return model
 
 

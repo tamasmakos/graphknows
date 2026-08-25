@@ -68,7 +68,9 @@ lib/
 
 research
 .briefs
-.github
+# NOT .github: a workflow that exists only on one laptop enforces nothing and
+# does not survive a clone - the same reason .claude/hooks/ is version
+# controlled below. Ignoring it is why this repo had no CI.
 .opencode
 .hermes
 research

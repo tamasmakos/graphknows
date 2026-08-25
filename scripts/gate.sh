@@ -33,33 +33,11 @@ fi
 # new_coverage reading is visible before it binds. Flip to 1 to arm it.
 SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-0}"
 
-# Vulnerabilities present when this gate was written (26 Jul 2026). Listed so
-# that NEW ones fail the push while known ones do not block every commit.
-# This is a debt ledger, not a dismissal — each line names its fix version.
-#
-#   click             8.3.2   -> 8.3.3      PYSEC-2026-2132
-#   cryptography     46.0.7   -> 48.0.1     GHSA-537c-gmf6-5ccf
-#   mcp              1.27.0   -> 1.28.1     PYSEC-2026-3481/3482/3483
-#   pydantic-settings 2.13.1  -> 2.14.2     GHSA-4xgf-cpjx-pc3j
-#   python-multipart 0.0.29   -> 0.0.31     PYSEC-2026-3036/3037/3040
-#   setuptools       81.0.0   -> 83.0.0     PYSEC-2026-3447
-#   starlette         1.1.0   -> 1.3.1      PYSEC-2026-248/249
-#   torch            2.12.0   -> 2.13.0     PYSEC-2025-194     (image rebuild)
-#   transformers     4.57.6   -> 5.x/none   PYSEC-2025-217, PYSEC-2026-2288/2289/2290
-#
-# The first seven are ordinary bumps. torch and transformers need an image
-# rebuild and an eval re-run, so they are deliberately deferred rather than
-# bundled into a gate change.
-KNOWN_VULNS=(
-  PYSEC-2026-2132 GHSA-537c-gmf6-5ccf
-  PYSEC-2026-3481 PYSEC-2026-3482 PYSEC-2026-3483
-  GHSA-4xgf-cpjx-pc3j
-  PYSEC-2026-3036 PYSEC-2026-3037 PYSEC-2026-3040
-  PYSEC-2026-3447
-  PYSEC-2026-248 PYSEC-2026-249
-  PYSEC-2025-194
-  PYSEC-2025-217 PYSEC-2026-2288 PYSEC-2026-2289 PYSEC-2026-2290
-)
+# The known-vulnerability ledger lives in .pip-audit-ignore, read by this gate
+# AND by .github/workflows/ci.yml. It used to be a KNOWN_VULNS array here, which
+# meant CI and the pre-push gate each carried their own copy of the same list —
+# two ledgers that drift are worse than one that is occasionally stale.
+AUDIT_IGNORE_FILE=".pip-audit-ignore"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
@@ -86,7 +64,41 @@ EOF
   exit 1
 fi
 
-dex() { docker exec -e RUFF_CACHE_DIR=/tmp/ruffcache "$CONTAINER" sh -c "cd /app && $*"; }
+# The shared container mounts ONE tree at /app. Pushing from a git worktree — one
+# per issue, which is how this repo works — used to check that mounted tree and
+# report green about code nobody was pushing. Silently validating the wrong tree
+# is worse than the "silently skipped" failure the guard above refuses.
+#
+# Detected by marker rather than by comparing paths: /app's mount source is a host
+# path in the daemon's spelling, REPO_ROOT is in the shell's, and normalising
+# between them is a portability bug waiting to happen. Asking the container
+# whether it can see a file we just created answers the real question directly.
+GATE_MARKER=".gate-tree-$$"
+: >"$REPO_ROOT/$GATE_MARKER"
+docker exec "$CONTAINER" test -f "/app/$GATE_MARKER" >/dev/null 2>&1
+CONTAINER_HAS_THIS_TREE=$?
+rm -f "$REPO_ROOT/$GATE_MARKER"
+
+if [ "$CONTAINER_HAS_THIS_TREE" -eq 0 ]; then
+  dex() { docker exec -e RUFF_CACHE_DIR=/tmp/ruffcache "$CONTAINER" sh -c "cd /app && $*"; }
+else
+  # Same image, so the baked models and the installed venv are identical; same
+  # network, so anything the suite reaches by service name still resolves.
+  GATE_IMAGE="$(docker inspect "$CONTAINER" --format '{{.Config.Image}}')"
+  GATE_NET="$(docker inspect "$CONTAINER" \
+    --format '{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}' | awk '{print $1}')"
+  # cygpath: Docker Desktop wants a Windows path, this shell speaks MSYS.
+  GATE_HOST_ROOT="$REPO_ROOT"
+  if command -v cygpath >/dev/null 2>&1; then
+    GATE_HOST_ROOT="$(cygpath -w "$REPO_ROOT")"
+  fi
+  echo "gate: '$CONTAINER' mounts a different tree - checking $REPO_ROOT instead." >&2
+  dex() {
+    MSYS_NO_PATHCONV=1 docker run --rm -e RUFF_CACHE_DIR=/tmp/ruffcache \
+      ${GATE_NET:+--network "$GATE_NET"} \
+      -v "$GATE_HOST_ROOT:/app" -w /app "$GATE_IMAGE" sh -c "cd /app && $*"
+  }
+fi
 
 # -- 1. Lint + format, whole repo --------------------------------------------
 step "ruff (check + format)"
@@ -97,7 +109,9 @@ record $? "ruff format"
 
 # -- 2. Types, whole package -------------------------------------------------
 step "mypy (whole package)"
-dex "mypy graphknows --exclude 'graphknows/utils' --strict --ignore-missing-imports \
+# No --exclude: CI checks the whole package, and a path the gate skips is a path
+# that lands red on the runner instead of here.
+dex "mypy graphknows --strict --ignore-missing-imports \
      --allow-untyped-decorators --no-warn-unused-ignores"
 record $? "mypy"
 
@@ -105,6 +119,14 @@ record $? "mypy"
 step "import-linter (module boundaries)"
 dex "lint-imports"
 record $? "import-linter"
+
+# -- 3b. Static security -----------------------------------------------------
+# The pre-commit hook runs bandit on changed files only, so a finding introduced
+# before the rule existed never gets seen. CI runs the whole package; so must the
+# gate, with the identical skip list.
+step "bandit (whole package)"
+dex "bandit -r graphknows --skip B101,B104,B105,B110,B112"
+record $? "bandit"
 
 # -- 4. Tests + coverage floor -----------------------------------------------
 # The floor is a ratchet against backsliding, not a target. New-code coverage is
@@ -137,11 +159,19 @@ fi
 # enabled on this SonarCloud plan, so that command fails for a reason unrelated
 # to the code. pip-audit gives the same signal for free.
 step "dependency audit (new advisories only)"
-IGNORE_ARGS=""
-for v in "${KNOWN_VULNS[@]}"; do IGNORE_ARGS="$IGNORE_ARGS --ignore-vuln $v"; done
-dex "uv export --no-dev --no-editable --no-hashes --format requirements-txt > /tmp/req-audit.txt \
-     && uvx pip-audit -r /tmp/req-audit.txt --progress-spinner off $IGNORE_ARGS"
-record $? "dependency audit"
+# First token of each non-comment line is the advisory id; the rest is the fix
+# note. Reported like the missing publisher below rather than aborting the whole
+# gate, and never audited with an empty ignore list - that would drown the real
+# signal in known noise.
+if [ ! -f "$AUDIT_IGNORE_FILE" ]; then
+  echo "gate: $AUDIT_IGNORE_FILE is missing - the ledger cannot be read." >&2
+  FAILED+=("dependency audit (ledger missing)")
+else
+  IGNORE_ARGS="$(grep -oE '^(PYSEC|GHSA)[A-Za-z0-9-]+' "$AUDIT_IGNORE_FILE" | sed 's/^/--ignore-vuln /' | tr '\n' ' ')"
+  dex "uv export --no-dev --no-editable --no-hashes --format requirements-txt > /tmp/req-audit.txt \
+       && uvx pip-audit -r /tmp/req-audit.txt --progress-spinner off $IGNORE_ARGS"
+  record $? "dependency audit"
+fi
 
 # -- 7. SonarCloud -----------------------------------------------------------
 step "SonarCloud analysis (blocking=${SONAR_BLOCKING})"
