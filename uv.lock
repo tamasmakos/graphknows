@@ -1302,7 +1302,7 @@ requires-dist = [
     { name = "dspy", marker = "extra == 'assisted'", specifier = ">=2.5.0" },
     { name = "frame-semantic-transformer", marker = "extra == 'srl'", specifier = ">=1.1.0" },
     { name = "gliner", specifier = ">=0.2.26" },
-    { name = "gliner2", specifier = ">=0.1.0" },
+    { name = "gliner2", specifier = ">=0.1.0,<2" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "huggingface-hub", specifier = ">=0.24.0" },
     { name = "langchain", marker = "extra == 'observability'", specifier = ">=1.0" },

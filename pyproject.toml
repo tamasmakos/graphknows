@@ -46,7 +46,13 @@ dependencies = [
     # It is NOT a transitive dependency of gliner2 — omitting it breaks the
     # default llm_free extraction path with ModuleNotFoundError on first ingest.
     "gliner>=0.2.26",
-    "gliner2>=0.1.0",
+    # Capped below 2.0: gliner2 2.0.0 moved peft/torch/transformers/safetensors
+    # out of the base install and behind a `local` extra, so `pip install gliner2`
+    # imports fine but cannot load a model ("No module named 'peft'"), and
+    # `gliner2[local]` pins transformers<5 which this resolution cannot satisfy.
+    # The cap also makes the Dockerfile's lock-free `uv pip install ".[assisted]"`
+    # agree with uv.lock, which pins 1.3.1.
+    "gliner2>=0.1.0,<2",
     "spacy>=3.7.0",
     "sentence-transformers>=3.0.0",
     # Imported DIRECTLY by embedder.py, gliner_model.py and
