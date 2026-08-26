@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphknows.channels.temporal import asks_for_a_date
+from graphknows.temporal import asks_for_a_date
 
 
 class TestAsksForADate:

@@ -66,7 +66,7 @@ class ChannelContext:
         Loads spaCy+FrameNet on first use — only invoked by frame-aware channels.
         """
         if self._frame_parse is None:
-            from graphknows.channels._framenet import parse_query
+            from graphknows.symbolic.framenet.framenet import parse_query
 
             self._frame_parse = parse_query(self.query)
         return self._frame_parse

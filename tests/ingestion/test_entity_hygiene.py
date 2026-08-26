@@ -45,6 +45,44 @@ class TestReduceSpeakerSpan:
         assert _reduce_speaker_span("Caroline", SPEAKERS) == "Caroline"
 
 
+class TestDeixisSpeakerFragments:
+    """The three shapes the per-turn deixis rewrite mints.
+
+    On conv-30/skos_v1 these carried 215 of 283 REL edges while the plain
+    ``Jon``/``Gina`` nodes carried none. Each assertion is one of the measured
+    names, so a regression puts the supernodes straight back.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        ["Caroline Caroline", "Caroline, Caroline", "Melanie, Caroline", "Caroline, Melanie"],
+    )
+    def test_all_speaker_tokens_collapse_to_the_first(self, name: str) -> None:
+        assert _reduce_speaker_span(name, SPEAKERS) == name.split()[0].strip(",")
+
+    def test_trailing_speaker_after_a_clause_is_the_speaker(self) -> None:
+        assert _reduce_speaker_span("Caroline's hard work and effort, Caroline", SPEAKERS) == (
+            "Caroline"
+        )
+
+    def test_person_typed_genitive_of_a_speaker_is_that_speaker(self) -> None:
+        assert _reduce_speaker_span("Caroline's students", SPEAKERS, "PERSON") == "Caroline"
+
+    def test_the_same_genitive_untyped_keeps_its_owner(self) -> None:
+        """Type is the ONLY separator — without it the span must survive intact."""
+        assert _reduce_speaker_span("Caroline's students", SPEAKERS) == "Caroline's students"
+
+    @pytest.mark.parametrize("ent_type", ["", "ORGANIZATION", "PRODUCT"])
+    def test_non_person_genitive_keeps_its_owner(self, ent_type: str) -> None:
+        """ "Jon's studio" is a place that belongs to Jon, not Jon."""
+        assert _reduce_speaker_span("Caroline's studio", SPEAKERS, ent_type) == "Caroline's studio"
+
+    def test_trailing_non_speaker_name_is_untouched(self) -> None:
+        assert (
+            _reduce_speaker_span("dinner with Alex, Robin", SPEAKERS) == "dinner with Alex, Robin"
+        )
+
+
 class TestMintPoints:
     def test_dedupe_reduces_speaker_glued_span(self) -> None:
         """The span merges with the plain speaker entity instead of forking it."""

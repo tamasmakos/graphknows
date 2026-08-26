@@ -107,8 +107,19 @@ USER graphknows
 
 # Fail fast and loudly if the image is missing a model, instead of surfacing it
 # as a download stall on the first customer request.
-HEALTHCHECK --interval=60s --timeout=30s --start-period=10s --retries=3 \
-    CMD python /app/scripts/bake_models.py --check || exit 1
+#
+# `--present` checks the FILES are on disk (3s). `--check` also LOADS all seven
+# model groups to prove they still instantiate — relex alone is 25s, the full set
+# runs for minutes. That belongs at BUILD time, where a broken cache should stop
+# the world, not in a liveness probe.
+#
+# Getting this wrong was expensive. As `--check` on a 60s interval with a 30s
+# timeout, the probe could never finish: Docker killed it at 30s and started
+# another 60s later, so the container ran at a permanent ~50% duty cycle of model
+# loading, on the same GPU as the work. Measured on a conv-30 ingest:
+# drain_turns 3089s with it, 594s without — a 5.2x tax from a health probe.
+HEALTHCHECK --interval=5m --timeout=60s --start-period=60s --retries=3 \
+    CMD python /app/scripts/bake_models.py --present || exit 1
 
 # Invoked via `sh <script>` rather than as an executable: the +x bit does not
 # survive a checkout on every host, and a non-executable entrypoint fails with an
@@ -133,6 +144,22 @@ RUN pip install --no-cache-dir uv \
 COPY pyproject.toml uv.lock README.md ./
 RUN uv pip install --python /opt/venv/bin/python --no-cache \
         --group dev --group eval jupyterlab
+
+# The `srl` extra: transformer frame identification, which the eval measures.
+# Kept in `dev` only — it is default-ON wherever it is importable, so putting it
+# in `runtime` would silently change what every shipped deployment extracts.
+#
+# `--no-deps` is required: it pins protobuf<6 where this project resolves 7.x,
+# and drags in pytorch-lightning + nlpaug for training code that inference never
+# runs. nlpaug is installed the same way for the same reason.
+#
+# This was previously hand-installed into a running container and existed
+# nowhere in the build. Recreating the container from the image wiped it, the
+# frame layer silently fell back to the one-guess-per-chunk path, and an eval
+# came back with 92 FRAME_INSTANCE nodes instead of 1240 — a 93% loss that
+# nothing reported, because a missing optional extra is not an error.
+RUN uv pip install --python /opt/venv/bin/python --no-cache --no-deps \
+    frame-semantic-transformer nlpaug
 
 # SonarQube CLI — code-quality/secret scanning for local development and the
 # git pre-commit hook. Installed to a system path so it is on PATH for every

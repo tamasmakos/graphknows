@@ -441,7 +441,7 @@ class Memory:
 
         if mode is not TopicMode.llm:
             return None
-        from graphknows.ingestion.summarize import TopicSummarizer
+        from graphknows.topics.summarize import TopicSummarizer
 
         s = self.settings
         return TopicSummarizer(
@@ -566,7 +566,11 @@ class Memory:
             result = await service.ingest_messages(messages, options, infer_flags=infer_flags)
         finally:
             await service.close()
-        return {"turns": len(messages), "chunks": result.chunk_count}
+        return {
+            "turns": len(messages),
+            "chunks": result.chunk_count,
+            "abstentions": result.abstentions,
+        }
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
         """Consolidate a session in place.
@@ -607,9 +611,12 @@ class Memory:
         topics_created = 0
         turns_ingested = 0
         turn_chunks = 0
+        abstentions: dict[str, int] = {}
         modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0}
         verifier_coverage: dict[str, dict[str, Any]] = {}
+        # Seconds per named stage, so the slow one is identifiable without a profiler.
+        stage_s: dict[str, float] = {}
 
         async def step(name: str, coro: Any, default: Any) -> Any:
             """Await one pipeline step, recording a named error instead of aborting.
@@ -618,13 +625,22 @@ class Memory:
             skip ``consolidate_session``, which is the state flip that makes the
             flush meaningful. The step name is kept in the error so a caller can
             tell which stage degraded.
+
+            Timed, because ``flush_elapsed_s`` covers drain, resolution, pagerank,
+            node2vec, louvain and topics together — a 50-minute flush said nothing
+            about WHICH of those took the 50 minutes, so every conversation about
+            ingest cost started by guessing. A failed step is timed too: how long
+            a stage took before it fell over is exactly what you want to know.
             """
+            started = time.monotonic()
             try:
                 return await coro
             except Exception as exc:
                 logger.warning("flush_memory: %s failed: %s", name, exc)
                 errors.append(f"{name}: {exc}")
                 return default
+            finally:
+                stage_s[name] = round(time.monotonic() - started, 2)
 
         try:
             await self._get_retriever()  # ensures the store is connected + schema'd
@@ -642,10 +658,11 @@ class Memory:
                 drained = await step(
                     "drain_turns",
                     self._ingest_buffered_turns(store, session_id, raw_turns),
-                    {"turns": 0, "chunks": 0},
+                    {"turns": 0, "chunks": 0, "abstentions": {}},
                 )
                 turns_ingested = drained["turns"]
                 turn_chunks = drained["chunks"]
+                abstentions = drained.get("abstentions") or {}
             await step("mark_turns_consolidated", store.mark_turns_consolidated(session_id), 0)
 
             # Caller-supplied structure goes in HERE: the buffer has drained, so
@@ -705,6 +722,11 @@ class Memory:
             "chunks": chunks_flipped,
             "turns": turns_ingested,
             "turn_chunks": turn_chunks,
+            # What the write path declined to write, per gate. Reported so an
+            # empty graph can be told apart from a graph whose gates ate it.
+            "abstentions": abstentions,
+            # Seconds per stage. `elapsed_s` is their sum plus the untimed glue.
+            "stage_s": stage_s,
             "topics_created": topics_created,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],

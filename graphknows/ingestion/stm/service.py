@@ -156,6 +156,7 @@ class STMService:
         }
 
         handler = self._handler()
+        chunks_before = handler._chunks_written
         for i, msg in enumerate(messages):
             try:
                 # The turn's own timestamp is the anchor ingest_turn resolves
@@ -188,6 +189,9 @@ class STMService:
                     # its coarse role and the real participants never reached
                     # CHUNK.speaker at all.
                     speaker=msg.name or "",
+                    # Forces the pending window out on the final turn, so the
+                    # tail of a conversation is never left buffered.
+                    last_in_batch=(i == len(messages) - 1),
                 )
             except Exception as exc:
                 errors.append(f"turn {i}: {exc}")
@@ -196,8 +200,11 @@ class STMService:
             session_id=session_id,
             file_id=dialog_id,
             title="",
-            chunk_count=len(messages),
+            # Chunks actually written, which is NOT the message count once turns
+            # are grouped into sliding windows.
+            chunk_count=handler._chunks_written - chunks_before,
             entity_count=total_entities,
             elapsed_s=round(time.perf_counter() - t0, 3),
             errors=errors,
+            abstentions={k: v for k, v in handler._abstentions.items() if v},
         )

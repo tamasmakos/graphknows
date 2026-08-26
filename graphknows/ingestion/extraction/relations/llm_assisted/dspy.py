@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from graphknows.ingestion.extraction.relations.filter import OntologyPredicateMapper
 from graphknows.llm import build_lm, get_openrouter_api_key
-from graphknows.ontology.loader import (
+from graphknows.symbolic.ontology.loader import (
     RdfOntologyManifest,
     load_ontology_terms,
     load_rdf_ontology_file,
@@ -90,7 +90,7 @@ def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
     """Build a SKOS-enriched context string from an RDF/OWL ontology manifest.
 
     Extends the basic ``{"classes": [...], "properties": [...]}`` context from
-    :func:`~graphknows.ontology.loader.load_rdf_ontology_file` with
+    :func:`~graphknows.symbolic.ontology.loader.load_rdf_ontology_file` with
     per-property domain/range and SKOS ``prefLabel``/``definition`` where
     available.  This gives the DSPy LLM structured signal about *what each
     relation means* and *which entity types it connects*.
@@ -99,13 +99,19 @@ def _build_enriched_ontology_context(manifest: RdfOntologyManifest) -> str:
     or the ontology file cannot be parsed.
     """
     try:
+        from pathlib import Path
+
         import rdflib
         from rdflib import OWL, RDF, RDFS
         from rdflib.namespace import SKOS
 
-        path = manifest.file_path
-        graph = rdflib.Graph()
-        graph.parse(path)
+        from graphknows.symbolic.ontology.rdf_io import parse_file
+
+        # Through the one guarded door: a bare graph.parse(str) will happily
+        # dereference a URL, which an offline-by-design system must make
+        # structurally impossible rather than merely avoid by convention. This
+        # was the last unguarded parse in the tree.
+        graph = parse_file(Path(manifest.file_path))
 
         def _label(node: rdflib.term.Node) -> str:
             lbl = graph.value(node, RDFS.label)

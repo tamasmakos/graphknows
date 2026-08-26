@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from graphknows.exceptions import ConfigurationError
-from graphknows.integrations._session import GraphKnowsMemory
+from graphknows.integrations.langgraph import GraphKnowsMemory
 from graphknows.settings import GraphKnowsSettings
 from tests.fixtures.memory import FakeMemory as _FakeMemory
 

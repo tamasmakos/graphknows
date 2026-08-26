@@ -1,10 +1,10 @@
 """Snapshot of the public API surface.
 
 The documented public surface of ``graphknows`` is exactly ``graphknows.__all__``
-plus ``graphknows.ports``, ``graphknows.integrations.client``, ``graphknows.integrations.*``, the
-two CLI entry points, and the MCP tool contract. This test pins the top-level
-export set so an accidental addition or removal is a deliberate, reviewed change
-(bump the snapshot in the same commit).
+plus one subpackage per integration under ``graphknows.integrations.*``, the two
+CLI entry points, and the MCP tool contract. This test pins the top-level export
+set so an accidental addition or removal is a deliberate, reviewed change (bump
+the snapshot in the same commit).
 """
 
 from __future__ import annotations
@@ -35,6 +35,10 @@ EXPECTED_PUBLIC_API = {
     "date_in",
     "normalize_messages",
     "render_memories",
+    # The per-turn extraction decision. Public because every caller has to make
+    # it — the alternative is minting entities out of greetings — and it is
+    # purely linguistic, so re-writing it per integration only makes it drift.
+    "worth_extracting",
 }
 
 

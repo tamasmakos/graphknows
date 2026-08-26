@@ -26,10 +26,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from graphknows.exceptions import ConfigurationError
 
 # The always-on default ontology, resolved off this file rather than imported
-# from ``graphknows.ontology``: settings sits BELOW ontology in the layering
+# from ``graphknows.symbolic.ontology``: settings sits BELOW ontology in the layering
 # (see CLAUDE.md), so the dependency may only point the other way.
 _BUNDLED_ONTOLOGY = str(
-    Path(__file__).resolve().parent / "ontology" / "assets" / "cco" / "cco.json"
+    Path(__file__).resolve().parent / "symbolic" / "ontology" / "assets" / "cco" / "cco.json"
 )
 
 # The relation vocabulary. This used to be a DIFFERENT file from the ontology
@@ -46,12 +46,41 @@ _BUNDLED_ONTOLOGY = str(
 # separate curated vocabulary is still a supported override.
 _BUNDLED_RELATION_PROFILE = _BUNDLED_ONTOLOGY
 
+# The hand-curated alternative, now shipped so the CCO-vs-profile question is an
+# A/B anyone can run rather than a fixture only the test suite can reach:
+#
+#     GRAPHKNOWS_RELATION_ONTOLOGY=personal
+#
+# 9 classes and 25 object properties, every one declaring a domain and a range,
+# sized to be offered WHOLE. It is NOT the default: the decision to unify on CCO
+# above was deliberate, and reversing it is a measurement, not an opinion.
+_BUNDLED_PERSONAL_PROFILE = str(
+    Path(__file__).resolve().parent
+    / "symbolic"
+    / "ontology"
+    / "assets"
+    / "personal"
+    / "personal-profile.json"
+)
+
+# Bare tokens accepted by GRAPHKNOWS_RELATION_ONTOLOGY in place of a path, so an
+# A/B arm is one short env var instead of a path into site-packages.
+_RELATION_VOCABULARIES = {
+    "personal": _BUNDLED_PERSONAL_PROFILE,
+    "cco": _BUNDLED_ONTOLOGY,
+}
+
 # The INPUT SKOS overlay: the everyday concepts CCO does not model as binary
 # predicates (works for, plans to, likes, cares for), each carrying the
 # altLabels that make it lexically reachable and domain/range in CCO's own class
 # vocabulary. Data, not code — point this elsewhere to change the vocabulary.
 _BUNDLED_OVERLAY = str(
-    Path(__file__).resolve().parent / "ontology" / "assets" / "cco" / "conversational.json"
+    Path(__file__).resolve().parent
+    / "symbolic"
+    / "ontology"
+    / "assets"
+    / "cco"
+    / "conversational.json"
 )
 
 
@@ -211,7 +240,7 @@ class GraphKnowsSettings(BaseSettings):
     # (which ships only in the ``assisted`` extra), so a bare `pip install
     # graphknows` gets the same ontology the container does, and both memory
     # modes load it through one identical code path.
-    # ``scripts/build_ontology_digest.py`` regenerates it from the TTL sources
+    # ``python -m graphknows.symbolic.ontology.digest`` regenerates it from the TTL sources
     # under ``ontology/assets/cco-*``. GRAPHKNOWS_ONTOLOGY overrides it
     # with any other RDF/OWL/TTL file, digest, or folder of them — an override,
     # not an on/off switch: an EMPTY value means "unset" (which is how
@@ -268,6 +297,21 @@ class GraphKnowsSettings(BaseSettings):
     # (head, predicate, tail) and accumulates evidence.
     extract_overlap: int = Field(default=2, ge=0, alias="GRAPHKNOWS_EXTRACT_OVERLAP")
 
+    # Whether a stored CHUNK is the extraction WINDOW or the single turn.
+    #
+    # A lone turn is a poor retrieval unit: "She said yes" carries nothing an
+    # embedding can match, and the turn that named her is a different chunk.
+    # The extractor has read a 5-turn window since ``extract_window`` landed —
+    # this makes the stored, embedded, retrieved unit that same window, so what
+    # comes back carries the context extraction already depended on. Windows
+    # overlap by ``extract_overlap``, so no adjacent pair of turns is split
+    # across a boundary, and a turn appearing in two chunks is not double
+    # evidence: MENTIONS and REL both MERGE.
+    #
+    # False restores one-chunk-per-turn exactly, which is what makes it the
+    # control arm of an A/B rather than an approximation of one.
+    window_chunks: bool = Field(default=True, alias="GRAPHKNOWS_WINDOW_CHUNKS")
+
     # Label selection by LEXICAL evidence over the SKOS scheme rather than by
     # embedding the chunk against class definitions. Measured on conv-30: the
     # embedding path put 11% of tags in a chunk sharing even one word with it
@@ -289,6 +333,10 @@ class GraphKnowsSettings(BaseSettings):
     # Frames (deterministic FrameNet layer) are ON by default; disable with
     # GRAPHKNOWS_ENABLE_FRAMES=false.
     enable_frames: bool = Field(default=True, alias="GRAPHKNOWS_ENABLE_FRAMES")
+    # The FRAME_INSTANCE layer as a retrieval leg (channels/frame_facts.py).
+    # OFF until it is A/B'd: the fact layer has never fed retrieval, and the last
+    # channel added to the fusion tracked accuracy 0.766 -> 0.722.
+    enable_frame_facts: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FRAME_FACTS")
     # The ontology retrieval channel is OPT-IN and defaults OFF: it has never
     # been measured on its own. It went live as a side effect of making ontology
     # INJECTION always-on (its `if settings.ontology_source:` gate could not be
@@ -352,7 +400,12 @@ class GraphKnowsSettings(BaseSettings):
         can point relations at a curated domain profile without replacing the
         class vocabulary that types entities.
         """
-        return self.relation_ontology.strip() or _BUNDLED_RELATION_PROFILE
+        chosen = self.relation_ontology.strip()
+        if not chosen:
+            return _BUNDLED_RELATION_PROFILE
+        # A bare vocabulary name resolves to its bundled asset; anything else is
+        # taken as a path, so an explicit file always wins over the shorthand.
+        return _RELATION_VOCABULARIES.get(chosen.casefold(), chosen)
 
     @property
     def uses_llm(self) -> bool:

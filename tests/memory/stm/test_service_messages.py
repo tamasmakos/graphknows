@@ -57,18 +57,81 @@ async def test_ingest_messages_returns_ingest_result():
     result = await svc.ingest_messages(messages, options)
 
     assert isinstance(result, IngestResult)
-    assert result.chunk_count == 3
+    # 3 turns is exactly one stride, so one window is emitted.
+    assert result.chunk_count == 1
     assert result.session_id != ""
 
 
-async def test_ingest_messages_chunk_count_matches_message_count():
-    svc, store = _make_svc()
-    messages = _make_messages(5)
-    options = _make_options()
+async def test_chunk_count_is_chunks_written_not_messages_received():
+    """The count must follow the writes, not the input length.
 
-    result = await svc.ingest_messages(messages, options)
+    Turns are grouped into sliding windows, so reporting ``len(messages)`` would
+    claim chunks that were never written — and every caller (flush, the eval
+    harness) treats that number as the graph's size.
+    """
+    svc, store = _make_svc()
+
+    result = await svc.ingest_messages(_make_messages(5), _make_options())
+
+    assert result.chunk_count == store.write_chunk.await_count
+
+
+async def test_window_chunking_off_restores_one_chunk_per_turn(monkeypatch):
+    """The A/B control arm must be an exact replay, not an approximation."""
+    monkeypatch.setenv("GRAPHKNOWS_WINDOW_CHUNKS", "false")
+    svc, store = _make_svc()
+
+    result = await svc.ingest_messages(_make_messages(5), _make_options())
 
     assert result.chunk_count == 5
+    assert store.write_chunk.await_count == 5
+
+
+class TestWindowChunking:
+    """A retrievable CHUNK is a 5-turn sliding window, not a single turn.
+
+    A lone turn is a poor retrieval unit — "She said yes" carries nothing an
+    embedding can match. The extractor has always read a 5-turn window; this
+    makes the STORED chunk that same window, so what is retrieved carries the
+    context the extractor already relied on. Windows overlap (stride 3) so no
+    adjacent pair of turns is ever split across a boundary.
+    """
+
+    async def test_turns_are_grouped_into_overlapping_windows(self):
+        svc, store = _make_svc()
+        result = await svc.ingest_messages(_make_messages(9), _make_options())
+        # 9 turns at stride 3 -> windows ending at turns 3, 6, 9.
+        assert result.chunk_count == 3
+        assert store.write_chunk.await_count == 3
+
+    async def test_a_chunk_carries_the_whole_window_not_one_turn(self):
+        svc, store = _make_svc()
+        await svc.ingest_messages(_make_messages(6), _make_options())
+        texts = [
+            c.kwargs.get("text") or c.args[0]["text"] for c in store.write_chunk.await_args_list
+        ]
+        # The second window covers turns 2..6, so it must contain more than its
+        # own last turn — that context is the entire point.
+        assert any("message 1" in t and "message 5" in t for t in texts), texts
+
+    async def test_trailing_turns_are_not_lost(self):
+        """7 turns at stride 3 leaves one past the last full window."""
+        svc, store = _make_svc()
+        result = await svc.ingest_messages(_make_messages(7), _make_options())
+        texts = [
+            c.kwargs.get("text") or c.args[0]["text"] for c in store.write_chunk.await_args_list
+        ]
+        assert any("message 6" in t for t in texts), texts
+        assert result.chunk_count == store.write_chunk.await_count
+
+    async def test_every_turn_reaches_some_chunk(self):
+        svc, store = _make_svc()
+        await svc.ingest_messages(_make_messages(11), _make_options())
+        joined = " || ".join(
+            c.kwargs.get("text") or c.args[0]["text"] for c in store.write_chunk.await_args_list
+        )
+        missing = [i for i in range(11) if f"message {i}" not in joined]
+        assert not missing, f"turns absent from every chunk: {missing}"
 
 
 async def test_ingest_messages_no_infer_skips_extractor():

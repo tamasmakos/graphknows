@@ -45,6 +45,10 @@ def default_channels(settings: GraphKnowsSettings) -> list[Channel]:
         from graphknows.channels.frames import FrameChannel
 
         channels.append(FrameChannel())
+    if settings.enable_frame_facts:
+        from graphknows.channels.frame_facts import FrameFactChannel
+
+        channels.append(FrameFactChannel())
     if settings.enable_ontology_channel:
         from graphknows.channels.ontology import OntologyChannel
 

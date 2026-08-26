@@ -129,42 +129,14 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Optional tracing. `--profile observability`.
-  langfuse:
-    image: langfuse/langfuse:2.95.0
-    profiles: ["observability"]
-    depends_on:
-      langfuse-db:
-        condition: service_healthy
-    ports:
-      - "3000:3000"
-    environment:
-      # Intentionally no inline default: a connection string with embedded
-      # credentials must not be committed. Set LANGFUSE_DATABASE_URL in .env
-      # (see .env.example) when using the observability profile.
-      DATABASE_URL: "${LANGFUSE_DATABASE_URL:-}"
-      NEXTAUTH_SECRET: "${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-production}"
-      SALT: "${LANGFUSE_SALT:-change-me-in-production}"
-      NEXTAUTH_URL: "http://localhost:3000"
-      TELEMETRY_ENABLED: "false"
-    restart: unless-stopped
-
-  langfuse-db:
-    image: postgres:16.6-alpine
-    profiles: ["observability"]
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: "${LANGFUSE_DB_USER:-langfuse}"
-      POSTGRES_PASSWORD: "${LANGFUSE_DB_PASSWORD:-langfuse}"
-      POSTGRES_DB: "${LANGFUSE_DB_NAME:-langfuse}"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - langfuse_data:/var/lib/postgresql/data
+# Tracing is NOT here. Langfuse is its own stack in docker-compose.langfuse.yaml
+# — six services with their own Postgres, ClickHouse, Redis and MinIO, which has
+# no business sharing a lifecycle with the memory backend:
+#
+#     docker compose -f docker-compose.langfuse.yaml up -d
+#
+# The `observability` profile that used to live here ran langfuse 2.95.0, a
+# server the current SDK cannot post to at all (see that file's header).
 
 volumes:
   arcadedb_data:
-  langfuse_data:

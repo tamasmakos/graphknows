@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
-from graphknows.ontology.catalog import OntologyTerm
+from graphknows.symbolic.ontology import OntologyTerm
 
 
 class _StubIndex:

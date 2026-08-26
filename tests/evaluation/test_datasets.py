@@ -116,3 +116,67 @@ class TestLongMemDataset:
                 msg.pop("has_answer", None)
         units = load_longmem(self._write(tmp_path, [record]), limit=1, offset=0)
         assert units[0].cases[0].extras["evidence"] == []
+
+
+class TestTurnFedIngestion:
+    """A LoCoMo session can be fed as TURNS instead of one concatenated blob.
+
+    Joining a whole session into one document makes each chunk a multi-turn
+    transcript, so gold evidence sits inside almost anything retrieved and
+    ``evidence_recall@probe`` pins at 1.000 on every arm of an A/B — the harness
+    stops being able to measure retrieval at all. Feeding turns routes ingestion
+    through the same buffer-then-flush path a real agent uses, where chunking is
+    the 5-turn sliding window.
+    """
+
+    def _row(self) -> dict[str, Any]:
+        return {
+            "id": "conv-1-q0001",
+            "category": "temporal",
+            "question": "q",
+            "answer": "a",
+            "sessions": [
+                {
+                    "session_id": "s1",
+                    "messages": [
+                        {"role": "Gina", "content": "I lost my job.", "timestamp": "1 May, 2023"},
+                        {
+                            "role": "Jon",
+                            "content": "Sorry to hear that.",
+                            "timestamp": "1 May, 2023",
+                        },
+                    ],
+                }
+            ],
+        }
+
+    def test_document_mode_joins_the_session_and_mints_no_turns(self) -> None:
+        from evaluation.locomo.dataset import build_documents
+
+        docs = build_documents(self._row(), max_documents=50, max_chars=8000, turn_fed=False)
+
+        assert len(docs) == 1
+        assert "I lost my job." in docs[0].text and "Sorry to hear that." in docs[0].text
+        assert docs[0].turns == []
+
+    def test_turn_mode_keeps_each_utterance_separate(self) -> None:
+        from evaluation.locomo.dataset import build_documents
+
+        docs = build_documents(self._row(), max_documents=50, max_chars=8000, turn_fed=True)
+
+        assert len(docs) == 1
+        turns = docs[0].turns
+        assert [t["content"] for t in turns] == ["I lost my job.", "Sorry to hear that."]
+
+    def test_turn_mode_carries_speaker_and_timestamp_structurally(self) -> None:
+        """Flattening them into the text is what mints "Hey Jon" as an entity."""
+        from evaluation.locomo.dataset import build_documents
+
+        turns = build_documents(self._row(), max_documents=50, max_chars=8000, turn_fed=True)[
+            0
+        ].turns
+
+        assert [t["name"] for t in turns] == ["Gina", "Jon"]
+        assert all(t["timestamp"] == "1 May, 2023" for t in turns)
+        # The speaker must NOT also be glued into the content.
+        assert not any(t["content"].startswith(("Gina", "Jon")) for t in turns)

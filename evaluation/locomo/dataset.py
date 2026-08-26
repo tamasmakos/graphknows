@@ -129,10 +129,44 @@ def _evidence_turns(row: dict[str, Any]) -> list[str]:
     return out
 
 
+def _session_turns(session: dict[str, Any]) -> list[dict[str, str]]:
+    """A session's messages as ingestable turns, structure intact.
+
+    ``name`` and ``timestamp`` travel as FIELDS rather than being flattened into
+    the content: the speaker becomes ``CHUNK.speaker`` and anchors the turn's
+    first-person clauses, and the timestamp is what its relative dates resolve
+    against. Flattening either is what mints greetings as entities and dates a
+    2023 conversation to ingestion time.
+    """
+    turns: list[dict[str, str]] = []
+    for msg in session.get("messages", []):
+        if not isinstance(msg, dict):
+            continue
+        content = first_string(msg, ("content", "text", "utterance", "message")).strip()
+        if not content:
+            continue
+        turns.append(
+            {
+                # LoCoMo speakers are people, not chat roles; the participant
+                # name goes to `name`, which is what becomes CHUNK.speaker.
+                "role": "user",
+                "content": content,
+                "name": first_string(msg, ("speaker", "role", "author")),
+                "timestamp": first_string(msg, ("timestamp", "created_at", "time")),
+            }
+        )
+    return turns
+
+
 def build_documents(
-    row: dict[str, Any], *, max_documents: int, max_chars: int
+    row: dict[str, Any], *, max_documents: int, max_chars: int, turn_fed: bool = False
 ) -> list[EvalDocument]:
-    """Normalize a LoCoMo row's ``sessions`` into ingestable documents."""
+    """Normalize a LoCoMo row's ``sessions`` into ingestable units.
+
+    ``turn_fed`` keeps each utterance separate so ingestion runs through the
+    buffer-then-flush path a live agent uses; otherwise the session is joined
+    into one document, as the original harness did.
+    """
     sessions = row.get("sessions")
     if not isinstance(sessions, list):
         return []
@@ -143,9 +177,15 @@ def build_documents(
         title = first_string(session, ("title", "id", "session_id"), f"session-{index}")
         text = "\n".join(filter(None, (_message_text(msg) for msg in session.get("messages", []))))
         text = _clip(text, max_chars)
-        if text:
+        turns = _session_turns(session) if turn_fed else []
+        if text or turns:
             documents.append(
-                EvalDocument(title=title, text=text, anchor_date=_session_anchor(session))
+                EvalDocument(
+                    title=title,
+                    text=text,
+                    anchor_date=_session_anchor(session),
+                    turns=turns,
+                )
             )
     return documents
 
@@ -179,6 +219,7 @@ def load_units(config: LocomoConfig, *, limit: int, offset: int) -> list[IngestU
             dlg_rows[0],
             max_documents=config.max_documents,
             max_chars=config.max_chars_per_document,
+            turn_fed=config.turn_fed,
         )
         cases = [
             EvalCase(

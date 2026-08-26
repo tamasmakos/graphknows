@@ -9,7 +9,7 @@ vocabulary offered to the extractor shrinks with no error anywhere.
 
 from __future__ import annotations
 
-from graphknows.ontology.skos import Concept, ancestors
+from graphknows.symbolic.ontology.skos import Concept, ancestors
 
 
 def _scheme(parents: dict[str, tuple[str, ...]]) -> dict[str, Concept]:

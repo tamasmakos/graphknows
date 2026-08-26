@@ -138,7 +138,7 @@ Feature: Ontology- and frame-driven agentic memory
         | ENTITY         | a named thing, merged on its normalised name      |
         | TEMPORAL       | one global node per resolved ISO date             |
         | TOPIC          | a community of entities                           |
-        | FRAME          | a FrameNet frame this chunk evokes                |
+        | FRAME          | one FrameNet frame, canonical for the namespace   |
         | FRAME_INSTANCE | a role-filled reading of an evoked frame          |
         | ONTOLOGY       | the loaded ontology's identity and term count     |
         | ONTOLOGY_CLASS | one class, with its definition and embedding      |
@@ -162,6 +162,11 @@ Feature: Ontology- and frame-driven agentic memory
         | REL             | ENTITY -> ENTITY         |
         | INSTANCE_OF     | ENTITY -> ONTOLOGY_CLASS |
         | MATCHES_CLASS   | CHUNK -> ONTOLOGY_CLASS  |
+        | BROADER         | FRAME -> FRAME, and      |
+        |                 | ONTOLOGY_CLASS -> CLASS  |
+      # ONE edge type carries both subsumption hierarchies, because both are
+      # read identically: one hop DOWN from a query match, at a discount, to
+      # reach the specific thing a general query asked about.
 
     Scenario: Every semantic fact is one REL edge whose predicate is a property
       Given relations with the predicates "worksFor", "knows" and "find"
@@ -298,6 +303,36 @@ Feature: Ontology- and frame-driven agentic memory
       # itself, so every gate reading it was inert.
       # test: tests/ontology/test_cco_digest.py::test_the_subclass_chain_reaches_bfo
 
+    @measured
+    Scenario: The ancestor walk is breadth-first and case-insensitive at entry
+      Given the scheme is keyed by prefLabel "Person"
+      When ancestors are requested for the extracted type "person"
+      Then the same chain is returned as for "Person"
+      And every declared parent is walked, not just the first
+      And a concept is never its own ancestor, even in a cyclic hierarchy
+      # Both halves were live bugs. The scheme is keyed by prefLabel while every
+      # caller hands over the COARSE types entity_labels emits ("person"), so an
+      # exact lookup missed all of them and the domain/range widening this
+      # function exists for contributed NOTHING: the satisfied set was the 7
+      # coarse labels, now 16. Following broader[0] alone also dropped whole
+      # branches of CCO's multiple inheritance.
+      # test: tests/ontology/test_skos_lexicalization.py::TestAncestors
+
+    @measured
+    Scenario: Upper-ontology plumbing is excluded from the STRUCTURAL offer
+      Given the widened satisfaction set above
+      When relation labels are selected for a chunk that speaks none of them
+      Then "continuant part of", "is predecessor of" and "member part of"
+        are NOT offered
+      And a property whose own name the text SPEAKS is still offered
+      # A BFO-typed property is satisfiable by literally anything, because the
+      # ancestor walk climbs every entity into material entity / continuant. It
+      # would win budget slots on every chunk while asserting a relation between
+      # categories of being that no speaker uttered — the permits/requires
+      # failure that produced 64 of 286 REL edges. The LEXICAL half keeps them:
+      # text that says "requires" IS asserting the property.
+      # test: tests/ingestion/test_lexical_labels.py::TestDomainRangeSatisfaction
+
     Scenario: The input overlay supplies what BFO does not model as a predicate
       When the SKOS scheme is built with its default overlay
       Then the overlay is "assets/cco/conversational.json"
@@ -395,7 +430,7 @@ Feature: Ontology- and frame-driven agentic memory
   # ===========================================================================
 
   @ingest
-  Rule: Text is chunked along headings, turns are chunked one per turn
+  Rule: Text is chunked along headings, turns are chunked by sliding window
 
     Scenario: Markdown is chunked by heading with small sections merged
       Given a Markdown document with headings
@@ -418,11 +453,62 @@ Feature: Ontology- and frame-driven agentic memory
       # The text is in the key because a character offset alone collides when one
       # section yields several chunks that resolve to the same offset.
 
-    Scenario: A conversation turn becomes one chunk of kind "turn"
-      When a turn is ingested
-      Then one CHUNK is written with kind "turn"
-      And it records the speaker, not merely the coarse role
+    Scenario: Conversation turns become one chunk per 5-turn window
+      When turns are ingested with the default settings
+      Then a CHUNK of kind "turn" is written every 3 turns, covering the last 5
+      And 369 turns yield 123 chunks
+      And the last turn of a batch forces the pending window out, so no tail is lost
+      And each chunk records the speaker of its final turn, not merely the coarse role
+      # A lone turn is a poor retrieval unit: "She said yes" carries nothing an
+      # embedding can match, and the turn that named her is a different chunk.
+      # The extractor has read a 5-turn window since `extract_window` landed;
+      # this makes the STORED, embedded, retrieved unit that same window.
+      # Extraction therefore fires once per window rather than once per turn
+      # over substantially the same text, so ingest does ~3x less work.
+      # test: tests/memory/stm/test_service_messages.py::TestWindowChunking
+
+    Scenario: A multi-turn window is speaker-prefixed but never deixis-resolved
+      Given a window covering turns by Gina and Jon
+      When the chunk is written
+      Then each line reads "Speaker: utterance", because one text has many speakers
+      And the text is NOT deixis-resolved
+      And that same prefixed text is what gets embedded
+      # The extractor benefits from "Gina lost Gina's job"; a reader quoting the
+      # memory back does not.
+
+    Scenario: A window of one turn is still stored verbatim
+      Given the session's first turn, with no prior turns to join
+      When the chunk is written
+      Then CHUNK.text is that turn byte for byte, with no speaker prefix
+      And the embedding is still computed from the attributed search_surface
+      # Two separate measured contracts: storage stays verbatim, the EMBEDDING
+      # carries the attribution the utterance itself omits.
+
+    Scenario: The provenance filter is skipped when the chunk is the window
+      When entities are extracted for a window chunk
+      Then spans from every turn in the window become this chunk's entities
+      # The offset filter exists to stop a TURN-chunk re-minting the previous
+      # four turns' entities. When the chunk IS those turns, it would drop all
+      # but the last turn's.
+
+    Scenario: Window chunking has an exact control arm
+      Given GRAPHKNOWS_WINDOW_CHUNKS is false
+      When turns are ingested
+      Then one chunk is written per turn, exactly as before
       And its identifier is a hash of session, file, sequence and cleaned text
+      # An exact replay, which is what makes it an A/B control rather than an
+      # approximation of one.
+      # test: tests/memory/stm/test_service_messages.py::test_window_chunking_off_restores_one_chunk_per_turn
+
+    @measured
+    Scenario: The window is what makes the chunk worth retrieving
+      Given conv-30 fed turn by turn, 81 questions, --reset on both arms
+      When chunks are single turns
+      Then evidence_recall@probe is 0.795
+      When chunks are 5-turn windows
+      Then evidence_recall@probe is 0.976
+      # +0.181 exact, not judge-scored. See also the ts scenario in Section E:
+      # retrieval and generation were two separate wins.
 
     Scenario: An empty turn is dropped loudly
       When a turn with no non-whitespace text is ingested
@@ -493,8 +579,10 @@ Feature: Ontology- and frame-driven agentic memory
   Rule: The extraction window is overlapping, per-turn attributed, and guarded
 
     One turn read alone loses what the turns before it established. The window
-    widens what the EXTRACTOR sees; only the current turn is stored, embedded
-    and retrieved.
+    widens what the EXTRACTOR sees — and, since `window_chunks` became the
+    default, it is also what is stored, embedded and retrieved (see "turns are
+    chunked by sliding window" above). The deixis-resolved form below is the
+    extractor's input only; storage keeps the verbatim lines.
 
     Scenario: Windows overlap so no turn boundary is a blind spot
       When turns are ingested with the default settings
@@ -534,11 +622,14 @@ Feature: Ontology- and frame-driven agentic memory
       # test: tests/ingestion/test_lexical_labels.py::TestContractions
 
     Scenario: Only the current turn's spans become this chunk's entities
+      Given GRAPHKNOWS_WINDOW_CHUNKS is false, so a chunk is one turn
       When entities are extracted from a window
       Then spans lying before the current turn's offset are discarded
       And relations are NOT filtered that way
       # Earlier turns already minted their entities against their own chunks;
-      # a cross-turn TRIPLE is the entire point of the window.
+      # a cross-turn TRIPLE is the entire point of the window. Under the default
+      # (the chunk IS the window) this filter is skipped — every entity in the
+      # window really is mentioned by that chunk.
 
     Scenario: A relation's subject must be supported by the asserting turn
       Given a window where two people each report losing a job
@@ -1210,6 +1301,57 @@ Feature: Ontology- and frame-driven agentic memory
       And each FRAME node copies the frame's definition text and definition embedding
       And the chunk's already-computed embedding is reused, with no re-embed
 
+    @measured
+    Scenario: FRAME is canonical — one vertex per frame, not one per evocation
+      Given a namespace in which 245 evocations name 58 distinct frames
+      When the frames are written
+      Then 58 FRAME vertices exist, MERGEd on the frame NAME
+      And 245 EVOKED_BY edges exist, so no evidence was lost
+      And FRAME carries no session_id and no chunk_id
+      And everything per-evocation lives on the EVOKED_BY edge
+      # It used to be one vertex per (session, chunk, rank), which left no
+      # stable node to hang FRAME->FRAME edges off and forced the saturation
+      # guard to count coverage off the node.
+      # test: tests/storage/test_graph_store.py::test_write_frames_merges_one_canonical_vertex_per_frame_type
+
+    Scenario: The per-frame data is written once, not once per chunk
+      When the same frame is evoked by a second chunk
+      Then its definition embedding is not re-sent
+      And its BROADER parents are not re-written
+      And emptying the database makes both eligible again
+      # An embedding-less FRAME is invisible to the channel's vector search, so
+      # a cache surviving a dropped namespace would kill the layer silently
+      # rather than fail.
+      # test: tests/storage/test_graph_store.py::test_emptying_the_database_reinstates_the_frame_writes
+
+    Scenario: The dead FRAME columns are gone
+      When the schema is ensured
+      Then FRAME declares no lu, speaker, fes or fillers property
+      # All four were declared and written EMPTY on every row by the only
+      # writer. The role-filled frame data lives on FRAME_INSTANCE/PLAYS_ROLE,
+      # which has a live reader.
+
+    Scenario: An evoked frame brings its FrameNet parents as BROADER edges
+      Given a chunk evoking "Revenge"
+      When the frames are written
+      Then a BROADER edge to "Rewards_and_punishments" exists
+      And the parent is MERGEd bare: no summary, no embedding, no EVOKED_BY
+      And a parent therefore never enters the ANN pool on its own account
+      # Verified: 27 bare parents of 58 frames, none of which leaked into a
+      # vector-search result. LSM_VECTOR skips null-embedding rows.
+
+    Scenario: The frame taxonomy is strictly directional
+      When the frame hierarchy is built
+      Then Inheritance, Using and Perspective_on are walked sub -> super only
+      And Subframe and Precedes are excluded
+      And the result contains 0 symmetric pairs, against 254 in the query-side map
+      # The query-side expansion map deliberately makes Perspective_on
+      # symmetric, which is right for widening a search and corrupting for a
+      # taxonomy: a symmetric `broader` makes the narrower-walk hand back
+      # siblings as if they were specialisations. Subframe is part-of and
+      # Precedes is temporal order; neither is subsumption, and nothing reads
+      # them.
+
     Scenario: A frame instance is a role-filled reading of an evoked frame
       When frame-guided role extraction runs
       Then the chunk's candidate frames come from its main-verb lexical units, ranked by embedding
@@ -1236,6 +1378,34 @@ Feature: Ontology- and frame-driven agentic memory
     Scenario: Role fillers pass the shared junk gate
       When a role filler is not a graph entity name
       Then it is dropped before any entity node exists
+
+    @measured
+    Scenario: A frame instance is identified by the fills that can persist
+      Given two chunks each yielding "Activity_ongoing" with Agent Gina and Jon
+      And one of them also fills a role with a span no entity was minted for
+      When the instances are written
+      Then both MERGE onto ONE node, because the extra fill cannot persist
+      And that node carries a FRAME_EVOKED_IN edge per evidence chunk
+      Given an instance whose every filler is unknown
+      Then it is not written at all
+      # A role edge MATCHes its entity and never mints one, so an unrecognised
+      # filler is dropped — but it was hashed into the id anyway, which made
+      # identity depend on something absent from the graph. Measured on conv-30
+      # before the fix: 20 nodes carried 7 signatures, 13 of them duplicates
+      # indistinguishable once written, each hoarding a single evidence edge
+      # instead of pooling. After: 104 instances -> 92, duplicate signatures
+      # 7 -> 1, instances with more than one evidence chunk 3 -> 8, and
+      # FRAME_EVOKED_IN unchanged at 107 — nothing lost, only pooled.
+      # test: tests/storage/test_graph_store.py::test_frame_instance_identity_ignores_fillers_that_cannot_persist
+
+    Scenario: One residual duplicate survives, and it is an ordering artifact
+      Given entity resolution runs at FLUSH, after frame instances are written
+      When it merges or drops a filler entity that existed at write time
+      Then two instances whose hashes differed legitimately can end up
+        indistinguishable in the final graph
+      # 1 node in 92 on conv-30. Repairing it means re-hashing the layer after
+      # resolution, which is a whole post-flush pass for one node; recorded
+      # rather than built.
 
     Scenario: The frame passes reuse the already-loaded models
       When frame instances are extracted
@@ -1711,7 +1881,21 @@ Feature: Ontology- and frame-driven agentic memory
       When the frame channel runs
       Then the query embedding is ANN-searched against FRAME.embedding in this namespace
       And each matched frame joins to the chunks that evoke it
-      And chunks are scored by the sum of their frames' match scores
+      And each chunk scores by the frame's match TIMES its own EVOKED_BY confidence
+      And chunks are scored by the sum of their frames' scores
+      # The confidence weight is not decoration. A canonical FRAME fans out to
+      # every chunk that evoked it, so without it all of them rank identically.
+
+    Scenario: A matched frame also reaches its narrower frames
+      Given a query matching "Rewards_and_punishments"
+      When the frame channel runs
+      Then chunks that only evoked "Revenge" are also collected
+      And they score at 0.6 of a direct hit, so an exact match always wins
+      And the expansion is one level, walked over the persisted BROADER edges
+      # This is the READER that keeps the frame taxonomy from being another
+      # write-only layer. Verified live across 6 namespaces: 33 chunks were
+      # reachable ONLY through BROADER. The same helper serves the ontology
+      # class hierarchy — only the vertex type and its key differ.
 
     @measured
     Scenario: A frame evoked by more than half a session's chunks is dropped
@@ -1719,10 +1903,12 @@ Feature: Ontology- and frame-driven agentic memory
       When the frame channel runs
       Then that frame's chunks are dropped from the join
       And coverage is measured over the GRAPH, never over the rows a query returned
-      # FRAME is one vertex per chunk-frame pair, so counting from an ANN capped
-      # at top_k bounds the numerator by the sample size while the denominator
-      # stays the whole session: the same frame showed on 29% of rows while
-      # covering 68% of chunks, and so cleared the 50% test on every query.
+      And coverage is scoped by the CHUNK's session, since FRAME has none
+      # Counting from an ANN capped at top_k bounds the numerator by the sample
+      # size while the denominator stays the whole session: the same frame
+      # showed on 29% of rows while covering 68% of chunks, and so cleared the
+      # 50% test on every query. Scoping on f.session_id after FRAME became
+      # canonical would match nothing and silently retire the guard.
 
     Scenario: The ontology channel reaches chunks by two paths
       When the ontology channel runs
@@ -1738,7 +1924,22 @@ Feature: Ontology- and frame-driven agentic memory
       When the ontology channel runs
       Then chunks tagged "Dance Studio" are also collected
       And they score at 0.6 of a direct hit, so an exact match always wins
-      And the expansion is one level, read from the class's persisted parents
+      And the expansion is one level, walked over the persisted BROADER edges
+      And the walk matches on parent URI, which is unique, not on label
+      # It used to pull every ONTOLOGY_CLASS row (1401 under CCO) into Python on
+      # each query and re-split the `parents` string to rediscover the
+      # hierarchy. CCO declares parents as LABELS and ONTOLOGY_CLASS(label) is
+      # NOTUNIQUE, so the label is resolved to a URI at WRITE time — otherwise
+      # the edge fans out across every class sharing that label.
+
+    Scenario: An existing namespace is backfilled with the hierarchy
+      Given a namespace whose ontology terms were persisted before BROADER existed
+      When the ontology is written again
+      Then the BROADER edges are added without re-MERGEing the class rows
+      # write_ontology short-circuits on a term-count guard, and the subclass
+      # expansion now reads ONLY these edges. Without the backfill such a
+      # namespace keeps its classes and silently stops generalising.
+      # test: tests/storage/test_graph_store.py::test_write_ontology_backfills_broader_on_an_existing_namespace
       # Generalisation is what the hierarchy is FOR: the chunk is about a
       # facility, it just never used the word. Without this the channel can only
       # return chunks whose tag the query matched head-on.
@@ -1828,6 +2029,37 @@ Feature: Ontology- and frame-driven agentic memory
 
   @retrieve
   Rule: The result is plain dicts, with an optional structured fact-sheet
+
+    Scenario: Every hit carries the chunk's own fields, from one builder
+      When any collector contributes a candidate
+      Then the payload is built by one shared helper, not hand-assembled
+      And the fused row carries text, speaker, ts, entities, metadata and doc_id
+      And a field the store already fetched therefore reaches the answerer
+      # Each collector used to hand-build this dict and each kept a different
+      # subset, so `ts` and `speaker` were dropped on five of six paths. They
+      # survived only because _shape_and_rank re-fetches every candidate and
+      # prefers the stored row — a backstop that made the omission invisible
+      # rather than harmless.
+      # test: tests/retrieval/test_det_retriever.py::test_a_hit_carries_the_chunks_timestamp
+
+    @measured
+    Scenario: A memory is dated from its ts, not by scraping its text
+      Given a passage whose text contains no date and whose chunk has a ts
+      When the memories are rendered for the answerer
+      Then the block is prefixed with that date
+      And passages are ordered chronologically by it
+      Given a passage carrying an inline date and no ts
+      Then the inline date still parses, so a flattened transcript is unaffected
+      # THE most expensive defect measured in this repo. Scraping the text works
+      # only when a date was flattened into it, which is true of a concatenated
+      # transcript and false of a real conversation, where the timestamp is a
+      # FIELD. Fed turn by turn, temporal accuracy was 0.077 against 0.962
+      # document-fed; the generator said so itself, answering "the day before
+      # the message (No specific date given) Hey Gina!" having retrieved exactly
+      # the right chunk. Restoring the date moved accuracy 0.531 -> 0.864 and
+      # temporal 0.077 -> 0.923 with evidence_recall BYTE-IDENTICAL — the whole
+      # gap was generation-bound, not retrieval.
+      # test: tests/evaluation/test_common.py::TestPassageTimestamp
 
     Scenario: There is no XML context payload
       When retrieval returns

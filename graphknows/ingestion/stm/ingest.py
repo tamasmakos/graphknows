@@ -13,8 +13,7 @@ import hashlib
 import logging
 import os
 import time
-from collections import deque
-from itertools import zip_longest
+from collections import defaultdict, deque
 from typing import Any
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
@@ -56,7 +55,11 @@ _ONT_CLASS_MIN_SIM = 0.45
 # produced colleague/owns/follows. GLiNER and GLiREL are both trained at <=25
 # labels per instance and our relex model card demos 2-5, so the ceiling is real
 # too. 15 sits in the measured band.
-_RELATION_LABEL_CAP = 15
+# 25 = the bundled personal profile's full size, so a vocabulary designed to be
+# offered WHOLE is never truncated, and the documented <=25 training budget of
+# GLiNER/GLiREL. Raised from 15 alongside the proportional allocation below: the
+# cap alone was not the defect, the flat round-robin was.
+_RELATION_LABEL_CAP = 25
 
 # Turns to accumulate before the lexical index is frozen. Document frequency is
 # what separates a discriminating altLabel ("dance") from a ubiquitous one
@@ -84,6 +87,103 @@ _PERSON_CLASS = "person"
 # 0.840 and let `Jon owns students` through — the single edge the gate exists
 # for. Retune only against a fresh census; the two neighbours are 0.26 apart.
 _RANGE_GATE_MIN_CLASS_SIM = 0.7
+
+
+# The class set offered to the definition-described typing pass. A fixed
+# mid-level list, not a computed one: ranking CCO by descendant count — the
+# obvious derivation — optimises for generality and returns `entity` /
+# `continuant` / `generically dependent continuant`, which type everything and
+# discriminate nothing. It also broke the relation gate downstream, because an
+# abstract class satisfies nearly every property's domain and range. This is the
+# set that measured best (22/26 surfaces typed, against 14/24 for the mapped
+# path); the whole schema is one encoder input, so it stays short by design.
+_TYPING_CLASSES: tuple[str, ...] = (
+    "Person",
+    "Organization",
+    "Family",
+    "Group of Agents",
+    "Facility",
+    "Geospatial Region",
+    "Artifact",
+    "Information Content Entity",
+    "Act",
+    "Act of Communication",
+    "Occupation Role",
+    "Skill",
+    "Plan",
+    "Disease",
+)
+
+
+def _allocate_offer(
+    groups: dict[tuple[tuple[str, ...], tuple[str, ...]], list[Any]], cap: int
+) -> list[Any]:
+    """Choose up to *cap* properties across (domain, range) groups.
+
+    Every group keeps at least one slot, then the remainder is shared in
+    proportion to how many applicable properties each group actually holds.
+
+    The floor is the original round-robin's intent: nine interpersonal
+    Person->Person properties sit at the top of the profile and would otherwise
+    take every slot the moment a person is mentioned, deleting the event, place
+    and employment properties from the offer.
+
+    Proportionality is what a FLAT round-robin got backwards on a large
+    vocabulary. Measured on the bundled CCO digest for a person-centric chunk:
+    99 applicable properties across 7 groups, 89 of them Person->Person, and
+    zip_longest handed that group one slot per round — so **5 of 87 familial
+    predicates were offered** while ten of the fifteen slots went to BFO
+    mereology (`has member part`, `continuant part of`, `is successor of`,
+    `uses`, `is predecessor of`). A chunk about someone's family was offered
+    almost none of the vocabulary for describing families.
+
+    Within-group order is preserved, so an embedding rank applied by
+    :meth:`_rank_within_groups` still decides which members of a group are kept.
+    """
+    if not groups:
+        return []
+    ordered = sorted(groups.values(), key=len, reverse=True)
+    # Below one slot each, the biggest groups are the ones worth keeping.
+    if len(ordered) >= cap:
+        return [g[0] for g in ordered[:cap]]
+
+    total = sum(len(g) for g in ordered)
+    remaining = cap - len(ordered)
+    quota = [1] * len(ordered)
+    for i, group in enumerate(ordered):
+        # -1 because the floor already granted one.
+        quota[i] += int(remaining * (len(group) - 1) / max(total - len(ordered), 1))
+    # Integer division leaves slots unspent; hand them to the largest groups.
+    for i in range(len(ordered)):
+        if sum(quota) >= cap:
+            break
+        quota[i] += 1
+    # Emit round-robin so the interleaved ORDER survives — a caller that ranked
+    # within groups by embedding fit expects its best match to lead. The quotas
+    # decide how many each group contributes; the interleave decides when.
+    pools = [list(group[:n]) for group, n in zip(ordered, quota, strict=True)]
+    out: list[Any] = []
+    while len(out) < cap and any(pools):
+        for pool in pools:
+            if pool:
+                out.append(pool.pop(0))
+                if len(out) >= cap:
+                    break
+    return out
+
+
+def _group_ranking_enabled() -> bool:
+    """Whether a (domain, range) group is ordered by chunk fit (default off).
+
+    Read at call time so the eval A/B can flip it per subprocess, matching
+    ``GRAPHKNOWS_FRAME_SRL``. Delete the knob once the arm has decided it.
+    """
+    return os.environ.get("GRAPHKNOWS_RELATION_GROUP_RANKING", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _entities_from(entities: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
@@ -181,6 +281,10 @@ class _STMIngestHandler:
         # separate: the two vocabularies are the same file by default but need
         # not be, and a type resolves against each independently.
         self._profile_class_cache: dict[str, tuple[str, float]] = {}
+        # Built on first use from the loaded ontology, then reused: the schema is
+        # the same for every chunk, and rebuilding it per chunk would re-scan the
+        # class list 1437 entries deep for no gain.
+        self._typing_schema: dict[str, str] | None = None
         # Recent speaker-attributed turns per session, for the extraction window
         # (see ingest_turn). Bounded by ``extract_window``; a session that ends
         # leaves at most that many strings behind. Read here rather than beside
@@ -191,9 +295,24 @@ class _STMIngestHandler:
         _cfg = _Settings()
         self._extract_window: int = _cfg.extract_window
         self._window_overlap: int = _cfg.extract_overlap
+        self._window_chunks: bool = _cfg.window_chunks
         # Turn dicts, not strings: the deixis resolver and the attribution guard
         # both need each turn's speaker, and flattening them loses exactly that.
         self._recent_turns: dict[str, deque[dict[str, str]]] = {}
+        # Turns seen since this session last emitted a chunk. With window
+        # chunking a turn does not get its own chunk; it joins the next window,
+        # which is emitted every ``_chunk_stride`` turns.
+        self._since_emit: dict[str, int] = {}
+        # Chunks actually written, so the service can report the real count
+        # instead of assuming one per message.
+        self._chunks_written: int = 0
+        # Every gate that can drop something, tallied for the session. These
+        # existed as per-chunk log lines only: `_write_relations` built a full
+        # report and the caller discarded the return value, so the numbers were
+        # computed and thrown away — the same defect as verifier_score. An
+        # abstention nobody can count is indistinguishable from an extractor
+        # that found nothing.
+        self._abstentions: dict[str, int] = defaultdict(int)
         # Lexical label selection over the SKOS scheme. Replaces embedding the
         # chunk against class definitions, which measured 11% of tags sharing a
         # word with their own chunk. Built lazily: the lexical index needs the
@@ -229,7 +348,7 @@ class _STMIngestHandler:
             self._hint_min_sim = settings.ontology_hint_min_sim
             self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
             if self._relations is None:
-                from graphknows.ontology import load_ontology_index
+                from graphknows.symbolic.ontology import load_ontology_index
 
                 self._relations = load_ontology_index(settings.relation_ontology_source)
                 if self._relations is None:
@@ -331,7 +450,16 @@ class _STMIngestHandler:
             first_pass: list[ExtractionResult] = await asyncio.to_thread(
                 self._extractor.extract_batch, cleaned_texts, entity_hints, None
             )
-            batch_extractions = await self._relation_pass(cleaned_texts, entity_hints, first_pass)
+            batch_extractions = await self._relation_pass(
+                cleaned_texts, entity_hints, first_pass, batch_embeddings if use_batch else None
+            )
+
+        # Frame parsing for ALL chunks in one batched pass, for the same reason
+        # the entity pass above batches: the parser is the ingest cost, and
+        # per-chunk calls hand it ~14 sentences at a time. Overlapping windows
+        # (5 turns, stride 3) also share most of their text, so this collapses
+        # the ~1.7x duplicate parses into one. Each chunk's parse then hits cache.
+        await self._prewarm_frame_srl(cleaned_texts, infer)
 
         for idx, seg in enumerate(parsed.segments):
             seg.metadata["chunk_index"] = idx
@@ -421,6 +549,7 @@ class _STMIngestHandler:
         texts: list[str],
         entity_hints: list[list[str]] | None,
         first_pass: list[ExtractionResult],
+        embeddings: list[list[float]] | None = None,
     ) -> list[ExtractionResult]:
         """Re-extract with the relation labels pass 1's entity types selected.
 
@@ -432,7 +561,10 @@ class _STMIngestHandler:
         """
         if self._relations is None or not texts:
             return first_pass
-        hints = [self._relation_labels(r.entities) for r in first_pass]
+        hints = [
+            self._relation_labels(r.entities, embeddings[i] if embeddings else None)
+            for i, r in enumerate(first_pass)
+        ]
         todo = [i for i, h in enumerate(hints) if h]
         if not todo:
             log.info(
@@ -469,8 +601,16 @@ class _STMIngestHandler:
         metadata: dict[str, Any] | None = None,
         infer: bool = True,
         speaker: str = "",
+        last_in_batch: bool = True,
     ) -> int:
-        """Write one conversation turn as a CHUNK(kind='turn'). Returns entity count.
+        """Ingest one conversation turn. Returns entity count.
+
+        With ``window_chunks`` on (the default) a turn does not become its own
+        CHUNK: it joins a 5-turn sliding window emitted every
+        :attr:`_chunk_stride` turns, and this returns 0 for the turns in
+        between. ``last_in_batch`` forces the pending window out so the tail of
+        a conversation is never dropped — it defaults True so a caller ingesting
+        one turn at a time still gets that turn stored.
 
         Phase-1 bridge: gives the messages path the same full extraction (ENTITY
         + MENTIONS + evidenced relations + temporal) the text/chunk path has.
@@ -511,11 +651,6 @@ class _STMIngestHandler:
         # ubiquitous and the filter empties the whole vocabulary.
         if self._lexical and not self._lex_frozen:
             self._corpus_seen.append(clean)
-        embedding = self._embed_fn(surface)
-        # Same ontology steering as the chunk path — the turn's own embedding
-        # selects the candidate entity labels, so no extra embedding call.
-        ent_hints = self._label_hints([embedding])
-        entity_labels = ent_hints[0] if ent_hints else None
         # The extraction WINDOW. A turn read alone loses what the turns before it
         # established: "She said yes" asserts something only if the previous turn
         # named her. The window prepends the recent speaker-attributed turns so
@@ -529,7 +664,37 @@ class _STMIngestHandler:
         # chunk. Relations are deliberately NOT filtered — a triplet whose head
         # came from an earlier turn is the entire point, and its endpoints merge
         # by name onto the ENTITY nodes those turns already created.
-        window_text, offset, spans = self._extraction_window(session_id, clean, speaker or role)
+        window_text, offset, spans, verbatim = self._extraction_window(
+            session_id, clean, speaker or role
+        )
+
+        # With window chunking, a turn does not get its own chunk — it joins the
+        # window that will be emitted `_chunk_stride` turns from the last one.
+        # Returning here skips this turn's embedding AND its extraction pass,
+        # which is why windowing makes ingest cheaper rather than dearer: the
+        # extractor runs once per window instead of once per turn over
+        # substantially the same text.
+        if self._window_chunks:
+            pending = self._since_emit.get(session_id, 0) + 1
+            if pending < self._chunk_stride and not last_in_batch:
+                self._since_emit[session_id] = pending
+                return 0
+            self._since_emit[session_id] = 0
+
+        # What is stored, embedded and retrieved. A multi-turn window carries
+        # the turns around this one, so a question about a fact stated two turns
+        # ago can reach the chunk that also holds the answer; its lines are
+        # already "Speaker: said", so it is its own retrieval surface. A window
+        # of one is the turn byte for byte, and still needs `surface` — the
+        # attribution the utterance itself omits is the whole reason that exists.
+        windowed = self._window_chunks and verbatim != clean
+        chunk_text = verbatim if windowed else clean
+        chunk_surface = verbatim if windowed else surface
+        embedding = self._embed_fn(chunk_surface)
+        # Same ontology steering as the chunk path — the chunk's own embedding
+        # selects the candidate entity labels, so no extra embedding call.
+        ent_hints = self._label_hints([embedding])
+        entity_labels = ent_hints[0] if ent_hints else None
         # Lexical selection over the SKOS scheme, when it is warm. It sees the
         # WINDOW, not the turn: the labels a chunk needs are evoked by the whole
         # passage the extractor reads.
@@ -556,7 +721,9 @@ class _STMIngestHandler:
         )
         # Lexically-evoked properties win over the domain/range-only selection:
         # a property whose own name is spoken is the strongest evidence there is.
-        if infer and (rel_labels := lex_rels or self._relation_labels(extraction.entities)):
+        if infer and (
+            rel_labels := lex_rels or self._relation_labels(extraction.entities, embedding)
+        ):
             t_rel = time.monotonic()
             extraction = await asyncio.to_thread(
                 self._extract, window_text, entity_labels, rel_labels, speaker or role
@@ -567,7 +734,12 @@ class _STMIngestHandler:
                 len(rel_labels),
                 1000 * (time.monotonic() - t_rel),
             )
-        if infer and offset:
+        # The provenance filter keeps a turn-chunk from re-minting the previous
+        # four turns' entities and hanging their MENTIONS on the wrong chunk.
+        # When the chunk IS the window that reasoning inverts: every entity in
+        # the window really is mentioned by this chunk, and filtering would drop
+        # all but the last turn's.
+        if infer and offset and not self._window_chunks:
             extraction.entities = _entities_from(extraction.entities, offset)
         if infer and spans:
             extraction.relations = _attributed(
@@ -575,16 +747,19 @@ class _STMIngestHandler:
             )
         anchor = metadata.get("timestamp") or metadata.get("anchor_date")
         temporal = self._resolve_temporal_entities(extraction.entities, anchor)
-        chunk_id = hashlib.sha256(f"{session_id}:{file_id}:{seq}:{clean}".encode()).hexdigest()[:16]
+        chunk_id = hashlib.sha256(
+            f"{session_id}:{file_id}:{seq}:{chunk_text}".encode()
+        ).hexdigest()[:16]
+        self._chunks_written += 1
         return await self._write_extracted(
             session_id=session_id,
             file_id=file_id,
             chunk_id=chunk_id,
-            text=clean,
+            text=chunk_text,
             seq=seq,
             kind="turn",
             speaker=speaker or role,
-            search_text=surface,
+            search_text=chunk_surface,
             # The same anchor the relative dates resolve against is what dates
             # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
             # the column was written, indexed and selected as "" everywhere.
@@ -618,8 +793,8 @@ class _STMIngestHandler:
             log.info("Lexical label selection off: the extractor exposes no spaCy pipeline")
             return False
         if self._scheme is None:
-            from graphknows.ontology.scheme import load_scheme
             from graphknows.settings import GraphKnowsSettings
+            from graphknows.symbolic.ontology.scheme import load_scheme
 
             cfg = GraphKnowsSettings()
             self._scheme = load_scheme(cfg.ontology_source, cfg.overlay_source)
@@ -630,7 +805,7 @@ class _STMIngestHandler:
         # `usable_index` needs the document count to know when a frequency is
         # meaningful, so a small corpus simply filters nothing.
         if self._corpus_seen and (self._lex_index is None or not self._lex_frozen):
-            from graphknows.ontology.scheme import build_index
+            from graphknows.symbolic.ontology.scheme import build_index
 
             self._lex_index = build_index(self._scheme, self._corpus_seen, self._extractor.nlp)
             self._lex_frozen = len(self._corpus_seen) >= _LEXICAL_WARMUP
@@ -640,19 +815,33 @@ class _STMIngestHandler:
         """``(entity labels, relation labels)`` for one window, lexically selected."""
         if not self._ensure_scheme():
             return None, None
-        from graphknows.ontology import entity_labels, relation_labels
+        from graphknows.symbolic.ontology import entity_labels, relation_labels
 
-        doc = self._extractor.nlp(text)
+        doc = self._extractor.parse(text)
         ents = entity_labels(doc, self._scheme, self._lex_index)
         rels = relation_labels(doc, set(ents), self._scheme, self._lex_index)
         # relex takes {label: definition}; the definition is what it reads.
         spec = {r: (self._scheme[r].definition or r) for r in rels if r in self._scheme}
         return ents, spec or None
 
+    @property
+    def _chunk_stride(self) -> int:
+        """Turns between emitted window chunks — the window minus its overlap.
+
+        Window 5 / overlap 2 gives stride 3: windows cover turns 1-5, 4-8, 7-11.
+        Clamped to at least 1 so an overlap >= the window cannot emit forever.
+        """
+        return max(self._extract_window - self._window_overlap, 1)
+
     def _extraction_window(
         self, session_id: str, clean: str, speaker: str
-    ) -> tuple[str, int, list[tuple[int, int, str]]]:
-        """``(text to extract from, where this turn starts, per-turn spans)``.
+    ) -> tuple[str, int, list[tuple[int, int, str]], str]:
+        """``(text to extract from, where this turn starts, spans, verbatim window)``.
+
+        The fourth element is the same window WITHOUT deixis resolution — what
+        gets stored as the chunk when window chunking is on. Storage stays
+        verbatim on purpose: the extractor benefits from "Gina lost Gina's job",
+        a reader quoting it back does not.
 
         The turn is always the tail of the window, so a zero offset means the
         window is off (``extract_window <= 1``) or this is the session's first
@@ -693,14 +882,21 @@ class _STMIngestHandler:
             )
         recent.append({"speaker": speaker, "text": clean})
 
+        def _render(key: str) -> str:
+            return "\n".join(f"{t['speaker']}: {t[key]}" if t["speaker"] else t[key] for t in turns)
+
         if window <= 1 or len(turns) == 1:
-            return clean, 0, []
+            # A one-turn window IS the turn, stored byte for byte. Speaker
+            # prefixes appear only once there are several turns to tell apart;
+            # who said this one is on CHUNK.speaker, and the attributed form is
+            # what search_text already carries.
+            return clean, 0, [], clean
         lines = [
             f"{t['speaker']}: {t['resolved']}" if t["speaker"] else t["resolved"] for t in turns
         ]
         text = "\n".join(lines)
         offset = len(text) - len(lines[-1]) + (len(speaker) + 2 if speaker else 0)
-        return text, offset, turn_spans(turns, text)
+        return text, offset, turn_spans(turns, text), _render("text")
 
     async def _ensure_session_and_file(
         self,
@@ -732,6 +928,20 @@ class _STMIngestHandler:
     ) -> int:
         """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count."""
         filtered = graph_entities(extraction.entities)
+        # Definition-described typing (default off). Runs BEFORE the entity write
+        # so a surface only this pass saw is a first-class ENTITY rather than a
+        # dangling INSTANCE_OF, and its result is carried into _link_ontology so
+        # the class it named wins over the embedding guess for that surface.
+        typed = await self._definition_typing(text)
+        if typed:
+            known = {str(e.get("name", "")).casefold() for e in filtered}
+            extra = [
+                {"name": surface, "type": label, "confidence": score}
+                for surface, (label, score) in typed.items()
+                if surface.casefold() not in known
+            ]
+            if extra:
+                filtered = graph_entities(list(extraction.entities) + extra)
         await self._store.write_chunk(
             {
                 "chunk_id": chunk_id,
@@ -753,7 +963,7 @@ class _STMIngestHandler:
         # Ontology layer — tag the chunk with the classes it evokes and link each
         # entity to its class. Both are additive: an entity that maps to nothing
         # keeps its extracted type and is written exactly as before.
-        await self._link_ontology(chunk_id, filtered, ontology_classes or [])
+        await self._link_ontology(chunk_id, filtered, ontology_classes or [], typed)
 
         # FRAME layer — match the chunk's embedding against FrameNet definitions
         # (top-k + min-sim floor, reusing the embedding already computed above; no
@@ -761,28 +971,43 @@ class _STMIngestHandler:
         # it evokes. Each FRAME node carries the frame's summary + definition
         # embedding (copied from the catalog, not recomputed) so the query side can
         # vector-search the frames evoked in this namespace.
+        # One parse serves both frame layers when SRL identification is on — it is
+        # the expensive step, and running it twice per chunk would double it.
+        srl_hits = await self._srl_hits(text)
+
         if self._enable_frames:
-            from graphknows.channels._frame_index import (
+            from graphknows.symbolic.framenet.framenet import _broader_up
+            from graphknows.symbolic.framenet.index import (
                 frame_embedding,
                 frame_summary,
                 match_frames,
             )
 
-            matches = match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
+            # Parsed triggers name the frames this chunk actually evokes; the
+            # embedding match only ranks candidates by definition similarity. The
+            # confidence is 1.0 because a trigger is an observation, not a guess —
+            # EVOKED_BY.confidence weights the chunk at query time, so a parsed
+            # tag should outweigh a cosine one.
+            matches = (
+                [(f, 1.0) for f in dict.fromkeys(h.frame for h in srl_hits)]
+                if srl_hits
+                else match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
+            )
             if matches:
+                # FrameNet's own hierarchy rides along, so the frames evoked here
+                # land as a traversable taxonomy rather than isolated tags: a
+                # query matching a general frame can then walk DOWN to the
+                # specific one a chunk actually evoked. Cached in-process.
+                up = _broader_up()
                 await self._store.write_frames(
-                    session_id,
                     [
                         {
                             "frame_type": name,
                             "chunk_id": chunk_id,
-                            "lu": "",
-                            "speaker": speaker or "",
-                            "fes": [],
-                            "fillers": [],
                             "confidence": sim,
                             "summary": frame_summary(name),
                             "embedding": frame_embedding(name),
+                            "parents": sorted(up.get(name, ())),
                         }
                         for name, sim in matches
                     ],
@@ -795,13 +1020,18 @@ class _STMIngestHandler:
         # second GLiNER2 schema pass, so only on fact-bearing chunks. Distinct from
         # the FRAME chunk-tag layer above.
         if self._enable_frames:
-            instances = await asyncio.to_thread(
-                self._frame_instances, text, chunk_id, speaker, embedding
+            instances, nesting = await asyncio.to_thread(
+                self._frame_instances, text, chunk_id, speaker, embedding, srl_hits
             )
             if instances:
-                await self._store.write_frame_instances(session_id, chunk_id, instances)
+                await self._store.write_frame_instances(
+                    session_id, chunk_id, instances, nesting=nesting
+                )
 
-        await self._write_relations(extraction, chunk_id, text, speaker)
+        relation_report = await self._write_relations(extraction, chunk_id, text, speaker)
+        for gate in ("blocked_domain", "blocked_range", "unsupported", "pruned_endpoint"):
+            self._abstentions[gate] += int(relation_report.get(gate, 0))
+        self._abstentions["relations"] += int(relation_report.get("relations", 0))
 
         iso_dates = [t["iso"] for t in temporal if t.get("iso")]
         if iso_dates:
@@ -1010,7 +1240,7 @@ class _STMIngestHandler:
         """
         if self._ontology is None or not embedding:
             return []
-        from graphknows.ontology.catalog import TAG_MIN_SIM
+        from graphknows.symbolic.ontology.catalog import TAG_MIN_SIM
 
         matches = self._ontology.match_classes(embedding, top_k=_ONT_TAG_TOP_K, min_sim=TAG_MIN_SIM)
         return [(term.uri, sim) for term, sim in matches]
@@ -1050,7 +1280,42 @@ class _STMIngestHandler:
             )
         return entity_hints
 
-    def _relation_labels(self, entities: list[dict[str, Any]]) -> dict[str, str]:
+    def _rank_within_groups(self, groups: dict[Any, list[Any]], embedding: list[float]) -> None:
+        """Order each (domain, range) group by how well the property fits THIS chunk.
+
+        Only the order changes — every property that satisfied the gate is still
+        offered — so this cannot admit a property the endpoints do not license.
+        That distinction is the whole reason it is safe: ranking across the full
+        vocabulary is the measured failure recorded on :meth:`_label_hints`
+        (cosine puts ``liveBlogUpdate`` above anything a dance sentence asserts,
+        with no floor separating right from wrong). Inside a group the endpoints
+        have already done the filtering, so cosine only has to break a tie
+        between properties that are all structurally admissible.
+
+        Properties the index has no vector for sort last, and Python's sort is
+        stable, so a group with no embeddings at all keeps its vocabulary order.
+        """
+        import numpy as np
+
+        v = np.asarray(embedding, dtype=np.float32).ravel()
+        norm = float(np.linalg.norm(v))
+        if v.size == 0 or norm == 0.0:
+            return
+        v = v / norm
+
+        def fit(prop: Any) -> float:
+            row = self._relations.term_embedding(prop.uri) if self._relations else []
+            if not row:
+                return -1.0
+            e = np.asarray(row, dtype=np.float32).ravel()
+            return float(e @ v) if e.shape == v.shape else -1.0
+
+        for props in groups.values():
+            props.sort(key=lambda p: -fit(p))
+
+    def _relation_labels(
+        self, entities: list[dict[str, Any]], embedding: list[float] | None = None
+    ) -> dict[str, str]:
         """Relation properties this chunk's ENTITY TYPES evoke: ``{label: definition}``.
 
         The ontology analogue of the FrameNet layer: a frame is evoked by a
@@ -1064,11 +1329,9 @@ class _STMIngestHandler:
         ``knows`` and ``likes`` but not ``worksFor``: with no Organization in it,
         an extractor offered ``worksFor`` could only invent the other end.
 
-        Capped at ``_RELATION_LABEL_CAP``, round-robin over the (domain, range)
-        pairs rather than in profile order — nine interpersonal Person->Person
-        properties sit at the top of the vocabulary and would otherwise take
-        every slot the moment a person is mentioned, deleting the event, place
-        and employment properties from the offer entirely.
+        Capped at ``_RELATION_LABEL_CAP`` and allocated across the (domain, range)
+        pairs by :func:`_allocate_offer` — one slot per pair as a floor, the rest
+        in proportion to how many applicable properties each pair holds.
 
         Offering nothing is a real outcome, and a logged one: an unlogged empty
         vocabulary is indistinguishable from a broken extractor downstream.
@@ -1100,10 +1363,10 @@ class _STMIngestHandler:
         groups: dict[tuple[tuple[str, ...], tuple[str, ...]], list[Any]] = {}
         for prop in offered:
             groups.setdefault((prop.domain, prop.range), []).append(prop)
-        interleaved = [p for row in zip_longest(*groups.values()) for p in row if p is not None][
-            :_RELATION_LABEL_CAP
-        ]
-        return {p.label: p.definition or p.label for p in interleaved}
+        if embedding and _group_ranking_enabled():
+            self._rank_within_groups(groups, embedding)
+        offer = _allocate_offer(groups, _RELATION_LABEL_CAP)
+        return {p.label: p.definition or p.label for p in offer}
 
     def _map_to_profile_class(self, entity_type: str) -> tuple[str, float]:
         """Map an extracted entity type onto a RELATION-profile class: ``(label, score)``.
@@ -1180,6 +1443,7 @@ class _STMIngestHandler:
         chunk_id: str,
         entities: list[dict[str, Any]],
         ontology_classes: list[tuple[str, float]],
+        typed: dict[str, tuple[str, float]] | None = None,
     ) -> None:
         """Write the chunk's MATCHES_CLASS tags and its entities' INSTANCE_OF edges.
 
@@ -1189,13 +1453,25 @@ class _STMIngestHandler:
         the (type, class) pair and identical for every entity sharing the type,
         so on its own it can rank nothing; with the per-entity factor two
         entities of one class carry different scores.
+        ``typed`` is the definition-described pass's verdict, keyed by casefolded
+        surface. Where it has one it wins, because it read the class DEFINITION
+        against the sentence, while :meth:`_map_to_class` only ever sees the
+        extracted TYPE STRING in isolation — that is the difference that moved
+        ``research`` off OCCUPATION and onto Act. Surfaces it did not type fall
+        through to the existing path unchanged.
         """
         if self._ontology is None:
             return
         if ontology_classes:
             await self._store.write_class_matches(chunk_id, ontology_classes)
+        by_norm = {s.casefold(): v for s, v in (typed or {}).items()}
         mappings = []
         for ent in entities:
+            name = str(ent.get("name", ""))
+            hit = by_norm.get(name.casefold())
+            if hit and (uri := self._uri_by_label.get(hit[0].casefold())):
+                mappings.append({"name": name, "uri": uri, "label": hit[0], "score": hit[1]})
+                continue
             uri, label, score = self._map_to_class(str(ent.get("type", "")))
             if uri:
                 confidence = float(ent.get("confidence", ent.get("score", 1.0)) or 0.0)
@@ -1209,6 +1485,38 @@ class _STMIngestHandler:
                 )
         if mappings:
             await self._store.write_instance_of(mappings)
+
+    async def _definition_typing(self, text: str) -> dict[str, tuple[str, float]]:
+        """``{casefolded surface: (class label, confidence)}`` for this chunk, or ``{}``.
+
+        Off unless ``GRAPHKNOWS_DEFINITION_TYPING`` is set. The schema is built
+        once per handler from the loaded ontology: it is one encoder input, so
+        the label set is capped rather than handed all 1437 classes.
+        """
+        from graphknows.ingestion.extraction.entities import typing_model
+
+        if self._ontology is None or not text.strip() or not typing_model.typing_enabled():
+            return {}
+        if self._typing_schema is None:
+            self._typing_schema = typing_model.build_schema(self._ontology, _TYPING_CLASSES)
+            # Name the absentees. The bundled CCO digest has no bare `Artifact`
+            # class (only "... Artifact Function"), so the list silently built a
+            # 13-label schema out of 14 and paintings had nowhere to be typed.
+            # A richer ontology — one built by graphknows.symbolic.ontology.rdf — supplies it.
+            if missing := [c for c in _TYPING_CLASSES if c not in self._typing_schema]:
+                log.info(
+                    "definition typing schema: %d classes (%d absent from this ontology: %s)",
+                    len(self._typing_schema),
+                    len(missing),
+                    ", ".join(missing),
+                )
+            else:
+                log.info("definition typing schema: %d classes", len(self._typing_schema))
+        if not self._typing_schema:
+            return {}
+        return await asyncio.to_thread(
+            typing_model.type_lines, text.split("\n"), self._typing_schema
+        )
 
     def _map_predicate(
         self, predicate: str, object_type: str = "", subject_type: str = ""
@@ -1371,27 +1679,95 @@ class _STMIngestHandler:
                 kept.append(fill)
         return kept
 
+    @staticmethod
+    def _surviving_nesting(hits: list[Any], kept_offsets: list[int]) -> list[tuple[int, str, int]]:
+        """Re-index frame nesting onto the instances that actually survived.
+
+        Nesting is computed over trigger offsets, but the fillability and junk
+        gates drop instances in between — so a pair naming a dropped frame is
+        dropped with it rather than pointing at the wrong row.
+        """
+        if not hits or len(kept_offsets) < 2:
+            return []
+        from graphknows.symbolic.framenet.srl import nested_pairs
+
+        index_of = {off: i for i, off in enumerate(kept_offsets) if off >= 0}
+        out = []
+        for parent, role, child in nested_pairs(hits):
+            p, c = index_of.get(hits[parent].offset), index_of.get(hits[child].offset)
+            if p is not None and c is not None and p != c:
+                out.append((p, role, c))
+        return out
+
+    async def _prewarm_frame_srl(self, texts: list[str], infer: bool = True) -> None:
+        """Parse every chunk's sentences once, up front. No-op unless SRL is on."""
+        if not (infer and self._enable_frames and texts):
+            return
+        from graphknows.symbolic.framenet.srl import prewarm, srl_enabled
+
+        if not srl_enabled():
+            return
+        start = time.monotonic()
+        parsed = await asyncio.to_thread(prewarm, texts)
+        log.info(
+            "frame SRL prewarm: %d sentences parsed for %d chunks in %.1fs",
+            parsed,
+            len(texts),
+            time.monotonic() - start,
+        )
+
+    async def _srl_hits(self, text: str) -> list[Any]:
+        """Parse the chunk's frame triggers once, off the event loop. ``[]`` when off."""
+        if not (self._enable_frames and text.strip()):
+            return []
+        from graphknows.symbolic.framenet.srl import srl_enabled
+
+        if not srl_enabled():
+            return []
+        from graphknows.symbolic.framenet.srl import parse
+
+        try:
+            return await asyncio.to_thread(parse, text)
+        except Exception as exc:
+            # On by default now, so it must degrade rather than fail: a parser
+            # that cannot load (no model cache, no VRAM, a broken install) drops
+            # this chunk back to the LU/embedding identifier instead of losing
+            # the document. Warned, not swallowed — silent degradation is how a
+            # pipeline runs for weeks with a dead layer nobody noticed.
+            log.warning("frame SRL parse failed, falling back to LU frames: %s", exc)
+            return []
+
     def _frame_instances(
-        self, text: str, chunk_id: str, speaker: str, embedding: list[float] | None = None
-    ) -> list[dict[str, Any]]:
+        self,
+        text: str,
+        chunk_id: str,
+        speaker: str,
+        embedding: list[float] | None = None,
+        srl_hits: list[Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[tuple[int, str, int]]]:
         """Frame-guided role extraction for one chunk → write dicts (thread-run).
 
         Reuses the entity extractor's already-loaded spaCy + GLiNER2 (no second
         load) and the chunk's already-computed ``embedding`` for frame ranking (no
         re-embed). Speaker/speakers come from the chunk's turn-lines (same logic the
         SVO pass uses), falling back to the passed ``speaker``. Returns
-        ``[{frame, match_sim, role_confidence, roles}]`` (0-1 items per short text,
-        per the role-fillability gate; the FRAME_INSTANCE id is content-hashed at
-        write time). Empty if the extractor doesn't expose reusable models.
+        ``([{frame, match_sim, role_confidence, roles}], nesting)`` — 0-1 items per
+        short text on the default path, one per parsed trigger on the SRL one, per
+        the role-fillability gate; the FRAME_INSTANCE id is content-hashed at write
+        time. ``nesting`` is ``(parent, role, child)`` indexed into the returned
+        list, empty unless the SRL path ran. Empty if the extractor doesn't expose
+        reusable models.
         """
         extractor = self._extractor
         if extractor is None or not hasattr(extractor, "nlp") or not hasattr(extractor, "gliner"):
-            return []
+            return [], []
         from graphknows.ingestion.extraction.entities.extractor import _line_speakers
         from graphknows.ingestion.extraction.relations.frame_srl import (
             extract_frame_instances,
+            extract_frame_instances_srl,
             lu_candidate_frames,
         )
+        from graphknows.linguistics import analyse
 
         line_speakers = _line_speakers(text)
         speakers = sorted({s for _, s in line_speakers if s})
@@ -1401,13 +1777,24 @@ class _STMIngestHandler:
 
         nlp = extractor.nlp
         gliner = extractor.gliner
-        instances = extract_frame_instances(
-            text,
-            primary,
-            speakers,
-            gliner,
-            lambda t: lu_candidate_frames(t, nlp, embedding=embedding),
-        )
+        # Shared with lexical labelling and frame-candidate ranking — see
+        # extractor.parse(). Previously each of the three parsed the same window
+        # again.
+        doc = extractor.parse(text)
+        if srl_hits:
+            # Parsed triggers instead of one embedding-ranked guess per chunk, so
+            # a chunk can yield one instance per fact rather than at most one.
+            instances = extract_frame_instances_srl(text, primary, speakers, gliner, srl_hits)
+        else:
+            instances = extract_frame_instances(
+                text,
+                primary,
+                speakers,
+                gliner,
+                lambda t: lu_candidate_frames(
+                    t, nlp, embedding=embedding, doc=doc if t == text else None
+                ),
+            )
         # Role fillers become ENTITY nodes, so they must clear the SAME junk gate
         # every other minting path uses. This was the one path that did not call
         # it: measured on LoCoMo conv-30, it minted 624 ENTITY nodes with no type,
@@ -1415,6 +1802,7 @@ class _STMIngestHandler:
         # and fed them to the generator's fact-sheet ("Buyer=Hey Gina!",
         # "Speaker=Yeah", "Cognizer=Wow").
         out: list[dict[str, Any]] = []
+        kept_offsets: list[int] = []
         for inst in instances:
             roles = {
                 role: self._dedupe_nested([f for f in fills if is_graph_entity_name(f)])
@@ -1424,16 +1812,24 @@ class _STMIngestHandler:
             # The frame's own gate: an instance under two filled roles is not a
             # fact, it is a frame label with a stray span attached.
             if len(roles) < 2:
+                self._abstentions["frame_under_two_roles"] += 1
                 continue
+            # How this instance is asserted — negated, hypothesised, hedged, or
+            # put in someone else's mouth. Reuses the `doc` parsed once above:
+            # no model load, no second parse. A trigger_offset of -1 (the
+            # non-SRL path, which guesses one frame per chunk with no span)
+            # returns the defaults rather than analysing an arbitrary token.
             out.append(
                 {
                     "frame": inst.frame,
                     "match_sim": inst.match_sim,
                     "role_confidence": inst.role_confidence,
                     "roles": roles,
+                    **analyse(doc, inst.trigger_offset).as_props(),
                 }
             )
-        return out
+            kept_offsets.append(inst.trigger_offset)
+        return out, self._surviving_nesting(srl_hits or [], kept_offsets)
 
     def _resolve_temporal(
         self, entities: list[dict[str, Any]], seg: Any, metadata: dict[str, Any]
@@ -1452,7 +1848,7 @@ class _STMIngestHandler:
     def _resolve_temporal_entities(
         entities: list[dict[str, Any]], anchor: Any
     ) -> list[dict[str, str]]:
-        from graphknows.channels.temporal import resolve_temporal
+        from graphknows.temporal import resolve_temporal
 
         return resolve_temporal(entities, anchor)
 

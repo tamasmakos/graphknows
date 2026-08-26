@@ -97,8 +97,8 @@ def gold_reachable(gold: str, passages: list[RetrievedPassage]) -> bool:
     return gold_toks <= haystack
 
 
-def evidence_recall(evidence: list[str], passages: list[RetrievedPassage]) -> float:
-    """Fraction of gold EVIDENCE turns present verbatim in the passages.
+def evidence_recall(evidence: list[str], texts: list[str]) -> float:
+    """Fraction of gold EVIDENCE turns present verbatim in the recalled *texts*.
 
     The honest retrieval metric, where ``gold_reachable`` is a proxy: it scores
     whether we retrieved the turns that actually answer the question, not
@@ -109,10 +109,14 @@ def evidence_recall(evidence: list[str], passages: list[RetrievedPassage]) -> fl
     Exact substring on whitespace-normalised text: verified 97/97 on conv-26,
     since chunk text preserves the utterance verbatim. Callers skip cases with
     no evidence rather than scoring them 0.
+
+    Takes plain strings, not ``RetrievedPassage``: it needs nothing but the
+    text, and demanding the harness's passage type is what made an out-of-
+    harness caller (the LangGraph runner, holding ``Hit``s) reimplement it.
     """
     if not evidence:
         return 0.0
-    haystack = " ".join(" ".join(p.text.split()) for p in passages)
+    haystack = " ".join(" ".join(t.split()) for t in texts)
     return sum(1 for turn in evidence if turn in haystack) / len(evidence)
 
 

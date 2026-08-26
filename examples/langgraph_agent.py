@@ -6,6 +6,12 @@
     python examples/langgraph_agent.py --session s1
     python examples/langgraph_agent.py --session s2
 
+Optional Langfuse tracing — set the three keys and rerun, nothing else changes::
+
+    pip install 'graphknows[observability]'
+    export LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-...
+    export LANGFUSE_HOST=https://cloud.langfuse.com   # or your own instance
+
 Every turn is buffered as a cheap TURN row (the STM buffer) — no extraction,
 no embedding. ``mem.flush()`` at the end of a session ingests those buffered
 turns through the real pipeline (entities, relations, topics) into the
@@ -90,6 +96,76 @@ async def trace(mem: GraphKnowsMemory, state: State) -> dict[str, Any]:
     return {}
 
 
+def tracing(namespace: str, session: str) -> tuple[dict[str, Any], Any]:
+    """``(run config, langfuse client)`` — or ``({}, None)`` when unconfigured.
+
+    Everything inside the graph is traced by the callback handler and costs no
+    code here: one span per node (recall/remember/respond/trace) carrying its
+    state in and out, and the ``ChatOpenAI`` call as a generation with model,
+    tokens, cost and latency. That part is not graphknows-specific — it is what
+    the handler gives any LangGraph.
+
+    Two choices ARE specific to a memory system, and they are the reason this
+    function exists rather than a bare ``CallbackHandler()`` at the call site:
+
+    * The Langfuse SESSION is the memory NAMESPACE, not ``--session``. s1 and s2
+      are separate conversations over one shared graph, and the demo's whole
+      claim is that s2 answers from what s1 stored. Keying on the namespace puts
+      both runs on one Langfuse timeline, where that is visible; keying on
+      ``--session`` files them as two unrelated sessions, where it is not.
+    * ``flush`` is traced separately (see :func:`consolidate`) because it runs
+      outside ``ainvoke``, so no callback ever sees it.
+
+    Absent credentials the demo runs untraced — no flag, no branch at the call
+    site, since an empty config is a valid config.
+    """
+    if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
+        return {}, None
+    from langfuse import get_client
+    from langfuse.langchain import CallbackHandler
+
+    config = {
+        "callbacks": [CallbackHandler()],
+        # `langfuse_session_id`/`langfuse_tags` are the handler's own reserved
+        # metadata keys; anything else rides along as plain trace metadata.
+        "metadata": {
+            "langfuse_session_id": namespace,
+            "langfuse_tags": ["graphknows", "langgraph-demo"],
+            "graphknows_session": session,
+        },
+    }
+    return config, get_client()
+
+
+async def consolidate(
+    mem: GraphKnowsMemory, langfuse: Any, namespace: str, session: str
+) -> dict[str, Any]:
+    """``mem.flush()``, as its own Langfuse span.
+
+    The callback handler cannot see this one: flush runs outside ``ainvoke``.
+    It is also the expensive half — extraction, embeddings, entity resolution —
+    and the only step that actually builds the graph, so tracing four cheap
+    nodes and not this one would be tracing the wrong half.
+
+    ``propagate_attributes`` is what puts this span on the same Langfuse session
+    as the graph runs. A manual span does not otherwise get one — the handler's
+    ``langfuse_session_id`` metadata key only reaches spans the handler itself
+    creates — and a sessionless flush is filed away from the very traces it
+    explains.
+    """
+    if langfuse is None:
+        return await mem.flush()
+    from langfuse import propagate_attributes
+
+    with (
+        langfuse.start_as_current_observation(name="graphknows.flush"),
+        propagate_attributes(session_id=namespace, tags=["graphknows", "langgraph-demo"]),
+    ):
+        stats = await mem.flush()
+        langfuse.update_current_span(input={"session": session}, output=stats)
+    return stats
+
+
 def build_graph(mem: GraphKnowsMemory, llm: ChatOpenAI) -> Any:
     """Wire the four-node graph: recall -> remember -> respond -> trace.
 
@@ -125,14 +201,24 @@ async def main() -> None:
     )
 
     async with GraphKnowsMemory(args.session) as mem:
+        config, langfuse = tracing(mem.memory.namespace, args.session)
         app = build_graph(mem, llm)
         for i, turn in enumerate(TURNS[args.session], start=1):
             print(f"\nturn {i}  user: {turn}")
-            out = await app.ainvoke({"messages": [{"role": "user", "content": turn}]})
+            out = await app.ainvoke(
+                {"messages": [{"role": "user", "content": turn}]}, config=config
+            )
             print(f"    answer: {out['messages'][-1]['content']}")
 
         if args.flush:
-            print(f"\nflush: {await mem.flush()}")
+            stats = await consolidate(mem, langfuse, mem.memory.namespace, args.session)
+            print(f"\nflush: {stats}")
+
+    if langfuse is not None:
+        # A short-lived script exits before the background exporter ships its
+        # queue, and the traces are simply lost. Nothing warns about it.
+        langfuse.flush()
+        print(f"traces: {os.environ.get('LANGFUSE_HOST', 'https://cloud.langfuse.com')}")
 
 
 if __name__ == "__main__":

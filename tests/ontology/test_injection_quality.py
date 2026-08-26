@@ -34,8 +34,8 @@ from pathlib import Path
 
 import pytest
 
-from graphknows.ontology.catalog import load_ontology_index
 from graphknows.storage.embedder import embed_one
+from graphknows.symbolic.ontology.catalog import load_ontology_index
 
 PERSONAL_TTL = Path(__file__).resolve().parents[1] / "fixtures" / "ontology" / "personal.ttl"
 
@@ -134,13 +134,13 @@ def test_small_ontology_is_injected_whole_at_the_production_top_k(index):
 
     This test used to assert ``DEFAULT_MIN_SIM == 0.0`` — injection gated by
     top-k alone — which was survivable only because personal.ttl has 11 classes,
-    so top-12 was the whole ontology. The default ontology is CCO's 1401
+    so top-12 was the whole ontology. The default ontology is CCO's 1437
     classes, so there is a floor (0.46, measured over real LoCoMo turns against
     the bundled CCO digest), and
     against a 13-property ontology it is the floor, not the budget, that decides
     what reaches the extractor.
     """
-    from graphknows.ontology.catalog import DEFAULT_MIN_SIM, DEFAULT_TOP_K
+    from graphknows.symbolic.ontology.catalog import DEFAULT_MIN_SIM, DEFAULT_TOP_K
 
     assert DEFAULT_MIN_SIM == 0.46
 
