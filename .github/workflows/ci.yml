@@ -136,29 +136,28 @@ jobs:
           --cov-report=term:skip-covered --cov-fail-under=65
 
       - name: SonarQube Cloud
-        # No `if:` — this needs a coverage.xml that means something. Publishing
-        # after a failed suite is how new_coverage got pinned at 0.0 before.
+        # Pull requests only. Sonar's verdict decides one thing — whether this
+        # change may enter main — so it runs at that decision and nowhere else.
+        # On a push to main the merge has already happened and a red gate would
+        # only make main look broken after the fact.
+        #
+        # Note this is `if:`, not `if: !cancelled()` like the checks above: those
+        # run anyway so one CI round reports every failure, but there is nothing
+        # to report here when a suite failed, and publishing after a failed suite
+        # is how new_coverage got pinned at 0.0 before.
+        if: github.event_name == 'pull_request'
         uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
         with:
-          # Non-blocking, matching the pre-push gate's GRAPHKNOWS_SONAR_BLOCKING=0.
-          # Arming this in CI while gate.sh stayed unarmed made two ledgers out of
-          # one stance, and CI enforced a phase this project has not entered.
+          # Blocking: a PR carrying Sonar findings fails this job.
           #
-          # It cannot bind yet regardless: main's branch-level new code definition
-          # is pinned to a deleted analysis, so EVERY analysis of main fails with
-          # "Analysis '742a0440-...' configured as manual baseline for the New Code
-          # Period no longer exists" and main's last good reading is 2026-05-26.
-          # Against that dead baseline a PR's new code is computed from a
-          # three-month-old reference, so unrelated pre-existing smells land on
-          # whoever touches the file next. The pin is unreachable: SonarQube Cloud
-          # exposes no UI control for it, the v1 new_code_periods endpoints 404,
-          # and the v2 host refuses a user token.
-          #
-          # Re-arm here and in gate.sh together, once that is repaired. See #167.
-          args: -Dsonar.qualitygate.wait=false
+          # For that failure to actually stop a merge, `gate` must be a required
+          # status check on main. It is not — branch protection returns 403 on a
+          # Free-plan private repo — so today this reports red without preventing
+          # the merge button. See #167.
+          args: -Dsonar.qualitygate.wait=true
 
   audit:
     name: audit

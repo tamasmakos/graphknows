@@ -22,11 +22,26 @@ SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-0}"
 SCANNER_IMAGE="${SONAR_SCANNER_IMAGE:-sonarsource/sonar-scanner-cli:latest}"
 
 # Token from the environment, else from .env (never echoed).
-if [ -z "${SONAR_TOKEN:-}" ] && [ -f .env ]; then
-  SONAR_TOKEN="$(grep -E '^SONAR_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '"'"'"' \r')"
+#
+# Two candidate .env files, because .gitignore excludes .env and therefore NO
+# git worktree ever has one. Every fix-issues run works in a worktree, so
+# reading only $REPO_ROOT/.env means an armed gate blocks every agent push with
+# "SONAR_TOKEN not found" while the token sits in the main checkout all along.
+# --git-common-dir resolves to the MAIN worktree's .git from inside any linked
+# worktree, and to plain .git otherwise, so this one lookup covers both.
+_read_token() { grep -E '^SONAR_TOKEN=' "$1" | head -1 | cut -d= -f2- | tr -d '"'"'"' \r'; }
+
+if [ -z "${SONAR_TOKEN:-}" ]; then
+  for _env in ".env" "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/../.env"; do
+    if [ -f "$_env" ] && SONAR_TOKEN="$(_read_token "$_env")" && [ -n "$SONAR_TOKEN" ]; then
+      break
+    fi
+    SONAR_TOKEN=""
+  done
 fi
 if [ -z "${SONAR_TOKEN:-}" ]; then
-  echo "sonar: SONAR_TOKEN not set and not found in .env — cannot publish." >&2
+  echo "sonar: SONAR_TOKEN not set, and no .env with one in this worktree or the" >&2
+  echo "       main checkout - cannot publish." >&2
   exit 1
 fi
 

@@ -29,9 +29,7 @@ if [ "$COVERAGE_FLOOR" -lt "$COVERAGE_FLOOR_MIN" ] 2>/dev/null; then
   echo "      may be raised but never lowered. Using $COVERAGE_FLOOR_MIN." >&2
   COVERAGE_FLOOR=$COVERAGE_FLOOR_MIN
 fi
-# Phase 2 uploads the Sonar analysis without gating on the verdict, so the real
-# new_coverage reading is visible before it binds. Flip to 1 to arm it.
-SONAR_BLOCKING="${GRAPHKNOWS_SONAR_BLOCKING:-0}"
+# SONAR_BLOCKING removed: this gate no longer runs Sonar at all. See section 7.
 
 # The known-vulnerability ledger lives in .pip-audit-ignore, read by this gate
 # AND by .github/workflows/ci.yml. It used to be a KNOWN_VULNS array here, which
@@ -174,22 +172,19 @@ else
 fi
 
 # -- 7. SonarCloud -----------------------------------------------------------
-step "SonarCloud analysis (blocking=${SONAR_BLOCKING})"
-# No `if [ -f ... ]` guard: a missing publisher used to make this stage vanish
-# with no output and no failure, which is the same silent skip the header of this
-# file forbids. An absent script is a broken gate, so it is reported as one.
-if [ ! -f scripts/sonar-publish.sh ]; then
-  echo "gate: scripts/sonar-publish.sh is missing - the Sonar stage cannot run." >&2
-  FAILED+=("SonarCloud analysis (script missing)")
-else
-  bash scripts/sonar-publish.sh
-  rc=$?
-  if [ "$SONAR_BLOCKING" = "1" ]; then
-    record $rc "SonarCloud quality gate"
-  elif [ $rc -ne 0 ]; then
-    echo "gate: Sonar analysis reported failure - NOT blocking this push yet." >&2
-  fi
-fi
+# Deliberately absent. Sonar runs on the pull request into main and nowhere else:
+# that is the point at which the verdict decides something, and CI analyses a real
+# clone, which is the only place a correct one can be produced.
+#
+# A pre-push analysis could not be correct anyway. The scanner reads git history
+# for blame, and in a linked worktree `.git` is a file naming an absolute host path
+# to the main repo; mounting only the worktree makes JGit fail with
+# "RepositoryNotFoundException". Every fix-issues lane pushes from a worktree, so a
+# blocking pre-push Sonar stage blocks the whole loop on an artefact of where the
+# checkout lives, which says nothing about the code.
+#
+# This is not the "silent skip" the header forbids: the check still runs, on the PR,
+# and its verdict still blocks. It runs once, where it is meaningful.
 
 # -- Verdict -----------------------------------------------------------------
 if [ ${#FAILED[@]} -ne 0 ]; then
