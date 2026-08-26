@@ -169,17 +169,26 @@ jobs:
         # `inputs` is null outside a workflow_call, so `!inputs.skip_sonar` is
         # true there and PR behaviour is unchanged.
         if: github.event_name == 'pull_request' && !inputs.skip_sonar
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
         with:
-          # Blocking: a PR carrying Sonar findings fails this job.
+          # Reporting, not blocking. The gate is still WAITED for, so the verdict
+          # and its failing conditions land in this job's log and on the PR — but
+          # `continue-on-error` keeps that verdict from failing the job.
           #
-          # For that failure to actually stop a merge, `gate` must be a required
-          # status check on main. It is not — branch protection returns 403 on a
-          # Free-plan private repo — so today this reports red without preventing
-          # the merge button. See #167.
+          # It was blocking, and could not act on it: for the failure to stop a
+          # merge, `gate` must be a required status check on main, and branch
+          # protection returns 403 on a Free-plan private repo (#167). So a red
+          # Sonar only ever painted CI red next to a green suite, and the cost of
+          # that is real — it trains everyone to read a red gate as "Sonar again".
+          # The checks that decide whether code may enter main are the suite,
+          # mypy, import-linter and bandit above; all of them still fail the job.
+          #
+          # Restore blocking by deleting `continue-on-error` — worth doing the day
+          # branch protection can actually enforce it.
           args: -Dsonar.qualitygate.wait=true
 
   audit:
