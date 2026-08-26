@@ -46,19 +46,21 @@ class Ingestor:
 
         async def _ingest_one(index: int, doc: EvalDocument) -> dict[str, Any]:
             title = doc.title or f"{session_id}-doc-{index}"
+            # Turn-fed units send `messages`, which buffers cheap TURN rows that
+            # the flush below drains through the real pipeline — the same
+            # lifecycle a live agent has, and the one whose chunking is the
+            # sliding window. A document sends `text` and is extracted eagerly.
+            payload: dict[str, Any] = {
+                "session_id": session_id,
+                "title": title,
+                "infer": infer,
+                "metadata": {"anchor_date": doc.anchor_date},
+                "namespace": namespace,
+            }
+            payload["messages" if doc.turns else "text"] = doc.turns or doc.text
             async with sem:
                 try:
-                    result = await self._client.call_tool(
-                        "memory_ingest",
-                        {
-                            "text": doc.text,
-                            "session_id": session_id,
-                            "title": title,
-                            "infer": infer,
-                            "metadata": {"anchor_date": doc.anchor_date},
-                            "namespace": namespace,
-                        },
-                    )
+                    result = await self._client.call_tool("memory_ingest", payload)
                 except Exception as exc:
                     log.exception("INGEST FAILED doc=%s (%s)", title, type(exc).__name__)
                     print(
@@ -86,6 +88,7 @@ class Ingestor:
             documents=len(outputs),
             chunks=sum(int(o.get("chunks", 0)) for o in outputs),
             entities=sum(int(o.get("entities", 0)) for o in outputs),
+            turns=sum(int(o.get("turns", 0)) for o in outputs),
             ingest_elapsed_s=round(sum(float(o.get("elapsed_s", 0)) for o in outputs), 3),
             ingest_error_count=sum(1 for o in outputs if "chunks" not in o),
         )
@@ -102,7 +105,18 @@ class Ingestor:
             )
             flush = result if isinstance(result, dict) else {"result": result}
         except Exception as exc:
-            log.warning("flush failed for %s: %s", session_id, exc)
+            # `%s` of a TimeoutError is the EMPTY STRING, so this line used to
+            # read "flush failed for <sid>: " and looked like a truncated log
+            # rather than the timeout it was. Name the type — the run is scored
+            # either way, and a scored half-flushed graph is the worst outcome
+            # here (it looks like a real, bad number).
+            log.warning(
+                "flush failed for %s: %s: %s (the conversation will be scored on an "
+                "INCOMPLETE graph — treat its metrics as invalid)",
+                session_id,
+                type(exc).__name__,
+                exc or "<no message>",
+            )
             ingest.flush_error_count = 1
             return
 
@@ -112,3 +126,4 @@ class Ingestor:
         ingest.flush_topics = int(flush.get("topics_created", 0))
         ingest.flush_elapsed_s = round(float(flush.get("elapsed_s", 0)), 3)
         ingest.flush_error_count = len(flush.get("errors", []))
+        ingest.flush_stage_s = {str(k): float(v) for k, v in (flush.get("stage_s") or {}).items()}

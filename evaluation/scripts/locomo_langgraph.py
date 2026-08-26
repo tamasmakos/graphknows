@@ -7,13 +7,17 @@
 Everything LoCoMo-specific lives HERE. ``graphknows`` is handed clean text plus
 metadata and asked for hits back; it is never told anything about this dataset.
 
-The workflow is two compiled graphs over one namespace:
+One namespace, one compiled graph:
 
-    INGEST  (per turn)      parse -> classify -> store -> trace
-    SESSION END             flush  (buffered turns -> knowledge graph)
-    RETRIEVE (per question) recall -> answer -> judge
+    INGEST  (per turn)      mem.add(text, speaker=, timestamp=, infer=)
+    SESSION END             mem.flush()   (buffered turns -> knowledge graph)
+    RETRIEVE (per question) recall -> answer
 
-``parse`` is the step that was missing. A LoCoMo turn arrives already
+Ingest is a loop, not a graph. It used to be a compiled two-node ``StateGraph``
+(``classify -> store``) that existed only because ``remember`` could not carry a
+per-turn ``infer``; it can now, so the ceremony is gone.
+
+``parse_turn`` is the step that matters. A LoCoMo turn arrives already
 structured — speaker, timestamp, utterance — and flattening it into
 ``"4:04 pm on 20 January, 2023 | Gina: Hey Jon!"`` made the extractor re-derive
 the speaker and the date AS ENTITIES. Measured on conv-30: "Jon" never existed
@@ -22,9 +26,11 @@ fragments. Each field now goes where it belongs: text stays text, the speaker
 becomes ``Message.name`` (-> ``CHUNK.speaker``), the timestamp becomes
 ``Message.timestamp`` (-> the anchor relative dates resolve against).
 
-``classify`` decides whether a turn is worth extracting from. graphknows has no
-opinion about that — it exposes ``infer`` and the caller decides. "Hey Jon!" is
-stored and embedded and stays retrievable as text; it just mints no entities.
+Whether a turn is worth extracting from is ``graphknows.worth_extracting``.
+Pass it once as ``GraphKnowsMemory(..., infer=worth_extracting)`` and every
+turn is judged; this file calls it per turn only because it also reports the
+rate. "Hey Jon!" is stored and embedded and stays retrievable as text; it just
+mints no entities.
 """
 
 from __future__ import annotations
@@ -45,13 +51,15 @@ from dateparser import parse as _parse_date
 # scope the ImportError aborted pytest COLLECTION — so every test of this file's
 # LoCoMo logic silently never ran. Deferring them keeps the schema layer below
 # importable, and therefore testable, without the extra.
+from evaluation.common.lexical import evidence_recall
 from evaluation.common.llm import extract_answer
+from evaluation.locomo.adapter import render_facts
 from evaluation.locomo.prompts import ANSWER_PROMPT
-from graphknows import Hit, render_memories
+from graphknows import Hit, worth_extracting
 from graphknows.channels.base import Channel
-from graphknows.channels.temporal import query_date_candidates
 from graphknows.integrations.langgraph import GraphKnowsMemory
 from graphknows.ranking.rrf import rrf_score
+from graphknows.temporal import query_date_candidates
 
 DATA = "evaluation/data/locomo/questions.jsonl"
 
@@ -88,46 +96,6 @@ def parse_turn(message: dict[str, Any], *, prefix: bool = False) -> dict[str, st
     return {"speaker": speaker, "timestamp": timestamp, "text": text}
 
 
-# ------------------------------------------------------------- classify ----
-def should_extract(text: str, nlp: Any) -> tuple[bool, str]:
-    """Is this turn worth extracting from? ``(yes, reason)``.
-
-    A turn earns extraction when it predicates something about something.
-    Naming a person does not count — "Hey Jon!" and "Mochi's vet is Dr. Nagy"
-    BOTH contain a PERSON entity, and only the second asserts anything; the
-    vocative has no clause at all. Skipped turns are still stored and embedded,
-    so a wrong skip costs graph coverage, never the evidence.
-    """
-    stripped = (text or "").strip()
-    if not stripped:
-        return False, "empty"
-    doc = nlp(stripped)
-
-    subject = next((t for t in doc if t.dep_ in {"nsubj", "nsubjpass"}), None)
-    if subject is None:
-        # Speech drops subjects constantly ("Still working on opening a dance
-        # studio"). An asserting verb plus a content noun is an elliptical clause.
-        verb = next((t for t in doc if t.pos_ == "VERB"), None)
-        noun = next((t for t in doc if t.pos_ == "NOUN"), None)
-        if verb is not None and (noun is not None or doc.ents):
-            about = noun.text if noun is not None else doc.ents[0].text
-            return True, f"elliptical clause: {verb.lemma_!r} + {about!r}"
-        return False, "no clause with a subject (greeting, vocative, backchannel)"
-
-    if subject.pos_ in {"NOUN", "PROPN"}:
-        return True, f"clause about {subject.text!r}"
-    if (noun := next((t for t in doc if t.pos_ == "NOUN"), None)) is not None:
-        return True, f"clause mentioning {noun.text!r}"
-    # A first-person subject IS nameable now that graphknows takes the speaker
-    # as a parameter — "I moved to Budapest" is a fact about Gina. This branch
-    # used to reject it as "a bare pronoun", which is also why the prefixed arm
-    # extracted 98% of turns to this one's 91%: its "Gina:" prefix handed every
-    # turn a PROPN subject, so the skip never fired.
-    if subject.text.lower() in {"i", "we", "you", "my", "our"}:
-        return True, f"first-person clause: {subject.text!r} resolves to the speaker"
-    return False, "clause subject is a bare pronoun with no content noun"
-
-
 # ------------------------------------------------------- custom schema ----
 def session_dates(sessions: list[dict[str, Any]]) -> dict[str, str]:
     """``{"conv-30-s1": "2023-01-20", ...}`` — one date per session.
@@ -159,7 +127,6 @@ class LoCoMoSessionSchema(Channel):
     What it adds on top of the universal graph:
 
     ``SESSION-[:ON_DATE]->TEMPORAL``   the conversation-day, as a real node
-    ``CHUNK-[:SAID_BY]->ENTITY``       attribution as an edge, not a string
     ``CHUNK.ts`` backfill              every chunk inherits its session's date
 
     The backfill is the measurable one. 26 of conv-30's 81 questions ask *when*
@@ -171,11 +138,12 @@ class LoCoMoSessionSchema(Channel):
     exactly one date, so the session is a guaranteed fallback. Watch the
     ``dated=`` percentage in the run report.
 
-    ``SAID_BY`` is deliberately NOT a ``MENTIONS`` edge. Commit c891e7b removed
-    the speaker's MENTIONS link to its own chunk because speaker entities appear
-    in ~half of all chunks and flooded the entity channel — ``_discriminative_
-    entities`` drops anything over 50%. A separate edge type keeps attribution
-    traversable without putting Gina and Jon back into that filter's way.
+    There was a third layer, ``CHUNK-[:SAID_BY]->ENTITY``. It was written on
+    every flush and read by nothing — attribution already travels as
+    ``CHUNK.speaker``, which is what ``Hit.speaker`` and the renderer use. It is
+    deleted rather than wired up: this docstring's own first paragraph names
+    write-only schema as the failure this repo keeps paying for, and the honest
+    move is to stop paying it.
     """
 
     name = "locomo_session"
@@ -187,13 +155,11 @@ class LoCoMoSessionSchema(Channel):
         """Write this session's schema layer. Runs once per flush, after chunks exist."""
         iso = self._dates.get(session_id, "")
         # Idempotent DDL, declared by the layer that uses it. ArcadeDB needs an
-        # edge type to exist before an edge of it can be created, and these two
-        # are ours, not the library's.
-        for ddl in (
-            "CREATE EDGE TYPE SAID_BY IF NOT EXISTS",
-            "CREATE EDGE TYPE ON_DATE IF NOT EXISTS",
-        ):
-            await store.client.command(store.database, ddl, language="sql")
+        # edge type to exist before an edge of it can be created, and this one
+        # is ours, not the library's.
+        await store.client.command(
+            store.database, "CREATE EDGE TYPE ON_DATE IF NOT EXISTS", language="sql"
+        )
 
         if iso:
             # The session's own date, as a first-class TEMPORAL node the same
@@ -217,18 +183,6 @@ class LoCoMoSessionSchema(Channel):
                 sid=session_id,
                 iso=iso,
             )
-
-        # Attribution: the chunk's speaker string, resolved to the ENTITY that
-        # already carries that identity. name_norm is the library's merge key
-        # (casefolded, whitespace-collapsed) — matching it is what keeps this
-        # pointing at the real person node instead of minting a second one.
-        await store.command(
-            "MATCH (c:CHUNK {session_id: $sid}) "
-            "WHERE c.speaker IS NOT NULL AND c.speaker <> '' "
-            "MATCH (e:ENTITY) WHERE e.name_norm = toLower(c.speaker) "
-            "MERGE (c)-[:SAID_BY]->(e)",
-            sid=session_id,
-        )
 
     async def collect(self, ctx: Any, rt: Any, top_k: int) -> dict[str, Any]:
         """Chunks belonging to a session whose DATE the query names.
@@ -264,81 +218,38 @@ class LoCoMoSessionSchema(Channel):
 
 
 # ------------------------------------------------------------- workflow ----
-class IngestState(TypedDict, total=False):
-    turn: dict[str, str]
-    infer: bool
-    reason: str
-
-
 class QAState(TypedDict, total=False):
     messages: list[dict[str, str]]
+    # Everything below `messages` is written by `mem.recall`. `memories_context`
+    # is the one the answerer uses: the hits already deduped, dated, attributed,
+    # ordered chronologically and budgeted. The rest are for triage.
     memories: list[str]
     memories_sources: list[str]
     memories_hits: list[Hit]
     memories_facts: list[str]
-    dated: int
-    undated: int
-
-
-def build_ingest_app(mem: GraphKnowsMemory, nlp: Any, stats: collections.Counter[str]) -> Any:
-    """parse -> classify -> store. One turn per invocation."""
-    from langgraph.graph import END, START, StateGraph
-
-    def classify(state: IngestState) -> dict[str, Any]:
-        ok, why = should_extract(state["turn"]["text"], nlp)
-        stats["extract" if ok else "store_only"] += 1
-        return {"infer": ok, "reason": why}
-
-    async def store(state: IngestState) -> dict[str, Any]:
-        t = state["turn"]
-        await mem.add(
-            t["text"],  # clean utterance, no prefix
-            speaker=t["speaker"],  # -> CHUNK.speaker
-            timestamp=t["timestamp"],  # -> relative-date anchor
-            infer=state["infer"],
-        )
-        return {}
-
-    g = StateGraph(IngestState)
-    g.add_node("classify", classify)
-    g.add_node("store", store)
-    g.add_edge(START, "classify")
-    g.add_edge("classify", "store")
-    g.add_edge("store", END)
-    return g.compile()
+    memories_context: str
+    memories_dated: int
+    memories_undated: int
 
 
 def build_qa_app(mem: GraphKnowsMemory, llm: Any, reference_date: str) -> Any:
     """recall -> answer. One question per invocation.
 
-    The answerer is the harness's staged ``ANSWER_PROMPT`` verbatim. It is built
-    on dated, attributed memories and a structured fact-sheet; the three-line
-    prompt it replaces threw both away, which is half of why the clean-parse arm
-    read as a regression.
-
-    Rendering those memories is ``graphknows.render_memories``, not something
-    this file does: dating, attributing, deduping and budgeting a ranked hit
-    list is the library's job on either arm, and the ~60 lines that used to do
-    it here disagreed with the harness's own renderer about where a date comes
-    from. Both arms still work — a hit with a ``ts`` renders dated and
+    The answerer is the harness's staged ``ANSWER_PROMPT`` verbatim, filled from
+    two library-rendered blocks and nothing else. Both used to be assembled here
+    — ~60 lines that disagreed with the harness's own renderer about where a
+    date comes from, which is half of why the clean-parse arm read as a
+    regression. Both arms still work: a hit with a ``ts`` renders dated and
     attributed, one without (the ``--prefix`` arm) passes through carrying its
-    own inline date — because that distinction lives in :class:`Hit`.
+    own inline date, because that distinction lives in :class:`Hit`.
     """
     from langgraph.graph import END, START, StateGraph
 
     async def answer(state: QAState) -> dict[str, Any]:
-        memories = render_memories(state.get("memories_hits", []))
-        facts = state.get("memories_facts", [])
         prompt = ANSWER_PROMPT.format(
             reference_date=reference_date or "2023",
-            facts=(
-                "Known facts (structured, extracted from the conversations):\n"
-                + "\n".join(f"- {f}" for f in facts)
-                + "\n\n"
-                if facts
-                else ""
-            ),
-            memories=memories.text or "(nothing recalled)",
+            facts=render_facts(state.get("memories_facts")),
+            memories=state.get("memories_context") or "(nothing recalled)",
             question=state["messages"][-1]["content"],
         )
         r = await llm.ainvoke(prompt)
@@ -347,8 +258,6 @@ def build_qa_app(mem: GraphKnowsMemory, llm: Any, reference_date: str) -> Any:
                 *state["messages"],
                 {"role": "assistant", "content": extract_answer(str(r.content)) or "Unknown"},
             ],
-            "dated": memories.dated,
-            "undated": memories.undated,
         }
 
     g = StateGraph(QAState)
@@ -362,7 +271,7 @@ def build_qa_app(mem: GraphKnowsMemory, llm: Any, reference_date: str) -> Any:
 
 # ---------------------------------------------------------------- phases ----
 async def ingest(
-    sessions: list[dict[str, Any]], ns: str, nlp: Any, prefix: bool = False
+    sessions: list[dict[str, Any]], ns: str, prefix: bool = False
 ) -> collections.Counter[str]:
     stats: collections.Counter[str] = collections.Counter()
     # The prefixed baseline sets no metadata fields at all, so it must not get
@@ -373,11 +282,21 @@ async def ingest(
         sid = s["session_id"]
         t0 = time.monotonic()
         async with GraphKnowsMemory(sid, namespace=ns, channels=schema) as mem:
-            app = build_ingest_app(mem, nlp, stats)
             for msg in s["messages"]:
                 turn = parse_turn(msg, prefix=prefix)
-                if turn["text"]:
-                    await app.ainvoke({"turn": turn})
+                if not turn["text"]:
+                    continue
+                # `infer=worth_extracting` on the constructor does this for
+                # every turn with no per-turn code; it is called explicitly here
+                # only because the report needs the rate.
+                extract = worth_extracting(turn["text"])
+                stats["extract" if extract else "store_only"] += 1
+                await mem.add(
+                    turn["text"],  # clean utterance, no prefix
+                    speaker=turn["speaker"],  # -> CHUNK.speaker
+                    timestamp=turn["timestamp"],  # -> relative-date anchor
+                    infer=extract,
+                )
             flush = await mem.flush()
             after = await mem.stats()
         cov = flush.get("verifier_coverage") or {}
@@ -413,27 +332,6 @@ def reference_date_of(sessions: list[dict[str, Any]]) -> str:
     return max(seen).strftime("%d %B %Y") if seen else ""
 
 
-def evidence_recall(gold_turns: list[str], memories: list[str]) -> float:
-    """Fraction of the gold evidence turns present verbatim in what was recalled.
-
-    THE metric that separates a retrieval miss from a generation miss, and the
-    only one that can tell you which half to work on. Without it a wrong answer
-    is unattributable: "Unknown" looks identical whether the evidence never
-    arrived or arrived and was ignored.
-
-    Same contract as ``evaluation.common.lexical.evidence_recall`` — exact
-    substring on whitespace-normalised text, per-hop so a 4-evidence question
-    can score 0.25, and it cannot be inflated by retrieving more. Reimplemented
-    over hit dicts rather than imported because that one takes RetrievedPassage.
-
-    Scoring only. The gold turns never reach the retriever or the answerer.
-    """
-    if not gold_turns:
-        return -1.0  # no gold evidence — excluded from the mean, never scored 0
-    haystack = " ".join(" ".join(m.split()) for m in memories)
-    return sum(1 for turn in gold_turns if turn in haystack) / len(gold_turns)
-
-
 def gold_evidence(q: dict[str, Any], sessions: list[dict[str, Any]]) -> list[str]:
     """``['D1:3']`` -> the utterance CONTENTS. 1-indexed on both axes."""
     ids = [(int(a), int(b)) for a, b in re.findall(r"D(\d+):(\d+)", str(q.get("evidence") or ""))]
@@ -461,7 +359,12 @@ async def answer_questions(
     from langchain_openai import ChatOpenAI
 
     from evaluation.common.dspy_judge import DSPyJudge
+    from evaluation.common.tracing import tracer
 
+    # One Langfuse session per namespace: every question in a run lands on one
+    # timeline, and two runs over the same graph are directly comparable there.
+    # Off unless LANGFUSE_* is set, so this changes nothing by default.
+    trace_config, langfuse = tracer(ns, f"{conv}@{ns}", tags=[conv, "langgraph-harness"])
     judge = DSPyJudge(os.environ.get("LLM_MODEL", "meta-llama/llama-3.3-70b-instruct"))
     llm = ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
@@ -491,13 +394,19 @@ async def answer_questions(
             # these arms are compared at. A real failure still lands as 0.0.
             for attempt in (1, 2):
                 try:
-                    st = await asyncio.wait_for(app.ainvoke(state), timeout=180)
+                    st = await asyncio.wait_for(
+                        app.ainvoke(state, config=trace_config), timeout=180
+                    )
                     ans = str(st["messages"][-1]["content"])
                     score, _ = await judge.judge_two_stage(q["question"], str(q["answer"]), ans)
                     sources = st.get("memories_sources", [])
-                    dated, undated = int(st.get("dated", 0)), int(st.get("undated", 0))
+                    dated = int(st.get("memories_dated", 0))
+                    undated = int(st.get("memories_undated", 0))
                     recalled = list(st.get("memories", []))
-                    ev_recall = evidence_recall(gold_turns, recalled)
+                    # -1.0 for "no gold evidence" is this report's sentinel, not
+                    # the metric's: `report` excludes those rather than mean them
+                    # in as 0.0. 4 of LoCoMo's 1540 rows ship none.
+                    ev_recall = evidence_recall(gold_turns, recalled) if gold_turns else -1.0
                     errored = False
                     break
                 except Exception as exc:
@@ -533,6 +442,10 @@ async def answer_questions(
             )
             with open(f"/tmp/locomo_lg_{conv}.json", "w", encoding="utf-8") as fh:
                 json.dump(out, fh, indent=1)
+    if langfuse is not None:
+        # The exporter ships in the background; a harness that exits on the last
+        # question loses the tail of its own run.
+        langfuse.flush()
     return out
 
 
@@ -616,12 +529,7 @@ async def main() -> None:
     )
     a = p.parse_args()
 
-    import spacy
-
-    from graphknows.settings import GraphKnowsSettings
-
     sessions, questions = load(a.conv)
-    nlp = spacy.load(GraphKnowsSettings().spacy_model)
     ns = a.namespace or a.conv
 
     stats: collections.Counter[str] = collections.Counter()
@@ -629,7 +537,7 @@ async def main() -> None:
     print(f"arm: {'PREFIXED (baseline replication)' if a.prefix else 'CLEAN (metadata fields)'}")
     print(f"conv={a.conv}  namespace={ns}  sessions={len(sessions)}  questions={len(questions)}")
     if a.phase in ("ingest", "both"):
-        stats = await ingest(sessions, ns, nlp, a.prefix)
+        stats = await ingest(sessions, ns, a.prefix)
     if a.phase in ("qa", "both"):
         qa = await answer_questions(
             questions,

@@ -10,10 +10,10 @@ layers =
     graphknows.memory
     graphknows.ingestion | graphknows.retrieval
     graphknows.channels
-    graphknows.ontology
+    graphknows.symbolic
     graphknows.ranking | graphknows.topics
     graphknows.storage
-    graphknows.models | graphknows.settings | graphknows.llm
+    graphknows.models | graphknows.settings | graphknows.llm | graphknows.temporal
     graphknows.exceptions
 
 [importlinter:contract:pipelines-independent]

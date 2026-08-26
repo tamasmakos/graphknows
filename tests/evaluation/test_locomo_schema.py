@@ -64,14 +64,13 @@ class TestSessionDates:
 
 class TestPopulate:
     @pytest.mark.asyncio
-    async def test_declares_its_own_edge_types(self) -> None:
+    async def test_declares_its_own_edge_type(self) -> None:
         """The layer owns its DDL; ArcadeDB needs the type before the edge."""
         store = _store()
 
         await LoCoMoSessionSchema({"s1": "2023-01-20"}).populate(store, "s1")
 
         ddl = [c.args[1] for c in store.client.command.await_args_list]
-        assert "CREATE EDGE TYPE SAID_BY IF NOT EXISTS" in ddl
         assert "CREATE EDGE TYPE ON_DATE IF NOT EXISTS" in ddl
 
     @pytest.mark.asyncio
@@ -101,37 +100,29 @@ class TestPopulate:
         assert "c.ts IS NULL OR c.ts = ''" in backfill[0].args[0]
 
     @pytest.mark.asyncio
-    async def test_attribution_is_said_by_not_mentions(self) -> None:
-        """Commit c891e7b removed the speaker's MENTIONS edge to its own chunk.
+    async def test_writes_no_attribution_edge(self) -> None:
+        """The layer writes only what it reads back.
 
-        Speakers sit in ~half of all chunks, and _discriminative_entities drops
-        anything over 50%. A distinct edge keeps attribution traversable without
-        putting Gina and Jon back in that filter's way.
+        It used to also write CHUNK-[:SAID_BY]->ENTITY on every flush, which
+        nothing ever traversed — attribution already reaches the answerer as
+        ``CHUNK.speaker`` via ``Hit.speaker``. Write-only schema is the failure
+        this seam exists to make visible, so the edge is gone rather than
+        wired up.
         """
         store = _store()
 
         await LoCoMoSessionSchema({"s1": "2023-01-20"}).populate(store, "s1")
 
-        said_by = [c for c in store.command.await_args_list if "SAID_BY" in c.args[0]]
-        assert len(said_by) == 1
-        assert "MENTIONS" not in said_by[0].args[0]
-        # Matches the library's own merge key, so it points at the real person
-        # node instead of minting a second one.
-        # toLower, not toLowerCase: ArcadeDB's Cypher takes the openCypher name,
-        # and the wrong one soft-fails into the flush error list rather than
-        # raising — the edge would simply never exist.
-        assert "e.name_norm = toLower(c.speaker)" in said_by[0].args[0]
+        assert not any("SAID_BY" in c for c in _cyphers(store))
 
     @pytest.mark.asyncio
-    async def test_a_session_with_no_known_date_writes_no_date_structure(self) -> None:
+    async def test_a_session_with_no_known_date_writes_nothing(self) -> None:
         store = _store()
 
         await LoCoMoSessionSchema({}).populate(store, "unknown-session")
 
         assert not any("ON_DATE" in c for c in _cyphers(store))
         assert not any("SET c.ts" in c for c in _cyphers(store))
-        # Attribution does not depend on the date and must still be written.
-        assert any("SAID_BY" in c for c in _cyphers(store))
 
 
 class TestCollect:

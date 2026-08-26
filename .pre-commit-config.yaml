@@ -37,7 +37,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy (graphknows)
-        files: ^graphknows/(?!utils/)
+        files: ^graphknows/
         args:
           - --strict
           - --ignore-missing-imports
@@ -58,10 +58,6 @@ repos:
           - graphknows/
           - --skip
           - B101,B104,B105,B110,B112
-          # Must be bandit's own -x: pre-commit's `exclude:` only filters the
-          # filenames passed to a hook, and this hook uses pass_filenames: false.
-          - -x
-          - graphknows/utils
         pass_filenames: false
   - repo: local
     hooks:

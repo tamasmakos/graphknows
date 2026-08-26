@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 _PROMPT_VERSION = "locomo-judge-two-stage-v3-strict-dates"
 
 
-def _render_facts(facts: list[str] | None) -> str:
+def render_facts(facts: list[str] | None) -> str:
     """Render the D8 fact-sheet as a prompt block, or "" when there are none.
 
     Empty facts yield "" so the formatted prompt is byte-identical to the
@@ -61,7 +61,7 @@ class LocomoAdapter(BenchmarkAdapter):
     ) -> tuple[str, dict[str, Any]]:
         prompt = prompts.ANSWER_PROMPT.format(
             reference_date=unit.reference_date or "2023",
-            facts=_render_facts(facts),
+            facts=render_facts(facts),
             memories=format_memories(passages),
             question=case.question,
         )

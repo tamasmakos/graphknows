@@ -1,6 +1,6 @@
 """The bundled Common Core Ontologies digest: the always-on default ontology.
 
-Four things are load-bearing here and each has a test that fails loudly:
+Five things are load-bearing here and each has a test that fails loudly:
 
 1. **No rdflib.** ``rdflib`` ships in the ``assisted`` extra, but the ontology
    layer runs in the default ``llm_free`` mode a bare ``pip install graphknows``
@@ -8,7 +8,7 @@ Four things are load-bearing here and each has a test that fails loudly:
    loading it in a fresh interpreter and checking ``sys.modules``. This is also
    what makes the two memory modes load the ontology identically.
 2. **Offerable relations.** Property selection is gated on domain and range, so
-   a property declaring neither can never be offered to the extractor. CCO's 86
+   a property declaring neither can never be offered to the extractor. CCO's 87
    familial relations declare neither, and none is inheritable — the whole chain
    up to "has familial relationship to" is empty — so the digest asserts
    Person->Person for that module. Lose that and the conversational relation
@@ -17,9 +17,13 @@ Four things are load-bearing here and each has a test that fails loudly:
    property, but the field stays a tuple: the any-match conformance below is
    written against multi-valued declarations and a single-string field would
    silently keep one of them.
-4. **A similarity floor on the label hints.** With 1401 classes the top-k is not
+4. **A similarity floor on the label hints.** With 1437 classes the top-k is not
    "the whole ontology", so an unfloored top-12 injects twelve arbitrary labels
    into every chunk's extraction schema.
+5. **The asset is current.** ``cco.json`` is a build PRODUCT checked into git,
+   and it went stale for months against a parser fix nobody re-ran. It is now
+   rebuilt from its sources and compared, every run — see
+   ``TestShippedDigestMatchesItsSources`` for why nothing cheaper works.
 """
 
 from __future__ import annotations
@@ -34,10 +38,20 @@ from typing import Any
 import pytest
 
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
-from graphknows.ontology.loader import OntologyTerm, load_ontology_terms, load_rdf_ontology_file
+from graphknows.symbolic.ontology.loader import (
+    OntologyTerm,
+    load_ontology_terms,
+    load_rdf_ontology_file,
+)
 
 DIGEST = (
-    Path(__file__).resolve().parents[2] / "graphknows" / "ontology" / "assets" / "cco" / "cco.json"
+    Path(__file__).resolve().parents[2]
+    / "graphknows"
+    / "symbolic"
+    / "ontology"
+    / "assets"
+    / "cco"
+    / "cco.json"
 )
 
 
@@ -59,7 +73,7 @@ class TestDigestLoads:
         """
         code = (
             "import sys, json;"
-            "from graphknows.ontology.loader import load_ontology_terms;"
+            "from graphknows.symbolic.ontology.loader import load_ontology_terms;"
             f"terms = load_ontology_terms({str(DIGEST)!r});"
             "print(json.dumps({'n': len(terms), 'rdflib': 'rdflib' in sys.modules}))"
         )
@@ -97,7 +111,7 @@ class TestDigestLoads:
         assert supervised.range == ("Person",)
 
     def test_familial_relations_are_offerable(self, terms: list[OntologyTerm]) -> None:
-        """The 86 familial properties declare no domain/range, and the gate needs one.
+        """The 87 familial properties declare no domain/range, and the gate needs one.
 
         CCO states none anywhere on the chain ("has brother" -> "is sibling of"
         -> "has familial relationship to" are all empty), so the digest asserts
@@ -112,19 +126,24 @@ class TestDigestLoads:
     def test_the_relation_vocabulary_is_not_mostly_unofferable(
         self, terms: list[OntologyTerm]
     ) -> None:
-        """Most properties must be selectable, or the BFO resolution regressed."""
+        """Every property must be selectable, or the BFO resolution regressed.
+
+        264 of 264: BFO supplies the endpoints CCO types against, and unwrapping
+        the ``owl:unionOf`` blank nodes supplies the rest. It was 234 while the
+        shipped digest predated that unwrapping.
+        """
         properties = [t for t in terms if t.kind == "property"]
         offerable = [t for t in properties if t.domain and t.range]
-        assert len(offerable) == 234
+        assert len(offerable) == len(properties) == 264
 
     def test_a_bfo_typed_constraint_resolves_to_a_label(self, terms: list[OntologyTerm]) -> None:
         """CCO types its relations against BFO, which is an IMPORT.
 
         ``has process part`` declares ``rdfs:domain obo:BFO_0000015``. Parsing
         the CCO modules without ``cco-imports/bfo-core.ttl`` resolves that IRI to
-        nothing and DROPS the constraint — which is how 199 of 224 properties
-        came to look untyped, silently emptying a relation vocabulary that is
-        gated on domain and range.
+        nothing and DROPS the constraint — a CCO-modules-only parse leaves 112
+        of its 224 properties without both endpoints, silently halving a
+        relation vocabulary that is gated on domain and range.
         """
         part_of = _term(terms, "property", "has process part")
         assert (part_of.domain, part_of.range) == (("process",), ("process",))
@@ -168,6 +187,76 @@ class TestDigestLoads:
         assert len(manifest.property_labels) == 264
         assert "Person" in manifest.class_labels
         assert "has brother" in manifest.property_labels
+
+
+# ---------------------------------------------------------------------------
+# The shipped asset vs. what its sources actually produce
+# ---------------------------------------------------------------------------
+
+
+def _difference(shipped: dict[str, Any], fresh: dict[str, Any]) -> str:
+    """One line naming what a fresh build changed, ``""`` when nothing did.
+
+    Not a bare ``assert shipped == fresh``: pytest's rewriting of two 600 KB
+    dicts prints a diff nobody reads, and the useful answer is *which term*
+    moved.
+    """
+    for key in ("source", "ontologies", "imports_unresolved"):
+        if shipped.get(key) != fresh[key]:
+            return f"header {key!r}: shipped {shipped.get(key)!r} != fresh {fresh[key]!r}"
+    for kind in ("classes", "properties"):
+        old = {t["uri"]: t for t in shipped[kind]}
+        new = {t["uri"]: t for t in fresh[kind]}
+        if changed := sorted(u for u in old.keys() | new.keys() if old.get(u) != new.get(u)):
+            # ponytail: the count plus ONE example. Enough to tell "regenerate
+            # it" from "the parser changed under you"; widen to the full list
+            # only if a regression ever needs every term named to be diagnosed.
+            first = changed[0]
+            return (
+                f"{len(changed)} of {len(new)} {kind} differ, e.g. {first}:\n"
+                f"  shipped {old.get(first)!r}\n  fresh   {new.get(first)!r}"
+            )
+    return ""
+
+
+class TestShippedDigestMatchesItsSources:
+    """The asset in git must be what ``BUNDLED_SOURCES`` currently digest to.
+
+    This is the check that was missing. ``cco.json`` sat stale for months after a
+    blank-node-unwrapping fix in ``digest.py``: 31 properties whose
+    ``rdfs:domain``/``rdfs:range`` are ``owl:unionOf`` blank nodes shipped with
+    empty endpoint lists, which the offer gate reads as "never offer this
+    relation" — 234 offerable instead of 264. Nothing failed, because nothing
+    compared the two.
+
+    Two cheaper designs were rejected:
+
+    * **A hash manifest of the .ttl sources.** It would not have caught this at
+      all: the sources never changed, the PARSER did.
+    * **A marked/opt-in test.** An opt-in drift check is the failure mode, not
+      the fix — it is exactly as unrun as no check.
+
+    So it rebuilds, unconditionally, in the subset anyone touching this package
+    already runs. Measured cost ~7 s (of which ~5 s is ``rdf_io._catalog``
+    parsing every RDF file under the source folders, most of them not in the
+    bundle), against a ~55 s ``tests/ontology`` suite. Needs rdflib, which this
+    directory already uses; the no-rdflib guarantee is asserted in a SUBPROCESS
+    above precisely so an in-process import here cannot weaken it.
+    """
+
+    def test_a_fresh_build_reproduces_the_shipped_asset(self) -> None:
+        from graphknows.symbolic.ontology.digest import BUNDLED_SOURCES, build
+
+        shipped = json.loads(DIGEST.read_text(encoding="utf-8"))
+        assert _difference(shipped, build(BUNDLED_SOURCES)) == "", (
+            "cco.json is not what its sources digest to. Regenerate it:\n"
+            "  python -m graphknows.symbolic.ontology.digest \\\n"
+            "    --source graphknows/symbolic/ontology/assets/cco-modules \\\n"
+            "    --source graphknows/symbolic/ontology/assets/cco-extensions"
+            "/FamilialRelationsOntology.ttl \\\n"
+            "    --source graphknows/symbolic/ontology/assets/cco-imports/bfo-core.ttl \\\n"
+            "    --out graphknows/symbolic/ontology/assets/cco/cco.json"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +397,8 @@ def _handler_for(index: Any) -> _STMIngestHandler:
 class TestHintFloor:
     def test_the_two_declarations_of_the_floor_agree(self) -> None:
         """``DEFAULT_MIN_SIM`` is the fallback for direct callers; settings is the knob."""
-        from graphknows.ontology.catalog import DEFAULT_MIN_SIM
         from graphknows.settings import GraphKnowsSettings
+        from graphknows.symbolic.ontology.catalog import DEFAULT_MIN_SIM
 
         assert DEFAULT_MIN_SIM == GraphKnowsSettings().ontology_hint_min_sim == 0.46
 

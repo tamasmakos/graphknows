@@ -46,7 +46,13 @@ dependencies = [
     # It is NOT a transitive dependency of gliner2 — omitting it breaks the
     # default llm_free extraction path with ModuleNotFoundError on first ingest.
     "gliner>=0.2.26",
-    "gliner2>=0.1.0",
+    # Capped below 2.0: gliner2 2.0.0 moved peft/torch/transformers/safetensors
+    # out of the base install and behind a `local` extra, so `pip install gliner2`
+    # imports fine but cannot load a model ("No module named 'peft'"), and
+    # `gliner2[local]` pins transformers<5 which this resolution cannot satisfy.
+    # The cap also makes the Dockerfile's lock-free `uv pip install ".[assisted]"`
+    # agree with uv.lock, which pins 1.3.1.
+    "gliner2>=0.1.0,<2",
     "spacy>=3.7.0",
     "sentence-transformers>=3.0.0",
     # Imported DIRECTLY by embedder.py, gliner_model.py and
@@ -63,7 +69,7 @@ dependencies = [
     # a tf-style scorer — a fused retrieval source that looked live and was not.
     "rank-bm25>=0.2.2",
     # WordNet/FrameNet lookups in the default (llm_free) relation path:
-    # ingestion/extraction/relations/_lingfeatures.py and channels/_framenet.py.
+    # ingestion/extraction/relations/_lingfeatures.py and frames/framenet.py.
     # Core, not eval-only — those call sites guard LookupError (missing *corpus*),
     # which does not catch the ModuleNotFoundError raised by a missing *package*.
     "nltk>=3.8",
@@ -80,13 +86,36 @@ dependencies = [
 # llm_assisted mode: LLM-driven relation extraction + injectable RDF/OWL ontology.
 # The one extra: `pip install 'graphknows[assisted]'`. Lazily imported and guarded
 # by MissingExtraError, so the base install never pulls dspy/rdflib.
-assisted = ["dspy>=2.5.0", "rdflib>=7.0.0"]
+#
+# `networkx` joins them for graphknows.symbolic.ontology.rdf: projecting a folder of RDF
+# needs a multigraph with parallel predicate-keyed edges, and the label-keyed
+# taxonomy needs cycle detection and a topological order. It is imported inside
+# functions behind the same MissingExtraError guard, so a base install never
+# pulls it either.
+assisted = ["dspy>=2.5.0", "rdflib>=7.0.0", "networkx>=3.0"]
 # Framework adapter. Genuinely optional — nothing in the core paths imports it,
 # and it is lazily imported behind a MissingExtraError guard. The `langchain`
 # extra was removed with its adapter: `GraphKnowsRetriever` had zero importers
 # (no test, example, eval, or docs page) and raised a bare ImportError, so the
 # extra it named guarded nothing.
 langgraph = ["langgraph>=0.2.0"]
+# Transformer frame identification (graphknows.symbolic.framenet.srl), an alternative to the
+# default LU+embedding frame guess. Lazily imported behind MissingExtraError and
+# only reached when GRAPHKNOWS_FRAME_SRL is on, so the base install never pulls
+# it. Kept an extra for two reasons beyond size: it pins `protobuf<6` where this
+# project resolves 7.x, and it drags pytorch-lightning + nlpaug in for TRAINING
+# code that inference never runs. Installing it will downgrade protobuf — check
+# nothing else in the environment needs 6+ before you do.
+srl = ["frame-semantic-transformer>=1.1.0"]
+# Langfuse tracing for the LangGraph example. Nothing in the library imports it
+# — the example builds the callback only when LANGFUSE_* is set.
+#
+# `langfuse>=3` is not cosmetic: the 2.x SDK imports `langchain.callbacks`,
+# which langchain 1.x deleted, so 2.x cannot be used with any current langchain.
+# The `langchain` meta-package is a real requirement, not a transitive one —
+# langfuse's integration imports it directly and raises if it is absent, and
+# langchain-openai/langgraph alone pull only langchain-core.
+observability = ["langfuse>=3.0", "langchain>=1.0"]
 
 # Every extra named by a MissingExtraError call site MUST appear above;
 # `MissingExtraError.KNOWN_EXTRAS` and tests/test_extras.py enforce it. For a
@@ -172,5 +201,7 @@ module = [
     "graphknows.server.mcp.*",
     "graphknows.ingestion.*",
     "graphknows.channels.*",
+    "graphknows.symbolic.*",
+    "graphknows.temporal",
 ]
 disable_error_code = ["no-any-return", "type-arg"]

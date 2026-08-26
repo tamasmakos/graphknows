@@ -84,15 +84,19 @@ The DDL is a pure ordered statement list, `_CORE_DDL`
 they match the configured embedder.
 
 - Vertices: `SESSION`, `TURN`, `FILE`, `CHUNK`, `ENTITY` (keyed on `name_norm`),
-  `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME`, `FRAME_INSTANCE`,
-  `ONTOLOGY`, `ONTOLOGY_CLASS`.
+  `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME` (canonical — one vertex
+  per frame type for the whole namespace, keyed by the frame name),
+  `FRAME_INSTANCE`, `ONTOLOGY`, `ONTOLOGY_CLASS`.
 - Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
   (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL),
   `IN_TOPIC` (ENTITY→TOPIC, with a
   `pagerank` property — the cluster membership itself, and the only persisted
   topic edge), `EVOKED_BY`
-  (FRAME→CHUNK), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK), `PLAYS_ROLE`
-  (FRAME_INSTANCE→ENTITY, with a `role` property), and `REL`.
+  (FRAME→CHUNK, with the per-chunk `confidence` — a canonical FRAME carries no
+  chunk or session of its own, so everything per-evocation lives here),
+  `BROADER` (the subsumption taxonomy, FRAME→FRAME and
+  ONTOLOGY_CLASS→ONTOLOGY_CLASS), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK),
+  `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role` property), and `REL`.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
   property, not the edge type name. The vocabulary is open and mostly single-use,
   so a type-per-predicate minted hundreds of near-empty types plus a DDL
@@ -130,10 +134,10 @@ Both paths converge on the same write helper, which per chunk:
 4. in `llm_assisted`, additionally runs the injected DSPy relation extractor and
    writes its triplets as `REL` edges with `source='dspy'`;
 5. when `enable_frames` is on, matches FrameNet frames by embedding
-   (`graphknows/channels/_frame_index.py`) into `FRAME` / `EVOKED_BY`, and
+   (`graphknows/frames/index.py`) into `FRAME` / `EVOKED_BY`, and
    role-fills `FRAME_INSTANCE` / `PLAYS_ROLE` via
    `graphknows/ingestion/extraction/relations/frame_srl.py`;
-6. resolves dates (`resolve_temporal` in `graphknows/channels/temporal.py`) into
+6. resolves dates (`resolve_temporal` in `graphknows/temporal.py`) into
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 
 `OntologyPredicateMapper` (`graphknows/ingestion/extraction/relations/filter.py`)
@@ -221,12 +225,16 @@ store:
 - `entity` — entity-graph traversal from query-token entity nodes
 - `vector` — dense ANN over chunk embeddings (plus a declarative query variant)
 - `bm25` — lexical search (`rank_bm25` when importable, tokenised fallback otherwise)
-- `temporal` — date-anchored traversal
-- `topic` — topic-node match (populated only under `llm_assisted`)
+- `temporal` — date-anchored traversal (`graphknows/temporal.py`)
 
-`GraphPPRChannel` (`graphknows/channels/graph_ppr.py`, name `ppr`) is registered
-alongside them; `FrameChannel` (`graphknows/channels/frames.py`, name `frame`) is
-added when `settings.enable_frames`.
+Only the optional signals are `Channel`s: `FrameChannel`
+(`graphknows/channels/frames.py`, name `frame`) when `settings.enable_frames`,
+and `OntologyChannel` (`graphknows/channels/ontology.py`, name `ontology`) when
+`settings.enable_ontology_channel`. A graph-traversal channel (`ppr`) and a
+`topic` channel both existed and were removed — `ppr` returned the worst
+gold-hit ratio of six channels, and nothing on the read path consumed what the
+topic stage wrote. See the `registry.py` docstring for the measurements,
+and [topics.md](topics.md) for what replaced the topic channel.
 
 ### DETRetriever (llm_free)
 
@@ -263,10 +271,12 @@ it have all been removed.
 - **MCP stdio** — `graphknows/server/mcp/stdio_server.py` (console script
   `graphknows-mcp`) over the shared FastMCP app in `graphknows/server/mcp/_app.py`.
   `graphknows/server/mcp/tools/__init__.py` is the authoritative inventory:
-  `memory_ingest`, `memory_flush`, `memory_query`, `memory_stats`,
-  `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
+  `memory_ingest`, `memory_flush`, `memory_query`, `memory_topics`,
+  `memory_stats`, `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
   `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`. A thin
   wrapper over one `Memory` instance.
+- **CLI** — `graphknows-topics` (`graphknows/cli/topics.py`) rebuilds or sweeps
+  the topic layer against a namespace. See [topics.md](topics.md).
 
 ## Ingest path
 

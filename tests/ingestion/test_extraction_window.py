@@ -25,7 +25,7 @@ def _handler(window: int) -> _STMIngestHandler:
 
 def _window(handler: _STMIngestHandler, session: str, text: str, speaker: str) -> tuple[str, int]:
     """``(text, offset)`` — the per-turn spans are exercised in test_lexical_labels."""
-    rendered, offset, _spans = handler._extraction_window(session, text, speaker)
+    rendered, offset, _spans, _verbatim = handler._extraction_window(session, text, speaker)
     return rendered, offset
 
 

@@ -29,7 +29,7 @@ ASSETS_ROOT = REPO_ROOT / "tests" / "fixtures" / "ontology"
 PERSONAL_TTL = ASSETS_ROOT / "personal.ttl"
 PERSONAL_SUMMARY = ASSETS_ROOT / "personal-summary.jsonld"
 
-_ONTOLOGY_PKG = REPO_ROOT / "graphknows" / "ontology"
+_ONTOLOGY_PKG = REPO_ROOT / "graphknows" / "symbolic" / "ontology"
 _RELATIONS_PKG = REPO_ROOT / "graphknows" / "ingestion" / "extraction" / "relations"
 
 
@@ -54,7 +54,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 def _loader_mod():
     return _load_module(
-        "graphknows.ontology.loader",
+        "graphknows.symbolic.ontology.loader",
         _ONTOLOGY_PKG / "loader.py",
     )
 

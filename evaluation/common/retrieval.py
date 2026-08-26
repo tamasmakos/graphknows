@@ -21,6 +21,7 @@ def _parse_hits(result: Any) -> list[RetrievedPassage]:
                 text=str(hit.get("text", "")),
                 score=hit.get("score"),
                 sources=str(hit.get("sources", "")),
+                ts=str(hit.get("ts", "") or ""),
             )
         )
     return passages

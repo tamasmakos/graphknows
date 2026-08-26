@@ -103,22 +103,23 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY TOPIC.keywords IF NOT EXISTS LIST"),
     ("sql", "CREATE PROPERTY TOPIC.coherence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE INDEX ON TOPIC(topic_id) UNIQUE"),
-    # Semantic-frame instances (deterministic FrameNet layer). Evidence is the
-    # EVOKED_BY edge to the CHUNK — no chunk_id string property.
+    # Semantic frames (deterministic FrameNet layer). CANONICAL: one vertex per
+    # frame type per namespace, keyed by the frame name. Everything per-evocation
+    # lives on the EVOKED_BY edge to the CHUNK — there is no chunk_id and no
+    # session_id here, because one frame is evoked by many chunks across many
+    # sessions. That stable identity is what FRAME->FRAME BROADER edges hang off.
+    #
+    # `lu`, `speaker`, `fes` and `fillers` used to be declared here and were
+    # written empty by the only writer on every single row. The role-filled frame
+    # data lives on FRAME_INSTANCE/PLAYS_ROLE below, which has a live reader.
     ("sql", "CREATE VERTEX TYPE FRAME IF NOT EXISTS"),
     ("sql", "CREATE PROPERTY FRAME.id IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME.frame_type IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.lu IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.speaker IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.fes IF NOT EXISTS STRING"),
-    ("sql", "CREATE PROPERTY FRAME.fillers IF NOT EXISTS LIST"),
     # The frame's definition text + its embedding, so a chunk's evoked frames are
     # vector-matchable by meaning against a query (see query_frames_by_embedding).
     ("sql", "CREATE PROPERTY FRAME.summary IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME.embedding IF NOT EXISTS LIST"),
     ("sql", "CREATE INDEX ON FRAME(id) UNIQUE"),
-    ("sql", "CREATE INDEX ON FRAME(session_id) NOTUNIQUE"),
     ("sql", "CREATE INDEX ON FRAME(frame_type) NOTUNIQUE"),
     (
         "sql",
@@ -137,7 +138,21 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY FRAME_INSTANCE.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY FRAME_INSTANCE.match_sim IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE PROPERTY FRAME_INSTANCE.role_confidence IF NOT EXISTS DOUBLE"),
+    # How the instance is ASSERTED, from graphknows/linguistics.py. Without these
+    # "she said she might move" is stored as "she moved". Every default is the
+    # status quo, so a missed cue degrades to the old behaviour, never to a new
+    # wrong claim; `modality_rules` records which rules fired, because a
+    # heuristic that becomes a graph property has to be auditable.
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.polarity IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.modality IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.epistemic IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.hedged IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.voice IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.tense IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.attributed_to IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FRAME_INSTANCE.modality_rules IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX ON FRAME_INSTANCE(id) UNIQUE"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON FRAME_INSTANCE(epistemic) NOTUNIQUE"),
     ("sql", "CREATE INDEX ON FRAME_INSTANCE(frame) NOTUNIQUE"),
     # Ontology layer — the loaded ontology's classes, persisted per namespace so
     # they are joinable to the data they describe (an ENTITY links to its class
@@ -175,6 +190,12 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK
     ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE PLAYS_ROLE IF NOT EXISTS"),  # FRAME_INSTANCE -> ENTITY
+    # SKOS broader — the subsumption taxonomy, shared by both hierarchies:
+    # FRAME -> FRAME (FrameNet Inheritance/Using/Perspective_on) and
+    # ONTOLOGY_CLASS -> ONTOLOGY_CLASS (CCO subClassOf). One edge type because
+    # both are read the same way: one hop DOWN from a query match, at a
+    # discount, to reach the specific thing a general query asked about.
+    ("sql", "CREATE EDGE TYPE BROADER IF NOT EXISTS"),
     # Every semantic ENTITY->ENTITY fact, regardless of predicate. The predicate is
     # the `predicate` PROPERTY, not the type name: the vocabulary is open and mostly
     # single-use, so a type-per-predicate minted hundreds of near-empty types (and a
@@ -183,9 +204,22 @@ _CORE_DDL: list[tuple[str, str]] = [
     # reserved-word predicates had to be escaped (find -> REL_FIND).
     ("sql", "CREATE EDGE TYPE REL IF NOT EXISTS"),  # ENTITY -> ENTITY
     ("sql", "CREATE PROPERTY REL.predicate IF NOT EXISTS STRING"),
+    # Where the edge came from. 'frame' marks co-role adjacency projected from a
+    # FRAME_INSTANCE, which the fact-sheet excludes (its frame facts already
+    # state the same content, with the role names intact).
+    ("sql", "CREATE PROPERTY REL.source IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.head_role IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.tail_role IF NOT EXISTS STRING"),
     ("sql", "CREATE INDEX IF NOT EXISTS ON REL (predicate) NOTUNIQUE"),
     ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
     ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK
+    # Frame nesting: a role span that embeds another frame's trigger ("...because
+    # my laptop died" fills Explanation with a Causation whose Cause is a Death).
+    # FRAME_INSTANCE -> FRAME_INSTANCE, the embedding role on the edge. Written
+    # only on the SRL identification path, which is what yields FE spans; read by
+    # entity_fact_context, so it is not another write-only layer.
+    ("sql", "CREATE EDGE TYPE FRAME_NESTS IF NOT EXISTS"),  # FRAME_INSTANCE -> FRAME_INSTANCE
+    ("sql", "CREATE PROPERTY FRAME_NESTS.role IF NOT EXISTS STRING"),
     # Ontology edges. INSTANCE_OF/MATCHES_CLASS carry the mapping score so a
     # weak match stays distinguishable from a confident one downstream.
     ("sql", "CREATE EDGE TYPE INSTANCE_OF IF NOT EXISTS"),  # ENTITY -> ONTOLOGY_CLASS
@@ -201,4 +235,30 @@ _CORE_DDL: list[tuple[str, str]] = [
     # say (both arrive as NULL) and coalesce lets a single permissive write win.
     ("sql", "CREATE PROPERTY REL.ontology_blocked IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE PROPERTY REL.verifier_score IF NOT EXISTS DOUBLE"),
+    # Written by write_relation since it was added and never declared, so every
+    # one was untyped and unindexed. Bi-temporality was half-built: the values
+    # were there, nothing could query them.
+    ("sql", "CREATE PROPERTY REL.fact IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.confidence IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY REL.valid_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.invalid_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.is_current IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE PROPERTY REL.state IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.created_at IF NOT EXISTS STRING"),
+    # `canonical_predicate` is the STABLE identifier and the dedup key; `predicate`
+    # stays the most SPECIFIC label, for display and for querying in the user's
+    # own vocabulary. One field cannot do both: dedup wants stability, display
+    # wants specificity, and with a single field a relex label that varies per
+    # chunk (hasSpouse here, isMarriedTo there) splits one fact into two rows.
+    ("sql", "CREATE PROPERTY REL.canonical_predicate IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.frame IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.frame_instance_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.reified IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE PROPERTY REL.anchor IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.polarity IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.modality IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.epistemic IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY REL.hedged IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON REL(canonical_predicate) NOTUNIQUE"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON REL(is_current) NOTUNIQUE"),
 ]

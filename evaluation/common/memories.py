@@ -16,10 +16,9 @@ from graphknows import MAX_CONTEXT_CHARS, date_in
 
 # The date shapes and the character budget are the library's, imported rather
 # than restated: they were duplicated here verbatim — same three regexes, same
-# 72k — and a duplicated constant is one that drifts. What stays local is the
-# one thing that genuinely differs: these passages arrive from the MCP wire
-# without a ``ts`` field, so their date has to be scraped back out of the text
-# and PREFIXED, where a typed Hit carries its own and renders it directly.
+# 72k — and a duplicated constant is one that drifts. A passage now carries its
+# chunk's ``ts`` over the wire and that is what dates it; scraping the text is
+# the fallback for a transcript that had its dates flattened inline.
 __all__ = ["MAX_CONTEXT_CHARS", "extract_date", "format_memories"]
 
 
@@ -55,7 +54,12 @@ def format_memories(passages: list[RetrievedPassage], *, max_chars: int = MAX_CO
         if not text or text in seen:
             continue
         seen.add(text)
-        when = extract_date(text)
+        # The chunk's own ts first, the text only as a fallback. Scraping the
+        # text works solely when a date was flattened into it; a passage that
+        # keeps its timestamp in the field where it belongs would otherwise
+        # render undated, and "lost my job yesterday" has no anchor to resolve
+        # against.
+        when = (extract_date(passage.ts) if passage.ts else None) or extract_date(text)
         block = f"({when.strftime('%B %d, %Y')}) {text}" if when else text
         cost = len(block) + (sep if kept else 0)
         if used + cost > max_chars:

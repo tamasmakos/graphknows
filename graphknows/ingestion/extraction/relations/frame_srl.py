@@ -45,7 +45,7 @@ def frame_ontology(name: str) -> dict[str, Any]:
     lexical_units: [(word, pos)], parents: [frame names]}``. Empty dict on lookup
     failure (unknown frame).
     """
-    from graphknows.channels._framenet import _framenet, _ontology_up
+    from graphknows.symbolic.framenet.framenet import _framenet, _ontology_up
 
     try:
         f = _framenet().frame(name)
@@ -90,7 +90,11 @@ _MAIN_VERB_DEPS = {"ROOT", "conj", "xcomp", "ccomp", "advcl", "acl", "relcl"}
 
 
 def lu_candidate_frames(
-    text: str, nlp: Any, top_k: int = 4, embedding: list[float] | None = None
+    text: str,
+    nlp: Any,
+    top_k: int = 4,
+    embedding: list[float] | None = None,
+    doc: Any | None = None,
 ) -> list[tuple[str, float]]:
     """Candidate frames = the CLAUSE MAIN VERB's LU frames, ranked by embedding fit.
 
@@ -106,11 +110,14 @@ def lu_candidate_frames(
 
     ``embedding`` (the chunk's already-computed vector) is used for the ranking so
     ingest never re-embeds the same text; only when it is None do we embed ``text``.
+    ``doc`` does the same for the parse — pass the segment's shared Doc and this
+    never runs ``en_core_web_lg`` over a window a caller has already parsed.
     """
-    from graphknows.channels._frame_index import match_frames, match_frames_text
-    from graphknows.channels._framenet import _lus
+    from graphknows.symbolic.framenet.framenet import _lus
+    from graphknows.symbolic.framenet.index import match_frames, match_frames_text
 
-    doc = nlp(text)
+    if doc is None:
+        doc = nlp(text)
     lui = _lus()
     verbs = [t for t in doc if t.pos_ == "VERB" and t.dep_ in _MAIN_VERB_DEPS]
     if not verbs:
@@ -145,6 +152,10 @@ class FrameInstance:
     roles: dict[str, list[str]] = field(default_factory=dict)
     match_sim: float = 0.0
     role_confidence: float = 0.0
+    # Where this instance's trigger sits in the chunk (SRL path only, else -1).
+    # Carried so nesting — which is computed over trigger offsets — survives the
+    # fillability gate dropping some instances.
+    trigger_offset: int = -1
 
     @property
     def filled_core(self) -> int:
@@ -209,6 +220,55 @@ def _resolve_surface(surface: str, speaker: str, speakers: list[str]) -> str:
     return surface
 
 
+def _passes_gate(inst: FrameInstance) -> bool:
+    """The role-fillability gate: enough filled core roles, one confident fill.
+
+    The one thing standing between this layer and a graph full of ``Trendiness``
+    off "that's cool" — frame selection is unreliable on conversational filler
+    and roles do not fill there. Applies per instance whichever identifier ran.
+    """
+    return inst.filled_core >= MIN_CORE_ROLES and inst.role_confidence >= ROLE_CONF_FLOOR
+
+
+def extract_frame_instances_srl(
+    text: str,
+    speaker: str,
+    speakers: list[str],
+    gliner: Any,
+    hits: list[Any],
+) -> list[FrameInstance]:
+    """One instance per parsed trigger (see :mod:`graphknows.symbolic.framenet.srl`).
+
+    The difference from :func:`extract_frame_instances` is arity, not method:
+    there the whole chunk gets one frame guess and therefore at most one kept
+    instance; here every trigger the parser found is filled on its own
+    trigger-marked line, so a chunk stating five facts can contribute five.
+    Role filling, speaker resolution, and the fillability gate are shared.
+
+    ``hits`` are :class:`~graphknows.symbolic.framenet.srl.FrameHit` (duck-typed to keep
+    the optional extra out of this module's imports).
+    """
+    from graphknows.symbolic.framenet.srl import marked_line
+
+    out: list[FrameInstance] = []
+    for hit in hits:
+        # The marked line, not the whole chunk: it scopes the roles to this
+        # trigger's turn (keeping its speaker) and disambiguates two instances
+        # of one frame on one line.
+        context = marked_line(text, hit.offset, hit.trigger)
+        roles, conf = _fill_roles(context, hit.frame, gliner, speaker, speakers)
+        inst = FrameInstance(
+            frame=hit.frame,
+            roles=roles,
+            match_sim=1.0,
+            role_confidence=conf,
+            trigger_offset=int(getattr(hit, "offset", -1)),
+        )
+        if _passes_gate(inst):
+            out.append(inst)
+    return out
+
+
 def extract_frame_instances(
     text: str,
     speaker: str,
@@ -240,8 +300,4 @@ def extract_frame_instances(
         inst = FrameInstance(frame=frame, roles=roles, match_sim=sim, role_confidence=max_conf)
         if best is None or inst.filled_core > best.filled_core:
             best = inst
-    if best is None:
-        return []
-    if best.filled_core >= MIN_CORE_ROLES and best.role_confidence >= ROLE_CONF_FLOOR:
-        return [best]
-    return []
+    return [best] if best is not None and _passes_gate(best) else []

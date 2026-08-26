@@ -21,7 +21,7 @@ What this file pins is the SELECTION MACHINERY, not the bundled vocabulary. The
 bundle is now a single ontology — the CCO digest serves both jobs, and its own
 shape is asserted in ``test_cco_digest.py`` — so the curated profile lives on
 here as a test fixture: 25 properties with a hand-checked domain/range table is
-what these assertions need, and re-deriving them against CCO's 1401 classes
+what these assertions need, and re-deriving them against CCO's 1437 classes
 would test the ontology rather than the code.
 """
 
@@ -38,8 +38,8 @@ import pytest
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.stm.ingest import _RELATION_LABEL_CAP, _STMIngestHandler
-from graphknows.ontology.catalog import load_ontology_index
-from graphknows.ontology.loader import OntologyTerm, load_ontology_terms
+from graphknows.symbolic.ontology.catalog import load_ontology_index
+from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
 
 PROFILE = Path(__file__).resolve().parents[1] / "fixtures" / "ontology" / "personal-profile.json"
 
@@ -71,7 +71,7 @@ class TestProfileAsset:
         """Same contract as the schema.org digest: the base install has no rdflib."""
         code = (
             "import sys, json;"
-            "from graphknows.ontology.loader import load_ontology_terms;"
+            "from graphknows.symbolic.ontology.loader import load_ontology_terms;"
             f"terms = load_ontology_terms({str(PROFILE)!r});"
             "print(json.dumps({'n': len(terms), 'rdflib': 'rdflib' in sys.modules}))"
         )
@@ -195,14 +195,30 @@ class TestDomainRangeSelection:
         assert "nationality" in offered
         assert "homeLocation" in offered, "Country is a Place, so a Place range is satisfied"
 
-    def test_the_offer_is_capped_and_prefers_specific_ranges(self, index: Any) -> None:
-        """Everything is a Thing, so Thing-ranged properties must not crowd out the rest."""
+    def test_the_offer_keeps_specific_ranges_and_fits_the_cap(self, index: Any) -> None:
+        """Everything is a Thing, so Thing-ranged properties must not crowd out the rest.
+
+        Used to assert ``len(offered) == _RELATION_LABEL_CAP`` — a proxy for "the
+        cap binds". It no longer does: the cap is now sized to the whole profile
+        so a vocabulary designed to be offered WHOLE is never truncated, and this
+        entity set evokes fewer properties than the cap allows. The intent the
+        docstring states is unchanged and is what is asserted below.
+        """
         offered = _handler(index)._relation_labels(
             _ents("PERSON", "ORGANIZATION", "PLACE", "EVENT", "OCCUPATION")
         )
-        assert len(offered) == _RELATION_LABEL_CAP
+        assert 0 < len(offered) <= _RELATION_LABEL_CAP
         for specific in ("worksFor", "hasOccupation", "homeLocation", "attendee"):
             assert specific in offered, f"{specific} lost its slot to a Thing-ranged property"
+
+    def test_nothing_applicable_is_dropped_when_it_fits(self, index: Any) -> None:
+        """The profile's design intent: offered whole, with no selection step."""
+        types = ("PERSON", "ORGANIZATION", "PLACE", "EVENT", "OCCUPATION")
+        offered = _handler(index)._relation_labels(_ents(*types))
+        # Every interpersonal property survives — the group that flat round-robin
+        # starved, because all nine share one (domain, range) pair.
+        for interpersonal in ("spouse", "parent", "children", "sibling", "colleague"):
+            assert interpersonal in offered, f"{interpersonal} was dropped from the offer"
 
     def test_the_values_are_definitions_the_extractor_can_use(self, index: Any) -> None:
         offered = _handler(index)._relation_labels(_ents("PERSON"))

@@ -1,5 +1,5 @@
-"""Overlapping-span resolution — memory_pipeline.feature, Rule "Typed entities
-are extracted against the candidate ontology classes":
+"""Overlapping-span resolution — Rule "Typed entities are extracted against the
+candidate ontology classes":
 
     Scenario: Overlapping spans are resolved to a single entity
       Given the extractor returns "Ada Lovelace" typed "Person" with confidence 0.9

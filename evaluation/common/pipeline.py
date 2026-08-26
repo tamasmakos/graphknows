@@ -156,8 +156,10 @@ def _evidence_metrics(
         return {}
     return {
         "evidence_count": float(len(evidence)),
-        "evidence_recall_at_probe": round(evidence_recall(evidence, probe), 3),
-        "evidence_recall_in_context": round(evidence_recall(evidence, context), 3),
+        "evidence_recall_at_probe": round(evidence_recall(evidence, [p.text for p in probe]), 3),
+        "evidence_recall_in_context": round(
+            evidence_recall(evidence, [p.text for p in context]), 3
+        ),
     }
 
 
@@ -206,6 +208,9 @@ def build_case_result(
             "flush_nodes": ingest.flush_nodes,
             "flush_edges": ingest.flush_edges,
             "flush_elapsed_s": ingest.flush_elapsed_s,
+            # One metric per stage, so the slow one is named in the report
+            # rather than hidden inside the total.
+            **{f"flush_stage_{k}_s": v for k, v in ingest.flush_stage_s.items()},
             "ingest_prompt_tokens": ingest.ingest_prompt_tokens,
             "ingest_completion_tokens": ingest.ingest_completion_tokens,
             "ingest_cost_usd": ingest.ingest_cost_usd,
@@ -282,10 +287,27 @@ async def _ingest_unit(
             f"({ingest.ingest_error_count}/{len(unit.documents)}); "
             f"scoring this run would measure a graph that was never built"
         )
+    # A turn-fed unit buffers TURN rows and mints nothing until flush, so
+    # reporting only `chunks` would print 0 on a perfectly healthy run and read
+    # as a total extraction failure.
+    written = (
+        f"turns={ingest.turns} flush_chunks={ingest.flush_chunks}"
+        if ingest.turns
+        else f"chunks={ingest.chunks}"
+    )
+    # The three slowest flush stages, inline. `flush_elapsed_s` alone cannot say
+    # WHICH stage took the time, and waiting for the results file to find out
+    # means a 20-minute round trip on every performance question.
+    slowest = sorted(ingest.flush_stage_s.items(), key=lambda kv: -kv[1])[:3]
+    timing = (
+        "  slowest: " + ", ".join(f"{name}={secs:.0f}s" for name, secs in slowest if secs >= 1)
+        if slowest
+        else ""
+    )
     print(
-        f"[{unit.group_id}] ingest done: chunks={ingest.chunks} "
+        f"[{unit.group_id}] ingest done: {written} "
         f"entities={ingest.entities} flush_nodes={ingest.flush_nodes} "
-        f"errors={ingest.ingest_error_count}",
+        f"errors={ingest.ingest_error_count} flush={ingest.flush_elapsed_s:.0f}s{timing}",
         flush=True,
     )
     return ingest

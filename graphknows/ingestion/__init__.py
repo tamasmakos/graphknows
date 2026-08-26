@@ -24,9 +24,9 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     from graphknows.ingestion.extraction.entities import build_entity_extractor
     from graphknows.ingestion.extraction.relations import build_relation_extractor
     from graphknows.ingestion.stm.service import STMService
-    from graphknows.ontology import load_ontology_index
     from graphknows.storage import build_graph_store
     from graphknows.storage.embedder import embed_one
+    from graphknows.symbolic.ontology import load_ontology_index
 
     return STMService(
         build_graph_store(settings, namespace),

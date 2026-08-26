@@ -1,0 +1,13 @@
+# alpha -> beta -> gamma -> alpha: an owl:imports CYCLE, which is legal and
+# common. The file names deliberately do not match the ontology IRIs: a catalog
+# is built by parsing, never by guessing from a filename.
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <https://graphknows.io/fixtures/alpha#> .
+
+<https://graphknows.io/fixtures/alpha>
+    a owl:Ontology ;
+    owl:versionIRI <https://graphknows.io/fixtures/alpha/1.0.0> ;
+    owl:imports <https://graphknows.io/fixtures/beta> .
+
+ex:AlphaThing a owl:Class ; rdfs:label "Alpha Thing" .

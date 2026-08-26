@@ -1,9 +1,11 @@
 # Ontology Injection
 
-Point `GRAPHKNOWS_ONTOLOGY` at an RDF/OWL file **or a folder of them** and
-GraphKnows will steer extraction toward your domain's vocabulary, link the
-resulting entities and relations to the ontology terms they instantiate, and
-persist the ontology itself as part of the graph.
+GraphKnows always runs with an ontology: it ships CCO as the default (see
+[The bundled ontology](#the-bundled-ontology)). Point `GRAPHKNOWS_ONTOLOGY` at
+your own RDF/OWL file **or a folder of them** to replace it, and GraphKnows will
+steer extraction toward your domain's vocabulary, link the resulting entities and
+relations to the ontology terms they instantiate, and persist the ontology itself
+as part of the graph.
 
 This is **mode-independent**: it works identically in `llm_free` and
 `llm_assisted`. The two modes differ in what runs *on top* (see
@@ -89,8 +91,10 @@ entire conversation.
 | `ONTOLOGY_CLASS` | `uri`, `label`, `definition`, `embedding` (LSM_VECTOR COSINE) |
 | `ONTOLOGY_PROPERTY` | `uri`, `label`, `definition`, `domain`, `range`, `embedding` |
 
-Edges: `DECLARES` (ontology → term), `SUBCLASS_OF`, `INSTANCE_OF` (entity →
-class, `.score`), `MATCHES_CLASS` (chunk → class, `.sim`).
+Edges: `BROADER` (class → superclass — the SKOS-shaped subsumption taxonomy,
+walked one hop DOWN at a discount by the query-side subclass expansion),
+`INSTANCE_OF` (entity → class, `.score`), `MATCHES_CLASS` (chunk → class,
+`.sim`).
 
 Written once per namespace at schema-ensure time, count-guarded so a restart is
 a no-op. The DDL is unconditional and additive, so an existing namespace gains
@@ -116,17 +120,28 @@ Unparseable files in a folder are skipped rather than fatal, and an unusable
 `GRAPHKNOWS_ONTOLOGY` logs and continues without injection — enrichment must not
 fail an ingest.
 
-## The bundled ontologies
+## The bundled ontology
 
-`graphknows/ontology/assets/` ships six: `personal`, `schema-org`, `lkif`
-(legal), `prov-o`, `fibo-fnd` (finance), and `political`. Point
-`GRAPHKNOWS_ONTOLOGY` at one by path, exactly as you would at your own file —
-there is no by-name registry. `assets/personal/personal.ttl` is a good starting
-point for conversational data — 11 classes and 13 properties, every one carrying
-a `skos:definition`.
+The bundled vocabulary is the **Common Core Ontologies (CCO)**, and it is the
+*always-on default* — not an opt-in. `GRAPHKNOWS_ONTOLOGY` defaults to
+`graphknows/ontology/assets/cco/cco.json`, resolved in
+[`graphknows/settings.py`](../graphknows/settings.py) (`_BUNDLED_ONTOLOGY`).
+Setting the variable **replaces** that default with your own file or folder.
+
+`graphknows/ontology/assets/` ships:
+
+| Path | What it is |
+| --- | --- |
+| `cco/cco.json` | The merged CCO digest — the default ontology and relation vocabulary. |
+| `cco/conversational.json` | A SKOS overlay adding everyday concepts CCO does not model, with altLabels that make them lexically reachable and domain/range in CCO's own classes. |
+| `cco-modules/` | The 11 CCO modules as `.ttl` (Agent, Event, Time, Geospatial, Quality, Artifact, Facility, …). |
+| `cco-imports/`, `cco-extensions/` | Import closure and governance-board extensions. |
+
+There is no by-name registry — point `GRAPHKNOWS_ONTOLOGY` at a path, exactly as
+you would at your own file:
 
 ```bash
-GRAPHKNOWS_ONTOLOGY=graphknows/ontology/assets/personal/personal.ttl
+GRAPHKNOWS_ONTOLOGY=graphknows/ontology/assets/cco-modules/AgentOntology.ttl
 ```
 
 ## llm_assisted: extract-then-map

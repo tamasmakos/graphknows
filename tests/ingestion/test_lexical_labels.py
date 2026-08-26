@@ -17,9 +17,9 @@ import pytest
 
 from graphknows.ingestion.stm._attribution import admits, turn_spans
 from graphknows.ingestion.stm._deixis import resolve_line, resolve_window
-from graphknows.ontology import entity_labels, relation_labels
-from graphknows.ontology.scheme import load_scheme
 from graphknows.settings import GraphKnowsSettings
+from graphknows.symbolic.ontology import entity_labels, relation_labels
+from graphknows.symbolic.ontology.scheme import load_scheme
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +56,7 @@ class TestLexicalSelection:
 
     @pytest.fixture
     def index(self, scheme: dict) -> dict:
-        from graphknows.ontology import lexical_index
+        from graphknows.symbolic.ontology.skos import lexical_index
 
         return lexical_index(scheme)
 
@@ -78,6 +78,85 @@ class TestLexicalSelection:
         nlp = spacy.load(GraphKnowsSettings().spacy_model)
         labels = entity_labels(nlp("Nothing relevant here at all."), scheme, index)
         assert {"person", "organization", "facility"} <= set(labels)
+
+
+class TestDomainRangeSatisfaction:
+    """The structural half of the offer: properties whose declared types fit."""
+
+    @pytest.fixture
+    def index(self, scheme: dict) -> dict:
+        from graphknows.symbolic.ontology.skos import lexical_index
+
+        return lexical_index(scheme)
+
+    @pytest.fixture
+    def bare_doc(self):
+        """A turn that evokes no property lexically, isolating the structural branch."""
+        import spacy
+
+        return spacy.load(GraphKnowsSettings().spacy_model)("Mm hmm. Yeah, okay.")
+
+    def test_entity_types_resolve_case_insensitively(self, scheme: dict, index: dict) -> None:
+        """``entity_labels`` emits ``person``; the scheme is keyed ``Person``.
+
+        The satisfaction set is widened by each type's ancestors, but the
+        ancestor walk is a dict lookup on the prefLabel. Handed the coarse types
+        this pipeline actually extracts, an exact-case lookup missed every one,
+        so the widening contributed nothing and properties declared on
+        ``Animal`` or ``material entity`` were never structurally reachable.
+        """
+        from graphknows.symbolic.ontology.skos import ancestors
+
+        assert ancestors(scheme, "Person"), "fixture assumption: Person has ancestors"
+        assert ancestors(scheme, "person") == ancestors(scheme, "Person")
+
+    def test_upper_ontology_plumbing_is_never_offered_structurally(
+        self, scheme: dict, index: dict, bare_doc
+    ) -> None:
+        """BFO part/succession predicates relate categories of being, not people.
+
+        They become structurally satisfiable only because the ancestor walk
+        climbs into ``material entity``/``continuant`` — every entity is one.
+        Offering them spends the budget on predicates nobody asserts:
+        ``permits``/``requires`` and their siblings were 64 of 286 REL edges on
+        conv-30. The lexical branch still keeps them (see the test below): text
+        that says the word is asserting the property.
+        """
+        offered = relation_labels(bare_doc, {"person", "organization"}, scheme, index)
+        assert not {
+            "continuant part of",
+            "has continuant part",
+            "member part of",
+            "has member part",
+            "is predecessor of",
+            "is successor of",
+        } & set(offered)
+
+    def test_a_spoken_plumbing_predicate_is_still_offered(self) -> None:
+        """The guard is structural only — it must not silence the spoken word.
+
+        Synthetic scheme: CCO's own labels are not lemmatised, so the real
+        ``requires`` is unreachable from the word "requires" for an unrelated
+        reason, which would mask the behaviour under test.
+        """
+        import spacy
+
+        from graphknows.symbolic.ontology.skos import Concept, lexical_index
+
+        scheme = {
+            "requires": Concept(
+                uri="bfo:requires",
+                pref_label="requires",
+                definition="",
+                kind="property",
+                alt_labels={"require"},
+                domain=("process",),
+                range=("process",),
+            )
+        }
+        nlp = spacy.load(GraphKnowsSettings().spacy_model)
+        doc = nlp("The process requires a signature.")
+        assert "requires" in relation_labels(doc, {"person"}, scheme, lexical_index(scheme))
 
 
 class TestDeixis:

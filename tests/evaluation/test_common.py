@@ -225,3 +225,42 @@ class TestMemoryBudgetSelection:
         passages = [self._p(d, "May", f"p{d}", filler=5) for d in range(1, 11)]
         out = format_memories(passages)
         assert out.count("1:56 pm") == 10
+
+
+class TestPassageTimestamp:
+    """A passage's date comes from its ``ts``, not from scraping its text.
+
+    Scraping only ever worked because the document harness flattened
+    "<timestamp> | <speaker>:" into every line. Feeding turns puts the timestamp
+    where it belongs — a field — and the scrape then finds nothing, so every
+    memory renders undated and "lost my job yesterday" becomes unanswerable.
+    Measured: temporal accuracy 0.962 document-fed vs 0.077 turn-fed.
+    """
+
+    def test_ts_dates_a_passage_whose_text_has_no_date(self) -> None:
+        out = format_memories(
+            [
+                RetrievedPassage(
+                    text="Jon: Lost my job as a banker yesterday.", ts="20 January, 2023"
+                )
+            ]
+        )
+        assert "(January 20, 2023)" in out
+
+    def test_ts_orders_passages_whose_text_has_no_date(self) -> None:
+        out = format_memories(
+            [
+                RetrievedPassage(text="Jon: the later thing", ts="10 June, 2023"),
+                RetrievedPassage(text="Jon: the earlier thing", ts="1 May, 2023"),
+            ]
+        )
+        assert out.index("earlier thing") < out.index("later thing")
+
+    def test_an_inline_date_still_works_without_ts(self) -> None:
+        """The document harness must keep behaving exactly as before."""
+        out = format_memories([RetrievedPassage(text="[2023/05/01] user: dated")])
+        assert "(May 01, 2023)" in out
+
+    def test_unparseable_ts_falls_back_to_the_text(self) -> None:
+        out = format_memories([RetrievedPassage(text="[2023/05/01] user: dated", ts="not a date")])
+        assert "(May 01, 2023)" in out
