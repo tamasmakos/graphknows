@@ -35,7 +35,16 @@ LLM-assisted mode.
 
 The `graphknows.integrations.client` SDK (drive the server out-of-process) needs no extras.
 
-GraphKnows needs a running ArcadeDB. The quickest path:
+`pip install graphknows` gives you the library plus two console scripts,
+`graphknows-mcp` and `graphknows-topics` — no repo checkout needed for either.
+
+It is not standalone-runnable, though: GraphKnows stores its graph in
+[ArcadeDB](https://arcadedb.com/), and every ingest or recall call needs a
+reachable server. Point the library at one with `GRAPHKNOWS_ARCADEDB_URL`
+(default `http://localhost:2480`) and `GRAPHKNOWS_ARCADEDB_USER` /
+`GRAPHKNOWS_ARCADEDB_PASSWORD` (default `root` / `changeme` — refused in
+production). Either an ArcadeDB you already have running is fine, or spin
+one up from a checkout of this repo:
 
 ```bash
 docker compose up -d arcadedb
@@ -43,10 +52,12 @@ docker compose up -d arcadedb
 
 > A `pip` install downloads its models on first use (the relex extractor, the
 > embedder, the reranker, the spaCy pipeline and two NLTK corpora — a few GB).
-> To warm them ahead of time: `python scripts/bake_models.py`.
+> To warm them ahead of time from a repo clone/checkout: `python scripts/bake_models.py`
+> (the wheel ships only the `graphknows` package, so this script isn't
+> available to a plain `pip install`).
 > The **Docker images bake all of them at build time**, so a container serves
 > requests with no per-call download and works with the network cut.
-> See [docs/configuration.md](docs/configuration.md).
+> See [.env.example](.env.example) and [docs/configuration.md](docs/configuration.md).
 
 ## Deploy
 
