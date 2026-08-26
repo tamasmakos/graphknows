@@ -228,16 +228,29 @@ def lexical_index(scheme: dict[str, Concept]) -> dict[str, set[str]]:
 
 
 def ancestors(scheme: dict[str, Concept], label: str, depth: int = 12) -> list[str]:
-    """The ``broader`` chain — what multi-hop generalisation walks."""
+    """Every transitive ``broader`` ancestor, nearest level first.
+
+    Not one chain: a concept can have two parents — a Store is both a Facility
+    and an Organization — and walking only the first silently drops the other
+    branch from ``relation_labels``' satisfied domain/range set and from
+    ``entity_labels``' redundancy set. ``depth`` limits the levels walked.
+    """
     out: list[str] = []
-    seen: set[str] = set()
-    current = label
-    while depth > 0 and current in scheme and current not in seen:
-        seen.add(current)
-        parents = scheme[current].broader
+    seen = {label}
+    frontier = [label]
+    for _ in range(depth):
+        parents = list(
+            dict.fromkeys(
+                parent
+                for child in frontier
+                if child in scheme
+                for parent in scheme[child].broader
+                if parent not in seen
+            )
+        )
         if not parents:
             break
-        out.append(parents[0])
-        current = parents[0]
-        depth -= 1
+        seen.update(parents)
+        out.extend(parents)
+        frontier = parents
     return out
