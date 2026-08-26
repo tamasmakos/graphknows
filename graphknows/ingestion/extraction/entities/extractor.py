@@ -825,6 +825,16 @@ class GLiNER2EntityExtractor:
         self._ensure_model_loaded()
         return self._gliner
 
+    @property
+    def relation_verifier(self) -> Any:
+        """The relation verifier gate this extractor was built with.
+
+        Exposed so the ingest write funnel scores the non-relex tiers with the
+        ALREADY-LOADED gate: a second :class:`RelationVerifierGate` would mean a
+        second DeBERTa checkpoint resident in memory.
+        """
+        return self._relation_verifier
+
     def _ensure_model_loaded(self) -> None:
         """Load GLiNER2 model on first extraction call."""
         if self._gliner is not None:

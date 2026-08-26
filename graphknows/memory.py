@@ -588,6 +588,11 @@ class Memory:
            for it, and flips the session's CHUNK lifecycle ``state`` raw ->
            consolidated in place. Nothing else is deleted; relation
            canonicalize lands later.
+
+        The result's ``verifier_coverage`` reports, per relation tier, how many
+        REL edges carry a relation-verifier score and their mean: the verifier
+        only ever sees the tiers routed through its gate, so per-tier coverage
+        is what makes an unverified tier visible instead of silent.
         """
         import time
 
@@ -604,6 +609,7 @@ class Memory:
         turn_chunks = 0
         modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0}
+        verifier_coverage: dict[str, dict[str, Any]] = {}
 
         async def step(name: str, coro: Any, default: Any) -> Any:
             """Await one pipeline step, recording a named error instead of aborting.
@@ -691,6 +697,7 @@ class Memory:
             chunks_flipped = await step(
                 "consolidate_session", store.consolidate_session(session_id), 0
             )
+            verifier_coverage = await step("verifier_coverage", store.verifier_coverage(), {})
 
         return {
             "nodes": pagerank_updated,
@@ -705,6 +712,7 @@ class Memory:
             "communities_computed": communities_computed,
             "modularity": modularity,
             "communities_scored": topics_created,
+            "verifier_coverage": verifier_coverage,
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }
