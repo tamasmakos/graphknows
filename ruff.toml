@@ -70,7 +70,7 @@ ignore = [
 # SIM905's autofix expands the compact whitespace-delimited stopword block into
 # ~100 lines of one word each. An inline noqa is impossible — the diagnostic
 # lands on the `"""` line, where the directive becomes string content.
-"**/stm/_entity_writer.py" = ["SIM905"]
+"**/extraction/entities/hygiene.py" = ["SIM905"]
 
 [lint.pydocstyle]
 convention = "google"
