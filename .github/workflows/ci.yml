@@ -23,12 +23,26 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      skip_sonar:
+        # Only takes effect when the CALLER's own triggering event is
+        # pull_request (the Sonar step's `if:` checks github.event_name ==
+        # 'pull_request' first). A tag/release workflow triggered by `push`
+        # already skips this step via that same check, with or without this
+        # input — set it explicitly anyway so a reader doesn't have to
+        # rediscover that from the Sonar step's condition.
+        description: skip the Sonar step even when the caller's triggering event is pull_request
+        type: boolean
+        default: false
 
 # Superseded pushes to the same PR are pointless once a newer commit exists.
 # main is NOT cancelled: its analysis sets Sonar's new-code baseline.
+# Tag refs are NOT cancelled either: a tag run is the release build, and its
+# artifacts cannot be re-created by re-running a cancelled job.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -145,7 +159,10 @@ jobs:
         # run anyway so one CI round reports every failure, but there is nothing
         # to report here when a suite failed, and publishing after a failed suite
         # is how new_coverage got pinned at 0.0 before.
-        if: github.event_name == 'pull_request'
+        #
+        # `inputs` is null outside a workflow_call, so `!inputs.skip_sonar` is
+        # true there and PR behaviour is unchanged.
+        if: github.event_name == 'pull_request' && !inputs.skip_sonar
         uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -191,14 +208,17 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: build
-        run: uv build --wheel
+        # No --wheel: this must produce both the sdist and the wheel.
+        # [tool.hatch.build.targets.sdist] is configured in pyproject.toml and
+        # nothing has ever verified it actually builds.
+        run: uv build
 
-      - name: assert the wheel still ships py.typed and stays small
+      - name: assert the wheel still ships py.typed and stays small, and the sdist is complete
         # A packaging regression is invisible to every other check here: the
-        # suite imports from the source tree, not from the wheel.
+        # suite imports from the source tree, not from the wheel or sdist.
         run: |
           python3 - <<'PY'
-          import glob, os, zipfile
+          import glob, os, tarfile, zipfile
 
           wheel = sorted(glob.glob("dist/*.whl"))[-1]
           names = zipfile.ZipFile(wheel).namelist()
@@ -206,4 +226,22 @@ jobs:
           kb = os.path.getsize(wheel) / 1024
           assert kb < 1024, f"wheel too large: {kb:.0f} KB"
           print(f"wheel OK: {os.path.basename(wheel)} ({kb:.0f} KB, py.typed present)")
+
+          sdists = sorted(glob.glob("dist/*.tar.gz"))
+          assert len(sdists) == 1, f"expected exactly one sdist, found {len(sdists)}"
+          sdist = sdists[0]
+          members = tarfile.open(sdist).getnames()
+          assert any(m.endswith("pyproject.toml") for m in members), "pyproject.toml missing from the sdist"
+          assert any("graphknows/" in m for m in members), "graphknows/ source missing from the sdist"
+          sdist_kb = os.path.getsize(sdist) / 1024
+          print(f"sdist OK: {os.path.basename(sdist)} ({sdist_kb:.0f} KB, pyproject.toml + graphknows/ present)")
           PY
+
+      - name: upload the distribution
+        # This run is what a release workflow reuses via workflow_call, so the
+        # artifacts must outlive the job.
+        uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
