@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+# A release run must never be cancelled mid-upload, and it must not share
+# ci.yml's group.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    # By reference, never copied: one gate definition means a release can never
+    # be checked more loosely than a merge to main. A reusable workflow gets no
+    # secrets by default and ci.yml's gate ends on a step that reads
+    # SONAR_TOKEN; a tag ref has no PR context, so Sonar is told to stay out.
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    with:
+      skip_sonar: true
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Scoped here alone: PyPI exchanges this short-lived identity token for an
+      # upload token. No API token is stored anywhere.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: assert the tag matches the packaged version
+        # Read the literal out of the source text. Importing the package would
+        # pull torch/gliner/spacy into a lean publish job and raise ImportError
+        # instead of checking a version. The version is never typed into this
+        # file: automation reads it, it does not restate it.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          packaged=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' graphknows/_version.py)
+          if [ -z "$packaged" ]; then
+            echo "::error::no __version__ literal found in graphknows/_version.py"
+            exit 1
+          fi
+          if [ "$tag" != "$packaged" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} carries version ${tag}, graphknows/_version.py says ${packaged}"
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches packaged version ${packaged}"
+
+      - name: download the distribution CI built
+        # The same bytes the py.typed and wheel-size assertions ran against.
+        # This job performs no build of its own.
+        uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+      - name: publish to PyPI
+        # Pinned to a full commit SHA: a mutable tag is a supply-chain surface
+        # on the one path that can publish under this project's name.
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
