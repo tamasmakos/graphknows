@@ -101,6 +101,7 @@ jobs:
           path: |
             .cache/huggingface
             .cache/nltk_data
+            .cache/graphknows
           # Model ids are resolved from settings.py and the modules that own
           # them, so those files decide what the cache holds.
           key: models-${{ hashFiles('uv.lock', 'scripts/bake_models.py', 'graphknows/settings.py') }}
@@ -142,6 +143,11 @@ jobs:
           # above, so a cache miss must fail loudly here rather than turn into a
           # silent multi-GB download mid-test.
           HF_HUB_OFFLINE: "1"
+          # Definition-embedding matrices (FrameNet's ~1200 frames, the ontology
+          # vocabularies). Defaults to ~/.cache/graphknows, which is OUTSIDE the
+          # workspace and so was never preserved by the cache step above: every
+          # run re-embedded every vocabulary from scratch.
+          GRAPHKNOWS_CACHE_DIR: .cache/graphknows
         # 65 is scripts/gate.sh's COVERAGE_FLOOR_MIN — a ratchet against
         # backsliding. New-code coverage is Sonar's job, one step below.
         run: >-

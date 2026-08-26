@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+from functools import cached_property
 
 import numpy as np
 
@@ -127,13 +128,24 @@ class OntologyIndex:
         self.classes = [t for t in terms if t.kind == "class"]
         self.properties = [t for t in terms if t.kind == "property"]
         self.digest = _source_digest(terms)
-        self._class_mat = self._matrix(self.classes, "classes")
-        self._property_mat = self._matrix(self.properties, "properties")
         # uri -> row within its own kind's matrix.
         self._rows: dict[str, tuple[str, int]] = {
             **{t.uri: ("class", i) for i, t in enumerate(self.classes)},
             **{t.uri: ("property", i) for i, t in enumerate(self.properties)},
         }
+
+    # Built on first match, not in __init__. Embedding a vocabulary costs minutes
+    # (CCO is 1437 definitions), and most readers of an index never match against
+    # it at all — they read labels, domains and ranges. Eager building made every
+    # construction pay for a matrix the caller usually never touched, which is
+    # what put a 1437-definition embed behind a unit test that injects a stub.
+    @cached_property
+    def _class_mat(self) -> np.ndarray:
+        return self._matrix(self.classes, "classes")
+
+    @cached_property
+    def _property_mat(self) -> np.ndarray:
+        return self._matrix(self.properties, "properties")
 
     def _matrix(self, terms: list[OntologyTerm], kind: str) -> np.ndarray:
         if not terms:

@@ -37,6 +37,10 @@ def _cache_key() -> str:
     return cache_key("frames")
 
 
+# Query widths a forced rebuild already failed to reconcile; see match_frames.
+_unreconciled_dims: set[int] = set()
+
+
 def _frame_names() -> list[str]:
     """The vocabulary, without embedding anything.
 
@@ -95,8 +99,23 @@ def match_frames(
         return []
     names, mat = _ensure()
     if mat.size and v.shape[0] != mat.shape[1]:
-        # Embedding dims changed under this cache key — rebuild before giving up.
+        # Embedding dims changed under this cache key — rebuild before giving up,
+        # but only ONCE per offending width. A rebuild that does not reconcile the
+        # two means the caller's vectors are not this embedder's, and retrying it
+        # per call re-embeds the whole 1200-frame vocabulary on every query: the
+        # retrieval suite spent 19 of its 22 minutes in exactly that loop.
+        if v.shape[0] in _unreconciled_dims:
+            return []
+        _unreconciled_dims.add(v.shape[0])
         names, mat = _ensure(force=True)
+        if mat.size and v.shape[0] != mat.shape[1]:
+            log.warning(
+                "frame index is %d-dimensional but the query embedding is %d; "
+                "frame reranking is off for this process",
+                mat.shape[1],
+                v.shape[0],
+            )
+            return []
     return match(v, names, mat, top_k, min_sim)
 
 
