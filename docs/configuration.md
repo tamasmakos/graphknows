@@ -3,17 +3,19 @@
 All configuration is read from `GRAPHKNOWS_*` environment variables, or from a
 `.env` file in the current working directory. Precedence is standard: constructor
 arguments > environment variables > `.env` file. Settings are defined in
-[`graphknows/config/__init__.py`](../graphknows/config/__init__.py) (`GraphKnowsSettings`).
+[`graphknows/settings.py`](../graphknows/settings.py) (`GraphKnowsSettings`).
 
 ```python
-from graphknows import GraphKnowsSettings, GraphKnowsRuntime
+from graphknows import GraphKnowsSettings, Memory
 
 # From environment / .env:
-rt = GraphKnowsRuntime()
+async with Memory() as mem:
+    ...
 
 # Or explicitly:
 settings = GraphKnowsSettings(mode="llm_assisted", llm_api_key="sk-...")
-rt = GraphKnowsRuntime(settings)
+async with Memory(settings) as mem:
+    ...
 ```
 
 ## Reference
@@ -26,7 +28,7 @@ rt = GraphKnowsRuntime(settings)
 | `GRAPHKNOWS_ARCADEDB_URL` | `http://localhost:2480` | ArcadeDB HTTP base URL. |
 | `GRAPHKNOWS_ARCADEDB_USER` | `root` | ArcadeDB user. |
 | `GRAPHKNOWS_ARCADEDB_PASSWORD` | `changeme` | ArcadeDB password. Required in production. |
-| `GRAPHKNOWS_NAMESPACE` | `""` | Tenant isolation boundary → physical database pair `stm_<ns>`/`ltm_<ns>` (`""` = the shared `stm`/`ltm`). The default when an MCP call omits `namespace`. See [multi-tenancy.md](multi-tenancy.md). |
+| `GRAPHKNOWS_NAMESPACE` | `""` | Tenant isolation boundary → one physical database `mem_<ns>` (`""` = the shared `mem`). The default when an MCP call omits `namespace`. See [multi-tenancy.md](multi-tenancy.md). |
 | `GRAPHKNOWS_MAX_OPEN_NAMESPACES` | `64` | MCP server cap on concurrently-open namespace runtimes (LRU-evicted). |
 | **Embeddings** | | |
 | `GRAPHKNOWS_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | Local sentence-transformers model, or a remote model id when `EMBED_API_BASE` is set. |

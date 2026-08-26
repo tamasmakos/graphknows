@@ -187,12 +187,16 @@ generation, not retrieval. Full per-case report:
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — STM/LTM, promotion, RRF retrieval
+Full index: **[docs/](docs/README.md)**.
+
+- [docs/services.md](docs/services.md) — the main services and how they stack
+- [docs/architecture.md](docs/architecture.md) — lifecycle states, consolidation, RRF retrieval
 - [docs/modes.md](docs/modes.md) — llm_free vs llm_assisted
-- [docs/ontology.md](docs/ontology.md) — injecting a domain ontology
+- [docs/ontology.md](docs/ontology.md) — the bundled CCO ontology, and injecting your own
 - [docs/topics.md](docs/topics.md) — the re-runnable topic stage
 - [docs/configuration.md](docs/configuration.md) — full settings reference
 - [docs/integrations.md](docs/integrations.md) — framework integration recipe
+- [docs/multi-tenancy.md](docs/multi-tenancy.md) — namespaces, isolation and scaling
 - [docs/versioning.md](docs/versioning.md) — semver & deprecation policy
 
 The `evaluation/` directory is internal LoCoMo/BEAM/LongMemEval benchmarking — not part

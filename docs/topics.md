@@ -63,8 +63,8 @@ check it before trusting a `graph_embedding` build.
 
 node2vec's walk parameters are exposed (`n2v_walk_length`, `n2v_walks`,
 `n2v_dimensions`, with `recompute_embeddings` to re-run it). Note what they do
-and do not affect: they shape the embedding space, so they drive PPR seed
-expansion, entity similarity, and `graph_embedding` topic granularity. They do
+and do not affect: they shape the embedding space, so they drive entity
+similarity and `graph_embedding` topic granularity. They do
 **not** influence the Louvain communities — nothing feeds node2vec output back
 into community detection.
 

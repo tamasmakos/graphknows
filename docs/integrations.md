@@ -10,10 +10,10 @@ names, over the MCP transport).
 
 | Framework concept | graphknows verb |
 | --- | --- |
-| write hook / after a turn | `ingest_memory(text, session_id=...)` (or `record_turn`) |
+| write hook / after a turn | `ingest_memory(text, session_id=...)` |
 | read hook / before generation | `recall_memory(query, session_id=..., top_k=...)` |
 | conversation / thread id | `session_id` |
-| end of episode / consolidation | `flush_memory(session_id)` (promote STM → LTM) |
+| end of episode / consolidation | `flush_memory(session_id)` (consolidates the session in place) |
 | reset | `purge_memory(scope=..., session_id=...)` |
 
 Map the framework's "remember" point to `ingest_memory`, its "recall" point to

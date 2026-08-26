@@ -226,11 +226,12 @@ store:
 - `vector` — dense ANN over chunk embeddings (plus a declarative query variant)
 - `bm25` — lexical search (`rank_bm25` when importable, tokenised fallback otherwise)
 - `temporal` — date-anchored traversal
-- `topic` — topic-node match (populated only under `llm_assisted`)
 
-`GraphPPRChannel` (`graphknows/channels/graph_ppr.py`, name `ppr`) is registered
-alongside them; `FrameChannel` (`graphknows/channels/frames.py`, name `frame`) is
-added when `settings.enable_frames`.
+The optional channels sit on top of that spine: `FrameChannel`
+(`graphknows/channels/frames.py`) when `settings.enable_frames`, and
+`OntologyChannel` (`graphknows/channels/ontology.py`) when an ontology is
+configured. There is no topic channel and no PageRank channel — both were
+removed after measurement; see [topics.md](topics.md).
 
 ### DETRetriever (llm_free)
 
@@ -267,10 +268,12 @@ it have all been removed.
 - **MCP stdio** — `graphknows/server/mcp/stdio_server.py` (console script
   `graphknows-mcp`) over the shared FastMCP app in `graphknows/server/mcp/_app.py`.
   `graphknows/server/mcp/tools/__init__.py` is the authoritative inventory:
-  `memory_ingest`, `memory_flush`, `memory_query`, `memory_stats`,
-  `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
+  `memory_ingest`, `memory_flush`, `memory_query`, `memory_topics`,
+  `memory_stats`, `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
   `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`. A thin
   wrapper over one `Memory` instance.
+- **CLI** — `graphknows-topics` (`graphknows/cli/topics.py`) rebuilds or sweeps
+  the topic layer against a namespace. See [topics.md](topics.md).
 
 ## Ingest path
 
