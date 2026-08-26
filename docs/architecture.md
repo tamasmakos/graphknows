@@ -233,7 +233,8 @@ and `OntologyChannel` (`graphknows/channels/ontology.py`, name `ontology`) when
 `settings.enable_ontology_channel`. A graph-traversal channel (`ppr`) and a
 `topic` channel both existed and were removed — `ppr` returned the worst
 gold-hit ratio of six channels, and nothing on the read path consumed what the
-topic stage wrote. See the `registry.py` docstring for the measurements.
+topic stage wrote. See the `registry.py` docstring for the measurements,
+and [topics.md](topics.md) for what replaced the topic channel.
 
 ### DETRetriever (llm_free)
 
@@ -270,10 +271,12 @@ it have all been removed.
 - **MCP stdio** — `graphknows/server/mcp/stdio_server.py` (console script
   `graphknows-mcp`) over the shared FastMCP app in `graphknows/server/mcp/_app.py`.
   `graphknows/server/mcp/tools/__init__.py` is the authoritative inventory:
-  `memory_ingest`, `memory_flush`, `memory_query`, `memory_stats`,
-  `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
+  `memory_ingest`, `memory_flush`, `memory_query`, `memory_topics`,
+  `memory_stats`, `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
   `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`. A thin
   wrapper over one `Memory` instance.
+- **CLI** — `graphknows-topics` (`graphknows/cli/topics.py`) rebuilds or sweeps
+  the topic layer against a namespace. See [topics.md](topics.md).
 
 ## Ingest path
 
