@@ -975,13 +975,9 @@ class _STMIngestHandler:
         # the expensive step, and running it twice per chunk would double it.
         srl_hits = await self._srl_hits(text)
 
+        tagged_frames: set[str] = set()
         if self._enable_frames:
-            from graphknows.symbolic.framenet.framenet import _broader_up
-            from graphknows.symbolic.framenet.index import (
-                frame_embedding,
-                frame_summary,
-                match_frames,
-            )
+            from graphknows.symbolic.framenet.index import match_frames
 
             # Parsed triggers name the frames this chunk actually evokes; the
             # embedding match only ranks candidates by definition similarity. The
@@ -993,32 +989,8 @@ class _STMIngestHandler:
                 if srl_hits
                 else match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
             )
-            if matches:
-                # FrameNet's own hierarchy rides along, so the frames evoked here
-                # land as a traversable taxonomy rather than isolated tags: a
-                # query matching a general frame can then walk DOWN to the
-                # specific one a chunk actually evoked. Cached in-process.
-                up = _broader_up()
-                await self._store.write_frames(
-                    [
-                        {
-                            "frame_type": name,
-                            "chunk_id": chunk_id,
-                            "confidence": sim,
-                            "summary": frame_summary(name),
-                            "embedding": frame_embedding(name),
-                            "parents": [
-                                {
-                                    "id": p,
-                                    "summary": frame_summary(p),
-                                    "embedding": frame_embedding(p),
-                                }
-                                for p in sorted(up.get(name, ()))
-                            ],
-                        }
-                        for name, sim in matches
-                    ],
-                )
+            await self._write_frame_tags(chunk_id, matches)
+            tagged_frames = {name for name, _ in matches}
 
         # FRAME_INSTANCE layer — frame-guided semantic role labeling. The chunk's
         # top FrameNet frames (main-verb LUs, embedding-ranked) become a GLiNER2
@@ -1031,6 +1003,23 @@ class _STMIngestHandler:
                 self._frame_instances, text, chunk_id, speaker, embedding, srl_hits
             )
             if instances:
+                # An instance whose FRAME vertex does not exist gets no EVOKES
+                # edge, so the fact cannot generalise through the taxonomy.
+                # write_frames is idempotent (MERGE) and skips per-frame
+                # embedding work for frames already materialised this process,
+                # so re-tagging an already-tagged frame is cheap.
+                # Unlike the SRL trigger above, these frames come from
+                # lu_candidate_frames and can rank below _FRAME_MIN_SIM — use
+                # the instance's own match_sim as the tag confidence rather
+                # than the trigger's 1.0, so the embedding guess the tag layer
+                # already rejected doesn't outrank a real cosine match.
+                frame_sims: dict[str, float] = {}
+                for i in instances:
+                    frame = str(i["frame"])
+                    sim = float(i.get("match_sim") or 0.0)
+                    frame_sims[frame] = max(sim, frame_sims.get(frame, 0.0))
+                untagged = [(f, sim) for f, sim in frame_sims.items() if f not in tagged_frames]
+                await self._write_frame_tags(chunk_id, untagged)
                 await self._store.write_frame_instances(
                     session_id, chunk_id, instances, nesting=nesting
                 )
@@ -1721,6 +1710,39 @@ class _STMIngestHandler:
             parsed,
             len(texts),
             time.monotonic() - start,
+        )
+
+    async def _write_frame_tags(self, chunk_id: str, matches: list[tuple[str, float]]) -> None:
+        """Write FRAME chunk tags for ``matches`` (name, confidence) pairs."""
+        if not matches:
+            return
+        from graphknows.symbolic.framenet.framenet import _broader_up
+        from graphknows.symbolic.framenet.index import frame_embedding, frame_summary
+
+        # FrameNet's own hierarchy rides along, so the frames evoked here
+        # land as a traversable taxonomy rather than isolated tags: a
+        # query matching a general frame can then walk DOWN to the
+        # specific one a chunk actually evoked. Cached in-process.
+        up = _broader_up()
+        await self._store.write_frames(
+            [
+                {
+                    "frame_type": name,
+                    "chunk_id": chunk_id,
+                    "confidence": sim,
+                    "summary": frame_summary(name),
+                    "embedding": frame_embedding(name),
+                    "parents": [
+                        {
+                            "id": p,
+                            "summary": frame_summary(p),
+                            "embedding": frame_embedding(p),
+                        }
+                        for p in sorted(up.get(name, ()))
+                    ],
+                }
+                for name, sim in matches
+            ],
         )
 
     async def _srl_hits(self, text: str) -> list[Any]:

@@ -96,7 +96,9 @@ they match the configured embedder.
   chunk or session of its own, so everything per-evocation lives here),
   `BROADER` (the subsumption taxonomy, FRAME→FRAME and
   ONTOLOGY_CLASS→ONTOLOGY_CLASS), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK),
-  `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role` property), and `REL`.
+  `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role` property), `EVOKES`
+  (FRAME_INSTANCE→FRAME, the fact plane's link into the frame taxonomy, since
+  `BROADER` hangs off the canonical FRAME vertex), and `REL`.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
   property, not the edge type name. The vocabulary is open and mostly single-use,
   so a type-per-predicate minted hundreds of near-empty types plus a DDL
