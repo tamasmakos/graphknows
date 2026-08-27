@@ -69,6 +69,15 @@ numbers. One known gap remains: there is no secret scan at all now that the
 analysis CLI that ran one is gone.
 [gitleaks](https://github.com/gitleaks/gitleaks) is the candidate replacement.
 
+A dependency-drift check (`deptry`) now runs in both `make gate` and CI,
+report-only for now. Its suppressions live in
+`[tool.deptry.per_rule_ignores]` in `pyproject.toml`, and every one must
+carry a dated rationale — if that ignore list grows without corresponding
+fixes, the tool is deleted. This is not a new policy: `import-linter` is the
+only architecture checker left for exactly this reason, after a second one
+(`tach`) was deleted for the same failure mode, recorded in `pyproject.toml`'s
+`import-linter` comment: "a gate that documents its own bypass is not a gate."
+
 ## Architecture rules
 
 The layer stack in [`.importlinter`](.importlinter) is enforced, not advisory —
