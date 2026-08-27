@@ -31,15 +31,12 @@ dependencies = [
     # also serves MCP out of the box. Only the llm_assisted stack (dspy/rdflib) is
     # gated behind the single [assisted] extra.
     "pydantic>=2.7.0",
+    # env_file loading in settings.py needs python-dotenv, but pydantic-settings
+    # already requires it unconditionally (not behind an extra) — no separate
+    # declaration needed here.
     "pydantic-settings>=2.2.0",
-    "python-dotenv>=1.0.0",
     "httpx>=0.27.0",
     "numpy>=1.26.0",
-    # Hierarchical clustering for the topic stage. Already present transitively
-    # via sentence-transformers; declared because graphknows.topics imports it
-    # directly (a naive Python agglomerative is O(N^3) and unusable at ~1e3
-    # entities).
-    "scipy>=1.11.0",
     "dateparser>=1.2.0",
     # extraction (llm_free) + embeddings
     # `gliner` (not just gliner2) is required: entities/gliner_model.py loads
@@ -193,10 +190,11 @@ known_first_party = ["graphknows"]
 # on this environment (`uv sync --group dev`, no optional extras installed)
 # reported exactly four DEP002 (unused dependency) findings and nothing else:
 #   - python-dotenv  ([project.dependencies] — genuinely unimported anywhere
-#     under graphknows/; not ignored below, see discoveries)
-#   - scipy          ([project.dependencies] — same: zero references under
+#     under graphknows/; removed (#218) — pydantic-settings already requires
+#     it unconditionally for env_file loading)
+#   - scipy          ([project.dependencies] — zero references under
 #     graphknows/ despite the dependency comment claiming a direct import;
-#     not ignored below, see discoveries)
+#     removed (#218))
 #   - langfuse        (`observability` extra — deliberate, ignored below)
 #   - langchain       (`observability` extra — deliberate, ignored below)
 # No DEP003/DEP004 findings this run. frame-semantic-transformer (`srl` extra)
