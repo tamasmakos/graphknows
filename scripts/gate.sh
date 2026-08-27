@@ -4,6 +4,18 @@
 # mypy errors and 32 ruff errors sat on main unseen for weeks. Runs in the
 # workspace container — the host virtualenv cannot even collect the suite.
 # Install with `pre-commit install --hook-type pre-push`.
+#
+# | Check                          | Where       |
+# | ------------------------------ | ----------- |
+# | ruff check + format            | local + CI  |
+# | mypy                           | local + CI  |
+# | import-linter                  | local + CI  |
+# | bandit                         | local + CI  |
+# | pytest + coverage floor        | local + CI  |
+# | dependency audit               | local + CI  |
+# | diff coverage                  | CI only     |
+# (diff coverage compares against the pull request's base branch; a
+# pre-push run on a local worktree has no meaningful base ref.)
 set -uo pipefail
 
 CONTAINER="${GRAPHKNOWS_CONTAINER:-graphknows-workspace}"

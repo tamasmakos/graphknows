@@ -52,6 +52,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so the diff coverage step below can compare this
+          # branch against origin/<base>. A shallow clone has no base ref to
+          # diff against: loud failure at best, a silent 100% at worst.
+          fetch-depth: 0
 
       - name: free disk space
         # torch + six baked models + the uv cache do not fit alongside the
@@ -132,11 +137,34 @@ jobs:
           # run re-embedded every vocabulary from scratch.
           GRAPHKNOWS_CACHE_DIR: .cache/graphknows
         # 65 is scripts/gate.sh's COVERAGE_FLOOR_MIN — a ratchet against
-        # backsliding. Diff/new-code coverage lands with #201.
+        # backsliding. The diff-scoped number is the separate step below.
         run: >-
           uv run python -m pytest -q -m "not integration"
           --cov=graphknows --cov-report=xml:coverage.xml
           --cov-report=term:skip-covered --cov-fail-under=65
+
+      - name: diff coverage (report-only)
+        # NOT `!cancelled()` like its neighbours, deliberately: there is nothing
+        # to report when the suite failed, reporting anyway is how the old
+        # new-code number got pinned at 0.0, and a collection error leaves no
+        # coverage.xml behind — a permissive guard would stack a missing-file
+        # error on top of the real failure. Pull requests only: no base branch
+        # to compare against on a push or a dispatch.
+        if: ${{ success() && github.event_name == 'pull_request' }}
+        env:
+          # The diff-coverage threshold: a DISTINCT constant from the 65% whole
+          # repo floor above, never expressed in terms of it — ratcheting one
+          # must not move the other. 0 means report-only: the number is printed,
+          # a low one does not fail the job, and the real threshold is set from
+          # two pull requests of measured numbers (#206).
+          DIFF_COVERAGE_MIN: "0"
+        # Reads the coverage.xml the step above already wrote: no second test
+        # run, no new declared dependency — uvx fetches the tool ephemerally,
+        # the same way the audit job runs pip-audit.
+        run: >-
+          uvx diff-cover coverage.xml
+          --compare-branch=origin/${{ github.base_ref }}
+          --fail-under=$DIFF_COVERAGE_MIN
 
   audit:
     name: audit
