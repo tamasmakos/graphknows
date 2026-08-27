@@ -61,6 +61,13 @@ def _release_text() -> str:
     return RELEASE.read_text(encoding="utf-8")
 
 
+def _release_code_text() -> str:
+    """`_release_text()` with full-line YAML comments stripped, so a comment
+    mentioning e.g. "pytest" doesn't read as re-declaring it."""
+    text = _release_text()
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
 def test_triggers_only_on_version_tag_pushes() -> None:
     """The workflow must fire on `vX.Y.Z` tags only — no pull_request, no
     branch push — otherwise it publishes on every ordinary commit."""
@@ -85,10 +92,11 @@ def test_calls_ci_by_reference_not_by_copy() -> None:
         f"{RELEASE}: does not call ci.yml via `uses: ./.github/workflows/ci.yml`"
     )
     assert "secrets: inherit" in text, f"{RELEASE}: missing `secrets: inherit`"
-    assert "uv sync" not in text, (
+    code_text = _release_code_text()
+    assert "uv sync" not in code_text, (
         f"{RELEASE}: re-declares `uv sync` instead of reusing ci.yml via `uses:`"
     )
-    assert "pytest" not in text, (
+    assert "pytest" not in code_text, (
         f"{RELEASE}: re-declares `pytest` instead of reusing ci.yml via `uses:`"
     )
 
