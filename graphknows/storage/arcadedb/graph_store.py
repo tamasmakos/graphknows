@@ -1220,6 +1220,12 @@ class GraphStore(ArcadeStoreBase):
         edge instead of pooling them onto one fact. Writes are batched: one UNWIND for the instances+evidence edges,
         one for all PLAYS_ROLE edges (ENTITY fillers MERGE on ``name_norm``).
 
+        Each instance is also linked to its canonical FRAME vertex by
+        ``EVOKES``, which is what makes instance -> frame -> BROADER* ->
+        ancestor -> sibling-instance traversal possible. The cost is one extra
+        UNWIND round trip per chunk, over rows that already exist — not one
+        call per instance.
+
         The reified (FRAME_INSTANCE)-[:PLAYS_ROLE {role}]->(ENTITY) form remains
         the primary representation. Alongside it, co-role fillers are also linked
         ENTITY->ENTITY as ``REL {predicate: frame, source: 'frame'}`` — an
@@ -1448,6 +1454,31 @@ class GraphStore(ArcadeStoreBase):
                 "still carry their frame_instance_id and it resolves to nothing",
                 chunk_id,
                 len(inst_rows),
+            )
+        # Batch 1b: link each instance to its canonical FRAME vertex. Own
+        # command, not folded into batch 1 — batch 1's leading MATCH is already
+        # silent when the CHUNK is missing, and adding a second MATCH there
+        # would drop the whole instance write whenever the FRAME vertex is
+        # absent. Never MERGE the FRAME here: a FRAME minted without its
+        # definition, embedding and BROADER parents is a stub, and an edge into
+        # a stub buys nothing (that is the ingest-path FRAME writer's job).
+        linked = await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
+            "MATCH (f:FRAME {id: row.frame}) "
+            "MERGE (fi)-[:EVOKES]->(f) "
+            "RETURN count(*) AS n",
+            rows=inst_rows,
+        )
+        if linked and int(linked[0].get("n") or 0) < len(inst_rows):
+            logger.info(
+                "frame instances under-linked: chunk %s has %d FRAME_INSTANCE(s) "
+                "but only %d EVOKES edge(s) to a FRAME vertex — the missing FRAME "
+                "vertices mean those instances cannot generalise through the "
+                "BROADER taxonomy",
+                chunk_id,
+                len(inst_rows),
+                int(linked[0].get("n") or 0),
             )
         # Batch 2a: MERGE the distinct filler ENTITIES first, on their own.
         # role_rows is keyed (fid, nn, role), so ONE entity filling TWO roles of a

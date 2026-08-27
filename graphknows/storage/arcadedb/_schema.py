@@ -213,6 +213,10 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE INDEX IF NOT EXISTS ON REL (predicate) NOTUNIQUE"),
     ("sql", "CREATE PROPERTY PLAYS_ROLE.role IF NOT EXISTS STRING"),
     ("sql", "CREATE EDGE TYPE FRAME_EVOKED_IN IF NOT EXISTS"),  # FRAME_INSTANCE -> CHUNK
+    # FRAME_INSTANCE -> FRAME. The fact plane's link into the frame taxonomy:
+    # BROADER hangs off the canonical FRAME vertex, so without this edge no
+    # instance can generalise through it.
+    ("sql", "CREATE EDGE TYPE EVOKES IF NOT EXISTS"),
     # Frame nesting: a role span that embeds another frame's trigger ("...because
     # my laptop died" fills Explanation with a Causation whose Cause is a Death).
     # FRAME_INSTANCE -> FRAME_INSTANCE, the embedding role on the edge. Written

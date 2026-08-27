@@ -491,6 +491,43 @@ async def test_write_frame_instances_edges_and_convenience_relations() -> None:
     assert not [s for s in stmts if "BEING_EMPLOYED" in s.upper()]
 
 
+@pytest.mark.asyncio
+async def test_write_frame_instances_links_the_instance_to_its_frame() -> None:
+    """A FRAME_INSTANCE must reach its FRAME by an edge, not just a string property.
+
+    ``fi.frame`` alone dead-ends at the chunk-tag layer: the FRAME taxonomy
+    (FRAME -[:BROADER]-> FRAME) is only traversable from the fact plane if an
+    instance holds a graph edge to its canonical FRAME vertex. Without it, no
+    query can walk instance -> frame -> ancestor -> sibling instances.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "caroline"}, {"nn": "hospital"}])
+    store = GraphStore(client=client)
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id="c1",
+        instances=[
+            {
+                "frame": "Being_employed",
+                "roles": {"Employee": ["Caroline"], "Employer": ["hospital"]},
+            }
+        ],
+    )
+
+    fi_call = next(
+        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
+    )
+    fid = fi_call.kwargs["params"]["rows"][0]["fid"]
+
+    evokes_call = next(c for c in client.command.await_args_list if "EVOKES" in c.args[1])
+    stmt = evokes_call.args[1]
+    assert "MATCH (f:FRAME {id: row.frame})" in stmt
+    assert "MERGE (fi)-[:EVOKES]->(f)" in stmt
+    evokes_rows = evokes_call.kwargs["params"]["rows"]
+    assert evokes_rows[0]["frame"] == "Being_employed"
+    assert evokes_rows[0]["fid"] == fid
+
+
 # ---------------------------------------------------------------------------
 # REL provenance contract — both writers, and the residue neither route covers
 # ---------------------------------------------------------------------------
