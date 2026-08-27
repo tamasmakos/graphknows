@@ -31,6 +31,7 @@ see it is a vulnerability silently un-ignored.
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -41,17 +42,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 PIP_AUDIT_IGNORE = REPO_ROOT / ".pip-audit-ignore"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 CI_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
 
 
-def _gate_job_text() -> str:
-    """Slice the `gate` job's text out of CI_TEXT, from `^  gate:$` up to the
-    next top-level job key (`^  \\w[\\w-]*:$`) or end of file, so assertions
-    scoped to `gate` cannot be satisfied by a setting that lives in another
-    job."""
-    match = re.search(r"^  gate:$", CI_TEXT, re.MULTILINE)
-    assert match is not None, f"{CI_WORKFLOW}: no `  gate:` job found"
+def _job_text(name: str) -> str:
+    """Slice a top-level job's text out of CI_TEXT, from `^  <name>:$` up to
+    the next top-level job key (`^  \\w[\\w-]*:$`) or end of file, so
+    assertions scoped to one job cannot be satisfied by a setting that lives
+    in another job."""
+    match = re.search(rf"^  {re.escape(name)}:$", CI_TEXT, re.MULTILINE)
+    assert match is not None, f"{CI_WORKFLOW}: no `  {name}:` job found"
     start = match.end()
     next_job = re.search(r"^  \w[\w-]*:$", CI_TEXT[start:], re.MULTILINE)
     end = start + next_job.start() if next_job else len(CI_TEXT)
@@ -65,7 +67,7 @@ def test_gate_job_checks_out_full_history() -> None:
     This setting was previously attributed to a now-deleted external-analysis
     step and was deleted with it — this test is what stops that happening
     again."""
-    gate_text = _gate_job_text()
+    gate_text = _job_text("gate")
     assert "fetch-depth: 0" in gate_text, (
         f"{CI_WORKFLOW}: `gate` job checkout has no `fetch-depth: 0` — "
         "diff-cover has no origin/<base> to compare against"
@@ -78,7 +80,7 @@ def test_diff_coverage_step_is_guarded_on_a_succeeded_suite_and_a_pull_request()
     new-code number got pinned at zero, and a collection error leaves no
     coverage.xml so a permissive guard adds a missing-file error on top of
     the real failure."""
-    gate_text = _gate_job_text()
+    gate_text = _job_text("gate")
     assert "diff-cover" in gate_text, f"{CI_WORKFLOW}: `gate` job has no `diff-cover` invocation"
     idx = gate_text.index("diff-cover")
     block_start = gate_text.rfind("\n      - ", 0, idx) + 1
@@ -106,7 +108,7 @@ def test_diff_coverage_step_is_guarded_on_a_succeeded_suite_and_a_pull_request()
 def test_diff_coverage_threshold_is_a_distinct_constant_from_the_repo_floor() -> None:
     """The two thresholds are never expressed in terms of each other, so
     ratcheting one cannot silently move the other."""
-    gate_text = _gate_job_text()
+    gate_text = _job_text("gate")
     repo_floor_match = re.search(r"--cov-fail-under=(\d+)", gate_text)
     diff_threshold_match = re.search(r'DIFF_COVERAGE_MIN:\s*"?(\d+)"?', gate_text)
     assert repo_floor_match is not None, (
@@ -247,4 +249,38 @@ def test_third_party_actions_are_pinned_to_a_commit_hash(workflow_path: Path) ->
     assert checked > 0, (
         f"{workflow_path}: no third-party `uses:` references were checked — "
         "the matching regex is silently matching nothing"
+    )
+
+
+def test_smoke_job_declares_the_interpreters_the_classifiers_name() -> None:
+    """`requires-python = ">=3.11"` and the classifier list advertise which
+    interpreters this package supports; the `smoke` job is what actually
+    installs and imports the built wheel on each one. If the two lists
+    diverge, either CI is silently skipping an advertised interpreter or the
+    classifiers are advertising one nothing ever tests."""
+    smoke_text = _job_text("smoke")
+
+    python_version_line = re.search(r"^\s*python-version:.*$", smoke_text, re.MULTILINE)
+    assert python_version_line is not None, (
+        f"{CI_WORKFLOW}: `smoke` job has no `python-version:` matrix line"
+    )
+    smoke_versions = set(re.findall(r'"(\d+\.\d+)"', python_version_line.group(0)))
+
+    pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    classifiers = pyproject["project"]["classifiers"]
+    classifier_versions = {
+        version
+        for classifier in classifiers
+        for version in re.findall(r"Programming Language :: Python :: (\d+\.\d+)", classifier)
+    }
+
+    assert smoke_versions and classifier_versions, (
+        f"{CI_WORKFLOW} smoke matrix versions {smoke_versions!r} and "
+        f"{PYPROJECT} classifier versions {classifier_versions!r}: neither may be empty"
+    )
+    assert smoke_versions == classifier_versions, (
+        f"{CI_WORKFLOW} smoke matrix declares {sorted(smoke_versions)} but "
+        f"{PYPROJECT} classifiers advertise {sorted(classifier_versions)} — "
+        "the interpreters CI tests and the interpreters the package claims to "
+        "support must be the same set"
     )

@@ -270,9 +270,16 @@ jobs:
           wheel = sorted(glob.glob("dist/*.whl"))[-1]
           names = zipfile.ZipFile(wheel).namelist()
           assert any("py.typed" in n for n in names), "py.typed missing from the wheel"
+          ontology_assets = [
+              "graphknows/symbolic/ontology/assets/cco/cco.json",
+              "graphknows/symbolic/ontology/assets/cco/conversational.json",
+              "graphknows/symbolic/ontology/assets/personal/personal-profile.json",
+          ]
+          for asset in ontology_assets:
+              assert asset in names, f"bundled ontology asset missing from the wheel: {asset}"
           kb = os.path.getsize(wheel) / 1024
           assert kb < 1024, f"wheel too large: {kb:.0f} KB"
-          print(f"wheel OK: {os.path.basename(wheel)} ({kb:.0f} KB, py.typed present)")
+          print(f"wheel OK: {os.path.basename(wheel)} ({kb:.0f} KB, py.typed + ontology assets present)")
 
           sdists = sorted(glob.glob("dist/*.tar.gz"))
           assert len(sdists) == 1, f"expected exactly one sdist, found {len(sdists)}"
@@ -292,3 +299,54 @@ jobs:
           name: dist
           path: dist/
           if-no-files-found: error
+
+  smoke:
+    name: smoke
+    # A separate job, not a matrix over `gate`: `gate` already takes 60
+    # minutes and deletes several GB of preinstalled toolchains because the
+    # unit suite loads a real GLiNER model and en_core_web_lg, none of it
+    # marked integration — tripling that job across three interpreters would
+    # triple the pipeline's worst cost for a check this job gets far cheaper.
+    # This job installs nothing but the built wheel: no checkout, no model
+    # bake, no pytest.
+    needs: wheel
+    runs-on: ubuntu-latest
+    # ponytail: unmeasured, replace with the first green run's per-leg wall-clock
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      # Deliberately no actions/checkout. The whole point of this job is an
+      # environment that has never seen the source tree — a checkout would
+      # let `import graphknows` resolve against the flat repo layout instead
+      # of the installed wheel, and a packaging regression would stay
+      # invisible exactly the way it is today.
+      - name: download the built distribution
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          # No enable-cache / cache-dependency-glob: there is no uv.lock in
+          # this workspace without a checkout.
+          python-version: ${{ matrix.python-version }}
+
+      - name: install the wheel into a fresh venv and import it
+        # `uv pip`, not plain `pip`: only `uv pip` respects the workflow-level
+        # UV_TORCH_BACKEND: cpu env var. Plain pip would resolve torch's
+        # default CUDA wheel, several GB, onto a runner with no disk-clearing
+        # step. Exactly one install per leg — no `uv sync`, no second import.
+        run: |
+          uv venv
+          uv pip install dist/*.whl
+          .venv/bin/python -c "import graphknows; print(graphknows.__version__)"
+
+      # A first RED run here may be a genuine incompatibility rather than a
+      # bug in this job: the top-level import in graphknows/__init__.py pulls
+      # in graphknows.memory and its heavy transitive modules, so an install
+      # or import failure on one of these interpreters is the gate working as
+      # designed, not a false alarm to silence.
