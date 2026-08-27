@@ -1007,7 +1007,14 @@ class _STMIngestHandler:
                             "confidence": sim,
                             "summary": frame_summary(name),
                             "embedding": frame_embedding(name),
-                            "parents": sorted(up.get(name, ())),
+                            "parents": [
+                                {
+                                    "id": p,
+                                    "summary": frame_summary(p),
+                                    "embedding": frame_embedding(p),
+                                }
+                                for p in sorted(up.get(name, ()))
+                            ],
                         }
                         for name, sim in matches
                     ],
