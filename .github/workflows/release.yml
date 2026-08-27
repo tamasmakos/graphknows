@@ -18,7 +18,9 @@ jobs:
     # By reference, never copied: one gate definition means a release can never
     # be checked more loosely than a merge to main.
     uses: ./.github/workflows/ci.yml
-    secrets: inherit
+    # Pinned by tests/test_release_workflow.py and tests/test_repo_hygiene.py;
+    # narrowing this to named secrets is tracked separately.
+    secrets: inherit # zizmor: ignore[secrets-inherit] 2026-08-27
 
   publish:
     needs: ci
@@ -29,7 +31,11 @@ jobs:
       # upload token. No API token is stored anywhere.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # This job authenticates to PyPI over OIDC, not with the git token,
+          # so persisting it on disk buys nothing.
+          persist-credentials: false
 
       - name: assert the tag matches the packaged version
         # Read the literal out of the source text. Importing the package would
@@ -52,7 +58,7 @@ jobs:
       - name: download the distribution CI built
         # The same bytes the py.typed and wheel-size assertions ran against.
         # This job performs no build of its own.
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: dist
           path: dist/

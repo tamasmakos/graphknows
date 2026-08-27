@@ -21,6 +21,11 @@ yaml dependency, and YAML 1.1 parses the bare `on:` key as the boolean
 and the `audit` job in this same file extract its entries with the identical
 `grep -oE '^(PYSEC|GHSA)[A-Za-z0-9-]+'` — an entry shaped so that regex cannot
 see it is a vulnerability silently un-ignored.
+
+  * Every third-party `uses:` reference in ci.yml and release.yml must be
+    pinned to a commit hash, not a mutable tag — the same rationale already
+    recorded next to `pypa/gh-action-pypi-publish` in release.yml, extended
+    to the rest of both workflows as one convention instead of one exception.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 PIP_AUDIT_IGNORE = REPO_ROOT / ".pip-audit-ignore"
 
 CI_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
@@ -207,4 +213,38 @@ def test_vulnerability_ledger_exists_and_is_machine_readable() -> None:
     assert entries > 0, (
         f"{PIP_AUDIT_IGNORE}: no advisory entries found — auditing with an "
         "empty ignore list drowns the real signal"
+    )
+
+
+@pytest.mark.parametrize("workflow_path", [CI_WORKFLOW, RELEASE_WORKFLOW])
+def test_third_party_actions_are_pinned_to_a_commit_hash(workflow_path: Path) -> None:
+    """A mutable tag (`@v7`, `@v10.0.1`, ...) can be repointed by the action's
+    owner at any time, so what CI actually executes could change with no
+    commit in this repository. `pypa/gh-action-pypi-publish` in release.yml
+    already carries this rationale in its own trailing comment
+    (`# v1.14.2`); this test is what spreads that convention to every other
+    `uses:` reference in both workflows instead of leaving it as one
+    exception."""
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    hash_pattern = re.compile(r"^[a-f0-9]{40}$")
+    checked = 0
+    for match in re.finditer(r"^\s*(?:- )?uses:\s*(\S+)(.*)$", workflow_text, re.MULTILINE):
+        reference, rest_of_line = match.group(1), match.group(2)
+        if reference.startswith("./"):
+            continue  # local workflow reuse, e.g. `uses: ./.github/workflows/ci.yml` — no hash to pin
+        checked += 1
+        owner_repo, _, pin = reference.partition("@")
+        assert hash_pattern.match(pin), (
+            f"{workflow_path}: `uses: {reference}` is not pinned to a full "
+            "40-character commit hash — a mutable tag can be repointed by "
+            f"{owner_repo}'s owner at any time, changing what CI executes "
+            "with no commit in this repository"
+        )
+        assert re.search(r"#\s*\S+", rest_of_line), (
+            f"{workflow_path}: `uses: {reference}` has no trailing `# <version>` "
+            "comment — the pinned hash is unreadable by a human without one"
+        )
+    assert checked > 0, (
+        f"{workflow_path}: no third-party `uses:` references were checked — "
+        "the matching regex is silently matching nothing"
     )

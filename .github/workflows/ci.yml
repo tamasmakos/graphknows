@@ -51,12 +51,16 @@ jobs:
     # The first run bakes several GB of models; cached runs are ~8 min.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history so the diff coverage step below can compare this
           # branch against origin/<base>. A shallow clone has no base ref to
           # diff against: loud failure at best, a silent 100% at worst.
           fetch-depth: 0
+          # No authenticated git operation happens after checkout in this job
+          # (it only reads local refs), so persisting the job token buys
+          # nothing and only widens what a compromised step could exfiltrate.
+          persist-credentials: false
 
       - name: free disk space
         # torch + six baked models + the uv cache do not fit alongside the
@@ -64,7 +68,7 @@ jobs:
         # left alone — uv installs its own Python, but setup-uv reads that path.
         run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
 
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -84,7 +88,7 @@ jobs:
           "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
 
       - name: cache models
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             .cache/huggingface
@@ -158,21 +162,29 @@ jobs:
           # a low one does not fail the job, and the real threshold is set from
           # two pull requests of measured numbers (#206).
           DIFF_COVERAGE_MIN: "0"
+          # An attacker-controlled branch name expanded straight into `run:` is
+          # a template-injection surface (zizmor `template-injection`); routing
+          # it through env and referencing it as a shell variable instead keeps
+          # the expansion out of the generated script.
+          BASE_REF: ${{ github.base_ref }}
         # Reads the coverage.xml the step above already wrote: no second test
         # run, no new declared dependency — uvx fetches the tool ephemerally,
         # the same way the audit job runs pip-audit.
         run: >-
           uvx diff-cover coverage.xml
-          --compare-branch=origin/${{ github.base_ref }}
-          --fail-under=$DIFF_COVERAGE_MIN
+          --compare-branch="origin/$BASE_REF"
+          --fail-under="$DIFF_COVERAGE_MIN"
 
   audit:
     name: audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No authenticated git operation happens after checkout in this job.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -183,16 +195,48 @@ jobs:
         run: |
           test -f .pip-audit-ignore || { echo "::error::.pip-audit-ignore is missing"; exit 1; }
           uv export --no-dev --no-editable --no-hashes --format requirements-txt > /tmp/req-audit.txt
+          # The word-splitting below is deliberate: one --ignore-vuln flag per
+          # ledger entry, not a single quoted argument. Quoting it would pass
+          # pip-audit one malformed flag instead of N well-formed ones.
+          # shellcheck disable=SC2046
           uvx pip-audit -r /tmp/req-audit.txt --progress-spinner off \
             $(grep -oE '^(PYSEC|GHSA)[A-Za-z0-9-]+' .pip-audit-ignore | sed 's/^/--ignore-vuln /')
+
+      - name: workflow security lint (zizmor)
+        # Nothing here has ever read .github/workflows/*.yml as code, so the
+        # pipeline's own config was the one part of the repo with no linter.
+        # A first --offline run over both workflows found 16 findings: 10
+        # unpinned-uses (fixed above), 1 template-injection (fixed above), 4
+        # artipacked (fixed above), 1 secrets-inherit (inline-ignored in
+        # release.yml, pinned by contract tests). Nothing is left to defer.
+        # Pinned, unlike the pip-audit call above: a linter whose rule set
+        # changes on someone else's release must not turn this pipeline red
+        # on an unrelated push. --offline keeps it deterministic and token-free.
+        run: uvx zizmor@1.29.0 --offline .github/workflows/
+
+      - name: workflow correctness lint (actionlint)
+        # Catches what zizmor doesn't: expression typing, YAML validity, and
+        # shellcheck over embedded `run:` blocks. A first run found 2 findings
+        # (both shellcheck, both fixed above). actionlint-py is the published
+        # PyPI wrapper around the compiled Go binary, so this runs ephemerally
+        # through uvx exactly like the pip-audit and zizmor steps above — no
+        # hash-pinned download step needed. Pinned for the same reason as
+        # zizmor. CI-only: gate.sh has no shellcheck/actionlint in the
+        # workspace container, so this is not mirrored there.
+        run: >-
+          uvx --from actionlint-py==1.7.12.24 actionlint
+          .github/workflows/ci.yml .github/workflows/release.yml
 
   wheel:
     name: wheel
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No authenticated git operation happens after checkout in this job.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -230,7 +274,7 @@ jobs:
       - name: upload the distribution
         # This run is what a release workflow reuses via workflow_call, so the
         # artifacts must outlive the job.
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: dist
           path: dist/
