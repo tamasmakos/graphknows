@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import ast
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
+import zipfile
 from importlib.metadata import packages_distributions
 from pathlib import Path
 
@@ -174,6 +176,43 @@ def test_bundled_default_ontology_ships_in_the_wheel() -> None:
     if ignored.returncode == 128:  # e.g. "dubious ownership" inside the container
         pytest.skip("git cannot read this repo here; the VCS check needs a host run")
     assert ignored.returncode == 1, f"gitignored, so hatchling will not ship it: {asset}"
+
+
+def test_built_wheel_ships_the_default_ontology_assets(tmp_path: Path) -> None:
+    """Build a real wheel with `uv build` and assert the ontology assets are
+    actually inside the archive — the condition proxy above checks the
+    source file exists and is not gitignored, but never proves hatchling's
+    packaging config actually puts it in the wheel.
+
+    These three archive paths mirror `_BUNDLED_ONTOLOGY`, `_BUNDLED_OVERLAY`
+    and `_BUNDLED_PERSONAL_PROFILE` in graphknows/settings.py. The first two
+    are what `GraphKnowsSettings().ontology_source` / `overlay_source`
+    resolve to by default; the personal profile is only reached via
+    `GRAPHKNOWS_RELATION_ONTOLOGY=personal` (the default relation ontology
+    is `_BUNDLED_ONTOLOGY`, same file as `_BUNDLED_RELATION_PROFILE`).
+    """
+    if shutil.which("uv") is None:
+        pytest.skip("uv not on PATH; cannot build a wheel here")
+
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"uv build --wheel failed:\n{result.stderr}"
+
+    wheels = sorted(tmp_path.glob("*.whl"))
+    assert len(wheels) == 1, f"expected exactly one built wheel in {tmp_path}, found {wheels}"
+
+    names = zipfile.ZipFile(wheels[0]).namelist()
+    for expected in (
+        "graphknows/symbolic/ontology/assets/cco/cco.json",
+        "graphknows/symbolic/ontology/assets/cco/conversational.json",
+        "graphknows/symbolic/ontology/assets/personal/personal-profile.json",
+    ):
+        assert expected in names, f"{wheels[0].name}: missing bundled ontology asset {expected!r}"
 
 
 def test_every_imported_third_party_module_is_declared() -> None:
