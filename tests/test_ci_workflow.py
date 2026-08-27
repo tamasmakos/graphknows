@@ -39,6 +39,94 @@ PIP_AUDIT_IGNORE = REPO_ROOT / ".pip-audit-ignore"
 CI_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
 
 
+def _gate_job_text() -> str:
+    """Slice the `gate` job's text out of CI_TEXT, from `^  gate:$` up to the
+    next top-level job key (`^  \\w[\\w-]*:$`) or end of file, so assertions
+    scoped to `gate` cannot be satisfied by a setting that lives in another
+    job."""
+    match = re.search(r"^  gate:$", CI_TEXT, re.MULTILINE)
+    assert match is not None, f"{CI_WORKFLOW}: no `  gate:` job found"
+    start = match.end()
+    next_job = re.search(r"^  \w[\w-]*:$", CI_TEXT[start:], re.MULTILINE)
+    end = start + next_job.start() if next_job else len(CI_TEXT)
+    return CI_TEXT[start:end]
+
+
+def test_gate_job_checks_out_full_history() -> None:
+    """Diff coverage compares the diff against the pull request's base
+    branch; a shallow clone has no `origin/<base>` to compare against, so the
+    step fails loudly at best and silently reports a perfect score at worst.
+    This setting was previously attributed to a now-deleted external-analysis
+    step and was deleted with it — this test is what stops that happening
+    again."""
+    gate_text = _gate_job_text()
+    assert "fetch-depth: 0" in gate_text, (
+        f"{CI_WORKFLOW}: `gate` job checkout has no `fetch-depth: 0` — "
+        "diff-cover has no origin/<base> to compare against"
+    )
+
+
+def test_diff_coverage_step_is_guarded_on_a_succeeded_suite_and_a_pull_request() -> None:
+    """Unlike its neighbours this step must not run after a failed suite —
+    there is nothing to report, reporting anyway is how the previous
+    new-code number got pinned at zero, and a collection error leaves no
+    coverage.xml so a permissive guard adds a missing-file error on top of
+    the real failure."""
+    gate_text = _gate_job_text()
+    assert "diff-cover" in gate_text, f"{CI_WORKFLOW}: `gate` job has no `diff-cover` invocation"
+    idx = gate_text.index("diff-cover")
+    block_start = gate_text.rfind("\n      - ", 0, idx) + 1
+    next_step = re.search(r"^      - ", gate_text[idx:], re.MULTILINE)
+    block_end = idx + next_step.start() if next_step else len(gate_text)
+    step_text = gate_text[block_start:block_end]
+
+    if_match = re.search(r"^\s*if:.*$", step_text, re.MULTILINE)
+    assert if_match is not None, f"{CI_WORKFLOW}: diff-cover step has no `if:` guard"
+    if_line = if_match.group(0)
+    assert "success()" in if_line, (
+        f"{CI_WORKFLOW}: diff-cover step's `if:` does not contain `success()` — "
+        f"got: {if_line.strip()!r}"
+    )
+    assert "github.event_name == 'pull_request'" in if_line, (
+        f"{CI_WORKFLOW}: diff-cover step's `if:` does not contain "
+        f"`github.event_name == 'pull_request'` — got: {if_line.strip()!r}"
+    )
+    assert "!cancelled()" not in if_line, (
+        f"{CI_WORKFLOW}: diff-cover step's `if:` uses `!cancelled()`, which "
+        f"runs it after a failed suite with no coverage.xml — got: {if_line.strip()!r}"
+    )
+
+
+def test_diff_coverage_threshold_is_a_distinct_constant_from_the_repo_floor() -> None:
+    """The two thresholds are never expressed in terms of each other, so
+    ratcheting one cannot silently move the other."""
+    gate_text = _gate_job_text()
+    repo_floor_match = re.search(r"--cov-fail-under=(\d+)", gate_text)
+    diff_threshold_match = re.search(r'DIFF_COVERAGE_MIN:\s*"?(\d+)"?', gate_text)
+    assert repo_floor_match is not None, (
+        f"{CI_WORKFLOW}: no `--cov-fail-under=<N>` literal found in the gate job"
+    )
+    assert diff_threshold_match is not None, (
+        f"{CI_WORKFLOW}: no `DIFF_COVERAGE_MIN: <N>` literal found in the gate job"
+    )
+    assert repo_floor_match.group(1) != diff_threshold_match.group(1), (
+        f"{CI_WORKFLOW}: diff-coverage threshold "
+        f"({diff_threshold_match.group(1)!r}) equals the whole-repo floor "
+        f"({repo_floor_match.group(1)!r}) — they must be distinct literals"
+    )
+
+    idx = gate_text.index("diff-cover")
+    block_start = gate_text.rfind("\n      - ", 0, idx) + 1
+    next_step = re.search(r"^      - ", gate_text[idx:], re.MULTILINE)
+    block_end = idx + next_step.start() if next_step else len(gate_text)
+    step_text = gate_text[block_start:block_end]
+    assert "cov-fail-under" not in step_text, (
+        f"{CI_WORKFLOW}: diff-cover step references `cov-fail-under` — the "
+        "diff-coverage threshold must not be expressed in terms of the "
+        "whole-repo floor"
+    )
+
+
 def test_ci_is_callable_by_a_release_workflow() -> None:
     """A release/tag workflow must be able to `uses: ./.github/workflows/ci.yml`
     instead of duplicating every check, which requires `workflow_call` under

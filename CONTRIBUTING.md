@@ -63,8 +63,10 @@ Test layout mirrors the package (`tests/api/`, `tests/ingestion/`,
 `asyncio_mode = "auto"`, markers `unit` and `integration`. Ruff's config lives
 in `[tool.ruff]`, same file.
 
-Two known gaps: there is no diff coverage check until #201 lands, and there is
-no secret scan at all now that the analysis CLI that ran one is gone.
+A diff coverage check now runs in CI on pull requests, comparing the branch against
+the base branch; it is report-only until its threshold is set from measured
+numbers. One known gap remains: there is no secret scan at all now that the
+analysis CLI that ran one is gone.
 [gitleaks](https://github.com/gitleaks/gitleaks) is the candidate replacement.
 
 ## Architecture rules
