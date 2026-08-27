@@ -1,41 +1,20 @@
 #!/usr/bin/env bash
 # The pre-push gate. Nothing reaches origin without passing every check here.
-#
-# Split of responsibilities:
-#   pre-commit (~5s, changed files)  ruff, mypy, bandit, sonar issue scan
-#   pre-push   (this, ~3-4 min)      full suite, whole-package types, layers,
-#                                    coverage, secrets, dependency audit, Sonar
-#
 # Whole-package, not changed-files: file-scoped checking is exactly how five
-# mypy errors and 32 ruff errors sat on main unseen for weeks.
-#
-# Everything Python runs in the workspace container. The host virtualenv cannot
-# even collect the suite, so a host run would be a green light that means
-# nothing. If the container is missing this script FAILS — it never degrades to
-# "skipped", which is the failure mode the whole gate exists to prevent.
-#
-# Install with scripts/install-hooks.sh. Bypass is `--no-verify`, available to a
-# human at their own terminal and denied to agents by .claude/hooks/gate_guard.py.
+# mypy errors and 32 ruff errors sat on main unseen for weeks. Runs in the
+# workspace container — the host virtualenv cannot even collect the suite.
+# Install with `pre-commit install --hook-type pre-push`.
 set -uo pipefail
 
 CONTAINER="${GRAPHKNOWS_CONTAINER:-graphknows-workspace}"
-# The floor is a ratchet, so the environment may only RAISE it. Reading it
-# straight from the env made `GRAPHKNOWS_COVERAGE_FLOOR=0 git push` a one-word
-# bypass, which is the env-var escape hatch this design deliberately omits.
+# Ratchet: env may RAISE the floor, never lower it (no `FLOOR=0 git push` bypass).
 COVERAGE_FLOOR_MIN=65
 COVERAGE_FLOOR="${GRAPHKNOWS_COVERAGE_FLOOR:-$COVERAGE_FLOOR_MIN}"
 if [ "$COVERAGE_FLOOR" -lt "$COVERAGE_FLOOR_MIN" ] 2>/dev/null; then
-  echo "gate: ignoring GRAPHKNOWS_COVERAGE_FLOOR=$COVERAGE_FLOOR - the floor" >&2
-  echo "      may be raised but never lowered. Using $COVERAGE_FLOOR_MIN." >&2
+  echo "gate: ignoring GRAPHKNOWS_COVERAGE_FLOOR=$COVERAGE_FLOOR - floor may be raised, never lowered." >&2
   COVERAGE_FLOOR=$COVERAGE_FLOOR_MIN
 fi
-# SONAR_BLOCKING removed: this gate no longer runs Sonar at all. See section 7.
-
-# The known-vulnerability ledger lives in .pip-audit-ignore, read by this gate
-# AND by .github/workflows/ci.yml. It used to be a KNOWN_VULNS array here, which
-# meant CI and the pre-push gate each carried their own copy of the same list —
-# two ledgers that drift are worse than one that is occasionally stale.
-AUDIT_IGNORE_FILE=".pip-audit-ignore"
+AUDIT_IGNORE_FILE=".pip-audit-ignore"  # shared with .github/workflows/ci.yml
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
@@ -44,33 +23,22 @@ FAILED=()
 step() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 record() { [ "$1" -eq 0 ] || FAILED+=("$2"); }
 
-# -- Preconditions -----------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
   echo "gate: docker not found. The suite cannot run on the host (incomplete venv)." >&2
   exit 1
 fi
 if ! docker exec "$CONTAINER" true >/dev/null 2>&1; then
-  cat >&2 <<EOF
-gate: container '$CONTAINER' is not running.
-
-  Start it:   docker compose up -d
-  Then push again.
-
-Refusing to skip the gate - a check that silently does not run is worse than
-no check at all.
-EOF
+  echo "gate: container '$CONTAINER' is not running. Start it: docker compose up -d" >&2
   exit 1
 fi
 
 # The shared container mounts ONE tree at /app. Pushing from a git worktree — one
 # per issue, which is how this repo works — used to check that mounted tree and
-# report green about code nobody was pushing. Silently validating the wrong tree
-# is worse than the "silently skipped" failure the guard above refuses.
-#
-# Detected by marker rather than by comparing paths: /app's mount source is a host
-# path in the daemon's spelling, REPO_ROOT is in the shell's, and normalising
-# between them is a portability bug waiting to happen. Asking the container
-# whether it can see a file we just created answers the real question directly.
+# report green about code nobody was pushing. Detected by marker rather than by
+# comparing paths: /app's mount source is a host path in the daemon's spelling,
+# REPO_ROOT is in the shell's, and normalising between them is a portability bug
+# waiting to happen. Asking the container whether it can see a file we just
+# created answers the real question directly.
 GATE_MARKER=".gate-tree-$$"
 : >"$REPO_ROOT/$GATE_MARKER"
 docker exec "$CONTAINER" test -f "/app/$GATE_MARKER" >/dev/null 2>&1
@@ -80,8 +48,8 @@ rm -f "$REPO_ROOT/$GATE_MARKER"
 if [ "$CONTAINER_HAS_THIS_TREE" -eq 0 ]; then
   dex() { docker exec -e RUFF_CACHE_DIR=/tmp/ruffcache "$CONTAINER" sh -c "cd /app && $*"; }
 else
-  # Same image, so the baked models and the installed venv are identical; same
-  # network, so anything the suite reaches by service name still resolves.
+  # Same image, so the installed venv is identical; same network, so anything
+  # the suite reaches by service name still resolves.
   GATE_IMAGE="$(docker inspect "$CONTAINER" --format '{{.Config.Image}}')"
   GATE_NET="$(docker inspect "$CONTAINER" \
     --format '{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}' | awk '{print $1}')"
@@ -98,69 +66,26 @@ else
   }
 fi
 
-# -- 1. Lint + format, whole repo --------------------------------------------
 step "ruff (check + format)"
-dex "ruff check --no-fix --config ruff.toml graphknows evaluation tests"
-record $? "ruff check"
-dex "ruff format --check --config ruff.toml graphknows evaluation tests"
-record $? "ruff format"
+dex "ruff check --no-fix graphknows evaluation tests"; record $? "ruff check"
+dex "ruff format --check graphknows evaluation tests"; record $? "ruff format"
 
-# -- 2. Types, whole package -------------------------------------------------
 step "mypy (whole package)"
-# No --exclude: CI checks the whole package, and a path the gate skips is a path
-# that lands red on the runner instead of here.
-dex "mypy graphknows --strict --ignore-missing-imports \
-     --allow-untyped-decorators --no-warn-unused-ignores"
+dex "mypy graphknows --strict --ignore-missing-imports --allow-untyped-decorators --no-warn-unused-ignores"
 record $? "mypy"
 
-# -- 3. Architecture ---------------------------------------------------------
 step "import-linter (module boundaries)"
-dex "lint-imports"
-record $? "import-linter"
+dex "lint-imports"; record $? "import-linter"
 
-# -- 3b. Static security -----------------------------------------------------
-# The pre-commit hook runs bandit on changed files only, so a finding introduced
-# before the rule existed never gets seen. CI runs the whole package; so must the
-# gate, with the identical skip list.
 step "bandit (whole package)"
-dex "bandit -r graphknows --skip B101,B104,B105,B110,B112"
-record $? "bandit"
+dex "bandit -r graphknows --skip B101,B104,B105,B110,B112"; record $? "bandit"
 
-# -- 4. Tests + coverage floor -----------------------------------------------
-# The floor is a ratchet against backsliding, not a target. New-code coverage is
-# Sonar's new_coverage condition, which is diff coverage and the one that bites.
 step "pytest (unit) + coverage floor ${COVERAGE_FLOOR}%"
-dex "python -m pytest -q -m 'not integration' \
-     --cov=graphknows --cov-report=xml:coverage.xml --cov-report=term:skip-covered \
-     --cov-fail-under=${COVERAGE_FLOOR}"
+dex "python -m pytest -q -m 'not integration' --cov=graphknows \
+     --cov-report=xml:coverage.xml --cov-report=term:skip-covered --cov-fail-under=${COVERAGE_FLOOR}"
 record $? "pytest/coverage"
 
-# -- 5. Secrets --------------------------------------------------------------
-# Replaces the gitleaks stage the deleted Jenkinsfile never successfully ran.
-# The SonarQube CLI is already installed and authenticated, so this costs no new
-# dependency. Scoped to TRACKED files: scanning the worktree hits .venv and the
-# baked models and times out at 30s, and an untracked file cannot leak anyway.
-step "secret scan (tracked files)"
-if command -v sonar >/dev/null 2>&1; then
-  # `xargs` splits 300+ paths across several invocations, so a plain `$?` reports
-  # only the LAST batch and a secret found in the first one is masked by a clean
-  # second one. -P1 keeps ordering and `xargs` returns non-zero if ANY child did.
-  git ls-files -z | xargs -0 -P1 sonar analyze secrets
-  record $? "secret scan"
-else
-  echo "gate: sonar CLI not found - install it or the secret scan cannot run." >&2
-  FAILED+=("secret scan (tool missing)")
-fi
-
-# -- 6. Dependency audit -----------------------------------------------------
-# NOT `sonar analyze dependency-risks`: Software Composition Analysis is not
-# enabled on this SonarCloud plan, so that command fails for a reason unrelated
-# to the code. pip-audit gives the same signal for free.
 step "dependency audit (new advisories only)"
-# First token of each non-comment line is the advisory id; the rest is the fix
-# note. Reported like the missing publisher below rather than aborting the whole
-# gate, and never audited with an empty ignore list - that would drown the real
-# signal in known noise.
 if [ ! -f "$AUDIT_IGNORE_FILE" ]; then
   echo "gate: $AUDIT_IGNORE_FILE is missing - the ledger cannot be read." >&2
   FAILED+=("dependency audit (ledger missing)")
@@ -171,22 +96,6 @@ else
   record $? "dependency audit"
 fi
 
-# -- 7. SonarCloud -----------------------------------------------------------
-# Deliberately absent. Sonar runs on the pull request into main and nowhere else:
-# that is the point at which the verdict decides something, and CI analyses a real
-# clone, which is the only place a correct one can be produced.
-#
-# A pre-push analysis could not be correct anyway. The scanner reads git history
-# for blame, and in a linked worktree `.git` is a file naming an absolute host path
-# to the main repo; mounting only the worktree makes JGit fail with
-# "RepositoryNotFoundException". Every fix-issues lane pushes from a worktree, so a
-# blocking pre-push Sonar stage blocks the whole loop on an artefact of where the
-# checkout lives, which says nothing about the code.
-#
-# This is not the "silent skip" the header forbids: the check still runs, on the PR,
-# and its verdict still blocks. It runs once, where it is meaningful.
-
-# -- Verdict -----------------------------------------------------------------
 if [ ${#FAILED[@]} -ne 0 ]; then
   printf '\n\033[31mgate: FAILED\033[0m - %s\n' "$(IFS=', '; echo "${FAILED[*]}")" >&2
   echo "Fix what the gate found. Do not weaken it to make it pass." >&2

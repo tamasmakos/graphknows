@@ -78,14 +78,13 @@ def test_triggers_only_on_version_tag_pushes() -> None:
 
 
 def test_calls_ci_by_reference_not_by_copy() -> None:
-    """Must `uses: ./.github/workflows/ci.yml` with `secrets: inherit` and
-    `skip_sonar: true`, and must never re-declare CI's own steps."""
+    """Must `uses: ./.github/workflows/ci.yml` with `secrets: inherit`, and
+    must never re-declare CI's own steps."""
     text = _release_text()
     assert re.search(r"uses:\s*\./\.github/workflows/ci\.yml", text), (
         f"{RELEASE}: does not call ci.yml via `uses: ./.github/workflows/ci.yml`"
     )
     assert "secrets: inherit" in text, f"{RELEASE}: missing `secrets: inherit`"
-    assert "skip_sonar: true" in text, f"{RELEASE}: missing `skip_sonar: true`"
     assert "uv sync" not in text, (
         f"{RELEASE}: re-declares `uv sync` instead of reusing ci.yml via `uses:`"
     )

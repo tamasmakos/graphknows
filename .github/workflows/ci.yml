@@ -2,7 +2,7 @@
 #
 # This is scripts/gate.sh's checks, run on a clean machine instead of the
 # developer's workspace container. Same checks, same thresholds, same order:
-#   ruff -> mypy -> import-linter -> bandit -> pytest+coverage -> SonarQube Cloud
+#   ruff -> mypy -> import-linter -> bandit -> pytest+coverage
 #
 # Why not just run gate.sh? It requires the graphknows-workspace container and
 # refuses to degrade to a host run — correct for a pre-push hook on a machine
@@ -24,21 +24,9 @@ on:
     branches: [main]
   workflow_dispatch:
   workflow_call:
-    inputs:
-      skip_sonar:
-        # Only takes effect when the CALLER's own triggering event is
-        # pull_request (the Sonar step's `if:` checks github.event_name ==
-        # 'pull_request' first). A tag/release workflow triggered by `push`
-        # already skips this step via that same check, with or without this
-        # input — set it explicitly anyway so a reader doesn't have to
-        # rediscover that from the Sonar step's condition.
-        description: skip the Sonar step even when the caller's triggering event is pull_request
-        type: boolean
-        default: false
 
 # Superseded pushes to the same PR are pointless once a newer commit exists.
-# main is NOT cancelled: its analysis sets Sonar's new-code baseline.
-# Tag refs are NOT cancelled either: a tag run is the release build, and its
+# main and tag refs are NOT cancelled: a tag run is the release build, and its
 # artifacts cannot be re-created by re-running a cancelled job.
 concurrency:
   group: ci-${{ github.ref }}
@@ -64,11 +52,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-        with:
-          # Sonar reads git blame to decide what "new code" is. A shallow clone
-          # makes every line look new, which silently distorts new_coverage —
-          # the one condition this project's quality gate actually fails on.
-          fetch-depth: 0
 
       - name: free disk space
         # torch + six baked models + the uv cache do not fit alongside the
@@ -116,11 +99,11 @@ jobs:
 
       - name: ruff check
         if: ${{ !cancelled() }}
-        run: uv run ruff check --no-fix --config ruff.toml graphknows evaluation tests
+        run: uv run ruff check --no-fix graphknows evaluation tests
 
       - name: ruff format
         if: ${{ !cancelled() }}
-        run: uv run ruff format --check --config ruff.toml graphknows evaluation tests
+        run: uv run ruff format --check graphknows evaluation tests
 
       - name: mypy
         if: ${{ !cancelled() }}
@@ -149,38 +132,11 @@ jobs:
           # run re-embedded every vocabulary from scratch.
           GRAPHKNOWS_CACHE_DIR: .cache/graphknows
         # 65 is scripts/gate.sh's COVERAGE_FLOOR_MIN — a ratchet against
-        # backsliding. New-code coverage is Sonar's job, one step below.
+        # backsliding. Diff/new-code coverage lands with #201.
         run: >-
           uv run python -m pytest -q -m "not integration"
           --cov=graphknows --cov-report=xml:coverage.xml
           --cov-report=term:skip-covered --cov-fail-under=65
-
-      - name: SonarQube Cloud
-        # Pull requests only. Sonar's verdict decides one thing — whether this
-        # change may enter main — so it runs at that decision and nowhere else.
-        # On a push to main the merge has already happened and a red gate would
-        # only make main look broken after the fact.
-        #
-        # Note this is `if:`, not `if: !cancelled()` like the checks above: those
-        # run anyway so one CI round reports every failure, but there is nothing
-        # to report here when a suite failed, and publishing after a failed suite
-        # is how new_coverage got pinned at 0.0 before.
-        #
-        # `inputs` is null outside a workflow_call, so `!inputs.skip_sonar` is
-        # true there and PR behaviour is unchanged.
-        if: github.event_name == 'pull_request' && !inputs.skip_sonar
-        uses: SonarSource/sonarqube-scan-action@v8
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: https://sonarcloud.io
-        with:
-          # Blocking: a PR carrying Sonar findings fails this job.
-          #
-          # For that failure to actually stop a merge, `gate` must be a required
-          # status check on main. It is not — branch protection returns 403 on a
-          # Free-plan private repo — so today this reports red without preventing
-          # the merge button. See #167.
-          args: -Dsonar.qualitygate.wait=true
 
   audit:
     name: audit

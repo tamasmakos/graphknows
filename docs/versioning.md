@@ -41,8 +41,8 @@ next major. Current deprecations (removed in 2.0):
 5. Commit, then `git tag vX.Y.Z` and push the tag: `git push origin vX.Y.Z`.
 
 Pushing the tag is what triggers `.github/workflows/release.yml` — the rest is
-automated. It reruns the full CI gate (`ci.yml`, called by reference, Sonar
-skipped since a tag has no PR context), then asserts that the pushed tag
+automated. It reruns the full CI gate (`ci.yml`, called by reference), then
+asserts that the pushed tag
 matches the `__version__` literal in `graphknows/_version.py`. If they
 disagree, the run fails before any upload, reporting both values. Only then
 does it publish the wheel and sdist that CI itself built — no separate build

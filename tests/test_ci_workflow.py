@@ -4,10 +4,8 @@ These invariants exist because ci.yml is currently a leaf workflow — its `on:`
 block only fires on pull_request/push/workflow_dispatch — so a release/tag
 workflow has no way to reuse it and would have to duplicate every check:
 
-  * `workflow_call` with a `skip_sonar` input is the seam a release workflow
-    needs to invoke `gate` and `wheel` without duplicating them.
-  * The Sonar step must be able to honour that input (via its own `if:`),
-    otherwise a caller workflow with no PR context still tries to run Sonar.
+  * `workflow_call` is the seam a release workflow needs to invoke `gate` and
+    `wheel` without duplicating them.
   * `cancel-in-progress` currently cancels every non-main ref, tag refs
     included — a tag build superseded by another push to the same tag is
     exactly the release artifact that must survive, not be cancelled.
@@ -41,36 +39,13 @@ PIP_AUDIT_IGNORE = REPO_ROOT / ".pip-audit-ignore"
 CI_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_ci_is_callable_with_a_skip_sonar_input() -> None:
+def test_ci_is_callable_by_a_release_workflow() -> None:
     """A release/tag workflow must be able to `uses: ./.github/workflows/ci.yml`
     instead of duplicating every check, which requires `workflow_call` under
-    `on:` with a boolean `skip_sonar` input defaulting to false."""
+    `on:`."""
     assert re.search(r"^  workflow_call:", CI_TEXT, re.MULTILINE), (
         f"{CI_WORKFLOW}: `on:` block has no `workflow_call:` trigger — "
         "ci.yml cannot be reused by a release/tag workflow"
-    )
-    assert re.search(r"^\s*skip_sonar:\s*$", CI_TEXT, re.MULTILINE), (
-        f"{CI_WORKFLOW}: workflow_call block declares no `skip_sonar` input"
-    )
-    assert "type: boolean" in CI_TEXT, (
-        f"{CI_WORKFLOW}: `skip_sonar` input is not declared `type: boolean`"
-    )
-    assert "default: false" in CI_TEXT, f"{CI_WORKFLOW}: `skip_sonar` input has no `default: false`"
-
-
-def test_a_caller_can_turn_sonar_off() -> None:
-    """The Sonar step's `if:` must reference `inputs.skip_sonar` alongside the
-    existing pull_request gate, otherwise a caller workflow with no PR event
-    (a tag push) cannot suppress Sonar and the step either never runs or runs
-    unconditionally."""
-    if_lines = [line for line in CI_TEXT.splitlines() if "if:" in line]
-    assert any(
-        "github.event_name == 'pull_request'" in line and "inputs.skip_sonar" in line
-        for line in if_lines
-    ), (
-        f"{CI_WORKFLOW}: no `if:` line combines "
-        "`github.event_name == 'pull_request'` with `inputs.skip_sonar` — "
-        "a caller workflow has no way to disable the Sonar step"
     )
 
 

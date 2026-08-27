@@ -1,10 +1,10 @@
-# docker-compose.yaml — GraphKnows stack (ArcadeDB + MCP server)
+# docker-compose.yaml — GraphKnows dev stack (ArcadeDB + dev workspace)
 #
-#   docker compose up -d                 # arcadedb + mcp
-#   docker compose --profile dev up -d   # + workspace dev container
-#   docker compose --profile observability up -d   # + Langfuse
+#   docker compose up -d
 #
 # Configure via a .env file (see .env.example). All app config is GRAPHKNOWS_*.
+# Docker is dev-only: the PyPI wheel is the product, so there is no separate
+# deployment compose file and no shipped-image target to select.
 
 x-graphknows-env: &graphknows-env
   GRAPHKNOWS_ARCADEDB_URL: "${GRAPHKNOWS_ARCADEDB_URL:-http://arcadedb:2480}"
@@ -56,23 +56,18 @@ services:
       retries: 10
       start_period: 30s
 
+  # MCP server, containerized. Bind-mounts the repo so code edits take effect
+  # on `restart` without a rebuild (PYTHONPATH=/app shadows the venv-installed
+  # copy) — a pyproject/uv.lock change still needs `docker compose build mcp`.
   mcp:
     container_name: graphknows-mcp
     build:
       context: .
       dockerfile: Dockerfile
-      # Pin the shipped stage explicitly: the Dockerfile's LAST stage is `dev`
-      # (developer tooling), and an untargeted build would silently pick it up.
-      target: runtime
     command: graphknows-mcp
-    # Bind-mount the repo so code edits take effect on `restart` without a
-    # rebuild. PYTHONPATH=/app makes the live source shadow the copy installed
-    # into the image venv: the `graphknows-mcp` console script imports
-    # `graphknows`, which then resolves to /app/graphknows first. Dependencies
-    # still come from the image — a pyproject/uv.lock change still needs
-    # `docker compose build`.
     volumes:
       - .:/app
+      - model_cache:/opt/models
     environment:
       <<: *graphknows-env
       PYTHONPATH: /app
@@ -81,36 +76,33 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Dev container (mounts the repo, interactive shell). `--profile dev`.
+  # Dev container: mounts the repo, interactive shell, all tooling.
   workspace:
     container_name: graphknows-workspace
-    profiles: ["dev"]
     build:
       context: .
       dockerfile: Dockerfile
-      # Developer tooling (SonarQube CLI) lives in the `dev` stage only, so the
-      # shipped mcp/web images stay free of it.
-      target: dev
       args:
-        # CUDA torch for the workspace ONLY. The Dockerfile defaults TORCH_INDEX
-        # to the CPU wheel because that is right for the shipped mcp/web images,
-        # but this container is the eval workstation and the compose `deploy`
-        # block below reserves the host GPU for it. With the CPU wheel,
-        # torch.cuda.is_available() is False and the 467M-parameter relex
-        # extractor runs on CPU — conv-30 (49 chunks, the shortest LoCoMo
-        # dialogue) took 18.6 minutes to ingest.
+        # CUDA torch for the workspace. The Dockerfile defaults TORCH_BACKEND
+        # to the CPU wheel, but this container is the eval workstation and the
+        # `deploy` block below reserves the host GPU for it. With the CPU
+        # wheel, torch.cuda.is_available() is False and the 467M-parameter
+        # relex extractor runs on CPU — conv-30 (49 chunks, the shortest
+        # LoCoMo dialogue) took 18.6 minutes to ingest.
         # cu128 matches the host driver (CUDA 12.8); lower it if the driver is older.
-        TORCH_INDEX: https://download.pytorch.org/whl/cu128
+        TORCH_BACKEND: cu128
     working_dir: /app
     volumes:
       - .:/app
+      # Model weights: a NAMED volume, not baked into the image, so rebuilding
+      # the image never re-downloads gigabytes of weights. Backs the
+      # Dockerfile's HF_HOME/NLTK_DATA (both under /opt/models). This is NOT
+      # the BuildKit `uv` cache mount in the Dockerfile — different owner,
+      # different lifetime.
+      - model_cache:/opt/models
     environment:
       <<: *graphknows-env
       PYTHONPATH: /app
-      # SonarQube CLI headless auth — dev-only, browser `sonar auth login`
-      # cannot run in a container. Must be a USER token.
-      SONARQUBE_CLI_TOKEN: "${SONARQUBE_CLI_TOKEN:-}"
-      SONARQUBE_CLI_ORG: "${SONARQUBE_CLI_ORG:-}"
     tty: true
     stdin_open: true
     command: /bin/bash
@@ -129,14 +121,6 @@ services:
               count: all
               capabilities: [gpu]
 
-# Tracing is NOT here. Langfuse is its own stack in docker-compose.langfuse.yaml
-# — six services with their own Postgres, ClickHouse, Redis and MinIO, which has
-# no business sharing a lifecycle with the memory backend:
-#
-#     docker compose -f docker-compose.langfuse.yaml up -d
-#
-# The `observability` profile that used to live here ran langfuse 2.95.0, a
-# server the current SDK cannot post to at all (see that file's header).
-
 volumes:
   arcadedb_data:
+  model_cache:

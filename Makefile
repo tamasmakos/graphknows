@@ -1,18 +1,15 @@
 # Graphknows — developer command centre
 # ──────────────────────────────────────────────────────────────────
 # First run:  make setup   (creates .env)
-# Start:      make up       /   make up then make ps
-# Logs:       make logs     /   make logs SVC=web
-# Shell:      make shell SVC=web
+# Start:      make up
+# Shell:      make shell SVC=workspace
 # ──────────────────────────────────────────────────────────────────
 COMPOSE := docker compose
 CONTAINER ?= graphknows-workspace
-SVC     ?=   # optional: limit logs/restart/stop/shell/build to one service
+SVC     ?= workspace   # service `make shell`/`logs`/`restart`/`stop`/`build` targets
 
-.PHONY: up down restart stop build rebuild ps logs shell \
-        infra-up infra-down observability setup clean prune help \
-        test test-integration lint typecheck arch build-wheel smoke ci eval-smoke \
-        gate hooks sweep
+.PHONY: up down restart stop build rebuild ps logs shell infra-up infra-down setup clean prune \
+        test test-integration lint typecheck arch build-wheel smoke eval-smoke sweep ci gate help
 
 # ── Lifecycle ──────────────────────────────────────────────────────
 up: ## Start all services
@@ -23,28 +20,27 @@ up: ## Start all services
 down: ## Stop and remove containers (data volumes preserved)
 	$(COMPOSE) down --remove-orphans
 
-restart: ## Restart one or all services  →  make restart SVC=web
+restart: ## Restart one or all services  →  make restart SVC=workspace
 	$(COMPOSE) restart $(SVC)
 
-stop: ## Stop (but don't remove) one or all services  →  make stop SVC=web
+stop: ## Stop (but don't remove) one or all services  →  make stop SVC=workspace
 	$(COMPOSE) stop $(SVC)
 
-# ── Build ──────────────────────────────────────────────────────────
-build: ## Build images (cached)  →  make build SVC=web
-	$(COMPOSE) build $(SVC)
-
-rebuild: ## Force-rebuild images (no cache)  →  make rebuild SVC=web
-	$(COMPOSE) build --no-cache $(SVC)
-
-# ── Observability ─────────────────────────────────────────────────
 ps: ## Show running containers and their status
 	$(COMPOSE) ps
 
-logs: ## Tail logs — all services or one  →  make logs SVC=web
+logs: ## Tail logs — all services or one  →  make logs SVC=workspace
 	$(COMPOSE) logs -f --tail=100 $(SVC)
 
-shell: ## Open a shell in a running container  →  make shell SVC=web
+shell: ## Open a shell in a running container  →  make shell SVC=workspace
 	$(COMPOSE) exec $(SVC) /bin/bash
+
+# ── Build ──────────────────────────────────────────────────────────
+build: ## Build images (cached)  →  make build SVC=workspace
+	$(COMPOSE) build $(SVC)
+
+rebuild: ## Force-rebuild images (no cache)  →  make rebuild SVC=workspace
+	$(COMPOSE) build --no-cache $(SVC)
 
 # ── Infra-only ────────────────────────────────────────────────────
 infra-up: ## Start only the database (ArcadeDB)
@@ -53,11 +49,13 @@ infra-up: ## Start only the database (ArcadeDB)
 infra-down: ## Stop the database
 	$(COMPOSE) stop arcadedb
 
-# ── Observability stack ───────────────────────────────────────────
-observability: ## Start Langfuse + its Postgres (profile: observability)
-	$(COMPOSE) --profile observability up -d langfuse langfuse-db
-
 # ── Setup / cleanup ───────────────────────────────────────────────
+clean: ## Stop containers and remove images built from this project
+	$(COMPOSE) down --rmi local
+
+prune: ## ⚠ Remove all stopped containers, unused images and networks
+	docker system prune -f
+
 setup: ## First-time setup: copy .env.example → .env if missing
 	@if [ ! -f .env ]; then \
 	  cp .env.example .env; \
@@ -65,12 +63,6 @@ setup: ## First-time setup: copy .env.example → .env if missing
 	else \
 	  echo "  .env already exists"; \
 	fi
-
-clean: ## Stop containers and remove images built from this project
-	$(COMPOSE) down --rmi local
-
-prune: ## ⚠ Remove all stopped containers, unused images and networks
-	docker system prune -f
 
 # ── Quality gates (local, no Docker) ──────────────────────────────
 test: ## Run the unit test suite (integration tests excluded)
@@ -103,9 +95,6 @@ ci: lint typecheck arch test build-wheel ## Run the full local CI gate
 
 gate: ## Run the pre-push gate exactly as the hook runs it
 	bash scripts/gate.sh
-
-hooks: ## Install both git hooks (once per clone)
-	bash scripts/install-hooks.sh
 
 # Report-only on purpose. vulture false-positives on pydantic fields, protocol
 # methods and lazy __getattr__, so it is a sweep a human reads, never a gate.

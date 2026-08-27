@@ -15,22 +15,12 @@ dist/
 build/
 *.dist-info
 
-# ─── Node artifacts ───────────────────────────────────────────────────────────
-node_modules
-.pnpm-store
-apps/**/node_modules
-packages/**/node_modules
-apps/**/.next
-apps/**/out
-apps/**/dist
-
 # ─── Testing / tooling ────────────────────────────────────────────────────────
 .pytest_cache
 .ruff_cache
 .mypy_cache
 coverage/
 htmlcov/
-.turbo
 
 # ─── Secrets / local config ───────────────────────────────────────────────────
 .env
@@ -38,9 +28,7 @@ htmlcov/
 !.env.example
 
 # ─── Dev tooling ──────────────────────────────────────────────────────────────
-.devcontainer
 .vscode
-memory-bank
 docs
 
 # ─── Data / output ────────────────────────────────────────────────────────────
