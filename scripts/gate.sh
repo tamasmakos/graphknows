@@ -13,6 +13,7 @@
 # | bandit                         | local + CI  |
 # | pytest + coverage floor        | local + CI  |
 # | dependency audit               | local + CI  |
+# | dependency drift               | local + CI  |
 # | diff coverage                  | CI only     |
 # | workflow security lint         | CI only     |
 # | workflow correctness lint      | CI only     |
@@ -110,6 +111,13 @@ else
   dex "uv export --no-dev --no-editable --no-hashes --format requirements-txt > /tmp/req-audit.txt \
        && uvx pip-audit -r /tmp/req-audit.txt --progress-spinner off $IGNORE_ARGS"
   record $? "dependency audit"
+fi
+
+step "dependency drift (report-only)"
+if dex "command -v deptry >/dev/null 2>&1"; then
+  dex "deptry graphknows" || echo "gate: deptry findings above are report-only for now - not failing the push."
+else
+  echo "gate: deptry is not in the workspace image. Rebuild it: docker compose build && docker compose up -d" >&2
 fi
 
 if [ ${#FAILED[@]} -ne 0 ]; then

@@ -161,6 +161,11 @@ dev = [
     # its failure message advertises `tach sync`, which rewrites the config to
     # permit the violation. A gate that documents its own bypass is not a gate.
     "import-linter>=2.11",
+    # deptry checks declared deps against actual imports — must be a resolved
+    # environment member, not an ephemeral `uvx` call like pip-audit/zizmor: it
+    # matches imported module names against the *installed* distributions, so
+    # it has to see this project's own resolved environment to work at all.
+    "deptry>=0.25.0",
 ]
 eval = [
     "datasets>=2.19.0",
@@ -170,6 +175,60 @@ eval = [
     # nltk (PorterStemmer for the locomo_f1 lexical diagnostic) is now a core
     # dependency — see [project.dependencies]. Declaring it here too was what
     # let the Docker image satisfy a production import from a dev-only group.
+]
+
+[tool.deptry]
+# `known_first_party`: deptry guesses local modules by iterating the *contents*
+# of the scanned root, so when the root passed on the command line is the
+# package directory itself (`deptry graphknows`, required below to keep
+# evaluation/'s legitimate eval-group imports out of scope) it never adds
+# "graphknows" itself to that guessed set — every internal `import graphknows`
+# / `from graphknows import ...` line then reads as DEP003 (a transitive
+# dependency). Declaring it here is the documented escape hatch, not a
+# workaround for a real drift.
+known_first_party = ["graphknows"]
+
+# First run (27 Aug 2026) of `uv run deptry graphknows --config pyproject.toml`
+# on this environment (`uv sync --group dev`, no optional extras installed)
+# reported exactly four DEP002 (unused dependency) findings and nothing else:
+#   - python-dotenv  ([project.dependencies] — genuinely unimported anywhere
+#     under graphknows/; not ignored below, see discoveries)
+#   - scipy          ([project.dependencies] — same: zero references under
+#     graphknows/ despite the dependency comment claiming a direct import;
+#     not ignored below, see discoveries)
+#   - langfuse        (`observability` extra — deliberate, ignored below)
+#   - langchain       (`observability` extra — deliberate, ignored below)
+# No DEP003/DEP004 findings this run. frame-semantic-transformer (`srl` extra)
+# was NOT flagged: graphknows/symbolic/framenet/srl.py:80 has a real
+# `from frame_semantic_transformer import ...` statement deptry's AST scan
+# sees, even though the availability probe on line 44 uses
+# importlib.util.find_spec rather than an import.
+#
+# Verified against deptry's own docs (https://deptry.com/usage/, v0.25.1):
+# [project.dependencies] / [project.optional-dependencies] are extracted as
+# regular dependencies, and groups under [dependency-groups] are extracted as
+# *development* dependencies BY DEFAULT — no group config needed. Development
+# dependencies are exempt from the unused-dependency rule (DEP002). So the
+# `dev` and `eval` groups need no `pep621_dev_dependency_groups` entry here;
+# that setting is deprecated in favour of `--optional-dependencies-dev-groups`,
+# which concerns [project.optional-dependencies] extras, not PEP 735 groups —
+# writing it would be a no-op on a deprecated option. This is what makes
+# DEP004 (a dev-group package that a shipped module imports) fire out of the
+# box, which is the actual class of defect this gate exists to catch: nltk
+# sat in the `eval` group while graphknows/ imported it, breaking a plain
+# `pip install graphknows` while the container stayed green because
+# Dockerfile installs `--group dev --group eval` (see #204).
+
+[tool.deptry.per_rule_ignores]
+DEP002 = [
+    # 27 Aug 2026: `observability` extra. [project.optional-dependencies]'s own
+    # comment says it: nothing in the library imports langfuse/langchain, the
+    # LangGraph example builds the tracing callback only when LANGFUSE_* env
+    # vars are set. Deliberately unused by graphknows/ itself. Remove this
+    # entry once the extra is either imported somewhere in graphknows/ or
+    # dropped.
+    "langfuse",   # 27 Aug 2026
+    "langchain",  # 27 Aug 2026
 ]
 
 [tool.bandit]
