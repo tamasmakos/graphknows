@@ -13,23 +13,6 @@ build/
 htmlcov/
 coverage.xml
 
-# ─── Node / pnpm ──────────────────────────────────────────────────────────────
-node_modules
-.pnpm-store
-pnpm-debug.log*
-
-# ─── Next.js ──────────────────────────────────────────────────────────────────
-apps/**/.next
-apps/**/out
-apps/**/dist
-
-# ─── Turborepo ────────────────────────────────────────────────────────────────
-.turbo
-
-# ─── TypeScript ───────────────────────────────────────────────────────────────
-*.tsbuildinfo
-packages/**/dist
-
 # ─── Secrets / environment ────────────────────────────────────────────────────
 .env
 .env.*
@@ -94,10 +77,10 @@ AGENTS.md
 # local analysis scratch (not committed)
 .scratch/
 evaluation/results/.judge_cache/
+.sonar
 # CLAUDE.md is the agent contract (container-not-host, no-silent-fallback, the
 # gate layout). Ignoring it is how this repo ended up with a CLAUDE.md
 # describing an entirely different project.
-.sonar
 .mcp.json
 
 graphify-out

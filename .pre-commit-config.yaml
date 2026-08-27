@@ -20,15 +20,12 @@ repos:
       # disagree on formatting, and a gate that disagrees with itself is noise.
       - id: ruff-check
         args:
-          - --config=ruff.toml
           - --fix
           - --exit-non-zero-on-fix
         types_or:
           - python
           - pyi
       - id: ruff-format
-        args:
-          - --config=ruff.toml
         types_or:
           - python
           - pyi
@@ -61,10 +58,12 @@ repos:
         pass_filenames: false
   - repo: local
     hooks:
-      - id: sonar-pre-commit
-        name: Sonar pre-commit scan
-        entry: sonar hook git-pre-commit --
+      # The pre-push gate: full suite, whole-package types, coverage floor,
+      # dependency audit, run inside the workspace container. `pre-commit
+      # install --hook-type pre-push` (CONTRIBUTING.md) is what wires this in.
+      - id: gate
+        name: pre-push gate (scripts/gate.sh)
+        entry: bash scripts/gate.sh
         language: system
-        pass_filenames: true
-        stages:
-          - pre-commit
+        pass_filenames: false
+        stages: [pre-push]

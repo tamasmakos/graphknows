@@ -55,33 +55,11 @@ docker compose up -d arcadedb
 > To warm them ahead of time from a repo clone/checkout: `python scripts/bake_models.py`
 > (the wheel ships only the `graphknows` package, so this script isn't
 > available to a plain `pip install`).
-> The **Docker images bake all of them at build time**, so a container serves
-> requests with no per-call download and works with the network cut.
+> The dev image downloads them on first use into a compose named volume, so a
+> rebuild never re-downloads gigabytes of weights. `python scripts/bake_models.py`
+> warms the volume ahead of time. CPU by default; for a GPU host:
+> `docker compose build --build-arg TORCH_BACKEND=cu128`.
 > See [.env.example](.env.example) and [docs/configuration.md](docs/configuration.md).
-
-## Deploy
-
-```bash
-cp .env.example .env          # then set GRAPHKNOWS_ARCADEDB_PASSWORD
-docker compose -f docker-compose.prod.yaml up -d
-```
-
-`docker-compose.prod.yaml` is the deployment stack: the image is the artifact,
-with no repo bind-mount. (`docker-compose.yaml` is the *development* stack — it
-mounts the working tree over the image and puts it first on `PYTHONPATH`, which
-is convenient while editing and means the container runs live source against
-image dependencies.)
-
-CPU by default. For a GPU host:
-
-```bash
-docker build --build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu124 \
-             -t graphknows:cuda .
-```
-
-To verify an image is complete — every dependency present, every model baked,
-nothing resolved over the network — run `scripts/docker-smoke.sh`. The same
-check runs as the container healthcheck (`scripts/bake_models.py --check`).
 
 ## Quickstart
 

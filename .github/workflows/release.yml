@@ -16,13 +16,9 @@ permissions:
 jobs:
   ci:
     # By reference, never copied: one gate definition means a release can never
-    # be checked more loosely than a merge to main. A reusable workflow gets no
-    # secrets by default and ci.yml's gate ends on a step that reads
-    # SONAR_TOKEN; a tag ref has no PR context, so Sonar is told to stay out.
+    # be checked more loosely than a merge to main.
     uses: ./.github/workflows/ci.yml
     secrets: inherit
-    with:
-      skip_sonar: true
 
   publish:
     needs: ci

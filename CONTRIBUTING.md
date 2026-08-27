@@ -15,7 +15,8 @@ cd graphknows
 
 make setup          # copies .env.example → .env if missing
 uv sync             # install the package + dev tooling
-make hooks          # install the git hooks (once per clone)
+pre-commit install                             # commit hooks
+pre-commit install --hook-type pre-push        # pre-push gate
 ```
 
 GraphKnows needs a running ArcadeDB:
@@ -28,12 +29,11 @@ make up             # start the full compose stack
 
 `docker-compose.yaml` is the **development** stack — it mounts the working tree
 over the image and puts it first on `PYTHONPATH`, so the container runs live
-source against image dependencies. `docker-compose.prod.yaml` is the deployment
-stack, where the image is the artifact.
+source against image dependencies.
 
-Models (GLiNER2, sentence-transformers, spaCy, NLTK) download on first use.
-`python scripts/bake_models.py` warms them ahead of time; the Docker images bake
-them at build time.
+Models (GLiNER2, sentence-transformers, spaCy, NLTK) download on first use, into
+a compose named volume so a rebuild never re-downloads them. `python
+scripts/bake_models.py` warms the volume ahead of time.
 
 ## Quality gates
 
@@ -48,7 +48,7 @@ them at build time.
 | `make build-wheel` | the wheel stays small and ships `py.typed` |
 
 `make gate` runs the pre-push hook exactly as the hook runs it. CI additionally
-runs `bandit` and publishes coverage to SonarQube.
+runs `bandit` and enforces a 65% coverage floor.
 
 Integration tests need a live ArcadeDB and are excluded from the unit run:
 
@@ -58,8 +58,14 @@ make test-integration
 ```
 
 Test layout mirrors the package (`tests/api/`, `tests/ingestion/`,
-`tests/retrieval/`, `tests/storage/`, …). `pytest.ini` is authoritative:
-`testpaths = tests`, `asyncio_mode = auto`, markers `unit` and `integration`.
+`tests/retrieval/`, `tests/storage/`, …). `pyproject.toml`'s
+`[tool.pytest.ini_options]` is authoritative: `testpaths = ["tests"]`,
+`asyncio_mode = "auto"`, markers `unit` and `integration`. Ruff's config lives
+in `[tool.ruff]`, same file.
+
+Two known gaps: there is no diff coverage check until #201 lands, and there is
+no secret scan at all now that the analysis CLI that ran one is gone.
+[gitleaks](https://github.com/gitleaks/gitleaks) is the candidate replacement.
 
 ## Architecture rules
 
