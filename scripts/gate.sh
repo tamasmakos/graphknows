@@ -14,8 +14,12 @@
 # | pytest + coverage floor        | local + CI  |
 # | dependency audit               | local + CI  |
 # | diff coverage                  | CI only     |
+# | workflow security lint         | CI only     |
+# | workflow correctness lint      | CI only     |
 # (diff coverage compares against the pull request's base branch; a
-# pre-push run on a local worktree has no meaningful base ref.)
+# pre-push run on a local worktree has no meaningful base ref. The two
+# workflow linters read only .github/workflows/*.yml, not this workspace's
+# code, and neither is installed in the workspace container.)
 set -uo pipefail
 
 CONTAINER="${GRAPHKNOWS_CONTAINER:-graphknows-workspace}"
