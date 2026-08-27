@@ -894,10 +894,10 @@ async def test_write_frames_merges_one_canonical_vertex_per_frame_type() -> None
 async def test_write_frames_merges_broader_parents_as_taxonomy() -> None:
     """A frame's FrameNet parents become BROADER edges: the traversable taxonomy.
 
-    Parents are scaffolding — MERGEd as bare vertices with no evidence edge and
-    no embedding, so they never enter the ANN pool on their own account. They
-    exist to be walked down from (see the narrower expansion in
-    query_frames_by_embedding).
+    A parent gets no evidence edge (nothing evokes it directly), but it still
+    carries its own definition and embedding — otherwise it is an id-only stub
+    that match_frames (a vector search) can never return, so the hierarchy
+    could be walked down to but never entered from a query.
     """
     client = _mock_client()
     store = GraphStore(client=client, db="mem")
@@ -906,22 +906,47 @@ async def test_write_frames_merges_broader_parents_as_taxonomy() -> None:
             {
                 "frame_type": "Revenge",
                 "chunk_id": "c1",
-                "parents": ["Rewards_and_punishments", "Response"],
+                "parents": [
+                    {
+                        "id": "Rewards_and_punishments",
+                        "summary": "a reward or punishment is given",
+                        "embedding": [0.4, 0.5, 0.6],
+                    },
+                    {
+                        "id": "Response",
+                        "summary": "a reaction to a stimulus",
+                        "embedding": [0.7, 0.8, 0.9],
+                    },
+                ],
             }
         ]
     )
     edge = next(c for c in client.command.await_args_list if "BROADER" in c.args[1])
     assert "MERGE (n)-[:BROADER]->(p)" in edge.args[1]
     assert edge.kwargs["params"]["rows"] == [
-        {"id": "Revenge", "parent": "Rewards_and_punishments"},
-        {"id": "Revenge", "parent": "Response"},
+        {
+            "id": "Revenge",
+            "parent": "Rewards_and_punishments",
+            "summary": "a reward or punishment is given",
+        },
+        {"id": "Revenge", "parent": "Response", "summary": "a reaction to a stimulus"},
     ]
-    # Scaffolding only: a parent gets no evidence edge and no vector.
+    # Parents get a summary via the same MERGE...
+    parent_merge = next(c for c in client.command.await_args_list if "MERGE (p:FRAME" in c.args[1])
+    assert "SET p.frame_type = r.parent, p.summary = r.summary" in parent_merge.args[1]
+    assert parent_merge.kwargs["params"]["rows"][0]["summary"] == "a reward or punishment is given"
+    # ...and an embedding, once each, via the same inline-literal path evoked frames use.
+    emb_calls = {
+        c.kwargs["params"]["key"]
+        for c in client.command.await_args_list
+        if "SET n.embedding = [" in c.args[1]
+    }
+    assert {"Rewards_and_punishments", "Response"} <= emb_calls
+    # No evidence edge: nothing evokes a bare parent.
     parent_sql = " | ".join(
         c.args[1] for c in client.command.await_args_list if "r.parent" in c.args[1]
     )
     assert "EVOKED_BY" not in parent_sql
-    assert "SET n.embedding" not in parent_sql
 
 
 @pytest.mark.asyncio

@@ -871,7 +871,8 @@ class GraphStore(ArcadeStoreBase):
         """Bulk-write canonical FRAME vertices + EVOKED_BY evidence edges to their chunks.
 
         Each ``frames`` item: ``{frame_type, chunk_id, confidence?, summary?,
-        embedding?}``.
+        embedding?, parents?}``, where ``parents`` is a list of
+        ``{id, summary?, embedding?}`` for the frames it generalises to.
 
         FRAME is CANONICAL: one vertex per frame type per namespace, MERGEd on
         the frame name. It used to be one vertex per (session, chunk, rank),
@@ -919,18 +920,24 @@ class GraphStore(ArcadeStoreBase):
             if emb := f.get("embedding"):
                 await self._set_embedding("FRAME", "id", str(f["frame_type"]), emb)
 
-        # FrameNet's own hierarchy, as SKOS-shaped BROADER edges. Parents are
-        # MERGEd bare: no summary, no embedding, no EVOKED_BY. They are not
-        # evoked by anything, they are what an evoked frame generalises to.
+        # FrameNet's own hierarchy, as SKOS-shaped BROADER edges. A parent is
+        # never itself evoked (no EVOKED_BY), but it still needs its own
+        # definition/embedding so match_frames can enter the taxonomy at an
+        # interior node, not just walk down to it from a leaf.
         pairs = [
-            {"id": str(f["frame_type"]), "parent": str(p)}
+            {
+                "id": str(f["frame_type"]),
+                "parent": str(p["id"]),
+                "summary": p.get("summary", "") or "",
+            }
             for f in fresh
             for p in f.get("parents") or ()
-            if p and str(p) != str(f["frame_type"])
+            if p and str(p["id"]) != str(f["frame_type"])
         ]
         if pairs:
             await self.command(
-                "UNWIND $rows AS r MERGE (p:FRAME {id: r.parent}) SET p.frame_type = r.parent",
+                "UNWIND $rows AS r MERGE (p:FRAME {id: r.parent}) "
+                "SET p.frame_type = r.parent, p.summary = r.summary",
                 rows=pairs,
             )
             await self.command(
@@ -939,6 +946,16 @@ class GraphStore(ArcadeStoreBase):
                 "MERGE (n)-[:BROADER]->(p)",
                 rows=pairs,
             )
+            fresh_parents = {
+                str(p["id"]): p
+                for f in fresh
+                for p in f.get("parents") or ()
+                if str(p["id"]) not in self._frames_materialised
+            }
+            for pid, p in fresh_parents.items():
+                if emb := p.get("embedding"):
+                    await self._set_embedding("FRAME", "id", pid, emb)
+            self._frames_materialised.update(fresh_parents)
         self._frames_materialised.update(str(f["frame_type"]) for f in fresh)
         return len(rows)
 
