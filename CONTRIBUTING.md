@@ -47,8 +47,11 @@ scripts/bake_models.py` warms the volume ahead of time.
 | `make test` | unit suite (`pytest -m "not integration"`) |
 | `make build-wheel` | the wheel stays small and ships `py.typed` |
 
-`make gate` runs the pre-push hook exactly as the hook runs it. CI additionally
-runs `bandit` and enforces a 65% coverage floor.
+`make gate` runs the pre-push hook exactly as the hook runs it, both locally
+and in CI: a wider ruff scope (`graphknows evaluation tests`, not just
+`graphknows tests`), plus `bandit` and a 65% coverage floor that `make lint`
+and `make test` above don't cover. `make lint` and `make test` are quick
+local checks, not a substitute for `make gate` before you push.
 
 Integration tests need a live ArcadeDB and are excluded from the unit run:
 
