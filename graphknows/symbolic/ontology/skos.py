@@ -27,24 +27,25 @@ structure that generalises at query time.
 
 WHAT IS DELIBERATELY NOT DONE
 -----------------------------
-Synonyms are taken from the FIRST WordNet synset of a content word only. Deeper
-expansion adds polysemy fast ("second" -> every temporal and ordinal sense), and
-this repo has already been burned once by a lexicalized set ranked on sense count
-turning into ``Strength``/``Pitch``/``Power``. Precision over recall here: an
-altLabel that fires on the wrong chunk is worse than one that never fires.
+``alt_labels`` here carries only the label itself and its own content words —
+no WordNet expansion. A content word has many senses and this module has no
+mention to disambiguate one against at build time, only the bare label; baking
+a dominant-sense synonym in here is exactly the context-free expansion issue
+#141 removed (it minted "Gina permits fashion" from "let" meaning "inform").
+Expansion is instead a MATCH-TIME decision, made where a mention — and
+therefore a context — exists: see ``senses.sense_lemmas`` and
+``lexical.evoked``'s WEAK branch. Precision over recall here: an altLabel that
+fires on the wrong chunk is worse than one that never fires.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -179,54 +180,18 @@ def content_tokens(label: str) -> list[str]:
     return [w for w in words if w not in _STRUCTURAL and len(w) > 2]
 
 
-@lru_cache(maxsize=1)
-def _wordnet() -> Any:
-    """The WordNet reader, or ``None`` if the corpus is not provisioned.
+def lexicalize(concept: Concept) -> Concept:
+    """Fill ``alt_labels`` from the label itself and its own content words.
 
-    ``nltk.corpus.wordnet`` is a ``LazyCorpusLoader``: importing it never touches
-    disk, so the corpus is only resolved on first *use* (e.g. ``wn.NOUN``). The
-    guard has to sit around that use, not the import above it.
-
-    A missing corpus is an ENVIRONMENT defect, so this neither downloads it nor
-    passes over it quietly. It does not download because this is library code: a
-    package installed from PyPI must not reach the network mid-ingest, and
-    ``nltk.download()`` without an explicit ``download_dir`` ignores ``NLTK_DATA``
-    anyway (see ``scripts/bake_models.py``), so the fetch would land somewhere
-    nothing reads. It warns rather than raising because synonym expansion is an
-    enrichment: callers that never wanted it pass ``synonyms=False``, and losing
-    it degrades matching instead of breaking it. Warning once per process — the
-    cache sees to that — is what keeps the degradation visible.
+    Properties are also lemmatised ("requires" -> "require"): CCO names them as
+    inflected present-tense verbs, but matching runs on spaCy lemmas throughout
+    (``lexical.lemma_view``) and WordNet's own lemma names are always base
+    forms, so an inflected-only altLabel is an index key neither the STRONG
+    lexical match nor sense-anchored expansion (``lexical._sense_anchored_matches``)
+    could ever reach. Classes are left alone: CCO's class labels are already
+    base-form common nouns, and lemmatising 1400+ of them at build time for no
+    reachability gain is not a cost worth paying.
     """
-    from nltk.corpus import wordnet as wn  # type: ignore[import-untyped]  # nltk ships no stubs
-
-    try:
-        wn.synsets("dog", pos=wn.NOUN)  # probe: forces the lazy corpus load
-    except LookupError:
-        log.warning(
-            "WordNet corpus not found, so SKOS labels get no synonym expansion and "
-            "relation matching will be measurably worse. Provision it rather than "
-            "working around it: `python scripts/bake_models.py` writes it to NLTK_DATA "
-            "(%s). Pass synonyms=False to ask for lexicalization without it.",
-            os.environ.get("NLTK_DATA") or "unset — nltk's default search path",
-        )
-        return None
-    return wn
-
-
-def _wordnet_synonyms(word: str, kind: str) -> set[str]:
-    """Lemmas of the word's FIRST synset — its dominant sense only."""
-    wn = _wordnet()
-    if wn is None:
-        return set()
-    pos = wn.NOUN if kind == "class" else wn.VERB
-    synsets = wn.synsets(word, pos=pos)
-    if not synsets:
-        return set()
-    return {lemma.name().replace("_", " ").lower() for lemma in synsets[0].lemmas()}
-
-
-def lexicalize(concept: Concept, synonyms: bool = True) -> Concept:
-    """Fill ``alt_labels`` from the label's own words and their dominant synonyms."""
     label = concept.pref_label.lower()
     alts: set[str] = {label}
     tokens = content_tokens(concept.pref_label)
@@ -236,14 +201,13 @@ def lexicalize(concept: Concept, synonyms: bool = True) -> Concept:
         # -> organization); the leading ones stay as separate handles.
         alts.update(tokens)
         alts.add(" ".join(tokens))
-        if synonyms and not _upper_ontology_property(concept):
-            for token in tokens:
-                alts |= _wordnet_synonyms(token, concept.kind)
+    if concept.kind == "property":
+        alts = _lemmatise(alts)
     concept.alt_labels = {a for a in alts if a not in _TOO_GENERIC and len(a) > 2}
     return concept
 
 
-def build_scheme(digest: Path, synonyms: bool = True) -> dict[str, Concept]:
+def build_scheme(digest: Path) -> dict[str, Concept]:
     """The whole CCO digest as a lexicalized SKOS scheme, keyed by prefLabel."""
     data = json.loads(digest.read_text(encoding="utf-8"))
     scheme: dict[str, Concept] = {}
@@ -260,7 +224,7 @@ def build_scheme(digest: Path, synonyms: bool = True) -> dict[str, Concept]:
                 range=tuple(entry.get("range") or ()),
                 module=str(entry.get("module") or ""),
             )
-            scheme[concept.pref_label] = lexicalize(concept, synonyms)
+            scheme[concept.pref_label] = lexicalize(concept)
     return scheme
 
 

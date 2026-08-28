@@ -29,7 +29,8 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict
 
-from graphknows.symbolic.ontology.skos import Concept
+from graphknows.symbolic.ontology import senses
+from graphknows.symbolic.ontology.skos import Concept, content_tokens
 
 # A lemma occurring in more than this fraction of chunks carries no information
 # about any individual chunk. 0.15 is deliberately aggressive: the failure being
@@ -59,6 +60,78 @@ def lemma_view(doc: object) -> tuple[set[str], set[str], set[str]]:
         elif token.pos_ == "VERB":
             verbs.add(lemma)
     return nouns, verbs, compounds
+
+
+def _candidate_mentions(doc: object) -> dict[str, tuple[str, int, str]]:
+    """``lemma -> (WordNet pos, char offset, surface text)`` of its FIRST token.
+
+    A sibling of :func:`lemma_view`, not a widening of it: ``document_frequency``
+    shares that signature and has no use for offsets, so folding this in would
+    cost every caller a field it never reads. Only the first occurrence is kept
+    — sense-anchoring is a per-lemma decision, not a per-token one. The surface
+    text is kept alongside the offset because :func:`senses.sense_lemmas` stars
+    it in the mention line, and an inflected surface form ("rushed") is rarely
+    the same length as its lemma ("rush").
+    """
+    out: dict[str, tuple[str, int, str]] = {}
+    for token in doc:  # type: ignore[attr-defined]
+        if token.is_stop or not token.lemma_.isalpha() or len(token.lemma_) < 3:
+            continue
+        lemma = token.lemma_.lower()
+        if lemma in out:
+            continue
+        if token.pos_ in {"NOUN", "PROPN"}:
+            out[lemma] = ("n", token.idx, token.text)
+        elif token.pos_ == "VERB":
+            out[lemma] = ("v", token.idx, token.text)
+    return out
+
+
+def _sense_anchored_matches(
+    doc: object,
+    scheme: dict[str, Concept],
+    index: dict[str, set[str]],
+    kind: str,
+) -> dict[str, float]:
+    """WEAK evidence: a mention licensed, by its IN-CONTEXT WordNet sense, to reach a single-token concept whose label it did not literally use.
+
+    Candidates still come only from the lexical index — the embedding chooses
+    among a word's senses, it never creates a candidate that was not already a
+    key of ``index`` (the anchor law from spec #135). The cheap pure-WordNet
+    prefilter below exists so ``senses.sense_lemmas`` — an embedding call — only
+    runs on a mention that could possibly matter, never on every noun and verb
+    in the chunk.
+
+    ponytail: one mention-line embedding per surviving lemma per chunk; upgrade
+    to a batched embed if this shows up in ingest timings.
+    """
+    wn = senses._wordnet()
+    if wn is None:
+        return {}
+    pos_gate = {"n"} if kind == "class" else {"n", "v"}
+    scores: dict[str, float] = defaultdict(float)
+    for lemma, (pos, offset, surface) in _candidate_mentions(doc).items():
+        if pos not in pos_gate:
+            continue
+        synset_lemmas = {
+            name.replace("_", " ").lower()
+            for synset in wn.synsets(lemma, pos=pos)
+            for name in synset.lemma_names()
+        }
+        if not (synset_lemmas & index.keys()):
+            continue
+        for name in senses.sense_lemmas(lemma, pos, doc.text, offset, surface):  # type: ignore[attr-defined]
+            for label in index.get(name, ()):
+                concept = scheme.get(label)
+                # Upper-ontology plumbing is NOT excluded here: that guard is
+                # structural-half-only (see labels.relation_labels' docstring)
+                # — a mention whose in-context WordNet sense anchors it to
+                # "requires"/"permits" IS the spoken word asserting the
+                # property, same as the STRONG branch above.
+                if concept is None or concept.kind != kind or len(content_tokens(label)) != 1:
+                    continue
+                scores[label] += 1.0
+    return scores
 
 
 def document_frequency(docs: list[object]) -> dict[str, float]:
@@ -111,9 +184,10 @@ def evoked(
     compound is worth far more than a single noun (it is much less likely to be
     coincidence), and a rarer lemma is worth more than a common one — plain IDF,
     reusing the document frequencies already computed.
-    """
-    from graphknows.symbolic.ontology.skos import content_tokens
 
+    The WEAK branch (a one-word concept reached through a mention that isn't
+    its literal label) is sense-anchored: see ``_sense_anchored_matches``.
+    """
     nouns, verbs, compounds = lemma_view(doc)
     # A property matches on NOUNS as well as verbs. CCO names its relations as
     # relational nouns — "has brother", "is spouse of", "has mother" — so the
@@ -146,14 +220,9 @@ def evoked(
         # cannot catch these: "shot" is genuinely rare in this corpus.
         if all(t in present for t in tokens):
             scores[label] += 3.0 * len(tokens)
-            continue
-        # WEAK: a one-word concept reached through a dominant-sense synonym
-        # (``Hospital`` via "infirmary"). Never applies to multi-word labels,
-        # where partial evidence is exactly the failure above.
-        if len(tokens) == 1:
-            synonyms = concept.alt_labels - set(tokens)
-            if any(alt in present and alt in index for alt in synonyms):
-                scores[label] += 1.0
+
+    for label, weak_score in _sense_anchored_matches(doc, scheme, index, kind).items():
+        scores[label] += weak_score
     return dict(scores)
 
 

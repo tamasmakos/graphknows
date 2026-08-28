@@ -69,7 +69,7 @@ class Pipeline:
         digest = digest_export.to_digest(self.hierarchy, self.taxa, self.edges, "test")
         out = tmp_path / "digest.json"
         out.write_text(json.dumps(digest), encoding="utf-8")
-        return build_scheme(out, synonyms=False)
+        return build_scheme(out)
 
 
 @pytest.fixture(scope="module")
