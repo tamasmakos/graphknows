@@ -710,15 +710,50 @@ class TestVerbHeadedPropositionsAreNotEntities:
         "name",
         [
             "Charlotte's Web: A Review",
+            "one-on-one mentoring and training",
             "New York City",
+            "New York",
             "Washington, D.C.",
             "Dr. Nagy",
             "county hospital",
             "dance studio",
-            "Gina",
+            "Gina",  # a plain person name
         ],
     )
     def test_real_multi_word_names_still_survive(self, name: str) -> None:
         """A proposition gate that buys its drops by deleting real multi-word
-        names is not a fix."""
+        names is not a fix.
+
+        One- and two-token names ("dance studio", "New York", "Gina") are
+        deliberately never head-checked -- too POS-ambiguous in isolation, and
+        no proposition measured on #160 is shorter than four tokens.
+        """
         assert is_graph_entity_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Saving Private Ryan",
+            "The Empire Strikes Back",
+            "Live and Let Die",
+        ],
+    )
+    def test_verb_headed_titles_survive_when_typed_as_work_of_art(self, name: str) -> None:
+        """A verb-headed span is still a name when it is a typed title -- the
+        gate exists to catch predications with no nominal referent, and a
+        typed title already has one."""
+        assert is_graph_entity_name(name, "WORK_OF_ART")
+
+    def test_degrades_to_admit_when_the_parser_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing spaCy model must never empty the graph -- it must admit,
+        not reject, the spans the head-gate can no longer check."""
+        import graphknows.ingestion.extraction.entities.hygiene as hygiene
+
+        monkeypatch.setattr(hygiene, "_parser", lambda: None)
+        hygiene._is_verb_headed.cache_clear()
+        try:
+            assert is_graph_entity_name("helps Jon find areas to improve") is True
+        finally:
+            hygiene._is_verb_headed.cache_clear()

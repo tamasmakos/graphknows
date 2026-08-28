@@ -24,6 +24,13 @@ _NON_GRAPH_ENTITY_TYPES = frozenset(
     {"DATE", "TIME", "CARDINAL", "ORDINAL", "PERCENT", "MONEY", "QUANTITY"}
 )
 
+# Titles of creative works are conventionally verb-headed ("Saving Private
+# Ryan", "The Empire Strikes Back", "Live and Let Die") -- that is what makes
+# them titles, not predications. The verb-head gate exists to catch
+# predications with no nominal referent (#160); a typed title already has a
+# referent, so it is exempt regardless of its syntactic head.
+_VERB_HEAD_EXEMPT_TYPES = frozenset({"WORK_OF_ART"})
+
 # GLiNER often leaves date/time/number spans UNTYPED (type=None), so the type
 # allowlist above misses them and they leak in as ENTITY nodes (e.g. "23 July
 # 2023", "10:31 am", "2023") — corpus-polluting noise that also corrupts
@@ -368,6 +375,8 @@ def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
         return False
     if _is_temporal_or_numeric_name(stripped):
         return False
+    if (ent_type or "").upper() in _VERB_HEAD_EXEMPT_TYPES:
+        return True
     return not _is_verb_headed(" ".join(stripped.split()))
 
 
