@@ -267,6 +267,57 @@ class TestGateScript:
         )
 
 
+# ─── Library code never provisions its own environment ──────────────────────
+
+
+# Sites in graphknows/ that fetch a corpus at runtime, on the failure path of a lookup.
+# This is a LEDGER THAT MUST SHRINK, not a list of blessed exceptions: every entry is a
+# package installed from PyPI reaching the network mid-ingest, which fails offline and
+# degrades silently. Tracked by #247; the provisioning step already exists in
+# scripts/bake_models.py and just is not wired up (#208).
+#
+# Removing the last entry is the goal. Adding one is the thing this test exists to stop.
+_KNOWN_RUNTIME_DOWNLOADS = {
+    "graphknows/symbolic/framenet/framenet.py",  # nltk.download("framenet_v17") — pre-existing
+    "graphknows/symbolic/ontology/skos.py",  # nltk.download("wordnet") — added by PR #246
+}
+
+_DOWNLOAD_CALL = re.compile(r"nltk\.download\s*\(")
+
+
+class TestNoRuntimeDownloads:
+    """A missing corpus is an environment defect, not something library code routes around.
+
+    The failure this pins: #137 shipped `nltk.download("wordnet")` into `skos.py` because the
+    corpus was absent from the image. The tests went green, so the success criterion was met,
+    and a package strangers pip-install now reaches the internet during ingest. It does not
+    even work — `scripts/bake_models.py:99` documents that `nltk.download()` ignores
+    `NLTK_DATA` without an explicit `download_dir`, and neither call passes one.
+    """
+
+    def _offenders(self) -> set[str]:
+        found = set()
+        for path in (REPO_ROOT / "graphknows").rglob("*.py"):
+            if _DOWNLOAD_CALL.search(path.read_text(encoding="utf-8")):
+                found.add(path.relative_to(REPO_ROOT).as_posix())
+        return found
+
+    def test_no_new_site_downloads_a_corpus(self) -> None:
+        new = self._offenders() - _KNOWN_RUNTIME_DOWNLOADS
+        assert not new, (
+            f"library code downloads a corpus at runtime: {sorted(new)}. A missing corpus is an "
+            "ENVIRONMENT defect — provision it in the Dockerfile/compose/scripts (see "
+            "scripts/bake_models.py, which already fetches these) and fail loud here instead."
+        )
+
+    def test_the_ledger_shrinks_and_is_never_padded(self) -> None:
+        fixed = _KNOWN_RUNTIME_DOWNLOADS - self._offenders()
+        assert not fixed, (
+            f"{sorted(fixed)} no longer download at runtime — remove them from "
+            "_KNOWN_RUNTIME_DOWNLOADS so the ledger cannot be padded back out. See #247."
+        )
+
+
 class TestPreflight:
     def _load_module(self, tmp_path=None):
         spec = importlib.util.spec_from_file_location("preflight_under_test", PREFLIGHT)
