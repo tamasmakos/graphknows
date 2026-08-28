@@ -16,6 +16,8 @@ import time
 from collections import defaultdict, deque
 from typing import Any
 
+import numpy as np
+
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.extraction.entities.hygiene import (
     graph_entities,
@@ -28,6 +30,7 @@ from graphknows.ingestion.parsers.text import (
     strip_content_heading,
 )
 from graphknows.models.ingest import IngestResult
+from graphknows.symbolic import match
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
@@ -232,6 +235,79 @@ def _attributed(
     return kept
 
 
+def _lexical_candidates(
+    entity_type: str,
+    classes: list[Any],
+    label_index: dict[str, str],
+    lex_index: dict[str, set[str]] | None,
+    scheme: dict[str, Any] | None,
+) -> dict[str, str]:
+    """``{label: uri}`` candidates for ``entity_type``, from lexical evidence only.
+
+    The anchor law: a grounding candidate may come ONLY from a lexical hit — the
+    exact-label index (``label_index``) or, when built, the SKOS altLabel index
+    (``lex_index``, prefLabel resolved back to a uri via ``scheme`` / ``classes``).
+    Cosine is never consulted here; it may only RANK what this returns.
+    """
+    key = entity_type.casefold()
+    candidates: dict[str, str] = {}
+    if uri := label_index.get(key):
+        label = next((t.label for t in classes if t.uri == uri), entity_type)
+        candidates[label] = uri
+    if lex_index is not None:
+        for pref in lex_index.get(key, ()):
+            concept = scheme.get(pref) if scheme is not None else None
+            uri2 = concept.uri if concept is not None else ""
+            if not uri2:
+                uri2 = next((t.uri for t in classes if t.label.casefold() == pref.casefold()), "")
+            if uri2:
+                candidates.setdefault(pref, uri2)
+    return candidates
+
+
+def _resolve_candidate(
+    entity_type: str, candidates: dict[str, str], index: Any
+) -> tuple[str, str, float, str]:
+    """``(uri, label, score, matcher)`` for an already-anchored candidate set.
+
+    One candidate is the answer at score 1.0 (``"lexical"``): the existing
+    exact-label behaviour, and ``index`` (an ``OntologyIndex``-shaped object)
+    is not touched at all in that case — its embedding matrix may not even
+    exist yet, and a single-candidate lookup has no cosine step to need it.
+    Several candidates are ranked by embedding ``entity_type`` once and reading
+    each candidate's own definition embedding straight off ``index`` — never a
+    full-vocabulary cosine pass, since the candidate set is already anchored
+    and cannot gain a uri the lexical stage did not already offer — then
+    resolved by :func:`graphknows.symbolic.match.accept` (``"lexical+cosine"``).
+    An empty set is the abstention: ``("", "", 0.0, "")``.
+    """
+    if not candidates:
+        return "", "", 0.0, ""
+    if len(candidates) == 1:
+        ((label, uri),) = candidates.items()
+        return uri, label, 1.0, "lexical"
+    from graphknows.storage.embedder import embed_one
+
+    v = np.asarray(embed_one(entity_type), dtype=np.float32).ravel()
+    norm = float(np.linalg.norm(v))
+    if norm == 0.0:
+        return "", "", 0.0, ""
+    v = v / norm
+    sim_of = {
+        uri: float(np.dot(v, term_vec))
+        for uri in candidates.values()
+        if (term_vec := index.term_embedding(uri))
+    }
+    order = sorted(sim_of, key=lambda u: sim_of[u], reverse=True)
+    matched_uri, score = match.accept(
+        order, sim_of, floor=_ONT_CLASS_MIN_SIM, floor_single=_ONT_CLASS_MIN_SIM, margin=0.0
+    )
+    if not matched_uri:
+        return "", "", 0.0, ""
+    label = next(lbl for lbl, u in candidates.items() if u == matched_uri)
+    return matched_uri, label, score, "lexical+cosine"
+
+
 class _STMIngestHandler:
     """Ingest parsed text into the golden GraphStore (state='raw').
 
@@ -276,7 +352,11 @@ class _STMIngestHandler:
         # are matched against the class DEFINITIONS by embedding instead.
         self._property_mapper: Any = None
         self._uri_by_label: dict[str, str] = {}
-        self._type_cache: dict[str, tuple[str, str, float]] = {}
+        self._type_cache: dict[str, tuple[str, str, float, str]] = {}
+        # The grounding provenance block's "version" field. Set from the loaded
+        # ontology's own source identity below; falls back to this configured
+        # string so a grounding edge is never written with an empty version.
+        self._ontology_source: str = ""
         # Entity type -> RELATION-profile class, memoised the same way and kept
         # separate: the two vocabularies are the same file by default but need
         # not be, and a type resolves against each independently.
@@ -322,6 +402,13 @@ class _STMIngestHandler:
         self._lex_index: Any = None
         self._corpus_seen: list[str] = []
         self._lex_frozen: bool = False
+        # Corpus size the lexical index was last built at. `_ensure_scheme` is
+        # now called both once per chunk (`_lexical_labels`) and once per
+        # distinct-type cache miss (`_map_to_class`); without this guard every
+        # one of those calls would re-run `build_index` — a full spaCy
+        # re-parse of the corpus — even though the corpus has not grown since
+        # the last build this same chunk.
+        self._lex_built_at: int = -1
         # rdfs:domain / rdfs:range per property label (both multi-valued), and
         # each class's parent chain. These are the ingredients of BOTH halves of
         # the ontology's job now: selecting which properties a chunk is offered
@@ -346,6 +433,7 @@ class _STMIngestHandler:
 
             settings = GraphKnowsSettings()
             self._hint_min_sim = settings.ontology_hint_min_sim
+            self._ontology_source = settings.ontology_source
             self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
             if self._relations is None:
                 from graphknows.symbolic.ontology import load_ontology_index
@@ -804,10 +892,15 @@ class _STMIngestHandler:
         # none ever — which is how this first ran and produced zero relations.
         # `usable_index` needs the document count to know when a frequency is
         # meaningful, so a small corpus simply filters nothing.
-        if self._corpus_seen and (self._lex_index is None or not self._lex_frozen):
+        if (
+            self._corpus_seen
+            and not self._lex_frozen
+            and len(self._corpus_seen) != self._lex_built_at
+        ):
             from graphknows.symbolic.ontology.scheme import build_index
 
             self._lex_index = build_index(self._scheme, self._corpus_seen, self._extractor.nlp)
+            self._lex_built_at = len(self._corpus_seen)
             self._lex_frozen = len(self._corpus_seen) >= _LEXICAL_WARMUP
         return self._lex_index is not None
 
@@ -1215,8 +1308,6 @@ class _STMIngestHandler:
         from graphknows.storage.embedder import embed_one
 
         if self._embed_fn is embed_one:
-            import numpy as np  # embed_batch returns np.ndarray
-
             arr: np.ndarray = embed_batch(texts)
             return True, [arr[i].tolist() for i in range(len(texts))]
         if self._ontology is not None:
@@ -1370,7 +1461,9 @@ class _STMIngestHandler:
         Same two stages as :meth:`_map_to_class` — exact label first ("PERSON" ->
         ``Person``), then the type string embedded against the class definitions
         — but over the RELATION vocabulary's classes, which is where the
-        properties' declared domain and range are written.
+        properties' declared domain and range are written. The anchor law does
+        not apply here: this class is only ever read for the domain/range
+        conformance gate, never persisted as a grounding.
 
         ``("", 0.0)`` means the type names nothing the profile can type a
         relation endpoint with, and contributes no property to the offer.
@@ -1399,38 +1492,34 @@ class _STMIngestHandler:
         self._profile_class_cache[entity_type] = result
         return result
 
-    def _map_to_class(self, entity_type: str) -> tuple[str, str, float]:
-        """Map a free-text entity type onto an ontology class: ``(uri, label, score)``.
+    def _map_to_class(self, entity_type: str) -> tuple[str, str, float, str]:
+        """Map a free-text entity type onto an ontology class: ``(uri, label, score, matcher)``.
 
-        An exact label hit scores 1.0 — the common case, because the ontology's
-        own labels were injected into the extractor's vocabulary. Otherwise the
-        type is embedded and matched against the class definitions. Results are
-        memoised per type string: types repeat across every chunk, so this costs
-        one embedding per DISTINCT type in the corpus, not one per entity.
+        The candidate set is built ONLY from lexical evidence — the exact-label
+        index and, once built, the SKOS altLabel index — never from cosine over
+        the whole vocabulary (the anchor law). A single candidate scores 1.0
+        (``matcher="lexical"``, the common case, because the ontology's own
+        labels were injected into the extractor's vocabulary); several are
+        ranked by embedding the type string once and resolved by
+        :func:`graphknows.symbolic.match.accept` (``matcher="lexical+cosine"``).
+        Results are memoised per type string: types repeat across every chunk,
+        so this costs one embedding per DISTINCT ambiguous type in the corpus.
 
-        ``("", "", 0.0)`` means unmapped, and an unmapped entity is still
-        written with its extracted type: this is enrichment, not a filter.
+        ``("", "", 0.0, "")`` means unmapped (no lexical candidate at all, the
+        anchor abstention) — and an unmapped entity is still written with its
+        extracted type: this is enrichment, not a filter.
         """
         if self._ontology is None or not entity_type:
-            return "", "", 0.0
+            return "", "", 0.0, ""
         if (hit := self._type_cache.get(entity_type)) is not None:
             return hit
-        uri = self._uri_by_label.get(entity_type.casefold())
-        if uri:
-            # Canonical ontology casing, not the extractor's ("PERSON" -> "Person").
-            label = next((t.label for t in self._ontology.classes if t.uri == uri), entity_type)
-            result = (uri, label, 1.0)
-        else:
-            from graphknows.storage.embedder import embed_one
-
-            matches = self._ontology.match_classes(
-                embed_one(entity_type), top_k=1, min_sim=_ONT_CLASS_MIN_SIM
-            )
-            result = (
-                (matches[0][0].uri, matches[0][0].label, matches[0][1])
-                if matches
-                else ("", "", 0.0)
-            )
+        self._ensure_scheme()
+        candidates = _lexical_candidates(
+            entity_type, self._ontology.classes, self._uri_by_label, self._lex_index, self._scheme
+        )
+        if not candidates:
+            self._abstentions["unanchored_type"] += 1
+        result = _resolve_candidate(entity_type, candidates, self._ontology)
         self._type_cache[entity_type] = result
         return result
 
@@ -1460,27 +1549,45 @@ class _STMIngestHandler:
             return
         if ontology_classes:
             await self._store.write_class_matches(chunk_id, ontology_classes)
+        version = getattr(self._ontology, "source", "") or self._ontology_source
         by_norm = {s.casefold(): v for s, v in (typed or {}).items()}
-        mappings = []
+        mappings: list[dict[str, Any]] = []
         for ent in entities:
             name = str(ent.get("name", ""))
             hit = by_norm.get(name.casefold())
             if hit and (uri := self._uri_by_label.get(hit[0].casefold())):
-                mappings.append({"name": name, "uri": uri, "label": hit[0], "score": hit[1]})
+                mappings.append(
+                    {
+                        "name": name,
+                        "uri": uri,
+                        "channel": "ontology",
+                        "version": version,
+                        "matcher": "definition_typing",
+                        "score": hit[1],
+                        "rank": 0,
+                        "chunk_id": chunk_id,
+                        "span": name,
+                    }
+                )
                 continue
-            uri, label, score = self._map_to_class(str(ent.get("type", "")))
+            uri, _label, score, matcher = self._map_to_class(str(ent.get("type", "")))
             if uri:
                 confidence = float(ent.get("confidence", ent.get("score", 1.0)) or 0.0)
                 mappings.append(
                     {
-                        "name": ent["name"],
+                        "name": name,
                         "uri": uri,
-                        "label": label,
+                        "channel": "ontology",
+                        "version": version,
+                        "matcher": matcher,
                         "score": confidence * score,
+                        "rank": 0,
+                        "chunk_id": chunk_id,
+                        "span": name,
                     }
                 )
         if mappings:
-            await self._store.write_instance_of(mappings)
+            await self._store.write_groundings(mappings)
 
     async def _definition_typing(self, text: str) -> dict[str, tuple[str, float]]:
         """``{casefolded surface: (class label, confidence)}`` for this chunk, or ``{}``.

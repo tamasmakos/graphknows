@@ -45,8 +45,9 @@ Per chunk:
    precedence, so injection can only add candidates.
 3. **Map.** Each extracted entity type is mapped to an ontology class, and each
    relation predicate to an ontology property.
-4. **Link.** `ENTITY-[:INSTANCE_OF {score}]->ONTOLOGY_CLASS`,
-   `CHUNK-[:MATCHES_CLASS {sim}]->ONTOLOGY_CLASS`, and
+4. **Link.** `ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS`, carrying the grounding's
+   full provenance (`channel`, `version`, `matcher`, `score`, `rank`,
+   `chunk_id`, `span`); `CHUNK-[:MATCHES_CLASS {sim}]->ONTOLOGY_CLASS`; and
    `REL.ontology_property` / `REL.map_score`.
 
 ### Enrichment, not filtering
@@ -63,12 +64,20 @@ The two mappers are deliberately different:
 - **Predicates** use `OntologyPredicateMapper` — exact match (1.0), then a
   surface-alias table (`"is friends with"` → `friend_of`, 0.95), then
   character-n-gram TF-IDF cosine. Suits multi-word phrases.
-- **Entity types** use **embedding** similarity against the class definitions,
-  memoised per distinct type. N-gram similarity is actively wrong here: on
-  single-word type labels it is dominated by shared suffixes and confidently
-  returns `LOCATION → Organization` and `ANIMAL → Goal`. Embedding gives
-  `LOCATION → Place` (0.54) and leaves `ANIMAL` unmapped, which is the right
-  answer for an ontology with no animal class.
+- **Entity types** are grounded in two stages, memoised per distinct type.
+  The candidate set comes only from lexical evidence — an exact label match,
+  or a SKOS altLabel once the corpus-frequency lexicon has warmed up — never
+  from embedding similarity against the whole class vocabulary. A single
+  candidate is the answer (`matcher="lexical"`, score 1.0). Several
+  candidates are ranked by embedding, but only against each other's
+  definitions, and accepted only if the top one clears a similarity floor and
+  beats the runner-up by a margin (`matcher="lexical+cosine"`). A type with no
+  lexical candidate at all is left unmapped rather than cosine-matched against
+  the full vocabulary: N-gram similarity is actively wrong on single-word type
+  labels (it confidently returns `LOCATION → Organization` and
+  `ANIMAL → Goal`), and an unanchored embedding match is no more trustworthy —
+  so an unrecognised type stays unmapped, which is the right answer for a type
+  the ontology has no class for.
 
 ## What happens at retrieval
 
@@ -93,8 +102,9 @@ entire conversation.
 
 Edges: `BROADER` (class → superclass — the SKOS-shaped subsumption taxonomy,
 walked one hop DOWN at a discount by the query-side subclass expansion),
-`INSTANCE_OF` (entity → class, `.score`), `MATCHES_CLASS` (chunk → class,
-`.sim`).
+`INSTANCE_OF` (entity → class — `score`, plus the grounding provenance
+`channel`, `version`, `matcher`, `rank`, `chunk_id`, `span`), `MATCHES_CLASS`
+(chunk → class, `.sim`).
 
 Written once per namespace at schema-ensure time, count-guarded so a restart is
 a no-op. The DDL is unconditional and additive, so an existing namespace gains

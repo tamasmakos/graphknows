@@ -614,7 +614,7 @@ class Memory:
         turn_chunks = 0
         abstentions: dict[str, int] = {}
         modularity: float | None = None
-        resolution = {"dropped": 0, "merged": 0}
+        resolution = {"dropped": 0, "merged": 0, "considered": 0}
         verifier_coverage: dict[str, dict[str, Any]] = {}
         # Seconds per named stage, so the slow one is identifiable without a profiler.
         stage_s: dict[str, float] = {}
@@ -737,6 +737,13 @@ class Memory:
             "topics_created": topics_created,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],
+            # merges / entities considered for resolution, so a bare count is
+            # never read without the population it's a fraction of.
+            "merge_rate": (
+                round(resolution["merged"] / considered, 4)
+                if (considered := resolution.get("considered"))
+                else 0.0
+            ),
             "graph_embeddings_computed": graph_embeddings_computed,
             "communities_computed": communities_computed,
             "modularity": modularity,

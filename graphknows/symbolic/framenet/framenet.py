@@ -23,6 +23,8 @@ from typing import Any
 
 import numpy as np
 
+from graphknows.symbolic import match
+
 log = logging.getLogger(__name__)
 
 # Disambiguation gates (tuned on LoCoMo conv-26; see .scratch/FRAME_GRAPH_NOTES.md).
@@ -257,11 +259,9 @@ def _disambiguate(targets: list[tuple[Any, str, list[str]]], stext: str) -> dict
 
 def _accept_frame(ranked: list[str], sim_of: dict[str, float]) -> tuple[str | None, float]:
     """Top frame passing the floor + margin gates, or ``(None, 0.0)``."""
-    top1 = sim_of[ranked[0]]
-    floor = SIM_FLOOR_SINGLE if len(ranked) == 1 else SIM_FLOOR
-    if top1 < floor or (len(ranked) > 1 and top1 - sim_of[ranked[1]] < SIM_MARGIN):
-        return None, 0.0
-    return ranked[0], top1
+    return match.accept(
+        ranked, sim_of, floor=SIM_FLOOR, floor_single=SIM_FLOOR_SINGLE, margin=SIM_MARGIN
+    )
 
 
 def _assign_fes(

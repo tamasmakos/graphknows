@@ -376,13 +376,14 @@ async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
     promotion), so resolution is namespace-wide; ``session_id`` is accepted for
     call-site symmetry with the rest of the flush path.
 
-    Returns ``{"dropped": n, "merged": n}``.
+    Returns ``{"dropped": n, "merged": n, "considered": n}``.
 
     A conservative 4th layer (emb>=0.92 AND same-type AND co-occurring) is left
     as a deliberate, off-by-default hook: it is not run here because embedding
     similarity does not cleanly separate nickname merges from distinct
     co-occurring people (see module docstring).
     """
+    considered = len(await store.list_entities())
     dropped = await _drop_junk(store)
     merged_morph = await _merge_standardized(store)
     merged_head = await _merge_syntactic_heads(store)
@@ -396,4 +397,4 @@ async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
         merged_head,
         merged_nick,
     )
-    return {"dropped": dropped, "merged": merged}
+    return {"dropped": dropped, "merged": merged, "considered": considered}

@@ -45,8 +45,8 @@ class _FakeStore:
     async def write_class_matches(self, chunk_id: str, matches: Any) -> None:
         return None
 
-    async def write_instance_of(self, mappings: list[dict[str, Any]]) -> None:
-        self.instance_of.extend(mappings)
+    async def write_groundings(self, rows: list[dict[str, Any]]) -> None:
+        self.instance_of.extend(rows)
 
     def scores(self) -> dict[str, float]:
         return {m["name"]: m["score"] for m in self.instance_of}
