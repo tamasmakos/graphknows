@@ -237,6 +237,23 @@ class TestGateScript:
     def test_still_invokes(self, tool: str) -> None:
         assert tool in self.text, f"{GATE_SH}: no longer invokes {tool!r}"
 
+    def test_worktree_fallback_inherits_volumes_and_env(self) -> None:
+        # The fallback `docker run` fires whenever a push comes from a worktree
+        # the shared container does not mount — the normal case here, one
+        # worktree per issue. Mounting only the repo tree loses
+        # `model_cache:/opt/models`, which backs HF_HOME and NLTK_DATA: every
+        # WordNet/embedding test then ERRORs on a cold lookup and the weight
+        # download runs until the caller's timeout kills the push. That is what
+        # parked #137 and #160 on the same fingerprint against a green main.
+        run_block = self.text.split("docker run", 1)
+        assert len(run_block) == 2, f"{GATE_SH}: no ephemeral `docker run` fallback left"
+        fallback = run_block[1]
+        for flag in ("--volumes-from", "--env-file"):
+            assert flag in fallback, (
+                f"{GATE_SH}: the worktree fallback no longer passes {flag!r}, so it "
+                f"runs without the model cache / container environment"
+            )
+
 
 class TestPreflight:
     def _load_module(self, tmp_path=None):
