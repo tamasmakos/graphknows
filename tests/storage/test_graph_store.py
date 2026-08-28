@@ -739,6 +739,112 @@ async def test_frame_instance_with_no_persistable_filler_is_not_written() -> Non
     assert not [c for c in client.command.await_args_list if "FRAME_INSTANCE" in c.args[1]]
 
 
+@pytest.mark.asyncio
+async def test_frame_instance_with_only_one_surviving_role_edge_is_not_written() -> None:
+    """The extraction gate admits an instance on filled role SLOTS, not on
+    surviving EDGES. ``Firing`` here has two filled roles (Employee, Employer),
+    but only "Tom" exists as an ENTITY — "factory" does not — so only one
+    PLAYS_ROLE edge would ever be drawn. Writing it anyway asserts a graph fact
+    with less support than the gate believed it was admitting (issue #161,
+    "13% under-connected"). This is the write path's own re-check: it is the
+    only place that knows which fillers actually survived the lookup.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "tom"}])
+    store = GraphStore(client=client)
+
+    written = await store.write_frame_instances(
+        "s1",
+        "c1",
+        [
+            {
+                "frame": "Firing",
+                "role_confidence": 0.9,
+                "roles": {"Employee": ["Tom"], "Employer": ["factory"]},
+            }
+        ],
+    )
+
+    assert written == 0
+    assert not [c for c in client.command.await_args_list if "FRAME_INSTANCE" in c.args[1]]
+
+
+@pytest.mark.asyncio
+async def test_more_completely_filled_sibling_instance_absorbs_the_lesser_one() -> None:
+    """Two instances of the SAME frame in one write call, differing only by an
+    extra surviving filler, must collapse to a single FRAME_INSTANCE row: the
+    lesser one states strictly less than the more complete one, so keeping both
+    is a duplicate fact under a different hash (issue #161, "near-duplicates
+    inside one chunk"). A real second event — disjoint fillers — must still be
+    written as two rows.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "tom"}, {"nn": "factory"}, {"nn": "2019"}])
+    store = GraphStore(client=client)
+
+    written = await store.write_frame_instances(
+        "s1",
+        "c1",
+        [
+            {"frame": "Firing", "roles": {"Employee": ["Tom"], "Employer": ["factory"]}},
+            {
+                "frame": "Firing",
+                "roles": {
+                    "Employee": ["Tom"],
+                    "Employer": ["factory"],
+                    "Time": ["2019"],
+                },
+            },
+        ],
+    )
+
+    fi_call = next(
+        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
+    )
+    fi_rows = fi_call.kwargs["params"]["rows"]
+    assert len(fi_rows) == 1
+    assert written == 1
+
+    surviving_fid = fi_rows[0]["fid"]
+    role_calls = [c for c in client.command.await_args_list if "PLAYS_ROLE" in c.args[1]]
+    role_rows = [
+        r for c in role_calls for r in c.kwargs["params"]["rows"] if r["fid"] == surviving_fid
+    ]
+    assert {r["nn"] for r in role_rows} == {"tom", "factory", "2019"}
+
+
+@pytest.mark.asyncio
+async def test_two_instances_of_the_same_frame_with_disjoint_fillers_stay_two_rows() -> None:
+    """A subset/superset pair collapses (see above); two genuinely different
+    events sharing a frame must not — that would silently drop a real fact.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(
+        return_value=[
+            {"nn": "tom"},
+            {"nn": "acme"},
+            {"nn": "caroline"},
+            {"nn": "beta"},
+        ]
+    )
+    store = GraphStore(client=client)
+
+    written = await store.write_frame_instances(
+        "s1",
+        "c1",
+        [
+            {"frame": "Firing", "roles": {"Employee": ["Tom"], "Employer": ["Acme"]}},
+            {"frame": "Firing", "roles": {"Employee": ["Caroline"], "Employer": ["Beta"]}},
+        ],
+    )
+
+    fi_call = next(
+        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
+    )
+    assert len(fi_call.kwargs["params"]["rows"]) == 2
+    assert written == 2
+
+
 # ---------------------------------------------------------------------------
 # Read API — state filter threading
 # ---------------------------------------------------------------------------

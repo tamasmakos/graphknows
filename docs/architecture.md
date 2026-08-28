@@ -138,7 +138,11 @@ Both paths converge on the same write helper, which per chunk:
 5. when `enable_frames` is on, matches FrameNet frames by embedding
    (`graphknows/frames/index.py`) into `FRAME` / `EVOKED_BY`, and
    role-fills `FRAME_INSTANCE` / `PLAYS_ROLE` via
-   `graphknows/ingestion/extraction/relations/frame_srl.py`;
+   `graphknows/ingestion/extraction/relations/frame_srl.py` — role filling is
+   scoped to the trigger's sentence, not its whole chat turn, so two events on
+   one turn don't share fillers; an instance is written only once at least two
+   role fillers resolve to an `ENTITY`, and a same-chunk sibling with a strict
+   subset of another's fillers collapses into it;
 6. resolves dates (`resolve_temporal` in `graphknows/temporal.py`) into
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 

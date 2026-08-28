@@ -44,6 +44,37 @@ def test_same_frame_twice_on_one_line_gets_distinct_inputs() -> None:
     assert marked_line(CHUNK, first, "gave") != marked_line(CHUNK, second, "gave")
 
 
+def test_marked_line_scopes_to_the_sentence_not_the_whole_turn() -> None:
+    """marked_line's return value is the ONLY context GLiNER2 sees when filling
+    a frame's core roles (see extract_frame_instances_srl). A chat turn is one
+    LINE but can hold several sentences about several events, so a line-wide
+    context lets a Firing instance's role filler collect entities from the same
+    turn's Hiring sentence, and vice versa (issue #161's cross-event bleed).
+    Scoping to the trigger's SENTENCE fixes that; the ``Speaker:`` prefix must
+    still survive so a 1st-person filler ("I") can resolve to the speaker.
+    """
+    text = "Caroline: Tom got fired from the factory. Caroline got hired at the hospital."
+    result = marked_line(text, text.index("fired"), "fired")
+    assert "*fired*" in result
+    assert "factory" in result
+    assert "hospital" not in result
+    assert "hired" not in result
+    assert result.startswith("Caroline:")
+
+
+def test_marked_line_prefixes_speaker_for_a_trigger_in_the_second_sentence() -> None:
+    """The speaker prefix must be reattached even when the trigger falls in a
+    later sentence of the turn, since narrowing to the sentence would otherwise
+    drop the turn's ``Speaker:`` prefix along with the other sentence's text.
+    """
+    text = "Caroline: Tom got fired from the factory. Caroline got hired at the hospital."
+    result = marked_line(text, text.index("hired"), "hired")
+    assert "*hired*" in result
+    assert result.startswith("Caroline:")
+    assert "factory" not in result
+    assert "fired" not in result
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [("true", True), ("fst", True), ("false", False), ("1", True), ("0", False)],

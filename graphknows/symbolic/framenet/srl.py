@@ -129,21 +129,40 @@ def sentences(text: str) -> list[tuple[int, str]]:
     return out
 
 
+_SPEAKER_PREFIX = re.compile(r"^\w+:\s+")
+
+
 def marked_line(text: str, offset: int, word: str) -> str:
-    """The line containing *offset*, with the trigger at *offset* starred.
+    """The SENTENCE containing *offset*, with the trigger at *offset* starred.
 
-    The LINE, not the sentence: in a chat chunk the line is the turn, so it
-    keeps the ``Speaker:`` prefix that lets the role filler resolve "I".
+    Sentence-scoped, not line-scoped (issue #161): in a chat chunk a line is a
+    whole turn and can state several events ("Tom got fired... Caroline got
+    hired..."), so a line-wide role-filling context let one event's roles pull
+    in the other's entities (a Firing and a Hiring instance sharing all four
+    fillers). Reusing :func:`sentences` keeps a sentence from ever crossing a
+    line, so this can only narrow, never widen, what the old line-based version
+    returned.
 
-    The star is what separates two instances of one frame on one line ("I gave a
-    book and gave a pen") — naming the trigger word in the role schema cannot,
-    since both are 'gave'. Marking it in the TEXT gives each instance its own
-    input, and therefore its own roles.
+    When the trigger's sentence is not the line's first, the line's
+    ``Speaker:`` prefix — detected from the start of the line, not the
+    sentence — is re-prepended: it carries no text of the event itself, but is
+    load-bearing for resolving a 1st/2nd-person filler ("I") to the speaker.
+
+    The star still separates two triggers of one frame inside one sentence
+    ("I gave a book and gave a pen") — naming the trigger word in the role
+    schema cannot, since both are 'gave'. Marking it in the TEXT gives each
+    instance its own input, and therefore its own roles.
     """
-    start = text.rfind("\n", 0, offset) + 1
-    end = text.find("\n", offset)
-    line, local = text[start : len(text) if end < 0 else end], offset - start
-    return f"{line[:local]}*{line[local : local + len(word)]}*{line[local + len(word) :]}"
+    line_start = text.rfind("\n", 0, offset) + 1
+    sent_start, sent = next(s for s in sentences(text) if s[0] <= offset < s[0] + len(s[1]))
+    local = offset - sent_start
+    marked = f"{sent[:local]}*{sent[local : local + len(word)]}*{sent[local + len(word) :]}"
+    if sent_start == line_start:
+        return marked
+    line_end = text.find("\n", line_start)
+    line = text[line_start : len(text) if line_end < 0 else line_end]
+    prefix = m.group(0) if (m := _SPEAKER_PREFIX.match(line)) else ""
+    return f"{prefix}{marked}"
 
 
 def nested_pairs(hits: list[FrameHit]) -> list[tuple[int, str, int]]:
