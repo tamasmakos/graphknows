@@ -44,6 +44,13 @@ _DB = "mem"
 # pairs, and the tail of that list is co-role trivia rather than fact.
 _MAX_FRAME_REL_PAIRS = 6
 
+# Mirrors frame_srl.MIN_CORE_ROLES. Deliberately duplicated, not imported —
+# storage must not depend on ingestion. The extraction-side gate counts filled
+# role SLOTS; PLAYS_ROLE only ever draws an edge for a filler that MATCHes an
+# existing ENTITY, so a slot can be "filled" and still contribute zero edges.
+# This is the write path's own re-check against what actually survived.
+_MIN_SURVIVING_ROLE_EDGES = 2
+
 # Bulk CHUNK writes are capped per statement to keep statement/body size bounded
 # (embeddings are large; see plan §8 statement-size risk). Tunable.
 _CHUNK_BATCH = 20
@@ -258,6 +265,73 @@ _REL_ROW_SELECT = ", ".join(
 # 1.0 so an exact match always wins; well above 0 because inheritance is real
 # evidence, not a tiebreak — a Dance Studio genuinely is a Facility.
 _SUBCLASS_DISCOUNT = 0.6
+
+
+def _derive_frame_instance(
+    inst: dict[str, Any], known: set[str]
+) -> tuple[str, dict[str, list[str]], str, set[tuple[str, str, str]]] | None:
+    """Pull ``(frame, roles, assertion, persistable)`` out of one raw instance.
+
+    Returns ``None`` when the instance carries no frame name — nothing to
+    write. ``persistable`` is the set of ``(role, name_norm, name)`` fills
+    whose filler resolves to an ENTITY in ``known`` — the only fills a
+    PLAYS_ROLE edge can ever attach to, since that edge MATCHes its entity and
+    never MERGEs one (see ``write_frame_instances``). ``assertion`` folds in
+    polarity/modality/epistemic because how a fact is asserted is part of the
+    fact's identity: "Melanie moved to Berlin" and "Melanie did NOT move to
+    Berlin" must not hash to the same id.
+    """
+    frame = str(inst.get("frame") or "").strip()
+    if not frame:
+        return None
+    roles: dict[str, list[str]] = inst.get("roles") or {}
+    persistable = {
+        (r, _name_norm(str(f)), str(f).strip())
+        for r, fs in roles.items()
+        for f in (fs or [])
+        if str(f).strip() and _name_norm(str(f)) in known
+    }
+    assertion = (
+        f"{inst.get('polarity') or 'pos'}/"
+        f"{inst.get('modality') or 'none'}/"
+        f"{inst.get('epistemic') or 'asserted'}"
+    )
+    return frame, roles, assertion, persistable
+
+
+def _drop_subsumed_siblings(
+    records: list[tuple[int, str, str, frozenset[tuple[str, str, str]]]],
+) -> dict[int, int]:
+    """Map each subsumed sibling's index to the index that subsumes it.
+
+    Two instances of the same ``(frame, assertion)`` written in one call are
+    one fact extracted twice, at different completeness, when one's surviving
+    fillers are a PROPER SUBSET of the other's — keep only the maximal one.
+    Fillers that are merely overlapping or disjoint stay separate: only a
+    strict subset/superset pair collapses. Equal filler sets already hash to
+    the same id and MERGE on their own, so they need no entry here.
+
+    Deterministic tie-break when several supersets qualify (a diamond, or a
+    chain): the largest surviving set, then the lowest index.
+    """
+    by_key: dict[tuple[str, str], list[tuple[int, frozenset[tuple[str, str, str]]]]] = defaultdict(
+        list
+    )
+    for index, frame, assertion, persistable in records:
+        by_key[(frame, assertion)].append((index, persistable))
+
+    absorbed_by: dict[int, int] = {}
+    for group in by_key.values():
+        for index, fills in group:
+            supersets = [
+                (other_index, other_fills)
+                for other_index, other_fills in group
+                if other_index != index and fills and fills < other_fills
+            ]
+            if supersets:
+                survivor, _ = min(supersets, key=lambda pair: (-len(pair[1]), pair[0]))
+                absorbed_by[index] = survivor
+    return absorbed_by
 
 
 class GraphStore(ArcadeStoreBase):
@@ -1220,6 +1294,26 @@ class GraphStore(ArcadeStoreBase):
         edge instead of pooling them onto one fact. Writes are batched: one UNWIND for the instances+evidence edges,
         one for all PLAYS_ROLE edges (ENTITY fillers MERGE on ``name_norm``).
 
+        Two more checks happen here, both because this method is the only
+        place that knows which fillers actually survived the entity lookup
+        (issue #161):
+
+        - *Surviving-edge gate.* The extraction-side gate
+          (``frame_srl.MIN_CORE_ROLES``, re-checked in
+          ``ingest._frame_instances``) counts filled role SLOTS. A slot can be
+          "filled" and still draw zero PLAYS_ROLE edges once unminted fillers
+          are dropped, so an instance is re-gated here on the number of
+          SURVIVING edges (``_MIN_SURVIVING_ROLE_EDGES``). Measured on conv-30: 166 of 1240 instances
+          (13%) were written with fewer than two surviving edges under the old
+          "non-empty" check — the "13% under-connected" half of the issue.
+        - *Sibling collapse.* Two instances of the same frame written in one
+          call, with the same assertion, whose surviving ``(role, name_norm)``
+          fills are a subset/superset pair are one fact stated at different
+          completeness — the lesser is dropped and its evidence/nesting
+          resolve to the surviving, more complete instance
+          (:func:`_drop_subsumed_siblings`) — the "duplicates inside one
+          chunk" half of the issue.
+
         Each instance is also linked to its canonical FRAME vertex by
         ``EVOKES``, which is what makes instance -> frame -> BROADER* ->
         ancestor -> sibling-instance traversal possible. The cost is one extra
@@ -1290,37 +1384,44 @@ class GraphStore(ArcadeStoreBase):
         rel_rows: list[dict[str, Any]] = []
         # Same-role filler pairs refused by the projection (see below).
         co_role_dropped = 0
+        # Instances dropped for having fewer than _MIN_SURVIVING_ROLE_EDGES
+        # surviving PLAYS_ROLE edges (issue #161, "13% under-connected").
+        gated_dropped = 0
         # Position in `instances` -> the id it was written under, so a nesting
         # pair given by index survives the drops below (no fills, no frame).
         fid_at: dict[int, str] = {}
-        for index, inst in enumerate(instances):
-            frame = str(inst.get("frame") or "").strip()
-            roles: dict[str, list[str]] = inst.get("roles") or {}
-            if not frame:
-                continue
-            # Content-hash id over the PERSISTABLE fills only, de-duplicated: the
-            # same filler named twice in one role is one fact, not two.
-            persistable = {
-                (r, _name_norm(str(f)), str(f).strip())
-                for r, fs in roles.items()
-                for f in (fs or [])
-                if str(f).strip() and _name_norm(str(f)) in known
-            }
-            # How the fact is asserted is PART OF the fact's identity. Without
-            # polarity/modality/epistemic in the signature, "Melanie moved to
-            # Berlin" and "Melanie did NOT move to Berlin" hash to the same id
-            # and the second silently overwrites the first.
-            assertion = (
-                f"{inst.get('polarity') or 'pos'}/"
-                f"{inst.get('modality') or 'none'}/"
-                f"{inst.get('epistemic') or 'asserted'}"
-            )
+
+        derived = [
+            (index, *parts)
+            for index, inst in enumerate(instances)
+            if (parts := _derive_frame_instance(inst, known)) is not None
+        ]
+        # Same (frame, assertion) siblings whose surviving fills are a strict
+        # subset of another's are the same fact stated less completely — one
+        # extraction pass finding two candidate spans for the same event
+        # (issue #161, "duplicates inside one chunk").
+        absorbed_by = _drop_subsumed_siblings(
+            [
+                (index, frame, assertion, frozenset(persistable))
+                for index, frame, _, assertion, persistable in derived
+            ]
+        )
+        collapsed = len(absorbed_by)
+
+        for index, frame, _roles, assertion, persistable in derived:
+            if index in absorbed_by:
+                continue  # written under the surviving sibling's fid, below
+            inst = instances[index]
             sig = [*sorted(f"{r}={nn}" for r, nn, _ in persistable), f"@{assertion}"]
             # Nothing that can be written is nothing to identify the fact BY, so
             # the instance is dropped rather than written as a bare frame label.
             # Tested on `persistable`, not `sig`: sig now always carries the
             # assertion suffix and is therefore never empty.
-            if not persistable:
+            #
+            # Gate on EDGE COUNT, not distinct role names — two surviving
+            # fills sharing one role still clear the floor.
+            if len(persistable) < _MIN_SURVIVING_ROLE_EDGES:
+                gated_dropped += 1
                 continue
             # Content hash for a stable frame-instance id — not a security digest.
             digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
@@ -1395,6 +1496,12 @@ class GraphStore(ArcadeStoreBase):
                         "hed": bool(inst.get("hedged") or False),
                     }
                 )
+        # A subsumed sibling maps to the id it was ABSORBED into (so a nesting
+        # pair naming it still resolves), never to nothing — that only happens
+        # to an instance the gate above dropped outright.
+        for dropped_index, survivor_index in absorbed_by.items():
+            if survivor_index in fid_at:
+                fid_at[dropped_index] = fid_at[survivor_index]
         # B19 / R13: PLAYS_ROLE MATCHes ENTITY by name_norm and never MERGEs —
         # correct policy (a filler the extractor never minted must not be
         # invented here), but it means a filler with no ENTITY produces no edge
@@ -1407,11 +1514,22 @@ class GraphStore(ArcadeStoreBase):
             for f in (fs or [])
             if str(f).strip() and _name_norm(str(f)) not in known
         )
-        if unbound:
+        if unbound or gated_dropped:
             logger.info(
                 "frame role fillers unbound: %d (no ENTITY was minted for them, so they "
-                "get no PLAYS_ROLE edge) in chunk %s",
+                "get no PLAYS_ROLE edge); %d instance(s) consequently dropped for surviving "
+                "fewer than %d role edge(s), in chunk %s",
                 unbound,
+                gated_dropped,
+                _MIN_SURVIVING_ROLE_EDGES,
+                chunk_id,
+            )
+        if collapsed:
+            logger.info(
+                "frame instances collapsed: %d in chunk %s (a less completely filled "
+                "sibling of the same fact — same frame and assertion, its surviving "
+                "fills a subset of another instance's)",
+                collapsed,
                 chunk_id,
             )
         if co_role_dropped:
