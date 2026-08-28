@@ -38,7 +38,7 @@ def _handler() -> tuple[_STMIngestHandler, MagicMock]:
         "write_chunk",
         "write_entities_bulk",
         "write_class_matches",
-        "write_instance_of",
+        "write_groundings",
         "write_temporal",
         "write_frames",
         "write_frame_instances",
@@ -124,6 +124,6 @@ async def test_instance_of_carries_the_models_confidence_not_a_flat_one(typed) -
     handler, store = _handler()
     await _write(handler, TEXT, list(RELEX_ENTITIES))
 
-    rows = {m["name"]: m for m in store.write_instance_of.await_args.args[0]}
+    rows = {m["name"]: m for m in store.write_groundings.await_args.args[0]}
     assert rows["research"]["uri"] == "u:Act"
     assert rows["research"]["score"] == pytest.approx(0.83)

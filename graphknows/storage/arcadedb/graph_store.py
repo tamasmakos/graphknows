@@ -1160,29 +1160,63 @@ class GraphStore(ArcadeStoreBase):
         )
         return len(rows)
 
-    async def write_instance_of(self, mappings: list[dict[str, Any]]) -> int:
-        """MERGE ENTITY-[:INSTANCE_OF {score}]->ONTOLOGY_CLASS edges.
+    # Full provenance block a grounding row must carry — asserted complete at
+    # the single write choke point rather than trusted at each call site.
+    _GROUNDING_FIELDS = (
+        "name",
+        "uri",
+        "channel",
+        "version",
+        "matcher",
+        "score",
+        "rank",
+        "chunk_id",
+        "span",
+    )
 
-        Each mapping: ``{name, uri, score}``, where ``score`` is *that entity's*
-        confidence in being an instance of that class — not the class's own match
-        score. An entity may accumulate several INSTANCE_OF edges — different
-        chunks extract different types, which is legitimate multi-classing.
-        Repeated writes keep the strongest mention rather than the latest, so the
-        stored score does not depend on chunk order.
+    async def write_groundings(self, rows: list[dict[str, Any]]) -> int:
+        """MERGE ENTITY-[:INSTANCE_OF {provenance}]->ONTOLOGY_CLASS edges.
+
+        The single place a grounding edge is written. Each row must carry the
+        full provenance block (``name, uri, channel, version, matcher, score,
+        rank, chunk_id, span``); a row missing any field raises immediately —
+        a provenance gap that only shows up as a missing property in the graph
+        months later is the silent failure this checks against.
+
+        ``score`` is *that entity's* confidence in being an instance of that
+        class — not the class's own match score. An entity may accumulate
+        several INSTANCE_OF edges — different chunks extract different types,
+        which is legitimate multi-classing. Repeated writes keep the strongest
+        mention rather than the latest, so the stored score does not depend on
+        chunk order.
+
+        Callers pass only the accepted candidate (``rank`` 0): nothing reads
+        INSTANCE_OF at retrieval today (the ENTITY route through it was
+        measured byte-identical to the direct CHUNK->MATCHES_CLASS route and
+        removed — see the comment in ``search_ontology_classes`` below), so
+        writing k-best sibling edges would triple a write-only layer for no
+        reader.
         """
-        if not mappings:
-            return 0
-        rows = [
-            {
-                "nn": _name_norm(str(m["name"])),
-                "uri": m["uri"],
-                "score": float(m.get("score", 0.0)),
-            }
-            for m in mappings
-            if m.get("name") and m.get("uri")
-        ]
         if not rows:
             return 0
+        for row in rows:
+            missing = [f for f in self._GROUNDING_FIELDS if row.get(f) is None]
+            if missing:
+                raise ValueError(f"grounding row missing provenance field(s) {missing}: {row}")
+        merged = [
+            {
+                "nn": _name_norm(str(r["name"])),
+                "uri": r["uri"],
+                "channel": r["channel"],
+                "version": r["version"],
+                "matcher": r["matcher"],
+                "score": float(r["score"]),
+                "rank": int(r["rank"]),
+                "chunk_id": r["chunk_id"],
+                "span": r["span"],
+            }
+            for r in rows
+        ]
         await self.command(
             "UNWIND $rows AS r "
             "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
@@ -1190,10 +1224,12 @@ class GraphStore(ArcadeStoreBase):
             "SET i.score = CASE "
             "    WHEN r.score > coalesce(i.score, 0) THEN r.score "
             "    ELSE i.score "
-            "END",
-            rows=rows,
+            "END, "
+            "i.channel = r.channel, i.version = r.version, i.matcher = r.matcher, "
+            "i.rank = r.rank, i.chunk_id = r.chunk_id, i.span = r.span",
+            rows=merged,
         )
-        return len(rows)
+        return len(merged)
 
     async def search_ontology_classes(
         self,

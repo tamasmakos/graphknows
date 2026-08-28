@@ -61,7 +61,7 @@ class _FakeStore:
         self.relations: list[dict[str, Any]] = []
         self.chunks: list[dict[str, Any]] = []
         self.entities: list[Any] = []
-        self.instance_of: list[Any] = []
+        self.groundings: list[Any] = []
         self.class_matches: list[Any] = []
         self.temporal: list[Any] = []
 
@@ -74,8 +74,8 @@ class _FakeStore:
     async def write_class_matches(self, chunk_id, matches) -> None:
         self.class_matches.append((chunk_id, matches))
 
-    async def write_instance_of(self, mappings) -> None:
-        self.instance_of.extend(mappings)
+    async def write_groundings(self, mappings) -> None:
+        self.groundings.extend(mappings)
 
     async def write_temporal(self, chunk_id, iso_dates) -> None:
         self.temporal.append((chunk_id, iso_dates))
