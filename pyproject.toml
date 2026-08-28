@@ -137,7 +137,11 @@ path = "graphknows/_version.py"
 packages = ["graphknows"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["evaluation", "examples", "tests", "research", ".scratch"]
+# `.claude` is the agent harness (skills, workflows, hooks) — version controlled so the
+# rules survive a clone, but it is not part of the distribution. hatchling drops
+# VCS-ignored files, so before it was tracked it was excluded for free; now that it is
+# tracked, only this line keeps ~1.5 MB of skills out of the sdist.
+exclude = ["evaluation", "examples", "tests", "research", ".scratch", ".claude", "CLAUDE.md"]
 
 [project.scripts]
 graphknows-mcp = "graphknows.server.mcp.stdio_server:main"
@@ -249,6 +253,11 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# The agent harness is tracked (so its rules survive a clone) but it is not this
+# package's code: these are vendored skill helpers, and scripts/gate.sh lints
+# `graphknows evaluation tests` only. Without this the pre-commit hook — which has no
+# path scope of its own — holds a third-party skill to graphknows' docstring rules.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = [

@@ -1,0 +1,39 @@
+cd C:/Users/User/Documents/dev/gk-issue-157 and work only there.
+Context -- GitHub issue #157: INSTANCE_OF.score is per-class, not per-entity
+Root cause: the score is keyed by class id, so every entity in a class shares one value
+Your task (2/2): key the score per entity
+move the computation inside the loop
+Expected files: graphknows/symbolic/typing.py
+Already done by earlier tasks: - reproduce the per-class score -> added tests/test_typing.py::test_instance_of_score_is_per_entity (red: true)
+Implement it fully. Do not commit. Do not touch anything outside this task -- no drive-by refactors, no unrelated files.
+Read C:/Users/User/Documents/dev/graphknows/.claude/skills/ponytail/SKILL.md and follow it: the ladder and the rules: reuse what is already here, stdlib before a dependency, deletion over addition, the shortest diff that actually works. Never lazy about UNDERSTANDING -- read the whole flow, then write the least code.
+If you need an import that is not already a declared dependency, add it to the correct pyproject.toml table in the SAME task, with a lower bound. Never leave an import undeclared.
+THIS REPO IS A DISTRIBUTED PYTHON PACKAGE. These rules are binding:
+  - NEVER change the version: not `[project] version` in pyproject.toml, not a single-sourced `__version__`, not a tag it is derived from. Versions are bumped once, at release. A version already published to PyPI can never be re-uploaded or replaced, so a stray bump in a fix branch burns a real version number.
+  - Every third-party module imported by package code must be declared in `[project.dependencies]` -- or in the right `[project.optional-dependencies]` extra if the feature is optional -- with a lower bound. An undeclared import installs fine for you and ImportErrors for every user.
+  - Test-only and dev-only imports go in the dev dependency group / extra, NEVER in `[project.dependencies]`.
+  - Do not use a stdlib API newer than `requires-python` permits, and do not change `requires-python` to make one legal.
+  - A new import package directory needs an `__init__.py`; without one it is a namespace package and may silently not ship.
+  - Non-.py files (data, ontologies, `py.typed`) do NOT ship automatically. They must be declared to the build backend or the wheel is missing them.
+  - This repo is FLAT layout: tests import the in-tree copy, so a wheel missing a file still tests green -- only the package gate catches it. Code that only works because of the current working directory works in the suite and breaks for installed users.
+  - Never add `dist/`, `build/` or `*.egg-info/` to the repository.
+Distribution facts, read from pyproject.toml at the start of this run:
+  name: graphknows
+  version: 0.4.1 (dynamic, from graphknows/_version.py) -- DO NOT CHANGE IT
+  build backend: hatchling.build | layout: flat | requires-python: >=3.11
+  declared dependencies: pydantic>=2.7.0, numpy>=1.26.0
+  extras: assisted, srl
+  non-.py files declared to the backend: yes
+Orientation: this repo has a knowledge graph. Before grepping blind, run these from C:/Users/User/Documents/dev/graphknows (NOT your worktree -- graphify-out is gitignored):
+  `graphify query "<your question>"`   -- broad context, BFS over the graph
+  `graphify path "A" "B"`              -- how two concepts connect
+  `graphify explain "<symbol>"`        -- plain-language explanation of a node
+  `python C:/Users/User/Documents/dev/graphknows/.claude/skills/deep-code-review/metrics.py C:/Users/User/Documents/dev/graphknows/graphify-out/graph.json`  -- risk scoreboard: hotspots (churn x fan-in), hidden coupling (files that co-change with your target but share no import edge -- callers grep cannot find), cycles, god nodes.
+Use hidden-coupling rows to widen a root-cause search past the file the issue names, and blast-radius rows when assigning disjoint files to tasks.
+It was built 2026-08-09 and the package has moved since: use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI or graph is missing, skip it and read the code.
+You are the agent closest to the code. If you hit something previously unknown -- a bug you did not cause, a broken assumption, a problem, or a concrete enhancement this code is missing -- do NOT fix it and do NOT let it evaporate: record it under "discoveries". Everything recorded there is deduped and filed as a GitHub issue at the end of this run.
+Evidence bar -- two lanes, both strict:
+  BUG: report it only if you can state a concrete failure scenario -- real inputs producing a wrong result, a crash, a regression, or a broken contract.
+  ENHANCEMENT: report it only if you can name something a user cannot do today, or must do by hand, and why that matters now.
+Neither lane accepts style nits, speculative hardening, "could be more general", "add more tests", or a refactor wish. Those are not findings.
+Repo rules (CLAUDE.md) are binding: pythonic OOP, type hints, one thing per function, small diffs, no speculative abstraction. Pre-commit hooks are rules -- never pass --no-verify. NEVER weaken, delete or retarget an existing test to make the suite pass. If an existing test genuinely encodes the wrong behaviour, leave it failing and report it -- changing it silently is the one unforgivable move here.

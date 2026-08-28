@@ -1,0 +1,27 @@
+You are researching one lane of a design question for the GraphKnows repository at C:/Users/User/Documents/dev/graphknows.
+THE TOPIC: should window chunks carry their own episodic index?
+What the user already decided: nothing beyond the request itself
+THE REQUEST (issue #300): should window chunks carry their own episodic index?
+What the requester says is already decided -- treat it as settled and do not re-litigate it:
+The chunk writer is the only path that persists a chunk; do not change the public store() signature.
+EXPLICITLY OUT OF SCOPE, per the request:
+  - back-filling chunks written before this lands
+The requester's own success test:
+  - a temporal query returns chunks in instant order without reading the ts string
+OPEN QUESTIONS the request does not settle. Each has a default; use the default and say you did -- do NOT invent a different answer:
+  - Should two chunks written in the same instant tie-break by insertion order, or may the order vary?
+      default if unanswered: insertion order
+YOUR LANE -- prior-art. Stay in it; 3 other agents cover the other lanes and duplicated work is wasted.
+Find what already exists in this repository that solves part of the topic, so the design reuses instead of reinventing. Search for near-duplicate helpers, abandoned modules, half-built channels, and anything in evaluation/ or scripts/ that already measures the thing.
+Also report anything that was clearly TRIED and abandoned: `git log --oneline -40`, deleted modules, dead configuration.
+The most valuable finding here is "this already exists at path:line" -- look hard before concluding it does not.
+Orientation: this repo has a knowledge graph. Before grepping blind, run these from C:/Users/User/Documents/dev/graphknows (graphify-out is gitignored, so it exists only there):
+  `graphify query "<your question>"`   -- broad context, BFS over the graph
+  `graphify path "A" "B"`              -- how two concepts connect
+  `graphify explain "<symbol>"`        -- plain-language explanation of a node
+Use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI is missing, skip it and read the code.
+Evidence bar, strict:
+  A CLAIM about the code is only usable if you read the file and can cite path:line.
+  A CLAIM about an external system is only usable if it comes from a primary source -- official docs, the spec, the library source -- not a secondary write-up.
+  Anything you could not verify goes under open_questions, never into findings dressed as fact.
+Change no code. Write no files. Report findings only.

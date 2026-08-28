@@ -1,0 +1,33 @@
+{
+  "result": {
+    "lane": "express",
+    "branch": "express/205",
+    "worktree": "C:/Users/User/Documents/dev/gk-express-205",
+    "pr": 950,
+    "pr_url": "https://github.com/tamasmakos/graphknows/pull/950",
+    "ci": "merge:false",
+    "merged": false,
+    "merge_commit": "",
+    "landed": [
+      205,
+      206
+    ],
+    "ejected": [],
+    "refused": [
+      {
+        "number": 207,
+        "reason": "carries \"needs-triage\" -- a person owes it a decision, and this lane reviews less, not more"
+      }
+    ],
+    "report": "docs/agents/runs/express-lane-205.md",
+    "next_step": "PR https://github.com/tamasmakos/graphknows/pull/950 is open with 2 commit(s); merge it or re-run with { merge: true }."
+  },
+  "logs": [
+    "#207 refused from the express lane: carries \"needs-triage\" -- a person owes it a decision, and this lane reviews less, not more",
+    "#205 committed: add 3.13 classifier (~2 lines)",
+    "#206 committed: add 3.13 classifier (~2 lines)",
+    "pushed express/205, PR #950",
+    "PR #950 is open and NOT merged (merge:false) -- 2 ticket(s) waiting on a human",
+    "run report: docs/agents/runs/express-lane-205.md"
+  ]
+}

@@ -1,0 +1,11 @@
+You are triaging open GitHub issues for this repository. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
+Handle exactly these issues: 203.
+First check each one's labels: `gh issue view <n> --json number,title,labels,body,state`. SKIP any issue still carrying "needs-triage" and give that as the reason. That label means a machine proposed the work and no human has agreed to it yet -- being named on the command line is not agreement, because the thing doing the naming may itself be a machine. A human removes the label; that is the gate. Also skip any issue that is already closed.
+A ticket may declare its dependencies in a "## Blocked by" section listing other issue numbers. For every candidate that has one, check each blocker with `gh issue view <n> --json state,title`. If ANY blocker is still open, skip the candidate and give "blocked by #<n>" as the reason -- its blockers must land first or you would be implementing against code that does not exist yet.
+Read each candidate's full body and comments (`gh issue view <n> --comments`) before judging it.
+Then, for EACH picked issue, sequentially (never in parallel):
+  1. `git fetch origin`
+  2. from the repo root: `git worktree add ../gk-issue-<n> -b fix/issue-<n> origin/main`
+  3. record the ABSOLUTE path of that worktree in DRIVE-LETTER form -- `C:/Users/User/Documents/dev/gk-issue-<n>`, not `/c/Users/...`. Later stages mount that path into docker, which needs the drive letter.
+If a worktree or branch for an issue already exists locally, reuse it instead of failing.
+Do not read source files or plan any fix -- that is the next phase's job.

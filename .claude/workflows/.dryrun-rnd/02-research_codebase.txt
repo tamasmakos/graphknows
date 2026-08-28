@@ -1,0 +1,16 @@
+You are researching one lane of a design question for the GraphKnows repository at C:/Users/User/Documents/dev/graphknows.
+THE TOPIC: should window chunks carry their own episodic index?
+What the user already decided: nothing beyond the topic itself
+YOUR LANE -- codebase. Stay in it; three other agents cover the other lanes and duplicated work is wasted.
+Establish what the code does TODAY in the area this topic touches. Read the modules, the tests around them, and the CLI or evaluation entry points that drive them.
+Report the current control flow, the current interfaces, and where the seams already are. Cite path:line for everything.
+Orientation: this repo has a knowledge graph. Before grepping blind, run these from C:/Users/User/Documents/dev/graphknows (graphify-out is gitignored, so it exists only there):
+  `graphify query "<your question>"`   -- broad context, BFS over the graph
+  `graphify path "A" "B"`              -- how two concepts connect
+  `graphify explain "<symbol>"`        -- plain-language explanation of a node
+Use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI is missing, skip it and read the code.
+Evidence bar, strict:
+  A CLAIM about the code is only usable if you read the file and can cite path:line.
+  A CLAIM about an external system is only usable if it comes from a primary source -- official docs, the spec, the library source -- not a secondary write-up.
+  Anything you could not verify goes under open_questions, never into findings dressed as fact.
+Change no code. Write no files. Report findings only.

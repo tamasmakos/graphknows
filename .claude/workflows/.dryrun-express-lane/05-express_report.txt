@@ -1,0 +1,23 @@
+Write a file. That is the whole task: no analysis, no summarising, no edits to the text.
+Path: C:/Users/User/Documents/dev/graphknows/docs/agents/runs/express-lane-205.md -- create the directory if it is missing, overwrite the file if it exists.
+Content: everything between the two marker lines below, byte for byte. The markers are NOT part of the file.
+<<<REPORT-BEGINS>>>
+# express-lane -- 2 ticket(s) on one branch
+
+an express-lane run. Branch `express/205`, PR https://github.com/tamasmakos/graphknows/pull/950. Not merged.
+
+One gate run, one CI run and one merge were shared across this batch. Through the normal lane each ticket
+would have paid its own -- roughly thirty-one minutes each, or about 62 minutes for these 2.
+
+## Landed
+
+| # | Ticket | ~lines | Files |
+| --- | --- | --- | --- |
+| #205 | add 3.13 to the classifiers | 2 | pyproject.toml |
+| #206 | fix a stale path in the deprecation table | 2 | pyproject.toml |
+
+## Refused at the door
+
+- #207 gated one — carries "needs-triage" -- a person owes it a decision, and this lane reviews less, not more
+<<<REPORT-ENDS>>>
+Then confirm the file exists and report its path.

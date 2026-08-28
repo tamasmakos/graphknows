@@ -1,0 +1,48 @@
+Issue #157: INSTANCE_OF.score is per-class, not per-entity
+What it asks for: the score is computed once per class so it cannot rank entities
+Work in the worktree at C:/Users/User/Documents/dev/gk-issue-157 -- cd there first; it is a full checkout of this repo on branch fix/issue-157.
+If the issue references a parent spec issue, READ IT FIRST (`gh issue view <n>`). Tickets filed by prepare-tickets carry the design decision in the parent, not in themselves: planning from the ticket alone re-decides a question that was already settled, and settled differently. The parent may open with a quoted banner recording that an adversarial reviewer called the design unsound, or that a fact it rests on was refuted -- that is not decoration, it is the thing to resolve before you plan around it.
+The issue text is the contract, and the parent spec is its context. Where the decision was architecturally significant the spec cites an ADR under docs/adr/ -- that IS in your worktree, so read it when the spec names one. Do not go looking for any other design document; there is none.
+Check the comments as well (`gh issue view 157 --comments`). If one of them is an "## Agent Brief", THAT is the contract and the body is background: a person wrote it during triage precisely because the body was a raw report. It carries the same sections a pipeline ticket does -- acceptance criteria, Verify, Out of scope -- and where the two disagree, the brief is the later decision.
+A "[NEEDS CLARIFICATION: ...]" marker anywhere in the body or the brief means the work is NOT settled. Do not resolve it yourself and do not plan around it: stop, and report it as the reason. Somebody left that marker rather than guessing, and guessing here throws that away.
+Read the code before planning. Find the ROOT CAUSE, not the symptom: grep every caller of what you are about to change, so the fix lands where all callers route through instead of patching the one path the issue names.
+Read C:/Users/User/Documents/dev/graphknows/.claude/skills/diagnosing-bugs/SKILL.md and follow it: the root-cause discipline this repo uses -- build the feedback loop before theorising. You may not modify the tree, so follow its "Diagnosis for planning" branch: spec the loop, do not run it.
+Read CLAUDE.md and the surrounding modules; match their idiom.
+Read C:/Users/User/Documents/dev/graphknows/.claude/skills/ponytail/SKILL.md and follow it: the ladder: does this need to exist at all, is it already in this codebase, does the stdlib do it, can it be one line. Climb it for every task before you write the task down, and stop at the first rung that holds. It shortens the SOLUTION, never the reading -- trace the whole flow first.
+A plan is a budget. The smallest number of tasks that closes the issue is the correct number; a task you added because it seemed thorough is a file somebody has to review.
+Orientation: this repo has a knowledge graph. Before grepping blind, run these from C:/Users/User/Documents/dev/graphknows (NOT your worktree -- graphify-out is gitignored):
+  `graphify query "<your question>"`   -- broad context, BFS over the graph
+  `graphify path "A" "B"`              -- how two concepts connect
+  `graphify explain "<symbol>"`        -- plain-language explanation of a node
+  `python C:/Users/User/Documents/dev/graphknows/.claude/skills/deep-code-review/metrics.py C:/Users/User/Documents/dev/graphknows/graphify-out/graph.json`  -- risk scoreboard: hotspots (churn x fan-in), hidden coupling (files that co-change with your target but share no import edge -- callers grep cannot find), cycles, god nodes.
+Use hidden-coupling rows to widen a root-cause search past the file the issue names, and blast-radius rows when assigning disjoint files to tasks.
+It was built 2026-08-09 and the package has moved since: use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI or graph is missing, skip it and read the code.
+Produce the smallest plan that actually fixes it -- at most 4 tasks. Each task must be self-contained: the agent executing it starts with a blank context and sees only your instruction. Give tasks disjoint files where you can.
+AT MOST ONE task has kind="test": the reproduction that fails on the current code and passes once the fix lands. It touches only test files. Every other task is kind="code".
+Include it when there is BEHAVIOUR to reproduce -- something the code does wrong now and will do right after. Omit it when there is not: a deletion, a dependency or build-config change, a rename, a docs edit. For those the acceptance is the existing suite still passing, and the later stages know a plan can arrive with no test task.
+A test that asserts a file, a flag or a section is ABSENT is not a reproduction, it is the acceptance criteria copied into Python. Never write one. If the only test you can think of restates the ticket, that is the signal to omit the test task, not to write it anyway.
+The test must assert the CORRECT behaviour as the issue describes it -- never the behaviour the buggy code currently produces.
+Distribution facts, read from pyproject.toml at the start of this run:
+  name: graphknows
+  version: 0.4.1 (dynamic, from graphknows/_version.py) -- DO NOT CHANGE IT
+  build backend: hatchling.build | layout: flat | requires-python: >=3.11
+  declared dependencies: pydantic>=2.7.0, numpy>=1.26.0
+  extras: assisted, srl
+  non-.py files declared to the backend: yes
+THIS REPO IS A DISTRIBUTED PYTHON PACKAGE. These rules are binding:
+  - NEVER change the version: not `[project] version` in pyproject.toml, not a single-sourced `__version__`, not a tag it is derived from. Versions are bumped once, at release. A version already published to PyPI can never be re-uploaded or replaced, so a stray bump in a fix branch burns a real version number.
+  - Every third-party module imported by package code must be declared in `[project.dependencies]` -- or in the right `[project.optional-dependencies]` extra if the feature is optional -- with a lower bound. An undeclared import installs fine for you and ImportErrors for every user.
+  - Test-only and dev-only imports go in the dev dependency group / extra, NEVER in `[project.dependencies]`.
+  - Do not use a stdlib API newer than `requires-python` permits, and do not change `requires-python` to make one legal.
+  - A new import package directory needs an `__init__.py`; without one it is a namespace package and may silently not ship.
+  - Non-.py files (data, ontologies, `py.typed`) do NOT ship automatically. They must be declared to the build backend or the wheel is missing them.
+  - This repo is FLAT layout: tests import the in-tree copy, so a wheel missing a file still tests green -- only the package gate catches it. Code that only works because of the current working directory works in the suite and breaks for installed users.
+  - Never add `dist/`, `build/` or `*.egg-info/` to the repository.
+Fill in api_surface with the public importable names this fix changes (empty if purely internal), and new_dependencies with any third-party package the fix will need that is not already declared -- name the pyproject table it belongs in. Prefer a fix that needs no new dependency at all: every dependency you add is one every user must install.
+List under out_of_scope anything real you noticed while reading that this fix will NOT address -- a defect, a broken assumption, or a concrete enhancement the code is missing. Each one is deduped and filed as a GitHub issue at the end of this run, so be strict:
+Evidence bar -- two lanes, both strict:
+  BUG: report it only if you can state a concrete failure scenario -- real inputs producing a wrong result, a crash, a regression, or a broken contract.
+  ENHANCEMENT: report it only if you can name something a user cannot do today, or must do by hand, and why that matters now.
+Neither lane accepts style nits, speculative hardening, "could be more general", "add more tests", or a refactor wish. Those are not findings.
+Change nothing yourself.
+Repo rules (CLAUDE.md) are binding: pythonic OOP, type hints, one thing per function, small diffs, no speculative abstraction. Pre-commit hooks are rules -- never pass --no-verify. NEVER weaken, delete or retarget an existing test to make the suite pass. If an existing test genuinely encodes the wrong behaviour, leave it failing and report it -- changing it silently is the one unforgivable move here.
