@@ -1,0 +1,16 @@
+You are researching one lane of a design question for the GraphKnows repository at C:/Users/User/Documents/dev/graphknows.
+THE TOPIC: should window chunks carry their own episodic index?
+What the user already decided: nothing beyond the topic itself
+YOUR LANE -- constraints. Stay in it; three other agents cover the other lanes and duplicated work is wasted.
+Establish the constraints any design must satisfy: what the test suite already asserts in this area, what the evaluation harness measures, what pyproject.toml declares, and what the CI gate enforces.
+Read pyproject.toml, ruff.toml, pytest.ini and the importlinter contracts, and report the rules a design cannot break.
+THIS REPO IS A DISTRIBUTED PYTHON PACKAGE, so a design carries distribution consequences:
+  - a new third-party import is a new entry in [project.dependencies] that every user must install. Prefer a design that needs no new dependency; if one is unavoidable, say which pyproject table it belongs in and why the stdlib will not do.
+  - non-.py files (data, ontologies) do not ship unless declared to the build backend.
+  - src-layout-style rules apply: code that only works from the repo working directory works in the suite and breaks for installed users.
+  - never propose a version bump. Versions are bumped once, at release.
+Evidence bar, strict:
+  A CLAIM about the code is only usable if you read the file and can cite path:line.
+  A CLAIM about an external system is only usable if it comes from a primary source -- official docs, the spec, the library source -- not a secondary write-up.
+  Anything you could not verify goes under open_questions, never into findings dressed as fact.
+Change no code. Write no files. Report findings only.

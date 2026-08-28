@@ -1,0 +1,88 @@
+You are filing GitHub issues for everything this run discovered while fixing issue #157 on branch fix/issue-157. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
+Every stage of this run reports what it stumbled over, and you are the only place those become durable. Anything you drop is forgotten. But this repository also runs an automated loop that picks issues up and fixes them, so a bad issue costs real machine time and a duplicate costs a human. Precision over volume: filing nothing is a perfectly good outcome.
+Candidates, gathered from every stage:
+[
+  {
+    "source": "dogfood",
+    "kind": "bug",
+    "summary": "extracted chunk text keeps markdown fences",
+    "where": "graphknows/ingest/extract.py",
+    "evidence": "every fenced turn stores the fence"
+  },
+  {
+    "source": "dogfood",
+    "kind": "bug",
+    "summary": "bad data: chunk text keeps the markdown fence from extraction",
+    "where": "evaluation/run_locomo.py --turns 20, 41 INSTANCE_OF edges",
+    "evidence": "{\"text\":\"```\nCaroline met...\"}"
+  },
+  {
+    "source": "docs",
+    "kind": "bug",
+    "summary": "stale documentation: names a grader flag that was removed two releases ago",
+    "where": "docs/topics.md",
+    "evidence": "noticed while documenting this change"
+  },
+  {
+    "source": "plan",
+    "kind": "bug",
+    "summary": "the class embedding cache is never invalidated"
+  },
+  {
+    "source": "review",
+    "kind": "bug",
+    "summary": "ONTOLOGY_CLASS nodes are embedded but unused",
+    "file": "graphknows/symbolic/index.py",
+    "failure_scenario": "1437 embeddings serve 9 lookups"
+  },
+  {
+    "source": "package-gate",
+    "kind": "bug",
+    "summary": "py.typed is absent from the wheel"
+  },
+  {
+    "source": "implement: reproduce the per-class score",
+    "kind": "enhancement",
+    "summary": "no fixture builds a two-entity class",
+    "where": "tests/conftest.py",
+    "evidence": "every typing test hand-rolls it"
+  },
+  {
+    "source": "implement: key the score per entity",
+    "kind": "bug",
+    "summary": "the sibling caller in retrieval.py has the same per-class bug",
+    "where": "graphknows/retrieval.py:88",
+    "evidence": "same expression, unfixed"
+  },
+  {
+    "source": "baseline",
+    "kind": "bug",
+    "summary": "tests/topics/test_topic_stage.py::test_cluster already fails on main",
+    "where": "tests/topics/test_topic_stage.py::test_cluster",
+    "evidence": "assertion on cluster count"
+  }
+]
+For EACH candidate, in this order:
+  1. JUDGE it by its "kind".
+Evidence bar -- two lanes, both strict:
+  BUG: report it only if you can state a concrete failure scenario -- real inputs producing a wrong result, a crash, a regression, or a broken contract.
+  ENHANCEMENT: report it only if you can name something a user cannot do today, or must do by hand, and why that matters now.
+Neither lane accepts style nits, speculative hardening, "could be more general", "add more tests", or a refactor wish. Those are not findings.
+Drop anything already fixed on this branch and anything that is speculation. Verify it against the actual code in C:/Users/User/Documents/dev/gk-issue-157 before believing it -- a candidate is a claim, not a fact.
+Orientation: this repo has a knowledge graph. Before grepping blind, run these from C:/Users/User/Documents/dev/graphknows (NOT your worktree -- graphify-out is gitignored):
+  `graphify query "<your question>"`   -- broad context, BFS over the graph
+  `graphify path "A" "B"`              -- how two concepts connect
+  `graphify explain "<symbol>"`        -- plain-language explanation of a node
+  `python C:/Users/User/Documents/dev/graphknows/.claude/skills/deep-code-review/metrics.py C:/Users/User/Documents/dev/graphknows/graphify-out/graph.json`  -- risk scoreboard: hotspots (churn x fan-in), hidden coupling (files that co-change with your target but share no import edge -- callers grep cannot find), cycles, god nodes.
+Use hidden-coupling rows to widen a root-cause search past the file the issue names, and blast-radius rows when assigning disjoint files to tasks.
+It was built 2026-08-09 and the package has moved since: use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI or graph is missing, skip it and read the code.
+  2. DEDUPE, before creating anything: `gh issue list --state all --search "<3-5 distinctive terms>" --limit 20` and read the close matches. If an open issue already covers it, `gh issue comment <n>` with the new evidence and record it under "commented". Never open a second issue for something already known.
+  3. CREATE: `gh issue create --title "<symptom first, specific, searchable>" --label "agent-found" --label "needs-triage" --label "<bug|enhancement>" --body "<body>"`
+     A BUG body, in order: **Symptom** / **Where** (file:line) / **Concrete failure scenario** (inputs -> wrong output) / **How it was found** (during an automated process-issues run, while fixing #157) / **Why it was out of scope for #157** / **First thing to check** (one line, no fix design).
+     An ENHANCEMENT body, in order: **What to build** (the end-to-end behaviour this makes work, from the user's side -- not a layer-by-layer implementation list) / **Acceptance criteria** (a checklist) / **Blocked by** (issue references, or "None -- can start immediately") / **How it was found** (as above). Keep file paths and code snippets out of an enhancement body; they go stale fast.
+     If it is a packaging defect (missing from the wheel, an undeclared dependency, broken metadata), say so in the TITLE -- those are invisible to the test suite and a human should see that immediately.
+     A candidate whose source is "baseline" already fails on main and belongs to nobody: say that in the body, and do not attribute it to #157.
+     Labels: "agent-found" + "needs-triage" + exactly one of "bug" / "enhancement". "needs-triage" is the gate that stops this loop from feeding itself work it invented -- never omit it, and never remove it from an existing issue.
+     NEVER apply "ready-for-agent". Some skills in this repo end by telling you to; they are written for a human driving a slash command, not for this loop. "ready-for-agent" is what a human adds AFTER removing "needs-triage".
+Hard cap: create at most 3 new issues. If more clear the bar, file the highest-impact ones and put the rest under "dropped" with why.
+Do not modify any code. Do not touch issue #157 or its branch. Do not close, label or reopen anything else.

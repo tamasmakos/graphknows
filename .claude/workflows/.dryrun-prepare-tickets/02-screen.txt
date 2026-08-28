@@ -1,0 +1,26 @@
+Decide whether request #300 should become work at all, for the GraphKnows repository at C:/Users/User/Documents/dev/graphknows. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
+THE REQUEST (issue #300): should window chunks carry their own episodic index?
+What the requester says is already decided -- treat it as settled and do not re-litigate it:
+The chunk writer is the only path that persists a chunk; do not change the public store() signature.
+EXPLICITLY OUT OF SCOPE, per the request:
+  - back-filling chunks written before this lands
+The requester's own success test:
+  - a temporal query returns chunks in instant order without reading the ts string
+OPEN QUESTIONS the request does not settle. Each has a default; use the default and say you did -- do NOT invent a different answer:
+  - Should two chunks written in the same instant tie-break by insertion order, or may the order vary?
+      default if unanswered: insertion order
+Three checks, in this order. Stop at the first that fires.
+
+1. ALREADY BUILT. Search for an existing implementation of the requested behaviour BY DOMAIN CONCEPT, not by the words the request happens to use -- the same capability is usually already there under a different name. Answer with path:line or with "no". Read the file before claiming it; a plausible-looking name is not an implementation.
+Orientation: this repo has a knowledge graph. Before grepping blind, run these from C:/Users/User/Documents/dev/graphknows (graphify-out is gitignored, so it exists only there):
+  `graphify query "<your question>"`   -- broad context, BFS over the graph
+  `graphify path "A" "B"`              -- how two concepts connect
+  `graphify explain "<symbol>"`        -- plain-language explanation of a node
+Use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI is missing, skip it and read the code.
+2. PREVIOUSLY REJECTED. Read every file in C:/Users/User/Documents/dev/graphknows/.out-of-scope/ (its README explains the format). If one of them already declined this, say which file and quote the line that says what would have to change for the answer to be different -- that line is the actual answer to whether this request is different.
+3. OUTSIDE THE FRAME. Does the request contradict a stated product boundary in CLAUDE.md, an accepted ADR under docs/adr/, or its own "out of scope" field? Name the document and the line.
+
+Also check for an OPEN issue that already covers this (`gh issue list --state open --search "<domain words>"`). A duplicate is not a no-go on its own -- report the number and let the caller decide.
+
+Verdict "go" unless one of the three fired. Be specific about what you searched: a no-go that cannot name where it looked is a guess, and a guess here silently kills real work. When you are unsure, say "go" -- the cost of a wrong go is a spec nobody files; the cost of a wrong no-go is a request that vanishes.
+Change nothing and file nothing.

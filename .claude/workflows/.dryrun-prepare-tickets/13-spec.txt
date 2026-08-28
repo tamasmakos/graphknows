@@ -1,0 +1,57 @@
+You are writing the spec for a change to the GraphKnows repository at C:/Users/User/Documents/dev/graphknows. It will be filed as the parent issue that every ticket below it references.
+THE TOPIC: should window chunks carry their own episodic index?
+THE REQUEST (issue #300): should window chunks carry their own episodic index?
+What the requester says is already decided -- treat it as settled and do not re-litigate it:
+The chunk writer is the only path that persists a chunk; do not change the public store() signature.
+EXPLICITLY OUT OF SCOPE, per the request:
+  - back-filling chunks written before this lands
+The requester's own success test:
+  - a temporal query returns chunks in instant order without reading the ts string
+OPEN QUESTIONS the request does not settle. Each has a default; use the default and say you did -- do NOT invent a different answer:
+  - Should two chunks written in the same instant tie-break by insertion order, or may the order vary?
+      default if unanswered: insertion order
+THE CHOSEN DESIGN (this is the design; the alternatives are settled and closed):
+attach the episodic index at write time, in the chunk writer
+Grafted from the runners-up: the deep-module variant of the interface
+Known risks: back-filling existing chunks is not covered
+A PROTOTYPE WAS BUILT to settle a design question. Its verdict is evidence, not opinion:
+  question: does serial conditioning survive when two chunks share an instant
+  verdict: serial conditioning holds; ties break by insertion order
+  what it showed: two chunks at one instant still decode in order
+  the design survived intact
+  it lives on branch proto/episodic-chunk (run: python scratch/proto_episodic.py)
+  the decision it encodes:
+Instance(ts, seq) sorts by (ts, seq)
+
+RESEARCH BRIEF -- every line below was verified by a research agent and carries its source.
+  [sources] window chunks carry no episodic index
+      source: graphknows/storage/chunks.py:88
+      so what: temporal recall falls back to the string timestamp
+  [codebase] window chunks carry no episodic index
+      source: graphknows/storage/chunks.py:88
+      so what: temporal recall falls back to the string timestamp
+  [prior-art] window chunks carry no episodic index
+      source: graphknows/storage/chunks.py:88
+      so what: temporal recall falls back to the string timestamp
+  [constraints] window chunks carry no episodic index
+      source: graphknows/storage/chunks.py:88
+      so what: temporal recall falls back to the string timestamp
+STILL OPEN (nobody could verify these):
+  - does the answerer ever read the ts field
+Read C:/Users/User/Documents/dev/graphknows/.claude/skills/to-spec/SKILL.md and follow it: the spec template. Follow its section order exactly; you are the no-user branch, so stop at the draft.
+Vocabulary: use the domain terms the repo already uses -- the Tensor Brain lexicon in C:/Users/User/Documents/dev/graphknows/CLAUDE.md and the terms defined in docs/ontology.md, docs/architecture.md and docs/services.md. Do not coin new ones for concepts that have names.
+Sketch the seams you will test the feature at, per the template, and ALSO list them highest-first under "seams" in your output.
+The user-stories section is in "As an <actor>, I want <feature>, so that <benefit>" form. One story per distinct actor with a distinct want -- if two stories differ only in wording, they are one story.
+Length is a cost, not a virtue. Every sentence an implementer would not act on is a sentence that makes them build more. Do not re-derive what the user already decided above -- state it once, in one line, and move on.
+No file paths and no code snippets in the body -- they go stale. The one exception is a snippet from the prototype that encodes a decision more precisely than prose can; trim it to the decision.
+The WHY is already written down, in `docs/adr/0002-episodic-index-on-window-chunks.md`, committed to this repository. Cite it by path in "## Implementation Decisions" in one line and DO NOT restate its contents: not the options considered, not why the losers lost, not the costs accepted. This spec states what must become true and where it is tested. A spec that re-argues its own decision is a document a reader has to wade through to find the requirement.
+Everything ELSE a reader needs must be in this body. Do not cite any gitignored or local-only file as provenance -- a reader cannot open it.
+Keep the body under 400 lines. GitHub caps an issue at 65,536 characters and a spec here has already reached 56 KB of that; past a few hundred lines nothing downstream reads it usefully. If it will not fit, it is describing more than one change -- say so in your notes and scope it to what #300 actually asked for.
+Name the seams inside "## Testing Decisions" in the same words as your "seams" output -- a deterministic check refuses to file a spec whose body omits them; that section is the only place the implementing workflow will ever see them.
+Repo rules (CLAUDE.md) are binding and they constrain the DESIGN, not just the code: pythonic OOP, type hints, one thing per function, composition over inheritance, small diffs, no speculative abstraction, no interface with one implementation. This repo is modelled on the Tensor Brain, summarised in CLAUDE.md: a subsymbolic representation layer and a symbolic index layer, and a channel that only writes is dead weight. When a module maps onto a Tensor Brain concept, name it after that concept.
+THIS REPO IS A DISTRIBUTED PYTHON PACKAGE, so a design carries distribution consequences:
+  - a new third-party import is a new entry in [project.dependencies] that every user must install. Prefer a design that needs no new dependency; if one is unavoidable, say which pyproject table it belongs in and why the stdlib will not do.
+  - non-.py files (data, ontologies) do not ship unless declared to the build backend.
+  - src-layout-style rules apply: code that only works from the repo working directory works in the suite and breaks for installed users.
+  - never propose a version bump. Versions are bumped once, at release.
+Write the body as Markdown ready to be pasted into a GitHub issue. Change no code and file nothing.

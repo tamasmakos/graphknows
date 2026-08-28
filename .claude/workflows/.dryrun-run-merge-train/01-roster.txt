@@ -1,0 +1,12 @@
+You are building the roster of a merge train for the GraphKnows repository. The train is spec issue #200. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
+1. Read the spec: `gh issue view 200 --json number,title,state,labels`. If it is not open, report it and list no children.
+2. List its sub-issues: `gh issue view 200 --json subIssues`. These ARE the roster candidates -- do not search for children any other way; search is eventually consistent and this read is not.
+3. For EACH sub-issue, read `gh issue view <n> --json number,title,state,labels,body` and extract:
+   - its labels and state, verbatim
+   - the issue numbers in its "## Blocked by" section (empty if it says it can start immediately)
+   - for each blocker that is NOT itself a sub-issue of the spec: whether that blocker is currently open (`gh issue view <b> --json state`)
+   - every repository file path its body names, verbatim, under files_named. Miss none: the script refuses to board a car that rewrites the CI or the gate, and it can only see the paths you report.
+   - the number from its "Estimated diff: ~N lines" line, under expected_lines, if it has one. Report 0 when the line is absent -- do NOT estimate it yourself. The script batches the small ones onto one shared branch that gets reviewed once, and a size you invented would put a large change into that lane.
+4. Check work in flight: `gh pr list --state open --json number,headRefName,title,url` and `git ls-remote --heads origin "fix/issue-*"`. A candidate whose fix/issue-<n> branch has an open PR gets that PR URL under open_pr.
+5. From that same PR list, report every open PR that is NOT one of these candidates under other_prs, with its number, title and URL. A train lands N commits on main; a PR opened before it departed is the thing most likely to be made moot or unmergeable by them, and nobody finds out until the conflict.
+Report facts only. Do not decide who boards -- the script does that, and it will show its reasons.

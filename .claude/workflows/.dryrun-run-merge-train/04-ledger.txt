@@ -1,0 +1,6 @@
+Post ONE comment on GitHub issue #200 and do nothing else. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
+The text is final -- do not rephrase it, extend it, or add a signature.
+`gh issue comment 200 --body "<the text below, verbatim>"`
+<<<COMMENT>>>
+a merge-train run: express batch landed — #205 (https://github.com/tamasmakos/graphknows/pull/950). Ejected as bigger than rostered and re-queued as full cars: #206.
+<<<END COMMENT>>>

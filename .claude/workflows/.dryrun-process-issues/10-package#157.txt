@@ -1,0 +1,28 @@
+cd C:/Users/User/Documents/dev/gk-issue-157.
+The unit suite passing proves the SOURCE TREE works. It does not prove the WHEEL works: tests import the source tree, users import the installed package. This gate builds the artifact and exercises it.
+Distribution facts, read from pyproject.toml at the start of this run:
+  name: graphknows
+  version: 0.4.1 (dynamic, from graphknows/_version.py) -- DO NOT CHANGE IT
+  build backend: hatchling.build | layout: flat | requires-python: >=3.11
+  declared dependencies: pydantic>=2.7.0, numpy>=1.26.0
+  extras: assisted, srl
+  non-.py files declared to the backend: yes
+Everything runs INSIDE an ephemeral container mounted on your worktree: the host has neither `build` nor `twine`, and its virtualenv is incomplete. Open a shell there:
+```
+MSYS_NO_PATHCONV=1 docker run --rm -e GRAPHKNOWS_SKIP_PREFLIGHT=1 -v "C:/Users/User/Documents/dev/gk-issue-157:/app" -w /app graphknows-workspace sh
+```
+Inside it, /tmp is a real Linux tmpdir that dies with the container, so no artifact can ever land in the worktree. Run the steps one at a time and record what each actually printed.
+  1. `uvx --from build pyproject-build --outdir /tmp/dist` -- the image ships `uv`, not `build`. Both an sdist (.tar.gz) and a wheel (.whl) must appear.
+  2. `uvx twine check /tmp/dist/*` -- metadata is valid and the README renders.
+  3. `python -m zipfile -l /tmp/dist/*.whl`. Confirm EVERY file this change added is inside it -- new modules, and especially non-.py data files and py.typed. The backend is hatchling: it ships exactly what pyproject tells it to and nothing else. A missing file here is precisely the bug this gate exists to catch.
+  4. Fresh venv: `python -m venv /tmp/venv`, then `/tmp/venv/bin/pip install /tmp/dist/*.whl` -- ONLY the built wheel. Not the source tree, not editable.
+  5. `cd /tmp` (OUT of /app), then `/tmp/venv/bin/python -c "import graphknows; print(graphknows.__file__)"`. It must resolve inside /tmp/venv/lib/*/site-packages. If it prints a path under /app you are still importing the source tree -- cd out and rerun, the check is worthless otherwise.
+  6. Copy the reproduction test out of the source tree (`cp /app/<test file> /tmp/`, plus /app/tests/conftest.py if it needs fixtures) and run tests/test_typing.py::test_instance_of_score_is_per_entity from /tmp with `/tmp/venv/bin/python -m pytest`. Copying is the point: run it from /app and pytest puts the source tree on sys.path, so you would be testing the code you did not install. Passing from the source tree but failing here means the fix does not ship -- a blocker, record it under problems.
+  7. Exit the container (`--rm` takes /tmp with it), then on the HOST confirm `git status --short` in the worktree shows no dist/, build/ or *.egg-info. hatchling should leave none; delete any that appeared and set worktree_clean accordingly.
+You are the only stage that MEASURES packaging rather than reasoning about it, so you also fix what you break. If a step above fails because this change left the metadata wrong -- a third-party import missing from [project.dependencies], a runtime package sitting in a dev group, a new directory without __init__.py, a data file the backend was never told to ship -- then edit pyproject.toml (or add the __init__.py), rebuild from step 1, and record each edit under "fixed".
+Read C:/Users/User/Documents/dev/graphknows/.claude/skills/python-packaging/REFERENCE.md and follow it: the authority on dependency specifiers and what a build backend ships -- consult it before editing pyproject.toml.
+Read C:/Users/User/Documents/dev/graphknows/.claude/skills/python-packaging/SKILL.md and follow it: dependency specifier grammar (PEP 508) and extras vs dependency-groups -- which table a new dependency belongs in.
+Declare every dependency in the correct table with a lower bound. Two rules bound this: NEVER change the version, and never widen what ships just to make a step pass -- if you cannot fix it honestly, leave it and record it under "problems".
+NEVER upload anything: no `twine upload`, no TestPyPI, no PyPI, no git tag, no version edit. This gate builds and inspects only -- publishing belongs to a separate release workflow.
+If a step genuinely cannot run (no network for uvx, docker unavailable), set that field false and say exactly why in notes. Never report a check you did not actually run.
+Anything you find that is NOT caused by this change -- a file that was already missing from the wheel, metadata that was already wrong, a dependency nobody declared -- goes under "discoveries", not "problems". Those get filed as their own GitHub issues: packaging defects are invisible to the test suite, so an unfiled one stays unknown indefinitely.

@@ -1,0 +1,22 @@
+You are researching one lane of a design question for the GraphKnows repository at C:/Users/User/Documents/dev/graphknows.
+THE TOPIC: should window chunks carry their own episodic index?
+What the user already decided: nothing beyond the request itself
+THE REQUEST (issue #300): should window chunks carry their own episodic index?
+What the requester says is already decided -- treat it as settled and do not re-litigate it:
+The chunk writer is the only path that persists a chunk; do not change the public store() signature.
+EXPLICITLY OUT OF SCOPE, per the request:
+  - back-filling chunks written before this lands
+The requester's own success test:
+  - a temporal query returns chunks in instant order without reading the ts string
+OPEN QUESTIONS the request does not settle. Each has a default; use the default and say you did -- do NOT invent a different answer:
+  - Should two chunks written in the same instant tie-break by insertion order, or may the order vary?
+      default if unanswered: insertion order
+YOUR LANE -- sources. Stay in it; 3 other agents cover the other lanes and duplicated work is wasted.
+Investigate the topic against PRIMARY sources: official documentation, specifications, the source code of the libraries involved, and the papers this repo is built on.
+Start with C:/Users/User/Documents/dev/graphknows/CLAUDE.md -- it summarises the Tensor Brain, the model this system is built after, and a design that contradicts it must say so out loud. docs/README.md indexes the user-facing documentation; a design that changes documented behaviour has to change that page too.
+Follow every claim back to the source that owns it. A blog post summarising a spec is not the spec.
+Evidence bar, strict:
+  A CLAIM about the code is only usable if you read the file and can cite path:line.
+  A CLAIM about an external system is only usable if it comes from a primary source -- official docs, the spec, the library source -- not a secondary write-up.
+  Anything you could not verify goes under open_questions, never into findings dressed as fact.
+Change no code. Write no files. Report findings only.

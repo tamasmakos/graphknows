@@ -1,0 +1,58 @@
+Write a file. That is the whole task: no analysis, no summarising, no edits to the text.
+Path: C:/Users/User/Documents/dev/graphknows/docs/agents/runs/process-issues-157.md -- create the directory if it is missing, overwrite the file if it exists.
+Content: everything between the two marker lines below, byte for byte. The markers themselves are NOT part of the file.
+Do not reformat it, do not fix its grammar, do not add a heading or a footer, and do not append a note about yourself.
+
+<<<REPORT-BEGINS>>>
+# process-issues -- #157
+
+Base branch `main`, an automated process-issues run. Merging was disabled.
+
+| Issue | Repro red | Green | Dogfood | Docs | Wheel | Shipped | CI | Merged | Needs human |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| #157 INSTANCE_OF.score is per-class, not per-entity | yes | yes | edible | 1 page(s) | problems | yes | green | NO | yes |
+
+## Baseline
+
+1 check(s) already failing on `main` before this run:
+- `tests/topics/test_topic_stage.py::test_cluster` -- assertion on cluster count
+
+## #157 -- INSTANCE_OF.score is per-class, not per-entity
+
+Branch `fix/issue-157` in `C:/Users/User/Documents/dev/gk-issue-157`. PR: https://github.com/tamasmakos/graphknows/pull/163
+
+**Root cause.** the score is keyed by class id, so every entity in a class shares one value
+
+**Reproduction.** `tests/test_typing.py::test_instance_of_score_is_per_entity` -- red before the fix, green after.
+
+**The data it produces.** 41 record(s) from evaluation/run_locomo.py --turns 20, 41 INSTANCE_OF edges -- **edible**.
+- caused here: every INSTANCE_OF score in a class was 0.51
+  ~~~
+  {"entity":"Caroline","class":"Person","score":0.51} x14
+  ~~~
+- pre-existing: chunk text keeps the markdown fence from extraction
+  ~~~
+  {"text":"``` Caroline met..."}
+  ~~~
+- refined: moved the computation inside the entity loop; the 14 rows now span 0.31-0.72
+
+**Documentation.** `docs/architecture.md` -- INSTANCE_OF.score is described as per entity
+
+**Wheel gate.** built=yes, twine=yes, wheel complete=yes, clean install imports=yes. Problems: py.typed is absent from the wheel
+
+**Release impact.** patch -- INSTANCE_OF.score is now computed per entity. The version was deliberately not bumped.
+
+**Filed along the way.** #162 -- all gated behind `needs-triage`.
+
+## Not picked up
+
+- #160: too vague to implement
+
+## Next
+
+- Triage #162: remove `needs-triage` from the ones worth doing, or this workflow will never pick them up.
+- **#157 needs a human**: draft opened
+- Worktrees left in place: C:/Users/User/Documents/dev/gk-issue-157, ../gk-baseline (`git worktree remove <path>`).
+<<<REPORT-ENDS>>>
+
+Then confirm the file exists and report its path and its size in bytes.

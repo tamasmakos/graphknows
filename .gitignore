@@ -68,10 +68,18 @@ skills-lock.json
 .claude/*
 # The enforcement layer IS the gate for agent-authored code, so it is version
 # controlled: a hook that only exists on one laptop protects nothing and does
-# not survive a clone. Personal config (settings.local.json, local skills)
-# stays out.
+# not survive a clone. Skills and workflows are that same layer -- run-merge-train's
+# lane rules and process-issues' HOUSE rules decide what agents may ship -- so they
+# are tracked too. Only per-machine config (settings.local.json: permissions and
+# MCP toggles, not policy) stays out.
 !.claude/settings.json
 !.claude/hooks/
+!.claude/skills/
+!.claude/workflows/
+# A stray browser download: byte-identical to .claude/skills/wizard/SKILL.md, but named
+# .yaml, so check-yaml reads its `---` frontmatter as two documents and fails. Left on
+# disk rather than deleted -- it is not this change's to remove -- but never tracked.
+.claude/skills/openai (3).yaml
 AGENTS.md
 .codegraph
 # local analysis scratch (not committed)
@@ -80,11 +88,11 @@ evaluation/results/.judge_cache/
 .sonar
 # CLAUDE.md is the agent contract (container-not-host, no-silent-fallback, the
 # gate layout). Ignoring it is how this repo ended up with a CLAUDE.md
-# describing an entirely different project.
+# describing an entirely different project -- so it is tracked, and the rule that
+# ignored it anyway five lines below this comment is gone.
 .mcp.json
 
 graphify-out
-CLAUDE.md
 prototypes
 .scratch*
 # Candidate ontologies under evaluation — not part of the shipped bundle.

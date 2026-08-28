@@ -1,0 +1,40 @@
+cd C:/Users/User/Documents/dev/gk-issue-157.
+Code review of the fix for issue #157 returned:
+Resolves the issue: yes. the diff moves the computation per entity
+- no findings
+Fix every blocker and major finding. Judge the minors: fix if cheap, otherwise report them as unresolved. If a finding is wrong, say so in notes instead of "fixing" it.
+Then confirm the reproduction now passes: `pytest tests/test_typing.py::test_instance_of_score_is_per_entity` for tests/test_typing.py::test_instance_of_score_is_per_entity. It was observed failing before the fix. Set red_to_green accordingly.
+Run this repo's checks INSIDE a container mounted on your worktree. Never on the host (its virtualenv cannot
+even collect the suite) and never via `scripts/gate.sh` from a worktree (that script execs into the shared
+container, whose /app is the MAIN repo, not yours -- it would test the wrong code and report it as yours).
+One command, from anywhere:
+```
+MSYS_NO_PATHCONV=1 docker run --rm -e GRAPHKNOWS_SKIP_PREFLIGHT=1 -v "C:/Users/User/Documents/dev/gk-issue-157:/app" -w /app graphknows-workspace \
+  sh -c 'ruff check --no-fix graphknows evaluation tests \
+   && ruff format --check graphknows evaluation tests \
+   && mypy graphknows --strict --ignore-missing-imports --allow-untyped-decorators --no-warn-unused-ignores \
+   && lint-imports \
+   && python -m pytest -q -m "not integration"'
+```
+Both env vars are load-bearing: MSYS_NO_PATHCONV stops Git Bash mangling the mount path, GRAPHKNOWS_SKIP_PREFLIGHT
+stops the image entrypoint aborting the run. While iterating, run one stage at a time (drop the `&&` tail, swap in
+a single test path); run the whole chain before you claim green.
+Integration tests need a live ArcadeDB -- `-m "not integration"` deselects them, leave it that way.
+If docker is unavailable, STOP and report it (ran=false / green=false). Never fall back to host pytest, and never
+report a check you did not actually run.
+These checks ALREADY fail on main and are not yours to fix or delete:
+  - tests/topics/test_topic_stage.py::test_cluster: assertion on cluster count
+Anything failing that is NOT on this list was caused by this work.
+THIS REPO IS A DISTRIBUTED PYTHON PACKAGE. These rules are binding:
+  - NEVER change the version: not `[project] version` in pyproject.toml, not a single-sourced `__version__`, not a tag it is derived from. Versions are bumped once, at release. A version already published to PyPI can never be re-uploaded or replaced, so a stray bump in a fix branch burns a real version number.
+  - Every third-party module imported by package code must be declared in `[project.dependencies]` -- or in the right `[project.optional-dependencies]` extra if the feature is optional -- with a lower bound. An undeclared import installs fine for you and ImportErrors for every user.
+  - Test-only and dev-only imports go in the dev dependency group / extra, NEVER in `[project.dependencies]`.
+  - Do not use a stdlib API newer than `requires-python` permits, and do not change `requires-python` to make one legal.
+  - A new import package directory needs an `__init__.py`; without one it is a namespace package and may silently not ship.
+  - Non-.py files (data, ontologies, `py.typed`) do NOT ship automatically. They must be declared to the build backend or the wheel is missing them.
+  - This repo is FLAT layout: tests import the in-tree copy, so a wheel missing a file still tests green -- only the package gate catches it. Code that only works because of the current working directory works in the suite and breaks for installed users.
+  - Never add `dist/`, `build/` or `*.egg-info/` to the repository.
+Repo rules (CLAUDE.md) are binding: pythonic OOP, type hints, one thing per function, small diffs, no speculative abstraction. Pre-commit hooks are rules -- never pass --no-verify. NEVER weaken, delete or retarget an existing test to make the suite pass. If an existing test genuinely encodes the wrong behaviour, leave it failing and report it -- changing it silently is the one unforgivable move here.
+You get at most 3 attempts at getting green. If it is still red after that, STOP: set green=false, needs_human=true, and list exactly what fails. Do not keep grinding and do not disable, skip or xfail a test to get there.
+List under new_failures anything failing that is not in the baseline above. Do not commit.
+Finally, record changed_files: run `git add -A -N && git diff --name-only origin/main` and report every path it prints, verbatim. Later stages decide what still needs checking from that list, so an omission there silently removes a check.

@@ -1,0 +1,77 @@
+{
+  "result": {
+    "spec": 200,
+    "spec_title": "Window chunks carry their own episodic index",
+    "order": [
+      202,
+      203,
+      206
+    ],
+    "cars": [
+      {
+        "issue": 205,
+        "title": "add 3.13 to the classifiers",
+        "state": "landed",
+        "reason": "express batch",
+        "pr_url": "https://github.com/tamasmakos/graphknows/pull/950",
+        "merge_commit": "e0e0e0e"
+      },
+      {
+        "issue": 202,
+        "title": "derive an episodic index in the chunk writer",
+        "state": "landed",
+        "reason": "",
+        "pr_url": "https://github.com/tamasmakos/graphknows/pull/1102",
+        "merge_commit": "abc1234",
+        "filed": []
+      },
+      {
+        "issue": 203,
+        "title": "rank temporal candidates by episodic index",
+        "state": "landed",
+        "reason": "",
+        "pr_url": "https://github.com/tamasmakos/graphknows/pull/1103",
+        "merge_commit": "abc1234",
+        "filed": []
+      },
+      {
+        "issue": 206,
+        "title": "fix a stale path in the deprecation table",
+        "state": "landed",
+        "reason": "",
+        "pr_url": "https://github.com/tamasmakos/graphknows/pull/1106",
+        "merge_commit": "abc1234",
+        "filed": []
+      }
+    ],
+    "excluded": [
+      {
+        "number": 204,
+        "title": "gated straggler",
+        "reason": "still carries \"needs-triage\" -- no human has agreed to it"
+      }
+    ],
+    "halted": false,
+    "landed": [
+      205,
+      202,
+      203,
+      206
+    ],
+    "release_notes": [
+      "patch: stub change (#202)",
+      "patch: stub change (#203)",
+      "patch: stub change (#206)"
+    ],
+    "report": "not written",
+    "needs_human": true,
+    "next_step": "maxCars stopped the train early -- relaunch { spec: 200, merge: true } for the remaining 1 car(s)"
+  },
+  "logs": [
+    "#204 not boarding: still carries \"needs-triage\" -- no human has agreed to it",
+    "train for #200 \"Window chunks carry their own episodic index\": express batch [#205 + #206] -> #202 -> #203",
+    "#206 ejected from the express batch (needed 90 lines, over the 50 this lane takes) -- re-queued as a full car",
+    "express batch: 1 landed, 1 ejected, 0 refused",
+    "train done: 4 landed, 0 parked"
+  ]
+}
