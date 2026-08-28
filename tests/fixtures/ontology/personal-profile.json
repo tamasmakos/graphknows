@@ -77,14 +77,16 @@
    "label": "spouse",
    "definition": "The person the subject is married to.",
    "domain": ["Person"],
-   "range": ["Person"]
+   "range": ["Person"],
+   "functional": true
   },
   {
    "uri": "http://purl.org/vocab/relationship/lifePartnerOf",
    "label": "lifePartnerOf",
    "definition": "The subject's unmarried long-term or live-in partner.",
    "domain": ["Person"],
-   "range": ["Person"]
+   "range": ["Person"],
+   "functional": true
   },
   {
    "uri": "https://schema.org/parent",
@@ -154,7 +156,8 @@
    "label": "homeLocation",
    "definition": "Where the subject lives.",
    "domain": ["Person"],
-   "range": ["Place"]
+   "range": ["Place"],
+   "functional": true
   },
   {
    "uri": "https://schema.org/workLocation",
@@ -168,7 +171,8 @@
    "label": "nationality",
    "definition": "The country the subject is a national of.",
    "domain": ["Person"],
-   "range": ["Country"]
+   "range": ["Country"],
+   "functional": true
   },
   {
    "uri": "https://schema.org/owns",
@@ -224,7 +228,8 @@
    "label": "location",
    "definition": "Where the event took place.",
    "domain": ["Event"],
-   "range": ["Place"]
+   "range": ["Place"],
+   "functional": true
   },
   {
    "uri": "https://schema.org/about",

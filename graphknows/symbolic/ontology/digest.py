@@ -361,6 +361,7 @@ def build(sources: Sequence[Path]) -> dict[str, Any]:
                 "parents": r.refs(s, RDFS.subPropertyOf),
                 **({"parents_nontransitive": b} if (b := r.refs(s, SKOS.broader)) else {}),
                 "module": mod,
+                **({"functional": True} if (s, RDF.type, OWL.FunctionalProperty) in graph else {}),
             }
         )
 

@@ -69,8 +69,11 @@ _OLAP_VIEW = "mem_olap"
 # are frames, not relex predicates, and the flattened frame->ENTITY projection is
 # gone (write_frame_instances is reified PLAYS_ROLE only), so they match nothing
 # today and would wrongly tombstone sibling frame edges if it ever returns.
-# Phase 3 consolidation replaces this hardcoded set with frame-semantics-driven
-# functional detection.
+#
+# This is now the FALLBACK, not the whole story: _is_functional() checks the
+# persisted ONTOLOGY_PROPERTY.functional flag first (owl:FunctionalProperty,
+# threaded through the ontology loader) and only falls back to this hand-coded
+# set for a predicate no configured ontology declares.
 _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
     {
         "WORKS_AS",
@@ -350,6 +353,11 @@ class GraphStore(ArcadeStoreBase):
         # on every chunk that evokes the frame is pure cost. A cold start just
         # writes them once more — both are idempotent MERGE/SET.
         self._frames_materialised: set[str] = set()
+        # Cache of {label, uri} strings declared owl:FunctionalProperty in the
+        # persisted ontology (see _functional_predicates). One store is one
+        # database and the ontology is reference data written once, so a cold
+        # cache just re-queries once more.
+        self._functional_predicates_cache: set[str] | None = None
 
     # ------------------------------------------------------------------
     # Schema
@@ -366,6 +374,7 @@ class GraphStore(ArcadeStoreBase):
         # This database may have been dropped and recreated under us, so nothing
         # written by a previous life of this object can be assumed present.
         self._frames_materialised.clear()
+        self._functional_predicates_cache = None
         logger.info("GraphStore schema ensured (db=%s, dims=%d)", self._db, dims)
 
     async def _set_embedding(
@@ -683,6 +692,40 @@ class GraphStore(ArcadeStoreBase):
             rows=rows,
         )
 
+    async def _functional_predicates(self) -> set[str]:
+        """Labels of ontology properties declared ``owl:FunctionalProperty``.
+
+        Cached on the instance like ``_frames_materialised`` — the ontology is
+        reference data written once per namespace. Soft-fails to an empty set
+        (the type may not exist in an older namespace that predates it, or a
+        lightweight test double may never have run ``GraphStore.__init__``)
+        rather than raising: an ontology-detection failure must not block
+        relation consolidation, only weaken it to the ``_SINGLE_VALUED_RELATIONS``
+        fallback.
+        """
+        cached = getattr(self, "_functional_predicates_cache", None)
+        if cached is not None:
+            return cached
+        predicates: set[str] = set()
+        try:
+            rows = await self.query(
+                "MATCH (p:ONTOLOGY_PROPERTY) WHERE p.functional = true RETURN p.label AS label"
+            )
+            for row in rows:
+                label = row.get("label")
+                if label:
+                    predicates.add(str(label))
+        except Exception as exc:
+            logger.debug("_functional_predicates: soft-failed, falling back: %s", exc)
+        self._functional_predicates_cache = predicates
+        return predicates
+
+    async def _is_functional(self, canonical_predicate: str, predicate: str) -> bool:
+        """Whether a predicate is single-valued: ontology-declared first, else the hand list."""
+        if canonical_predicate in await self._functional_predicates():
+            return True
+        return predicate.upper() in _SINGLE_VALUED_RELATIONS
+
     async def _supersede_edge(self, predicate: str, src_norm: str, dst_norm: str, now: str) -> None:
         """Tombstone any current edge for (src, predicate) pointing elsewhere.
 
@@ -801,7 +844,7 @@ class GraphStore(ArcadeStoreBase):
         now = datetime.now(UTC).isoformat()
 
         # A replayed dead edge must not tombstone the winner's live sibling.
-        if is_current and predicate.upper() in _SINGLE_VALUED_RELATIONS:
+        if is_current and await self._is_functional(canon, predicate):
             await self._supersede_edge(predicate, src_norm, dst_norm, now)
 
         evidence_set = _evidence_set(chunk_id)
@@ -857,6 +900,7 @@ class GraphStore(ArcadeStoreBase):
             f"    r.valid_at = coalesce(r.valid_at, $valid_at), "
             f"    {current_set}"
             f"    r.state = coalesce(r.state, 'raw'), "
+            f"    r.support = coalesce(r.support, 1), "
             # The STABLE identifier, which is what dedup and contradiction
             # detection key on — as against `predicate`, which stays the most
             # SPECIFIC label for display. No frame instance covers this edge
@@ -922,6 +966,247 @@ class GraphStore(ArcadeStoreBase):
                 norms=mention_norms,
                 conf=float(confidence),
             )
+
+    @staticmethod
+    def _rel_where(row: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """WHERE fragment + params pinning the exact REL edge a fetched row came from.
+
+        Matching on (head, tail, predicate) alone hits every role variant two
+        entities share under the same predicate — co-role frame projections —
+        the exact failure ``_carry_rel_columns`` documents. Pinning polarity/
+        modality/head_role/tail_role too reproduces each writer's own MERGE
+        key, so this can only ever match the one row it was read from.
+        """
+        params = {
+            "h": row["h"],
+            "t": row["t"],
+            "p": row["p"],
+            "pol": row.get("pol"),
+            "mod": row.get("mod"),
+            "hr": row.get("hr"),
+            "tr": row.get("tr"),
+        }
+        where = (
+            "a.name_norm = $h AND b.name_norm = $t AND r.predicate = $p "
+            "AND coalesce(r.polarity,'') = coalesce($pol,'') "
+            "AND coalesce(r.modality,'') = coalesce($mod,'') "
+            "AND coalesce(r.head_role,'') = coalesce($hr,'') "
+            "AND coalesce(r.tail_role,'') = coalesce($tr,'')"
+        )
+        return where, params
+
+    async def _merge_contradicts(
+        self,
+        *,
+        head: str,
+        tail: str,
+        canonical_predicate: str,
+        reason: str,
+        current_tail: str,
+        now: str,
+    ) -> None:
+        """MERGE a CONTRADICTS edge between the head and tail ENTITY vertices.
+
+        Links entities, not the two REL rows: ArcadeDB edges connect vertices
+        only, so the contradicting PAIR is identified by (head,
+        canonical_predicate) plus ``current_tail`` — the surviving edge's tail
+        name_norm — which together are exactly enough to find both REL rows
+        again.
+        """
+        await self.command(
+            "MATCH (a:ENTITY {name_norm: $head}), (b:ENTITY {name_norm: $tail}) "
+            "MERGE (a)-[c:CONTRADICTS {canonical_predicate: $cp, reason: $reason}]->(b) "
+            "SET c.current_tail = $current_tail, "
+            "    c.created_at = coalesce(c.created_at, $now)",
+            head=head,
+            tail=tail,
+            cp=canonical_predicate,
+            reason=reason,
+            current_tail=current_tail,
+            now=now,
+        )
+
+    async def consolidate_relations(self) -> dict[str, int]:
+        """Triple-level consolidation over REL edges (issue #140, B7 + B10).
+
+        The write-time paths (``write_relation`` / ``write_frame_instances``)
+        MERGE on the specific relex predicate label, so the same fact arriving
+        under two verbs (``hasSpouse`` vs. ``isMarriedTo``) never collapses,
+        and a fact that contradicts a functional-property edge never
+        invalidates it. This is the flush-time pass that reconciles the whole
+        namespace afterwards:
+
+        - Exact duplicates (same dedup key, several predicate surfaces) merge
+          onto the highest-confidence edge, whose ``support`` becomes the
+          summed group support and whose ``evidence`` absorbs the losers'.
+        - A polarity contradiction (same fact, one asserted one denied) keeps
+          both edges and links them with a CONTRADICTS edge — nothing deleted.
+        - A functional-property collision (a second tail for a single-valued
+          predicate, ontology-declared or from the ``_SINGLE_VALUED_RELATIONS``
+          fallback) tombstones every edge but the newest and links each to the
+          survivor with CONTRADICTS — tombstoned, never deleted.
+
+        ponytail: this reads every REL edge in the namespace once per flush —
+        fine at conversation scale, but the ceiling to watch if edge counts
+        ever make a full scan expensive; scope it to the session's chunks then.
+        """
+        rows = await self.query(
+            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE r.is_current = true "
+            "RETURN a.name_norm AS h, a.name AS h_name, b.name_norm AS t, "
+            "b.name AS t_name, r.canonical_predicate AS cp, r.predicate AS p, "
+            "r.polarity AS pol, r.modality AS mod, r.valid_at AS va, "
+            "r.is_current AS cur, r.confidence AS conf, r.evidence AS ev, "
+            "r.support AS support, r.created_at AS created_at, "
+            "r.head_role AS hr, r.tail_role AS tr"
+        )
+        if not rows:
+            return {"deduped": 0, "contradictions": 0, "invalidated": 0}
+
+        now = datetime.now(UTC).isoformat()
+
+        def bucket(row: dict[str, Any]) -> str:
+            # No in-tree caller sets valid_at on a relex edge today, so this is
+            # uniformly "" and costs nothing — it is in the key because the
+            # key is the contract for when one does.
+            return str(row.get("va") or "")[:10]
+
+        groups: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            key = (
+                str(row["h"]),
+                str(row["cp"]),
+                str(row["t"]),
+                str(row.get("pol") or "pos"),
+                str(row.get("mod") or "none"),
+                bucket(row),
+            )
+            groups[key].append(row)
+
+        deduped = 0
+        survivors: list[dict[str, Any]] = []
+        for group in groups.values():
+            if len(group) == 1:
+                survivors.append(group[0])
+                continue
+            # Highest confidence wins; ties broken by created_at then predicate
+            # so the pass is deterministic and idempotent.
+            ranked = sorted(
+                group,
+                key=lambda r: (
+                    -float(r.get("conf") or 0),
+                    str(r.get("created_at") or ""),
+                    str(r["p"]),
+                ),
+            )
+            winner, losers = ranked[0], ranked[1:]
+            total_support = sum(int(r.get("support") or 1) for r in group)
+            evidence = list(winner.get("ev") or [])
+            for loser in losers:
+                for cid in loser.get("ev") or []:
+                    if cid not in evidence:
+                        evidence.append(cid)
+            # The confidence-ranked winner is not necessarily the most recently
+            # RESTATED surface of this fact — a low-confidence restatement can
+            # still be the latest word on it. The functional-collision pass
+            # below picks a survivor by created_at alone, so a merged group
+            # that kept the winner's own (possibly stale) created_at would let
+            # an older fact silently outrank a newer, unrelated collision on
+            # the same predicate. ISO 8601 strings compare correctly here, same
+            # as the `ranked` sort key above.
+            latest_created_at = max((str(r.get("created_at") or "") for r in group), default="")
+            where, params = self._rel_where(winner)
+            await self.command(
+                f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE {where} "
+                "SET r.support = $support, r.evidence = $evidence, "
+                "    r.created_at = $created_at",
+                support=total_support,
+                evidence=evidence,
+                created_at=latest_created_at,
+                **params,
+            )
+            for loser in losers:
+                where, params = self._rel_where(loser)
+                await self.command(
+                    f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE {where} DELETE r",
+                    **params,
+                )
+                deduped += 1
+            merged = dict(winner)
+            merged["support"] = total_support
+            merged["ev"] = evidence
+            merged["created_at"] = latest_created_at
+            survivors.append(merged)
+
+        # Opposite polarity: surviving rows sharing everything but polarity.
+        # Both edges are kept — nothing deleted, nothing tombstoned.
+        contradictions = 0
+        by_fact: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in survivors:
+            fact_key = (
+                str(row["h"]),
+                str(row["cp"]),
+                str(row["t"]),
+                str(row.get("mod") or "none"),
+                bucket(row),
+            )
+            by_fact[fact_key].append(row)
+        for (head, cp, tail, _mod, _bucket), fact_rows in by_fact.items():
+            pols = {str(r.get("pol") or "pos") for r in fact_rows}
+            if {"pos", "neg"} <= pols:
+                await self._merge_contradicts(
+                    head=head,
+                    tail=tail,
+                    canonical_predicate=cp,
+                    reason="polarity",
+                    current_tail=tail,
+                    now=now,
+                )
+                contradictions += 1
+
+        # Functional collision: surviving rows sharing (head, canonical_predicate)
+        # but pointing at DIFFERENT tails, where the predicate is single-valued.
+        # The newest stays current; every older row is tombstoned, never deleted.
+        invalidated = 0
+        by_head_pred: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in survivors:
+            by_head_pred[(str(row["h"]), str(row["cp"]))].append(row)
+        for (head, cp), pred_rows in by_head_pred.items():
+            tails = {str(r["t"]) for r in pred_rows}
+            if len(tails) < 2:
+                continue
+            is_functional = False
+            for row in pred_rows:
+                if await self._is_functional(cp, str(row["p"])):
+                    is_functional = True
+                    break
+            if not is_functional:
+                continue
+            ranked = sorted(pred_rows, key=lambda r: str(r.get("created_at") or ""))
+            newest, older_rows = ranked[-1], ranked[:-1]
+            for older in older_rows:
+                where, params = self._rel_where(older)
+                await self.command(
+                    f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE {where} "
+                    "SET r.invalid_at = $now, r.is_current = false",
+                    now=now,
+                    **params,
+                )
+                await self._merge_contradicts(
+                    head=head,
+                    tail=str(older["t"]),
+                    canonical_predicate=cp,
+                    reason="functional",
+                    current_tail=str(newest["t"]),
+                    now=now,
+                )
+                invalidated += 1
+                contradictions += 1
+
+        return {
+            "deduped": deduped,
+            "contradictions": contradictions,
+            "invalidated": invalidated,
+        }
 
     # ------------------------------------------------------------------
     # Write API — temporal / frames / topics
@@ -1050,6 +1335,7 @@ class GraphStore(ArcadeStoreBase):
         source = getattr(index, "source", "")
 
         class_terms = [t for t in terms if t.kind == "class"]
+        property_terms = [t for t in terms if t.kind != "class"]
         existing = await self.query(
             "MATCH (o:ONTOLOGY {id: $id}) RETURN o.term_count AS c", id=ont_id
         )
@@ -1057,8 +1343,12 @@ class GraphStore(ArcadeStoreBase):
             # The terms are here, but BROADER may predate this feature — and the
             # subclass expansion reads ONLY those edges. Backfilling them is the
             # difference between an older namespace generalising and silently
-            # not; re-MERGEing the classes themselves is not needed.
+            # not; re-MERGEing the classes themselves is not needed. Same story
+            # for ONTOLOGY_PROPERTY: a namespace ingested before it existed has
+            # the term count already but none of these rows — without the
+            # backfill here, _functional_predicates finds nothing forever.
             await self._write_class_broader(class_terms)
+            await self._write_properties(property_terms)
             return len(terms)
 
         await self.command(
@@ -1067,10 +1357,6 @@ class GraphStore(ArcadeStoreBase):
             src=source,
             n=len(terms),
         )
-        # Only classes are persisted: ONTOLOGY_CLASS is what search_ontology_classes
-        # reads. The ONTOLOGY_PROPERTY vertices and the DECLARES edges were
-        # written here and read by nothing. The class hierarchy is back as
-        # BROADER below — this time with a reader (see _narrower_scores).
         # ``module`` is the sub-ontology the term is curated in ("AgentOntology")
         # and ``parents`` its declared superclasses, as labels. Both are
         # descriptive metadata on the node, not a second hierarchy: nothing
@@ -1095,14 +1381,46 @@ class GraphStore(ArcadeStoreBase):
                 rows=rows,
             )
         await self._write_class_broader(class_terms)
+        await self._write_properties(property_terms)
         # Embeddings are per-row inline literals: LIST params conflict with the
-        # LSM_VECTOR index, the same constraint CHUNK/ENTITY/FRAME honour.
+        # LSM_VECTOR index, the same constraint CHUNK/ENTITY/FRAME honour. Only
+        # ONTOLOGY_CLASS is vector-searched, so properties get none.
         for term in class_terms:
             emb = index.term_embedding(term.uri)
             if emb:
                 await self._set_embedding("ONTOLOGY_CLASS", "uri", term.uri, emb)
         logger.info("Ontology persisted: %d terms from %s", len(terms), source)
         return len(terms)
+
+    async def _write_properties(self, property_terms: list[Any]) -> int:
+        """MERGE ONTOLOGY_PROPERTY vertices, carrying the ``functional`` flag.
+
+        Reinstated (issue #140): these vertices are how ``functional``
+        (owl:FunctionalProperty) reaches the store at all — storage sits below
+        symbolic in the import-linter layer contract and cannot import the
+        ontology loader to consult an in-memory ``OntologyTerm``. The reader is
+        ``_functional_predicates``. ``getattr`` rather than ``t.functional``:
+        ``index`` and its terms are duck-typed, and a term shape that predates
+        the flag must default to not-functional rather than raise.
+        """
+        rows = [
+            {
+                "uri": t.uri,
+                "label": t.label,
+                "definition": t.definition,
+                "functional": bool(getattr(t, "functional", False)),
+            }
+            for t in property_terms
+        ]
+        if not rows:
+            return 0
+        await self.command(
+            "UNWIND $rows AS r MERGE (n:ONTOLOGY_PROPERTY {uri: r.uri}) "
+            "SET n.label = r.label, n.definition = r.definition, "
+            "n.functional = r.functional",
+            rows=rows,
+        )
+        return len(rows)
 
     async def _write_class_broader(self, class_terms: list[Any]) -> int:
         """MERGE ONTOLOGY_CLASS-[:BROADER]->ONTOLOGY_CLASS from declared parents.
