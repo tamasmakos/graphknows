@@ -30,6 +30,7 @@ def _store() -> MagicMock:
         return_value={"deduped": 0, "contradictions": 0, "invalidated": 0}
     )
     store.verifier_coverage = AsyncMock(return_value={})
+    store.entity_coverage = AsyncMock(return_value={"total": 10, "connected": 8, "isolated": 2})
     return store
 
 
@@ -65,6 +66,7 @@ async def test_happy_path_reports_every_step() -> None:
     assert out["merged_entities"] == 2
     assert out["modularity"] == 0.5
     assert out["communities_scored"] == 6
+    assert out["entity_coverage"] == {"total": 10, "connected": 8, "isolated": 2}
 
 
 @pytest.mark.asyncio

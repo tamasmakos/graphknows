@@ -354,6 +354,7 @@ class Memory:
                 "elapsed_s": round(result.elapsed_s, 3),
                 "errors": list(result.errors),
                 "warnings": [],
+                "abstentions": result.abstentions,
             }
         finally:
             await service.close()
@@ -601,6 +602,12 @@ class Memory:
         REL edges carry a relation-verifier score and their mean: the verifier
         only ever sees the tiers routed through its gate, so per-tier coverage
         is what makes an unverified tier visible instead of silent.
+
+        The result's ``entity_coverage`` reports the whole-namespace count of
+        ENTITY nodes with no semantic edge (issue #160). Isolation is a
+        property of the finished graph, not of one chunk — a relation written
+        by a later chunk can connect an entity an earlier chunk minted — so
+        flush, not per-chunk ingest, is the only place this can be measured.
         """
         import time
 
@@ -620,6 +627,7 @@ class Memory:
         resolution = {"dropped": 0, "merged": 0, "considered": 0}
         rel_consolidation = {"deduped": 0, "contradictions": 0, "invalidated": 0}
         verifier_coverage: dict[str, dict[str, Any]] = {}
+        entity_coverage: dict[str, int] = {}
         # Seconds per named stage, so the slow one is identifiable without a profiler.
         stage_s: dict[str, float] = {}
 
@@ -734,6 +742,7 @@ class Memory:
                 "consolidate_session", store.consolidate_session(session_id), 0
             )
             verifier_coverage = await step("verifier_coverage", store.verifier_coverage(), {})
+            entity_coverage = await step("entity_coverage", store.entity_coverage(), {})
 
         return {
             "nodes": pagerank_updated,
@@ -762,6 +771,9 @@ class Memory:
             "communities_scored": topics_created,
             "rel_consolidation": rel_consolidation,
             "verifier_coverage": verifier_coverage,
+            # A graph whose entities are all isolated and a graph with no
+            # entities look identical to every other number in this report.
+            "entity_coverage": entity_coverage,
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }

@@ -9,8 +9,12 @@ flush-time entity resolver.
 
 from __future__ import annotations
 
+import functools
+import logging
 import re
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # spaCy NER labels that are numeric/temporal noise as graph entities. Dates and
 # times are captured separately as canonical TEMPORAL nodes; numbers/percents/
@@ -98,15 +102,14 @@ _SENTENCE_BREAK_RE = re.compile(r"[A-Za-z]{3,}\.\s+[A-Z]")
 _SPEAKER_COLON_RE = re.compile(r"^[A-Z][\w'-]{1,20}:\s")
 # A proper entity is a noun phrase, not a sentence or a heading — cap the words.
 #
-# KNOWN TOO PERMISSIVE, deliberately unchanged. Measured on LoCoMo conv-30 (369
-# turns): the graph held 1863 ENTITY nodes over 1863 distinct name_norms — every
-# surface unique, so entity resolution has nothing to merge — and 377 (20%) were
-# >=4 words, clause fragments like "Been having some tough times lately".
-# Lowering to 3 removes them, but also deletes legitimate 4-word titles
-# (tests/ingestion/consolidation asserts "Charlotte's Web: A Review" survives),
-# and no measurement yet shows a smaller entity population improves retrieval —
-# this repo's history is of graph-quality wins that do not move accuracy. The cap
-# stays at 8 until the relation/entity layer's contribution is ablated end to end.
+# DECIDED (#160): the cap STAYS at 8. Lowering it to 3 was already measured to
+# delete legitimate 4-word titles ("Charlotte's Web: A Review"), and length was
+# only ever standing in for the clause case — a predication minted as an ENTITY
+# because the string rules cannot see its syntactic head. That case is now
+# decided by the span's head POS instead (``_is_verb_headed``), not by length.
+# Re-measure this decision against the per-ingest
+# ``abstentions["untyped_entities"]/["entities"]`` share and the flush's
+# ``entity_coverage["isolated"]`` count landed under this same issue.
 _MAX_ENTITY_WORDS = 8
 
 
@@ -276,6 +279,54 @@ def _is_code_or_clause(name: str) -> bool:
     return bool(_CODE_MARKUP_RE.search(stripped)) or len(stripped.split()) > _MAX_ENTITY_WORDS
 
 
+_NLP_UNAVAILABLE = False
+
+
+def _parser() -> Any:
+    """The shared spaCy pipeline.
+
+    Reuses ``worth._nlp``'s singleton instead of loading a second ~600MB copy
+    of the same model into the process. Soft-fails: a missing model logs once
+    at WARNING and returns ``None`` rather than raising, so this gate degrades
+    to "admit" instead of emptying the graph.
+    """
+    global _NLP_UNAVAILABLE
+    if _NLP_UNAVAILABLE:
+        return None
+    try:
+        from graphknows.worth import _nlp
+
+        return _nlp()
+    except Exception as exc:  # a missing model must not take ingest down
+        _NLP_UNAVAILABLE = True
+        log.warning("Verb-head entity gate skipped: spaCy unavailable (%s)", exc)
+        return None
+
+
+@functools.lru_cache(maxsize=4096)
+def _is_verb_headed(name: str) -> bool:
+    """A span of 3+ tokens whose syntactic ROOT is a verb is a predication, not a name.
+
+    Only applied to names of three or more whitespace tokens: one- and two-token
+    names ("dance studio", "New York") are the overwhelming majority of real
+    entities and are POS-ambiguous in isolation, and none of the measured
+    propositions from #160 is shorter than four tokens. Returns False (admit)
+    when the parser is unavailable or no ROOT token is found — today's
+    behaviour, unchanged.
+    """
+    tokens = name.split()
+    if len(tokens) < 3:
+        return False
+    nlp = _parser()
+    if nlp is None:
+        return False
+    doc = nlp(" ".join(tokens))
+    root = next((t for t in doc if t.dep_ == "ROOT"), None)
+    if root is None:
+        return False
+    return root.pos_ in {"VERB", "AUX"}
+
+
 def _is_degenerate_name(name: str) -> bool:
     """Single characters, punctuation-only, and 1-2 char lowercase fragments.
 
@@ -315,7 +366,9 @@ def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
         return False
     if _is_code_or_clause(stripped):
         return False
-    return not _is_temporal_or_numeric_name(stripped)
+    if _is_temporal_or_numeric_name(stripped):
+        return False
+    return not _is_verb_headed(" ".join(stripped.split()))
 
 
 def graph_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:

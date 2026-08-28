@@ -129,7 +129,13 @@ Both paths converge on the same write helper, which per chunk:
 1. embeds the text and writes it onto the `CHUNK` vertex;
 2. runs `GLiNER2EntityExtractor`
    (`graphknows/ingestion/extraction/entities/extractor.py`) and writes `ENTITY`
-   nodes plus `MENTIONS` edges;
+   nodes plus `MENTIONS` edges — `is_graph_entity_name`
+   (`graphknows/ingestion/extraction/entities/hygiene.py`) is the gate every
+   minting path routes through, and rejects a span of three or more tokens
+   whose syntactic root is a verb (e.g. "make the dance studio look awesome")
+   as a predication rather than a name; the ingest result's `abstentions`
+   reports the `entities` written and the `untyped_entities` share among them
+   (a generic `ENTITY`/`EVENT` type with no relation domain/range to match);
 3. writes the extractor's open-vocabulary relations as `REL` edges with
    chunk-level evidence provenance (no ontology filter — it would reject every
    open-vocab label);
@@ -175,6 +181,12 @@ aborting, so an analytics failure never skips the state flip:
 7. **State flip** — `consolidate_session(session_id)` moves the session's chunks
    from `raw` to `consolidated`. Nothing is deleted; relation canonicalization and
    topic summarization are not part of this path.
+8. **Entity coverage audit** — `GraphStore.entity_coverage()` counts, over the
+   whole namespace, `ENTITY` nodes with no `REL` edge in either direction and no
+   incoming `PLAYS_ROLE`; returned as `entity_coverage: {total, connected,
+   isolated}` in the flush result, since isolation is a property of the
+   finished graph and a later chunk's relation can connect an entity an
+   earlier chunk minted.
 
 `corpus_ingest` is a thin loop: `ingest_memory` per document into one session,
 then a single `flush_memory`. Documents without text are recorded in `errors` and
