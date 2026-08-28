@@ -83,13 +83,18 @@ else
   # which is the wrong tree — the explicit `-v` below overrides it at the same
   # target, which is the documented precedence and is asserted by the marker
   # check that got us here.
-  GATE_ENV_FILE="$REPO_ROOT/.gate-env-$$"
+  # Outside the repo tree on purpose: this file is the container's whole
+  # environment, API keys included, and a gate killed by a caller's timeout does
+  # not always run its trap. In $TMPDIR a survivor is inert; in the worktree it
+  # is one `git add -A` away from being published.
+  GATE_ENV_FILE="$(mktemp)"
+  chmod 600 "$GATE_ENV_FILE"
   docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' >"$GATE_ENV_FILE"
   GATE_ENV_ARG="$GATE_ENV_FILE"
   if command -v cygpath >/dev/null 2>&1; then
     GATE_ENV_ARG="$(cygpath -w "$GATE_ENV_FILE")"
   fi
-  trap 'rm -f "$GATE_ENV_FILE"' EXIT
+  trap 'rm -f "$GATE_ENV_FILE"' EXIT INT TERM
   echo "gate: '$CONTAINER' mounts a different tree - checking $REPO_ROOT instead." >&2
   dex() {
     MSYS_NO_PATHCONV=1 docker run --rm \
