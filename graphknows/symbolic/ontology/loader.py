@@ -76,6 +76,10 @@ class OntologyTerm:
     # says so. Carried onto the ONTOLOGY_CLASS node so a match can be traced to
     # the module that supplied it; never used for selection.
     module: str = ""
+    # An owl:FunctionalProperty has at most one value per subject, which is what
+    # lets an invalidation pass tombstone the older assertion instead of keeping
+    # both. Always False for classes.
+    functional: bool = False
 
     @property
     def index_text(self) -> str:
@@ -102,8 +106,18 @@ def _local_name(node: Any) -> str:
     return text
 
 
-def _collect_terms(graph: Any, subjects: Any, kind: str, source: str) -> list[OntologyTerm]:
-    """Build :class:`OntologyTerm` records for one kind of subject."""
+def _collect_terms(
+    graph: Any,
+    subjects: Any,
+    kind: str,
+    source: str,
+    functional_nodes: frozenset[Any] = frozenset(),
+) -> list[OntologyTerm]:
+    """Build :class:`OntologyTerm` records for one kind of subject.
+
+    ``functional_nodes`` is only ever non-empty for properties; classes never
+    match it, so they always come out with ``functional=False``.
+    """
     from rdflib import RDFS  # type: ignore
     from rdflib.namespace import DCTERMS, SKOS  # type: ignore
 
@@ -139,6 +153,7 @@ def _collect_terms(graph: Any, subjects: Any, kind: str, source: str) -> list[On
                     sorted(_local_name(p) for p in graph.objects(node, SKOS.broader))
                 ),
                 source=source,
+                functional=node in functional_nodes,
             )
         )
     return terms
@@ -156,13 +171,16 @@ def _rdf_terms(graph: Any, source: str) -> list[OntologyTerm]:
         | set(graph.subjects(RDF.type, OWL.DatatypeProperty))
         | set(graph.subjects(RDF.type, RDF.Property))
     )
+    functional_nodes = frozenset(graph.subjects(RDF.type, OWL.FunctionalProperty))
     # Sorted, not set-ordered: term order determines the embedding matrix's row
     # order, and rdflib subject sets iterate differently between processes
     # (randomized string hashing). An unstable order silently pairs a cached
     # matrix with a different term list.
     return [
         *_collect_terms(graph, sorted(class_nodes, key=str), "class", source),
-        *_collect_terms(graph, sorted(property_nodes, key=str), "property", source),
+        *_collect_terms(
+            graph, sorted(property_nodes, key=str), "property", source, functional_nodes
+        ),
     ]
 
 
@@ -235,6 +253,7 @@ def _terms_from_digest(path: Path) -> list[OntologyTerm]:
             parents_nontransitive=tuple(entry.get("parents_nontransitive") or ()),
             source=source,
             module=str(entry.get("module") or ""),
+            functional=bool(entry.get("functional")),
         )
         for kind, key in (("class", "classes"), ("property", "properties"))
         for entry in data.get(key) or []

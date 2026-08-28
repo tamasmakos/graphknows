@@ -13237,7 +13237,8 @@
     "temporal region"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "functional": true
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000171",
@@ -13304,7 +13305,8 @@
     "material entity"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "functional": true
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000185",
@@ -13389,7 +13391,8 @@
     "temporal region"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "functional": true
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000200",
@@ -13403,7 +13406,8 @@
     "spatiotemporal region"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "functional": true
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000210",
@@ -13468,7 +13472,8 @@
     "temporal instant"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "functional": true
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000223",
@@ -13494,7 +13499,8 @@
     "temporal instant"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "functional": true
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001774",
@@ -16774,7 +16780,8 @@
     "temporal instant"
    ],
    "parents": [],
-   "module": "TimeOntology"
+   "module": "TimeOntology",
+   "functional": true
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002081",
@@ -16787,7 +16794,8 @@
     "temporal instant"
    ],
    "parents": [],
-   "module": "TimeOntology"
+   "module": "TimeOntology",
+   "functional": true
   }
  ]
 }

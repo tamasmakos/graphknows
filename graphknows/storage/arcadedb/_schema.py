@@ -179,6 +179,17 @@ _CORE_DDL: list[tuple[str, str]] = [
         "CREATE INDEX IF NOT EXISTS ON ONTOLOGY_CLASS(embedding) LSM_VECTOR "
         f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
     ),
+    # Ontology properties — reinstated (issue #140) with a reader:
+    # GraphStore._functional_predicates queries `functional = true` rows to
+    # drive relation-consolidation invalidation. Not vector-searched, so no
+    # embedding column and no LSM_VECTOR index (only ONTOLOGY_CLASS is).
+    ("sql", "CREATE VERTEX TYPE ONTOLOGY_PROPERTY IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.uri IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.label IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.definition IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.functional IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE INDEX ON ONTOLOGY_PROPERTY(uri) UNIQUE"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON ONTOLOGY_PROPERTY(label) NOTUNIQUE"),
     # ---- Edge types -------------------------------------------------------
     ("sql", "CREATE EDGE TYPE PART_OF IF NOT EXISTS"),  # CHUNK -> FILE
     ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE|TURN -> SESSION
@@ -273,4 +284,18 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY REL.hedged IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE INDEX IF NOT EXISTS ON REL(canonical_predicate) NOTUNIQUE"),
     ("sql", "CREATE INDEX IF NOT EXISTS ON REL(is_current) NOTUNIQUE"),
+    # How many distinct assertions (relex label variants of the same
+    # canonical_predicate) collapsed onto this row — raised by
+    # GraphStore.consolidate_relations, initialised to 1 by write_relation so
+    # every edge has a count even before consolidation ever runs.
+    ("sql", "CREATE PROPERTY REL.support IF NOT EXISTS INTEGER"),
+    # ENTITY -> ENTITY, not REL -> REL: ArcadeDB edges connect vertices only,
+    # so a contradicting PAIR of REL rows is identified by (head,
+    # canonical_predicate) plus `current_tail` — the surviving edge's tail
+    # name_norm — which together are enough to find both REL rows again.
+    ("sql", "CREATE EDGE TYPE CONTRADICTS IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY CONTRADICTS.canonical_predicate IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY CONTRADICTS.reason IF NOT EXISTS STRING"),  # 'polarity' | 'functional'
+    ("sql", "CREATE PROPERTY CONTRADICTS.current_tail IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY CONTRADICTS.created_at IF NOT EXISTS STRING"),
 ]

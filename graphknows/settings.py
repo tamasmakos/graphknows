@@ -236,10 +236,13 @@ class GraphKnowsSettings(BaseSettings):
 
     # Ontology injection — ALWAYS ON, like the FrameNet layer. Ontology class
     # labels steer entity extraction and property labels steer relation
-    # extraction in BOTH modes; classes are persisted as ONTOLOGY_CLASS nodes,
-    # while properties are NOT persisted — domain/range validation reads the
-    # in-memory OntologyTerm from the loader, so ONTOLOGY_PROPERTY vertices
-    # would be write-only. Read via ``ontology_source``.
+    # extraction in BOTH modes; classes are persisted as ONTOLOGY_CLASS nodes.
+    # Properties ARE persisted too, as ONTOLOGY_PROPERTY vertices carrying the
+    # ``functional`` flag: the flush-time relation consolidation in the storage
+    # layer reads it to tombstone a superseded single-valued fact, and storage
+    # sits below ``symbolic`` in the import-linter layer contract, so it cannot
+    # import this loader to ask an in-memory OntologyTerm instead. Read via
+    # ``ontology_source``.
     #
     # The default is the bundled Common Core Ontologies digest: a pre-parsed
     # JSON of 1401 classes and 224 object properties that loads WITHOUT rdflib

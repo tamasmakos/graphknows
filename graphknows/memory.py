@@ -590,9 +590,12 @@ class Memory:
            ArcadeDB algos, each with its own soft-fail — see
            ``GraphStore.compute_and_persist_pagerank`` et al.), builds the
            TOPIC layer over those communities when ``GRAPHKNOWS_TOPICS`` asks
-           for it, and flips the session's CHUNK lifecycle ``state`` raw ->
-           consolidated in place. Nothing else is deleted; relation
-           canonicalize lands later.
+           for it, flips the session's CHUNK lifecycle ``state`` raw ->
+           consolidated in place, and runs ``GraphStore.consolidate_relations``
+           (issue #140) over the merged graph: duplicate REL edges under
+           different predicate surfaces collapse with a raised ``support``
+           counter, polarity contradictions are linked (not deleted), and a
+           functional-property collision tombstones every edge but the newest.
 
         The result's ``verifier_coverage`` reports, per relation tier, how many
         REL edges carry a relation-verifier score and their mean: the verifier
@@ -615,6 +618,7 @@ class Memory:
         abstentions: dict[str, int] = {}
         modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0, "considered": 0}
+        rel_consolidation = {"deduped": 0, "contradictions": 0, "invalidated": 0}
         verifier_coverage: dict[str, dict[str, Any]] = {}
         # Seconds per named stage, so the slow one is identifiable without a profiler.
         stage_s: dict[str, float] = {}
@@ -688,6 +692,14 @@ class Memory:
             resolution = await step(
                 "resolve_entities", resolve_entities(store, session_id), resolution
             )
+            # Entity merges above replay REL edges through write_relation and
+            # can themselves mint duplicates, so consolidation must run after
+            # resolution has settled, over the already-merged graph.
+            rel_consolidation = await step(
+                "consolidate_relations",
+                store.consolidate_relations(),
+                rel_consolidation,
+            )
             # Rebuild the analytical view once and share it across all three
             # algos below (each is skip_view_ensure=True) — rebuilding is not
             # free. A failure here is non-fatal and deliberately not recorded in
@@ -748,6 +760,7 @@ class Memory:
             "communities_computed": communities_computed,
             "modularity": modularity,
             "communities_scored": topics_created,
+            "rel_consolidation": rel_consolidation,
             "verifier_coverage": verifier_coverage,
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
