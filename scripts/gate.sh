@@ -94,10 +94,16 @@ else
   if command -v cygpath >/dev/null 2>&1; then
     GATE_ENV_ARG="$(cygpath -w "$GATE_ENV_FILE")"
   fi
-  trap 'rm -f "$GATE_ENV_FILE"' EXIT INT TERM
+  # A killed gate must not leave its container running. `--rm` fires when the
+  # process exits normally; a caller timeout SIGKILLs the client and the
+  # container keeps the CPU. The runbook then tells the next agent not to retry
+  # -- correctly, because it would starve against the survivor -- so one orphan
+  # costs the whole car. Naming it makes it killable by the trap.
+  GATE_RUNNER="gk-gate-$$"
+  trap 'rm -f "$GATE_ENV_FILE"; docker rm -f "$GATE_RUNNER" >/dev/null 2>&1' EXIT INT TERM
   echo "gate: '$CONTAINER' mounts a different tree - checking $REPO_ROOT instead." >&2
   dex() {
-    MSYS_NO_PATHCONV=1 docker run --rm \
+    MSYS_NO_PATHCONV=1 docker run --rm --name "$GATE_RUNNER" \
       --volumes-from "$CONTAINER" --env-file "$GATE_ENV_ARG" \
       -e RUFF_CACHE_DIR=/tmp/ruffcache \
       ${GATE_NET:+--network "$GATE_NET"} \
