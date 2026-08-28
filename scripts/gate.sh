@@ -75,9 +75,26 @@ else
   if command -v cygpath >/dev/null 2>&1; then
     GATE_HOST_ROOT="$(cygpath -w "$REPO_ROOT")"
   fi
+  # The ephemeral runner must inherit the reference container's volumes and
+  # environment, not just its image. `model_cache:/opt/models` backs HF_HOME and
+  # NLTK_DATA; without it every WordNet/embedding test ERRORs on a cold lookup
+  # and anything that falls back to downloading weights runs until the caller's
+  # timeout kills it. `--volumes-from` also carries that container's own `.:/app`,
+  # which is the wrong tree — the explicit `-v` below overrides it at the same
+  # target, which is the documented precedence and is asserted by the marker
+  # check that got us here.
+  GATE_ENV_FILE="$REPO_ROOT/.gate-env-$$"
+  docker inspect "$CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' >"$GATE_ENV_FILE"
+  GATE_ENV_ARG="$GATE_ENV_FILE"
+  if command -v cygpath >/dev/null 2>&1; then
+    GATE_ENV_ARG="$(cygpath -w "$GATE_ENV_FILE")"
+  fi
+  trap 'rm -f "$GATE_ENV_FILE"' EXIT
   echo "gate: '$CONTAINER' mounts a different tree - checking $REPO_ROOT instead." >&2
   dex() {
-    MSYS_NO_PATHCONV=1 docker run --rm -e RUFF_CACHE_DIR=/tmp/ruffcache \
+    MSYS_NO_PATHCONV=1 docker run --rm \
+      --volumes-from "$CONTAINER" --env-file "$GATE_ENV_ARG" \
+      -e RUFF_CACHE_DIR=/tmp/ruffcache \
       ${GATE_NET:+--network "$GATE_NET"} \
       -v "$GATE_HOST_ROOT:/app" -w /app "$GATE_IMAGE" sh -c "cd /app && $*"
   }
