@@ -254,6 +254,18 @@ class TestGateScript:
                 f"runs without the model cache / container environment"
             )
 
+    def test_env_dump_is_never_written_into_the_worktree(self) -> None:
+        # The dump is the container's whole environment, API keys included, and a
+        # gate killed by a caller's timeout does not reliably run its trap. Under
+        # $TMPDIR a survivor is inert; under REPO_ROOT it is one `git add -A`
+        # away from being published.
+        assert 'GATE_ENV_FILE="$(mktemp)"' in self.text, (
+            f"{GATE_SH}: the container env dump must go to mktemp, not the repo tree"
+        )
+        assert "$REPO_ROOT/.gate-env" not in self.text, (
+            f"{GATE_SH}: writes the container env dump (secrets) inside the worktree"
+        )
+
 
 class TestPreflight:
     def _load_module(self, tmp_path=None):
