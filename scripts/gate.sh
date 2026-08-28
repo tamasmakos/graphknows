@@ -70,6 +70,13 @@ else
   GATE_IMAGE="$(docker inspect "$CONTAINER" --format '{{.Config.Image}}')"
   GATE_NET="$(docker inspect "$CONTAINER" \
     --format '{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}' | awk '{print $1}')"
+  # /opt/models (NLTK_DATA, HF_HOME) is a named volume, not baked into the
+  # image (see docker-compose.yaml) — an ephemeral container that skips it
+  # starts with an empty corpus dir and silently degrades every WordNet-backed
+  # check. Reuse whatever volume the running container mounts there instead of
+  # hardcoding its compose-generated name.
+  GATE_MODELS_VOL="$(docker inspect "$CONTAINER" \
+    --format '{{range .Mounts}}{{if eq .Destination "/opt/models"}}{{.Name}}{{end}}{{end}}')"
   # cygpath: Docker Desktop wants a Windows path, this shell speaks MSYS.
   GATE_HOST_ROOT="$REPO_ROOT"
   if command -v cygpath >/dev/null 2>&1; then
@@ -79,7 +86,9 @@ else
   dex() {
     MSYS_NO_PATHCONV=1 docker run --rm -e RUFF_CACHE_DIR=/tmp/ruffcache \
       ${GATE_NET:+--network "$GATE_NET"} \
-      -v "$GATE_HOST_ROOT:/app" -w /app "$GATE_IMAGE" sh -c "cd /app && $*"
+      -v "$GATE_HOST_ROOT:/app" -w /app \
+      ${GATE_MODELS_VOL:+-v "$GATE_MODELS_VOL:/opt/models"} \
+      "$GATE_IMAGE" sh -c "cd /app && $*"
   }
 fi
 
