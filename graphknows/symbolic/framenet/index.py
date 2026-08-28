@@ -61,27 +61,33 @@ def _embed_frames(names: list[str]) -> np.ndarray:
     return _embed_norm(texts)  # (N, dim) float32, already L2-normalized
 
 
-def _ensure(force: bool = False) -> tuple[list[str], np.ndarray]:
-    """The frame names and their definition matrix, built or loaded once.
+def _ensure(force: bool = False) -> tuple[list[str], np.ndarray, bool]:
+    """The frame names, their definition matrix, and whether it came from disk.
 
     Process-global: there is one FrameNet per process, so the matrix outlives
     any single namespace. ``force`` skips the disk cache — used when the
     embedder's dimension no longer matches what the cache holds.
+
+    The third element is what makes the rebuild in ``match_frames`` decidable:
+    only a matrix loaded from a STALE CACHE can be reconciled by re-embedding.
+    One that was just built came from this process's own embedder, so building
+    it a second time cannot produce a different width.
     """
     global _names, _matrix
     if _matrix is not None and not force:
-        return _names, _matrix  # type: ignore[return-value]
+        return _names, _matrix, True  # type: ignore[return-value]
     with _lock:
         if _matrix is not None and not force:
-            return _names, _matrix  # type: ignore[return-value]
+            return _names, _matrix, True  # type: ignore[return-value]
         names = _frame_names()
         key = _cache_key()
         mat = None if force else load_matrix(key, names)
+        from_cache = mat is not None
         if mat is None:
             mat = _embed_frames(names)
             save_matrix(key, names, mat)
         _names, _matrix = names, mat
-    return names, mat
+    return names, mat, from_cache
 
 
 def match_frames(
@@ -97,17 +103,36 @@ def match_frames(
         # Degenerate vector — answer before touching the index, so a bad query
         # never pays for embedding the whole frame vocabulary.
         return []
-    names, mat = _ensure()
-    if mat.size and v.shape[0] != mat.shape[1]:
-        # Embedding dims changed under this cache key — rebuild before giving up,
-        # but only ONCE per offending width. A rebuild that does not reconcile the
-        # two means the caller's vectors are not this embedder's, and retrying it
-        # per call re-embeds the whole 1200-frame vocabulary on every query: the
-        # retrieval suite spent 19 of its 22 minutes in exactly that loop.
-        if v.shape[0] in _unreconciled_dims:
-            return []
+    if v.shape[0] in _unreconciled_dims:
+        return []
+    # The embedder's own width, known without embedding anything. A caller whose
+    # vectors are not this embedder's can be answered here, before the index is
+    # touched at all — otherwise the FIRST such call embeds all ~1221 definitions
+    # only to discard them. That cost a fully-mocked unit test 5 minutes of real
+    # model work (and a huggingface.co round trip) for a matrix it could never use.
+    from graphknows.storage.embedder import EMBED_DIM
+
+    if _matrix is None and v.shape[0] != EMBED_DIM:
         _unreconciled_dims.add(v.shape[0])
-        names, mat = _ensure(force=True)
+        log.warning(
+            "query embedding is %d-dimensional but the embedder produces %d; "
+            "frame reranking is off for this process",
+            v.shape[0],
+            EMBED_DIM,
+        )
+        return []
+    names, mat, from_cache = _ensure()
+    if mat.size and v.shape[0] != mat.shape[1]:
+        # Dims disagree under this cache key. Rebuilding can only help when the
+        # matrix came off DISK — a stale cache written by a different embedder.
+        # One this process just built came from the same embedder that will build
+        # the replacement, so a rebuild re-embeds 1221 definitions to land on the
+        # identical width. Retrying per call was worse still: the retrieval suite
+        # spent 19 of its 22 minutes in exactly that loop.
+        _unreconciled_dims.add(v.shape[0])
+        if not from_cache:
+            return []
+        names, mat, _ = _ensure(force=True)
         if mat.size and v.shape[0] != mat.shape[1]:
             log.warning(
                 "frame index is %d-dimensional but the query embedding is %d; "
@@ -141,7 +166,7 @@ def frame_embedding(name: str) -> list[float]:
     Reuses the already-built matrix, so populating a FRAME node's embedding at
     ingest is a copy — never a per-chunk re-embed.
     """
-    names, mat = _ensure()
+    names, mat, _ = _ensure()
     try:
         i = names.index(name)
     except ValueError:
