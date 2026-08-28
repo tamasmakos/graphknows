@@ -359,6 +359,11 @@ const ISSUES_SCHEMA = {
               'absolute path of the created worktree in DRIVE-LETTER form (C:/Users/.../gk-issue-<n>), not the Git Bash /c/... form -- later stages mount this path into docker',
           },
           branch: { type: 'string' },
+          resumed_from: {
+            type: 'string',
+            description:
+              "commits a reused branch carried over, after rebasing it onto the base; empty when the branch was cut fresh this run. A resumed car is the one case where the base was not the current tip until the rebase fixed it, so the report has to say so.",
+          },
         },
       },
     },
@@ -863,7 +868,22 @@ const triage = await call(
     '  1. `git fetch origin`',
     `  2. from the repo root: \`git worktree add ../gk-issue-<n> -b fix/issue-<n> origin/${BASE}\``,
     '  3. record the ABSOLUTE path of that worktree in DRIVE-LETTER form -- `C:/Users/User/Documents/dev/gk-issue-<n>`, not `/c/Users/...`. Later stages mount that path into docker, which needs the drive letter.',
-    'If a worktree or branch for an issue already exists locally, reuse it instead of failing.',
+    // The train's whole safety story is that each car is cut from main AS IT STANDS after the
+    // previous merge, so siblings cannot conflict. A leftover branch silently voids that: it was
+    // cut from an older main. #137 resumed one and spent a full car re-deriving a gate fix that
+    // had already landed on the tip, because its base predated that merge -- and the duplicate
+    // shipped, because nothing downstream can tell a stale base from a fresh one.
+    'If a worktree or branch for an issue already exists locally, reuse the DIRECTORY rather than failing --',
+    'but never trust its commits as they stand, because a leftover branch was cut from an older base.',
+    'Before any work starts on a reused branch, put it on the current tip:',
+    `  a. \`git -C <worktree> fetch origin\` then \`git -C <worktree> rebase origin/${BASE}\``,
+    `  b. If the rebase reports conflicts, STOP for that issue: \`git -C <worktree> rebase --abort\`, skip the`,
+    '     issue, and give the conflict as the skip reason. A leftover branch that disagrees with the tip is a',
+    "     human's call, not something to resolve on the way past.",
+    `  c. If it rebases clean, confirm it: \`git -C <worktree> log --oneline origin/${BASE}..HEAD\` is now only`,
+    "     this issue's own commits. Anything you do not recognise means the branch is not what its name claims.",
+    '  d. Set resumed_from to the commits it carried over (or "" when the branch was created fresh this run),',
+    '     so the run report says the car resumed rather than started clean.',
     "Do not read source files or plan any fix -- that is the next phase's job.",
   ].join('\n'),
   { label: 'triage', schema: ISSUES_SCHEMA },
@@ -875,6 +895,11 @@ if (!issues.length) {
   return { picked: [], skipped: triage?.skipped || [], baseline, note: 'no actionable open issues' }
 }
 log(`picked ${issues.length} issue(s): ${issues.map((i) => '#' + i.number).join(', ')}`)
+// A resumed car is the one that carried commits written against an older base. Saying so is
+// what turns "why did this re-fix something already on main" into a one-line answer.
+for (const i of issues.filter((i) => (i.resumed_from || '').trim())) {
+  log(`#${i.number} resumed an existing branch, rebased onto ${BASE}: ${i.resumed_from}`)
+}
 
 // -- Change classification ------------------------------------------
 // One derived class, one policy table, no router agent: every fact a router would need is
